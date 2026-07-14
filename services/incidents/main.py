@@ -436,10 +436,27 @@ def _incident_delivery_ids(incident_id: str) -> tuple[str, str, str]:
     )
 
 
+def _delivery_environment(deployment_stage: str | None) -> EnvironmentName:
+    normalized = str(deployment_stage or "").strip().lower()
+    if normalized == "frozen":
+        normalized = EnvironmentName.LIVE.value
+    try:
+        return EnvironmentName(normalized)
+    except ValueError:
+        configured = os.getenv("PANTHEON_EVENT_ENVIRONMENT", EnvironmentName.DEV.value)
+        try:
+            return EnvironmentName(configured.strip().lower())
+        except ValueError:
+            return EnvironmentName.DEV
+
+
 def _prepare_postmortem_delivery(incident_id: str, terminal_status: str) -> ReliableOutboxRecord:
+    incident = store.get_incident(incident_id)
+    if incident is None:
+        raise ValueError(f"incident not found while preparing delivery: {incident_id}")
     event_id, idempotency_key, outbox_id = _incident_delivery_ids(incident_id)
     trace = TraceContext.new(
-        environment=EnvironmentScope(name=EnvironmentName.SANDBOX),
+        environment=EnvironmentScope(name=_delivery_environment(incident.deployment_stage)),
         source_system="incident-svc",
         idempotency_key=idempotency_key,
     )

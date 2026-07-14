@@ -10,7 +10,8 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fastapi.testclient import TestClient
-from services.incident.incident import IncidentCase, IncidentStatus
+from services.incident.incident import IncidentCase, IncidentStatus, Postmortem
+from services.postmortems import main as postmortems_main
 from services.postmortems.main import (
     app,
     inbox_store,
@@ -121,6 +122,15 @@ def test_publish_delivery_success():
     assert records[0].event.payload["postmortem_id"] == "pm-123"
     assert "decision_id" in records[0].event.payload
     assert "inc-123" in records[0].event.payload["decision_id"]
+    assert (
+        records[0].event.payload["postmortem"]["published_at"]
+        == store.get_postmortem("pm-123").published_at
+    )
+    assert (
+        records[0].event.event_id
+        == store.get_postmortem("pm-123").published_event_id
+        == records[0].event.payload["postmortem"]["published_event_id"]
+    )
 
     # 2. Process outbox and verify httpx POST is made
     with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
@@ -134,6 +144,7 @@ def test_publish_delivery_success():
         assert payload["delivery_event"]["idempotency_key"] == records[0].event.idempotency_key
         assert payload["delivery_event"]["sequence_no"] == 1
         assert payload["delivery_event"]["trace_id"] == records[0].event.trace_id
+        assert payload["delivery_event"]["trace"]["environment"]["name"] == "live"
         assert payload["metadata"]["bridge_contract"] == "on_postmortem_published"
         assert payload["metadata"]["bridge_proposed_action"] == "rollback"
         assert payload["action_type"] == "flag_for_review"
@@ -287,9 +298,77 @@ def test_activation_failure_leaves_recoverable_postmortem_event(monkeypatch):
     assert store.get_postmortem("pm-123").status == "published"
     assert len(outbox_store.list_prepared()) == 1
 
+    # A legitimate parent transition after the postmortem commit must not
+    # invalidate the historical publication event selected by that commit.
+    store.update_incident_status("inc-123", "closed")
     monkeypatch.setattr(outbox_store, "activate", real_activate)
     assert reconcile_postmortems_outbox() == 1
     assert len(outbox_store.list_pending_and_failed()) == 1
+
+
+def test_postmortem_save_failure_rolls_back_status_and_keeps_intent_prepared(monkeypatch):
+    _seed_incident()
+    _seed_postmortem()
+    monkeypatch.setattr(store, "_save", MagicMock(side_effect=OSError("domain disk full")))
+
+    with pytest.raises(OSError, match="domain disk full"):
+        client.post("/api/postmortems/pm-123/status", json={"status": "published"})
+
+    assert store.get_postmortem("pm-123").status == "draft"
+    assert len(outbox_store.list_prepared()) == 1
+    assert outbox_store.list_pending_and_failed() == []
+    assert reconcile_postmortems_outbox() == 0
+
+
+def test_concurrent_draft_change_cannot_publish_stale_snapshot(monkeypatch):
+    _seed_incident()
+    _seed_postmortem()
+    original_prepare = postmortems_main._prepare_evolution_delivery
+
+    def prepare_then_change_draft(postmortem, incident):
+        prepared = original_prepare(postmortem, incident)
+        current = store.get_postmortem("pm-123")
+        changed = Postmortem(
+            **{
+                **current.to_dict(),
+                "root_cause": "root cause changed while publish was preparing",
+            }
+        )
+        store.update_postmortem_draft(changed)
+        return prepared
+
+    monkeypatch.setattr(
+        postmortems_main,
+        "_prepare_evolution_delivery",
+        prepare_then_change_draft,
+    )
+    raced = client.post(
+        "/api/postmortems/pm-123/status",
+        json={"status": "published"},
+    )
+
+    assert raced.status_code == 409
+    assert store.get_postmortem("pm-123").status == "draft"
+    assert "root cause changed" in store.get_postmortem("pm-123").root_cause
+    assert outbox_store.list_pending_and_failed() == []
+    assert len(outbox_store.list_prepared()) == 1
+    assert reconcile_postmortems_outbox() == 0
+
+    # A new intent is versioned from the updated snapshot.  Only that intent
+    # becomes deliverable; the stale prepared record remains inert.
+    monkeypatch.setattr(
+        postmortems_main,
+        "_prepare_evolution_delivery",
+        original_prepare,
+    )
+    retried = client.post(
+        "/api/postmortems/pm-123/status",
+        json={"status": "published"},
+    )
+    assert retried.status_code == 200, retried.text
+    assert len(outbox_store.list_pending_and_failed()) == 1
+    assert len(outbox_store.list_prepared()) == 1
+    assert reconcile_postmortems_outbox() == 0
 
 
 def test_postmortem_dlq_redrive_requires_token_and_approval(monkeypatch):

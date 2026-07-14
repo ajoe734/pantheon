@@ -103,6 +103,7 @@ def test_incident_resolution_delivery_success():
         assert envelope["idempotency_key"] == records[0].event.idempotency_key
         assert envelope["sequence_no"] == 1
         assert envelope["trace_id"] == records[0].event.trace_id
+        assert envelope["trace"]["environment"]["name"] == "live"
 
         # Verify record is marked published
         assert len(outbox_store.list_pending_and_failed()) == 0
@@ -200,6 +201,19 @@ def test_activation_failure_leaves_recoverable_prepared_event(monkeypatch):
     monkeypatch.setattr(outbox_store, "activate", real_activate)
     assert reconcile_incidents_outbox() == 1
     assert len(outbox_store.list_pending_and_failed()) == 1
+
+
+def test_incident_save_failure_rolls_back_status_and_keeps_intent_prepared(monkeypatch):
+    _seed_incident()
+    monkeypatch.setattr(store, "_save", MagicMock(side_effect=OSError("domain disk full")))
+
+    with pytest.raises(OSError, match="domain disk full"):
+        client.post("/api/incidents/inc-123/status", json={"status": "resolved"})
+
+    assert store.get_incident("inc-123").status == "open"
+    assert len(outbox_store.list_prepared()) == 1
+    assert outbox_store.list_pending_and_failed() == []
+    assert reconcile_incidents_outbox() == 0
 
 
 def test_dead_letter_redrive_requires_token_and_approval(monkeypatch):

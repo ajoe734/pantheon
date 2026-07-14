@@ -36,13 +36,14 @@ import json
 import os
 import tempfile
 import threading
+from copy import deepcopy
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from functools import wraps
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Mapping, Optional
 
 try:  # pragma: no cover - Linux production and CI provide fcntl.
     import fcntl
@@ -91,7 +92,23 @@ def _serialized_store_write(method):
     @wraps(method)
     def wrapped(self, *args, **kwargs):
         with self._write_guard():
-            return method(self, *args, **kwargs)
+            # JSON guards refresh before yielding; Postgres-backed subclasses
+            # refresh here because their guard has no filesystem path. Preserve
+            # that durable state so a failed _save (or any other exception after
+            # mutation) cannot leak an uncommitted transition through reads.
+            self._refresh_from_disk()
+            incidents_before = deepcopy(self._incidents)
+            postmortems_before = deepcopy(self._postmortems)
+            loaded_mtime_before = self._loaded_mtime_ns
+            try:
+                return method(self, *args, **kwargs)
+            except BaseException:
+                self._incidents.clear()
+                self._incidents.update(incidents_before)
+                self._postmortems.clear()
+                self._postmortems.update(postmortems_before)
+                self._loaded_mtime_ns = loaded_mtime_before
+                raise
 
     return wrapped
 
@@ -311,6 +328,7 @@ class Postmortem:
 
     # Optional
     published_at: Optional[str] = None
+    published_event_id: Optional[str] = None
     linked_evolution_decision_id: Optional[str] = None  # set after EVO-003
 
     def __post_init__(self) -> None:
@@ -668,9 +686,26 @@ class IncidentStore:
         new_status: str,
         *,
         published_at: Optional[str] = None,
+        published_event_id: Optional[str] = None,
+        expected_snapshot: Optional[Mapping[str, Any]] = None,
+        expected_incident_snapshot: Optional[Mapping[str, Any]] = None,
     ) -> Postmortem:
         self._refresh_from_disk()
         pm = self.require_postmortem(postmortem_id)
+        if expected_snapshot is not None and pm.to_dict() != dict(expected_snapshot):
+            raise IncidentError(
+                "Postmortem changed concurrently before status transition: "
+                f"{postmortem_id}"
+            )
+        incident = self.require_incident(pm.incident_id)
+        if (
+            expected_incident_snapshot is not None
+            and incident.to_dict() != dict(expected_incident_snapshot)
+        ):
+            raise IncidentError(
+                "Parent IncidentCase changed concurrently before postmortem status transition: "
+                f"{pm.incident_id}"
+            )
         try:
             PostmortemStatus(new_status)
         except ValueError:
@@ -679,6 +714,8 @@ class IncidentStore:
         updates: Dict[str, Any] = {"status": new_status}
         if new_status == PostmortemStatus.PUBLISHED.value:
             updates["published_at"] = published_at or _utc_now()
+            if published_event_id:
+                updates["published_event_id"] = published_event_id
 
         updated = Postmortem(**{**pm.to_dict(), **updates})
         errors = validate_postmortem(updated)

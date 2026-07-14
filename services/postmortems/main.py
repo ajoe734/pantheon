@@ -376,6 +376,9 @@ def consume_resolved_incident(
             or event.aggregate_type != "incident"
             or event.aggregate_id != incident_id
             or str(event.payload.get("incident_id") or "") != incident_id
+            or event.producer_service != "incident-svc"
+            or str(event.payload.get("terminal_status") or "")
+            not in {"resolved", "closed"}
         ):
             raise HTTPException(
                 status_code=422,
@@ -515,13 +518,36 @@ def _nonnegative_float_env(name: str, default: float) -> float:
     return value if value >= 0 else default
 
 
-def _postmortem_delivery_ids(postmortem_id: str) -> tuple[str, str, str]:
-    digest = sha256_checksum({"postmortem_id": postmortem_id, "transition": "published"})[:24]
+def _postmortem_delivery_ids(
+    postmortem_id: str,
+    intent_checksum: str,
+) -> tuple[str, str, str]:
+    digest = sha256_checksum(
+        {
+            "postmortem_id": postmortem_id,
+            "transition": "published",
+            "intent_checksum": intent_checksum,
+        }
+    )[:24]
     return (
         f"evt-postmortem-published-{digest}",
         f"idmp-postmortem-published-{digest}",
         f"outbox-postmortem-published-{digest}",
     )
+
+
+def _delivery_environment(deployment_stage: str | None) -> EnvironmentName:
+    normalized = str(deployment_stage or "").strip().lower()
+    if normalized == "frozen":
+        normalized = EnvironmentName.LIVE.value
+    try:
+        return EnvironmentName(normalized)
+    except ValueError:
+        configured = os.getenv("PANTHEON_EVENT_ENVIRONMENT", EnvironmentName.DEV.value)
+        try:
+            return EnvironmentName(configured.strip().lower())
+        except ValueError:
+            return EnvironmentName.DEV
 
 
 def _bridge_proposal(
@@ -570,10 +596,25 @@ def _prepare_evolution_delivery(
     incident: Dict[str, Any],
 ) -> ReliableOutboxRecord:
     postmortem_id = str(postmortem["postmortem_id"])
-    event_id, idempotency_key, outbox_id = _postmortem_delivery_ids(postmortem_id)
-    proposal = _bridge_proposal(postmortem, incident, publish_event_id=event_id)
+    intent_postmortem = dict(postmortem)
+    intent_postmortem.pop("published_event_id", None)
+    intent_checksum = sha256_checksum(
+        {"postmortem": intent_postmortem, "incident": incident}
+    )
+    event_id, idempotency_key, outbox_id = _postmortem_delivery_ids(
+        postmortem_id,
+        intent_checksum,
+    )
+    published_snapshot = {**intent_postmortem, "published_event_id": event_id}
+    proposal = _bridge_proposal(
+        published_snapshot,
+        incident,
+        publish_event_id=event_id,
+    )
     trace = TraceContext.new(
-        environment=EnvironmentScope(name=EnvironmentName.SANDBOX),
+        environment=EnvironmentScope(
+            name=_delivery_environment(str(incident.get("deployment_stage") or ""))
+        ),
         source_system="postmortem-svc",
         correlation_id=str(postmortem.get("trace_id") or "") or None,
         idempotency_key=idempotency_key,
@@ -590,7 +631,7 @@ def _prepare_evolution_delivery(
             "incident_id": incident["incident_id"],
             "decision_id": proposal.get("decision_id") if proposal else None,
             "proposal": proposal,
-            "postmortem": postmortem,
+            "postmortem": published_snapshot,
             "incident": incident,
         },
         idempotency_key=idempotency_key,
@@ -607,6 +648,9 @@ def _prepare_evolution_delivery(
             "aggregate_type": "postmortem",
             "aggregate_id": postmortem_id,
             "expected_statuses": ["published"],
+            "expected_snapshot_checksum": sha256_checksum(published_snapshot),
+            "source_incident_checksum": sha256_checksum(incident),
+            "published_event_id": event_id,
         },
     )
     log.info(
@@ -623,7 +667,13 @@ def _postmortem_transition_applied(transition: Dict[str, Any]) -> bool:
         return False
     postmortem = store.get_postmortem(str(transition.get("aggregate_id") or ""))
     expected = set(transition.get("expected_statuses") or [])
-    return postmortem is not None and postmortem.status in expected
+    if postmortem is None or postmortem.status not in expected:
+        return False
+    expected_event_id = str(transition.get("published_event_id") or "")
+    if expected_event_id and postmortem.published_event_id != expected_event_id:
+        return False
+    expected_checksum = str(transition.get("expected_snapshot_checksum") or "")
+    return not expected_checksum or sha256_checksum(postmortem.to_dict()) == expected_checksum
 
 
 def reconcile_postmortems_outbox() -> int:
@@ -769,12 +819,14 @@ def update_status(
     crosses_published_boundary = pm.status != "published" and body.status == "published"
     prepared: ReliableOutboxRecord | None = None
     published_at = body.published_at or pm.published_at
+    source_snapshot = pm.to_dict()
     if crosses_published_boundary:
         from services.evolution.postmortem_bridge import PostmortemBridgeError
 
+        published_at = published_at or _utc_now()
         prospective = pm.to_dict()
         prospective["status"] = "published"
-        prospective["published_at"] = published_at or _utc_now()
+        prospective["published_at"] = published_at
         try:
             prepared = _prepare_evolution_delivery(prospective, incident.to_dict())
         except PostmortemBridgeError as exc:
@@ -794,9 +846,15 @@ def update_status(
             postmortem_id,
             body.status,
             published_at=published_at,
+            published_event_id=(prepared.event.event_id if prepared is not None else None),
+            expected_snapshot=source_snapshot if prepared is not None else None,
+            expected_incident_snapshot=(
+                incident.to_dict() if prepared is not None else None
+            ),
         )
     except IncidentError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        status_code = 409 if "changed concurrently" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc))
 
     log.info("Postmortem %s → status=%s", postmortem_id, body.status)
 

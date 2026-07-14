@@ -35,10 +35,17 @@ import json
 import logging
 import os
 import sys
+import tempfile
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, Iterator, List, Mapping, Optional
+
+try:  # pragma: no cover - Linux production and CI provide fcntl.
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 from fastapi import FastAPI, HTTPException, Query, Response
 from pydantic import ValidationError
@@ -133,19 +140,42 @@ os.makedirs(EVOLUTION_DATA_DIR, exist_ok=True)
 
 
 class _EvolutionProposalInbox:
-    """Small durable inbox ledger for generic proposal delivery events.
+    """Concurrent-safe durable inbox ledger for proposal delivery events.
 
     Evolution decisions and inbox receipts intentionally remain separate owner
-    records.  The route-level lock serializes the check/create/receipt sequence
-    within one service process, while immutable-decision comparison closes the
-    recoverable window where the decision write succeeded but the receipt write
-    did not.
+    records.  A path-scoped thread lock plus an advisory file lock serializes
+    the entire check/create/receipt sequence across service instances, while
+    immutable-decision comparison closes the recoverable window where the
+    decision write succeeded but the receipt write did not.
     """
+
+    _path_locks_guard = threading.Lock()
+    _path_locks: Dict[str, threading.RLock] = {}
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.lock = threading.RLock()
+        self.lock_path = self.path.with_name(f".{self.path.name}.lock")
+        key = str(self.path.expanduser().resolve())
+        with self._path_locks_guard:
+            lock = self._path_locks.get(key)
+            if lock is None:
+                lock = threading.RLock()
+                self._path_locks[key] = lock
+            self._thread_lock = lock
+
+    @contextmanager
+    def locked(self) -> Iterator[None]:
+        with self._thread_lock:
+            descriptor = os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                if fcntl is not None:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX)
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
 
     def _read_unlocked(self) -> Dict[str, Dict[str, Any]]:
         if not self.path.exists():
@@ -163,12 +193,29 @@ class _EvolutionProposalInbox:
         }
 
     def _write_unlocked(self, records: Mapping[str, Mapping[str, Any]]) -> None:
-        temporary_path = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
-        temporary_path.write_text(
-            json.dumps(records, indent=2, sort_keys=True),
+        handle = tempfile.NamedTemporaryFile(
+            mode="w",
             encoding="utf-8",
+            dir=self.path.parent,
+            prefix=f".{self.path.name}.",
+            suffix=".tmp",
+            delete=False,
         )
-        os.replace(temporary_path, self.path)
+        temporary_path = Path(handle.name)
+        try:
+            with handle:
+                json.dump(records, handle, indent=2, sort_keys=True)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, self.path)
+            directory_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
 
     def matching_event_unlocked(self, event: EventEnvelope) -> List[Dict[str, Any]]:
         matches: List[Dict[str, Any]] = []
@@ -223,7 +270,7 @@ class _EvolutionProposalInbox:
 
     def clear(self) -> None:
         """Test/support hook that removes only this service-owned inbox file."""
-        with self.lock:
+        with self.locked():
             if self.path.exists():
                 self.path.unlink()
 
@@ -356,6 +403,11 @@ def _validated_delivery_event(body: ProposeRequest) -> Dict[str, Any] | None:
             status_code=422,
             detail="delivery_event.aggregate_type must be 'postmortem'",
         )
+    if event.producer_service != "postmortem-svc":
+        raise HTTPException(
+            status_code=422,
+            detail="delivery_event.producer_service must be 'postmortem-svc'",
+        )
 
     payload = dict(event.payload)
     embedded_proposal = payload.get("proposal")
@@ -412,42 +464,40 @@ def _validated_delivery_event(body: ProposeRequest) -> Dict[str, Any] | None:
         )
 
     postmortem_snapshot = payload.get("postmortem")
-    if postmortem_snapshot is not None:
-        if not isinstance(postmortem_snapshot, Mapping):
-            raise HTTPException(
-                status_code=422,
-                detail="delivery_event.payload.postmortem must be an object",
-            )
-        if str(postmortem_snapshot.get("postmortem_id") or "") != linked_postmortem_id:
-            raise _delivery_conflict(
-                "delivery_event postmortem snapshot does not match linked_postmortem_id"
-            )
-        if str(postmortem_snapshot.get("incident_id") or "") != linked_incident_id:
-            raise _delivery_conflict(
-                "delivery_event postmortem snapshot does not match linked_incident_id"
-            )
-        if postmortem_snapshot.get("status") != "published":
-            raise HTTPException(
-                status_code=422,
-                detail="delivery_event postmortem snapshot must be published",
-            )
-        if not postmortem_snapshot.get("published_at"):
-            raise HTTPException(
-                status_code=422,
-                detail="delivery_event published postmortem snapshot requires published_at",
-            )
+    if not isinstance(postmortem_snapshot, Mapping):
+        raise HTTPException(
+            status_code=422,
+            detail="delivery_event.payload.postmortem snapshot is required",
+        )
+    if str(postmortem_snapshot.get("postmortem_id") or "") != linked_postmortem_id:
+        raise _delivery_conflict(
+            "delivery_event postmortem snapshot does not match linked_postmortem_id"
+        )
+    if str(postmortem_snapshot.get("incident_id") or "") != linked_incident_id:
+        raise _delivery_conflict(
+            "delivery_event postmortem snapshot does not match linked_incident_id"
+        )
+    if postmortem_snapshot.get("status") != "published":
+        raise HTTPException(
+            status_code=422,
+            detail="delivery_event postmortem snapshot must be published",
+        )
+    if not postmortem_snapshot.get("published_at"):
+        raise HTTPException(
+            status_code=422,
+            detail="delivery_event published postmortem snapshot requires published_at",
+        )
 
     incident_snapshot = payload.get("incident")
-    if incident_snapshot is not None:
-        if not isinstance(incident_snapshot, Mapping):
-            raise HTTPException(
-                status_code=422,
-                detail="delivery_event.payload.incident must be an object",
-            )
-        if str(incident_snapshot.get("incident_id") or "") != linked_incident_id:
-            raise _delivery_conflict(
-                "delivery_event incident snapshot does not match linked_incident_id"
-            )
+    if not isinstance(incident_snapshot, Mapping):
+        raise HTTPException(
+            status_code=422,
+            detail="delivery_event.payload.incident snapshot is required",
+        )
+    if str(incident_snapshot.get("incident_id") or "") != linked_incident_id:
+        raise _delivery_conflict(
+            "delivery_event incident snapshot does not match linked_incident_id"
+        )
 
     semantic_event = {
         "schema_version": event.schema_version,
@@ -925,16 +975,32 @@ def propose(body: ProposeRequest, response: Response):
     - Single-active-rule: the target must not already have an active decision.
     """
     delivery = _validated_delivery_event(body)
+
+    # Ordinary operator/controller proposals cannot claim an identity already
+    # owned by a decision or durable inbox record.  This check shares the inbox
+    # lock with delivery admission, so omitting delivery_event is not a bypass
+    # around replay ownership or an opportunity to reset review state.
+    if delivery is None:
+        with proposal_inbox.locked():
+            if proposal_inbox.for_decision_unlocked(body.decision_id):
+                raise _delivery_conflict(
+                    "evolution decision is bound to a durable delivery event"
+                )
+            if store.get(body.decision_id) is not None:
+                raise _delivery_conflict(
+                    "decision_id is already occupied by an evolution decision"
+                )
+            candidate = _build_proposed_decision(
+                body,
+                require_local_postmortem=True,
+            )
+            _store_proposed_decision(candidate)
+        return _decision_to_response(candidate)
+
     candidate = _build_proposed_decision(
         body,
-        require_local_postmortem=delivery is None,
+        require_local_postmortem=False,
     )
-
-    # Ordinary operator/controller proposals preserve their existing behavior.
-    # Only durable delivery calls participate in the evolution inbox protocol.
-    if delivery is None:
-        _store_proposed_decision(candidate)
-        return _decision_to_response(candidate)
 
     event = delivery["event"]
     event_fingerprint = str(delivery["event_fingerprint"])
@@ -944,7 +1010,7 @@ def propose(body: ProposeRequest, response: Response):
 
     # Serialize inbox classification, decision admission, and receipt writes so
     # concurrent retries cannot both overwrite the canonical decision.
-    with proposal_inbox.lock:
+    with proposal_inbox.locked():
         matching_records = proposal_inbox.matching_event_unlocked(event)
         if matching_records:
             for record in matching_records:

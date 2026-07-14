@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -86,6 +87,88 @@ def test_prepared_record_survives_restart_and_reconciles(tmp_path):
     assert reconcile_prepared(restarted, transition_applied=lambda transition: False) == 0
     assert reconcile_prepared(restarted, transition_applied=lambda transition: True) == 1
     assert restarted.list_pending_and_failed()[0].event.event_id == event.event_id
+
+
+def test_prepare_reuses_canonical_envelope_when_retry_only_changes_trace_and_timestamps(tmp_path):
+    store = _outbox(tmp_path)
+    event = _event()
+    transition = {"aggregate_type": "incident", "aggregate_id": "inc-1"}
+    prepared = store.prepare(
+        record=OutboxRecord(outbox_id="outbox-1", owner_service="incident-svc", event=event),
+        transition=transition,
+    )
+    retry_event = replace(
+        _event(),
+        event_time=datetime(2026, 7, 14, 1, tzinfo=timezone.utc),
+        emitted_at=datetime(2026, 7, 14, 1, 0, 1, tzinfo=timezone.utc),
+    )
+
+    retried = store.prepare(
+        record=OutboxRecord(
+            outbox_id="outbox-1",
+            owner_service="incident-svc",
+            event=retry_event,
+        ),
+        transition=transition,
+    )
+
+    assert retry_event.trace_id != event.trace_id
+    assert retried.event.to_dict() == prepared.event.to_dict()
+
+
+def test_prepare_rejects_same_outbox_id_with_divergent_payload(tmp_path):
+    store = _outbox(tmp_path)
+    event = _event()
+    transition = {"aggregate_type": "incident", "aggregate_id": "inc-1"}
+    store.prepare(
+        record=OutboxRecord(outbox_id="outbox-1", owner_service="incident-svc", event=event),
+        transition=transition,
+    )
+    divergent = replace(event, payload={"incident_id": "inc-other"})
+
+    with pytest.raises(ValueError, match=r"event\.payload"):
+        store.prepare(
+            record=OutboxRecord(
+                outbox_id="outbox-1",
+                owner_service="incident-svc",
+                event=divergent,
+            ),
+            transition=transition,
+        )
+
+
+@pytest.mark.parametrize(
+    ("record_change", "transition", "expected_mismatch"),
+    [
+        ({"event": replace(_event(), event_id="evt-other")}, None, r"event\.event_id"),
+        ({"owner_service": "other-svc"}, None, "owner_service"),
+        ({}, {"aggregate_type": "incident", "aggregate_id": "inc-other"}, "transition"),
+    ],
+)
+def test_prepare_rejects_other_divergent_stable_semantics(
+    tmp_path,
+    record_change,
+    transition,
+    expected_mismatch,
+):
+    store = _outbox(tmp_path)
+    event = _event()
+    canonical_transition = {"aggregate_type": "incident", "aggregate_id": "inc-1"}
+    store.prepare(
+        record=OutboxRecord(outbox_id="outbox-1", owner_service="incident-svc", event=event),
+        transition=canonical_transition,
+    )
+    incoming = OutboxRecord(
+        outbox_id="outbox-1",
+        owner_service="incident-svc",
+        event=event,
+    )
+
+    with pytest.raises(ValueError, match=expected_mismatch):
+        store.prepare(
+            record=replace(incoming, **record_change),
+            transition=transition or canonical_transition,
+        )
 
 
 def test_backoff_dead_letter_and_governed_redrive_are_durable(tmp_path):

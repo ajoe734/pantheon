@@ -354,7 +354,11 @@ class ReliableOutboxStore:
     ) -> ReliableOutboxRecord:
         existing = self.get(record.outbox_id)
         if existing is not None:
-            _assert_same_event_identity(existing.event, record.event)
+            _assert_same_prepared_semantics(
+                existing=existing,
+                incoming_record=record,
+                incoming_transition=transition,
+            )
             return existing
         prepared = ReliableOutboxRecord(
             record=record,
@@ -399,12 +403,50 @@ class ReliableOutboxStore:
         return redriven
 
 
-def _assert_same_event_identity(existing: EventEnvelope, incoming: EventEnvelope) -> None:
-    fields = ("event_type", "aggregate_type", "aggregate_id", "sequence_no", "idempotency_key")
-    mismatches = [field for field in fields if getattr(existing, field) != getattr(incoming, field)]
+_STABLE_EVENT_FIELDS = (
+    "event_id",
+    "event_type",
+    "aggregate_type",
+    "aggregate_id",
+    "sequence_no",
+    "payload",
+    "idempotency_key",
+    "causal_parent_id",
+    "producer_service",
+    "schema_ref",
+    "schema_version",
+)
+
+
+def _assert_same_prepared_semantics(
+    *,
+    existing: ReliableOutboxRecord,
+    incoming_record: OutboxRecord,
+    incoming_transition: Mapping[str, Any],
+) -> None:
+    """Reject deterministic-id reuse for a different delivery intent.
+
+    Trace context plus event/outbox timestamps are deliberately excluded: an
+    internal retry constructs fresh observability metadata and must reuse the
+    already-persisted canonical envelope.  Domain payload, routing/schema
+    identity, owner, and reconciliation transition are immutable semantics.
+    """
+
+    mismatches = [
+        f"event.{field}"
+        for field in _STABLE_EVENT_FIELDS
+        if getattr(existing.event, field) != getattr(incoming_record.event, field)
+    ]
+    if existing.owner_service != incoming_record.owner_service:
+        mismatches.append("owner_service")
+    if existing.record.schema_version != incoming_record.schema_version:
+        mismatches.append("outbox.schema_version")
+    if dict(existing.transition or {}) != dict(incoming_transition):
+        mismatches.append("transition")
     if mismatches:
         raise ValueError(
-            f"outbox identity collision for event_id={incoming.event_id!r}: mismatched {mismatches}"
+            "outbox identity collision for "
+            f"outbox_id={incoming_record.outbox_id!r}: mismatched {mismatches}"
         )
 
 
