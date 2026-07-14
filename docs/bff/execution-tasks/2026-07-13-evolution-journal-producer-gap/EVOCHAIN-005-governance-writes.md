@@ -112,14 +112,15 @@ did not exercise. Each is fixed below.
 ## 3. Verification Details
 An expanded integration test suite lives in
 `services/control-plane/bff/tests/test_evochain_005_governance_writes.py`
-(17 tests), plus round-2 additions to
-`services/governance/test_freeze_rollback_store.py` and
+(12 tests), plus round-2/3 additions to
+`services/governance/test_freeze_rollback_store.py`,
+`services/control-plane/internal/test_internal_api_incident.py`, and
 `services/control-plane/governance/test_evolution_decision.py`. Running the
 full affected surface —
 `services/governance/`, `services/control-plane/bff/tests/test_evochain_005_governance_writes.py`,
 `services/control-plane/bff/test_command_executor.py`,
 `services/control-plane/governance/test_evolution_decision.py`, and
-`services/evolution/` — passes **291 tests**. (The earlier "41 tests"
+`services/evolution/` — passes **310 tests**. (The earlier "41 tests"
 figure in this doc was inaccurate and did not correspond to any single
 command actually run.)
 

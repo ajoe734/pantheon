@@ -320,6 +320,7 @@ _GOVERNANCE_WRITE_ROLES = (
 _GOVERNANCE_AUTHORITY_ROLES = frozenset(
     {"governance_reviewer", "risk_owner", "governance_committee", "admin", "approver"}
 )
+
 # Freeze orders have a legitimate first-class "create as active" path (kill
 # switch, evolution-mutation freeze) that the BFF already gates at operator
 # level (see _MUTATION_EXECUTION_ROLES / ActivateKillSwitch's admin check) —
@@ -341,12 +342,32 @@ def _authenticate_governance_write(
     freeze order with ``status: "active"``) and get a 201. Require a valid
     bearer token here and derive identity/roles from it instead.
     """
+    gov_env = {
+        "PANTHEON_RUNTIME_AUTH_MODE": os.getenv("PANTHEON_GOVERNANCE_AUTH_MODE") or os.getenv("PANTHEON_BFF_AUTH_MODE") or os.getenv("PANTHEON_RUNTIME_AUTH_MODE") or "permissive",
+        "PANTHEON_RUNTIME_JWT_SECRET": os.getenv("PANTHEON_GOVERNANCE_JWT_SECRET") or os.getenv("PANTHEON_BFF_JWT_SECRET") or os.getenv("PANTHEON_RUNTIME_JWT_SECRET", ""),
+        "PANTHEON_RUNTIME_JWT_ISSUER": os.getenv("PANTHEON_GOVERNANCE_JWT_ISSUER") or os.getenv("PANTHEON_BFF_JWT_ISSUER") or os.getenv("PANTHEON_RUNTIME_JWT_ISSUER", ""),
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": os.getenv("PANTHEON_GOVERNANCE_JWT_AUDIENCE") or os.getenv("PANTHEON_BFF_JWT_AUDIENCE") or os.getenv("PANTHEON_RUNTIME_JWT_AUDIENCE", ""),
+        "PANTHEON_RUNTIME_DEFAULT_ROLE": os.getenv("PANTHEON_GOVERNANCE_DEFAULT_ROLE") or os.getenv("PANTHEON_BFF_DEFAULT_ROLE") or os.getenv("PANTHEON_RUNTIME_DEFAULT_ROLE", "operator"),
+        "PANTHEON_RUNTIME_MFA_REQUIRED": os.getenv("PANTHEON_GOVERNANCE_MFA_REQUIRED") or os.getenv("PANTHEON_BFF_MFA_REQUIRED") or os.getenv("PANTHEON_RUNTIME_MFA_REQUIRED", "false"),
+        # OIDC/JWKS optional path — active only when JWKS_URI is set.
+        "PANTHEON_RUNTIME_JWKS_URI": os.getenv("PANTHEON_GOVERNANCE_JWKS_URI") or os.getenv("PANTHEON_BFF_JWKS_URI") or os.getenv("PANTHEON_RUNTIME_JWKS_URI", ""),
+        "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL": os.getenv("PANTHEON_GOVERNANCE_OIDC_DISCOVERY_URL") or os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL") or os.getenv("PANTHEON_RUNTIME_OIDC_DISCOVERY_URL", ""),
+        "PANTHEON_RUNTIME_OIDC_ISSUER": os.getenv("PANTHEON_GOVERNANCE_OIDC_ISSUER") or os.getenv("PANTHEON_BFF_OIDC_ISSUER") or os.getenv("PANTHEON_RUNTIME_OIDC_ISSUER", ""),
+        "PANTHEON_RUNTIME_OIDC_AUDIENCE": os.getenv("PANTHEON_GOVERNANCE_OIDC_AUDIENCE") or os.getenv("PANTHEON_BFF_OIDC_AUDIENCE") or os.getenv("PANTHEON_RUNTIME_OIDC_AUDIENCE", ""),
+        "PANTHEON_RUNTIME_ROLE_CLAIMS": os.getenv("PANTHEON_GOVERNANCE_ROLE_CLAIMS") or os.getenv("PANTHEON_BFF_ROLE_CLAIMS") or os.getenv("PANTHEON_RUNTIME_ROLE_CLAIMS", ""),
+        "PANTHEON_RUNTIME_ROLE_MAP": os.getenv("PANTHEON_GOVERNANCE_ROLE_MAP") or os.getenv("PANTHEON_BFF_ROLE_MAP") or os.getenv("PANTHEON_RUNTIME_ROLE_MAP", ""),
+        "PANTHEON_RUNTIME_ROLE_MAP_MODE": os.getenv("PANTHEON_GOVERNANCE_ROLE_MAP_MODE") or os.getenv("PANTHEON_BFF_ROLE_MAP_MODE") or os.getenv("PANTHEON_RUNTIME_ROLE_MAP_MODE", ""),
+        "PANTHEON_RUNTIME_MFA_CLAIMS": os.getenv("PANTHEON_GOVERNANCE_MFA_CLAIMS") or os.getenv("PANTHEON_BFF_MFA_CLAIMS") or os.getenv("PANTHEON_RUNTIME_MFA_CLAIMS", ""),
+        "PANTHEON_RUNTIME_MFA_VALUES": os.getenv("PANTHEON_GOVERNANCE_MFA_VALUES") or os.getenv("PANTHEON_BFF_MFA_VALUES") or os.getenv("PANTHEON_RUNTIME_MFA_VALUES", ""),
+    }
+    mfa_required = gov_env["PANTHEON_RUNTIME_MFA_REQUIRED"].lower() == "true"
     try:
         return validate_request_auth(
             authorization=authorization,
             mfa_header=mfa_token,
             required_roles=_GOVERNANCE_WRITE_ROLES,
-            mfa_required=False,
+            mfa_required=mfa_required,
+            env=gov_env,
         )
     except AuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
@@ -427,6 +448,25 @@ def record_freeze_order(
             if response:
                 response.status_code = 200
 
+            # Enforce legal status transitions
+            existing_status = existing.get("status")
+            new_status = body.get("status")
+            if existing_status in ("released", "rejected"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot transition from terminal freeze order status '{existing_status}'.",
+                )
+            if existing_status == "active" and new_status not in ("released", "active"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid transition from active to '{new_status}'.",
+                )
+            if existing_status == "requested" and new_status not in ("active", "rejected", "requested"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid transition from requested to '{new_status}'.",
+                )
+
             inc_source_cmd = body.get("transition_source_command_id") or body.get("source_command_id")
             if not inc_source_cmd:
                 raise HTTPException(
@@ -472,7 +512,8 @@ def record_freeze_order(
         new_status = body.get("status")
         if new_status in _FREEZE_AUTHORITY_STATUSES:
             acting_role = body.get("transition_actor") if is_transition else body.get("actor")
-            if acting_role not in _GOVERNANCE_AUTHORITY_ROLES:
+            allowed_roles = _GOVERNANCE_AUTHORITY_ROLES if is_transition else _FREEZE_CREATE_AUTHORITY_ROLES
+            if acting_role not in allowed_roles:
                 raise HTTPException(
                     status_code=403,
                     detail=f"Role '{acting_role}' is not authorized to set freeze order status to '{new_status}'.",
@@ -537,6 +578,25 @@ def record_rollback(
             is_transition = True
             if response:
                 response.status_code = 200
+
+            # Enforce legal status transitions
+            existing_status = existing.get("status")
+            new_status = body.get("status")
+            if existing_status in ("completed", "rejected", "aborted"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot transition from terminal rollback status '{existing_status}'.",
+                )
+            if existing_status == "approved" and new_status not in ("completed", "failed", "aborted", "approved", "rejected"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid transition from approved to '{new_status}'.",
+                )
+            if existing_status == "initiated" and new_status not in ("approved", "rejected", "completed", "failed", "aborted", "initiated"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid transition from initiated to '{new_status}'.",
+                )
 
             inc_source_cmd = body.get("transition_source_command_id") or body.get("source_command_id")
             if not inc_source_cmd:

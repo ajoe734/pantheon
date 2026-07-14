@@ -178,7 +178,15 @@ def _actor_context(
     )
     actor_role = params.get("approved_by_role") or params.get("actor_role")
     if not actor_role:
-        for preferred_role in ("admin", "approver", "reviewer", "operator"):
+        for preferred_role in (
+            "governance_committee",
+            "risk_owner",
+            "governance_reviewer",
+            "admin",
+            "approver",
+            "reviewer",
+            "operator",
+        ):
             if preferred_role in token_roles:
                 actor_role = preferred_role
                 break
@@ -196,13 +204,12 @@ def _actor_context(
 # enum has no 'admin' member — EXECUTION_ROLES only recognizes
 # evolution_controller/operator. Sending "admin" straight through used to
 # raise an unhandled ValueError inside the evolution service instead of a
-# clean 4xx. Map it onto the equivalent domain role the execute path already
-# grants operator-level authority to.
-_EVOLUTION_EXECUTION_ROLE_ALIASES = {"admin": "operator"}
-
-
+# clean 4xx. Map any non-controller user execution role onto "operator" specifically
+# for evolution execution payloads.
 def _evolution_actor_role(actor_role: str) -> str:
-    return _EVOLUTION_EXECUTION_ROLE_ALIASES.get(actor_role, actor_role)
+    if actor_role == "evolution_controller":
+        return actor_role
+    return "operator"
 
 
 def _post_json(

@@ -271,3 +271,108 @@ def test_post_endpoints_reject_role_spoofing_and_self_declared_approval(tmp_path
     )
     assert unauth_status_response.status_code == 403
     assert rollback_store.get("rollback-self-approved") is None
+
+
+def test_freeze_order_status_transitions(tmp_path, monkeypatch) -> None:
+    """EVOCHAIN-005: Enforce legal state transitions for FreezeOrders."""
+    client, freeze_store, rollback_store = _isolated_client(tmp_path, monkeypatch)
+
+    # 1. Create a freeze order as operator (allowed by _FREEZE_CREATE_AUTHORITY_ROLES)
+    resp = client.post(
+        "/api/governance/freeze-orders",
+        json={
+            "freeze_order_id": "freeze-transition-test",
+            "scope": "persona",
+            "target_id": "persona-gamma",
+            "status": "active",
+            "actor": "operator",
+            "source_command_id": "cmd-init-ks",
+        },
+        headers={"Authorization": "Bearer op-test:operator"},
+    )
+    assert resp.status_code == 201
+
+    # 2. Transition from active to released (allowed)
+    resp2 = client.post(
+        "/api/governance/freeze-orders",
+        json={
+            "freeze_order_id": "freeze-transition-test",
+            "status": "released",
+            "actor": "governance_reviewer",
+            "source_command_id": "cmd-release-ks",
+        },
+        headers={"Authorization": "Bearer reviewer-test:governance_reviewer"},
+    )
+    assert resp2.status_code == 200
+
+    # 3. Transition from terminal state released to active (forbidden)
+    resp3 = client.post(
+        "/api/governance/freeze-orders",
+        json={
+            "freeze_order_id": "freeze-transition-test",
+            "status": "active",
+            "actor": "governance_reviewer",
+            "source_command_id": "cmd-reactivate-ks",
+        },
+        headers={"Authorization": "Bearer reviewer-test:governance_reviewer"},
+    )
+    assert resp3.status_code == 400
+
+
+def test_rollback_status_transitions(tmp_path, monkeypatch) -> None:
+    """EVOCHAIN-005: Enforce legal state transitions for Rollback records."""
+    client, freeze_store, rollback_store = _isolated_client(tmp_path, monkeypatch)
+
+    # 1. Create as initiated (allowed)
+    resp = client.post(
+        "/api/governance/rollbacks",
+        json={
+            "rollback_id": "rollback-transition-test",
+            "runtime_id": "runtime-gamma",
+            "action_type": "replace",
+            "status": "initiated",
+            "actor": "operator",
+            "source_command_id": "cmd-init-rb",
+        },
+        headers={"Authorization": "Bearer op-test:operator"},
+    )
+    assert resp.status_code == 201
+
+    # 2. Transition from initiated to approved (allowed)
+    resp2 = client.post(
+        "/api/governance/rollbacks",
+        json={
+            "rollback_id": "rollback-transition-test",
+            "status": "approved",
+            "actor": "approver",
+            "source_command_id": "cmd-approve-rb",
+        },
+        headers={"Authorization": "Bearer approver-test:approver"},
+    )
+    assert resp2.status_code == 200
+
+    # 3. Transition from approved to completed (allowed)
+    resp3 = client.post(
+        "/api/governance/rollbacks",
+        json={
+            "rollback_id": "rollback-transition-test",
+            "status": "completed",
+            "actor": "operator",
+            "source_command_id": "cmd-complete-rb",
+        },
+        headers={"Authorization": "Bearer op-test:operator"},
+    )
+    assert resp3.status_code == 200
+
+    # 4. Transition from terminal state completed to initiated (forbidden)
+    resp4 = client.post(
+        "/api/governance/rollbacks",
+        json={
+            "rollback_id": "rollback-transition-test",
+            "status": "initiated",
+            "actor": "operator",
+            "source_command_id": "cmd-reinit-rb",
+        },
+        headers={"Authorization": "Bearer op-test:operator"},
+    )
+    assert resp4.status_code == 400
