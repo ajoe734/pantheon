@@ -317,6 +317,169 @@ def test_run_scheduled_frontier_retry_backoff_and_dlq_replay_are_durable(client)
     assert len(durable_frontier.json()["frontier"]) == 1
 
 
+def test_frontier_recovery_resolves_correlated_dlq_and_survives_reload(client) -> None:
+    test_client, _, module = client
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(connector_id="conn-auto-recovery", source_type="internal_note"),
+            "fetch": {
+                "mode": "static_records",
+                "next_watermark": "2026-07-14T10:00:00Z",
+                "fail_until_attempt": 2,
+                "failure_reason": "bounded recovery fixture unavailable",
+                "records": [
+                    {
+                        "source_id": "src-auto-recovery-note-1",
+                        "title": "Recovered scheduled note",
+                        "content_ref": "memory://scheduled/auto-recovery/note-1",
+                    }
+                ],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+    scheduled = test_client.put(
+        "/api/source-ingest/connectors/conn-auto-recovery/schedule",
+        json={"interval_seconds": 60, "enabled": True},
+    )
+    assert scheduled.status_code == 200, scheduled.text
+
+    failed = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+    assert failed.status_code == 200, failed.text
+    assert failed.json()["summary"]["total_failed"] == 1
+    frontier_id = failed.json()["failed"][0]["frontier"]["frontier_id"]
+    pending = test_client.get("/api/source-ingest/dlq")
+    assert pending.json()["pending_count"] == 1
+    assert pending.json()["unresolved_count"] == 1
+
+    recovered = test_client.post(f"/api/source-ingest/frontier/{frontier_id}/replay")
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["run"]["status"] == "completed"
+    assert recovered.json()["frontier"]["status"] == "done"
+    resolved = test_client.get("/api/source-ingest/dlq").json()
+    assert resolved["entry_count"] == 1
+    assert resolved["pending_count"] == 0
+    assert resolved["unresolved_count"] == 0
+    assert resolved["status_counts"]["replayed"] == 1
+    readback = test_client.get("/api/source-ingest/controller/readback").json()
+    assert readback["dlq_count"] == 1
+    assert readback["pending_dlq_count"] == 0
+    assert readback["unresolved_dlq_count"] == 0
+
+    reloaded = importlib.reload(module)
+    replay_client = TestClient(reloaded.app)
+    durable = replay_client.get("/api/source-ingest/dlq").json()
+    assert durable["entry_count"] == 1
+    assert durable["pending_count"] == 0
+    assert durable["unresolved_count"] == 0
+    assert durable["status_counts"]["replayed"] == 1
+
+
+def test_completed_frontier_sweep_repairs_crash_before_dlq_resolution(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_client, _, module = client
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(connector_id="conn-recovery-saga", source_type="internal_note"),
+            "fetch": {
+                "mode": "static_records",
+                "next_watermark": "2026-07-14T10:30:00Z",
+                "fail_until_attempt": 2,
+                "failure_reason": "saga recovery fixture unavailable",
+                "records": [
+                    {
+                        "source_id": "src-recovery-saga-note-1",
+                        "title": "Saga recovered note",
+                        "content_ref": "memory://scheduled/recovery-saga/note-1",
+                    }
+                ],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+    test_client.put(
+        "/api/source-ingest/connectors/conn-recovery-saga/schedule",
+        json={"interval_seconds": 60, "enabled": True},
+    )
+    failed = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+    frontier_id = failed.json()["failed"][0]["frontier"]["frontier_id"]
+    original_append_audit = module._append_audit_actions
+
+    def fail_recovery_audit(actions):
+        if any(action.action_type == "source_ingestion.scheduled_run.recovered" for action in actions):
+            raise OSError("simulated recovery audit fsync failure")
+        return original_append_audit(actions)
+
+    monkeypatch.setattr(module, "_append_audit_actions", fail_recovery_audit)
+    with pytest.raises(OSError, match="simulated recovery audit fsync failure"):
+        test_client.post(f"/api/source-ingest/frontier/{frontier_id}/replay")
+
+    assert module.store.get_frontier(frontier_id).status == "done"
+    assert test_client.get("/api/source-ingest/dlq").json()["pending_count"] == 1
+    monkeypatch.setattr(module, "_append_audit_actions", original_append_audit)
+
+    swept = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+    assert swept.status_code == 200, swept.text
+    assert swept.json()["summary"]["resolved_dlq_count"] == 1
+    assert test_client.get("/api/source-ingest/dlq").json()["unresolved_count"] == 0
+    audit_actions = test_client.get("/api/source-ingest/audit").json()["actions"]
+    recovery_actions = [
+        action
+        for action in audit_actions
+        if action["action_type"] == "source_ingestion.scheduled_run.recovered"
+    ]
+    assert len(recovery_actions) == 1
+
+    duplicate_sweep = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+    assert duplicate_sweep.status_code == 200, duplicate_sweep.text
+    assert duplicate_sweep.json()["summary"]["resolved_dlq_count"] == 0
+    assert len(
+        [
+            action
+            for action in test_client.get("/api/source-ingest/audit").json()["actions"]
+            if action["action_type"] == "source_ingestion.scheduled_run.recovered"
+        ]
+    ) == 1
+
+
+def test_rejected_scheduled_run_is_reported_as_failed_not_ran(client) -> None:
+    test_client, _, _ = client
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(connector_id="conn-rejected-scheduled", source_type="internal_note"),
+            "fetch": {
+                "mode": "static_records",
+                "records": [
+                    {
+                        "source_id": "src-rejected-scheduled-1",
+                        "title": "Rejected scheduled note",
+                        "content_ref": "memory://scheduled/rejected/note-1",
+                        "status": "rejected",
+                    }
+                ],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+    test_client.put(
+        "/api/source-ingest/connectors/conn-rejected-scheduled/schedule",
+        json={"interval_seconds": 60, "enabled": True},
+    )
+
+    response = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["total_ran"] == 0
+    assert response.json()["summary"]["total_failed"] == 1
+    assert response.json()["failed"][0]["run"]["status"] == "rejected"
+    assert response.json()["failed"][0]["frontier"]["status"] == "retry"
+
+
 def test_run_scheduled_skips_not_due_connector(client) -> None:
     test_client, _, _ = client
     configured = _configure_with_records(test_client)

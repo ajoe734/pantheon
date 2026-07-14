@@ -156,6 +156,15 @@ def _actual_readback() -> dict[str, Any]:
         "connector_count": 1,
         "source_record_count": 1,
         "dlq_count": 0,
+        "pending_dlq_count": 0,
+        "unresolved_dlq_count": 0,
+        "dlq_status_counts": {
+            "pending": 0,
+            "replayed": 0,
+            "duplicate_skipped": 0,
+            "replay_failed": 0,
+            "schema_rejected": 0,
+        },
         "frontier_backlog": 0,
         "max_lag_seconds": 5,
         "connectors": [
@@ -445,6 +454,42 @@ def test_personas_from_payload_rejects_duplicate_requirement_within_persona() ->
     assert "duplicate" in str(raised.value).lower()
 
 
+@pytest.mark.parametrize(
+    "persona",
+    [
+        {"persona_id": "persona-source-test"},
+        {"persona_id": "persona-source-test", "required_data_sources": None},
+        {"persona_id": "persona-source-test", "requiredDataSources": []},
+    ],
+)
+def test_personas_from_payload_rejects_missing_or_null_required_data_sources(
+    persona: dict[str, Any],
+) -> None:
+    with pytest.raises(ControllerTickError) as raised:
+        _personas_from_payload({"personas": [persona]})
+
+    assert raised.value.stage == "desired_state_validate"
+    assert "required_data_sources" in str(raised.value)
+
+
+def test_personas_from_payload_accepts_explicit_empty_required_data_sources() -> None:
+    assert _personas_from_payload(
+        {
+            "personas": [
+                {
+                    "persona_id": "persona-source-test",
+                    "required_data_sources": [],
+                }
+            ]
+        }
+    ) == (
+        {
+            "persona_id": "persona-source-test",
+            "required_data_sources": [],
+        },
+    )
+
+
 def test_personas_from_payload_accepts_authoritative_empty_snapshot() -> None:
     assert _personas_from_payload({"personas": [], "authoritative_snapshot": True}) == ()
 
@@ -455,6 +500,105 @@ def test_terminal_readback_accepts_fresh_matching_provenance_rich_connector() ->
         schedule=_schedule(),
         actual=_actual_readback(),
     )
+
+
+def test_terminal_readback_accepts_resolved_historical_dead_letters() -> None:
+    actual = _actual_readback()
+    actual["dlq_count"] = 1
+    actual["dlq_status_counts"]["replayed"] = 1
+
+    _validate_terminal_readback(
+        reconcile=_reconcile(),
+        schedule=_schedule(),
+        actual=actual,
+    )
+
+
+@pytest.mark.parametrize("value", [None, True, -1, "0"])
+def test_terminal_readback_rejects_invalid_pending_dead_letter_count(value: object) -> None:
+    actual = _actual_readback()
+    actual["pending_dlq_count"] = value
+
+    with pytest.raises(ControllerTickError) as raised:
+        _validate_terminal_readback(reconcile=_reconcile(), schedule=_schedule(), actual=actual)
+
+    assert raised.value.stage == "actual_readback"
+
+
+def test_terminal_readback_rejects_missing_pending_dead_letter_count() -> None:
+    actual = _actual_readback()
+    actual.pop("pending_dlq_count")
+
+    with pytest.raises(ControllerTickError) as raised:
+        _validate_terminal_readback(reconcile=_reconcile(), schedule=_schedule(), actual=actual)
+
+    assert raised.value.stage == "actual_readback"
+
+
+def test_terminal_readback_rejects_unresolved_dead_letter() -> None:
+    actual = _actual_readback()
+    actual["dlq_count"] = 1
+    actual["pending_dlq_count"] = 1
+    actual["unresolved_dlq_count"] = 1
+    actual["dlq_status_counts"]["pending"] = 1
+
+    with pytest.raises(ControllerTickError, match="unresolved dead-letter") as raised:
+        _validate_terminal_readback(reconcile=_reconcile(), schedule=_schedule(), actual=actual)
+
+    assert raised.value.stage == "actual_readback"
+
+
+@pytest.mark.parametrize("status", ["replay_failed", "schema_rejected"])
+def test_terminal_readback_rejects_nonpending_unresolved_dead_letter(status: str) -> None:
+    actual = _actual_readback()
+    actual["dlq_count"] = 1
+    actual["unresolved_dlq_count"] = 1
+    actual["dlq_status_counts"][status] = 1
+
+    with pytest.raises(ControllerTickError, match="unresolved dead-letter") as raised:
+        _validate_terminal_readback(reconcile=_reconcile(), schedule=_schedule(), actual=actual)
+
+    assert raised.value.stage == "actual_readback"
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda actual: actual.update({"dlq_count": 1}),
+        lambda actual: actual["dlq_status_counts"].update({"pending": 1}),
+        lambda actual: actual["dlq_status_counts"].pop("replayed"),
+        lambda actual: actual["dlq_status_counts"].update({"unexpected": 0}),
+    ],
+)
+def test_terminal_readback_rejects_contradictory_dead_letter_counts(mutate: Any) -> None:
+    actual = _actual_readback()
+    mutate(actual)
+
+    with pytest.raises(ControllerTickError, match="contradictory dead-letter counts") as raised:
+        _validate_terminal_readback(reconcile=_reconcile(), schedule=_schedule(), actual=actual)
+
+    assert raised.value.stage == "actual_readback"
+
+
+@pytest.mark.parametrize("value", [None, True, -1, "0"])
+def test_terminal_readback_rejects_invalid_frontier_backlog(value: object) -> None:
+    actual = _actual_readback()
+    actual["frontier_backlog"] = value
+
+    with pytest.raises(ControllerTickError) as raised:
+        _validate_terminal_readback(reconcile=_reconcile(), schedule=_schedule(), actual=actual)
+
+    assert raised.value.stage == "actual_readback"
+
+
+def test_terminal_readback_rejects_unresolved_frontier_backlog() -> None:
+    actual = _actual_readback()
+    actual["frontier_backlog"] = 1
+
+    with pytest.raises(ControllerTickError, match="unresolved frontier") as raised:
+        _validate_terminal_readback(reconcile=_reconcile(), schedule=_schedule(), actual=actual)
+
+    assert raised.value.stage == "actual_readback"
 
 
 def test_terminal_readback_rejects_missing_authoritative_connector() -> None:
@@ -587,6 +731,7 @@ def test_run_controller_tick_orders_terminal_success_after_readback_validation(
     assert _call(writer, "heartbeat")["truth_level"] == "scheduled_tick"
     assert _call(writer, "tick")["truth_level"] == "scheduled_tick"
     assert _call(writer, "success")["truth_level"] == FINAL_TRUTH_LEVEL
+    assert _call(writer, "success")["kwargs"]["dlq_count"] == 0
 
 
 def test_run_controller_tick_persists_explicit_failure_with_nonterminal_truth(
@@ -633,6 +778,7 @@ def test_run_controller_tick_persists_explicit_failure_with_nonterminal_truth(
     assert _call(writer, "heartbeat")["truth_level"] == "scheduled_tick"
     assert _call(writer, "tick")["truth_level"] == "scheduled_tick"
     assert _call(writer, "failure")["truth_level"] == "scheduled_tick"
+    assert _call(writer, "failure")["kwargs"]["dlq_count"] is None
 
 
 def test_run_controller_tick_records_repair_after_recovery(

@@ -103,15 +103,15 @@ def _normalize_persona(raw: Mapping[str, Any]) -> dict[str, Any]:
     persona = dict(raw)
     if not persona.get("persona_id") and persona.get("id"):
         persona["persona_id"] = persona["id"]
-    if "required_data_sources" not in persona and isinstance(persona.get("requiredDataSources"), list):
-        persona["required_data_sources"] = persona["requiredDataSources"]
     persona_id = str(persona.get("persona_id") or "").strip()
-    requirements = persona.get("required_data_sources")
     if not persona_id:
         raise ControllerTickError("desired_state_validate", "persona desired state is missing persona_id")
-    if requirements is None:
-        requirements = []
-        persona["required_data_sources"] = requirements
+    if "required_data_sources" not in persona:
+        raise ControllerTickError(
+            "desired_state_validate",
+            f"persona {persona_id} must explicitly contain required_data_sources",
+        )
+    requirements = persona["required_data_sources"]
     if not isinstance(requirements, list):
         raise ControllerTickError(
             "desired_state_validate",
@@ -377,6 +377,74 @@ def _validate_terminal_readback(
         raise ControllerTickError(
             "schedule",
             f"scheduled source tick reported {failed} failed connector(s)",
+            reconcile=reconcile,
+            schedule=schedule,
+            actual_readback=actual,
+        )
+    pending_dlq_count = actual.get("pending_dlq_count")
+    if type(pending_dlq_count) is not int or pending_dlq_count < 0:
+        raise ControllerTickError(
+            "actual_readback",
+            "authoritative source readback is missing a valid pending_dlq_count",
+            reconcile=reconcile,
+            schedule=schedule,
+            actual_readback=actual,
+        )
+    dlq_count = actual.get("dlq_count")
+    unresolved_dlq_count = actual.get("unresolved_dlq_count")
+    dlq_status_counts = actual.get("dlq_status_counts")
+    expected_dlq_statuses = {
+        "pending",
+        "replayed",
+        "duplicate_skipped",
+        "replay_failed",
+        "schema_rejected",
+    }
+    if (
+        type(dlq_count) is not int
+        or dlq_count < pending_dlq_count
+        or not isinstance(dlq_status_counts, Mapping)
+        or set(dlq_status_counts) != expected_dlq_statuses
+        or type(dlq_status_counts.get("pending")) is not int
+        or dlq_status_counts.get("pending") != pending_dlq_count
+        or any(type(value) is not int or value < 0 for value in dlq_status_counts.values())
+        or sum(dlq_status_counts.values()) != dlq_count
+        or type(unresolved_dlq_count) is not int
+        or unresolved_dlq_count < pending_dlq_count
+        or unresolved_dlq_count
+        != sum(
+            dlq_status_counts[status]
+            for status in ("pending", "replay_failed", "schema_rejected")
+        )
+    ):
+        raise ControllerTickError(
+            "actual_readback",
+            "authoritative source readback has contradictory dead-letter counts",
+            reconcile=reconcile,
+            schedule=schedule,
+            actual_readback=actual,
+        )
+    if unresolved_dlq_count:
+        raise ControllerTickError(
+            "actual_readback",
+            f"authoritative source readback has {unresolved_dlq_count} unresolved dead-letter entrie(s)",
+            reconcile=reconcile,
+            schedule=schedule,
+            actual_readback=actual,
+        )
+    frontier_backlog = actual.get("frontier_backlog")
+    if type(frontier_backlog) is not int or frontier_backlog < 0:
+        raise ControllerTickError(
+            "actual_readback",
+            "authoritative source readback is missing a valid frontier_backlog",
+            reconcile=reconcile,
+            schedule=schedule,
+            actual_readback=actual,
+        )
+    if frontier_backlog:
+        raise ControllerTickError(
+            "actual_readback",
+            f"authoritative source readback has {frontier_backlog} unresolved frontier item(s)",
             reconcile=reconcile,
             schedule=schedule,
             actual_readback=actual,
@@ -718,6 +786,9 @@ def run_controller_tick(
             "connector_count": actual.get("connector_count"),
             "source_record_count": actual.get("source_record_count"),
             "dlq_count": actual.get("dlq_count"),
+            "pending_dlq_count": actual.get("pending_dlq_count"),
+            "unresolved_dlq_count": actual.get("unresolved_dlq_count"),
+            "dlq_status_counts": actual.get("dlq_status_counts"),
             "frontier_backlog": actual.get("frontier_backlog"),
             "max_lag_seconds": actual.get("max_lag_seconds"),
         }
@@ -728,6 +799,7 @@ def run_controller_tick(
                 summary="desired state reconciled; scheduled ingestion terminal readback accepted",
                 backlog=int(actual.get("frontier_backlog") or 0),
                 lag=int(actual.get("max_lag_seconds") or 0),
+                dlq_count=int(actual.get("unresolved_dlq_count") or 0),
                 evidence_refs=[ref for ref in evidence_refs if ref and ref != "None"],
                 payload={
                     "desired_state": desired_meta,
@@ -779,7 +851,11 @@ def run_controller_tick(
                     LOOP_ID,
                     f"{error.stage}: {error}",
                     NON_TERMINAL_TRUTH_LEVEL,
-                    dlq_count=int((actual or {}).get("dlq_count") or 0),
+                    dlq_count=(
+                        int(actual["unresolved_dlq_count"])
+                        if type(actual.get("unresolved_dlq_count")) is int
+                        else None
+                    ),
                     payload={
                         "failure_stage": error.stage,
                         "state_sequence_no": state.sequence_no,

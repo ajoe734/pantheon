@@ -303,7 +303,8 @@ class SourceProvisioningReconciler:
                         idempotency_key=requirement.idempotency_key,
                         details={"failed_policy_gates": failed_gates, "policy_gate_results": gate_results},
                     )
-                self.manager.upsert_connector(existing.connector)
+                if not dry_run:
+                    self.manager.upsert_connector(existing.connector)
                 schedule_action, schedule_details = self._ensure_schedule(
                     connector_id,
                     requirement=requirement,
@@ -511,7 +512,8 @@ class SourceProvisioningReconciler:
             self.manager.upsert_connector(stored.connector)
             return "created", {"connector_id": connector_id}
 
-        self.manager.upsert_connector(existing.connector)
+        if not dry_run:
+            self.manager.upsert_connector(existing.connector)
         connector_matches = existing.connector.to_dict() == plan.connector.to_dict()
         fetch_matches = dict(existing.fetch) == desired_fetch
         if connector_matches and fetch_matches:
@@ -623,11 +625,16 @@ def _persona_id(persona: Mapping[str, Any] | Any) -> str:
 
 def _requirements(persona: Mapping[str, Any] | Any) -> tuple[PersonaDataSourceRequirement, ...]:
     persona_id = _persona_id(persona)
-    raw_requirements = persona.get("required_data_sources", []) if isinstance(persona, Mapping) else getattr(
-        persona,
-        "required_data_sources",
-        [],
-    )
+    if isinstance(persona, Mapping):
+        if "required_data_sources" not in persona:
+            raise SourceEvidenceError("required_data_sources must be explicitly present for source provisioning")
+        raw_requirements = persona["required_data_sources"]
+    else:
+        if not hasattr(persona, "required_data_sources"):
+            raise SourceEvidenceError("required_data_sources must be explicitly present for source provisioning")
+        raw_requirements = getattr(persona, "required_data_sources")
+    if not isinstance(raw_requirements, (list, tuple)):
+        raise SourceEvidenceError("required_data_sources must be an array")
     return tuple(_requirement_from_raw(persona_id, item) for item in raw_requirements)
 
 
