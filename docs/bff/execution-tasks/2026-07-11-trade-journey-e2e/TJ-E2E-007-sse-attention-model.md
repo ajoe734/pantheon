@@ -1,9 +1,9 @@
 # TJ-E2E-007 - Live SSE And Attention Model
 
-Owner: Claude  
-Reviewer: Antigravity  
-Wave: 3  
-Repository: `ajoe734/pantheon` and `ajoe734/execute-plans`  
+Owner: Claude
+Reviewer: Antigravity
+Wave: 3
+Repository: `ajoe734/pantheon` and `ajoe734/execute-plans`
 Dependencies: `TJ-E2E-005`, `TJ-E2E-006`
 
 ## Goal

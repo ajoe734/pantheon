@@ -1,11 +1,11 @@
 # BG-002 Sidecar Review Packet
 
-**Task**: BG-002 — Publish research backend maturity matrix and production-path mapping  
-**Owner**: Codex  
-**Reviewer**: Qwen  
-**Parent Gap**: GAP-02 (Pantheon_Blueprint_Gap_Review_v1.md)  
-**Phase**: Blueprint Gap P1  
-**Created**: 2026-04-13  
+**Task**: BG-002 — Publish research backend maturity matrix and production-path mapping
+**Owner**: Codex
+**Reviewer**: Qwen
+**Parent Gap**: GAP-02 (Pantheon_Blueprint_Gap_Review_v1.md)
+**Phase**: Blueprint Gap P1
+**Created**: 2026-04-13
 
 _Originally drafted while Claude held the helper-claim; retained as the companion review packet after owner reassignment to Codex._
 

@@ -188,6 +188,18 @@ def test_finmind_fetch_config_uses_provider_owned_adapter_contract(tmp_path) -> 
         "FinMindTaiwanDatasetAdapter.records_from_data_payload"
     )
     assert batch.records[0].metadata["ingest_job"]["dataset"] == "TaiwanStockPrice"
+    assert batch.records[0].metadata["normalized_row"] == {
+        "schema_version": "tw_price_daily.v1",
+        "target_table": "tw_price_daily",
+        "provider": "FinMind",
+        "market": "TW",
+        "symbol": "2330",
+        "symbol_canonical": "2330.TW",
+        "dataset": "tw_price_daily",
+        "source_dataset": "TaiwanStockPrice",
+        "trade_date": "2026-06-08",
+        "close": 955.0,
+    }
 
 
 # ---------------------------------------------------------------------------

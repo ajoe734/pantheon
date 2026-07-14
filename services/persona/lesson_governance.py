@@ -189,7 +189,7 @@ class TradeLessonCandidateStore:
         target_env = candidate.get("target_env", "paper")
         if target_env not in env_to_stage:
             raise TradeLessonCandidateError(f"Invalid target environment: {target_env}")
-            
+
         expected_stage = env_to_stage[target_env]
         if "promotion_stage" not in candidate:
             candidate["promotion_stage"] = expected_stage
@@ -325,9 +325,9 @@ class LessonGovernanceService:
         if action == "endorse":
             old_env = candidate.get("target_env", "paper")
             old_stage = candidate.get("promotion_stage", "proposed")
-            
+
             new_env = target_env or old_env
-            
+
             # Map promotion stages server-side
             env_to_stage = {
                 "paper": "proposed",
@@ -336,9 +336,9 @@ class LessonGovernanceService:
             }
             if new_env not in env_to_stage:
                 raise TradeLessonCandidateError(f"Invalid target environment: {new_env}")
-                
+
             new_stage = env_to_stage[new_env]
-            
+
             # If caller explicitly provided a stage, it must match the server-side derived stage
             if promotion_stage and promotion_stage != new_stage:
                 raise TradeLessonCandidateError(

@@ -1,9 +1,9 @@
 # TJ-E2E-009 - Cross-entry IA Integration
 
-Owner: Claude  
-Reviewer: Antigravity  
-Wave: 3  
-Repository: `ajoe734/execute-plans`  
+Owner: Claude
+Reviewer: Antigravity
+Wave: 3
+Repository: `ajoe734/execute-plans`
 Dependencies: `TJ-E2E-006`
 
 ## Goal

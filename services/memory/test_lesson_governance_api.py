@@ -715,6 +715,3 @@ def test_api_decide_and_merge_target_validation_negative(client: TestClient, mon
     )
     assert resp.status_code == 403
     assert "target_version mismatch" in resp.json()["detail"]["message"]
-
-
-

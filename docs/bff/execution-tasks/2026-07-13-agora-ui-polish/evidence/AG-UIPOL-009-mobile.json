@@ -1,0 +1,181 @@
+{
+  "bffBaseUrl": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "cards": 2,
+  "events": 1,
+  "feBaseUrl": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+  "network": [
+    {
+      "auth": "present",
+      "method": "GET",
+      "path": "/bff/agora/workshops",
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops",
+      "status": 200
+    },
+    {
+      "auth": "present",
+      "method": "GET",
+      "path": "/bff/events/stream",
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream",
+      "status": 200
+    },
+    {
+      "auth": "present",
+      "method": "GET",
+      "path": "/bff/agora/workshops/d854bbfd-fe89-4793-bd70-c7434974f524",
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/d854bbfd-fe89-4793-bd70-c7434974f524",
+      "status": 200
+    },
+    {
+      "auth": "present",
+      "method": "GET",
+      "path": "/bff/agora/workshops/d854bbfd-fe89-4793-bd70-c7434974f524/completeness",
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/d854bbfd-fe89-4793-bd70-c7434974f524/completeness",
+      "status": 200
+    },
+    {
+      "auth": "present",
+      "method": "GET",
+      "path": "/bff/agora/workshops/d854bbfd-fe89-4793-bd70-c7434974f524/readiness",
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/d854bbfd-fe89-4793-bd70-c7434974f524/readiness",
+      "status": 200
+    },
+    {
+      "auth": "present",
+      "method": "GET",
+      "path": "/bff/agora/workshops/d854bbfd-fe89-4793-bd70-c7434974f524/cards",
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/d854bbfd-fe89-4793-bd70-c7434974f524/cards",
+      "status": 200
+    },
+    {
+      "auth": "present",
+      "method": "GET",
+      "path": "/bff/agora/workshops/d854bbfd-fe89-4793-bd70-c7434974f524/events",
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/d854bbfd-fe89-4793-bd70-c7434974f524/events",
+      "status": 200
+    },
+    {
+      "auth": "present",
+      "method": "GET",
+      "path": "/bff/agora/workshops/d854bbfd-fe89-4793-bd70-c7434974f524/stream",
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/d854bbfd-fe89-4793-bd70-c7434974f524/stream",
+      "status": 200
+    }
+  ],
+  "readiness": {
+    "spec_version": "1.0",
+    "assessment_id": "ready_d854bbfd-fe89-4793-bd70-c7434974f524_1",
+    "workshop_id": "d854bbfd-fe89-4793-bd70-c7434974f524",
+    "strategy_id": "unbound-d854bbfd-fe89-4793-bd70-c7434974f524",
+    "workshop_version_id": "unbound-d854bbfd-fe89-4793-bd70-c7434974f524",
+    "strategy_spec_registry_id": "unbound-d854bbfd-fe89-4793-bd70-c7434974f524",
+    "assessment_version": 1,
+    "gates": [
+      {
+        "gate": "preliminary_research",
+        "state": "conditional",
+        "requirements": [
+          {
+            "requirement_id": "state_map_present",
+            "title": "Strategy completeness state map is present",
+            "hardness": "soft",
+            "state": "missing"
+          },
+          {
+            "requirement_id": "workshop_evidence_present",
+            "title": "Workshop event evidence exists in scoped store",
+            "hardness": "hard",
+            "state": "satisfied"
+          },
+          {
+            "requirement_id": "research_blockers_clear",
+            "title": "No research gate hard blockers",
+            "hardness": "hard",
+            "state": "satisfied"
+          }
+        ],
+        "evaluated_at": "2026-07-13T22:57:16Z"
+      },
+      {
+        "gate": "full_validation",
+        "state": "not_assessed",
+        "requirements": [
+          {
+            "requirement_id": "preliminary_research_ready",
+            "title": "Preliminary research gate is ready",
+            "hardness": "hard",
+            "state": "partial"
+          },
+          {
+            "requirement_id": "validation_blockers_clear",
+            "title": "No validation gate hard blockers",
+            "hardness": "hard",
+            "state": "satisfied"
+          }
+        ],
+        "blocking_requirement_ids": [
+          "preliminary_research_ready"
+        ],
+        "evaluated_at": "2026-07-13T22:57:16Z"
+      },
+      {
+        "gate": "trading_room",
+        "state": "not_assessed",
+        "requirements": [
+          {
+            "requirement_id": "strategy_registry_ref_present",
+            "title": "Strategy Registry reference exists in scoped workshop session",
+            "hardness": "hard",
+            "state": "missing"
+          },
+          {
+            "requirement_id": "full_validation_ready",
+            "title": "Full validation gate is ready",
+            "hardness": "hard",
+            "state": "partial"
+          },
+          {
+            "requirement_id": "trading_room_blockers_clear",
+            "title": "No Trading Room hard blockers",
+            "hardness": "hard",
+            "state": "satisfied"
+          }
+        ],
+        "blocking_requirement_ids": [
+          "strategy_registry_ref_present",
+          "full_validation_ready"
+        ],
+        "evaluated_at": "2026-07-13T22:57:16Z"
+      }
+    ],
+    "staleness_reasons": [
+      "strategy_completeness_snapshot_missing"
+    ],
+    "assessed_at": "2026-07-13T22:57:16Z",
+    "evidence_refs": [
+      {
+        "ref_type": "evidence_item",
+        "ref_id": "pcnt_01KXEV5CC9B6P84V1DFKY2G1SJ",
+        "summary": "Private workshop message",
+        "data_cutoff": "2026-07-13 22:56:59+00"
+      }
+    ]
+  },
+  "selectorTexts": [
+    "策略工坊\nopen - 2026-07-13 22:56:59Z"
+  ],
+  "viewport": "mobile",
+  "workshop": {
+    "workshop_id": "d854bbfd-fe89-4793-bd70-c7434974f524",
+    "tenant_id": "pantheon-dev",
+    "user_id": "lupin",
+    "servant_persona_id": null,
+    "openclaw_session_id": null,
+    "strategy_id": null,
+    "active_strategy_spec_registry_id": null,
+    "selected_version_id": null,
+    "status": "open",
+    "lock_version": 1,
+    "created_at": "2026-07-13 22:56:59+00",
+    "updated_at": "2026-07-13 22:56:59+00"
+  }
+}

@@ -1,6 +1,6 @@
 # PTJ-004 reviewer findings
 
-Reviewer: Codex2  
+Reviewer: Codex2
 Disposition: approved
 
 ## Final re-review of `6ba87c2ca`

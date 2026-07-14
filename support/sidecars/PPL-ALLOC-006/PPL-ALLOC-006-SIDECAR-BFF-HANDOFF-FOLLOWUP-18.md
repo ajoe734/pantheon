@@ -1,10 +1,10 @@
 # PPL-ALLOC-006 BFF / Frontend Handoff Follow-Up 18
 
-Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18`  
-Parent: `PPL-ALLOC-006`  
-Owner: Codex  
-Reviewer: Claude  
-Kind: support-only `bff_handoff_packet`  
+Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-18`
+Parent: `PPL-ALLOC-006`
+Owner: Codex
+Reviewer: Claude
+Kind: support-only `bff_handoff_packet`
 Generated: 2026-07-11
 
 ## Boundary
@@ -95,10 +95,10 @@ enable writes, repair supervisor dispatch, or close parent `PPL-ALLOC-006`.
 ## Review And Composition
 
 Owned here: support-only evidence checkpoint and fifth-repeat supervisor
-escalation.  
+escalation.
 Not changing: L1/L2 truth, BFF/frontend implementation, route contracts,
 runtime/registry/governance behavior, dependency ownership, PR state,
-supervisor policy, or parent lifecycle.  
+supervisor policy, or parent lifecycle.
 Composes with: parent `PPL-ALLOC-006`, the operative Follow-Up 12 handoff,
 Follow-Ups 14 through 17, `PPL-ALLOC-003` binding reads, `PPL-ALLOC-004`
 allocation semantics, and `PPL-ALLOC-008` emergency containment.

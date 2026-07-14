@@ -1,9 +1,9 @@
 # TJ-E2E-003 - Correlation Envelope Propagation
 
-Owner: Codex  
-Reviewer: Claude  
-Wave: 1  
-Repository: `ajoe734/pantheon`  
+Owner: Codex
+Reviewer: Claude
+Wave: 1
+Repository: `ajoe734/pantheon`
 Dependencies: `TJ-E2E-001`, `TJ-E2E-002`
 
 ## Goal

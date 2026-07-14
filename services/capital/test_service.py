@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from services.capital.allocation_store import allocation_line_digest
 
 
 @pytest.fixture()
@@ -84,10 +85,16 @@ def _rebalance_payload(*, rebalance_id="rb-001", lines=None, **overrides):
         "rebalance_id": rebalance_id,
         "capital_pool_id": "pool-001",
         "ranking_snapshot_id": "ranking-q3",
+        "allocation_evaluation_id": "allocation-evaluation-q3",
+        "allocation_policy_version": "persona-real-allocation-v1",
         "reason": "quarterly",
         "lines": lines
         or [
             {
+                "ranking_snapshot_id": "ranking-q3",
+                "allocation_evaluation_id": "allocation-evaluation-q3",
+                "allocation_line_digest": "allocation-line-q3-persona-alpha",
+                "allocation_policy_version": "persona-real-allocation-v1",
                 "persona_id": "persona-alpha",
                 "stage": "live_running",
                 "capital_scope": "pool",
@@ -106,6 +113,22 @@ def _rebalance_payload(*, rebalance_id="rb-001", lines=None, **overrides):
         "audit_refs": ["audit:ranking-q3"],
     }
     payload.update(overrides)
+    payload["lines"] = [dict(line) for line in payload["lines"]]
+    for index, line in enumerate(payload["lines"]):
+        line.setdefault("ranking_snapshot_id", payload["ranking_snapshot_id"])
+        line.setdefault(
+            "allocation_evaluation_id",
+            payload["allocation_evaluation_id"],
+        )
+        line.setdefault(
+            "allocation_line_digest",
+            f"allocation-line-{rebalance_id}-{index}",
+        )
+        line.setdefault(
+            "allocation_policy_version",
+            payload["allocation_policy_version"],
+        )
+        line["allocation_line_digest"] = allocation_line_digest(line)
     return payload
 
 
@@ -278,7 +301,7 @@ def test_owner_create_legacy_idempotency_entry_replays_and_migrates_schema(tmp_p
         actor_scope="operator-legacy",
         key="legacy-key",
     )
-    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 2
+    assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 3
 
 
 def test_postgres_pool_and_binding_refreshes_are_serialized():
@@ -634,6 +657,123 @@ def test_rebalance_apply_updates_authoritative_allocations_and_replays_once(clie
     conflicting_payload = {**proposal_payload, "reason": "different body"}
     conflict = test_client.post("/api/rebalances", json=conflicting_payload)
     assert conflict.status_code == 409
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "ranking_snapshot_id",
+        "allocation_evaluation_id",
+        "allocation_policy_version",
+    ),
+)
+def test_rebalance_admission_requires_outer_allocation_lineage(client, field):
+    test_client, _ = client
+    payload = _rebalance_payload(rebalance_id=f"rb-missing-outer-{field}")
+    payload.pop(field)
+
+    response = test_client.post("/api/rebalances", json=payload)
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "ranking_snapshot_id",
+        "allocation_evaluation_id",
+        "allocation_line_digest",
+        "allocation_policy_version",
+    ),
+)
+def test_rebalance_admission_requires_per_line_allocation_lineage(client, field):
+    test_client, _ = client
+    payload = _rebalance_payload(rebalance_id=f"rb-missing-line-{field}")
+    payload["lines"][0].pop(field)
+
+    response = test_client.post("/api/rebalances", json=payload)
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "ranking_snapshot_id",
+        "allocation_evaluation_id",
+        "allocation_policy_version",
+    ),
+)
+def test_rebalance_store_rejects_lineage_mismatch_with_outer_evaluation(
+    client,
+    field,
+):
+    test_client, data_dir = client
+    _create_default_pool_and_binding(test_client)
+    payload = _rebalance_payload(rebalance_id=f"rb-mismatch-{field}")
+    payload["lines"][0][field] = f"attacker-{field}"
+
+    response = test_client.post("/api/rebalances", json=payload)
+
+    assert response.status_code == 422, response.text
+    assert field in response.json()["detail"]
+    persisted_path = data_dir / "capital_allocation_authority.json"
+    if persisted_path.exists():
+        persisted = json.loads(persisted_path.read_text(encoding="utf-8"))
+        assert payload["rebalance_id"] not in persisted.get("rebalances", {})
+
+
+def test_rebalance_store_rejects_blank_line_digest(client):
+    test_client, _ = client
+    _create_default_pool_and_binding(test_client)
+    payload = _rebalance_payload(rebalance_id="rb-blank-line-digest")
+    payload["lines"][0]["allocation_line_digest"] = "   "
+
+    response = test_client.post("/api/rebalances", json=payload)
+
+    assert response.status_code == 422, response.text
+    assert "allocation_line_digest is required" in response.json()["detail"]
+
+
+def test_rebalance_store_rejects_line_digest_that_does_not_match_tuple(client):
+    test_client, _ = client
+    _create_default_pool_and_binding(test_client)
+    payload = _rebalance_payload(rebalance_id="rb-forged-line-digest")
+    payload["lines"][0]["allocation_line_digest"] = "0" * 64
+
+    response = test_client.post("/api/rebalances", json=payload)
+
+    assert response.status_code == 422, response.text
+    assert "does not match the admitted allocation tuple" in response.json()["detail"]
+
+
+def test_rebalance_allocation_lineage_survives_owner_store_restart(client):
+    test_client, _ = client
+    _create_default_pool_and_binding(test_client)
+    payload = _rebalance_payload(rebalance_id="rb-lineage-restart")
+
+    created = test_client.post("/api/rebalances", json=payload)
+
+    assert created.status_code == 201, created.text
+    created_body = created.json()
+    for field in (
+        "ranking_snapshot_id",
+        "allocation_evaluation_id",
+        "allocation_policy_version",
+    ):
+        assert created_body[field] == payload[field]
+        assert created_body["lines"][0][field] == payload[field]
+    assert (
+        created_body["lines"][0]["allocation_line_digest"]
+        == payload["lines"][0]["allocation_line_digest"]
+    )
+
+    restarted_module = _reload_capital_module()
+    restarted = TestClient(restarted_module.app)
+    readback = restarted.get("/api/rebalances/rb-lineage-restart")
+
+    assert readback.status_code == 200, readback.text
+    assert readback.json() == created_body
 
 
 def test_rebalance_proposal_receipt_and_allocations_survive_store_restart(client):

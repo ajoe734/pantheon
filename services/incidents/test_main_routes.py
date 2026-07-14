@@ -212,6 +212,20 @@ def test_threshold_consumer_fixture_creates_incident_case():
     assert store.get_incident(payload["incident_id"]) is not None
 
 
+def test_threshold_consumer_preserves_dedupe_key_note_in_evidence_summary():
+    """The producer's dedupe_key audit note must survive into canonical
+    incident evidence, not be dropped (round-2 review point 4)."""
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-dedupe-key-evidence"
+    payload["threshold_snapshot"]["note"] = "dedupe_key=rb-evochain-001:rolling_drawdown_multiple:paper-daily-sweep:2026-07-13"
+    result = ThresholdTelemetryIncidentConsumer(incident_store=store).consume(payload)
+
+    assert result.created is True
+    assert "dedupe_key=rb-evochain-001:rolling_drawdown_multiple:paper-daily-sweep:2026-07-13" in (
+        result.incident.evidence_summary or ""
+    )
+
+
 def test_consume_threshold_route_creates_incident_case():
     payload = _threshold_fixture()
     r = client.post("/api/incidents/consume-threshold", json=payload)
@@ -246,6 +260,30 @@ def test_consume_threshold_route_rejects_unbreached_threshold():
 
     assert r.status_code == 422
     assert store.get_incident("inc-unbreached-threshold") is None
+
+
+def test_consume_threshold_route_rejects_empty_metric_name():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-empty-metric"
+    payload["threshold_snapshot"]["metric_name"] = ""
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "metric_name is required" in r.text
+    assert store.get_incident("inc-empty-metric") is None
+
+
+def test_consume_threshold_route_rejects_empty_policy_source():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-empty-policy-source"
+    payload["threshold_snapshot"]["policy_source"] = "   "
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "policy_source is required" in r.text
+    assert store.get_incident("inc-empty-policy-source") is None
 
 
 def test_consume_drift_report_route_creates_incident_case():

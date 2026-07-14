@@ -229,8 +229,8 @@ As the designated owner of `PLAN-002-SIDECAR-ACCEPTANCE`, I have reviewed this p
 
 ## 9. Codex Reviewer Endorsement (Shared-Truth Scope)
 
-**Reviewer:** Codex  
-**Reviewed:** 2026-04-13T02:12:50Z  
+**Reviewer:** Codex
+**Reviewed:** 2026-04-13T02:12:50Z
 **Verdict:** ✅ **APPROVE SIDECAR PACKET** — no blocking mismatch remains after aligning the packet to current shared truth.
 
 ### Reviewer Checks
