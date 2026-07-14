@@ -104,14 +104,20 @@ lint.
 - Live curl/hosted proof of the fixture badge rendering against a real
   seed-origin item is deferred to `EVOCHAIN-011` (dev deploy + closeout),
   once `EVOCHAIN-007` has landed.
-- Owner: Claude, reassigned to Antigravity. Reviewer: Codex2.
+- Owner: Antigravity. Reviewer: Codex.
 
 ## Review And Delivery
 
-- `execute-plans` PR: [#301](https://github.com/ajoe734/execute-plans/pull/301), merged (merge commit `e74b9c8`).
-- `execute-plans` follow-up PR: [#312](https://github.com/ajoe734/execute-plans/pull/312), merges entry_type interface field and EvolutionJournalPage.test.tsx unit tests. Auto-merge enabled.
-- `pantheon` PR: [#3527](https://github.com/ajoe734/pantheon/pull/3527), merged.
+- `execute-plans` initial PR: [#301](https://github.com/ajoe734/execute-plans/pull/301), merged (merge commit `e74b9c8`).
+- `execute-plans` first follow-up PR: [#312](https://github.com/ajoe734/execute-plans/pull/312), merges entry_type interface field and EvolutionJournalPage.test.tsx unit tests. Auto-merge enabled.
+- `execute-plans` recovery PR: [#327](https://github.com/ajoe734/execute-plans/pull/327), merged (merge commit `b5d6485`). This restored the implementation and tests after a regression.
+- `pantheon` initial PR: [#3527](https://github.com/ajoe734/pantheon/pull/3527), merged.
+- Dev FE deployment verified at commit `936f252e09fa3bb887c88e733e24b6941cac644e` (descendant of `b5d6485`).
 - Handoff / history reconciliation:
   - Re-dispatched to Antigravity as owner to address Codex2's review changes (normalize entry_type vs entryType, add focused rendering tests including negative checks and fallback suppression).
-  - All requested changes implemented in execute-plans anchor commit `2b709e3`, merged with dev, and PR #312 opened with auto-merge.
+  - Later reopened by Codex due to a regression caused by a reconciliation commit in PR #288.
+  - Restoration and tests completed in execute-plans PR #327.
+- Hosted evidence captured via Playwright test `e2e/evochain009.spec.ts` against the live dev frontend:
+  ![Hosted Evolution Journal Evidence](evolution_journal_hosted_evidence.png)
+
 
