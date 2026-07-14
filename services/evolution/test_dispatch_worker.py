@@ -698,6 +698,7 @@ class TestRunPoll:
             "wrong-state",
             "wrong-plane",
             "missing-ref",
+            "wrong-ref",
         ],
     )
     def test_run_poll_rejects_empty_or_malformed_execute_2xx(
@@ -741,6 +742,8 @@ class TestRunPoll:
                 response["execution_result"]["plane"] = "governance"
             elif payload_kind == "missing-ref":
                 response["execution_result"]["execution_ref_id"] = ""
+            elif payload_kind == "wrong-ref":
+                response["execution_result"]["execution_ref_id"] = "dispatch-other"
             return response
 
         monkeypatch.setattr(dw, "_http_get", fake_get)

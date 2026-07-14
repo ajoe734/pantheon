@@ -176,7 +176,15 @@ def _validate_execute_payload(
         != expected_execution_plane
     ):
         raise RuntimeError(f"{context} has a mismatched execution plane")
-    _require_nonempty_string(execution_result, "execution_ref_id", context=context)
+    execution_ref_id = _require_nonempty_string(
+        execution_result, "execution_ref_id", context=context
+    )
+    expected_execution_ref_id = f"dispatch-{decision_id}"
+    if execution_ref_id != expected_execution_ref_id:
+        raise RuntimeError(
+            f"{context} has mismatched execution_ref_id={execution_ref_id!r}; "
+            f"expected {expected_execution_ref_id!r}"
+        )
     _require_nonempty_string(execution_result, "executed_at", context=context)
     _require_nonempty_string(result, "cooldown_ends_at", context=context)
     _require_nonempty_string(result, "observation_window_ends_at", context=context)

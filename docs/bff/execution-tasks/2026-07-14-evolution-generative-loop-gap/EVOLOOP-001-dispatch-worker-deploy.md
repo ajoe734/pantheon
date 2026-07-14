@@ -1,6 +1,6 @@
 # EVOLOOP-001 — Evolution Dispatch Worker Deployment
 
-Status: hosted dev dispatch/restart proof accepted; PR and reviewer closeout pending
+Status: reviewer remediation implemented; fresh exact-ref Compose proof pending
 
 - Owner: Codex2
 - Reviewer: Codex
@@ -9,13 +9,24 @@ Status: hosted dev dispatch/restart proof accepted; PR and reviewer closeout pen
 - Published implementation anchor: `2da815d2923901cc160835946e474232b54657b3`
   (`EVOLOOP-001: anchor dispatch worker activation`)
 - Published proof head: `183cba011d6993029b3e828dc85f13dd166f207c`
+- Reviewer-remediation anchor: `8c9308721f1799f820fb1f54a87c50c31a0dd82c`
+  (`EVOLOOP-001: anchor research-only dispatch guard`)
 
 ## Scope
 
 This task makes `evolution-dispatch-worker` a default root-compose service for
 dev. The worker polls the evolution service's approved-decision endpoint, then
-calls its boundary and gated execute routes for each candidate. It owns its
-interval, timeout, actor, one-shot test control, and health-file settings.
+calls its boundary and gated execute routes only for the canonical research
+action family. It owns its interval, timeout, actor, one-shot test control, and
+health-file settings.
+
+The unattended allowlist is `observe`, `revalidate`, `retrain`,
+`require_more_data`, and `flag_for_review`. Governance, deployment, and runtime
+actions are emitted as structured `skipped_unsupported` diagnostics and remain
+`approved` for their authoritative owner. In particular, an active-live freeze
+is never auto-consumed: proposal metadata is an evidence snapshot, not
+dispatch-time Runtime Manager truth, and it does not say whether the approved
+follow-through is `freeze_stage` or rollback.
 
 This task does not change the daily sweep cadence, any supervisor cadence,
 threshold or approval policy, the downstream research consumer, or runtime
@@ -41,13 +52,33 @@ research job or artifact has completed. Research completion belongs to
 - Tightened the worker so a boundary-read failure records a diagnostic and
   skips `/execute`; a partially reachable API can no longer bypass the
   boundary preflight.
+- Restricted default-on dispatch to research actions. A supported boundary
+  must be a complete object with `boundary_key=research_<action>`,
+  `execution_plane=research`, and `followthrough=[]` before mutation is
+  attempted.
+- Removed caller-supplied runtime/freeze claims from the worker's execute
+  request. The request now carries only its actor role and actor id; execute
+  request model defaults are sufficient for a research action.
+- Rejects empty, non-object, structurally incomplete, or semantically
+  mismatched boundary and execute 2xx payloads. A successful execute response
+  must match the decision/action, confirm `executed` and `submitted`, carry the
+  research plane, exact `dispatch-<decision_id>` ref, and non-empty execution,
+  cooldown, and observation timestamps before the worker counts it.
+- Resets the health file to `status=starting,ticks=0` before the first network
+  poll on every boot, so a retained writable-layer file cannot advertise a
+  prior container's healthy state.
 - Strengthened automated coverage for entrypoint-driven auto-execution,
   durable-store restart idempotence, dispatch metadata, boundary failure,
-  total API outage, health freshness, and the Compose contract.
+  malformed 2xx responses, active-live-freeze non-consumption, total API
+  outage, boot health reset/freshness, and the Compose contract.
+- Added `services/evolution/hosted_dispatch_probe.py`, a reproducible two-phase
+  hosted probe with a sanitized request ledger. Its initial phase performs only
+  create/review/approve mutations; its verify phase is read-only and checks the
+  same exact ref and single execution step after a Compose restart.
 
 ## Dispatch Metadata Contract
 
-The durable evidence for a successful dispatch is:
+The durable evidence for a successful research dispatch is:
 
 - `decision_state=executed`;
 - `execution_result.status=submitted`;
@@ -56,6 +87,12 @@ The durable evidence for a successful dispatch is:
 - non-null execution, cooldown, and observation timestamps; and
 - exactly one `executed` review-chain step attributed to the worker actor.
 
+The worker counts no non-research decision as dispatched. Its structured skip
+record includes `decision_id`, `action_type`, `target_stage`, any reported
+runtime binding id for diagnosis only, and the explicit-owner reason. The
+decision retains `decision_state=approved`, a null `execution_result`, and no
+`executed` review step.
+
 The test reloads `decisions.json` into a new `EvolutionDecisionStore` before a
 second poll. The second worker instance finds no approved decision, makes no
 second execute request, and preserves the original execution reference and
@@ -63,12 +100,13 @@ single executed review step.
 
 ## Local Verification
 
-The following checks passed on `task/EVOLOOP-001` at tested head
-`183cba011d6993029b3e828dc85f13dd166f207c`:
+The following checks passed on the reviewer-remediation worktree based on
+anchor `8c9308721f1799f820fb1f54a87c50c31a0dd82c`:
 
 ```bash
 python3 -m pytest \
   services/evolution/test_dispatch_worker.py \
+  services/evolution/test_hosted_dispatch_probe.py \
   services/evolution/test_compose_activation.py -q
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider \
   services/evolution -q
@@ -80,15 +118,17 @@ git diff --check
 
 Results:
 
-- Focused worker and Compose contract: `22 passed in 10.80s`.
-- Post-rebase full evolution service suite: `192 passed, 2 warnings in 48.86s`;
+- Focused worker, hosted-probe, and Compose contract:
+  `43 passed in 10.45s`.
+- Post-refresh full evolution service suite: `218 passed, 2 warnings in 44.77s`;
   both
   warnings are existing FastAPI `on_event` deprecations in the incidents
   service.
 - Rendered default services include `evolution-dispatch-worker`; it has no
   profile and waits for a healthy `evolution` service.
 - Image build completed as
-  `evoloop-001-evolution-dispatch-worker:latest`.
+  `evoloop-001-evolution-dispatch-worker:latest`, manifest list
+  `sha256:253a647708a329f0063cfae285dddcb8a378357050dbbeaf8b58653b7de96d79`.
 - Compose parsing and whitespace validation passed.
 
 The successful entrypoint test creates, reviews, and approves a unique
@@ -99,7 +139,7 @@ asserts `executed` plus `dispatch-<decision_id>` metadata.
 
 ## Fail-closed Container Evidence
 
-The built image was also run for one tick against an unreachable evolution API:
+The remediated image was also run for one tick against an unreachable evolution API:
 
 ```bash
 docker run --rm \
@@ -111,7 +151,7 @@ docker run --rm \
   python -m services.evolution.dispatch_worker
 ```
 
-Minimal output at `2026-07-14T04:13:49Z`:
+Minimal output at `2026-07-14T06:24:25Z`:
 
 ```json
 {
@@ -121,12 +161,15 @@ Minimal output at `2026-07-14T04:13:49Z`:
     "ticks": 1,
     "total_dispatched": 0,
     "total_errors": 1,
-    "last_failure_reason": "<urlopen error [Errno 111] Connection refused>"
+    "last_failure_reason": "<urlopen error [Errno 111] Connection refused>",
+    "total_skipped": 0
   },
   "result": {
     "decisions_found": 0,
     "dispatched": 0,
     "dispatch_items": [],
+    "skip_items": [],
+    "skipped_unsupported": 0,
     "errors": ["<urlopen error [Errno 111] Connection refused>"]
   }
 }
@@ -140,64 +183,72 @@ after the check.
 
 ## Hosted Dev Proof
 
-Accepted at `2026-07-14T05:25:09Z` while official workflow run
+### Superseded evidence — not acceptance
+
+Workflow run
 [29306967263](https://github.com/ajoe734/pantheon/actions/runs/29306967263)
-held the dev-root deployment lease. The run completed successfully at
-`2026-07-14T05:25:54Z`; its requested ref, workflow-resolved SHA, prepared
-`/home/lupin/pantheon-ci-deploy/dev-root` checkout, and BFF source SHA were all
-`183cba011d6993029b3e828dc85f13dd166f207c`. The root deployment step completed
-at `2026-07-14T05:24:46Z`, and its OpenClaw, public BFF, and Agora restart
-persistence smokes also passed.
+did deploy the earlier task implementation and supported a research auto-dispatch
+probe. It is no longer acceptance evidence for two independent reasons:
 
-The `pantheon` root Compose project showed
-`pantheon-evolution-dispatch-worker-1` running with Docker health `healthy`.
-A task-scoped probe then issued exactly these mutating requests:
+1. it predates the research-only, malformed-payload, and boot-health reviewer
+   remediation; and
+2. later root deployments replaced the hosted checkout. Runs
+   [29308875940](https://github.com/ajoe734/pantheon/actions/runs/29308875940)
+   and
+   [29309421576](https://github.com/ajoe734/pantheon/actions/runs/29309421576)
+   each reported `pantheon-evolution-dispatch-worker-1` as an orphan because
+   their deployed refs did not contain this task's Compose service.
 
-```text
-POST /api/evolution/proposals
-POST /api/evolution/proposals/evoloop-001-probe-b2844ae249/review
-POST /api/evolution/proposals/evoloop-001-probe-b2844ae249/approve
+Therefore the currently running old container must not be described as
+Compose-owned or current. The earlier decision
+`evoloop-001-probe-b2844ae249` is retained only as historical pre-remediation
+evidence.
+
+### Fresh acceptance gate
+
+Pending after publication of the remediated task ref. The accepted probe must:
+
+- dispatch `nonprod-deploy.yml` for `environment=dev`, `component=root`, and
+  an exact task commit;
+- prove the workflow-resolved SHA, remote checkout SHA, and container source
+  match that exact commit;
+- prove Docker Compose labels identify project `pantheon`, service
+  `evolution-dispatch-worker`, and the active root Compose config rather than
+  an orphan;
+- create/review/approve one unique research decision without calling its
+  execute route, then observe the worker's exact dispatch ref and one executed
+  review step;
+- create/review/approve one daily-sweep-shaped active-live freeze with a
+  runtime binding snapshot and prove it remains `approved`, has no execution
+  result, and receives no worker execute POST;
+- restart only the Compose service, observe health reset/recovery and a fresh
+  tick, then prove neither decision was double-dispatched; and
+- capture the command sequence and secret-free normalized output here before
+  requesting re-review.
+
+The API portion is reproducible with the task-owned probe:
+
+```bash
+python3 -m services.evolution.hosted_dispatch_probe \
+  --api-url http://127.0.0.1:18093 \
+  --output /tmp/evoloop-001-hosted-initial.json \
+  initial \
+  --prefix evoloop-001-<unique-suffix> \
+  --freeze-observation-seconds 65
+
+docker compose -p pantheon -f docker-compose.yml \
+  restart evolution-dispatch-worker
+
+python3 -m services.evolution.hosted_dispatch_probe \
+  --api-url http://127.0.0.1:18093 \
+  --output /tmp/evoloop-001-hosted-restart.json \
+  verify \
+  --input /tmp/evoloop-001-hosted-initial.json
 ```
 
-The probe instrumented every request it made and asserted that all later API
-requests were GETs. It never invoked `POST .../execute`; the hosted worker made
-the gated execute request on its next poll. Minimal secret-free proof:
-
-```json
-{
-  "approved_at": "2026-07-14T05:24:30Z",
-  "observed_at": "2026-07-14T05:25:09Z",
-  "decision_id": "evoloop-001-probe-b2844ae249",
-  "decision_state": "executed",
-  "execution_result": {
-    "status": "submitted",
-    "plane": "research",
-    "execution_ref_id": "dispatch-evoloop-001-probe-b2844ae249",
-    "executed_at": "2026-07-14T05:24:48Z"
-  },
-  "cooldown_ends_at": "2026-07-17T05:24:48Z",
-  "observation_window_ends_at": "2026-07-21T05:24:48Z",
-  "executed_step_count": 1,
-  "executed_step_actor": "evolution-dispatch-worker",
-  "dispatch_log_count": 1,
-  "health_before_restart": "healthy",
-  "health_after_restart": "healthy",
-  "restart_tick_seen": true,
-  "direct_execute_calls_by_probe": 0
-}
-```
-
-The probe restarted only `evolution-dispatch-worker`. Docker retained container
-ID `07ab1e53ac16609674f7a7f9ea431d74b4a96a05207936fdbeea72b21326fa4d`, as
-expected for a Compose restart, and the worker emitted a fresh `tick: 1` with
-healthy state. Post-restart readback still contained one executed review step
-and the same execution reference, proving no duplicate dispatch.
-
-Earlier run
-[29305788872](https://github.com/ajoe734/pantheon/actions/runs/29305788872)
-also completed for the same task ref, but a later task-ref deployment replaced
-the hosted checkout before this probe could run. It is recorded only as
-superseded deployment history; run `29306967263` is the accepted hosted truth.
+The Compose ownership/source checks run immediately before and after those
+commands; their normalized output and the two probe JSON files are archived
+with the final hosted evidence.
 
 ## Intentional Disable And Re-enable
 
@@ -229,9 +280,10 @@ values below one second.
 
 | Criterion | Evidence | State |
 |---|---|---|
-| Default dev Compose service with own interval and healthcheck | Rendered no-profile Compose contract, exact-ref run `29306967263`, hosted service running/healthy | Passed |
-| Approved decision auto-transitions to executed with metadata | Entrypoint integration test plus hosted decision `evoloop-001-probe-b2844ae249`, worker actor, submitted/research/ref/timestamps | Passed |
-| Restart does not double-dispatch | Store-reload test plus hosted worker restart, fresh tick, one executed step, unchanged ref | Passed |
+| Default dev Compose service with own interval and healthcheck | Rendered no-profile Compose contract passes locally; old hosted service is orphaned | Pending fresh hosted proof |
+| Approved research decision auto-transitions to executed with metadata | Entrypoint integration test covers worker actor, submitted/research/exact ref/timestamps | Local passed; hosted pending |
+| Active-live freeze is not silently consumed | Daily-sweep-shaped regression proves structured skip, no POST, still approved, no execution result/step | Local passed; hosted pending |
+| Restart does not double-dispatch and resets health first | Store-reload and boot-health tests pass | Local passed; hosted pending |
 | Evolution API failure logs diagnostics and dispatches nothing | Boundary-failure test, main-loop outage test, built-image one-shot output | Passed |
 | Existing cadences remain unchanged | Compose diff leaves existing scheduler blocks and interval variables unchanged; worker uses its own namespaced interval | Passed |
 
@@ -242,8 +294,15 @@ values below one second.
   execute/store persistence window is outside this thin slice. Owner:
   Evolution service. Review by `LOOP-PROD-EVO-001`.
 - This worker records a governed submitted dispatch; it does not confirm
-  target-plane completion. Owner: research/evolution integration. Review by
-  `EVOLOOP-004` and `LOOP-PROD-EVO-001`.
+  target-plane completion or create the real research work item by itself.
+  Owner: research/evolution integration. Review by `EVOLOOP-004` and
+  `LOOP-PROD-EVO-001`.
+- Non-research decisions intentionally remain `approved`. The worker cannot
+  select a freeze-stage versus rollback path from evidence metadata, and the
+  current generic execute route does not persist or deliver its in-memory
+  companion commands. Owner: Evolution/Governance/Runtime integration. This
+  restriction must remain until an authoritative runtime read plus approved
+  follow-through contract and downstream acceptance ref exist.
 - Docker marks a degraded worker unhealthy but does not restart a still-running
   unhealthy process solely because of health status. The poll loop continues
   retrying on its own interval; process exits remain covered by
@@ -252,8 +311,8 @@ values below one second.
 
 ## Review And Delivery
 
-- PR: pending.
+- PR: [#3618](https://github.com/ajoe734/pantheon/pull/3618), open.
 - Reviewer decision: pending Codex review.
 - Merge commit: pending.
-- Hosted dev deployment and automatic dispatch proof: accepted via successful
-  run `29306967263` and decision `evoloop-001-probe-b2844ae249`.
+- Hosted dev deployment and automatic dispatch proof: pending fresh exact-ref
+  Compose deployment; run `29306967263` is explicitly superseded.
