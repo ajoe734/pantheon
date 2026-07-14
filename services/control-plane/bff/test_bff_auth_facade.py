@@ -248,6 +248,19 @@ class TestExtractIdentityJwt:
             "assistant.kernel.repair",
         ]
 
+    def test_permissive_viewer_does_not_inherit_or_assert_stub_capabilities(self):
+        identity = self._call(
+            "Bearer pantheon-dev-browser:viewer:mfa:assistant.kernel.debug",
+            env_overrides={
+                "PANTHEON_BFF_AUTH_MODE": "permissive",
+                "PANTHEON_BFF_JWT_SECRET": "",
+                "PANTHEON_BFF_STUB_CAPABILITIES": "assistant.kernel.repair",
+            },
+        )
+
+        assert identity.roles == ["viewer"]
+        assert identity.claims.get("capabilities") in (None, [])
+
 
 # ---------------------------------------------------------------------------
 # Unit tests: _extract_identity_stub (legacy dev mode)
@@ -287,6 +300,19 @@ class TestExtractIdentityStub:
             "assistant.kernel.debug",
             "assistant.kernel.repair",
         ]
+
+    def test_viewer_stub_does_not_inherit_or_assert_capabilities(self):
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_BFF_STUB_CAPABILITIES": "assistant.kernel.repair"},
+            clear=False,
+        ):
+            identity = self._call(
+                "Bearer pantheon-dev-browser:viewer:mfa:assistant.kernel.debug"
+            )
+
+        assert identity.roles == ["viewer"]
+        assert identity.claims["capabilities"] == []
 
     def test_colon_format_multiple_roles(self):
         identity = self._call("Bearer op-multi:operator,reviewer")

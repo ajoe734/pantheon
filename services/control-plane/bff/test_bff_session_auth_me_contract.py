@@ -95,7 +95,32 @@ def test_bff_me_stub_returns_frontend_ready_current_user_dto(monkeypatch) -> Non
     assert data["session"]["mfa_verified"] is True
 
 
-def test_bff_me_permissive_structured_token_includes_dev_kernel_capabilities(monkeypatch) -> None:
+def test_bff_me_permissive_operator_keeps_explicit_dev_kernel_capabilities(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", "")
+    monkeypatch.setenv("PANTHEON_BFF_STUB_CAPABILITIES", "")
+
+    client = TestClient(bff_main.app)
+    response = client.get(
+        "/bff/me",
+        headers={
+            "Authorization": (
+                "Bearer pantheon-dev-browser:admin,operator:mfa:"
+                "assistant.kernel.debug,assistant.kernel.repair"
+            )
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["session"]["mfa_verified"] is True
+    assert set(data["roles"]) == {"admin", "operator"}
+    assert "assistant.kernel.debug" in data["capabilities"]
+    assert "assistant.kernel.repair" in data["capabilities"]
+
+
+def test_bff_me_permissive_viewer_does_not_inherit_dev_kernel_capabilities(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", "")
@@ -107,15 +132,15 @@ def test_bff_me_permissive_structured_token_includes_dev_kernel_capabilities(mon
     client = TestClient(bff_main.app)
     response = client.get(
         "/bff/me",
-        headers={"Authorization": "Bearer pantheon-dev-browser:admin,operator:mfa"},
+        headers={"Authorization": "Bearer pantheon-dev-browser:viewer"},
     )
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]
-    assert data["session"]["mfa_verified"] is True
-    assert set(data["roles"]) == {"admin", "operator"}
-    assert "assistant.kernel.debug" in data["capabilities"]
-    assert "assistant.kernel.repair" in data["capabilities"]
+    assert data["roles"] == ["viewer"]
+    assert set(data["capabilities"]) == {"metric.read", "strategy.view", "persona.view"}
+    assert "assistant.kernel.debug" not in data["capabilities"]
+    assert "assistant.kernel.repair" not in data["capabilities"]
 
 
 def test_bff_me_permissive_rejects_plain_no_role_bearer(monkeypatch) -> None:
