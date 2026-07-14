@@ -163,6 +163,96 @@ class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
 
         self.assertIsNone(result)
 
+    def test_performance_metrics_prefer_independent_explicit_as_of_timestamps(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        event = _event("pnl_snapshot", created_at="2026-05-01T00:10:00Z")
+        event["metrics"] = {"pnl": 125.5, "drawdown_pct": 0.08}
+        event["pnl_as_of"] = "2026-05-01T00:08:00Z"
+        event["drawdown_as_of"] = "2026-05-01T00:09:00+00:00"
+
+        summary = store.project_event(event)
+
+        self.assertEqual(summary["pnl"], 125.5)
+        self.assertEqual(summary["pnl_at"], "2026-05-01T00:08:00Z")
+        self.assertEqual(summary["drawdown"], 0.08)
+        self.assertEqual(summary["drawdown_at"], "2026-05-01T00:09:00+00:00")
+
+    def test_performance_metrics_fall_back_to_created_at_for_legacy_events(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        event = _event("drawdown_snapshot", created_at="2026-05-01T00:10:00Z")
+        event["metrics"] = {"pnl": -25.0, "drawdown_pct": 0.12}
+
+        summary = store.project_event(event)
+
+        self.assertEqual(summary["pnl_at"], "2026-05-01T00:10:00Z")
+        self.assertEqual(summary["drawdown_at"], "2026-05-01T00:10:00Z")
+
+    def test_invalid_explicit_metric_as_of_falls_back_to_created_at(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        event = _event("pnl_snapshot", created_at="2026-05-01T00:10:00Z")
+        event["metrics"] = {"pnl": 5.0, "drawdown_pct": 0.02}
+        event["pnl_as_of"] = "not-a-timestamp"
+        event["drawdown_as_of"] = "2026-05-01T00:09:00"  # no timezone
+
+        summary = store.project_event(event)
+
+        self.assertEqual(summary["pnl_at"], "2026-05-01T00:10:00Z")
+        self.assertEqual(summary["drawdown_at"], "2026-05-01T00:10:00Z")
+
+    def test_threshold_derived_echo_does_not_refresh_explicit_metric_as_of(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        genuine = _event("drawdown_snapshot", created_at="2026-05-01T00:05:00Z")
+        genuine["metrics"] = {"pnl": -10.0, "drawdown_pct": 0.10}
+        genuine["pnl_as_of"] = "2026-05-01T00:03:00Z"
+        genuine["drawdown_as_of"] = "2026-05-01T00:04:00Z"
+        store.project_event(genuine)
+
+        derived = _event("drawdown_snapshot", created_at="2026-05-01T00:20:00Z")
+        derived["event_id"] = "evt-derived-threshold-echo"
+        derived["metrics"] = {"pnl": -999.0, "drawdown_pct": 0.99}
+        derived["pnl_as_of"] = "2026-05-01T00:18:00Z"
+        derived["drawdown_as_of"] = "2026-05-01T00:19:00Z"
+        derived["metadata"]["derived_from_threshold_evaluation"] = True
+
+        summary = store.project_event(derived)
+
+        self.assertEqual(summary["pnl"], -10.0)
+        self.assertEqual(summary["pnl_at"], "2026-05-01T00:03:00Z")
+        self.assertEqual(summary["drawdown"], 0.10)
+        self.assertEqual(summary["drawdown_at"], "2026-05-01T00:04:00Z")
+
+    def test_older_metric_observations_do_not_regress_independent_values(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        initial = _event("pnl_snapshot", created_at="2026-05-01T00:20:00Z")
+        initial["metrics"] = {"pnl": 100.0, "drawdown_pct": 0.10}
+        initial["pnl_as_of"] = "2026-05-01T00:10:00Z"
+        initial["drawdown_as_of"] = "2026-05-01T00:10:00Z"
+        store.project_event(initial)
+
+        older = _event("drawdown_snapshot", created_at="2026-05-01T00:30:00Z")
+        older["event_id"] = "evt-unique-older-observations"
+        older["metrics"] = {"pnl": -50.0, "drawdown_pct": 0.40}
+        older["pnl_as_of"] = "2026-05-01T00:09:00Z"
+        older["drawdown_as_of"] = "2026-05-01T00:09:00Z"
+        summary = store.project_event(older)
+
+        self.assertEqual(summary["pnl"], 100.0)
+        self.assertEqual(summary["pnl_at"], "2026-05-01T00:10:00Z")
+        self.assertEqual(summary["drawdown"], 0.10)
+        self.assertEqual(summary["drawdown_at"], "2026-05-01T00:10:00Z")
+
+        mixed = _event("pnl_snapshot", created_at="2026-05-01T00:40:00Z")
+        mixed["event_id"] = "evt-independent-metric-observations"
+        mixed["metrics"] = {"pnl": 125.0, "drawdown_pct": 0.50}
+        mixed["pnl_as_of"] = "2026-05-01T00:11:00Z"
+        mixed["drawdown_as_of"] = "2026-05-01T00:08:00Z"
+        summary = store.project_event(mixed)
+
+        self.assertEqual(summary["pnl"], 125.0)
+        self.assertEqual(summary["pnl_at"], "2026-05-01T00:11:00Z")
+        self.assertEqual(summary["drawdown"], 0.10)
+        self.assertEqual(summary["drawdown_at"], "2026-05-01T00:10:00Z")
+
     def test_multiple_stages_coexist_without_collision(self):
         store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
         fresh = datetime(2026, 5, 1, 0, 0, 30, tzinfo=timezone.utc)
@@ -232,6 +322,27 @@ class TestFillProjection(unittest.TestCase):
         self.assertEqual(summary["last_fill"]["fill_price"], 100.0)
         self.assertEqual(summary["position_count"], 1)
         self.assertEqual(summary["positions"], [{"symbol": "AAPL.US", "quantity": 7.0}])
+
+    def test_bracket_log_does_not_count_as_an_executed_fill(self):
+        store = self._store()
+        event = _event(
+            event_type="bracket_order_logged",
+            created_at="2026-05-01T00:01:00Z",
+        )
+        event["event_id"] = "evt-bracket-log-only"
+        event["metrics"] = {
+            "fill_quantity": 7.0,
+            "fill_price": 100.0,
+            "action": "bracket_logged_only",
+            "submitted_to_broker": False,
+        }
+        event["metadata"]["symbol"] = "AAPL.US"
+
+        summary = store.project_event(event)
+
+        self.assertNotIn("executed_trade_count", summary)
+        self.assertNotIn("last_fill", summary)
+        self.assertNotIn("positions", summary)
 
     def test_multiple_fills_accumulate_count_and_positions(self):
         store = self._store()

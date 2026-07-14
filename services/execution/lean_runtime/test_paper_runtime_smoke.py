@@ -33,6 +33,7 @@ from services.execution.lean_runtime.paper_runtime import (
     RuntimeTelemetryEmitter,
 )
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+from services.execution.lean_runtime.performance_telemetry import MarketMark
 from services.execution.lean_runtime.runtime_context import PantheonRuntimeContext
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 
@@ -170,6 +171,16 @@ class _CapturingTelemetry:
         metrics.update(extra_metrics or {})
         return self.emit("pnl_snapshot", metrics, metadata=metadata)
 
+    def emit_drawdown_snapshot(
+        self,
+        drawdown_pct: float,
+        metadata: dict | None = None,
+        extra_metrics: dict | None = None,
+    ) -> bool:
+        metrics = {"drawdown_pct": float(drawdown_pct)}
+        metrics.update(extra_metrics or {})
+        return self.emit("drawdown_snapshot", metrics, metadata=metadata)
+
     def snapshot(self) -> dict:
         return {
             "enabled": self.enabled,
@@ -189,6 +200,41 @@ class _FakeRuntimeManagerClient:
 
     def list_all(self) -> list[dict]:
         return list(self._bindings)
+
+
+class _FixedSourceIngestMarkProvider:
+    """Fresh independent marks for the smoke pipeline's open positions."""
+
+    def __init__(self, price: float = 101.0):
+        self.price = float(price)
+        self.as_of = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+            "+00:00", "Z"
+        )
+
+    def resolve(self, symbols):
+        marks = {
+            symbol: MarketMark(
+                symbol=symbol,
+                price=self.price,
+                as_of=self.as_of,
+                source_ref=f"source-ingest://smoke/{symbol}",
+            )
+            for symbol in symbols
+        }
+        return marks, {
+            "source": "source_ingest",
+            "enabled": True,
+            "requested_symbols": list(symbols),
+            "resolved_symbols": sorted(marks),
+            "missing_symbols": [],
+        }
+
+    def snapshot(self, *, requested_symbols=None):
+        return {
+            "source": "source_ingest",
+            "enabled": True,
+            "requested_symbols": list(requested_symbols or []),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +288,7 @@ class PaperRuntimeSmokeTest(unittest.TestCase):
             identity=identity,
             runtime_manager_client=rm_client,
             telemetry_emitter=telemetry,
+            mark_provider=_FixedSourceIngestMarkProvider(),
             runtime_context=context,
             poll_interval_seconds=3600,
             max_batch_size=50,
@@ -354,6 +401,15 @@ class PaperRuntimeSmokeTest(unittest.TestCase):
         pnl_event = pnl_events[0]
         self.assertEqual(pnl_event["execution_mode"], "paper")
         self.assertIn("pnl", pnl_event["metrics"])
+        self.assertNotEqual(pnl_event["metrics"]["pnl"], 0.0)
+        self.assertIn("pnl_as_of", pnl_event["metrics"])
+        self.assertNotIn("drawdown_pct", pnl_event["metrics"])
+
+        drawdown_events = telemetry.events_of_type("drawdown_snapshot")
+        self.assertEqual(len(drawdown_events), 1)
+        self.assertIn("drawdown_pct", drawdown_events[0]["metrics"])
+        self.assertIn("drawdown_as_of", drawdown_events[0]["metrics"])
+        self.assertNotIn("pnl", drawdown_events[0]["metrics"])
 
     def test_paper_smoke_full_pipeline_canonical_evidence_shape(self):
         """End-to-end check: all required canonical event types are present."""
@@ -370,6 +426,7 @@ class PaperRuntimeSmokeTest(unittest.TestCase):
         self.assertIn("heartbeat", event_types)
         self.assertIn("paper_fill_simulated", event_types)
         self.assertIn("pnl_snapshot", event_types)
+        self.assertIn("drawdown_snapshot", event_types)
 
         for event in telemetry.events:
             self.assertEqual(event["execution_mode"], "paper", f"wrong mode in {event['event_type']}")

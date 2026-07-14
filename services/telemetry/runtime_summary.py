@@ -27,6 +27,29 @@ def _parse_rfc3339(value: Any) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
+def _explicit_metric_as_of(value: Any) -> Optional[str]:
+    """Return a timezone-aware RFC3339 timestamp, or None when unusable.
+
+    ``created_at`` remains the backward-compatible metric timestamp fallback.
+    Explicit per-metric timestamps are only trusted when they are strings and
+    carry timezone information; accepting a naive value would make freshness
+    depend on the telemetry host's local timezone.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        normalized = f"{text[:-1]}+00:00" if text.endswith("Z") else text
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return text
+
+
 def _summary_key(payload: dict[str, Any]) -> Optional[str]:
     runtime_id = str(payload.get("runtime_id") or "").strip()
     return runtime_id or None
@@ -188,22 +211,37 @@ class RuntimeSummaryProjectionStore:
                     break
                 for source_key in source_keys:
                     if source_key in metrics:
-                        current[target_key] = metrics[source_key]
                         # Per-metric as-of timestamp: a metric only carried
                         # forward by `dict.update` above (e.g. an old drawdown
                         # value untouched by a newer heartbeat-only event)
                         # must not read as fresh just because the summary's
                         # overall `last_event_at` advanced.
-                        current[f"{target_key}_at"] = event_time
+                        explicit_as_of = _explicit_metric_as_of(
+                            event.get(f"{target_key}_as_of")
+                        )
+                        metric_as_of = explicit_as_of or event_time
+                        previous_as_of = _parse_rfc3339(
+                            current.get(f"{target_key}_at")
+                        )
+                        candidate_as_of = _parse_rfc3339(metric_as_of)
+                        if previous_as_of is not None and (
+                            candidate_as_of is None or candidate_as_of < previous_as_of
+                        ):
+                            # Events can arrive out of order. Compare each
+                            # metric against its own as-of field so a stale
+                            # pnl observation cannot overwrite pnl while an
+                            # independently newer drawdown still advances.
+                            break
+                        current[target_key] = metrics[source_key]
+                        current[f"{target_key}_at"] = metric_as_of
                         current[f"{target_key}_binding_id"] = binding_id
                         break
 
             # Surface executed paper fills so trade activity is visible end-to-end.
-            # The runtime emits paper_fill_simulated / bracket_order_logged events that
-            # were ingested but previously not reflected in the runtime summary the BFF
-            # reads (only health + pnl were projected). Project a trade counter, the
-            # last fill, and net positions so executed trades light up downstream.
-            if event_type in ("paper_fill_simulated", "bracket_order_logged"):
+            # ``bracket_order_logged`` only records order intent and must never
+            # inflate fill counts or positions.  Only the simulated-fill event
+            # proves that the paper ledger actually changed.
+            if event_type == "paper_fill_simulated":
                 symbol = metadata.get("symbol") or metrics.get("symbol")
                 fill_qty = metrics.get("fill_quantity")
                 fill_price = metrics.get("fill_price")

@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from services.execution.lean_runtime.paper_runtime import _Handler, PaperRuntimeService, RuntimeTelemetryEmitter, PaperExecutionAlgorithm, OrderEvent
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+from services.execution.lean_runtime.performance_telemetry import MarketMark
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 
 
@@ -59,6 +60,11 @@ class _FakeTelemetryEmitter:
         metrics.update(extra_metrics or {})
         return self.emit("pnl_snapshot", metrics, metadata=metadata)
 
+    def emit_drawdown_snapshot(self, drawdown_pct, metadata=None, extra_metrics=None):
+        metrics = {"drawdown_pct": float(drawdown_pct)}
+        metrics.update(extra_metrics or {})
+        return self.emit("drawdown_snapshot", metrics, metadata=metadata)
+
     def snapshot(self):
         return {
             "enabled": True,
@@ -66,6 +72,39 @@ class _FakeTelemetryEmitter:
             "sent": len(self.events),
             "failed": 0,
             "last_error": None,
+        }
+
+
+class _FakeMarkProvider:
+    def __init__(self, *, price=105.0, as_of=None):
+        self.price = float(price)
+        self.as_of = as_of or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+            "+00:00", "Z"
+        )
+
+    def resolve(self, symbols):
+        marks = {
+            symbol: MarketMark(
+                symbol=symbol,
+                price=self.price,
+                as_of=self.as_of,
+                source_ref=f"source-ingest://{symbol}",
+            )
+            for symbol in symbols
+        }
+        return marks, {
+            "source": "source_ingest",
+            "enabled": True,
+            "requested_symbols": list(symbols),
+            "resolved_symbols": sorted(marks),
+            "missing_symbols": [],
+        }
+
+    def snapshot(self, *, requested_symbols=None):
+        return {
+            "source": "source_ingest",
+            "enabled": True,
+            "requested_symbols": list(requested_symbols or []),
         }
 
 
@@ -200,10 +239,45 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(snapshot["paper_state"]["processed_signal_count"], 1)
         self.assertEqual(snapshot["paper_state"]["execution_event_count"], 1)
         self.assertEqual(snapshot["paper_state"]["positions"][0]["symbol"], "AAPL")
-        self.assertEqual(len(telemetry.events), 3)
+        self.assertEqual(len(telemetry.events), 2)
         self.assertEqual(telemetry.events[0]["event_type"], "paper_fill_simulated")
         self.assertEqual(telemetry.events[1]["event_type"], "heartbeat")
-        self.assertEqual(telemetry.events[2]["event_type"], "pnl_snapshot")
+        self.assertEqual(
+            snapshot["paper_state"]["performance_telemetry"]["code"],
+            "missing_market_marks",
+        )
+
+    def test_drain_once_emits_separate_pnl_and_drawdown_snapshots_with_real_mark(self):
+        telemetry = _FakeTelemetryEmitter()
+        mark_provider = _FakeMarkProvider(price=105.0)
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([self._signal()]),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=telemetry,
+            mark_provider=mark_provider,
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+
+        snapshot = service.drain_once()
+
+        pnl_events = [event for event in telemetry.events if event["event_type"] == "pnl_snapshot"]
+        drawdown_events = [
+            event for event in telemetry.events if event["event_type"] == "drawdown_snapshot"
+        ]
+        self.assertEqual(len(pnl_events), 1)
+        self.assertEqual(len(drawdown_events), 1)
+        self.assertAlmostEqual(pnl_events[0]["metrics"]["pnl"], 50.0)
+        self.assertEqual(pnl_events[0]["metrics"]["pnl_as_of"], mark_provider.as_of)
+        self.assertNotIn("drawdown_pct", pnl_events[0]["metrics"])
+        self.assertEqual(drawdown_events[0]["metrics"]["drawdown_pct"], 0.0)
+        self.assertEqual(drawdown_events[0]["metrics"]["drawdown_as_of"], mark_provider.as_of)
+        self.assertNotIn("pnl", drawdown_events[0]["metrics"])
+        self.assertEqual(
+            snapshot["paper_state"]["performance_telemetry"]["code"],
+            "performance_snapshots_emitted",
+        )
 
     def test_drain_once_does_not_execute_when_binding_halted(self):
         """Safety gate: a paused/halted binding must not fill orders.
@@ -380,8 +454,8 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(noop_events[0]["metrics"]["noop_count"], 1)
         self.assertEqual(noop_events[0]["metrics"]["fill_rate"], 0.0)
         self.assertEqual(noop_events[0]["metadata"]["alpha_source"], "llm_riskoff_agent")
-        self.assertEqual(pnl_events[-1]["metrics"]["fill_event_count"], 0)
-        self.assertEqual(pnl_events[-1]["metrics"]["fill_rate"], 0.0)
+        self.assertEqual(pnl_events, [])
+        self.assertEqual(snapshot["paper_state"]["performance_telemetry"]["code"], "performance_no_fills")
 
     def test_exit_without_position_records_paper_order_noop_without_fill(self):
         signal = self._signal()
@@ -434,8 +508,8 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(fill_events, [])
         self.assertEqual(noop_events[0]["metrics"]["computed_quantity"], 0.0)
         self.assertEqual(noop_events[0]["metadata"]["alpha_source"], "quant_drawdown_exit")
-        self.assertEqual(pnl_events[-1]["metrics"]["fill_event_count"], 0)
-        self.assertEqual(pnl_events[-1]["metrics"]["open_position_count"], 0)
+        self.assertEqual(pnl_events, [])
+        self.assertEqual(snapshot["paper_state"]["performance_telemetry"]["code"], "performance_no_fills")
 
     def test_sell_long_without_position_liquidate_records_noop_without_fill(self):
         signal = self._signal()
@@ -490,8 +564,8 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(fill_events, [])
         self.assertEqual(noop_events[0]["metrics"]["requested_quantity"], 0.0)
         self.assertEqual(noop_events[0]["metrics"]["computed_quantity"], 0.0)
-        self.assertEqual(pnl_events[-1]["metrics"]["fill_event_count"], 0)
-        self.assertEqual(pnl_events[-1]["metrics"]["open_position_count"], 0)
+        self.assertEqual(pnl_events, [])
+        self.assertEqual(snapshot["paper_state"]["performance_telemetry"]["code"], "performance_no_fills")
 
     def test_set_holdings_no_delta_records_noop_without_fill(self):
         signal = self._signal()
@@ -548,8 +622,8 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(fill_events, [])
         self.assertEqual(noop_events[0]["metrics"]["requested_quantity"], 0.5)
         self.assertEqual(noop_events[0]["metrics"]["computed_quantity"], 0.0)
-        self.assertEqual(pnl_events[-1]["metrics"]["fill_event_count"], 0)
-        self.assertEqual(pnl_events[-1]["metrics"]["open_position_count"], 0)
+        self.assertEqual(pnl_events, [])
+        self.assertEqual(snapshot["paper_state"]["performance_telemetry"]["code"], "performance_no_fills")
 
     def test_snapshot_without_drain_reports_truthful_ready_state(self):
         service = PaperRuntimeService(

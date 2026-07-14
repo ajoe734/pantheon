@@ -46,6 +46,12 @@ from services.execution.lean_runtime.pending_signal_store import (
     binding_queue_key,
     build_pending_signal_store,
 )
+from services.execution.lean_runtime.performance_telemetry import (
+    MarketMark,
+    RollingDrawdownTracker,
+    SourceIngestMarkProvider,
+    value_portfolio,
+)
 from services.execution.lean_runtime.runtime_context import PantheonRuntimeContext
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.execution.lean_runtime.signal_consumer import SignalConsumer
@@ -169,6 +175,9 @@ class _Holding:
 class _Security:
     def __init__(self, price: float = 100.0) -> None:
         self.Price = price
+        self.MarkAsOf: str | None = None
+        self.MarkSource: str | None = None
+        self.MarkAuthoritative = False
 
 
 @dataclass
@@ -211,6 +220,7 @@ class PaperExecutionAlgorithm:
         event_sink: Callable[[OrderEvent], None] | None = None,
         deployment_stage: str = "paper",
         bracket_order_execution_enabled: bool = True,
+        state_path: str | None = None,
     ) -> None:
         self._initial_cash = initial_cash
         self._cash = initial_cash
@@ -222,6 +232,15 @@ class PaperExecutionAlgorithm:
         self.Securities: dict[str, _Security] = {}
         self._open_bracket_orders: list[dict[str, Any]] = []
         self._current_signal_metadata: dict[str, Any] = {}
+        self._fill_count = 0
+        self._ledger_started_at = _iso_now()
+        self._first_fill_at: str | None = None
+        self._last_fill_at: str | None = None
+        self._performance_window_state: dict[str, Any] = {}
+        self._state_path = Path(state_path) if state_path else None
+        self._state_error: str | None = None
+        self._state_load_error: str | None = None
+        self._load_state()
 
     def _holding(self, symbol: str) -> _Holding:
         return self.Portfolio.setdefault(symbol, _Holding())
@@ -233,9 +252,36 @@ class PaperExecutionAlgorithm:
         """Expose deterministic paper pricing for executor price lookups."""
         return self._security(str(symbol))
 
-    def SetSecurityPrice(self, symbol: str, price: float) -> None:  # noqa: N802
+    def SetSecurityPrice(  # noqa: N802
+        self,
+        symbol: str,
+        price: float,
+        *,
+        as_of: str | None = None,
+        source: str = "runtime_price",
+        authoritative: bool = False,
+    ) -> None:
         security = self._security(str(symbol))
         security.Price = float(price)
+        security.MarkAsOf = str(as_of) if as_of else None
+        security.MarkSource = str(source) if source else None
+        security.MarkAuthoritative = bool(authoritative and as_of and source)
+
+    def SetSecurityMark(  # noqa: N802
+        self,
+        symbol: str,
+        price: float,
+        *,
+        as_of: str | None,
+        source: str,
+    ) -> None:
+        self.SetSecurityPrice(
+            symbol,
+            price,
+            as_of=as_of,
+            source=source,
+            authoritative=True,
+        )
 
     def SetCurrentSignalContext(self, metadata: dict[str, Any] | None) -> None:  # noqa: N802
         self._current_signal_metadata = dict(metadata or {})
@@ -318,11 +364,20 @@ class PaperExecutionAlgorithm:
         fill_qty = float(order.get("fill_qty") or qty)
         order_id = str(order.get("order_id") or "")
         if fill_price > 0:
-            self.SetSecurityPrice(str(symbol), fill_price)
+            self.SetSecurityPrice(
+                str(symbol),
+                fill_price,
+                as_of=str(order.get("filled_at") or order.get("updated_at") or _iso_now()),
+                source=str(order.get("quote_source") or "shioaji_paper_fill"),
+                authoritative=False,
+            )
         holding = self._holding(str(symbol))
-        holding.Quantity += fill_qty if side == "buy" else -fill_qty
+        signed_fill_qty = fill_qty if side == "buy" else -fill_qty
+        holding.Quantity += signed_fill_qty
+        self._cash -= signed_fill_qty * fill_price
+        self._record_fill()
         self._publish(
-            "paper_fill_simulated", str(symbol), fill_qty, action,
+            "paper_fill_simulated", str(symbol), signed_fill_qty, action,
             broker_submission_status="filled",
             submitted_to_broker=True,
             metadata={**base_metadata, "broker_order_id": order_id,
@@ -419,19 +474,28 @@ class PaperExecutionAlgorithm:
             return
         holding.Quantity = target_quantity
         self._cash -= delta * float(security.Price)
+        self._record_fill()
         self._publish("paper_fill_simulated", symbol, delta, "set_holdings")
 
     def MarketOrder(self, symbol: str, quantity: float) -> None:  # noqa: N802
         security = self._security(symbol)
         self._holding(symbol).Quantity += float(quantity)
         self._cash -= float(quantity) * float(security.Price)
+        self._record_fill()
         self._publish("paper_fill_simulated", symbol, quantity, "market_order")
 
     def LimitOrder(self, symbol: str, quantity: float, limit_price: float) -> None:  # noqa: N802
         security = self._security(symbol)
-        security.Price = float(limit_price)
+        self.SetSecurityPrice(
+            symbol,
+            float(limit_price),
+            as_of=_iso_now(),
+            source="paper_limit_fill",
+            authoritative=False,
+        )
         self._holding(symbol).Quantity += float(quantity)
         self._cash -= float(quantity) * float(security.Price)
+        self._record_fill()
         self._publish("paper_fill_simulated", symbol, quantity, "limit_order")
 
     def Liquidate(self, symbol: str) -> None:  # noqa: N802
@@ -462,6 +526,7 @@ class PaperExecutionAlgorithm:
             return
         self._holding(symbol).Quantity = 0.0
         self._cash += quantity * float(security.Price)
+        self._record_fill()
         self._publish("paper_fill_simulated", symbol, -quantity, "liquidate")
 
     def SubmitBracketOrder(  # noqa: N802
@@ -631,6 +696,150 @@ class PaperExecutionAlgorithm:
             )
         return positions
 
+    def mark_symbols(self) -> list[str]:
+        return [
+            symbol
+            for symbol, holding in sorted(self.Portfolio.items())
+            if abs(float(holding.Quantity)) > 1e-12
+        ]
+
+    def apply_market_marks(self, marks: Mapping[str, MarketMark]) -> None:
+        for symbol, mark in marks.items():
+            self.SetSecurityMark(
+                symbol,
+                mark.price,
+                as_of=mark.as_of,
+                source=mark.source_ref,
+            )
+
+    def authoritative_marks(self) -> dict[str, MarketMark]:
+        marks: dict[str, MarketMark] = {}
+        for symbol in self.mark_symbols():
+            security = self._security(symbol)
+            if not security.MarkAuthoritative or not security.MarkAsOf or not security.MarkSource:
+                continue
+            marks[symbol] = MarketMark(
+                symbol=symbol,
+                price=float(security.Price),
+                as_of=security.MarkAsOf,
+                source_ref=security.MarkSource,
+            )
+        return marks
+
+    def performance_ledger(self) -> dict[str, Any]:
+        return {
+            "initial_cash": float(self._initial_cash),
+            "cash": float(self._cash),
+            "positions": self.positions(),
+            "fill_count": int(self._fill_count),
+            "ledger_started_at": self._ledger_started_at,
+            "first_fill_at": self._first_fill_at,
+            "last_fill_at": self._last_fill_at,
+            "state_path": str(self._state_path) if self._state_path else None,
+            "state_error": self._state_error,
+            "state_load_error": self._state_load_error,
+        }
+
+    def performance_window_state(self) -> dict[str, Any]:
+        return json.loads(json.dumps(self._performance_window_state))
+
+    def save_performance_window(self, payload: Mapping[str, Any]) -> bool:
+        self._performance_window_state = json.loads(json.dumps(dict(payload)))
+        self._persist_state()
+        return self._state_error is None
+
+    def _record_fill(self) -> None:
+        filled_at = _iso_now()
+        if self._fill_count == 0:
+            self._first_fill_at = filled_at
+        self._fill_count += 1
+        self._last_fill_at = filled_at
+        self._persist_state()
+
+    def _load_state(self) -> None:
+        if self._state_path is None or not self._state_path.exists():
+            return
+        try:
+            payload = json.loads(self._state_path.read_text(encoding="utf-8"))
+            if payload.get("schema_version") != "paper_performance_ledger.v1":
+                raise ValueError("unsupported paper performance ledger schema")
+            initial_cash = float(payload["initial_cash"])
+            cash = float(payload["cash"])
+            fill_count = int(payload["fill_count"])
+            if not math.isfinite(initial_cash) or initial_cash <= 0 or not math.isfinite(cash):
+                raise ValueError("paper performance ledger contains invalid cash values")
+            holdings = payload.get("holdings")
+            if not isinstance(holdings, dict):
+                raise ValueError("paper performance ledger holdings must be an object")
+            restored: dict[str, _Holding] = {}
+            for symbol, raw_quantity in holdings.items():
+                quantity = float(raw_quantity)
+                if not math.isfinite(quantity):
+                    raise ValueError(f"paper performance ledger has invalid quantity for {symbol}")
+                restored[str(symbol)] = _Holding(quantity)
+            execution_prices = payload.get("execution_prices")
+            if isinstance(execution_prices, dict):
+                for symbol, raw_price in execution_prices.items():
+                    price = float(raw_price)
+                    if math.isfinite(price) and price > 0:
+                        # Restored fill/execution prices are deliberately not
+                        # authoritative marks; source-ingest must refresh them.
+                        self._security(str(symbol)).Price = price
+            self._initial_cash = initial_cash
+            self._cash = cash
+            self.Portfolio = restored
+            self._fill_count = max(fill_count, 0)
+            self._last_fill_at = str(payload.get("last_fill_at") or "") or None
+            self._first_fill_at = (
+                str(payload.get("first_fill_at") or "")
+                or (self._last_fill_at if self._fill_count else None)
+            )
+            self._ledger_started_at = (
+                str(payload.get("ledger_started_at") or "")
+                or self._first_fill_at
+                or _iso_now()
+            )
+            performance_window = payload.get("performance_window") or {}
+            if not isinstance(performance_window, dict):
+                raise ValueError("paper performance window must be an object")
+            self._performance_window_state = dict(performance_window)
+            self._state_error = None
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+            self._state_error = f"{type(exc).__name__}: {exc}"
+            self._state_load_error = self._state_error
+
+    def _persist_state(self) -> None:
+        if self._state_path is None:
+            return
+        payload = {
+            "schema_version": "paper_performance_ledger.v1",
+            "initial_cash": float(self._initial_cash),
+            "cash": float(self._cash),
+            "fill_count": int(self._fill_count),
+            "ledger_started_at": self._ledger_started_at,
+            "first_fill_at": self._first_fill_at,
+            "last_fill_at": self._last_fill_at,
+            "performance_window": self._performance_window_state,
+            "holdings": {
+                symbol: float(holding.Quantity)
+                for symbol, holding in sorted(self.Portfolio.items())
+                if abs(float(holding.Quantity)) > 1e-12
+            },
+            "execution_prices": {
+                symbol: float(security.Price)
+                for symbol, security in sorted(self.Securities.items())
+                if math.isfinite(float(security.Price)) and float(security.Price) > 0
+            },
+        }
+        try:
+            self._state_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self._state_path.with_name(f"{self._state_path.name}.{uuid.uuid4().hex}.tmp")
+            temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+            os.replace(temporary, self._state_path)
+            self._state_error = None
+        except OSError as exc:
+            self._state_error = f"{type(exc).__name__}: {exc}"
+
     def open_bracket_orders(self) -> list[dict[str, Any]]:
         return [dict(order) for order in self._open_bracket_orders]
 
@@ -682,7 +891,19 @@ class SyntheticMarketData:
                 anchor * (1.0 + self._amplitude * math.sin(self._step * self._freq + self._phase_offset(symbol))),
                 4,
             )
-            algo.SetSecurityPrice(symbol, price)
+            try:
+                algo.SetSecurityPrice(
+                    symbol,
+                    price,
+                    as_of=_iso_now(),
+                    source="synthetic_market_data",
+                    authoritative=False,
+                )
+            except TypeError:
+                # Compatibility for the deliberately tiny fake used by the
+                # isolated synthetic-source unit tests.  Canonical runtime
+                # valuation never treats this source as authoritative.
+                algo.SetSecurityPrice(symbol, price)
             updated[symbol] = price
         return updated
 
@@ -835,6 +1056,14 @@ class RuntimeTelemetryEmitter:
         event_metadata = self._base_metadata(binding)
         event_metadata.update(metadata or {})
         incoming_envelope = event_metadata.get("correlation_envelope")
+        event_metrics = dict(metrics)
+        metric_as_of: str | None = None
+        if event_type == "pnl_snapshot":
+            raw_as_of = event_metrics.pop("pnl_as_of", None)
+            metric_as_of = str(raw_as_of) if raw_as_of not in (None, "") else None
+        elif event_type == "drawdown_snapshot":
+            raw_as_of = event_metrics.pop("drawdown_as_of", None)
+            metric_as_of = str(raw_as_of) if raw_as_of not in (None, "") else None
         payload = {
             "event_id": event_id or str(uuid.uuid4()),
             "event_type": event_type,
@@ -857,9 +1086,11 @@ class RuntimeTelemetryEmitter:
                 "artifact_type": artifact_type,
                 "promotion_state": "paper",
             },
-            "metrics": metrics,
+            "metrics": event_metrics,
             "metadata": event_metadata,
         }
+        if metric_as_of is not None:
+            payload[f"{'pnl' if event_type == 'pnl_snapshot' else 'drawdown'}_as_of"] = metric_as_of
         lineage_ref = os.getenv("PANTHEON_LINEAGE_REF", "").strip()
         if lineage_ref:
             payload["target"]["lineage_ref"] = lineage_ref
@@ -940,6 +1171,17 @@ class RuntimeTelemetryEmitter:
             metrics.update(extra_metrics)
         return self.emit("pnl_snapshot", metrics, metadata=metadata)
 
+    def emit_drawdown_snapshot(
+        self,
+        drawdown_pct: float,
+        metadata: dict[str, Any] | None = None,
+        extra_metrics: dict[str, Any] | None = None,
+    ) -> bool:
+        metrics: dict[str, Any] = {"drawdown_pct": float(drawdown_pct)}
+        if extra_metrics:
+            metrics.update(extra_metrics)
+        return self.emit("drawdown_snapshot", metrics, metadata=metadata)
+
     def _base_metadata(self, binding: dict[str, Any]) -> dict[str, Any]:
         metadata: dict[str, Any] = {
             "runtime_role": self._identity.runtime_role,
@@ -998,6 +1240,7 @@ class PaperRuntimeService:
         identity: RuntimeIdentity | None = None,
         runtime_manager_client: RuntimeManagerClient | None = None,
         telemetry_emitter: RuntimeTelemetryEmitter | None = None,
+        mark_provider: SourceIngestMarkProvider | None = None,
         runtime_context: PantheonRuntimeContext | None = None,
         poll_interval_seconds: float | None = None,
         max_batch_size: int | None = None,
@@ -1039,6 +1282,10 @@ class PaperRuntimeService:
             self._binding_resolver,
             runtime_context=runtime_context,
         )
+        self._mark_provider = mark_provider or SourceIngestMarkProvider()
+        self._drawdown_tracker = RollingDrawdownTracker(
+            window_days=int(os.getenv("PANTHEON_PERFORMANCE_WINDOW_DAYS", "20"))
+        )
         self._algo = PaperExecutionAlgorithm(
             event_sink=self._handle_order_event,
             deployment_stage=self._identity.deployment_stage or self._identity.runtime_mode or "paper",
@@ -1046,7 +1293,13 @@ class PaperRuntimeService:
                 os.getenv("PANTHEON_BRACKET_ORDER_EXECUTION_ENABLED"),
                 default=True,
             ),
+            state_path=os.getenv("PANTHEON_PERFORMANCE_STATE_PATH") or None,
         )
+        self._performance_state_restore_error: str | None = None
+        try:
+            self._drawdown_tracker.restore(self._algo.performance_window_state())
+        except (TypeError, ValueError) as exc:
+            self._performance_state_restore_error = f"{type(exc).__name__}: {exc}"
         self._consumer = SignalConsumer(
             store_client=self._store,
             binding_id=self._identity.binding_id or None,
@@ -1087,6 +1340,10 @@ class PaperRuntimeService:
         self._execution_event_count = 0
         self._fill_event_count = 0
         self._recent_order_events: list[dict[str, Any]] = []
+        self._performance_telemetry: dict[str, Any] = {
+            "status": "not_evaluated",
+            "code": "performance_not_evaluated",
+        }
 
     def start(self) -> None:
         if self._thread is not None:
@@ -1146,10 +1403,10 @@ class PaperRuntimeService:
             self._processed_signal_count += max(after - before, 0)
             self._poll_count += 1
             if self._last_error is None:
-                self._maybe_emit_heartbeat()
                 if self._synthetic_market is not None:
                     self._synthetic_market.advance(self._algo)
-                self._maybe_emit_pnl_snapshot()
+                self._maybe_emit_performance_snapshots()
+                self._maybe_emit_heartbeat()
             return self.snapshot()
 
     def pool_access_violation(self, requested_pool_id: str | None) -> dict[str, Any] | None:
@@ -1200,6 +1457,7 @@ class PaperRuntimeService:
                     "positions": self._algo.positions(),
                     "open_bracket_orders": self._algo.open_bracket_orders(),
                     "recent_order_events": list(self._recent_order_events),
+                    "performance_telemetry": dict(self._performance_telemetry),
                     "last_error": self._last_error,
                 },
                 "stub_mode": False,
@@ -1492,25 +1750,176 @@ class PaperRuntimeService:
                 "is_real_capital": False,
                 "sim_fill_flag": False,
                 "capital_scale_pct": 0,
+                "performance_telemetry": dict(self._performance_telemetry),
             },
         )
         if emitted:
             self._last_heartbeat_at = now
 
-    def _maybe_emit_pnl_snapshot(self) -> None:
+    def _maybe_emit_performance_snapshots(self) -> None:
         if not self._telemetry.enabled:
             return
-        self._telemetry.emit_pnl_snapshot(
-            self._algo.pnl(),
-            metadata={
-                "runtime_package": "paper_execution_runtime",
-                "queue_depth": self._safe_queue_depth(),
-                "is_real_order": False,
-                "is_real_capital": False,
-                "capital_scale_pct": 0,
-            },
-            extra_metrics=self._performance_snapshot_metrics(),
+
+        symbols = self._algo.mark_symbols()
+        provider_diagnostic: dict[str, Any]
+        if symbols:
+            provider_marks, provider_diagnostic = self._mark_provider.resolve(symbols)
+            self._algo.apply_market_marks(provider_marks)
+        else:
+            provider_diagnostic = self._mark_provider.snapshot(requested_symbols=[])
+        current_marks = self._algo.authoritative_marks()
+
+        ledger = self._algo.performance_ledger()
+        if ledger.get("state_load_error") or self._performance_state_restore_error:
+            self._performance_telemetry = {
+                "status": "invalid_ledger",
+                "code": "performance_ledger_load_failed",
+                "attempted_at": _iso_now(),
+                "state_path": ledger.get("state_path"),
+                "detail": (
+                    ledger.get("state_load_error")
+                    or self._performance_state_restore_error
+                ),
+            }
+            return
+        valuation = value_portfolio(
+            initial_cash=ledger["initial_cash"],
+            cash=ledger["cash"],
+            positions=ledger["positions"],
+            marks=current_marks,
+            fill_count=ledger["fill_count"],
+            last_fill_at=ledger["last_fill_at"],
+            mark_diagnostic=provider_diagnostic,
+            max_mark_age_seconds=_as_float(
+                os.getenv("PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS"),
+                172800.0,
+            ),
         )
+        self._performance_telemetry = {
+            "status": valuation.status,
+            **valuation.diagnostic,
+        }
+        if valuation.sample is None:
+            return
+
+        sample = valuation.sample
+        tracker_checkpoint = self._drawdown_tracker.export_state()
+        try:
+            drawdown_metrics = self._drawdown_tracker.observe(
+                sample,
+                initial_equity_as_of=(
+                    ledger.get("first_fill_at") or ledger.get("ledger_started_at")
+                ),
+            )
+        except ValueError as exc:
+            self._drawdown_tracker.restore(tracker_checkpoint)
+            self._performance_telemetry.update(
+                {
+                    "status": "invalid_drawdown_series",
+                    "code": "invalid_drawdown_series",
+                    "detail": str(exc),
+                }
+            )
+            return
+        if drawdown_metrics is None:
+            self._performance_telemetry.update(
+                {
+                    "status": "unchanged",
+                    "code": "performance_sample_unchanged",
+                    "as_of": sample.as_of,
+                }
+            )
+            return
+
+        mark_refs = [mark.to_dict() for mark in sample.marks]
+        metadata = {
+            "runtime_package": "paper_execution_runtime",
+            "queue_depth": self._safe_queue_depth(),
+            "is_real_order": False,
+            "is_real_capital": False,
+            "capital_scale_pct": 0,
+            "valuation_method": "fill_cash_ledger_mark_to_market",
+            "valuation_as_of": sample.as_of,
+            "mark_refs": mark_refs,
+        }
+        common_metrics = {
+            "portfolio_value": sample.portfolio_value,
+            "initial_cash": sample.initial_cash,
+            "cash": sample.cash,
+            "fill_count": sample.fill_count,
+            "valuation_mark_count": len(sample.marks),
+            **self._performance_snapshot_metrics(),
+        }
+        pnl_sent = self._telemetry.emit_pnl_snapshot(
+            sample.pnl,
+            metadata=metadata,
+            extra_metrics={
+                **common_metrics,
+                "pnl_as_of": sample.as_of,
+            },
+        )
+        emit_drawdown = getattr(self._telemetry, "emit_drawdown_snapshot", None)
+        if callable(emit_drawdown):
+            drawdown_sent = emit_drawdown(
+                drawdown_metrics["drawdown_pct"],
+                metadata=metadata,
+                extra_metrics={
+                    **common_metrics,
+                    **{
+                        key: value
+                        for key, value in drawdown_metrics.items()
+                        if key != "drawdown_pct"
+                    },
+                },
+            )
+        else:
+            drawdown_sent = self._telemetry.emit(
+                "drawdown_snapshot",
+                {
+                    "drawdown_pct": drawdown_metrics["drawdown_pct"],
+                    **common_metrics,
+                    **{
+                        key: value
+                        for key, value in drawdown_metrics.items()
+                        if key != "drawdown_pct"
+                    },
+                },
+                metadata=metadata,
+            )
+        self._performance_telemetry.update(
+            {
+                "status": "emitted" if pnl_sent and drawdown_sent else "emit_failed",
+                "code": (
+                    "performance_snapshots_emitted"
+                    if pnl_sent and drawdown_sent
+                    else "performance_snapshot_emit_failed"
+                ),
+                "as_of": sample.as_of,
+                "pnl": sample.pnl,
+                "drawdown_pct": drawdown_metrics["drawdown_pct"],
+                "pnl_snapshot_sent": bool(pnl_sent),
+                "drawdown_snapshot_sent": bool(drawdown_sent),
+            }
+        )
+        if pnl_sent and drawdown_sent:
+            if not self._algo.save_performance_window(self._drawdown_tracker.export_state()):
+                self._performance_telemetry.update(
+                    {
+                        "status": "state_persist_failed",
+                        "code": "performance_window_persist_failed",
+                        "detail": self._algo.performance_ledger().get("state_error"),
+                    }
+                )
+        else:
+            # Retry the same observation after a transient telemetry failure;
+            # do not advance the durable high-water series without both
+            # canonical events.
+            self._drawdown_tracker.restore(tracker_checkpoint)
+
+    # Backward-compatible private hook retained for narrow callers/tests.  It
+    # now enforces the paired, fail-closed performance contract.
+    def _maybe_emit_pnl_snapshot(self) -> None:
+        self._maybe_emit_performance_snapshots()
 
     def _performance_snapshot_metrics(self) -> dict[str, Any]:
         processed = int(self._processed_signal_count)
