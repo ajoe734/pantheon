@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import quote
 
+from common import canonical_task_state_lock_file, write_json as durable_write_json
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -23,6 +25,7 @@ STATUS_ROOT = status_root()
 ARCHIVE_DIR = STATUS_ROOT / "ai-task-archive"
 ARCHIVE_TASKS_DIR = ARCHIVE_DIR / "tasks"
 ARCHIVE_INDEX_FILE = ARCHIVE_DIR / "index.json"
+STATUS_FILE = STATUS_ROOT / "ai-status.json"
 
 ARCHIVE_VERSION = 1
 TERMINAL_STATUS_DONE = "done"
@@ -33,6 +36,11 @@ DEFAULT_RECENT_LIMIT = 20
 
 def iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _archive_fault(point: str) -> None:
+    if str(os.environ.get("LOOP_TEST_ARCHIVE_SIGKILL_AFTER") or "").strip() == point:
+        os.kill(os.getpid(), 9)
 
 
 def ensure_parent(path: Path) -> None:
@@ -49,8 +57,12 @@ def load_json(path: Path, default: Any | None = None) -> Any:
 
 
 def write_json(path: Path, payload: Any) -> None:
-    ensure_parent(path)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    with canonical_task_state_lock_file(
+        STATUS_FILE,
+        shared=False,
+        nonblocking=False,
+    ):
+        durable_write_json(path, payload)
 
 
 def normalize_task_id(task_id: str | None) -> str:
@@ -125,7 +137,12 @@ def default_archive_index() -> dict[str, Any]:
 
 
 def load_archive_index() -> dict[str, Any]:
-    payload = load_json(ARCHIVE_INDEX_FILE, default_archive_index()) or default_archive_index()
+    with canonical_task_state_lock_file(
+        STATUS_FILE,
+        shared=True,
+        nonblocking=False,
+    ):
+        payload = load_json(ARCHIVE_INDEX_FILE, default_archive_index()) or default_archive_index()
     counts = payload.setdefault("counts", {})
     counts["total"] = int(counts.get("total") or 0)
     counts[TERMINAL_OUTCOME_COMPLETED] = int(counts.get(TERMINAL_OUTCOME_COMPLETED) or 0)
@@ -151,7 +168,12 @@ def load_archived_snapshot(task_id: str | None) -> dict[str, Any] | None:
     if not normalized:
         return None
     path = archive_task_path(normalized)
-    snapshot = load_json(path, default=None)
+    with canonical_task_state_lock_file(
+        STATUS_FILE,
+        shared=True,
+        nonblocking=False,
+    ):
+        snapshot = load_json(path, default=None)
     if not isinstance(snapshot, dict):
         return None
     return snapshot
@@ -161,13 +183,41 @@ def load_archived_task(task_id: str | None) -> dict[str, Any] | None:
     snapshot = load_archived_snapshot(task_id)
     if not snapshot:
         return None
-    task = snapshot.get("task")
-    return deepcopy(task) if isinstance(task, dict) else None
+    return task_from_archive_snapshot(snapshot)
+
+
+def task_from_archive_snapshot(snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize modern nested and legacy top-level archive task shapes."""
+
+    nested = snapshot.get("task")
+    if isinstance(nested, dict):
+        return deepcopy(nested)
+    task_id = normalize_task_id(snapshot.get("task_id") or snapshot.get("id"))
+    if not task_id:
+        return None
+    task = deepcopy(snapshot)
+    task["id"] = task_id
+    task.pop("task_id", None)
+    task.pop("archived_at", None)
+    task.pop("version", None)
+    task.pop("terminal_status", None)
+    task.pop("handoffs", None)
+    task.pop("blockers", None)
+    task.setdefault(
+        "status",
+        snapshot.get("terminal_status")
+        or (TERMINAL_STATUS_DONE if snapshot.get("terminal_outcome") else None),
+    )
+    if not task.get("status"):
+        return None
+    return task
 
 
 def compact_terminal_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
-    task = snapshot.get("task") if isinstance(snapshot.get("task"), dict) else {}
-    task_id = normalize_task_id(snapshot.get("task_id") or task.get("id"))
+    task = task_from_archive_snapshot(snapshot) or {}
+    task_id = normalize_task_id(
+        snapshot.get("task_id") or snapshot.get("id") or task.get("id")
+    )
     return {
         "task_id": task_id,
         "title": task.get("title"),
@@ -185,17 +235,22 @@ def compact_terminal_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 
 def recent_terminal_summaries(limit: int = DEFAULT_RECENT_LIMIT) -> list[dict[str, Any]]:
-    index = load_archive_index()
-    summaries: list[dict[str, Any]] = []
-    for task_id in index.get("recent_terminal_ids", [])[: max(0, int(limit))]:
-        snapshot = load_archived_snapshot(task_id)
-        if not snapshot:
-            continue
-        summaries.append(compact_terminal_summary(snapshot))
-    return summaries
+    with canonical_task_state_lock_file(
+        STATUS_FILE,
+        shared=True,
+        nonblocking=False,
+    ):
+        index = load_archive_index()
+        summaries: list[dict[str, Any]] = []
+        for task_id in index.get("recent_terminal_ids", [])[: max(0, int(limit))]:
+            snapshot = load_archived_snapshot(task_id)
+            if not snapshot:
+                continue
+            summaries.append(compact_terminal_summary(snapshot))
+        return summaries
 
 
-def rebuild_archive_index(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -> dict[str, Any]:
+def _rebuild_archive_index_locked(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -> dict[str, Any]:
     summaries: list[dict[str, Any]] = []
     if ARCHIVE_TASKS_DIR.exists():
         for path in sorted(ARCHIVE_TASKS_DIR.glob("*.json")):
@@ -234,7 +289,16 @@ def rebuild_archive_index(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -> dict[s
     return index
 
 
-def archive_task_snapshot(
+def rebuild_archive_index(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -> dict[str, Any]:
+    with canonical_task_state_lock_file(
+        STATUS_FILE,
+        shared=False,
+        nonblocking=False,
+    ):
+        return _rebuild_archive_index_locked(recent_limit=recent_limit)
+
+
+def _archive_task_snapshot_locked(
     task: dict[str, Any],
     *,
     handoffs: Iterable[dict[str, Any]] | None = None,
@@ -249,10 +313,11 @@ def archive_task_snapshot(
         raise ValueError("Task id is required for archiving")
 
     existing = load_archived_snapshot(task_id)
-    if existing:
-        return existing
-
-    archived_at = archived_at or iso_now()
+    archived_at = archived_at or (
+        str(existing.get("archived_at") or "").strip()
+        if isinstance(existing, dict)
+        else ""
+    ) or iso_now()
     snapshot = {
         "version": ARCHIVE_VERSION,
         "task_id": task_id,
@@ -263,7 +328,16 @@ def archive_task_snapshot(
         "handoffs": deepcopy(list(handoffs or [])),
         "blockers": deepcopy(list(blockers or [])),
     }
+    if existing:
+        if existing != snapshot:
+            raise RuntimeError(
+                f"existing archive snapshot conflicts with terminal task: {task_id}"
+            )
+        # An exact snapshot may have survived a crash before the index write.
+        _rebuild_archive_index_locked(recent_limit=recent_limit)
+        return existing
     write_json(archive_task_path(task_id), snapshot)
+    _archive_fault("snapshot")
 
     index = load_archive_index()
     counts = index.setdefault("counts", {})
@@ -278,7 +352,30 @@ def archive_task_snapshot(
     index["recent_terminal_ids"] = recent_ids[: max(0, int(recent_limit))]
     index["updated_at"] = archived_at
     save_archive_index(index)
+    _archive_fault("index")
     return snapshot
+
+
+def archive_task_snapshot(
+    task: dict[str, Any],
+    *,
+    handoffs: Iterable[dict[str, Any]] | None = None,
+    blockers: Iterable[dict[str, Any]] | None = None,
+    archived_at: str | None = None,
+    recent_limit: int = DEFAULT_RECENT_LIMIT,
+) -> dict[str, Any]:
+    with canonical_task_state_lock_file(
+        STATUS_FILE,
+        shared=False,
+        nonblocking=False,
+    ):
+        return _archive_task_snapshot_locked(
+            task,
+            handoffs=handoffs,
+            blockers=blockers,
+            archived_at=archived_at,
+            recent_limit=recent_limit,
+        )
 
 
 class TaskResolver:
@@ -369,5 +466,4 @@ class TaskResolver:
         snapshot = self._load_archived_snapshot(task_id)
         if not snapshot:
             return None
-        task = snapshot.get("task")
-        return deepcopy(task) if isinstance(task, dict) else None
+        return task_from_archive_snapshot(snapshot)

@@ -762,10 +762,17 @@ class RuntimeCapabilityVerifierTests(unittest.TestCase):
 
     def test_valid_signature_and_protected_ledger_are_required(self) -> None:
         manifest, registry, evidence, policy, manifest_sha256 = self._signed_fixture()
-        with mock.patch.object(
-            runtime_state,
-            "_protected_verifier_policy",
-            return_value=policy,
+        with (
+            mock.patch.object(
+                runtime_state,
+                "_protected_verifier_policy",
+                return_value=policy,
+            ),
+            mock.patch.object(
+                runtime_state,
+                "_protected_checks_evidence",
+                return_value={},
+            ),
         ):
             decision = runtime_state.verify_runtime_lock_capability(
                 manifest=manifest,
@@ -800,3 +807,54 @@ class RuntimeCapabilityVerifierTests(unittest.TestCase):
                 "protected verifier policy parent is unsafe|permissions are unsafe",
             ):
                 runtime_state._protected_verifier_policy(self.root)
+
+
+class RuntimeWriterInventoryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        (self.root / ".orchestrator").mkdir()
+        (self.root / "scripts").mkdir()
+
+    def test_seeded_unregistered_direct_writer_is_rejected(self) -> None:
+        unsafe = self.root / "scripts/unsafe_writer.py"
+        unsafe.write_text(
+            "from pathlib import Path\n"
+            "STATUS = Path(__file__).parent / 'ai-status.json'\n"
+            "def mutate():\n"
+            "    STATUS.write_text('{}\\n', encoding='utf-8')\n",
+            encoding="utf-8",
+        )
+        inventory = runtime_state.runtime_lock_source_inventory(self.root)
+        self.assertEqual(
+            inventory["unregistered_direct_writers"],
+            [
+                {
+                    "path": "scripts/unsafe_writer.py",
+                    "line": 4,
+                    "sink": "path.write_text",
+                    "reason_id": "unregistered_direct_canonical_write",
+                }
+            ],
+        )
+
+    def test_guarded_isolated_fixture_writer_is_not_canonical(self) -> None:
+        guarded = self.root / "scripts/guarded_writer.py"
+        guarded.write_text(
+            "from pathlib import Path\n"
+            "from canonical_writer_guard import assert_isolated_legacy_write_target\n"
+            "STATUS = Path(__file__).parent / 'ai-status.json'\n"
+            "def mutate():\n"
+            "    assert_isolated_legacy_write_target(STATUS, tool='fixture')\n"
+            "    STATUS.write_text('{}\\n', encoding='utf-8')\n",
+            encoding="utf-8",
+        )
+        inventory = runtime_state.runtime_lock_source_inventory(self.root)
+        self.assertEqual(inventory["unregistered_direct_writers"], [])
+
+    def test_real_repository_has_no_unregistered_canonical_writer(self) -> None:
+        repository_root = Path(__file__).resolve().parents[1]
+        inventory = runtime_state.runtime_lock_source_inventory(repository_root)
+        self.assertGreater(len(inventory["files"]), 100)
+        self.assertEqual(inventory["unregistered_direct_writers"], [])

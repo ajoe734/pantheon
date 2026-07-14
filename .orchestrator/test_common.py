@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import gzip
+import multiprocessing
 import os
 import subprocess
 import sys
@@ -12,6 +14,22 @@ from unittest import mock
 from urllib.error import HTTPError
 
 import common
+
+
+def _sigkill_during_activity_rotation(log_path: str, point: str) -> None:
+    os.environ["LOOP_TEST_ACTIVITY_ROTATION_SIGKILL_AFTER"] = point
+    common.write_activity_log(
+        {
+            "paths": {
+                "activity_log": log_path,
+                "activity_log_rotate_bytes": 1,
+            }
+        },
+        {
+            "event_id": "child-event-must-not-commit",
+            "type": "rotation_test",
+        },
+    )
 
 
 class PlanningSharedFilesTests(unittest.TestCase):
@@ -396,6 +414,127 @@ class RecentTaskActivityTests(unittest.TestCase):
             result = common._recent_task_activity({"paths": {"activity_log": str(activity_log)}}, "TASK-1", limit=3)
 
         self.assertEqual([entry["message"] for entry in result], ["older", "newer"])
+
+
+class ActivityAuditRecoveryTests(unittest.TestCase):
+    def _audit_rows(self, log_path: Path) -> list[dict]:
+        rows: list[dict] = []
+        with common.activity_audit_lock_file(
+            log_path,
+            shared=True,
+            nonblocking=False,
+        ):
+            for source in common.activity_audit_source_paths_unlocked(log_path):
+                if source.suffix == ".gz":
+                    with gzip.open(source, "rt", encoding="utf-8") as handle:
+                        text = handle.read()
+                else:
+                    text = source.read_text(encoding="utf-8")
+                rows.extend(json.loads(line) for line in text.splitlines() if line)
+        return rows
+
+    def test_sigkill_at_each_rotation_boundary_recovers_exactly_once(self) -> None:
+        context = multiprocessing.get_context("fork")
+        for point in ("intent", "archive", "tail"):
+            with self.subTest(point=point), tempfile.TemporaryDirectory() as tmpdir:
+                log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+                original = [
+                    {
+                        "event_id": f"original-{index}",
+                        "payload": "x" * 256,
+                    }
+                    for index in range(3)
+                ]
+                log_path.write_text(
+                    "".join(json.dumps(row) + "\n" for row in original),
+                    encoding="utf-8",
+                )
+                process = context.Process(
+                    target=_sigkill_during_activity_rotation,
+                    args=(str(log_path), point),
+                )
+                process.start()
+                process.join(timeout=10)
+                if process.is_alive():
+                    process.kill()
+                    process.join(timeout=5)
+                    self.fail(f"rotation child hung at {point}")
+                self.assertEqual(process.exitcode, -9)
+
+                common.write_activity_log(
+                    {
+                        "paths": {
+                            "activity_log": str(log_path),
+                            "activity_log_rotate_bytes": 1,
+                        }
+                    },
+                    {
+                        "event_id": "restart-event",
+                        "type": "rotation_test",
+                    },
+                )
+
+                rows = self._audit_rows(log_path)
+                counts: dict[str, int] = {}
+                for row in rows:
+                    event_id = str(row.get("event_id") or "")
+                    counts[event_id] = counts.get(event_id, 0) + 1
+                self.assertEqual(
+                    counts,
+                    {
+                        "original-0": 1,
+                        "original-1": 1,
+                        "original-2": 1,
+                        "restart-event": 1,
+                    },
+                )
+                self.assertFalse(
+                    common.activity_rotation_intent_path(log_path).exists()
+                )
+
+    def test_interrupted_non_newline_tail_is_repaired_before_append(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_path.write_bytes(
+                b'{"event_id":"old"}\n{"event_id":"partial"'
+            )
+
+            common.write_activity_log(
+                {
+                    "paths": {
+                        "activity_log": str(log_path),
+                        "activity_log_rotate_bytes": 1024 * 1024,
+                    }
+                },
+                {"event_id": "new", "type": "tail_recovery_test"},
+            )
+
+            rows = self._audit_rows(log_path)
+            self.assertEqual(
+                [row["event_id"] for row in rows],
+                ["old", "new"],
+            )
+
+    def test_complete_json_without_newline_is_preserved_before_append(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_path.write_bytes(b'{"event_id":"old"}')
+
+            common.write_activity_log(
+                {
+                    "paths": {
+                        "activity_log": str(log_path),
+                        "activity_log_rotate_bytes": 1024 * 1024,
+                    }
+                },
+                {"event_id": "new", "type": "tail_recovery_test"},
+            )
+
+            rows = self._audit_rows(log_path)
+            self.assertEqual(
+                [row["event_id"] for row in rows],
+                ["old", "new"],
+            )
 
 
 if __name__ == "__main__":

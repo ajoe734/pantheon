@@ -27,6 +27,7 @@ def test_rebuild_indexes_legacy_top_level_id(tmp_path, monkeypatch) -> None:
     index_file = tmp_path / "index.json"
     monkeypatch.setattr(task_archive, "ARCHIVE_TASKS_DIR", tasks_dir)
     monkeypatch.setattr(task_archive, "ARCHIVE_INDEX_FILE", index_file)
+    monkeypatch.setattr(task_archive, "STATUS_FILE", tmp_path / "ai-status.json")
 
     # Modern schema
     _write(
@@ -46,3 +47,12 @@ def test_rebuild_indexes_legacy_top_level_id(tmp_path, monkeypatch) -> None:
     assert index["counts"]["total"] == 2, index["counts"]
     assert "LEGACY-001" in index["recent_terminal_ids"], "legacy top-level id was dropped from the index"
     assert "MODERN-001" in index["recent_terminal_ids"]
+
+    summaries = task_archive.recent_terminal_summaries(10)
+    assert {item["task_id"] for item in summaries} == {
+        "LEGACY-001",
+        "MODERN-001",
+    }
+    resolver = task_archive.TaskResolver([], archive_tasks_dir=tasks_dir)
+    assert resolver.get("LEGACY-001")["id"] == "LEGACY-001"
+    assert resolver.dependency_satisfied("LEGACY-001") is True

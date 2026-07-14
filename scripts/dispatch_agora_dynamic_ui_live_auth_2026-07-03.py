@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 
+from canonical_writer_guard import assert_isolated_legacy_write_target
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 STATUS_PATH = REPO_ROOT / "ai-status.json"
 LOG_PATH = REPO_ROOT / "ai-activity-log.jsonl"
@@ -107,10 +109,12 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
+    assert_isolated_legacy_write_target(STATUS_PATH, tool=Path(__file__).name)
     STATUS_PATH.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def append_log(entry: dict) -> None:
+    assert_isolated_legacy_write_target(LOG_PATH, tool=Path(__file__).name)
     with LOG_PATH.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
@@ -202,4 +206,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

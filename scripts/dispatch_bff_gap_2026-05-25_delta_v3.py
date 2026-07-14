@@ -25,6 +25,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from canonical_writer_guard import assert_isolated_legacy_write_target
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 STATE_PATH = REPO_ROOT / "ai-status.json"
 
@@ -105,6 +107,7 @@ def update_sprint_metadata() -> None:
     state["sprint"] = SPRINT_ID
     state["sprint_started_at"] = "2026-05-25T00:00:00Z"
     state["objective"] = SPRINT_OBJECTIVE
+    assert_isolated_legacy_write_target(STATE_PATH, tool=Path(__file__).name)
     STATE_PATH.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n")
     print(f"Sprint metadata updated: {SPRINT_ID}")
 

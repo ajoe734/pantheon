@@ -5,6 +5,7 @@ import argparse
 import atexit
 import fcntl
 import fnmatch
+import hashlib
 import importlib
 import json
 import math
@@ -32,6 +33,7 @@ from adapters.base import DeliveryRequest
 from common import (
     agent_config_for,
     command_exists,
+    canonical_task_state_lock_file,
     config_path,
     display_name_for,
     execution_context_files,
@@ -6003,6 +6005,20 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
     return False
 
 
+def _status_activity_outbox(events: list[dict[str, Any]]) -> dict[str, Any]:
+    body = json.dumps(
+        events,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return {
+        "schema_version": 1,
+        "transaction_id": "ai-status-tx-" + hashlib.sha256(body).hexdigest(),
+        "events": events,
+    }
+
+
 def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -> bool:
     reason = str(event.get("reason") or "").strip()
     action = DISPATCH_STATUS_ACTIONS.get(reason)
@@ -6077,23 +6093,28 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     return False
 
 
-def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -> bool:
+def _prepare_preempted_task_status_locked(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+) -> dict[str, Any] | None:
     """Keep task truth aligned when a worker is superseded for higher-priority work."""
     if not config.get("paths", {}).get("status_file"):
-        return False
+        return None
 
     dispatch_reason = str(worker.get("request_snapshot", {}).get("reason") or "").strip()
     task_id = str(worker.get("task_id") or "").strip()
     target_agent = display_name_for(config, str(worker.get("agent_id") or worker.get("provider") or "")).strip()
     if not task_id or not target_agent:
-        return False
+        return None
 
     status = load_status(config)
+    if status.get("status_activity_outbox") not in (None, {}, []):
+        return None
     task = task_index_from_status(config, status).get(task_id)
     if not task:
-        return False
+        return None
     if str(task.get("owner") or "").strip() != target_agent:
-        return False
+        return None
 
     task_status = str(task.get("status") or "").lower()
     timestamp = utc_now()
@@ -6101,7 +6122,7 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
 
     if dispatch_reason in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS}:
         if task_status != "in_progress":
-            return False
+            return None
         task["status"] = "todo"
         message = (
             f"Supervisor preempted {task_id} to free {target_agent} for higher-priority review/finalize work; "
@@ -6109,44 +6130,50 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
         )
     elif dispatch_reason == REASON_OWNED_FINALIZE:
         if task_status != "review_approved":
-            return False
+            return None
         message = (
             f"Supervisor paused finalize on {task_id} to free {target_agent} for higher-priority review work; "
             "task remains review_approved."
         )
     else:
-        return False
+        return None
 
     task["last_update"] = timestamp
     task["next"] = message
+    event = {
+        "event_id": "supervisor-preempt-"
+        + hashlib.sha256(
+            f"{task_id}\0{timestamp}\0{dispatch_reason}\0{message}".encode("utf-8")
+        ).hexdigest(),
+        "ts": timestamp,
+        "agent": "Orchestrator",
+        "type": "task_preempted_synced",
+        "task_id": task_id,
+        "target_agent": target_agent,
+        "dispatch_reason": dispatch_reason,
+        "message": message,
+    }
+    status["status_activity_outbox"] = _status_activity_outbox([event])
     write_json(config_path(config, "status_file"), status)
-    synced = sync_status_pipeline(config)
-    if synced:
-        write_activity_log(
-            config,
-            {
-                "type": "task_preempted_synced",
-                "task_id": task_id,
-                "target_agent": target_agent,
-                "dispatch_reason": dispatch_reason,
-                "message": message,
-            },
-        )
-    else:
-        write_activity_log(
-            config,
-            {
-                "type": "task_preempt_sync_failed",
-                "task_id": task_id,
-                "target_agent": target_agent,
-                "dispatch_reason": dispatch_reason,
-                "message": f"Failed to persist preempted task truth for {task_id}.",
-            },
-        )
-    return synced
+    return event
 
 
-def persist_task_reassignment(
+def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -> bool:
+    if not config.get("paths", {}).get("status_file"):
+        return False
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(
+        status_path,
+        shared=False,
+        nonblocking=False,
+    ):
+        event = _prepare_preempted_task_status_locked(config, worker)
+    if event is None:
+        return False
+    return sync_status_pipeline(config)
+
+
+def _persist_task_reassignment_locked(
     config: dict[str, Any],
     *,
     task_id: str,
@@ -6160,6 +6187,8 @@ def persist_task_reassignment(
 ) -> bool:
     status_path = config_path(config, "status_file")
     status = load_status(config)
+    if status.get("status_activity_outbox") not in (None, {}, []):
+        return False
     tasks = status.get("tasks", []) or []
     timestamp = utc_now()
     task = next((item for item in tasks if item.get("id") == task_id), None)
@@ -6205,7 +6234,60 @@ def persist_task_reassignment(
             }
         )
 
+    event = {
+        "event_id": "supervisor-reassign-"
+        + hashlib.sha256(
+            (
+                f"{task_id}\0{timestamp}\0{old_owner}\0{new_owner}\0"
+                f"{old_reviewer}\0{new_reviewer}\0{message}"
+            ).encode("utf-8")
+        ).hexdigest(),
+        "ts": timestamp,
+        "agent": "Orchestrator",
+        "type": "task_reassigned",
+        "task_id": task_id,
+        "old_owner": old_owner,
+        "new_owner": new_owner,
+        "old_reviewer": old_reviewer,
+        "new_reviewer": new_reviewer,
+        "message": message,
+    }
+    status["status_activity_outbox"] = _status_activity_outbox([event])
     write_json(status_path, status)
+    return True
+
+
+def persist_task_reassignment(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    new_owner: str,
+    new_reviewer: str,
+    message: str,
+    new_status: str | None = None,
+    handoff_to: str | None = None,
+    handoff_from: str | None = None,
+    resolve_open_blockers: bool = False,
+) -> bool:
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(
+        status_path,
+        shared=False,
+        nonblocking=False,
+    ):
+        applied = _persist_task_reassignment_locked(
+            config,
+            task_id=task_id,
+            new_owner=new_owner,
+            new_reviewer=new_reviewer,
+            message=message,
+            new_status=new_status,
+            handoff_to=handoff_to,
+            handoff_from=handoff_from,
+            resolve_open_blockers=resolve_open_blockers,
+        )
+    if not applied:
+        return False
     return sync_status_pipeline(config)
 
 

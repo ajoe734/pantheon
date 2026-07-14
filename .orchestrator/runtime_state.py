@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import base64
+import ast
 import hashlib
 import json
 import os
 import stat
+import subprocess
 import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
@@ -76,6 +78,39 @@ RUNTIME_LOCK_REQUIRED_API = (
     "activity_audit_lock_file",
     "verify_runtime_lock_capability",
 )
+RUNTIME_LOCK_SOURCE_ROOTS = (".orchestrator", "scripts")
+RUNTIME_LOCK_SOURCE_SUFFIXES = {".py", ".sh"}
+RUNTIME_LOCK_WRITER_SCANNER_ID = "pantheon-canonical-writer-ast-v1"
+_CANONICAL_PATH_LITERALS = {
+    "ai-status.json",
+    "ai-activity-log.jsonl",
+    "state.json",
+    "event-queue.jsonl",
+    "approval-queue.json",
+}
+_DIRECT_SINK_ATTRIBUTES = {
+    "write_text",
+    "write_bytes",
+    "replace",
+    "rename",
+    "unlink",
+    "truncate",
+}
+_DIRECT_SINK_FUNCTIONS = {
+    "write_json",
+    "append_jsonl",
+    "write_text",
+    "copy_file",
+    "copy2",
+    "copyfile",
+    "move",
+    "replace",
+    "rename",
+}
+_CANONICAL_GUARD_FUNCTIONS = {
+    "assert_isolated_legacy_write_target",
+    "assert_noncanonical_bundle_target",
+}
 
 
 def default_state() -> dict[str, Any]:
@@ -868,6 +903,277 @@ def _capability_repo_path(root: Path, value: Any, *, label: str) -> Path:
     return resolved
 
 
+def _source_inventory_files(root: Path) -> dict[str, str]:
+    files: dict[str, str] = {}
+    for source_root in RUNTIME_LOCK_SOURCE_ROOTS:
+        base = root / source_root
+        if not base.is_dir():
+            raise ValueError(f"runtime lock source root is missing: {source_root}")
+        for path in sorted(base.rglob("*")):
+            if (
+                not path.is_file()
+                or path.suffix not in RUNTIME_LOCK_SOURCE_SUFFIXES
+                or "__pycache__" in path.parts
+            ):
+                continue
+            if path.is_symlink():
+                raise ValueError(f"runtime lock source symlink is forbidden: {path}")
+            relative = path.relative_to(root).as_posix()
+            files[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return files
+
+
+def _ast_symbols(node: ast.AST | None) -> set[str]:
+    if node is None:
+        return set()
+    return {
+        child.id
+        for child in ast.walk(node)
+        if isinstance(child, ast.Name)
+    }
+
+
+def _ast_has_canonical_literal(node: ast.AST | None) -> bool:
+    if node is None:
+        return False
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Constant) or not isinstance(child.value, str):
+            continue
+        value = child.value.strip()
+        if Path(value).name in _CANONICAL_PATH_LITERALS or value in {
+            "status_file",
+            "activity_log",
+            "state_file",
+            "event_queue",
+            "approval_queue",
+        }:
+            return True
+    return False
+
+
+def _assignment_taint(
+    tree: ast.AST,
+    inherited: set[str] | None = None,
+) -> set[str]:
+    tainted = set(inherited or set())
+    assignments: list[tuple[list[str], ast.AST | None]] = []
+    nodes: list[ast.AST] = []
+    stack = list(ast.iter_child_nodes(tree))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        nodes.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    for node in nodes:
+        if isinstance(node, ast.Assign):
+            targets = [
+                name.id
+                for target in node.targets
+                for name in ast.walk(target)
+                if isinstance(name, ast.Name)
+            ]
+            assignments.append((targets, node.value))
+        elif isinstance(node, ast.AnnAssign):
+            targets = [
+                name.id
+                for name in ast.walk(node.target)
+                if isinstance(name, ast.Name)
+            ]
+            assignments.append((targets, node.value))
+    changed = True
+    while changed:
+        changed = False
+        for targets, value in assignments:
+            if not targets:
+                continue
+            if _ast_has_canonical_literal(value) or _ast_symbols(value) & tainted:
+                for target in targets:
+                    if target not in tainted:
+                        tainted.add(target)
+                        changed = True
+    return tainted
+
+
+def _call_name(call: ast.Call) -> str:
+    function = call.func
+    if isinstance(function, ast.Name):
+        return function.id
+    if isinstance(function, ast.Attribute):
+        return function.attr
+    return ""
+
+
+def _write_mode(call: ast.Call, *, builtin_open: bool) -> bool:
+    mode_node: ast.AST | None = None
+    if builtin_open and len(call.args) >= 2:
+        mode_node = call.args[1]
+    elif not builtin_open and call.args:
+        mode_node = call.args[0]
+    for keyword in call.keywords:
+        if keyword.arg == "mode":
+            mode_node = keyword.value
+    if mode_node is None:
+        return False
+    if not isinstance(mode_node, ast.Constant) or not isinstance(mode_node.value, str):
+        return True
+    return any(marker in mode_node.value for marker in ("w", "a", "x", "+"))
+
+
+def _sink_target(call: ast.Call, tainted: set[str]) -> tuple[ast.AST | None, str] | None:
+    function = call.func
+    name = _call_name(call)
+    if isinstance(function, ast.Attribute):
+        receiver = function.value
+        if name == "open" and _write_mode(call, builtin_open=False):
+            if _ast_has_canonical_literal(receiver) or _ast_symbols(receiver) & tainted:
+                return receiver, "path.open(write)"
+        if name in _DIRECT_SINK_ATTRIBUTES:
+            if name in {"replace", "rename"}:
+                receiver_symbols = _ast_symbols(receiver)
+                if isinstance(receiver, ast.Call) or not any(
+                    marker in symbol.lower()
+                    for symbol in receiver_symbols
+                    for marker in ("path", "file", "status", "log", "queue", "state", "archive")
+                ):
+                    return None
+            if _ast_has_canonical_literal(receiver) or _ast_symbols(receiver) & tainted:
+                return receiver, f"path.{name}"
+        if name in {"replace", "rename", "copy", "copy2", "copyfile", "move"} and call.args:
+            destination = call.args[-1]
+            if _ast_has_canonical_literal(destination) or _ast_symbols(destination) & tainted:
+                return destination, name
+    if isinstance(function, ast.Name):
+        if name == "open" and call.args and _write_mode(call, builtin_open=True):
+            target = call.args[0]
+            if _ast_has_canonical_literal(target) or _ast_symbols(target) & tainted:
+                return target, "open(write)"
+        if name in _DIRECT_SINK_FUNCTIONS and call.args:
+            target = call.args[0]
+            if _ast_has_canonical_literal(target) or _ast_symbols(target) & tainted:
+                return target, name
+    return None
+
+
+def _python_writer_violations(root: Path, path: Path) -> list[dict[str, Any]]:
+    relative = path.relative_to(root).as_posix()
+    if (
+        relative in RUNTIME_LOCK_REQUIRED_WRITER_PATHS
+        or path.name.startswith("test_")
+        or "tests" in path.parts
+    ):
+        return []
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+    except (OSError, SyntaxError, UnicodeDecodeError) as exc:
+        return [
+            {
+                "path": relative,
+                "line": 0,
+                "sink": "source_parse",
+                "reason_id": f"writer_source_unreadable:{type(exc).__name__}",
+            }
+        ]
+    module_taint = _assignment_taint(tree)
+    parents: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+    scope_calls: dict[ast.AST, list[ast.Call]] = {tree: []}
+    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+        cursor: ast.AST | None = call
+        scope: ast.AST = tree
+        while cursor in parents:
+            cursor = parents[cursor]
+            if isinstance(cursor, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                scope = cursor
+                break
+        scope_calls.setdefault(scope, []).append(call)
+    violations: list[dict[str, Any]] = []
+    seen: set[tuple[int, str]] = set()
+    for scope, calls in scope_calls.items():
+        tainted = _assignment_taint(scope, module_taint)
+        guard_calls = [
+            call
+            for call in calls
+            if _call_name(call) in _CANONICAL_GUARD_FUNCTIONS and call.args
+        ]
+        for call in calls:
+            sink = _sink_target(call, tainted)
+            if sink is None:
+                continue
+            target, sink_name = sink
+            key = (int(getattr(call, "lineno", 0)), sink_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            target_symbols = _ast_symbols(target)
+            guarded = any(
+                int(getattr(guard, "lineno", 0)) < key[0]
+                and (
+                    bool(target_symbols & _ast_symbols(guard.args[0]))
+                    or (
+                        _ast_has_canonical_literal(target)
+                        and _ast_has_canonical_literal(guard.args[0])
+                    )
+                )
+                for guard in guard_calls
+            )
+            if guarded:
+                continue
+            violations.append(
+                {
+                    "path": relative,
+                    "line": key[0],
+                    "sink": sink_name,
+                    "reason_id": "unregistered_direct_canonical_write",
+                }
+            )
+    return sorted(
+        violations,
+        key=lambda item: (item["path"], item["line"], item["sink"]),
+    )
+
+
+def runtime_lock_source_inventory(root: str | Path) -> dict[str, Any]:
+    repository_root = Path(root).expanduser().resolve()
+    files = _source_inventory_files(repository_root)
+    violations: list[dict[str, Any]] = []
+    for relative in files:
+        path = repository_root / relative
+        if path.suffix == ".py":
+            violations.extend(_python_writer_violations(repository_root, path))
+        elif path.suffix == ".sh":
+            text = path.read_text(encoding="utf-8", errors="strict")
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                if (
+                    any(name in line for name in _CANONICAL_PATH_LITERALS)
+                    and any(
+                        marker in line
+                        for marker in (">", "tee ", "cp ", "mv ", "install ", "rsync ")
+                    )
+                ):
+                    violations.append(
+                        {
+                            "path": relative,
+                            "line": line_number,
+                            "sink": "shell_write",
+                            "reason_id": "unregistered_direct_canonical_write",
+                        }
+                    )
+    return {
+        "algorithm": "sha256(canonical-json(path-to-sha256))",
+        "roots": list(RUNTIME_LOCK_SOURCE_ROOTS),
+        "files": files,
+        "sha256": _canonical_sha256(files),
+        "writer_scanner_id": RUNTIME_LOCK_WRITER_SCANNER_ID,
+        "unregistered_direct_writers": sorted(
+            violations,
+            key=lambda item: (item["path"], item["line"], item["sink"]),
+        ),
+    }
+
+
 def _protected_verifier_policy(root: Path) -> dict[str, Any]:
     configured = str(
         os.environ.get("PANTHEON_RUNTIME_LOCK_VERIFIER_POLICY") or ""
@@ -933,6 +1239,73 @@ def _protected_verifier_policy(root: Path) -> dict[str, Any]:
     ):
         raise ValueError("protected verifier policy contract mismatch")
     return policy
+
+
+def _protected_checks_evidence(
+    *,
+    root: Path,
+    evidence_path: Path,
+    completion_evidence: dict[str, Any],
+    merge_sha: str,
+) -> dict[str, Any]:
+    checks_path = evidence_path.with_name("checks.json")
+    checks_body = checks_path.read_bytes()
+    if hashlib.sha256(checks_body).hexdigest() != completion_evidence.get(
+        "checks_sha256"
+    ):
+        raise ValueError("protected checks digest mismatch")
+    checks = _strict_json_object(checks_body, source=str(checks_path))
+    if set(checks) != {
+        "schema_version",
+        "protocol_id",
+        "task_id",
+        "source_inventory",
+        "writer_surface_verdict",
+        "validation_commands",
+    }:
+        raise ValueError("protected checks schema is not exact")
+    inventory = runtime_lock_source_inventory(root)
+    commands = checks.get("validation_commands")
+    if (
+        checks.get("schema_version") != 1
+        or checks.get("protocol_id") != RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID
+        or checks.get("task_id") != completion_evidence.get("task_id")
+        or checks.get("source_inventory") != inventory
+        or inventory.get("unregistered_direct_writers") != []
+        or checks.get("writer_surface_verdict") != "passed"
+        or not isinstance(commands, list)
+        or not commands
+        or any(
+            not isinstance(command, dict)
+            or set(command) != {"command", "conclusion", "result"}
+            or command.get("conclusion") != "passed"
+            or not str(command.get("command") or "").strip()
+            or not str(command.get("result") or "").strip()
+            for command in commands
+        )
+    ):
+        raise ValueError("protected checks contract mismatch")
+
+    def git_output(*arguments: str) -> bytes:
+        result = subprocess.run(
+            ["git", "-C", str(root), *arguments],
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise ValueError("protected checks git verification failed")
+        return result.stdout
+
+    head_sha = git_output("rev-parse", "HEAD").decode("ascii").strip()
+    if head_sha != merge_sha:
+        raise ValueError("protected checks require the exact merged checkout")
+    relative_checks = checks_path.relative_to(root).as_posix()
+    committed_checks = git_output("show", f"{merge_sha}:{relative_checks}")
+    if hashlib.sha256(committed_checks).hexdigest() != hashlib.sha256(
+        checks_body
+    ).hexdigest():
+        raise ValueError("protected checks merged blob mismatch")
+    return checks
 
 
 def verify_runtime_lock_capability(
@@ -1072,6 +1445,13 @@ def verify_runtime_lock_capability(
             or not _lower_hex(completion_evidence.get("checks_sha256"), 64)
         ):
             raise ValueError("capability evidence mismatch")
+
+        _protected_checks_evidence(
+            root=root,
+            evidence_path=evidence_path,
+            completion_evidence=completion_evidence,
+            merge_sha=merge_sha,
+        )
 
         policy = _protected_verifier_policy(root)
         if (

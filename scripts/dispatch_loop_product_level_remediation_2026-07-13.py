@@ -21,6 +21,17 @@ from typing import Any, Iterator
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+ORCHESTRATOR_DIR = REPO_ROOT / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+
+from common import (
+    activity_audit_source_paths_unlocked,
+    append_activity_log_entries_unlocked,
+    assert_activity_audit_stable_unlocked,
+    prepare_activity_audit_unlocked,
+)
+
 DEFAULT_CATALOG_PATH = (
     REPO_ROOT
     / "docs"
@@ -2217,33 +2228,19 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def activity_log_sources(*, since: datetime | None = None) -> list[Path]:
-    """Return rotated history followed by the active append-only log.
+    """Return disjoint rotated history followed by the active audit log."""
 
-    Both rotation implementations currently used by Pantheon retain an exact
-    tail in the next file.  Exact copies across different source files are
-    therefore valid, while duplicates within one source or conflicting uses of
-    one event ID are corruption and must stop recovery.
-    """
-
-    archives = sorted(
-        (STATUS_ROOT / "archive" / "logs").glob("ai-activity-log.jsonl-*.gz")
-    )
-    archives.extend(
-        sorted(
-            (STATUS_ROOT / ".orchestrator" / "logs" / "activity-log-archive").glob(
-                "ai-activity-log-*.jsonl.gz"
-            )
-        )
-    )
+    sources = activity_audit_source_paths_unlocked(LOG_PATH)
     if since is not None:
         # A pending event cannot have been rotated into an archive created
         # before its own bound timestamp.  Use a small filesystem timestamp
         # grace instead of re-reading years of unrelated compressed history.
         cutoff = since.timestamp() - 300
-        archives = [path for path in archives if path.stat().st_mtime >= cutoff]
-    sources = archives
-    if LOG_PATH.is_file():
-        sources.append(LOG_PATH)
+        sources = [
+            path
+            for path in sources
+            if path == LOG_PATH or path.stat().st_mtime >= cutoff
+        ]
     return sources
 
 
@@ -2304,9 +2301,14 @@ def activity_event_index(*, since: datetime | None = None) -> dict[str, str]:
             source_ids.add(event_id)
             payload_digest = canonical_json_sha256(entry)
             previous_digest = event_payloads.get(event_id)
-            if previous_digest is not None and previous_digest != payload_digest:
+            if previous_digest is not None:
+                detail = (
+                    "conflicting"
+                    if previous_digest != payload_digest
+                    else "duplicate"
+                )
                 raise DispatchError(
-                    f"conflicting activity audit event_id {event_id} across rotated logs"
+                    f"{detail} activity audit event_id {event_id} across rotated logs"
                 )
             event_payloads[event_id] = payload_digest
     return event_payloads
@@ -2345,23 +2347,7 @@ def parse_activity_timestamp(raw: Any) -> datetime:
 
 
 def append_logs(entries: list[dict[str, Any]]) -> None:
-    if not entries:
-        return
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with LOG_PATH.open("a+b") as handle:
-        handle.seek(0, os.SEEK_END)
-        if handle.tell() > 0:
-            handle.seek(-1, os.SEEK_END)
-            if handle.read(1) != b"\n":
-                handle.seek(0, os.SEEK_END)
-                handle.write(b"\n")
-        handle.seek(0, os.SEEK_END)
-        for entry in entries:
-            handle.write(
-                (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8")
-            )
-        handle.flush()
-        os.fsync(handle.fileno())
+    append_activity_log_entries_unlocked(LOG_PATH, entries)
 
 
 def build_affected_state_projection(
@@ -3593,6 +3579,10 @@ def main() -> int:
         catalog,
         shared=bool(args.dry_run),
     ):
+        if args.dry_run:
+            assert_activity_audit_stable_unlocked(LOG_PATH)
+        else:
+            prepare_activity_audit_unlocked(LOG_PATH)
         original_signature = file_signature(STATUS_PATH)
         state = read_json(STATUS_PATH)
         pending = state.get("program_activity_outbox")

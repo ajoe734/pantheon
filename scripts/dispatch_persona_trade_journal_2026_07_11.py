@@ -8,6 +8,8 @@ import json
 import os
 from pathlib import Path
 
+from canonical_writer_guard import assert_isolated_legacy_write_target
+
 ROOT = Path(__file__).resolve().parents[1]
 STATUS_ROOT = Path(os.path.expanduser(os.environ.get("PANTHEON_STATUS_ROOT", str(ROOT)))).resolve()
 STATUS = STATUS_ROOT / "ai-status.json"
@@ -71,7 +73,9 @@ def main() -> int:
         print(json.dumps({"would_add": added, "status": str(STATUS)}, ensure_ascii=False))
         return 0
     state["updated_at"] = stamp
+    assert_isolated_legacy_write_target(STATUS, tool=Path(__file__).name)
     STATUS.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    assert_isolated_legacy_write_target(LOG, tool=Path(__file__).name)
     with LOG.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps({"timestamp": stamp, "type": "execution_tasks_materialized", "actor": AUTO_BY, "task_ids": added, "source_ref": {"doc": SPEC, "packet": PACKET}}, ensure_ascii=False) + "\n")
     print(json.dumps({"added": added, "status": str(STATUS)}, ensure_ascii=False))

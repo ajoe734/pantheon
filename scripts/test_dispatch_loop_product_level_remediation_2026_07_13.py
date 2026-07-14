@@ -935,6 +935,39 @@ def test_activity_outbox_deduplicates_crash_after_log_append() -> None:
         assert len({record["event_id"] for record in records}) == 49
 
 
+def test_activity_outbox_repairs_interrupted_tail_then_replays_once() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        interrupted = run_dispatch(
+            root,
+            extra_env={"LOOP_PRODUCT_DISPATCH_FAIL_AFTER_STATUS_COMMIT": "1"},
+        )
+        assert interrupted.returncode == 2
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        events = state["program_activity_outbox"]["events"]
+        (root / "ai-activity-log.jsonl").write_bytes(
+            (json.dumps(events[0], ensure_ascii=False) + "\n").encode("utf-8")
+            + b'{"event_id":"interrupted-tail"'
+        )
+
+        recovered = run_dispatch(root)
+
+        assert recovered.returncode == 0, recovered.stderr
+        after = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        assert after["program_activity_outbox"] is None
+        rows = [
+            json.loads(line)
+            for line in (root / "ai-activity-log.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert len(rows) == len(events)
+        assert {row["event_id"] for row in rows} == {
+            event["event_id"] for event in events
+        }
+
+
 def test_activity_outbox_same_id_different_payload_retains_outbox() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
@@ -1116,7 +1149,7 @@ def test_activity_outbox_recovery_rejects_corrupt_active_audit_log(
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
 
-def test_activity_outbox_deduplicates_exact_events_across_rotated_history() -> None:
+def test_activity_outbox_rejects_exact_duplicates_across_rotated_history() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         prepare_status(root)
@@ -1138,9 +1171,10 @@ def test_activity_outbox_deduplicates_exact_events_across_rotated_history() -> N
 
         recovered = run_dispatch(root)
 
-        assert recovered.returncode == 0, recovered.stderr
+        assert recovered.returncode == 2
+        assert "duplicate activity audit event_id" in recovered.stderr
         after = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
-        assert after["program_activity_outbox"] is None
+        assert after["program_activity_outbox"] is not None
         assert (root / "ai-activity-log.jsonl").read_text(encoding="utf-8") == body
 
 

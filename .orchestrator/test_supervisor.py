@@ -8648,7 +8648,11 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
         self.assertEqual(task["last_update"], "2026-04-15T16:09:52Z")
         self.assertIn("returned to todo until a fresh run restarts it", task["next"])
         write_json.assert_called_once()
-        self.assertEqual(write_activity_log.call_args.args[1]["type"], "task_preempted_synced")
+        self.assertEqual(
+            status["status_activity_outbox"]["events"][0]["type"],
+            "task_preempted_synced",
+        )
+        write_activity_log.assert_not_called()
 
     def test_sync_preempted_finalize_task_keeps_review_approved(self) -> None:
         config = {
@@ -8689,7 +8693,11 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
         self.assertEqual(task["last_update"], "2026-04-15T16:09:52Z")
         self.assertIn("task remains review_approved", task["next"])
         write_json.assert_called_once()
-        self.assertEqual(write_activity_log.call_args.args[1]["type"], "task_preempted_synced")
+        self.assertEqual(
+            status["status_activity_outbox"]["events"][0]["type"],
+            "task_preempted_synced",
+        )
+        write_activity_log.assert_not_called()
 
     def test_reassigns_finalize_task_to_new_owner_after_repeated_failure(self) -> None:
         config = {

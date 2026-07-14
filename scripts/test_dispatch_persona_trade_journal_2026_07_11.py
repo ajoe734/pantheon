@@ -14,7 +14,11 @@ def test_dispatch_is_idempotent_and_disables_live_orders():
         root = Path(tmp)
         (root / "ai-status.json").write_text('{"tasks": []}\n', encoding="utf-8")
         (root / "ai-activity-log.jsonl").write_text("", encoding="utf-8")
-        env = {**os.environ, "PANTHEON_STATUS_ROOT": tmp}
+        env = {
+            **os.environ,
+            "PANTHEON_STATUS_ROOT": tmp,
+            "PANTHEON_ALLOW_ISOLATED_LEGACY_WRITES": "1",
+        }
         subprocess.run(["python3", str(SCRIPT)], check=True, env=env, capture_output=True, text=True)
         subprocess.run(["python3", str(SCRIPT)], check=True, env=env, capture_output=True, text=True)
         state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))

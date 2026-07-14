@@ -22,8 +22,6 @@ from pathlib import Path
 from threading import local
 from typing import Any, Mapping
 
-from task_archive import TaskResolver
-
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 TASK_BRIEFS_DIR = ORCHESTRATOR_DIR / "task-briefs"
@@ -645,7 +643,12 @@ def render_template(path: Path, variables: dict[str, Any]) -> str:
 
 
 ACTIVITY_LOG_ROTATE_BYTES_DEFAULT = 50 * 1024 * 1024  # 50 MiB
-ACTIVITY_LOG_ARCHIVE_SUBDIR = Path(".orchestrator") / "logs" / "activity-log-archive"
+ACTIVITY_LOG_ARCHIVE_SUBDIR = Path("archive") / "logs"
+ACTIVITY_LOG_LEGACY_ARCHIVE_SUBDIR = (
+    Path(".orchestrator") / "logs" / "activity-log-archive"
+)
+ACTIVITY_LOG_ROTATION_SUBDIR = Path(".orchestrator") / "logs" / "activity-rotation"
+ACTIVITY_LOG_ROTATION_SCHEMA_VERSION = 1
 
 
 def _activity_log_rotate_threshold(config: dict[str, Any]) -> int:
@@ -657,34 +660,444 @@ def _activity_log_rotate_threshold(config: dict[str, Any]) -> int:
     return threshold if threshold > 0 else ACTIVITY_LOG_ROTATE_BYTES_DEFAULT
 
 
-def _rotate_activity_log_if_needed(config: dict[str, Any], log_path: Path) -> None:
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
     try:
-        size = log_path.stat().st_size
-    except FileNotFoundError:
-        return
-    if size <= _activity_log_rotate_threshold(config):
-        return
-    archive_dir = log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    archive_path = archive_dir / f"{log_path.stem}-{stamp}.jsonl.gz"
-    counter = 1
-    while archive_path.exists():
-        archive_path = archive_dir / f"{log_path.stem}-{stamp}-{counter}.jsonl.gz"
-        counter += 1
-    rotating_path = log_path.with_suffix(log_path.suffix + ".rotating")
-    try:
-        os.replace(log_path, rotating_path)
-    except FileNotFoundError:
-        return
-    try:
-        with rotating_path.open("rb") as src, gzip.open(archive_path, "wb") as dst:
-            shutil.copyfileobj(src, dst, length=1024 * 1024)
+        os.fsync(descriptor)
     finally:
+        os.close(descriptor)
+
+
+def durable_write_bytes(path: Path, payload: bytes) -> None:
+    """Atomically replace one file and durably publish its directory entry."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+        _fsync_directory(path.parent)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _durable_write_gzip(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "wb") as raw:
+            with gzip.GzipFile(
+                filename="",
+                mode="wb",
+                fileobj=raw,
+                mtime=0,
+            ) as compressed:
+                compressed.write(payload)
+            raw.flush()
+            os.fsync(raw.fileno())
+        os.replace(temp_path, path)
+        _fsync_directory(path.parent)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _activity_rotation_dir(log_path: Path) -> Path:
+    return log_path.parent / ACTIVITY_LOG_ROTATION_SUBDIR
+
+
+def activity_rotation_intent_path(log_path: Path) -> Path:
+    return _activity_rotation_dir(log_path) / f"{log_path.name}.intent.json"
+
+
+def _canonical_json_sha256(payload: Any) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _activity_rotation_fault(point: str) -> None:
+    """Process-test-only SIGKILL seam used to prove restart convergence."""
+
+    requested = str(
+        os.environ.get("LOOP_TEST_ACTIVITY_ROTATION_SIGKILL_AFTER") or ""
+    ).strip()
+    if requested == point:
+        os.kill(os.getpid(), 9)
+
+
+def _validated_activity_rotation_intent(
+    log_path: Path,
+    payload: Any,
+) -> dict[str, Any]:
+    required = {
+        "schema_version",
+        "transaction_id",
+        "log_name",
+        "source_sha256",
+        "archive_sha256",
+        "tail_sha256",
+        "archive_relative_path",
+    }
+    if not isinstance(payload, dict) or set(payload) != required:
+        raise RuntimeError("activity rotation intent schema is not exact")
+    seed = {key: payload[key] for key in sorted(required - {"transaction_id"})}
+    expected_id = "activity-rotation-" + _canonical_json_sha256(seed)
+    if (
+        payload.get("schema_version") != ACTIVITY_LOG_ROTATION_SCHEMA_VERSION
+        or payload.get("transaction_id") != expected_id
+        or payload.get("log_name") != log_path.name
+        or any(
+            not isinstance(payload.get(key), str)
+            or len(str(payload[key])) != 64
+            for key in ("source_sha256", "archive_sha256", "tail_sha256")
+        )
+    ):
+        raise RuntimeError("activity rotation intent contract is invalid")
+    relative = Path(str(payload.get("archive_relative_path") or ""))
+    if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+        raise RuntimeError("activity rotation archive path is invalid")
+    archive_path = (log_path.parent / relative).resolve()
+    try:
+        archive_path.relative_to(log_path.parent.resolve())
+    except ValueError as exc:
+        raise RuntimeError("activity rotation archive escapes status root") from exc
+    return payload
+
+
+def _load_activity_rotation_intent(log_path: Path) -> dict[str, Any] | None:
+    path = activity_rotation_intent_path(log_path)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("activity rotation intent is unreadable") from exc
+    return _validated_activity_rotation_intent(log_path, payload)
+
+
+def _activity_rotation_stage_paths(
+    log_path: Path,
+    transaction_id: str,
+) -> tuple[Path, Path]:
+    root = _activity_rotation_dir(log_path)
+    return (
+        root / f"{transaction_id}.archive.gz",
+        root / f"{transaction_id}.tail",
+    )
+
+
+def _read_gzip_bytes(path: Path) -> bytes:
+    with gzip.open(path, "rb") as handle:
+        return handle.read()
+
+
+def recover_activity_log_rotation_unlocked(log_path: Path) -> Path | None:
+    """Finish a durable archive/tail transaction while audit EX is held."""
+
+    log_path = log_path.expanduser().resolve()
+    intent = _load_activity_rotation_intent(log_path)
+    if intent is None:
+        return None
+    transaction_id = str(intent["transaction_id"])
+    stage_archive, stage_tail = _activity_rotation_stage_paths(
+        log_path,
+        transaction_id,
+    )
+    archive_path = (
+        log_path.parent / str(intent["archive_relative_path"])
+    ).resolve()
+
+    try:
+        tail = stage_tail.read_bytes()
+    except OSError as exc:
+        raise RuntimeError("activity rotation tail stage is missing") from exc
+    if hashlib.sha256(tail).hexdigest() != intent["tail_sha256"]:
+        raise RuntimeError("activity rotation tail stage digest mismatch")
+
+    if stage_archive.is_file():
         try:
-            rotating_path.unlink()
-        except FileNotFoundError:
-            pass
+            archive_payload = _read_gzip_bytes(stage_archive)
+        except (OSError, EOFError, gzip.BadGzipFile) as exc:
+            raise RuntimeError("activity rotation archive stage is unreadable") from exc
+    elif archive_path.is_file():
+        try:
+            archive_payload = _read_gzip_bytes(archive_path)
+        except (OSError, EOFError, gzip.BadGzipFile) as exc:
+            raise RuntimeError("activity rotation archive is unreadable") from exc
+    else:
+        raise RuntimeError("activity rotation archive stage is missing")
+    if hashlib.sha256(archive_payload).hexdigest() != intent["archive_sha256"]:
+        raise RuntimeError("activity rotation archive digest mismatch")
+    if hashlib.sha256(archive_payload + tail).hexdigest() != intent["source_sha256"]:
+        raise RuntimeError("activity rotation source partition digest mismatch")
+
+    if archive_path.exists():
+        try:
+            installed_archive = _read_gzip_bytes(archive_path)
+        except (OSError, EOFError, gzip.BadGzipFile) as exc:
+            raise RuntimeError("activity rotation installed archive is unreadable") from exc
+        if installed_archive != archive_payload:
+            raise RuntimeError("activity rotation installed archive conflicts")
+    else:
+        _durable_write_gzip(archive_path, archive_payload)
+    _activity_rotation_fault("archive")
+
+    try:
+        active = log_path.read_bytes()
+    except FileNotFoundError:
+        active = None
+    except OSError as exc:
+        raise RuntimeError("activity log is unreadable during recovery") from exc
+    active_digest = hashlib.sha256(active).hexdigest() if active is not None else None
+    if active_digest == intent["source_sha256"] or active is None:
+        durable_write_bytes(log_path, tail)
+    elif active_digest != intent["tail_sha256"]:
+        raise RuntimeError("activity log changed during rotation recovery")
+    _activity_rotation_fault("tail")
+
+    if log_path.read_bytes() != tail:
+        raise RuntimeError("activity rotation tail readback mismatch")
+    if _read_gzip_bytes(archive_path) != archive_payload:
+        raise RuntimeError("activity rotation archive readback mismatch")
+
+    intent_path = activity_rotation_intent_path(log_path)
+    intent_path.unlink(missing_ok=True)
+    stage_archive.unlink(missing_ok=True)
+    stage_tail.unlink(missing_ok=True)
+    _fsync_directory(intent_path.parent)
+    return archive_path
+
+
+def prepare_activity_audit_unlocked(log_path: Path) -> None:
+    """Recover rotation and one interrupted, non-newline append under audit EX."""
+
+    recover_activity_log_rotation_unlocked(log_path)
+    repair_activity_log_tail_unlocked(log_path)
+
+
+def assert_activity_audit_stable_unlocked(log_path: Path) -> None:
+    """Fail closed when a shared reader observes unfinished writer recovery."""
+
+    if activity_rotation_intent_path(log_path).exists():
+        raise RuntimeError("activity rotation recovery is pending")
+    if log_path.is_file():
+        data = log_path.read_bytes()
+        if data and not data.endswith(b"\n"):
+            raise RuntimeError("activity audit has an interrupted trailing row")
+
+
+def repair_activity_log_tail_unlocked(log_path: Path) -> bool:
+    """Repair only a non-newline tail; complete malformed rows remain fatal."""
+
+    try:
+        data = log_path.read_bytes()
+    except FileNotFoundError:
+        return False
+    if not data or data.endswith(b"\n"):
+        return False
+    split_at = data.rfind(b"\n")
+    prefix = data[: split_at + 1] if split_at >= 0 else b""
+    fragment = data[split_at + 1 :]
+    try:
+        decoded = fragment.decode("utf-8")
+        parsed = json.loads(decoded)
+        complete = isinstance(parsed, dict)
+    except (UnicodeError, json.JSONDecodeError):
+        complete = False
+    repaired = data + b"\n" if complete else prefix
+    durable_write_bytes(log_path, repaired)
+    return True
+
+
+def rotate_activity_log_unlocked(
+    log_path: Path,
+    *,
+    max_bytes: int,
+    keep_lines: int = 0,
+    archive_dir: Path | None = None,
+) -> Path | None:
+    """Durably partition active bytes into one archive and one active tail."""
+
+    log_path = log_path.expanduser().resolve()
+    prepare_activity_audit_unlocked(log_path)
+    if max_bytes <= 0:
+        return None
+    try:
+        data = log_path.read_bytes()
+    except FileNotFoundError:
+        return None
+    if len(data) <= max_bytes:
+        return None
+    if keep_lines > 0:
+        lines = data.splitlines(keepends=True)
+        if len(lines) > keep_lines:
+            archive_payload = b"".join(lines[:-keep_lines])
+            tail = b"".join(lines[-keep_lines:])
+        else:
+            archive_payload = data
+            tail = b""
+    else:
+        archive_payload = data
+        tail = b""
+    if not archive_payload:
+        return None
+
+    archive_digest = hashlib.sha256(archive_payload).hexdigest()
+    archive_dir = (
+        archive_dir.expanduser().resolve()
+        if archive_dir is not None
+        else (log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR).resolve()
+    )
+    try:
+        archive_relative = archive_dir.relative_to(log_path.parent)
+    except ValueError as exc:
+        raise RuntimeError("activity archive directory escapes status root") from exc
+    archive_path = archive_dir / f"{log_path.name}-{archive_digest}.gz"
+    seed = {
+        "schema_version": ACTIVITY_LOG_ROTATION_SCHEMA_VERSION,
+        "log_name": log_path.name,
+        "source_sha256": hashlib.sha256(data).hexdigest(),
+        "archive_sha256": archive_digest,
+        "tail_sha256": hashlib.sha256(tail).hexdigest(),
+        "archive_relative_path": str(archive_relative / archive_path.name),
+    }
+    transaction_id = "activity-rotation-" + _canonical_json_sha256(seed)
+    intent = {**seed, "transaction_id": transaction_id}
+    rotation_dir = _activity_rotation_dir(log_path)
+    rotation_dir.mkdir(parents=True, exist_ok=True)
+    stage_archive, stage_tail = _activity_rotation_stage_paths(
+        log_path,
+        transaction_id,
+    )
+    _durable_write_gzip(stage_archive, archive_payload)
+    durable_write_bytes(stage_tail, tail)
+    write_json(activity_rotation_intent_path(log_path), intent)
+    _activity_rotation_fault("intent")
+    return recover_activity_log_rotation_unlocked(log_path)
+
+
+def _rotate_activity_log_if_needed(
+    config: dict[str, Any],
+    log_path: Path,
+) -> Path | None:
+    return rotate_activity_log_unlocked(
+        log_path,
+        max_bytes=_activity_log_rotate_threshold(config),
+        keep_lines=0,
+    )
+
+
+def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
+    """Return disjoint rotated sources plus active while audit SH/EX is held."""
+
+    log_path = log_path.expanduser().resolve()
+    assert_activity_audit_stable_unlocked(log_path)
+    sources = sorted(
+        (log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR).glob(
+            f"{log_path.name}-*.gz"
+        )
+    )
+    sources.extend(
+        sorted(
+            (log_path.parent / ACTIVITY_LOG_LEGACY_ARCHIVE_SUBDIR).glob(
+                f"{log_path.stem}-*.jsonl.gz"
+            )
+        )
+    )
+    if log_path.is_file():
+        sources.append(log_path)
+    return sources
+
+
+def append_activity_log_entries_unlocked(
+    log_path: Path,
+    entries: list[dict[str, Any]],
+    *,
+    rotate_bytes: int | None = None,
+    keep_lines: int = 0,
+) -> None:
+    """Recover, optionally rotate, and durably append while audit EX is held."""
+
+    log_path = log_path.expanduser().resolve()
+    prepare_activity_audit_unlocked(log_path)
+    if rotate_bytes is not None:
+        rotate_activity_log_unlocked(
+            log_path,
+            max_bytes=rotate_bytes,
+            keep_lines=keep_lines,
+        )
+    if not entries:
+        return
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    created = not log_path.exists()
+    with log_path.open("ab") as handle:
+        for entry in entries:
+            handle.write(
+                (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8")
+            )
+        handle.flush()
+        os.fsync(handle.fileno())
+    if created:
+        _fsync_directory(log_path.parent)
+
+
+def _tail_bytes_unlocked(path: Path, max_lines: int | None) -> bytes | None:
+    if not path.exists():
+        return None
+    if max_lines is None or max_lines <= 0:
+        return path.read_bytes()
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        position = handle.tell()
+        buffer = bytearray()
+        line_count = 0
+        while position > 0 and line_count <= max_lines:
+            read_size = min(1 << 16, position)
+            position -= read_size
+            handle.seek(position)
+            buffer[0:0] = handle.read(read_size)
+            line_count = buffer.count(b"\n")
+    tail = bytes(buffer)
+    if line_count > max_lines:
+        split_at = -1
+        for _ in range(line_count - max_lines):
+            split_at = tail.find(b"\n", split_at + 1)
+            if split_at < 0:
+                break
+        if split_at >= 0:
+            tail = tail[split_at + 1 :]
+    return tail
+
+
+def read_activity_log_tail_bytes(
+    log_path: Path,
+    *,
+    max_lines: int | None,
+) -> bytes | None:
+    """Recover under EX, then return one consistent active-tail snapshot under SH."""
+
+    with activity_audit_lock_file(log_path, shared=False, nonblocking=False):
+        prepare_activity_audit_unlocked(log_path)
+    with activity_audit_lock_file(log_path, shared=True, nonblocking=False):
+        assert_activity_audit_stable_unlocked(log_path)
+        return _tail_bytes_unlocked(log_path, max_lines)
 
 
 def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
@@ -695,8 +1108,12 @@ def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
     }
     log_path = config_path(config, "activity_log")
     with activity_audit_lock_file(log_path, shared=False, nonblocking=False):
-        _rotate_activity_log_if_needed(config, log_path)
-        append_jsonl(log_path, payload)
+        append_activity_log_entries_unlocked(
+            log_path,
+            [payload],
+            rotate_bytes=_activity_log_rotate_threshold(config),
+            keep_lines=0,
+        )
 
 
 def runtime_log_path(prefix: str, target: str) -> Path:
@@ -993,6 +1410,8 @@ def _recent_task_activity(config: dict[str, Any], task_id: str, *, limit: int = 
 
 
 def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None:
+    from task_archive import TaskResolver
+
     if not task_id:
         return None
     status = load_status(config)
