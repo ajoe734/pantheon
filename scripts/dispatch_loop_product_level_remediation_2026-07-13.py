@@ -392,10 +392,10 @@ EXPECTED_DISPATCH_PREREQUISITE = {
         "fixtures/runtime-lock-bootstrap-task.v1.json"
     ),
     "task_contract_fixture_sha256": (
-        "f8e703856cfd907ae0b04efcb483107cf19c879c87cc7717539a679d39dec8db"
+        "eee36ad3bf27375805bcaf8379117cf409a00d039d8dde8c0387754961ee17a2"
     ),
     "task_contract_sha256": (
-        "ba34ce0a5ed90ac21c63d8d89e345550cae565a33e4a9d083883daa36e2e48fd"
+        "04f382e320292e11df3b4668ec4383819b9c9abadcc48f3b9150a7abcb65141e"
     ),
     "required_status": "done",
     "must_preexist_primary_materialization": True,
@@ -415,6 +415,7 @@ EXPECTED_DISPATCH_PREREQUISITE = {
             "tasks_runtime_admission_guard",
             "canonical_task_state_lock_file",
             "activity_audit_lock_file",
+            "verify_runtime_lock_capability",
         ],
         "shared_read_supported": True,
         "admission_decision_contract": {
@@ -1804,11 +1805,15 @@ def load_runtime_lock_protocol(catalog: dict[str, Any]) -> ModuleType:
     protocol = catalog["dispatch_prerequisite"]["protocol"]
     manifest_path = STATUS_ROOT / protocol["capability_manifest"]
     try:
-        manifest = read_json(manifest_path)
-    except DispatchError as exc:
-        if str(exc).startswith("JSON file not found:"):
-            raise DispatchError("runtime lock capability manifest is missing") from exc
-        raise
+        manifest_raw = manifest_path.read_bytes()
+    except FileNotFoundError as exc:
+        raise DispatchError("runtime lock capability manifest is missing") from exc
+    except OSError as exc:
+        raise DispatchError("runtime lock capability manifest is unreadable") from exc
+    manifest = strict_json_loads(manifest_raw, source=str(manifest_path))
+    if not isinstance(manifest, dict):
+        raise DispatchError("runtime lock capability manifest must be an object")
+    manifest_sha256 = sha256_bytes(manifest_raw)
     required_keys = set(protocol["capability_manifest_required_fields"])
     if set(manifest) != required_keys:
         raise DispatchError("runtime lock capability manifest schema is not exact")
@@ -1911,6 +1916,14 @@ def load_runtime_lock_protocol(catalog: dict[str, Any]) -> ModuleType:
         "worker_runtime_identity",
         "reviewer_runtime_identity",
         "checks_sha256",
+        "verdict_id",
+        "verifier_capability_sha256",
+        "signature_algorithm",
+        "key_id",
+        "policy_version",
+        "signature",
+        "revocation_checked_at",
+        "ledger_entry_id",
     }:
         raise DispatchError("runtime lock bootstrap completion evidence schema is not exact")
     if (
@@ -1924,8 +1937,24 @@ def load_runtime_lock_protocol(catalog: dict[str, Any]) -> ModuleType:
         or evidence.get("worker_runtime_identity")
         == evidence.get("reviewer_runtime_identity")
         or not _is_lower_hex(evidence.get("checks_sha256"), 64)
+        or evidence.get("verifier_capability_sha256")
+        != writers.get(str(manifest["module_path"]))
+        or evidence.get("signature_algorithm") != "ed25519"
+        or any(
+            not isinstance(evidence.get(field), str)
+            or not str(evidence[field]).strip()
+            for field in (
+                "verdict_id",
+                "key_id",
+                "policy_version",
+                "signature",
+                "revocation_checked_at",
+                "ledger_entry_id",
+            )
+        )
     ):
         raise DispatchError("runtime lock bootstrap completion evidence is not exact")
+    parse_activity_timestamp(evidence["revocation_checked_at"])
 
     repository_root = Path(
         _git_output(STATUS_ROOT, "rev-parse", "--show-toplevel")
@@ -1975,6 +2004,51 @@ def load_runtime_lock_protocol(catalog: dict[str, Any]) -> ModuleType:
     for api_name in protocol["required_api"]:
         if not callable(getattr(module, api_name, None)):
             raise DispatchError(f"runtime lock protocol API is missing: {api_name}")
+    try:
+        verification = module.verify_runtime_lock_capability(
+            manifest=deepcopy(manifest),
+            manifest_sha256=manifest_sha256,
+            writer_registry=deepcopy(registry),
+            completion_evidence=deepcopy(evidence),
+            repository_root=str(STATUS_ROOT),
+        )
+    except Exception as exc:
+        raise DispatchError(
+            "runtime lock protected capability verifier failed: "
+            f"{type(exc).__name__}"
+        ) from exc
+    expected_verification = {
+        "schema_version": 1,
+        "protocol_id": protocol["protocol_id"],
+        "allowed": True,
+        "reason_id": "verified",
+        "manifest_sha256": manifest_sha256,
+        "writer_registry_sha256": str(registry_digest),
+        "completion_evidence_sha256": str(evidence_digest),
+        "merged_commit_sha": str(merge_sha),
+    }
+    if verification != expected_verification:
+        raise DispatchError(
+            "runtime lock protected capability verifier decision is not exact"
+        )
+    try:
+        if sha256_bytes(manifest_path.read_bytes()) != manifest_sha256:
+            raise DispatchError("runtime lock capability manifest changed during validation")
+        if sha256_bytes((STATUS_ROOT / registry_path).read_bytes()) != registry_digest:
+            raise DispatchError("runtime lock writer registry changed during validation")
+        if sha256_bytes((STATUS_ROOT / evidence_path).read_bytes()) != evidence_digest:
+            raise DispatchError(
+                "runtime lock bootstrap completion evidence changed during validation"
+            )
+        for writer_path, expected_digest in writers.items():
+            if sha256_bytes((STATUS_ROOT / writer_path).read_bytes()) != expected_digest:
+                raise DispatchError(
+                    f"runtime lock capability writer changed during validation: {writer_path}"
+                )
+    except OSError as exc:
+        raise DispatchError(
+            "runtime lock capability binding became unreadable during validation"
+        ) from exc
     return module
 
 

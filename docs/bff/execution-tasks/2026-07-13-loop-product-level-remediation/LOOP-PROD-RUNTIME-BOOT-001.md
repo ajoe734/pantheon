@@ -5,7 +5,7 @@ Status: pre-dispatch external prerequisite
 Program:
 `loop-product-level-remediation-2026-07-13`
 
-Canonical contract SHA-256: `ba34ce0a5ed90ac21c63d8d89e345550cae565a33e4a9d083883daa36e2e48fd`
+Canonical contract SHA-256: `04f382e320292e11df3b4668ec4383819b9c9abadcc48f3b9150a7abcb65141e`
 
 Plan:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_GAP_ADDENDUM_2026-07-13.md`
@@ -58,10 +58,10 @@ transaction so the unsafe transaction is never used to bootstrap its own lock.
 - every `ai-status.json` writer, including `scripts/ai_status.py`, supervisor reassignment/finalization, archive transitions, and the loop dispatcher, uses the same never-replaced `.orchestrator/task-state.lock` inode
 - every append, scan, rotation, prune, recovery, and replay of `ai-activity-log.jsonl` and its rotated archives uses the same never-replaced `.orchestrator/activity-audit.lock` inode
 - one strict multi-task guard holds runtime serialization across queue, worker, execution-admission, and pending-approval inspection and across the nested task-state transaction
-- the guard parses each canonical runtime, queue, approval, task, and audit source with exact schemas and returns exactly one decision containing the protocol version, lock mode, ordered task IDs, ordered source digests, aggregate snapshot digest, exact conflict records, and stable reason ID; byte-substring scans and default-empty fallbacks are forbidden
-- missing, empty, malformed, unreadable, wrong-version, or default-substituted runtime state, event queue, approval queue, task state, or audit source fails closed
+- the runtime guard parses the canonical runtime, event-queue, and approval-queue sources with exact schemas and returns exactly one decision containing the protocol version, lock mode, ordered task IDs, ordered source digests, aggregate snapshot digest, exact conflict records, and stable reason ID; the dispatcher separately parses task and audit schemas under the next two ordered locks before acting, and byte-substring scans or default-empty fallbacks are forbidden
+- missing, empty, malformed, unreadable, wrong-version, or default-substituted runtime state, event queue, approval queue, or task state fails closed; a present activity source is parsed strictly, while a genuinely pre-dispatch empty append-only audit is valid only when exact outbox preflight also finds no conflicting event
 - queued, running, admitted, approval-suspended, duplicate, empty, or foreign task IDs fail closed with exact reason IDs and no canonical write
-- the capability manifest and exhaustive writer registry bind every registered writer blob, the executing dispatcher bytes, bootstrap completion evidence, and `dev` ancestry to the same exact merged commit; a locally fabricated, format-valid, or self-reported manifest is rejected
+- the capability manifest and exhaustive writer registry bind every registered writer blob, the executing dispatcher bytes, a signed bootstrap completion verdict with exact verifier capability, key, policy, revocation check, and protected ledger identity, a protected `verify_runtime_lock_capability` decision, and `dev` ancestry to the same exact merged commit; a locally fabricated, format-valid, or self-reported manifest is rejected
 - each registered helper holds its stable sidecar across the complete load, validation, mutation, fsync, replace/append/rotation, and readback transaction; repository tests reject unregistered direct canonical writes
 - post-`os.replace` contenders remain serialized by stable sidecars; deterministic process-level tests reproduce the old inode race and prove the second transaction cannot cross it
 - crash, kill, restart, concurrent enqueue, concurrent status write, log rotation, and outbox recovery tests preserve the newest task/runtime/audit truth without lost or duplicated events
@@ -73,7 +73,7 @@ transaction so the unsafe transaction is never used to bootstrap its own lock.
 - lock-order trace and process-level contention evidence for all three stable lock files
 - strict malformed/missing/runtime-busy matrix and no-write hashes
 - exact decision-schema/source-digest/conflict/reason-ID mutation matrix
-- merged-commit ancestry, writer-blob, executing-dispatcher, capability-manifest, and exhaustive writer-registry evidence
+- merged-commit ancestry, writer-blob, executing-dispatcher, capability-manifest, exhaustive writer-registry, signed verdict/key/policy/revocation/ledger, and protected verifier-decision evidence
 - concurrent enqueue/status/outbox/rotation crash matrix
 - canonical live dry-run before/after hashes bound to the merged bootstrap SHA
 - redacted checksummed evidence manifest and residual-risk verdict

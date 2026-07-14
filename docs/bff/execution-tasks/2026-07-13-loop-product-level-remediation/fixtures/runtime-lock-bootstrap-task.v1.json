@@ -33,9 +33,9 @@
       "exports exact protocol version 1 and rejects missing, partial, older, newer, or writer-digest-mismatched capability",
       "acquires runtime admission, canonical task state, and activity audit locks in that exact order using never-replaced stable inodes",
       "serializes every runtime queue/event, worker admission, approval, supervisor status, archive, audit append, scan, rotation, prune, replay, and outbox recovery writer",
-      "returns one exact schema-checked admission decision with ordered per-source digests, an aggregate snapshot digest, exact conflicts, and a stable reason_id derived from parsed runtime, queue, approval, task, and audit schemas",
+      "returns one exact schema-checked runtime-admission decision with ordered runtime, event-queue, and approval-queue digests, an aggregate snapshot digest, exact conflicts, and a stable reason_id; the dispatcher may act only after separately parsing task and audit schemas under the next two ordered locks",
       "fails closed on missing, empty, malformed, unreadable, default-substituted, busy, queued, running, admitted, approval-suspended, duplicate, empty, or foreign task/runtime state",
-      "binds the capability manifest, exhaustive writer registry, executing dispatcher bytes, writer blobs, bootstrap completion evidence, and dev ancestry to one exact merged commit; a self-authored or format-only manifest cannot satisfy the gate",
+      "binds the capability manifest, exhaustive writer registry, executing dispatcher bytes, writer blobs, signed bootstrap completion verdict with verifier/key/policy/revocation/ledger identity, protected capability-verifier decision, and dev ancestry to one exact merged commit; a self-authored or format-only manifest cannot satisfy the gate",
       "wraps every canonical writer's complete read-validate-mutate-replace transaction and rejects direct canonical writes outside the registered protocol helpers",
       "process-level inode-replace, contention, crash, kill, restart, concurrent writer, rotation, and outbox recovery tests preserve newest truth with no lost or duplicated events",
       "exact merged bootstrap SHA passes a canonical strict live dry-run with zero writes before primary materialization is authorized"
@@ -65,7 +65,7 @@
       "exact admitted task/run/provider/slot/worktree/scope/branch, PR, checks, merge SHA, and distinct-runtime review",
       "lock-order and stable-inode contention evidence",
       "exact parsed admission decision and malformed-source reason-ID matrix",
-      "merged-commit ancestry, writer-blob, executing-dispatcher, capability-manifest, and exhaustive writer-registry bindings",
+      "merged-commit ancestry, writer-blob, executing-dispatcher, capability-manifest, exhaustive writer-registry, signed verdict/key/policy/revocation/ledger, and protected verifier-decision bindings",
       "malformed/missing/runtime-busy matrix with no-write hashes",
       "concurrent writer, rotation, crash, restart, and outbox recovery matrix",
       "canonical live dry-run before/after hashes bound to the merged bootstrap SHA",
@@ -90,5 +90,5 @@
     "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-RUNTIME-BOOT-001.md",
     "requires_human_ops_signoff": true
   },
-  "task_contract_sha256": "ba34ce0a5ed90ac21c63d8d89e345550cae565a33e4a9d083883daa36e2e48fd"
+  "task_contract_sha256": "04f382e320292e11df3b4668ec4383819b9c9abadcc48f3b9150a7abcb65141e"
 }

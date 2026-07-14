@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import runpy
 import subprocess
 import tempfile
 
@@ -31,6 +32,17 @@ HISTORICAL_CATALOG_PATH = (
     "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/tasks.json"
 )
 RUNTIME_PROTOCOL_ID = "pantheon-runtime-task-audit-lock-v1"
+INCIDENT_FIXTURE = (
+    ROOT
+    / "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/"
+    "fixtures/browser-auth-incidents.v1.json"
+)
+ROUTE_FIXTURE = (
+    ROOT
+    / "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/"
+    "fixtures/browser-auth-route-matrix.v1.json"
+)
+DISPATCH = runpy.run_path(str(SCRIPT))
 
 
 FAKE_RUNTIME_PROTOCOL = '''from __future__ import annotations
@@ -93,6 +105,47 @@ def _canonical_sha256(value) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def verify_runtime_lock_capability(
+    *, manifest, manifest_sha256, writer_registry, completion_evidence, repository_root
+):
+    root = Path(repository_root)
+    registry_sha256 = hashlib.sha256(
+        (root / manifest["writer_registry_path"]).read_bytes()
+    ).hexdigest()
+    evidence_sha256 = hashlib.sha256(
+        (root / manifest["bootstrap_completion_evidence_path"]).read_bytes()
+    ).hexdigest()
+    allowed = bool(
+        writer_registry.get("transaction_scope")
+        == "complete_read_validate_mutate_replace"
+        and completion_evidence.get("conclusion") == "passed"
+        and completion_evidence.get("signature_algorithm") == "ed25519"
+        and completion_evidence.get("verifier_capability_sha256")
+        == manifest["writers"][manifest["module_path"]]
+        and completion_evidence.get("signature")
+        == "test-only-protected-signature"
+        and registry_sha256 == manifest["writer_registry_sha256"]
+        and evidence_sha256 == manifest["bootstrap_completion_evidence_sha256"]
+    )
+    decision = {
+        "schema_version": 1,
+        "protocol_id": RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID,
+        "allowed": allowed,
+        "reason_id": "verified" if allowed else "protected_evidence_invalid",
+        "manifest_sha256": manifest_sha256,
+        "writer_registry_sha256": registry_sha256,
+        "completion_evidence_sha256": evidence_sha256,
+        "merged_commit_sha": manifest["merged_commit_sha"],
+    }
+    mutation = os.environ.get("LOOP_TEST_CAPABILITY_VERIFIER_MUTATION")
+    if mutation == "deny":
+        decision["allowed"] = False
+        decision["reason_id"] = "protected_evidence_invalid"
+    elif mutation == "extra":
+        decision["unbound"] = True
+    return decision
 
 
 @contextmanager
@@ -173,7 +226,7 @@ def tasks_runtime_admission_guard(
         if conflicts and reason_id == "clear":
             reason_id = "target_has_runtime_admission"
         allowed = strict is True and reason_id == "clear" and not conflicts
-        yield {
+        decision = {
             "schema_version": 1,
             "protocol_id": RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID,
             "strict": strict,
@@ -185,6 +238,23 @@ def tasks_runtime_admission_guard(
             "reason_id": reason_id,
             "snapshot_sha256": _canonical_sha256(source_sha256),
         }
+        mutation = os.environ.get("LOOP_TEST_DECISION_MUTATION")
+        if mutation == "extra_field":
+            decision["unbound"] = True
+        elif mutation == "missing_field":
+            decision.pop("reason_id")
+        elif mutation == "snapshot":
+            decision["snapshot_sha256"] = "0" * 64
+        elif mutation == "source_order":
+            decision["source_sha256"] = dict(reversed(list(source_sha256.items())))
+            decision["snapshot_sha256"] = _canonical_sha256(decision["source_sha256"])
+        elif mutation == "clear_with_conflict":
+            decision["conflicts"] = [{
+                "source_id": "runtime_state",
+                "task_id": task_ids[0],
+                "status": "admitted",
+            }]
+        yield decision
 
 
 @contextmanager
@@ -337,6 +407,16 @@ def install_runtime_protocol(root: Path) -> None:
         "worker_runtime_identity": "Codex2",
         "reviewer_runtime_identity": "Codex",
         "checks_sha256": "2" * 64,
+        "verdict_id": "runtime-bootstrap-verdict-1",
+        "verifier_capability_sha256": writer_digests[
+            ".orchestrator/runtime_state.py"
+        ],
+        "signature_algorithm": "ed25519",
+        "key_id": "protected-runtime-review-key-1",
+        "policy_version": "runtime-lock-capability-v1",
+        "signature": "test-only-protected-signature",
+        "revocation_checked_at": "2026-07-14T00:00:00Z",
+        "ledger_entry_id": "protected-ledger-entry-1",
     }
     evidence_path.write_text(
         json.dumps(evidence, indent=2, sort_keys=True) + "\n",
@@ -345,22 +425,29 @@ def install_runtime_protocol(root: Path) -> None:
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     tracked = [*writer_digests, ".orchestrator/runtime-task-audit-writer-registry.json", evidence_relative]
     subprocess.run(["git", "-C", str(root), "add", "--", *tracked], check=True)
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(root),
-            "-c",
-            "user.name=Runtime Test",
-            "-c",
-            "user.email=runtime-test@example.invalid",
-            "commit",
-            "-q",
-            "-m",
-            "test runtime capability",
-        ],
-        check=True,
+    staged = subprocess.run(
+        ["git", "-C", str(root), "diff", "--cached", "--quiet"],
+        check=False,
     )
+    if staged.returncode == 1:
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "-c",
+                "user.name=Runtime Test",
+                "-c",
+                "user.email=runtime-test@example.invalid",
+                "commit",
+                "-q",
+                "-m",
+                "test runtime capability",
+            ],
+            check=True,
+        )
+    elif staged.returncode != 0:
+        raise AssertionError("failed to inspect staged runtime capability fixture")
     merged_commit_sha = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "HEAD"],
         check=True,
@@ -393,6 +480,7 @@ def install_runtime_protocol(root: Path) -> None:
             "tasks_runtime_admission_guard",
             "canonical_task_state_lock_file",
             "activity_audit_lock_file",
+            "verify_runtime_lock_capability",
         ],
         "writers": writer_digests,
         "writer_registry_path": (
@@ -468,6 +556,27 @@ def canonical_sha256(value: object) -> str:
     ).hexdigest()
 
 
+def refresh_route_derived(payload: dict) -> dict:
+    row_key_fields = payload["required_row_key_fields"]
+    payload["required_row_ids"] = [row["row_id"] for row in payload["rows"]]
+    payload["required_row_keys"] = sorted(
+        json.dumps(
+            {field: row[field] for field in row_key_fields},
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        for row in payload["rows"]
+    )
+    payload["required_path_method_pairs"] = [
+        {"method": method, "path_template": path}
+        for method, path in sorted(
+            {(row["method"], row["path_template"]) for row in payload["rows"]}
+        )
+    ]
+    return {"required_fixture_ids": payload["required_row_ids"]}
+
+
 def program_tasks(state: dict) -> list[dict]:
     primary_ids = {str(task["id"]) for task in load_catalog()["tasks"]}
     return [
@@ -494,6 +603,21 @@ def test_catalog_validates_and_has_complete_task_documents() -> None:
     assert catalog["execution_authority"]["planner_may_edit_declared_product_artifacts"] is False
     assert catalog["execution_authority"]["implementation_role"] == "supervisor_admitted_fleet_worker"
     assert catalog["execution_authority"]["review_role"] == "distinct_supervisor_admitted_fleet_reviewer"
+    assert catalog["execution_authority"]["required_worker_bindings"][-2:] == [
+        "remote",
+        "merge_target",
+    ]
+    assert catalog["completion_authority"]["dispatcher_pre_completion_policy"] == (
+        "reject_preexisting_consumption_or_program_completed"
+    )
+    assert catalog["completion_authority"]["consumption_writer_task_id"] == (
+        catalog["completion_authority"]["task_id"]
+    )
+    assert catalog["auth_lifecycle"]["strict_auth_prebootstrap_semantics"] == (
+        "strict_auth_code_and_non_pristine_state_may_be_delivered_or_preserved_"
+        "independently; hosted_qualification_lease_lifecycle_and_browser_"
+        "activation_require_bootstrap"
+    )
     assert len(catalog["loop_scope"]["canonical_l1_loop_ids"]) == 12
     assert catalog["loop_scope"]["composite_overlay_ids"] == ["per_persona_ooda"]
     assert catalog["tasks"][-1]["id"] == "LOOP-PROD-CLOSE-002"
@@ -510,6 +634,71 @@ def test_catalog_validates_and_has_complete_task_documents() -> None:
             assert f"`{value}`" in text
         for value in task["non_goals"]:
             assert value in text
+
+
+def test_strict_json_rejects_duplicate_keys_and_catalog_rejects_extra_task_keys() -> None:
+    dispatch_error = DISPATCH["DispatchError"]
+    with pytest.raises(dispatch_error, match="duplicate JSON key"):
+        DISPATCH["strict_json_loads"](
+            '{"task":{"id":"one","id":"two"}}',
+            source="duplicate-test",
+        )
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        candidate = write_catalog(
+            root,
+            lambda payload: payload["tasks"][0].__setitem__("unbound", True),
+        )
+        result = run_dispatch(root, "--validate-only", catalog=candidate)
+        assert result.returncode == 2
+        assert "unbound fields" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["head_sha", "head_tree_sha", "replay_decision", "projection_digest"],
+)
+def test_incident_fixture_immutable_projection_rejects_mutation(mutation: str) -> None:
+    payload = json.loads(INCIDENT_FIXTURE.read_text(encoding="utf-8"))
+    reference = {"required_fixture_ids": [row["fixture_id"] for row in payload["fixtures"]]}
+    row = payload["fixtures"][2]
+    if mutation == "head_sha":
+        row["pr"]["head_sha"] = "0" * 40
+    elif mutation == "head_tree_sha":
+        row["pr"]["head_tree_sha"] = "0" * 40
+    elif mutation == "replay_decision":
+        row["expected_replay"]["pre_switch_decision"] = "reject"
+    else:
+        payload["immutable_projection_sha256"] = "0" * 64
+    with pytest.raises(
+        DISPATCH["DispatchError"],
+        match="immutable PR/tree/replay projection",
+    ):
+        DISPATCH["validate_browser_incident_fixture"](payload, reference)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["historical_get", "privileged_negative", "attack_union", "logout"],
+)
+def test_browser_route_matrix_exact_unions_and_logout_reject_mutation(
+    mutation: str,
+) -> None:
+    payload = json.loads(ROUTE_FIXTURE.read_text(encoding="utf-8"))
+    by_id = {row["row_id"]: row for row in payload["rows"]}
+    if mutation == "historical_get":
+        payload["rows"] = [
+            row for row in payload["rows"] if row["row_id"] != "viewer-cookie-me-get"
+        ]
+    elif mutation == "privileged_negative":
+        by_id["viewer-tools-execute-deny"]["expected"]["product_success"] = True
+    elif mutation == "attack_union":
+        by_id["near-match-viewer-subject-me-deny"]["attack_classes"] = []
+    else:
+        by_id["viewer-cookie-logout-post"]["expected"]["state_delta"] = "clear_cookie_only"
+    reference = refresh_route_derived(payload)
+    with pytest.raises(DISPATCH["DispatchError"]):
+        DISPATCH["validate_browser_route_fixture"](payload, reference)
 
 
 @pytest.mark.parametrize(
@@ -1485,6 +1674,86 @@ def test_live_addendum_migration_rejects_changed_preimage_without_writes(mutatio
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
 
+def test_every_runtime_admission_alias_is_detected_without_catalog_field_confusion() -> None:
+    markers = DISPATCH["LIVE_ADMISSION_MARKER_FIELDS"]
+    required_runtime_aliases = {
+        "run_id",
+        "worker_provider",
+        "worker_slot",
+        "task_worktree",
+        "declared_scope",
+        "expected_branch",
+        "remote",
+    }
+    assert required_runtime_aliases.issubset(markers)
+    assert "merge_target" not in markers
+    assert DISPATCH["_has_live_admission"]({"merge_target": "dev"}) is False
+    for field in markers:
+        assert DISPATCH["_has_live_admission"]({field: "bound"}) is True
+
+
+@pytest.mark.parametrize(
+    "task_id",
+    ["LOOP-PROD-AGORA-002", "LOOP-PROD-MAI-001", "LOOP-PROD-CLOSE-001"],
+)
+def test_each_migration_target_rejects_full_preimage_or_admission_drift(
+    task_id: str,
+) -> None:
+    for mutation in ("immutable", "admission"):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state, _ = prepare_baseline_program(root)
+            target = next(task for task in state["tasks"] if task.get("id") == task_id)
+            if mutation == "immutable":
+                target["title"] += " tampered"
+            else:
+                target["remote"] = "https://example.invalid/foreign.git"
+            (root / "ai-status.json").write_text(
+                json.dumps(state, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            before = (root / "ai-status.json").read_bytes()
+            result = run_dispatch(root, "--apply")
+            assert result.returncode == 2
+            assert (root / "ai-status.json").read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "task_id",
+    ["LOOP-PROD-AGORA-002", "LOOP-PROD-MAI-001", "LOOP-PROD-CLOSE-001"],
+)
+@pytest.mark.parametrize(
+    "mutation",
+    ["owner", "same_reviewer", "created_at", "last_update", "next"],
+)
+def test_each_migration_target_validates_mutable_preimage_fields(
+    task_id: str,
+    mutation: str,
+) -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        state, _ = prepare_baseline_program(root)
+        target = next(task for task in state["tasks"] if task.get("id") == task_id)
+        if mutation == "owner":
+            target["owner"] = "Rogue"
+        elif mutation == "same_reviewer":
+            target["reviewer"] = target["owner"]
+        elif mutation == "created_at":
+            target["created_at"] = "not-a-timestamp"
+        elif mutation == "last_update":
+            target["last_update"] = "2000-01-01T00:00:00Z"
+        else:
+            target["next"] = ""
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        before = (root / "ai-status.json").read_bytes()
+        result = run_dispatch(root, "--apply")
+        assert result.returncode == 2
+        assert (root / "ai-status.json").read_bytes() == before
+
+
 @pytest.mark.parametrize(
     ("name", "mutator", "expected"),
     [
@@ -1666,7 +1935,22 @@ def test_authoritative_modes_fail_closed_without_runtime_capability(mode: str) -
         assert (root / "ai-activity-log.jsonl").read_text(encoding="utf-8") == ""
 
 
-@pytest.mark.parametrize("mutation", ["extra_writer", "shared_false", "bad_digest"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "extra_writer",
+        "shared_false",
+        "bad_digest",
+        "dispatcher_digest",
+        "registry_digest",
+        "bootstrap_task",
+        "evidence_digest",
+        "merged_commit",
+        "registry_content",
+        "evidence_content",
+        "evidence_signature",
+    ],
+)
 def test_runtime_capability_manifest_is_exact(mutation: str) -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
@@ -1677,13 +1961,60 @@ def test_runtime_capability_manifest_is_exact(mutation: str) -> None:
             manifest["writers"]["scripts/extra_writer.py"] = "0" * 64
         elif mutation == "shared_false":
             manifest["shared_read_supported"] = False
-        else:
+        elif mutation == "bad_digest":
             manifest["writers"]["scripts/ai_status.py"] = "0" * 64
+        elif mutation == "dispatcher_digest":
+            manifest["dispatcher_sha256"] = "0" * 64
+        elif mutation == "registry_digest":
+            manifest["writer_registry_sha256"] = "0" * 64
+        elif mutation == "bootstrap_task":
+            manifest["bootstrap_task_id"] = "FOREIGN-BOOTSTRAP"
+        elif mutation == "evidence_digest":
+            manifest["bootstrap_completion_evidence_sha256"] = "0" * 64
+        elif mutation == "merged_commit":
+            manifest["merged_commit_sha"] = "0" * 40
+        elif mutation == "registry_content":
+            registry_path = root / manifest["writer_registry_path"]
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
+            registry["transaction_scope"] = "partial_write"
+            registry_path.write_text(json.dumps(registry) + "\n", encoding="utf-8")
+            manifest["writer_registry_sha256"] = hashlib.sha256(
+                registry_path.read_bytes()
+            ).hexdigest()
+        else:
+            evidence_path = root / manifest["bootstrap_completion_evidence_path"]
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            if mutation == "evidence_content":
+                evidence["conclusion"] = "self_attested"
+            else:
+                evidence["signature"] = "forged-signature"
+            evidence_path.write_text(json.dumps(evidence) + "\n", encoding="utf-8")
+            manifest["bootstrap_completion_evidence_sha256"] = hashlib.sha256(
+                evidence_path.read_bytes()
+            ).hexdigest()
         path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         before = (root / "ai-status.json").read_bytes()
         result = run_dispatch(root, "--dry-run")
         assert result.returncode == 2
-        assert "runtime lock capability" in result.stderr
+        assert result.stderr.startswith("ERROR:")
+        assert (root / "ai-status.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("mutation", ["deny", "extra"])
+def test_runtime_capability_requires_exact_protected_verifier_decision(
+    mutation: str,
+) -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        before = (root / "ai-status.json").read_bytes()
+        result = run_dispatch(
+            root,
+            "--dry-run",
+            extra_env={"LOOP_TEST_CAPABILITY_VERIFIER_MUTATION": mutation},
+        )
+        assert result.returncode == 2
+        assert "protected capability verifier decision is not exact" in result.stderr
         assert (root / "ai-status.json").read_bytes() == before
 
 
@@ -1736,6 +2067,58 @@ def test_runtime_admission_snapshot_blocks_queued_task_without_status_write() ->
         assert "runtime admission blocked" in result.stderr
         assert (root / "ai-status.json").read_bytes() == before
         assert (root / "ai-activity-log.jsonl").read_text(encoding="utf-8") == ""
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["extra_field", "missing_field", "snapshot", "source_order", "clear_with_conflict"],
+)
+def test_runtime_admission_decision_schema_is_exact_and_zero_write(
+    mutation: str,
+) -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        before_status = (root / "ai-status.json").read_bytes()
+        before_log = (root / "ai-activity-log.jsonl").read_bytes()
+        result = run_dispatch(
+            root,
+            "--apply",
+            extra_env={"LOOP_TEST_DECISION_MUTATION": mutation},
+        )
+        assert result.returncode == 2
+        assert "runtime admission" in result.stderr
+        assert (root / "ai-status.json").read_bytes() == before_status
+        assert (root / "ai-activity-log.jsonl").read_bytes() == before_log
+
+
+@pytest.mark.parametrize(
+    ("source", "body"),
+    [
+        ("state.json", None),
+        ("state.json", b""),
+        ("event-queue.jsonl", b"{malformed\n"),
+        ("approval-queue.json", b'{"schema_version":1,"requests":[],"requests":[]}\n'),
+    ],
+)
+def test_runtime_admission_missing_empty_malformed_sources_fail_closed(
+    source: str,
+    body: bytes | None,
+) -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        source_path = root / ".orchestrator" / source
+        if body is None:
+            source_path.unlink()
+        else:
+            source_path.write_bytes(body)
+        before_status = (root / "ai-status.json").read_bytes()
+        result = run_dispatch(root, "--dry-run")
+        assert result.returncode == 2
+        assert "runtime admission blocked: runtime_source_invalid" in result.stderr
+        assert (root / "ai-status.json").read_bytes() == before_status
+        assert (root / "ai-activity-log.jsonl").read_bytes() == b""
 
 
 def test_invalid_actor_is_rejected_before_first_status_commit() -> None:

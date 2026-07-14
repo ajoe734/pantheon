@@ -30,8 +30,8 @@
     "task_id": "LOOP-PROD-RUNTIME-BOOT-001",
     "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-RUNTIME-BOOT-001.md",
     "task_contract_fixture": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/fixtures/runtime-lock-bootstrap-task.v1.json",
-    "task_contract_fixture_sha256": "f8e703856cfd907ae0b04efcb483107cf19c879c87cc7717539a679d39dec8db",
-    "task_contract_sha256": "ba34ce0a5ed90ac21c63d8d89e345550cae565a33e4a9d083883daa36e2e48fd",
+    "task_contract_fixture_sha256": "eee36ad3bf27375805bcaf8379117cf409a00d039d8dde8c0387754961ee17a2",
+    "task_contract_sha256": "04f382e320292e11df3b4668ec4383819b9c9abadcc48f3b9150a7abcb65141e",
     "required_status": "done",
     "must_preexist_primary_materialization": true,
     "protocol": {
@@ -51,7 +51,8 @@
       "required_api": [
         "tasks_runtime_admission_guard",
         "canonical_task_state_lock_file",
-        "activity_audit_lock_file"
+        "activity_audit_lock_file",
+        "verify_runtime_lock_capability"
       ],
       "shared_read_supported": true,
       "admission_decision_contract": {
@@ -3980,9 +3981,9 @@
         "the browser bundle, source maps, storage, DOM, URLs, request bodies, screenshots, logs, traces, videos, and third-party requests contain no reusable bearer, signing key, client secret, privileged capability, or fixed public-browser credential",
         "the read-only console uses an authorized short-lived server-mediated Secure HttpOnly SameSite session; any unauthenticated public viewer mode is a separately reviewed capability-free policy that is disabled by default and cannot mint, refresh, upgrade, or carry write privileges",
         "the exact browser_auth_incidents_v1 and browser_auth_route_matrix_v1 fixture digests are catalog-bound; abbreviated identities, alternative expected statuses, wildcard routes, missing rows, extra unreviewed rows, or prose-only replay claims fail closed",
-        "the generated final matrix enumerates the exact union of frontend browser callsites plus session and privileged-negative routes; boot-critical signed-cookie GETs include /bff/me, /bff/management/shell-summary, /bff/personas, /bff/incidents, every selected Management AI read route, and all 27 historical incident GET paths, with no /management/* wildcard and no nonexistent /bff/dashboard/summary claim",
+        "the content-addressed complete matrix materializes 118 exact row identities and enumerates the exact union of 63 pinned frontend browser callsites plus session, attack, and 16 privileged-negative routes; boot-critical signed-cookie GETs include /bff/me, /bff/management/shell-summary, /bff/personas, /bff/incidents, every selected Management AI read route, and all 27 historical incident GET paths, with no /management/* wildcard and no nonexistent /bff/dashboard/summary claim",
         "auth admission, router result, and product success are separate fields: HEAD /bff/me returning 405 and anonymous SSE liveness returning 200 never count as authenticated browser success",
-        "signed viewer-cookie POST /bff/logout revokes and expires only the exact session, and signed intended refresh-cookie POST /bff/auth/refresh under exact Origin plus CSRF rotates only the same subject, role, tenant, and capabilities; a fixed public bearer, raw literal viewer value in any transport, mixed bearer plus cookie, wrong origin, missing CSRF, or role/capability upgrade is denied with no state delta",
+        "signed viewer-cookie POST /bff/logout returns exact 200 JSON, revokes the exact authenticated refresh family, clears both access-session and refresh-family cookies, leaves unrelated sessions unchanged, and binds idempotent replay to that family; signed intended refresh-cookie POST /bff/auth/refresh under exact Origin plus CSRF rotates only the same subject, role, tenant, and capabilities; a fixed public bearer, raw literal viewer value in any transport, mixed bearer plus cookie, wrong origin, missing CSRF, or role/capability upgrade is denied with no state delta",
         "authenticated viewer-cookie SSE proves text/event-stream, X-BFF-Session-Kind=cookie, replay support, Last-Event-ID reconnect, and no duplicate IDs; anonymous liveness, fixed bearer, query token, expired cookie, and wrong origin cannot satisfy it, and /bff/management/nl/ask/stream remains a separate privileged POST streaming fetch",
         "viewer, operator, approver, risk owner, operator A, and operator B remain distinct short-lived subjects; viewer cannot freeze, rollback, approve, execute tools, activate control mode, prepare repair worktrees, or invoke any other write or privileged route",
         "exact frontend and BFF origins, CORS, redirect, callback, cookie domain and path, issuer, audience, tenant, and environment values pass a secret-free prerequisite job before any protected identity can be requested",

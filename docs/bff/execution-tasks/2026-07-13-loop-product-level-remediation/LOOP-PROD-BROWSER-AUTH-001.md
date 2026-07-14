@@ -4,7 +4,7 @@ Status: starts only after auth bootstrap, strict BFF auth, credential-free FE, d
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `d80517344e65e03b0699b56b95a74eec00dc797a2ab62d528b3d69d6173c0688`
+Canonical contract SHA-256: `3142b25a27d8c6072874ab4e598bd6e0805f357bf9d3e6248781bf8fac41084a`
 The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 
@@ -72,16 +72,20 @@ activation authority for this cutover.
   `4b9077480aad612145e78e691404f93a2f6c4ac983c952af75bf9606292b1624`
   and `fixtures/browser-auth-route-matrix.v1.json` at
   `8e465fc657e09e8be982181de5fd5929d2719392fcac472245df2c30563d3531`
-- the generated exact route union covers every browser callsite, all 27
-  historical GET probes, session routes, and enumerated privileged negatives;
+- the content-addressed complete route union materializes 118 exact rows and
+  covers 63 pinned browser callsites, all 27 historical GET probes, session
+  and attack routes, and 16 enumerated privileged negatives;
   `/bff/management/shell-summary` is canonical and the nonexistent
   `/bff/dashboard/summary` is not accepted
 - auth decision, router status, and product success are distinct: `HEAD
   /bff/me` 405 and anonymous SSE 200 are not boot-green
-- signed viewer-cookie logout clears only that session; signed refresh-cookie
-  rotation requires exact Origin+CSRF and cannot change subject/role/tenant/
-  capabilities; raw literal viewer values, fixed bearer, mixed transport,
-  wrong origin, missing CSRF, or upgrade attempts deny with zero state delta
+- signed viewer-cookie `POST /bff/logout` returns exact 200 JSON, revokes the
+  exact authenticated refresh family, clears both access and refresh cookies,
+  leaves unrelated sessions unchanged, and binds replay to the same family;
+  signed refresh-cookie rotation requires exact Origin+CSRF and cannot change
+  subject/role/tenant/capabilities; raw literal viewer values, fixed bearer,
+  mixed transport, wrong origin, missing CSRF, or upgrade attempts deny with
+  zero state delta
 - authenticated cookie SSE proves session-kind, replay support, Last-Event-ID
   reconnect, and no duplicates; anonymous liveness, fixed/query bearer,
   expired cookie, and wrong origin cannot satisfy it
