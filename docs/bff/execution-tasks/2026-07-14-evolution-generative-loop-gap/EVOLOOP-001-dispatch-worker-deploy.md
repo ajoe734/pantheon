@@ -1,19 +1,21 @@
 # EVOLOOP-001 — Evolution Dispatch Worker Deployment
 
-Status: implementation validated locally; hosted dev proof pending PR delivery
+Status: hosted dev dispatch/restart proof accepted; PR and reviewer closeout pending
 
 - Owner: Codex2
 - Reviewer: Codex
 - Branch: `task/EVOLOOP-001`
 - PR target: `dev`
-- Implementation anchor: `EVOLOOP-001: anchor dispatch worker activation`
+- Published implementation anchor: `2da815d2923901cc160835946e474232b54657b3`
+  (`EVOLOOP-001: anchor dispatch worker activation`)
+- Published proof head: `183cba011d6993029b3e828dc85f13dd166f207c`
 
 ## Scope
 
 This task makes `evolution-dispatch-worker` a default root-compose service for
-dev. The worker polls approved `EvolutionDecision` records and calls only the
-evolution service's boundary and gated execute routes. It owns its interval,
-timeout, actor, one-shot test control, and health-file settings.
+dev. The worker polls the evolution service's approved-decision endpoint, then
+calls its boundary and gated execute routes for each candidate. It owns its
+interval, timeout, actor, one-shot test control, and health-file settings.
 
 This task does not change the daily sweep cadence, any supervisor cadence,
 threshold or approval policy, the downstream research consumer, or runtime
@@ -26,7 +28,7 @@ research job or artifact has completed. Research completion belongs to
 ## Implementation
 
 - Added the unprofiled `evolution-dispatch-worker` root-compose service, using
-  the existing evolution image and
+  the existing evolution Dockerfile/runtime and
   `python -m services.evolution.dispatch_worker` command.
 - Preserved the existing worker's immediate first tick and added no change to
   the daily sweep scheduler or its interval.
@@ -61,7 +63,8 @@ single executed review step.
 
 ## Local Verification
 
-The following checks passed on `task/EVOLOOP-001`:
+The following checks passed on `task/EVOLOOP-001` at tested head
+`183cba011d6993029b3e828dc85f13dd166f207c`:
 
 ```bash
 python3 -m pytest \
@@ -78,7 +81,8 @@ git diff --check
 Results:
 
 - Focused worker and Compose contract: `22 passed in 10.80s`.
-- Full evolution service suite: `192 passed, 2 warnings in 81.52s`; both
+- Post-rebase full evolution service suite: `192 passed, 2 warnings in 48.86s`;
+  both
   warnings are existing FastAPI `on_event` deprecations in the incidents
   service.
 - Rendered default services include `evolution-dispatch-worker`; it has no
@@ -128,24 +132,72 @@ Minimal output at `2026-07-14T04:13:49Z`:
 }
 ```
 
-No execute request or state mutation occurred. The temporary validation
-container was stopped and removed after the check.
+The one-shot tick reported zero successful dispatches. Separately, the
+instrumented total-outage test asserts that the worker's POST helper is never
+called, proving that an unreachable API does not cause an execute attempt or
+state mutation. The temporary validation container was stopped and removed
+after the check.
 
 ## Hosted Dev Proof
 
-Pending PR-visible task-ref or merged-`dev` root deployment. The hosted proof
-must record all of the following before closeout:
+Accepted at `2026-07-14T05:25:09Z` while official workflow run
+[29306967263](https://github.com/ajoe734/pantheon/actions/runs/29306967263)
+held the dev-root deployment lease. The run completed successfully at
+`2026-07-14T05:25:54Z`; its requested ref, workflow-resolved SHA, prepared
+`/home/lupin/pantheon-ci-deploy/dev-root` checkout, and BFF source SHA were all
+`183cba011d6993029b3e828dc85f13dd166f207c`. The root deployment step completed
+at `2026-07-14T05:24:46Z`, and its OpenClaw, public BFF, and Agora restart
+persistence smokes also passed.
 
-1. the exact deployed commit and deployment run;
-2. `evolution-dispatch-worker` running and healthy in the root Compose project;
-3. a unique decision created, reviewed, and approved only through APIs;
-4. automatic transition to `executed` after a worker tick, without a direct
-   operator execute request;
-5. the dispatch metadata fields listed above; and
-6. a second interval or worker restart with no duplicate execute step or
-   changed execution reference.
+The `pantheon` root Compose project showed
+`pantheon-evolution-dispatch-worker-1` running with Docker health `healthy`.
+A task-scoped probe then issued exactly these mutating requests:
 
-Authentication and other secret values must not be copied into this record.
+```text
+POST /api/evolution/proposals
+POST /api/evolution/proposals/evoloop-001-probe-b2844ae249/review
+POST /api/evolution/proposals/evoloop-001-probe-b2844ae249/approve
+```
+
+The probe instrumented every request it made and asserted that all later API
+requests were GETs. It never invoked `POST .../execute`; the hosted worker made
+the gated execute request on its next poll. Minimal secret-free proof:
+
+```json
+{
+  "approved_at": "2026-07-14T05:24:30Z",
+  "observed_at": "2026-07-14T05:25:09Z",
+  "decision_id": "evoloop-001-probe-b2844ae249",
+  "decision_state": "executed",
+  "execution_result": {
+    "status": "submitted",
+    "plane": "research",
+    "execution_ref_id": "dispatch-evoloop-001-probe-b2844ae249",
+    "executed_at": "2026-07-14T05:24:48Z"
+  },
+  "cooldown_ends_at": "2026-07-17T05:24:48Z",
+  "observation_window_ends_at": "2026-07-21T05:24:48Z",
+  "executed_step_count": 1,
+  "executed_step_actor": "evolution-dispatch-worker",
+  "dispatch_log_count": 1,
+  "health_before_restart": "healthy",
+  "health_after_restart": "healthy",
+  "restart_tick_seen": true,
+  "direct_execute_calls_by_probe": 0
+}
+```
+
+The probe restarted only `evolution-dispatch-worker`. Docker retained container
+ID `07ab1e53ac16609674f7a7f9ea431d74b4a96a05207936fdbeea72b21326fa4d`, as
+expected for a Compose restart, and the worker emitted a fresh `tick: 1` with
+healthy state. Post-restart readback still contained one executed review step
+and the same execution reference, proving no duplicate dispatch.
+
+Earlier run
+[29305788872](https://github.com/ajoe734/pantheon/actions/runs/29305788872)
+also completed for the same task ref, but a later task-ref deployment replaced
+the hosted checkout before this probe could run. It is recorded only as
+superseded deployment history; run `29306967263` is the accepted hosted truth.
 
 ## Intentional Disable And Re-enable
 
@@ -177,11 +229,11 @@ values below one second.
 
 | Criterion | Evidence | State |
 |---|---|---|
-| Default dev Compose service with own interval and healthcheck | Rendered Compose contract, service-list check, image build | Passed locally; hosted pending |
-| Approved decision auto-transitions to executed with metadata | Entrypoint integration test using real API routes and durable store | Passed locally; hosted pending |
-| Restart does not double-dispatch | Store-reload test preserves one execute step and execution reference | Passed locally; hosted pending |
+| Default dev Compose service with own interval and healthcheck | Rendered no-profile Compose contract, exact-ref run `29306967263`, hosted service running/healthy | Passed |
+| Approved decision auto-transitions to executed with metadata | Entrypoint integration test plus hosted decision `evoloop-001-probe-b2844ae249`, worker actor, submitted/research/ref/timestamps | Passed |
+| Restart does not double-dispatch | Store-reload test plus hosted worker restart, fresh tick, one executed step, unchanged ref | Passed |
 | Evolution API failure logs diagnostics and dispatches nothing | Boundary-failure test, main-loop outage test, built-image one-shot output | Passed |
-| Existing cadences remain unchanged | Diff contains only the new worker cadence | Passed |
+| Existing cadences remain unchanged | Compose diff leaves existing scheduler blocks and interval variables unchanged; worker uses its own namespaced interval | Passed |
 
 ## Residual Risks
 
@@ -203,4 +255,5 @@ values below one second.
 - PR: pending.
 - Reviewer decision: pending Codex review.
 - Merge commit: pending.
-- Hosted dev deployment and automatic dispatch proof: pending.
+- Hosted dev deployment and automatic dispatch proof: accepted via successful
+  run `29306967263` and decision `evoloop-001-probe-b2844ae249`.
