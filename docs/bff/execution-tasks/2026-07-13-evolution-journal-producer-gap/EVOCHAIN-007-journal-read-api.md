@@ -19,7 +19,10 @@ This task implements server-side filtering, lineage mapping, and provenance-base
 Instead of free-text substring matching (which caused collisions like `persona-1` matching `persona-10` or summary decoy hits), the endpoint resolves the explicit lineage of a persona:
 1. Gathers the persona's associated identifiers from default market default records (`list_personas`).
 2. Iteratively computes the transitive closure (runtimes, bindings, plan IDs, and incidents) by checking associations in `list_runtime_bindings` and `list_incidents`.
+   - **Shared-Artifact Boundaries**: The transitive closure does NOT use shared `artifact_id` for traversal to avoid crossing shared-artifact persona boundaries.
 3. Verifies that the entry's identifiers (such as `target_id`, `artifact_id`, `incident_id`, `runtime_id`, `persona_id`, etc.) have an exact case-insensitive match inside the resolved lineage set.
+   - **Collision Prevention**: The row's `entry_type` or `entryType` is excluded from checked identifier sets to prevent parameter collisions (e.g. query `persona=mutation_review` matching all mutation review rows).
+   - **Error Handling**: Failures in the dependency lookups (such as read store database failures) are propagated as errors (HTTP 500) rather than being silently swallowed and returned as empty truth.
 
 ### 3. Provenance and Honest Origin Markers
 The `origin` field projects registered-seed provenance honestly:
