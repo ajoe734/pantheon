@@ -148,7 +148,7 @@ def load_thresholds(path: str | None = None) -> list[dict[str, Any]]:
     try:
         with open(config_path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return []
 
     raw_thresholds = data.get("thresholds") if isinstance(data, Mapping) else None
@@ -165,8 +165,9 @@ def load_thresholds(path: str | None = None) -> list[dict[str, Any]]:
         # a list where a string is expected) is dropped here, fail-closed,
         # instead of raising TypeError later in evaluate_breaches() when it
         # is used as a dict key or comparator lookup.
+        # Verify that metric_name, signal_type, policy_source, and summary_field are non-empty strings.
         if not all(
-            isinstance(entry.get(key), str)
+            isinstance(entry.get(key), str) and entry.get(key).strip() != ""
             for key in ("metric_name", "signal_type", "policy_source", "summary_field")
         ):
             continue
@@ -226,7 +227,7 @@ def load_baselines(path: str | None = None) -> dict[str, dict[str, Any]]:
     try:
         with open(baselines_path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return {}
 
     raw_baselines = data.get("baselines") if isinstance(data, Mapping) else None
@@ -558,12 +559,26 @@ def _load_pending_evidence(path: str) -> dict[str, dict[str, Any]]:
     valid: dict[str, dict[str, Any]] = {}
     for event_id, record in data.items():
         try:
+            if not isinstance(record, Mapping):
+                continue
+            tel_event = record.get("telemetry_event")
+            snap = record.get("threshold_snapshot")
+            
             if (
-                isinstance(record, Mapping)
-                and isinstance(record.get("telemetry_event"), Mapping)
-                and isinstance(record.get("threshold_snapshot"), Mapping)
+                isinstance(tel_event, Mapping)
+                and isinstance(snap, Mapping)
                 and isinstance(record.get("window_bucket"), str)
+                and "delivered" in record
+                and isinstance(record["delivered"], bool)
+                and "event_id" in tel_event
+                and str(tel_event["event_id"]) == str(event_id)
             ):
+                # Only enforce type and payload validation if the record is undelivered (requires retry)
+                if not record["delivered"]:
+                    event_type = tel_event.get("event_type")
+                    metrics = tel_event.get("metrics")
+                    if not isinstance(event_type, str) or not isinstance(metrics, Mapping):
+                        continue
                 valid[str(event_id)] = dict(record)
         except Exception:
             # Structurally invalid records must never raise
@@ -737,65 +752,69 @@ def run_tick(
             })
 
     for item in to_process:
-        event = item["telemetry_event"]
-        event_id = event["event_id"]
-        payload = {
-            "telemetry_event": event,
-            "threshold_snapshot": item["threshold_snapshot"],
-        }
-
         try:
-            admit_response = admit_telemetry_event(telemetry_api_url, event, timeout=timeout)
-        except urllib.error.HTTPError as exc:
-            result["errors"] += 1
-            result["diagnostics"].append(f"telemetry ingest rejected derived event status={exc.code}")
-            continue
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-            result["errors"] += 1
-            result["diagnostics"].append(f"telemetry ingest network error: {exc}")
-            continue
+            event = item["telemetry_event"]
+            event_id = event["event_id"]
+            payload = {
+                "telemetry_event": event,
+                "threshold_snapshot": item["threshold_snapshot"],
+            }
 
-        if admit_response.get("status") != 202:
-            result["errors"] += 1
-            result["diagnostics"].append(
-                f"telemetry ingest unexpected status={admit_response.get('status')}; "
-                "not citing unadmitted evidence in an incident (fail-closed)"
-            )
-            continue
-
-        try:
-            response = post_incident(incidents_api_url, payload, timeout=timeout)
-        except urllib.error.HTTPError as exc:
-            result["errors"] += 1
-            result["diagnostics"].append(f"post_incident rejected status={exc.code}")
-            continue
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-            result["errors"] += 1
-            result["diagnostics"].append(f"post_incident network error: {exc}")
-            continue
-
-        status = response.get("status")
-        if status == 201:
-            result["incidents_created"] += 1
-            pending[event_id]["delivered"] = True
             try:
-                _save_pending_evidence(active_state_path, pending)
-            except OSError as exc:
+                admit_response = admit_telemetry_event(telemetry_api_url, event, timeout=timeout)
+            except urllib.error.HTTPError as exc:
+                result["errors"] += 1
+                result["diagnostics"].append(f"telemetry ingest rejected derived event status={exc.code}")
+                continue
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+                result["errors"] += 1
+                result["diagnostics"].append(f"telemetry ingest network error: {exc}")
+                continue
+
+            if admit_response.get("status") != 202:
+                result["errors"] += 1
                 result["diagnostics"].append(
-                    f"warning: failed to save post-delivery state for event {event_id}: {exc}"
+                    f"telemetry ingest unexpected status={admit_response.get('status')}; "
+                    "not citing unadmitted evidence in an incident (fail-closed)"
                 )
-        elif status == 200:
-            result["incidents_deduped"] += 1
-            pending[event_id]["delivered"] = True
+                continue
+
             try:
-                _save_pending_evidence(active_state_path, pending)
-            except OSError as exc:
-                result["diagnostics"].append(
-                    f"warning: failed to save post-delivery state for event {event_id}: {exc}"
-                )
-        else:
+                response = post_incident(incidents_api_url, payload, timeout=timeout)
+            except urllib.error.HTTPError as exc:
+                result["errors"] += 1
+                result["diagnostics"].append(f"post_incident rejected status={exc.code}")
+                continue
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+                result["errors"] += 1
+                result["diagnostics"].append(f"post_incident network error: {exc}")
+                continue
+
+            status = response.get("status")
+            if status == 201:
+                result["incidents_created"] += 1
+                pending[event_id]["delivered"] = True
+                try:
+                    _save_pending_evidence(active_state_path, pending)
+                except OSError as exc:
+                    result["diagnostics"].append(
+                        f"warning: failed to save post-delivery state for event {event_id}: {exc}"
+                    )
+            elif status == 200:
+                result["incidents_deduped"] += 1
+                pending[event_id]["delivered"] = True
+                try:
+                    _save_pending_evidence(active_state_path, pending)
+                except OSError as exc:
+                    result["diagnostics"].append(
+                        f"warning: failed to save post-delivery state for event {event_id}: {exc}"
+                    )
+            else:
+                result["errors"] += 1
+                result["diagnostics"].append(f"post_incident unexpected status={status}")
+        except Exception as exc:
             result["errors"] += 1
-            result["diagnostics"].append(f"post_incident unexpected status={status}")
+            result["diagnostics"].append(f"unexpected error processing event: {exc}")
 
     return result
 

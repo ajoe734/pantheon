@@ -18,6 +18,9 @@ Primary execution packet:
 Machine baseline audit:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/BASELINE_AUDIT_2026-07-13.json`
 
+Additive execution audit:
+`docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_GAP_ADDENDUM_2026-07-13.md`
+
 ## 1. Objective
 
 This program closes the difference between "code exists" and "the product
@@ -118,13 +121,13 @@ The execution DAG advances through seven fail-closed gates:
 
 | Gate | Required proof |
 | --- | --- |
-| G0 planning integrity | twelve L1 loops plus the separately classified Per-Persona OODA overlay, unique task ids, an acyclic DAG, and explicit consumption of existing PPL/TJ/PINT/EVOCHAIN work |
-| G1 release and security | strict scoped dev auth, no browser credential, safe writes by default, exact-SHA gate-before-deploy, candidate probe, automatic rollback, and exact FE/BFF identities |
+| G0 planning integrity | twelve L1 loops plus the separately classified Per-Persona OODA overlay, unique task ids, an acyclic DAG, explicit consumption of existing work, planner/fleet implementation separation, canonical run/worktree/scope provenance, and distinct formal review |
+| G1 release and security | strict scoped dev auth, no browser bearer or secret, complete viewer/read and privileged-negative route matrix, safe writes by default, exact-SHA paired FE/BFF gate-before-deploy, one cutover lease, candidate probes, and two-sided rollback |
 | G2 real execution | default deployment owner, durable trigger, canonical side effect, and terminal downstream readback for every loop |
 | G3 recovery and truth | duplicate, lease, timeout, DLQ/replay, worker/BFF/database/full-stack restart, and controller records rather than registry-only liveness |
 | G4 product paths | target-dev Knowledge, Execution, Human Interaction, and Management Repair scenarios pass end to end |
 | G5 hosted UX and governance | authenticated desktop/mobile, accessibility, strict performance, SSE recovery, degraded/error behavior, RBAC, tenant, MFA, and two-person positives and negatives |
-| G6 evidence and closeout | checksummed machine evidence, exact PR/merge/deploy identities, independent review, evidence-derived maturity, and no unresolved blocking product risk |
+| G6 evidence and closeout | checksummed machine evidence, canonical fleet delivery provenance, exact PR/merge/deploy identities, formal review by a distinct admitted runtime identity, evidence-derived maturity, and no unresolved blocking product risk |
 
 Failure at a gate blocks later maturity promotion. An emergency release override
 may never bypass authentication, credential, artifact-integrity, or
@@ -712,16 +715,42 @@ The program is complete only when all of the following are true:
 7. each loop reaches its task-declared target maturity, and every
    `product-level` claim has target-host proof;
 8. Scenarios A through D pass from a clean target-host baseline;
-9. frontend deployment is gate-controlled, rollback-safe, safe-write by
-   default, and credential-free;
+9. frontend deployment is gate-controlled, paired with the exact BFF identity,
+   rollback-safe on both sides, safe-write by default, and contains no reusable
+   browser credential; the complete read-route and privileged-negative matrix
+   passes under one coordinated cutover lease;
 10. PPL, TJ, PINT, and Management AI closeouts pass their hosted acceptance;
 11. duplicate, restart, failure, degraded, rollback, security, tenant, and
     no-live-capital assertions pass; admitted commands show RPO zero and
     recovery within two test controller intervals;
-12. exact deployed SHAs, PRs, checks, evidence, reviewer verdicts, and residual
-    risks are archived;
+12. exact deployed SHAs, canonical task/run/worktree/scope admission, PRs,
+    checks, formal review by a distinct admitted fleet runtime identity,
+    evidence, reviewer verdicts, and residual risks are archived, with no
+    planner-authored product artifact or duplicate semantic repair;
 13. the final independent Human/Ops review accepts the evidence without an
     unresolved blocking risk.
 
 Until all thirteen conditions are proved, this document remains an archived
 planning baseline for active execution, not a completion declaration.
+
+## 14. Additive Closeout Authority
+
+The execution-time audit linked above found safety and evidence gaps that were
+not represented by the original 36-task DAG. The additive packet contains 48
+primary tasks plus one external runtime-lock bootstrap (49 execution tasks
+total). It preserves non-migration record fields while applying three
+versioned, exact-preimage v5 patches to pristine baseline `todo` tasks in the
+same atomic write that creates the twelve primary additive tasks. The
+non-pristine live `LOOP-PROD-AUTH-001` record is not mutated;
+`LOOP-PROD-BROWSER-AUTH-001`
+depends on auth bootstrap, BFF auth, credential-free FE, credential lifecycle,
+delivery provenance, and the environment lease, and is the sole coordinated
+browser activation authority. `LOOP-PROD-DELIVERY-001` enforces that the
+planner plans, dispatches, monitors, and reviews while supervisor-admitted
+fleets implement and a distinct admitted runtime identity formally reviews
+product artifacts. Live dry-run/apply remains blocked until the external
+`LOOP-PROD-RUNTIME-BOOT-001` capability and full task contract are merged and
+read back.
+`LOOP-PROD-CLOSE-001` is retained as the original baseline checkpoint;
+`LOOP-PROD-SIGNOFF-001` installs protected Human/Ops transition enforcement;
+`LOOP-PROD-CLOSE-002` is the sole final completion authority for this program.

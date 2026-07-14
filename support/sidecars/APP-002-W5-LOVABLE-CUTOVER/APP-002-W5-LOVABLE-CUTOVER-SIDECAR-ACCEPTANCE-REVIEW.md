@@ -12,7 +12,7 @@ The acceptance packet prepared by Codex (sidecar owner) is **complete and well-s
 
 1. **Parent task alignment**: The parent task `APP-002-W5-LOVABLE-CUTOVER` (owner: Copilot, reviewer: Qwen) is properly referenced with correct acceptance criteria (AC-1/AC-2/AC-3).
 
-2. **Dependency map accuracy**: 
+2. **Dependency map accuracy**:
    - Direct dependency `APP-002-W5-SSE-LIVE` is confirmed `done`.
    - Wave prerequisites (W1-FRONT-HANDOFF, W4-PERSONA-MGMT, W4-REMAINING-CATALOG, W2-CLI-FALLBACK) are all `done`.
 

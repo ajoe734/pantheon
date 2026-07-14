@@ -1,17 +1,17 @@
 # AG-DES-TR-001 — Sidecar Review Packet
 
-**Prepared by:** Claude2 (sidecar worker)  
-**Date:** 2026-06-21  
-**Task:** AG-DES-TR-001-SIDECAR-REVIEW  
-**Parent task:** AG-DES-TR-001 — Trading Room aggregate/intent handoff  
-**Reviewer:** Claude  
+**Prepared by:** Claude2 (sidecar worker)
+**Date:** 2026-06-21
+**Task:** AG-DES-TR-001-SIDECAR-REVIEW
+**Parent task:** AG-DES-TR-001 — Trading Room aggregate/intent handoff
+**Reviewer:** Claude
 **Status:** Review approved — finalized
 
 ---
 
 ## 0. Reviewer Acceptance Record
 
-**Reviewed by:** Claude  
+**Reviewed by:** Claude
 **Outcome:** `review_approved`
 
 Reviewer confirmed:
@@ -65,10 +65,10 @@ The v4 schema deployment is the remaining execution step. The design source mate
 - `top_decision_events` references `trading_decision_event.schema.json` via `$ref`
 - `additionalProperties: false` enforced
 
-**Gap — `readiness_state` missing `not_assessed`:**  
-Prose section A5 defines five gate states: `not_assessed`, `blocked`, `conditional`, `ready`, `stale`.  
-The schema's `readiness_state` enum only lists four: `["blocked", "conditional", "ready", "stale"]`.  
-`not_assessed` is required to represent a strategy that has not yet entered any readiness gate evaluation.  
+**Gap — `readiness_state` missing `not_assessed`:**
+Prose section A5 defines five gate states: `not_assessed`, `blocked`, `conditional`, `ready`, `stale`.
+The schema's `readiness_state` enum only lists four: `["blocked", "conditional", "ready", "stale"]`.
+`not_assessed` is required to represent a strategy that has not yet entered any readiness gate evaluation.
 **This must be corrected before deployment.**
 
 ### 2.3 Schema: `trading_decision_event.schema.json`
@@ -81,7 +81,7 @@ The schema's `readiness_state` enum only lists four: `["blocked", "conditional",
 - Event lifecycle states match D5: approaching/triggered/pending_review/decided/expired/invalidated/superseded
 - `decision_state` is a separate field from event `state` — this is intentional; the two fields model different dimensions (event progression vs. trader response)
 
-**Minor observation (non-blocking):**  
+**Minor observation (non-blocking):**
 `GovernedIntentHandoff.action_proposal.direction` is `type: string` (free-form), while the existing `trading_intent.schema.json` constrains it to `["long", "short", "neutral", "reduce", "exit"]`. The proposal object is a hint field inside the handoff aggregate, so loose typing is acceptable here. Reviewer may choose to tighten this in the final task if desired.
 
 ### 2.4 Schema: `governed_intent_handoff.schema.json`

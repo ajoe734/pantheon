@@ -1428,11 +1428,18 @@ services:
       RECONCILER_RESTART_BACKOFF_SECONDS: ${RECONCILER_RESTART_BACKOFF_SECONDS:-5}
       RECONCILER_DRAIN_TIMEOUT_SECONDS: ${RECONCILER_DRAIN_TIMEOUT_SECONDS:-10}
       PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      PANTHEON_SOURCE_INGEST_URL: http://source-ingest:8097
+      PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS: ${PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS:-172800}
+      PANTHEON_PERFORMANCE_STATE_ROOT: /data/runtime/paper-performance
       SIGNAL_STORE_URL: redis://signal-store:6379
+    volumes:
+      - runtime-data:/data/runtime
     depends_on:
       runtime-manager:
         condition: service_healthy
       signal-store:
+        condition: service_healthy
+      source-ingest:
         condition: service_healthy
     ports:
       - "${PAPER_FLEET_RECONCILER_PORT:-18011}:8011"
@@ -1590,10 +1597,13 @@ services:
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
       PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      PANTHEON_SOURCE_INGEST_URL: http://source-ingest:8097
+      PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS: ${PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS:-172800}
+      PANTHEON_PERFORMANCE_STATE_PATH: /data/runtime/paper-performance/static-paper-runtime.json
       SIGNAL_STORE_URL: redis://signal-store:6379
       PANTHEON_SIGNAL_QUEUE_KEY: ${PANTHEON_PAPER_SIGNAL_QUEUE_KEY:-pantheon:signals:pending}
       PANTHEON_STRATEGY_ID: ${PANTHEON_PAPER_STRATEGY_ID:-strategy-devloop-l0-001}
-      PANTHEON_PAPER_SYNTHETIC_MARKET_DATA: ${PANTHEON_PAPER_SYNTHETIC_MARKET_DATA:-true}
+      PANTHEON_PAPER_SYNTHETIC_MARKET_DATA: ${PANTHEON_PAPER_SYNTHETIC_MARKET_DATA:-false}
       PANTHEON_BFF_URL: http://operator-bff:8001
       PANTHEON_BFF_TOKEN: ${BFF_TOKEN:-op-paper:operator:mfa}
     depends_on:
@@ -1602,6 +1612,8 @@ services:
       runtime-manager:
         condition: service_healthy
       telemetry:
+        condition: service_healthy
+      source-ingest:
         condition: service_healthy
       operator-bff:
         condition: service_healthy
