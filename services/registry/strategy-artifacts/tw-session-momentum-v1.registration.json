@@ -4,7 +4,7 @@
   "strategy_artifact": {
     "artifact_schema_version": "1.0",
     "artifact_id": "artifact-tw-session-momentum-v1",
-    "strategy_id": "strategy-tw-session-momentum",
+    "strategy_id": "tw_session_momentum",
     "version": "1.0.0",
     "algorithm_ref": {
       "engine": "lean",

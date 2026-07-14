@@ -21,7 +21,8 @@ The schema is `services/registry/strategy_artifact.schema.json`. The first
 real registration request is
 `services/registry/strategy-artifacts/tw-session-momentum-v1.registration.json`
 with registry/artifact id `artifact-tw-session-momentum-v1` and semantic
-version `1.0.0`.
+version `1.0.0`. Its stable `strategy_id=tw_session_momentum` matches the
+strategy identity already observed on the selected RuntimeBinding.
 
 This is not a new artifact lifecycle or artifact-type enum. StrategyArtifact
 maps to the already supported executable type `artifact_type=execution_bundle`,
