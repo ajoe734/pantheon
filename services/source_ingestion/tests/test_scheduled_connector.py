@@ -6,6 +6,7 @@ import importlib
 import os
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -144,6 +145,57 @@ def test_run_scheduled_runs_due_connector_and_persists_evidence(client) -> None:
 
     source = test_client.get("/api/source-ingest/source-records/src-conn-sched-notes-note-1")
     assert source.status_code == 200
+
+
+def test_run_scheduled_force_reconciles_changed_connector_before_cadence(client) -> None:
+    test_client, _, _ = client
+    configured = _configure_with_records(test_client)
+    assert configured.status_code == 201, configured.text
+    scheduled = test_client.put(
+        "/api/source-ingest/connectors/conn-sched-notes/schedule",
+        json={"interval_seconds": 3600, "enabled": True},
+    )
+    assert scheduled.status_code == 200, scheduled.text
+
+    first = test_client.post("/api/source-ingest/run-scheduled")
+    duplicate = test_client.post("/api/source-ingest/run-scheduled")
+    forced = test_client.post(
+        "/api/source-ingest/run-scheduled",
+        json={"force_connector_ids": ["conn-sched-notes"]},
+    )
+
+    assert first.json()["summary"]["total_ran"] == 1
+    assert duplicate.json()["summary"]["total_skipped"] == 1
+    assert forced.json()["summary"]["total_ran"] == 1
+    assert forced.json()["summary"]["forced_connector_count"] == 1
+
+
+def test_stale_running_frontier_is_durably_recovered_after_restart(client) -> None:
+    _, _, module = client
+    item = module.store.enqueue_frontier(
+        connector_id="conn-restart-recovery",
+        max_attempts=2,
+        available_at="2026-07-14T00:00:00Z",
+    )
+    claimed = module.store.claim_frontier(item.frontier_id, now="2026-07-14T00:00:00Z")
+    future = (datetime.now(timezone.utc) + timedelta(seconds=600)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    recovered = module.store.recover_stale_running(timeout_seconds=300, now=future)
+    reloaded = module.JsonlIngestScheduleStore(module.SCHEDULE_STORE_PATH)
+
+    assert claimed.status == "running"
+    assert recovered[0].status == "retry"
+    assert reloaded.get_frontier(item.frontier_id).status == "retry"
+
+
+def test_frontier_append_failure_does_not_publish_phantom_work(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, _, module = client
+    monkeypatch.setattr(module.store, "_append", lambda *args: (_ for _ in ()).throw(OSError("disk full")))
+
+    with pytest.raises(OSError, match="disk full"):
+        module.store.enqueue_frontier(connector_id="conn-phantom")
+
+    assert module.store.list_frontier() == []
 
 
 def test_run_scheduled_honors_bounded_concurrency(client) -> None:

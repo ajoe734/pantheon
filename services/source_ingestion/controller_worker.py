@@ -10,16 +10,27 @@ import socket
 import time
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
+from uuid import uuid4
 
-from .controller_state import ControllerState, ControllerStateStore, utc_now
+from .controller_state import ControllerState, ControllerStateError, ControllerStateStore, parse_utc, utc_now
+from .controller_auth import load_controller_token
 from .scheduler_worker import run_tick as run_schedule_tick
 
 
 DEFAULT_DESIRED_STATE_PATH = Path(__file__).with_name("default_desired_state.json")
 LOOP_ID = "source_ingestion"
+NON_TERMINAL_TRUTH_LEVEL = "scheduled_tick"
+CADENCE_SOURCE_AGE_LIMIT_SECONDS = {
+    "realtime": 300,
+    "minutely": 300,
+    "hourly": 7200,
+    "daily": 864000,
+    "weekly": 1209600,
+}
 
 
 class ControllerTickError(RuntimeError):
@@ -106,6 +117,24 @@ def _normalize_persona(raw: Mapping[str, Any]) -> dict[str, Any]:
             "desired_state_validate",
             f"persona {persona_id} required_data_sources must be a list",
         )
+    normalized_requirements: list[dict[str, Any]] = []
+    seen_requirements: set[str] = set()
+    for index, requirement in enumerate(requirements):
+        if not isinstance(requirement, Mapping):
+            raise ControllerTickError(
+                "desired_state_validate",
+                f"persona {persona_id} required_data_sources[{index}] must be an object",
+            )
+        normalized = dict(requirement)
+        key = _canonical_json(normalized)
+        if key in seen_requirements:
+            raise ControllerTickError(
+                "desired_state_validate",
+                f"persona {persona_id} contains a duplicate data requirement",
+            )
+        seen_requirements.add(key)
+        normalized_requirements.append(normalized)
+    persona["required_data_sources"] = normalized_requirements
     return persona
 
 
@@ -118,9 +147,21 @@ def _personas_from_payload(payload: Any) -> tuple[dict[str, Any], ...]:
                 break
     if not isinstance(candidates, list):
         raise ControllerTickError("desired_state_validate", "desired-state payload must contain a persona list")
-    personas = tuple(_normalize_persona(item) for item in candidates if isinstance(item, Mapping))
-    if not personas:
-        raise ControllerTickError("desired_state_validate", "desired-state payload contains no personas")
+    personas_list: list[dict[str, Any]] = []
+    seen_persona_ids: set[str] = set()
+    for index, item in enumerate(candidates):
+        if not isinstance(item, Mapping):
+            raise ControllerTickError(
+                "desired_state_validate",
+                f"desired-state personas[{index}] must be an object",
+            )
+        persona = _normalize_persona(item)
+        persona_id = str(persona["persona_id"])
+        if persona_id in seen_persona_ids:
+            raise ControllerTickError("desired_state_validate", f"duplicate persona_id in desired state: {persona_id}")
+        seen_persona_ids.add(persona_id)
+        personas_list.append(persona)
+    personas = tuple(personas_list)
     return personas
 
 
@@ -159,23 +200,79 @@ def reconcile_desired_state(
     *,
     api_url: str,
     personas: Sequence[Mapping[str, Any]],
+    desired_state_sha256: str | None = None,
+    source_authority: str | None = None,
+    controller_token: str,
     timeout_seconds: float = 30.0,
 ) -> dict[str, Any]:
+    expected_sha256 = desired_state_sha256 or _digest(list(personas))
     response = _request_json(
         api_url.rstrip("/") + "/api/source-ingest/persona-source-provisioning/reconcile",
         method="POST",
-        payload={"personas": list(personas), "authoritative_snapshot": True, "dry_run": False},
+        payload={
+            "personas": list(personas),
+            "authoritative_snapshot": True,
+            "desired_state_sha256": expected_sha256,
+            "source_authority": source_authority,
+            "dry_run": False,
+        },
+        bearer_token=controller_token,
         timeout_seconds=timeout_seconds,
     )
     summary = response.get("summary")
     if not isinstance(summary, Mapping):
         raise ControllerTickError("reconcile_contract", "reconcile response is missing summary", reconcile=response)
+    if response.get("desired_state_sha256") != expected_sha256:
+        raise ControllerTickError(
+            "reconcile_contract",
+            "reconcile response desired-state digest does not match the admitted snapshot",
+            reconcile=response,
+        )
+    if not isinstance(response.get("pre_readback"), Mapping) or not isinstance(response.get("post_readback"), Mapping):
+        raise ControllerTickError(
+            "reconcile_contract",
+            "reconcile response is missing authoritative pre/post readback",
+            reconcile=response,
+        )
+    accepted_snapshot = response.get("accepted_requirement_snapshot")
+    post_snapshot = response.get("post_readback", {}).get("requirement_snapshot")
+    if (
+        not isinstance(accepted_snapshot, Mapping)
+        or accepted_snapshot.get("desired_state_sha256") != expected_sha256
+        or accepted_snapshot.get("authoritative") is not True
+        or not isinstance(post_snapshot, Mapping)
+        or post_snapshot.get("sequence") != accepted_snapshot.get("sequence")
+        or post_snapshot.get("desired_state_sha256") != expected_sha256
+    ):
+        raise ControllerTickError(
+            "reconcile_contract",
+            "reconcile response did not durably accept the authoritative requirement snapshot",
+            reconcile=response,
+        )
     conflicts = int(summary.get("conflicts") or 0)
     unsupported = int(summary.get("unsupported") or 0)
     if conflicts or unsupported:
         raise ControllerTickError(
             "reconcile",
             f"desired-state reconcile failed closed: conflicts={conflicts} unsupported={unsupported}",
+            reconcile=response,
+        )
+    requirement_count = sum(
+        len(persona.get("required_data_sources") or [])
+        for persona in personas
+        if isinstance(persona, Mapping)
+    )
+    live_binding_count = sum(
+        1
+        for persona in personas
+        if isinstance(persona, Mapping)
+        for requirement in (persona.get("required_data_sources") or [])
+        if isinstance(requirement, Mapping) and requirement.get("source_class") in {"live_pull", "live_push"}
+    )
+    if requirement_count and not live_binding_count:
+        raise ControllerTickError(
+            "reconcile",
+            "authoritative desired state contains no live source binding; seed-only state is not terminal proof",
             reconcile=response,
         )
     return response
@@ -192,6 +289,21 @@ def _connector_ids(reconcile: Mapping[str, Any]) -> list[str]:
     return sorted(values)
 
 
+def _mutated_connector_ids(reconcile: Mapping[str, Any]) -> list[str]:
+    values: set[str] = set()
+    for result in reconcile.get("results") or []:
+        if not isinstance(result, Mapping):
+            continue
+        for action in result.get("actions") or []:
+            if (
+                isinstance(action, Mapping)
+                and action.get("connector_id")
+                and action.get("status") == "mutated"
+            ):
+                values.add(str(action["connector_id"]))
+    return sorted(values)
+
+
 def read_actual_state(*, api_url: str, timeout_seconds: float = 30.0) -> dict[str, Any]:
     return _request_json(
         api_url.rstrip("/") + "/api/source-ingest/controller/readback",
@@ -204,7 +316,59 @@ def _validate_terminal_readback(
     reconcile: Mapping[str, Any],
     schedule: Mapping[str, Any],
     actual: Mapping[str, Any],
+    expected_controller_id: str,
+    expected_sequence_no: int,
+    expected_deployment: Mapping[str, Any],
 ) -> None:
+    if actual.get("schema_version") != "source_ingest_controller_readback.v1":
+        raise ControllerTickError(
+            "actual_readback",
+            "authoritative source readback schema is missing or unsupported",
+            reconcile=reconcile,
+            schedule=schedule,
+            actual_readback=actual,
+        )
+    captured_at = parse_utc(str(actual.get("captured_at") or ""))
+    if captured_at is None or (datetime.now(timezone.utc) - captured_at).total_seconds() > 300:
+        raise ControllerTickError(
+            "actual_readback",
+            "authoritative source readback is stale",
+            reconcile=reconcile,
+            schedule=schedule,
+            actual_readback=actual,
+        )
+    controller_state = actual.get("controller_state")
+    deployment = controller_state.get("deployment") if isinstance(controller_state, Mapping) else None
+    identity_fields = ("git_sha", "image_digest", "build_time", "deployment_id", "runtime_instance_id")
+    if (
+        not isinstance(controller_state, Mapping)
+        or controller_state.get("controller_id") != expected_controller_id
+        or int(controller_state.get("sequence_no") or -1) != expected_sequence_no
+        or not isinstance(deployment, Mapping)
+        or deployment.get("identity_complete") is not True
+        or any(str(deployment.get(field) or "").strip() in {"", "unknown", "unresolved", "local-dev"} for field in identity_fields)
+        or any(deployment.get(field) != expected_deployment.get(field) for field in identity_fields)
+    ):
+        raise ControllerTickError(
+            "actual_readback",
+            "controller deployment identity is missing from authoritative readback",
+            reconcile=reconcile,
+            schedule=schedule,
+            actual_readback=actual,
+        )
+    requirement_snapshot = actual.get("requirement_snapshot")
+    if (
+        not isinstance(requirement_snapshot, Mapping)
+        or requirement_snapshot.get("desired_state_sha256") != reconcile.get("desired_state_sha256")
+        or requirement_snapshot.get("authoritative") is not True
+    ):
+        raise ControllerTickError(
+            "actual_readback",
+            "authoritative requirement snapshot is missing or contradicted by actual readback",
+            reconcile=reconcile,
+            schedule=schedule,
+            actual_readback=actual,
+        )
     schedule_summary = schedule.get("summary")
     if not isinstance(schedule_summary, Mapping):
         raise ControllerTickError("schedule_contract", "scheduled tick response is missing summary", schedule=schedule)
@@ -217,7 +381,15 @@ def _validate_terminal_readback(
             schedule=schedule,
             actual_readback=actual,
         )
-    wanted = set(_connector_ids(reconcile))
+    wanted_requirements: dict[str, list[dict[str, Any]]] = {}
+    for result in reconcile.get("results") or []:
+        if not isinstance(result, Mapping):
+            continue
+        for action in result.get("actions") or []:
+            if not isinstance(action, Mapping) or not action.get("connector_id") or action.get("status") == "skipped":
+                continue
+            wanted_requirements.setdefault(str(action["connector_id"]), []).append(dict(action))
+    wanted = set(wanted_requirements)
     actual_connectors = {
         str(item.get("connector_id")): item
         for item in actual.get("connectors") or []
@@ -236,18 +408,102 @@ def _validate_terminal_readback(
     for connector_id in sorted(wanted):
         item = actual_connectors[connector_id]
         schedule_readback = item.get("schedule") if isinstance(item.get("schedule"), Mapping) else {}
-        source_class = str((item.get("desired_state") or {}).get("source_class") or "")
+        desired_state = item.get("desired_state") if isinstance(item.get("desired_state"), Mapping) else {}
+        source_class = str(desired_state.get("source_class") or "")
+        policy_gates = {
+            str(gate)
+            for gate in (desired_state.get("policy_gates") or [])
+            if str(gate)
+        }
+        gate_results = (
+            desired_state.get("policy_gate_results")
+            if isinstance(desired_state.get("policy_gate_results"), Mapping)
+            else {}
+        )
+        expected_datasets = {str(action.get("dataset") or "") for action in wanted_requirements[connector_id]}
         if not item.get("configured"):
             invalid.append(f"{connector_id}:connector_missing")
+        if str(desired_state.get("dataset") or "") not in expected_datasets:
+            invalid.append(f"{connector_id}:desired_dataset_mismatch")
+        for gate in sorted(policy_gates):
+            result = gate_results.get(gate) if isinstance(gate_results, Mapping) else None
+            if not isinstance(result, Mapping) or result.get("passed") is not True:
+                invalid.append(f"{connector_id}:policy_gate_not_admitted[{gate}]")
         if source_class != "live_push" and not schedule_readback.get("enabled"):
             invalid.append(f"{connector_id}:schedule_inactive")
         if source_class != "live_push":
             record = item.get("latest_source_record")
             health = item.get("source_health")
+            freshness = item.get("freshness") if isinstance(item.get("freshness"), Mapping) else {}
+            if freshness.get("status") != "fresh":
+                invalid.append(f"{connector_id}:freshness_not_accepted")
+            staleness_seconds = freshness.get("staleness_seconds")
+            interval_seconds = int(schedule_readback.get("interval_seconds") or 0)
+            if staleness_seconds is None or interval_seconds <= 0 or int(staleness_seconds) > interval_seconds:
+                invalid.append(f"{connector_id}:freshness_outside_cadence")
             if not isinstance(record, Mapping) or record.get("status") != "normalized":
                 invalid.append(f"{connector_id}:normalized_record_missing")
+            else:
+                if record.get("connector_id") != connector_id:
+                    invalid.append(f"{connector_id}:record_connector_mismatch")
+                if not record.get("source_id") or not record.get("content_ref") or not record.get("trace_id"):
+                    invalid.append(f"{connector_id}:record_identity_incomplete")
+                provenance = record.get("provenance") if isinstance(record.get("provenance"), Mapping) else {}
+                required_provenance = {
+                    "provider",
+                    "dataset",
+                    "available_time",
+                    "api_endpoint",
+                    "access_scope",
+                    "license_scope",
+                    "schema_hash",
+                    "source_ingest_run_id",
+                }
+                missing_provenance = sorted(key for key in required_provenance if provenance.get(key) in (None, "", []))
+                if missing_provenance:
+                    invalid.append(f"{connector_id}:provenance_missing[{','.join(missing_provenance)}]")
+                if str(provenance.get("dataset") or "") not in expected_datasets:
+                    invalid.append(f"{connector_id}:record_dataset_mismatch")
+                available_at = None
+                try:
+                    available_at = parse_utc(str(provenance.get("available_time") or ""))
+                except ControllerStateError:
+                    pass
+                cadence = str(desired_state.get("cadence") or "")
+                max_source_age = (
+                    86400
+                    if "require_freshness_within_1d" in policy_gates
+                    else CADENCE_SOURCE_AGE_LIMIT_SECONDS.get(cadence)
+                )
+                if (
+                    available_at is None
+                    or max_source_age is None
+                    or (datetime.now(timezone.utc) - available_at).total_seconds() > max_source_age
+                    or (available_at - datetime.now(timezone.utc)).total_seconds() > 300
+                ):
+                    invalid.append(f"{connector_id}:source_data_stale")
+            connector_payload = item.get("connector") if isinstance(item.get("connector"), Mapping) else {}
+            if "no_live_capital" in policy_gates and connector_payload.get("auth_type") == "broker_ref":
+                invalid.append(f"{connector_id}:no_live_capital_gate_failed")
+            if "public-source-only" in policy_gates and (
+                connector_payload.get("auth_type") != "none" or connector_payload.get("secret_ref_id")
+            ):
+                invalid.append(f"{connector_id}:public_source_gate_failed")
             if not isinstance(health, Mapping) or health.get("status") != "ok":
                 invalid.append(f"{connector_id}:source_health_not_ok")
+            else:
+                if health.get("source_id") != connector_id or not health.get("last_success_at"):
+                    invalid.append(f"{connector_id}:source_health_identity_incomplete")
+                health_metadata = health.get("metadata") if isinstance(health.get("metadata"), Mapping) else {}
+                latest_run = freshness.get("latest_run") if isinstance(freshness.get("latest_run"), Mapping) else {}
+                if latest_run.get("status") != "completed":
+                    invalid.append(f"{connector_id}:latest_run_not_completed")
+                if health_metadata.get("last_ingest_run_id") != latest_run.get("ingest_run_id"):
+                    invalid.append(f"{connector_id}:health_run_mismatch")
+                if isinstance(record, Mapping):
+                    provenance = record.get("provenance") if isinstance(record.get("provenance"), Mapping) else {}
+                    if provenance.get("source_ingest_run_id") != latest_run.get("ingest_run_id"):
+                        invalid.append(f"{connector_id}:record_run_mismatch")
     if invalid:
         raise ControllerTickError(
             "actual_readback",
@@ -288,20 +544,14 @@ class ControllerConfig:
     timeout_seconds: float
     lease_seconds: int
     truth_level: str
+    controller_token: str
 
 
 def config_from_env() -> ControllerConfig:
     interval = _env_int("SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS", 60, minimum=1)
     alive = str(os.getenv("SOURCE_INGEST_CONTROLLER_ALIVE_PATH") or "").strip()
-    truth_level = str(os.getenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL") or "scheduled_tick").strip()
-    if truth_level not in {
-        "seed_fixture",
-        "snapshot_fallback",
-        "registry_metadata",
-        "scheduled_tick",
-        "reconciled_live_proof",
-        "proven_live_evidence",
-    }:
+    truth_level = str(os.getenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL") or "reconciled_live_proof").strip()
+    if truth_level not in {"scheduled_tick", "reconciled_live_proof"}:
         raise ValueError("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL is invalid")
     return ControllerConfig(
         api_url=str(os.getenv("SOURCE_INGEST_API_URL") or "http://127.0.0.1:8097"),
@@ -314,23 +564,81 @@ def config_from_env() -> ControllerConfig:
         timeout_seconds=float(os.getenv("SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS") or "30"),
         lease_seconds=_env_int("SOURCE_INGEST_CONTROLLER_LEASE_SECONDS", interval * 2, minimum=interval),
         truth_level=truth_level,
+        controller_token=load_controller_token(
+            token_path=os.getenv("SOURCE_INGEST_CONTROLLER_TOKEN_FILE")
+            or "/data/source-ingest/controller_token",
+            create=False,
+        ),
     )
+
+
+def _runtime_deployment() -> dict[str, Any]:
+    runtime_instance_id = socket.gethostname()
+    git_sha = str(os.getenv("GIT_SHA") or "unknown")
+    package_root = Path(__file__).parent
+    artifact_paths = sorted(package_root.rglob("*.py")) + [
+        package_root / "requirements.txt",
+        DEFAULT_DESIRED_STATE_PATH,
+        package_root.parent / "control-plane" / "persona" / "required_data_sources.schema.json",
+    ]
+    artifact_hasher = sha256()
+    for path in artifact_paths:
+        artifact_hasher.update(str(path.relative_to(package_root.parent)).encode("utf-8"))
+        artifact_hasher.update(path.read_bytes())
+    artifact_digest = "application-sha256:" + artifact_hasher.hexdigest()
+    image_digest = str(os.getenv("IMAGE_DIGEST") or artifact_digest)
+    artifact_mtime = max(path.stat().st_mtime for path in artifact_paths)
+    build_time = str(
+        os.getenv("BUILD_TIME")
+        or datetime.fromtimestamp(artifact_mtime, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
+    return {
+        "git_sha": git_sha,
+        "image_digest": image_digest,
+        "build_time": build_time,
+        "deployment_id": str(
+            os.getenv("SOURCE_INGEST_DEPLOYMENT_ID")
+            or f"container:{runtime_instance_id}"
+        ),
+        "runtime_instance_id": runtime_instance_id,
+        "identity_observed_at": utc_now(),
+        "identity_complete": (
+            git_sha not in {"", "unknown", "local-dev"}
+            and image_digest not in {"", "unknown", "unresolved"}
+        ),
+    }
+
+
+def _runtime_controller_id() -> str:
+    base = str(os.getenv("PANTHEON_CONTROLLER_ID") or f"source-ingestion-{socket.gethostname()}")
+    generation = str(os.getenv("SOURCE_INGEST_CONTROLLER_GENERATION_ID") or uuid4().hex[:12])
+    return f"{base}:{generation}"
 
 
 def _new_state() -> ControllerState:
-    controller_id = str(os.getenv("PANTHEON_CONTROLLER_ID") or f"source-ingestion-{socket.gethostname()}")
     return ControllerState(
-        controller_id=controller_id,
+        controller_id=_runtime_controller_id(),
         controller_name=str(os.getenv("PANTHEON_CONTROLLER_NAME") or "source-ingestion-controller"),
         environment=str(os.getenv("PANTHEON_ENV") or "dev"),
         tenant_id=str(os.getenv("PANTHEON_TENANT_ID") or "default"),
-        deployment={
-            "git_sha": str(os.getenv("GIT_SHA") or "unknown"),
-            "image_digest": str(os.getenv("IMAGE_DIGEST") or "unknown"),
-            "build_time": str(os.getenv("BUILD_TIME") or "unknown"),
-            "deployment_id": str(os.getenv("SOURCE_INGEST_DEPLOYMENT_ID") or "unknown"),
-        },
+        deployment=_runtime_deployment(),
     )
+
+
+def refresh_runtime_identity(state: ControllerState) -> ControllerState:
+    """Fence a restarted process and refresh exact deployment identity."""
+
+    environment = str(os.getenv("PANTHEON_ENV") or "dev")
+    tenant_id = str(os.getenv("PANTHEON_TENANT_ID") or "default")
+    if state.environment != environment or state.tenant_id != tenant_id:
+        raise ControllerStateError(
+            "persisted controller state tenant/environment does not match this runtime"
+        )
+    state.controller_id = _runtime_controller_id()
+    state.controller_name = str(os.getenv("PANTHEON_CONTROLLER_NAME") or "source-ingestion-controller")
+    state.deployment = _runtime_deployment()
+    state.started_at = utc_now()
+    return state
 
 
 def _write_alive(path: Path | None) -> None:
@@ -352,6 +660,7 @@ def run_controller_tick(
     desired_meta: dict[str, Any] = {}
     reconcile: dict[str, Any] = {}
     schedule: dict[str, Any] = {}
+    pre_actual: dict[str, Any] = {}
     actual: dict[str, Any] = {}
     had_failures = state.consecutive_failures > 0
     state.record_tick_started()
@@ -360,44 +669,58 @@ def run_controller_tick(
         _async(
             writer.record_heartbeat(
                 LOOP_ID,
-                config.truth_level,
+                NON_TERMINAL_TRUTH_LEVEL,
                 desired_state_query="persona/data requirement snapshot",
                 actual_state_query=config.api_url.rstrip("/") + "/api/source-ingest/controller/readback",
                 lease_duration_seconds=config.lease_seconds,
                 payload={"deployment": state.deployment, "state_sequence_no": state.sequence_no},
             )
         )
-        _async(writer.record_tick(LOOP_ID, config.truth_level, payload={"state_sequence_no": state.sequence_no}))
+        _async(writer.record_tick(LOOP_ID, NON_TERMINAL_TRUTH_LEVEL, payload={"state_sequence_no": state.sequence_no}))
+        pre_actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
         personas, desired_meta = load_desired_state(timeout_seconds=config.timeout_seconds)
         reconcile = reconcile_desired_state(
             api_url=config.api_url,
             personas=personas,
+            desired_state_sha256=str(desired_meta["sha256"]),
+            source_authority=str(desired_meta["authority"]),
+            controller_token=config.controller_token,
             timeout_seconds=config.timeout_seconds,
         )
         schedule = run_schedule_tick(
             api_url=config.api_url,
             max_concurrency=config.max_concurrency,
             timeout_seconds=config.timeout_seconds,
+            force_connector_ids=_mutated_connector_ids(reconcile),
         )
         actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
-        _validate_terminal_readback(reconcile=reconcile, schedule=schedule, actual=actual)
-        state.record_success(
-            desired_state=desired_meta,
-            reconcile={"summary": reconcile.get("summary"), "connector_ids": _connector_ids(reconcile)},
-            schedule={"summary": schedule.get("summary")},
-            actual_readback={
-                "captured_at": actual.get("captured_at"),
-                "connector_count": actual.get("connector_count"),
-                "source_record_count": actual.get("source_record_count"),
-                "dlq_count": actual.get("dlq_count"),
-            },
+        _validate_terminal_readback(
+            reconcile=reconcile,
+            schedule=schedule,
+            actual=actual,
+            expected_controller_id=state.controller_id,
+            expected_sequence_no=state.sequence_no,
+            expected_deployment=state.deployment,
         )
-        store.save(state)
+        wanted_connector_ids = set(_connector_ids(reconcile))
         evidence_refs = [
             str(item.get("latest_source_record", {}).get("source_id"))
             for item in actual.get("connectors") or []
-            if isinstance(item, Mapping) and isinstance(item.get("latest_source_record"), Mapping)
+            if (
+                isinstance(item, Mapping)
+                and str(item.get("connector_id") or "") in wanted_connector_ids
+                and isinstance(item.get("latest_source_record"), Mapping)
+            )
         ]
+        accepted_actual = {
+            "pre_captured_at": pre_actual.get("captured_at"),
+            "captured_at": actual.get("captured_at"),
+            "connector_count": actual.get("connector_count"),
+            "source_record_count": actual.get("source_record_count"),
+            "dlq_count": actual.get("dlq_count"),
+            "frontier_backlog": actual.get("frontier_backlog"),
+            "max_lag_seconds": actual.get("max_lag_seconds"),
+        }
         _async(
             writer.record_success(
                 LOOP_ID,
@@ -410,7 +733,7 @@ def run_controller_tick(
                     "desired_state": desired_meta,
                     "reconcile_summary": reconcile.get("summary"),
                     "schedule_summary": schedule.get("summary"),
-                    "actual_readback": state.actual_readback,
+                    "actual_readback": accepted_actual,
                 },
             )
         )
@@ -423,6 +746,13 @@ def run_controller_tick(
                     evidence_refs=[ref for ref in evidence_refs if ref and ref != "None"],
                 )
             )
+        state.record_success(
+            desired_state=desired_meta,
+            reconcile={"summary": reconcile.get("summary"), "connector_ids": sorted(wanted_connector_ids)},
+            schedule={"summary": schedule.get("summary")},
+            actual_readback=accepted_actual,
+        )
+        store.save(state)
         return {
             "status": "ok",
             "state_sequence_no": state.sequence_no,
@@ -448,7 +778,7 @@ def run_controller_tick(
                 writer.record_failure(
                     LOOP_ID,
                     f"{error.stage}: {error}",
-                    config.truth_level,
+                    NON_TERMINAL_TRUTH_LEVEL,
                     dlq_count=int((actual or {}).get("dlq_count") or 0),
                     payload={
                         "failure_stage": error.stage,
@@ -469,7 +799,8 @@ def run_controller_tick(
 def main() -> int:
     config = config_from_env()
     store = ControllerStateStore(config.state_path)
-    state = store.load() or _new_state()
+    loaded_state = store.load()
+    state = refresh_runtime_identity(loaded_state) if loaded_state is not None else _new_state()
     startup_missed = state.record_startup_missed(interval_seconds=config.interval_seconds)
     store.save(state)
     print(
@@ -486,12 +817,15 @@ def main() -> int:
     )
     writer = build_loop_writer(dsn=config.database_url, state=state)
     tick = 0
+    last_tick_failed = False
     while True:
         tick += 1
         try:
             result = run_controller_tick(config=config, state=state, store=store, writer=writer)
+            last_tick_failed = False
             print(_canonical_json({"tick": tick, **result}), flush=True)
         except Exception as exc:
+            last_tick_failed = True
             print(
                 _canonical_json(
                     {
@@ -505,7 +839,7 @@ def main() -> int:
                 flush=True,
             )
         if config.max_ticks and tick >= config.max_ticks:
-            return 0
+            return 1 if last_tick_failed else 0
         time.sleep(config.interval_seconds)
 
 

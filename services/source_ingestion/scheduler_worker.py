@@ -22,8 +22,19 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def run_tick(*, api_url: str, max_concurrency: int, timeout_seconds: float = 30.0) -> dict[str, Any]:
-    payload = json.dumps({"max_concurrency": max_concurrency}).encode("utf-8")
+def run_tick(
+    *,
+    api_url: str,
+    max_concurrency: int,
+    timeout_seconds: float = 30.0,
+    force_connector_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    payload = json.dumps(
+        {
+            "max_concurrency": max_concurrency,
+            "force_connector_ids": sorted(set(force_connector_ids or [])),
+        }
+    ).encode("utf-8")
     request = urllib.request.Request(
         api_url.rstrip("/") + "/api/source-ingest/run-scheduled",
         data=payload,

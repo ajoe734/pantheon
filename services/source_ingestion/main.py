@@ -10,16 +10,18 @@ refs, DLQ routing, and audit replay contract from the source_ingestion library.
 from __future__ import annotations
 
 import json
+import hmac
 import os
 import re
+import threading
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 try:
     from pydantic import BaseModel, ConfigDict, Field
 except ImportError:  # pragma: no cover - compatibility with older pydantic.
@@ -82,7 +84,10 @@ from .ingest_manager import IngestManager
 from .market_data_storage import MarketDataStorageWriter
 from .pg_store import build_source_evidence_repository
 from .policy_registry import crawler_policy_for_connector, policy_registry_payload
-from .persona_source_reconciler import SourceProvisioningReconciler
+from .controller_state import ControllerStateError, read_controller_state
+from .controller_auth import load_controller_token
+from .persona_source_reconciler import RECONCILIATION_METADATA_KEY, SourceProvisioningReconciler
+from .requirement_state import RequirementSnapshotStore, RequirementStateError
 from .scheduler import IngestBatch, IngestionScheduler, JsonlIngestScheduleStore
 from .source_health import (
     SourceHealth,
@@ -114,11 +119,24 @@ CONNECTOR_SCHEDULE_CONFIG_PATH = Path(os.getenv("SOURCE_INGEST_SCHEDULE_CONFIG_P
 SOURCE_HEALTH_STORE_PATH = Path(os.getenv("SOURCE_INGEST_HEALTH_STORE_PATH", str(DATA_DIR / "source_health.jsonl")))
 SOURCE_USAGE_STORE_PATH = Path(os.getenv("SOURCE_INGEST_USAGE_STORE_PATH", str(DATA_DIR / "source_usage_daily.jsonl")))
 MARKET_DATA_STORAGE_ROOT = Path(os.getenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(DATA_DIR / "market_data_store")))
+CONTROLLER_STATE_PATH = Path(
+    os.getenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(DATA_DIR / "controller_state.json"))
+)
+REQUIREMENT_STATE_PATH = Path(
+    os.getenv("SOURCE_INGEST_REQUIREMENT_STATE_PATH", str(DATA_DIR / "requirement_snapshots.jsonl"))
+)
+CONTROLLER_TOKEN_PATH = Path(
+    os.getenv("SOURCE_INGEST_CONTROLLER_TOKEN_FILE", str(DATA_DIR / "controller_token"))
+)
 SOURCE_RECORD_SCHEMA_PATH = Path(__file__).with_name("source_record.schema.json")
 MAX_RECORDS_PER_JOB = int(os.getenv("SOURCE_INGEST_MAX_RECORDS", "100"))
 SCHEDULER_MAX_CONCURRENCY = max(1, int(os.getenv("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY", "2")))
 FRONTIER_MAX_ATTEMPTS = max(1, int(os.getenv("SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS", "2")))
 FRONTIER_BACKOFF_SECONDS = max(0, int(os.getenv("SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS", "60")))
+FRONTIER_RUNNING_TIMEOUT_SECONDS = max(
+    1,
+    int(os.getenv("SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS", "300")),
+)
 # Optional: when set, notify search service after successful ingest runs (fire-and-forget).
 SEARCH_INGEST_NOTIFY_URL = os.getenv("SEARCH_INGEST_NOTIFY_URL", "").rstrip("/")
 PRODUCTION_POSTURE = require_source_search_posture("source-ingest")
@@ -139,6 +157,9 @@ scheduler = IngestionScheduler(manager=manager, store=store, dead_letter_queue=d
 replay_processor = DeadLetterReplayProcessor(schema_registry=SchemaRegistry())
 source_health_store = SourceHealthStore.from_jsonl(SOURCE_HEALTH_STORE_PATH)
 source_usage_store = SourceUsageDailyStore.from_jsonl(SOURCE_USAGE_STORE_PATH)
+requirement_snapshot_store = RequirementSnapshotStore(REQUIREMENT_STATE_PATH)
+controller_token = load_controller_token(token_path=CONTROLLER_TOKEN_PATH, create=True)
+authoritative_reconcile_lock = threading.RLock()
 market_data_storage_writer = MarketDataStorageWriter(MARKET_DATA_STORAGE_ROOT)
 register_fastapi_health_routes(
     app,
@@ -423,12 +444,16 @@ class SetConnectorLifecycleRequest(StrictBaseModel):
 
 class RunScheduledRequest(StrictBaseModel):
     max_concurrency: int | None = None
+    force_connector_ids: list[str] = Field(default_factory=list)
 
 
 class PersonaSourceProvisioningRequest(StrictBaseModel):
     persona: dict[str, Any] | None = None
     personas: list[dict[str, Any]] = Field(default_factory=list)
     dry_run: bool = False
+    authoritative_snapshot: bool = False
+    desired_state_sha256: str | None = None
+    source_authority: str | None = None
 
 
 class ReplayFrontierRequest(StrictBaseModel):
@@ -789,12 +814,179 @@ def _source_provisioning_reconciler() -> SourceProvisioningReconciler:
     )
 
 
+def _desired_state_digest(personas: list[dict[str, Any]]) -> str:
+    body = json.dumps(
+        personas,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return sha256(body).hexdigest()
+
+
+def _requirement_bindings(results: list[Any]) -> dict[str, str]:
+    bindings: dict[str, str] = {}
+    for result in results:
+        for action in result.actions:
+            if action.connector_id and action.status in {"satisfied", "mutated"}:
+                existing = bindings.get(action.idempotency_key)
+                if existing is not None and existing != action.connector_id:
+                    raise SourceEvidenceError(
+                        f"requirement binding conflict for {action.idempotency_key}: {existing} != {action.connector_id}"
+                    )
+                bindings[action.idempotency_key] = action.connector_id
+    return bindings
+
+
+def _retire_removed_requirement_bindings(
+    *,
+    previous_bindings: Mapping[str, str],
+    current_bindings: Mapping[str, str],
+) -> list[dict[str, Any]]:
+    retained_connector_ids = set(current_bindings.values())
+    removed_connector_ids = sorted(set(previous_bindings.values()) - retained_connector_ids)
+    actions: list[dict[str, Any]] = []
+    for connector_id in removed_connector_ids:
+        config = connector_store.get_config(connector_id)
+        if config is None:
+            actions.append({"connector_id": connector_id, "action": "already_absent"})
+            continue
+        marker = config.connector.metadata.get(RECONCILIATION_METADATA_KEY)
+        owner = str(marker.get("managed_by") or "") if isinstance(marker, Mapping) else ""
+        if owner != "persona_source_provisioning_reconciler":
+            actions.append({"connector_id": connector_id, "action": "retained_operator_owned"})
+            continue
+        connector_payload = config.connector.to_dict()
+        connector_payload["status"] = ConnectorStatus.DISABLED.value
+        metadata = dict(connector_payload.get("metadata") or {})
+        reconciliation = dict(metadata.get(RECONCILIATION_METADATA_KEY) or {})
+        reconciliation["retired_by_authoritative_snapshot"] = True
+        metadata[RECONCILIATION_METADATA_KEY] = reconciliation
+        connector_payload["metadata"] = metadata
+        retired_connector = SourceConnector.from_dict(connector_payload)
+        connector_store.upsert_config(retired_connector, config.fetch)
+        manager.upsert_connector(retired_connector)
+        schedule = schedule_config_store.get_schedule(connector_id)
+        if schedule is not None and schedule.enabled:
+            schedule_config_store.upsert_schedule(
+                connector_id,
+                interval_seconds=schedule.interval_seconds,
+                enabled=False,
+            )
+        actions.append({"connector_id": connector_id, "action": "disabled_controller_owned"})
+    return actions
+
+
+def _source_record_readback(record: SourceRecord | None) -> dict[str, Any] | None:
+    if record is None:
+        return None
+    payload = record.to_dict()
+    metadata = dict(record.metadata)
+    provenance_keys = (
+        "provider",
+        "dataset",
+        "source_dataset",
+        "venue",
+        "market",
+        "event_time",
+        "available_time",
+        "api_endpoint",
+        "access_scope",
+        "license_scope",
+        "schema_hash",
+        "source_ingest_run_id",
+    )
+    return {
+        "source_id": payload["source_id"],
+        "connector_id": payload["connector_id"],
+        "source_type": payload["source_type"],
+        "title": payload["title"],
+        "content_ref": payload["content_ref"],
+        "status": payload["status"],
+        "trace_id": payload["trace_id"],
+        "created_at": payload["created_at"],
+        "provenance": {key: metadata[key] for key in provenance_keys if key in metadata},
+    }
+
+
+def _latest_source_record_by_connector() -> dict[str, SourceRecord]:
+    latest: dict[str, SourceRecord] = {}
+    for record in evidence_repository.list_source_records():
+        current = latest.get(record.connector_id)
+        if current is None or str(record.to_dict()["created_at"]) > str(current.to_dict()["created_at"]):
+            latest[record.connector_id] = record
+    return latest
+
+
+def _controller_connector_readbacks() -> list[dict[str, Any]]:
+    latest_by_connector = _latest_source_record_by_connector()
+    readbacks: list[dict[str, Any]] = []
+    for config in sorted(connector_store.list_configs(), key=lambda item: item.connector.connector_id):
+        connector = config.connector
+        connector_id = connector.connector_id
+        schedule = schedule_config_store.get_schedule(connector_id)
+        freshness = _connector_freshness_summary(connector_id)
+        health = source_health_store.get(connector_id)
+        health_payload = health.to_dict() if health is not None else None
+        if health_payload is not None:
+            health_payload["staleness_seconds"] = freshness.get("staleness_seconds")
+        reconciliation = connector.metadata.get(RECONCILIATION_METADATA_KEY)
+        if not isinstance(reconciliation, Mapping):
+            reconciliation = {}
+        desired_state = reconciliation.get("desired_state")
+        readbacks.append(
+            {
+                "connector_id": connector_id,
+                "configured": True,
+                "connector": connector.to_dict(),
+                "desired_state": dict(desired_state) if isinstance(desired_state, Mapping) else {},
+                "desired_state_sha256": reconciliation.get("desired_state_sha256"),
+                "schedule": schedule.to_dict() if schedule is not None else None,
+                "fetch_state": connector_store.get_fetch_state(connector_id),
+                "freshness": freshness,
+                "latest_source_record": _source_record_readback(latest_by_connector.get(connector_id)),
+                "source_health": health_payload,
+            }
+        )
+    return readbacks
+
+
+def _controller_readback_payload() -> dict[str, Any]:
+    connector_readbacks = _controller_connector_readbacks()
+    frontier = store.list_frontier()
+    frontier_backlog = sum(1 for item in frontier if item.status in {"queued", "retry", "running"})
+    staleness_values = [
+        int(item["freshness"]["staleness_seconds"])
+        for item in connector_readbacks
+        if item.get("freshness", {}).get("staleness_seconds") is not None
+    ]
+    controller_state = read_controller_state(CONTROLLER_STATE_PATH)
+    requirement_snapshot = requirement_snapshot_store.latest
+    return {
+        "schema_version": "source_ingest_controller_readback.v1",
+        "captured_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "controller_state": controller_state,
+        "controller_state_path": str(CONTROLLER_STATE_PATH),
+        "requirement_snapshot": requirement_snapshot.to_dict() if requirement_snapshot is not None else None,
+        "connector_count": len(connector_readbacks),
+        "source_record_count": len(evidence_repository.list_source_records()),
+        "dlq_count": len(dead_letter_queue.entries()),
+        "frontier_backlog": frontier_backlog,
+        "max_lag_seconds": max(staleness_values, default=0),
+        "connectors": connector_readbacks,
+    }
+
+
 def _persona_source_provisioning_payload(request: PersonaSourceProvisioningRequest) -> dict[str, Any]:
     personas = list(request.personas)
     if request.persona is not None:
         personas.insert(0, request.persona)
-    if not personas:
+    if not personas and not request.authoritative_snapshot:
         raise SourceEvidenceError("persona or personas is required")
+    desired_state_sha256 = _desired_state_digest(personas)
+    if request.desired_state_sha256 and request.desired_state_sha256 != desired_state_sha256:
+        raise SourceEvidenceError("desired_state_sha256 does not match canonical persona snapshot")
+    pre_readback = _controller_readback_payload()
     reconciler = _source_provisioning_reconciler()
     results = reconciler.reconcile_personas(personas, dry_run=request.dry_run)
     summary = {
@@ -809,12 +1001,45 @@ def _persona_source_provisioning_payload(request: PersonaSourceProvisioningReque
     for result in results:
         for key, value in result.summary.items():
             summary[key] = int(summary.get(key, 0)) + int(value)
+    bindings = _requirement_bindings(list(results))
+    retirement_actions: list[dict[str, Any]] = []
+    accepted_snapshot = None
+    if (
+        request.authoritative_snapshot
+        and not request.dry_run
+        and summary["conflicts"] == 0
+        and summary["unsupported"] == 0
+    ):
+        previous_bindings = (
+            dict(requirement_snapshot_store.latest.bindings)
+            if requirement_snapshot_store.latest is not None
+            else {}
+        )
+        retirement_actions = _retire_removed_requirement_bindings(
+            previous_bindings=previous_bindings,
+            current_bindings=bindings,
+        )
+        accepted_snapshot = requirement_snapshot_store.append(
+            desired_state_sha256=desired_state_sha256,
+            bindings=bindings,
+            persona_count=len(personas),
+            authority=str(request.source_authority or "api://persona-source-provisioning"),
+            authoritative=True,
+        )
     return {
         "schema_version": "persona_source_provisioning_response.v1",
         "controller": "persona_source_provisioning_reconciler",
         "dry_run": request.dry_run,
+        "authoritative_snapshot": request.authoritative_snapshot,
+        "desired_state_sha256": desired_state_sha256,
+        "source_authority": request.source_authority,
         "summary": summary,
         "results": [result.to_dict() for result in results],
+        "bindings": bindings,
+        "retirement_actions": retirement_actions,
+        "accepted_requirement_snapshot": accepted_snapshot.to_dict() if accepted_snapshot is not None else None,
+        "pre_readback": pre_readback,
+        "post_readback": _controller_readback_payload(),
     }
 
 
@@ -1618,11 +1843,32 @@ def source_connector_registry() -> dict[str, Any]:
 
 
 @app.post("/api/source-ingest/persona-source-provisioning/reconcile")
-def reconcile_persona_source_provisioning(request: PersonaSourceProvisioningRequest) -> dict[str, Any]:
+def reconcile_persona_source_provisioning(
+    request: PersonaSourceProvisioningRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     try:
+        if request.authoritative_snapshot:
+            scheme, _, presented = str(authorization or "").partition(" ")
+            if scheme.lower() != "bearer" or not presented:
+                raise HTTPException(status_code=401, detail="controller service authorization is required")
+            if not hmac.compare_digest(presented, controller_token):
+                raise HTTPException(status_code=403, detail="controller service authorization is invalid")
+            with authoritative_reconcile_lock:
+                return _persona_source_provisioning_payload(request)
         return _persona_source_provisioning_payload(request)
-    except SourceEvidenceError as exc:
+    except (SourceEvidenceError, RequirementStateError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/source-ingest/controller/readback")
+def source_ingest_controller_readback() -> dict[str, Any]:
+    """Return authoritative connector/schedule/record/health actual state."""
+
+    try:
+        return _controller_readback_payload()
+    except ControllerStateError as exc:
+        raise HTTPException(status_code=503, detail=f"controller state is invalid: {exc}") from exc
 
 
 @app.get("/api/source-ingest/policy-registry")
@@ -1894,6 +2140,11 @@ def run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict
     now = datetime.now(timezone.utc)
     now_iso = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
     max_concurrency = request.max_concurrency if request and request.max_concurrency is not None else SCHEDULER_MAX_CONCURRENCY
+    force_connector_ids = {
+        str(connector_id).strip()
+        for connector_id in (request.force_connector_ids if request else [])
+        if str(connector_id).strip()
+    }
     if max_concurrency < 1:
         raise HTTPException(status_code=400, detail="max_concurrency must be >= 1")
     schedules = schedule_config_store.list_schedules()
@@ -1901,13 +2152,28 @@ def run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict
     ran: list[dict[str, Any]] = []
     skipped: list[str] = []
     failed: list[dict[str, Any]] = []
+    recovered_frontier = store.recover_stale_running(
+        timeout_seconds=FRONTIER_RUNNING_TIMEOUT_SECONDS,
+        now=now_iso,
+    )
+    active_frontier_connector_ids = {
+        item.connector_id
+        for item in store.list_frontier()
+        if item.status in {"queued", "running", "retry"}
+    }
+    configured_schedule_ids = {schedule.connector_id for schedule in schedules}
+    for connector_id in sorted(force_connector_ids - configured_schedule_ids):
+        failed.append({"connector_id": connector_id, "error": "forced connector schedule not found"})
 
     for sched in schedules:
         if not sched.enabled or sched.interval_seconds <= 0:
             skipped.append(sched.connector_id)
             continue
+        if sched.connector_id in active_frontier_connector_ids:
+            skipped.append(sched.connector_id)
+            continue
         watermark = store.get_watermark(sched.connector_id)
-        if watermark is not None:
+        if watermark is not None and sched.connector_id not in force_connector_ids:
             try:
                 last_run = datetime.fromisoformat(watermark.updated_at.replace("Z", "+00:00"))
                 elapsed = (now - last_run).total_seconds()
@@ -1933,6 +2199,7 @@ def run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict
                 available_at=now_iso,
             )
             enqueued.append(frontier.to_dict())
+            active_frontier_connector_ids.add(sched.connector_id)
         except (EvidenceValidationError, SourceEvidenceError) as exc:
             failed.append({"connector_id": sched.connector_id, "error": str(exc)})
 
@@ -1967,12 +2234,15 @@ def run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict
         "ran": ran,
         "skipped": skipped,
         "failed": failed,
+        "recovered_frontier": [item.to_dict() for item in recovered_frontier],
         "summary": {
             "total_ran": len(ran),
             "total_skipped": len(skipped),
             "total_failed": len(failed),
             "total_enqueued": len(enqueued),
             "max_concurrency": max_concurrency,
+            "forced_connector_count": len(force_connector_ids),
+            "recovered_frontier_count": len(recovered_frontier),
         },
     }
 
