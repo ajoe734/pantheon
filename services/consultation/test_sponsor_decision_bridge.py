@@ -138,3 +138,80 @@ def test_bridge_does_not_emit_decided_or_store_write_payload() -> None:
     assert "decision" not in proposal
     assert "decided_at" not in proposal
     assert "store_path" not in proposal
+
+
+def test_api_record_sponsor_decision_dispatches_proposal() -> None:
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch, MagicMock
+    import services.consultation.main as main_module
+    from services.consultation.main import app
+    from services.consultation.models import ConsultRequest, ConsultRequestType, ActorRef, ConsultRequestStatus
+    from services.consultation.store import build_consultation_store
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        old_store = main_module.store
+        main_module.store = build_consultation_store(td)
+
+        try:
+            req = ConsultRequest(
+                request_id="cr-test-001",
+                request_type=ConsultRequestType.STRATEGY_REVIEW,
+                requested_by=ActorRef(actor_type="persona", actor_id="persona-momentum"),
+                target_type="strategy_spec",
+                target_id="strat-test",
+                trace_id="trace-test-001",
+                metadata={
+                    "consultation": {
+                        "committee_ref": "comm-test-001",
+                        "type": "evolution",
+                        "action_type": "retrain",
+                    }
+                }
+            )
+            main_module.store.put_request(req)
+
+            from services.consultation.models import ConsultMemo, MemoStatus, MemoType, AuthorType, Recommendation
+            memo = ConsultMemo(
+                memo_id="mem-test-001",
+                request_id="cr-test-001",
+                memo_type=MemoType.COMMITTEE_SUMMARY,
+                author_type=AuthorType.SYSTEM,
+                author_ref="test-system",
+                target_type="strategy_spec",
+                target_id="strat-test",
+                summary="Test summary",
+                recommendation=Recommendation.APPROVE,
+                status=MemoStatus.PUBLISHED,
+                trace_id="trace-test-001"
+            )
+            main_module.store.put_memo(memo)
+
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                mock_resp = MagicMock()
+                mock_resp.read.return_value = b'{"status": "ok"}'
+                mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+                client = TestClient(app)
+                response = client.post(
+                    "/api/consult/committees/comm-test-001/sponsor-decision",
+                    json={
+                        "sponsor_decision": "approved",
+                        "rationale_ref": "workspace://ref",
+                        "actor_id": "operator-test",
+                    }
+                )
+
+                assert response.status_code == 200
+                data = response.json()
+                assert data["sponsor_decision"] == "approved"
+                assert "proposal_dispatch" in data["service_handoff"]
+                assert data["service_handoff"]["proposal_dispatch"]["status"] == "sent"
+                assert data["service_handoff"]["proposal_dispatch"]["proposal_type"] == "evolution_decision"
+
+                assert mock_urlopen.call_count == 1
+                call_args = mock_urlopen.call_args[0][0]
+                assert call_args.full_url.endswith("/api/evolution/proposals")
+
+        finally:
+            main_module.store = old_store

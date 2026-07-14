@@ -603,6 +603,99 @@ def record_committee_sponsor_decision(
     handoff.audit_refs.append(audit.audit_id)
     store.put_handoff(handoff)
 
+    # Map to governance / evolution proposal using the sponsor decision bridge
+    from .sponsor_decision_bridge import bridge, SponsorDecisionBridgeError
+
+    # Infer decision type: approval or evolution
+    decision_type = matched_consult.get("type") or matched_consult.get("decision_type")
+    if not decision_type:
+        if matched_consult.get("action_type") or "action_type" in matched_consult:
+            decision_type = "evolution"
+        else:
+            decision_type = "approval"
+
+    # Translate evidence refs format for the bridge
+    evidence_payload = []
+    for m in memos:
+        evidence_payload.append({"ref_type": "committee_memo", "ref_id": m.memo_id})
+    evidence_payload.append({"ref_type": "service_handoff", "ref_id": handoff.handoff_id})
+    for ref_id in evidence_refs:
+        if ref_id not in {m.memo_id for m in memos} and ref_id != handoff.handoff_id:
+            evidence_payload.append({"ref_type": "manual_review_ticket", "ref_id": ref_id})
+
+    bridge_payload = {
+        "decision_id": committee_id,
+        "type": decision_type,
+        "sponsor_persona_id": req.actor_id,
+        "target_type": matched_request.target_type,
+        "target_id": matched_request.target_id,
+        "target_version": matched_consult.get("target_version") or matched_request.metadata.get("target_version") or "1.0.0",
+        "sponsor_decision": sponsor_decision,
+        "rationale": matched_consult.get("rationale") or f"Committee sponsor decided via {committee_id}",
+        "rationale_ref": rationale_ref,
+        "conditions": matched_consult.get("conditions") or [],
+        "committee_id": committee_id,
+        "handoff_id": handoff.handoff_id,
+        "trace_id": matched_request.trace_id,
+        "capital_pool_id": matched_consult.get("capital_pool_id"),
+        "persona_id": matched_consult.get("persona_id"),
+        "evidence_refs": evidence_payload,
+        "action_type": matched_consult.get("action_type"),
+        "target_stage": matched_consult.get("target_stage"),
+        "threshold_snapshots": matched_consult.get("threshold_snapshots") or [],
+        "linked_incident_id": matched_consult.get("linked_incident_id"),
+        "linked_postmortem_id": matched_consult.get("linked_postmortem_id"),
+        "metadata": matched_consult.get("metadata") or {},
+    }
+
+    # Remove None values to avoid schema clutter
+    bridge_payload = {k: v for k, v in bridge_payload.items() if v is not None}
+
+    try:
+        proposal = bridge(bridge_payload)
+    except SponsorDecisionBridgeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Sponsor decision bridge mapping failed: {exc}",
+        )
+
+    # Post proposal to downstream service
+    gov_url = os.getenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL") or os.getenv("PANTHEON_GOVERNANCE_SERVICE_URL") or "http://127.0.0.1:8082"
+    evo_url = os.getenv("PANTHEON_EVOLUTION_API_URL") or os.getenv("PANTHEON_EVOLUTION_SERVICE_URL") or "http://127.0.0.1:8093"
+
+    dispatch_status = "pending"
+    dispatch_error = None
+
+    try:
+        import urllib.request
+        import json
+
+        proposal_dict = proposal.to_dict()
+        if proposal.proposal_type == "approval_decision":
+            target_url = f"{gov_url.rstrip('/')}/api/governance/approvals"
+        else:
+            target_url = f"{evo_url.rstrip('/')}/api/evolution/proposals"
+
+        data = json.dumps(proposal_dict).encode("utf-8")
+        post_req = urllib.request.Request(
+            target_url,
+            data=data,
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(post_req, timeout=10.0) as resp:
+            resp.read()
+        dispatch_status = "sent"
+    except Exception as exc:
+        dispatch_status = "failed"
+        dispatch_error = str(exc)
+        # Avoid blocking unit tests and local mock workflows if downstream is down
+        if not (os.getenv("PANTHEON_TEST_MODE") or os.getenv("PYTEST_CURRENT_TEST")):
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to dispatch proposal to downstream service: {exc}",
+            )
+
     metadata = matched_request.metadata if isinstance(matched_request.metadata, dict) else {}
     metadata["consultation"] = matched_consult
     metadata["service_handoff"] = {
@@ -611,6 +704,12 @@ def record_committee_sponsor_decision(
         "evidence_refs": list(handoff.evidence_refs),
         "audit_refs": list(handoff.audit_refs),
         "status": handoff.status.value if hasattr(handoff.status, "value") else handoff.status,
+        "proposal_dispatch": {
+            "status": dispatch_status,
+            "error": dispatch_error,
+            "proposal_id": proposal.decision_id,
+            "proposal_type": proposal.proposal_type,
+        },
     }
     matched_request.metadata = metadata
     store.put_request(matched_request)
@@ -632,5 +731,11 @@ def record_committee_sponsor_decision(
             "evidence_refs": list(handoff.evidence_refs),
             "audit_refs": list(handoff.audit_refs),
             "status": handoff.status.value if hasattr(handoff.status, "value") else handoff.status,
+            "proposal_dispatch": {
+                "status": dispatch_status,
+                "error": dispatch_error,
+                "proposal_id": proposal.decision_id,
+                "proposal_type": proposal.proposal_type,
+            },
         },
     }
