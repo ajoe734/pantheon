@@ -114,9 +114,15 @@ class TestArtifactStateTransitions:
         svc = RegistryService(store)
         entry = svc.register(_make_create_payload(), "reg-001")
         svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
-        advanced = svc.advance_artifact_state("reg-001", ArtifactState.APPROVED, approver="risk-committee")
+        advanced = svc.advance_artifact_state(
+            "reg-001",
+            ArtifactState.APPROVED,
+            approver="risk-committee",
+            approval_decision_id="decision-reg-001",
+        )
         assert advanced.entry.artifact_state == ArtifactState.APPROVED
         assert advanced.entry.approver == "risk-committee"
+        assert advanced.entry.approval_decision_id == "decision-reg-001"
         assert advanced.entry.approved_at is not None
 
     def test_approval_requires_lineage(self):
@@ -535,11 +541,16 @@ class TestFastAPIEndpoints:
         # Candidate -> Approved
         resp = self.client.post(
             f"/api/registry/entries/{registry_id}/advance",
-            json={"target_state": "approved", "approver": "test-reviewer"},
+            json={
+                "target_state": "approved",
+                "approver": "test-reviewer",
+                "approval_decision_id": "decision-api-test",
+            },
         )
         assert resp.status_code == 200
         assert resp.json()["entry"]["artifact_state"] == "approved"
         assert resp.json()["entry"]["approver"] == "test-reviewer"
+        assert resp.json()["entry"]["approval_decision_id"] == "decision-api-test"
 
     def test_advance_forbidden(self):
         payload = {

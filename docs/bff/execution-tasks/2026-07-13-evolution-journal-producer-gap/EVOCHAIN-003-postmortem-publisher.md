@@ -1,46 +1,183 @@
 # EVOCHAIN-003: Postmortem Publisher on Incident Resolution
 
-Status: implemented
+Status: implementation complete; task PR review pending
 
-Task: `docs/bff/execution-tasks/2026-07-13-evolution-journal-producer-gap/INDEX.md`
-(Wave 0, owner Antigravity, reviewer Codex)
+Owner: Codex
 
-## Scope
+Reviewer: Claude
 
-- Resolve incident resolve/close delivery issues where deployed incident and postmortems services did not receive `POSTMORTEMS_URL` or `EVOLUTION_URL` causing localhost defaults to fail.
-- Reconcile the Postgres vs JSON IncidentStore issue by mapping postmortems directly to the `POST /api/evolution/proposals` endpoint with self-contained payloads instead of the ID-only `/api/evolution/proposals/from-postmortem-published` route.
-- Implement durable outbox/inbox mechanism to replace simple in-memory retries for at-least-once delivery (UnifiedOutboxStore in both incidents and postmortems).
-- Harden published-event deduplication in the evolution service to enforce matching on target type, target ID (artifact ID), bridge key, and incident cluster, and reject unrelated decision conflicts (HTTP 409).
-- Add caller tests for resolve, close, publish, duplicates, and failures without no-op monkeypatches.
+Merge target: `dev`
 
-## Implemented Changes
+## Acceptance Boundary
 
-1. **Durable Outbox Delivery (First and Second Hop)**:
-   - Implemented `UnifiedOutboxStore` with Postgres/JSON storage capability in both `incidents` and `postmortems` services.
-   - Added outbox processors (`process_incidents_outbox`, `process_postmortems_outbox`) running as background tasks.
-   - Outbox tasks perform retryable at-least-once delivery with exponential backoff and auditing logs.
-   - Synchronous FastAPI routes write to the outbox atomically, avoiding crash-induced event loss.
+This task closes the missing producer chain:
 
-2. **Second Hop (Postmortem to Evolution) & Deduplication**:
-   - Wired `DATABASE_URL` and store backends (`postgres`/`json`) for `evolution` service.
-   - Enforced validation of target_type, target_id, postmortem_bridge_key, and incident_cluster_id when finding existing postmortem bridge decisions.
-   - Return HTTP 409 Conflict if an incoming `decision_id` is already occupied by an unrelated decision.
-   - Wired `POSTMORTEMS_URL` and `EVOLUTION_URL` env vars in `docker-compose.yml` and `docker-compose.control.yml`.
+1. the first transition of an incident into `resolved` or `closed` emits one
+   durable `incident.resolved` event;
+2. the postmortems consumer admits the complete event envelope and creates one
+   deterministic postmortem record;
+3. publishing that postmortem calls the unchanged pure
+   `services.evolution.postmortem_bridge.on_postmortem_published` contract;
+4. when the bridge returns a corrective action, the postmortems worker sends a
+   self-contained `postmortem.published` delivery to the existing generic
+   `POST /api/evolution/proposals` endpoint; and
+5. exact retries do not create a second postmortem or proposal, while divergent
+   replays fail closed.
 
-3. **Verification Tests**:
-   - Added comprehensive outbox delivery, validation, and regression tests in `services/incidents/test_evochain_003_delivery.py`, `services/postmortems/test_evochain_003_delivery.py`, and `services/evolution/test_evolution_service.py`.
+The bridge module itself is intentionally unchanged.
 
-## Verification Results
+## Delivered Behavior
 
-Unit test suite (133 tests) passes cleanly:
+### Durable producer boundaries
+
+`services/foundation/reliable_delivery.py` provides shared JSON/Postgres
+outbox and inbox primitives. JSON writes use a process lock plus `fcntl`, a
+temporary file, `fsync`, atomic replacement, and directory `fsync` so
+concurrent writers cannot silently replace one another.
+
+Incident and postmortem status routes use an equivalent durable-recovery
+protocol around their domain transition:
+
+- persist an outbox record deterministically keyed to the immutable delivery
+  intent before changing domain state;
+- reject the transition with `503` if preparation fails;
+- persist the domain transition and activate the prepared record;
+- retain the prepared record and return a recoverable `503` if activation
+  fails; and
+- reconcile prepared records whose domain transition is visible before every
+  worker pass, including after restart.
+
+Domain writes restore their guarded pre-write in-memory snapshot if JSON or
+Postgres persistence raises, and reconciliation rereads the backing store.
+This prevents reconciliation from observing a terminal state that existed only
+in process memory. Reusing a deterministic outbox identity compares the full
+stable event semantics, including payload, producer, schema, owner, and
+transition predicate; a divergent snapshot fails closed while a transport
+retry reuses the already persisted canonical trace.
+
+Postmortem publication additionally uses compare-and-set against both the
+draft and parent-incident snapshots. The successful write persists a
+`published_event_id` commit marker together with the single effective
+`published_at`. Reconciliation selects that exact event marker and postmortem
+snapshot, so a concurrent draft change cannot publish stale evidence and a
+later legitimate parent incident transition cannot strand the historical
+event.
+
+The terminal-boundary guard means `resolved` replay and `resolved` → `closed`
+do not enqueue another logical event. The original `resolved_at` value is also
+preserved.
+
+Both delivery workers preserve the full foundation `EventEnvelope` across the
+HTTP boundary and derive its environment from the incident deployment stage.
+Poll interval, maximum attempts, and exponential-backoff base are configurable
+through:
+
+- `INCIDENTS_OUTBOX_POLL_SECONDS`
+- `INCIDENTS_OUTBOX_MAX_ATTEMPTS`
+- `INCIDENTS_OUTBOX_BACKOFF_BASE_SECONDS`
+- `POSTMORTEMS_OUTBOX_POLL_SECONDS`
+- `POSTMORTEMS_OUTBOX_MAX_ATTEMPTS`
+- `POSTMORTEMS_OUTBOX_BACKOFF_BASE_SECONDS`
+
+Permanent validation/conflict responses and exhausted transient retries move a
+record to the durable dead-letter state. Redrive is fail-closed until its
+service token is configured, and requires an operator or risk-owner identity,
+approval reference, and reason:
+
+- `INCIDENTS_OUTBOX_REDRIVE_TOKEN`
+- `POSTMORTEMS_OUTBOX_REDRIVE_TOKEN`
+
+### Consumer admission and idempotency
+
+The postmortems first-hop consumer validates and records the complete incident
+event in a durable inbox. An exact event/idempotency replay returns the existing
+postmortem; a conflicting replay is rejected.
+
+On publish, the caller invokes `on_postmortem_published`. The caller adapter
+keeps that pure contract authoritative while converting the bridge's legacy
+high-severity `rollback` output to the currently valid generic proposal action
+`flag_for_review`; the original bridge action and cooldown are preserved in
+proposal metadata. A bridge `None` result is an audited no-op and produces no
+proposal.
+
+The evolution generic proposal route requires the `postmortem-svc` producer and
+complete postmortem/incident snapshots, then validates that the outer request,
+event identity, the snapshot's `published_event_id` commit marker, embedded
+proposal, and linkage agree. Its durable inbox binds event ID and idempotency
+key to one immutable proposal identity. Exact retries return `200` without
+resetting review/approval state; divergent reuse returns `409`. If a crash
+persisted the matching decision but not its receipt, the next retry records the
+receipt without overwriting the decision. Omitting `delivery_event` cannot
+bypass that reservation or overwrite an existing decision ID.
+
+### Concurrent JSON persistence
+
+The shared incident/postmortem domain store now serializes cross-instance JSON
+writes, reloads the latest snapshot while locked, and persists with atomic
+replacement plus `fsync`. Dedicated tests exercise both this store and the
+shared reliable-delivery record store with concurrent writers.
+
+The canonical `EvolutionDecisionStore` and proposal inbox now use path-scoped
+thread locks, `fcntl`, reload-before-write, optimistic stale-writer detection,
+atomic replacement, file/directory `fsync`, and in-memory rollback. Concurrent
+two-instance tests and restart/write-failure tests prove that proposal
+admission and review state remain durable.
+
+## Verification Evidence
+
+The final expanded runtime regression command passed in an isolated
+system-site-packages venv with the service runtime dependency installed:
 
 ```sh
-python3 -m pytest services/incidents/test_evochain_003_delivery.py services/postmortems/test_evochain_003_delivery.py services/evolution/ -v
+python3 -m venv --system-site-packages /tmp/evochain-003-venv
+/tmp/evochain-003-venv/bin/python -m pip install 'uvicorn>=0.30,<1'
+/tmp/evochain-003-venv/bin/python -m pytest -q \
+  services/incidents services/postmortems services/incident services/evolution \
+  services/control-plane/governance/test_evolution_decision.py \
+  services/control-plane/governance/test_evolution_dispatcher_invariants.py
+# 464 passed, 4 warnings in 111.94s
 ```
 
-All 133 tests passed successfully.
+The root test requirements now include the same `uvicorn` runtime declared by
+the three services, so the subprocess integration test runs rather than skips
+in branch CI. The warnings are existing FastAPI `on_event` deprecation
+warnings. Additional integration and configuration evidence:
 
-## Residual Risks and Out of Scope
+```sh
+/tmp/evochain-003-venv/bin/python -m pytest -q \
+  services/postmortems/test_evochain_003_http_chain.py -vv
+# 1 passed
 
-- If the database is completely unavailable, outbox writes will fail synchronously, preventing status transitions to ensure consistency.
-- Expiry: Re-verify during `EVOCHAIN-010` end-to-end integration test.
+docker compose config --quiet
+docker compose -f docker-compose.control.yml config --quiet
+# both passed
+```
+
+The subprocess full-chain test starts independent incidents, postmortems, and
+evolution Uvicorn processes against their shared JSON volumes. It drives the
+real HTTP URLs and background workers from incident resolution through
+postmortem creation/publication and generic proposal admission, replays both
+persisted envelopes over HTTP, and asserts one postmortem plus one proposal.
+
+Task anchors retained for review:
+
+- `32ae7c380` — durable delivery boundaries
+- `200165804` — evolution delivery admission
+- `9abbd6937` — concurrent store and full-chain proof
+- `99a493bf2` — crash-safe admission, commit markers, and real HTTP proof
+
+## Operational Notes and Residual Risks
+
+- Compose already supplies `POSTMORTEMS_URL` and `EVOLUTION_URL`; this task did
+  not alter deployment topology.
+- At-least-once HTTP delivery remains intentional. Consumer inboxes provide the
+  once-per-logical-event outcome.
+- Redrive endpoints remain unavailable until operators configure their token;
+  this is a deliberate fail-closed default.
+- A prepared record for a transition that never committed remains inert. It is
+  never delivered; snapshot-versioned retries can proceed, while future
+  lifecycle cleanup/retention may archive the inert record.
+- The legacy `/api/evolution/proposals/from-postmortem-published` route remains
+  for compatibility, but this producer chain uses the required generic route.
+- BFF incident command stubs are outside this task. The proved entry point is
+  the canonical incidents service status route.

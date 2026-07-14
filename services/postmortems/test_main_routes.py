@@ -40,11 +40,18 @@ def clean_store(monkeypatch):
 
     monkeypatch.setattr("services.postmortems.main.reference_validator", _AcceptAllValidator())
     monkeypatch.setattr("services.postmortems.main._publish_postmortem_to_evolution_if_needed", lambda postmortem_id: None)
-    store._incidents.clear()
-    store._postmortems.clear()
+    _reset_store()
     yield
+    _reset_store()
+
+
+def _reset_store():
     store._incidents.clear()
     store._postmortems.clear()
+    path = getattr(store, "_path", None)
+    if path is not None and path.exists():
+        path.unlink()
+    store._loaded_mtime_ns = None
 
 
 client = TestClient(app)

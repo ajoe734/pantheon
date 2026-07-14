@@ -82,6 +82,168 @@ def test_execute_rollback_writes_to_governance(configure_urls, monkeypatch) -> N
     assert gov_payload["source_command_id"] == "cmd-rollback-123"
 
 
+def test_execute_rollback_derives_runtime_id_when_omitted(configure_urls, monkeypatch) -> None:
+    """EVOCHAIN-005 round 2: callers routinely only supply target_id (see
+    _ROLLBACK_REQUIRED in bff/main.py, which does not list runtime_id), but
+    the canonical governance POST requires runtime_id and 400s without it.
+    _execute_rollback must derive a non-empty runtime_id rather than sending
+    a bare POST that fails the write."""
+    post_calls = []
+
+    def mock_post_json(url: str, payload: Dict[str, Any], auth_token=None, mfa_token=None) -> Dict[str, Any]:
+        post_calls.append((url, dict(payload)))
+        if "/api/governance/rollbacks" in url and not payload.get("runtime_id"):
+            # Mirrors the real canonical store's required-field enforcement.
+            import urllib.error
+            raise urllib.error.HTTPError(url=url, code=400, msg="Missing required audit field: runtime_id", hdrs=None, fp=None)
+        if url.endswith("/rollbacks/execute"):
+            return {"rollback_id": payload.get("rollback_id"), "status": "executed"}
+        return payload
+
+    monkeypatch.setattr(bff_executor, "_post_json", mock_post_json)
+
+    result = bff_executor._execute_rollback(
+        command_id="cmd-rollback-no-runtime-id",
+        params={
+            "rollback_target_type": "runtime",
+            "target_id": "binding-xyz",
+            "rollback_to_version": "previous",
+        },
+        auth_token="op-user:admin",
+    )
+
+    assert result["runtime_id"] == "binding-xyz"
+    gov_calls = [call for call in post_calls if "/api/governance/rollbacks" in call[0]]
+    assert len(gov_calls) == 2
+    for _, payload in gov_calls:
+        assert payload["runtime_id"] == "binding-xyz"
+
+
+def test_execute_rollback_retry_does_not_repeat_internal_execute(configure_urls, monkeypatch) -> None:
+    """EVOCHAIN-005 round 2: the real internal rollbacks/execute API reports
+    its terminal state as "executed" (services/control-plane/internal/
+    internal_api.py::execute_rollback), not "completed". Before the fix, the
+    replay short-circuit only recognized "completed", so a same-command retry
+    (e.g. a client timeout-and-retry) would re-dispatch the rollback action
+    against the runtime a second time."""
+    governance_records: Dict[str, Dict[str, Any]] = {}
+    internal_execute_calls = []
+
+    def mock_post_json(url: str, payload: Dict[str, Any], auth_token=None, mfa_token=None) -> Dict[str, Any]:
+        if url.endswith("/rollbacks/execute"):
+            internal_execute_calls.append(dict(payload))
+            return {"rollback_id": payload.get("rollback_id"), "status": "executed"}
+        if "/api/governance/rollbacks" in url:
+            rollback_id = payload.get("rollback_id")
+            governance_records[rollback_id] = dict(payload)
+            return dict(payload)
+        return {}
+
+    def mock_get_json(url: str, auth_token=None, mfa_token=None) -> Dict[str, Any]:
+        rollback_id = url.rsplit("/", 1)[-1]
+        record = governance_records.get(rollback_id)
+        if record is None:
+            raise urllib_error_not_found(url)
+        return record
+
+    monkeypatch.setattr(bff_executor, "_post_json", mock_post_json)
+    monkeypatch.setattr(bff_executor, "_get_json", mock_get_json)
+
+    params = {
+        "runtime_id": "runtime-retry",
+        "runtime_binding_id": "binding-retry",
+        "rollback_action_type": "replace",
+        "target_artifact_id": "art-retry",
+    }
+
+    first = bff_executor._execute_rollback(command_id="cmd-retry-1", params=params, auth_token="op-user:admin")
+    assert first["status"] == "completed"
+    assert len(internal_execute_calls) == 1
+
+    second = bff_executor._execute_rollback(command_id="cmd-retry-1", params=params, auth_token="op-user:admin")
+    assert second["status"] == "completed"
+    # The replay short-circuit must recognize the normalized "completed"
+    # status from the first call — no second dispatch to the runtime.
+    assert len(internal_execute_calls) == 1
+
+
+def urllib_error_not_found(url: str):
+    import urllib.error
+    return urllib.error.HTTPError(url=url, code=404, msg="Not Found", hdrs=None, fp=None)
+
+
+def test_bff_command_to_governance_to_journal_composition(configure_urls, monkeypatch) -> None:
+    """EVOCHAIN-005 round 2: end-to-end BFF command -> governance canonical
+    write (through the real, now-authenticated FastAPI routes) -> governance
+    read -> Evolution Journal item composition. Proves actor, identity,
+    timestamps, and source_command_id survive the full round trip, not just
+    a mocked _post_json call."""
+    from fastapi.testclient import TestClient
+    from services.governance import main as gov_main
+    from services.governance.record_store import JsonGovernanceRecordStore
+    import main as bff_main
+    import tempfile
+    from pathlib import Path
+
+    tmpdir = tempfile.TemporaryDirectory()
+    tmp_path = Path(tmpdir.name)
+    rollback_store = JsonGovernanceRecordStore(tmp_path / "rollbacks.json", id_fields=("rollback_id", "id"))
+    monkeypatch.setattr(gov_main, "rollback_store", rollback_store)
+    gov_client = TestClient(gov_main.app)
+
+    def routed_post_json(url: str, payload: Dict[str, Any], auth_token=None, mfa_token=None) -> Dict[str, Any]:
+        if url.endswith("/rollbacks/execute"):
+            return {"rollback_id": payload.get("rollback_id"), "status": "executed"}
+        if "/api/governance/rollbacks" in url:
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+            resp = gov_client.post("/api/governance/rollbacks", json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+        return {}
+
+    def routed_get_json(url: str, auth_token=None, mfa_token=None) -> Any:
+        rollback_id = url.rsplit("/", 1)[-1]
+        resp = gov_client.get(f"/api/governance/rollbacks/{rollback_id}")
+        if resp.status_code == 404:
+            raise urllib_error_not_found(url)
+        resp.raise_for_status()
+        return resp.json()
+
+    monkeypatch.setattr(bff_executor, "_post_json", routed_post_json)
+    monkeypatch.setattr(bff_executor, "_get_json", routed_get_json)
+
+    result = bff_executor._execute_rollback(
+        command_id="cmd-composition-1",
+        params={
+            "runtime_id": "runtime-composition",
+            "runtime_binding_id": "binding-composition",
+            "rollback_action_type": "replace",
+            "target_artifact_id": "art-composition",
+        },
+        auth_token="op-composition:admin",
+    )
+    assert result["status"] == "completed"
+
+    read_resp = gov_client.get(f"/api/governance/rollbacks/{result['rollback_id']}")
+    assert read_resp.status_code == 200
+    canonical_record = read_resp.json()
+    assert canonical_record["actor"] == "admin"
+    assert canonical_record["identity"] == "op-composition"
+    assert canonical_record["source_command_id"] == "cmd-composition-1"
+    assert canonical_record["runtime_id"] == "runtime-composition"
+
+    journal_item = bff_main._evolution_journal_rollback_item(canonical_record)
+    assert journal_item is not None
+    assert journal_item["record"]["actor"] == "admin"
+    assert journal_item["record"]["identity"] == "op-composition"
+    assert journal_item["record"]["source_command_id"] == "cmd-composition-1"
+    assert journal_item["record"]["transition_actor"] == "admin"
+    assert journal_item["record"]["transition_identity"] == "op-composition"
+    assert journal_item["record"]["transition_source_command_id"] == "cmd-composition-1"
+
+    tmpdir.cleanup()
+
+
 def test_approve_reject_rollback_writes_to_governance(configure_urls, monkeypatch) -> None:
     post_calls = []
 
@@ -311,23 +473,32 @@ def test_rollback_transition_lifecycle_preserves_origin(configure_urls, monkeypa
         "action_type": "pause_then_replace",
         "status": "initiated",
         "actor": "operator",
-        "identity": "op-user-1",
         "source_command_id": "cmd-init-123",
         "created_at": "2026-07-14T01:00:00Z",
     }
-    resp1 = client.post("/api/governance/rollbacks", json=init_payload)
+    resp1 = client.post(
+        "/api/governance/rollbacks",
+        json=init_payload,
+        headers={"Authorization": "Bearer op-user-1:operator"},
+    )
     assert resp1.status_code == 201
 
-    # Step 2: Transition (Approve)
+    # Step 2: Transition (Approve). Real roles only — the old
+    # "approver-role"/"rejecter-role" test-only aliases were removed from the
+    # governance service's authority check, so this now authenticates as the
+    # real "approver" role via the bearer token.
     approve_payload = {
         "rollback_id": "rb-lifecycle-test",
         "status": "approved",
-        "actor": "approver-role",
-        "identity": "op-user-2",
+        "actor": "approver",
         "source_command_id": "cmd-approve-456",
         "approved_at": "2026-07-14T01:05:00Z",
     }
-    resp2 = client.post("/api/governance/rollbacks", json=approve_payload)
+    resp2 = client.post(
+        "/api/governance/rollbacks",
+        json=approve_payload,
+        headers={"Authorization": "Bearer op-user-2:approver"},
+    )
     assert resp2.status_code == 200
 
     # Readback and verify
@@ -341,8 +512,9 @@ def test_rollback_transition_lifecycle_preserves_origin(configure_urls, monkeypa
     assert record["actor"] == "operator"
     assert record["identity"] == "op-user-1"
     assert record["source_command_id"] == "cmd-init-123"
-    # Contained transition audit details
-    assert record["transition_actor"] == "approver-role"
+    # Contained transition audit details, derived from the authenticated
+    # bearer token rather than the self-declared body fields.
+    assert record["transition_actor"] == "approver"
     assert record["transition_identity"] == "op-user-2"
     assert record["transition_source_command_id"] == "cmd-approve-456"
 
@@ -350,12 +522,15 @@ def test_rollback_transition_lifecycle_preserves_origin(configure_urls, monkeypa
     reject_payload = {
         "rollback_id": "rb-lifecycle-test",
         "status": "rejected",
-        "actor": "rejecter-role",
-        "identity": "op-user-3",
+        "actor": "governance_reviewer",
         "source_command_id": "cmd-reject-789",
         "rejected_at": "2026-07-14T01:10:00Z",
     }
-    resp3 = client.post("/api/governance/rollbacks", json=reject_payload)
+    resp3 = client.post(
+        "/api/governance/rollbacks",
+        json=reject_payload,
+        headers={"Authorization": "Bearer op-user-3:governance_reviewer"},
+    )
     assert resp3.status_code == 200
 
     # Readback and verify
@@ -363,8 +538,75 @@ def test_rollback_transition_lifecycle_preserves_origin(configure_urls, monkeypa
     assert record_rejected["status"] == "rejected"
     assert record_rejected["actor"] == "operator"
     assert record_rejected["identity"] == "op-user-1"
-    assert record_rejected["transition_actor"] == "rejecter-role"
+    assert record_rejected["transition_actor"] == "governance_reviewer"
     assert record_rejected["transition_identity"] == "op-user-3"
+
+    tmpdir.cleanup()
+
+
+def test_rollback_transition_lifecycle_rejects_unauthenticated_and_spoofed_writes(
+    configure_urls, monkeypatch
+) -> None:
+    """EVOCHAIN-005 round 2: canonical writes must be authenticated and the
+    declared actor role must be one the caller's token actually carries."""
+    from fastapi.testclient import TestClient
+    from services.governance import main as gov_main
+    from services.governance.record_store import JsonGovernanceRecordStore
+
+    import tempfile
+    from pathlib import Path
+    tmpdir = tempfile.TemporaryDirectory()
+    tmp_path = Path(tmpdir.name)
+
+    rollback_store = JsonGovernanceRecordStore(tmp_path / "rollbacks.json", id_fields=("rollback_id", "id"))
+    monkeypatch.setattr(gov_main, "rollback_store", rollback_store)
+
+    client = TestClient(gov_main.app)
+
+    # No Authorization header at all.
+    unauth_resp = client.post(
+        "/api/governance/rollbacks",
+        json={
+            "rollback_id": "rb-unauth",
+            "runtime_id": "runtime-test",
+            "action_type": "replace",
+            "status": "initiated",
+            "actor": "operator",
+            "source_command_id": "cmd-unauth",
+        },
+    )
+    assert unauth_resp.status_code == 401
+    assert rollback_store.get("rb-unauth") is None
+
+    # Create the record as a legitimate operator.
+    init_resp = client.post(
+        "/api/governance/rollbacks",
+        json={
+            "rollback_id": "rb-spoof-test",
+            "runtime_id": "runtime-test",
+            "action_type": "replace",
+            "status": "initiated",
+            "actor": "operator",
+            "source_command_id": "cmd-init",
+        },
+        headers={"Authorization": "Bearer op-user-1:operator"},
+    )
+    assert init_resp.status_code == 201
+
+    # Authenticated as a plain operator, but declaring "approver" — a role the
+    # token does not carry — to approve the rollback. Must be rejected.
+    spoof_resp = client.post(
+        "/api/governance/rollbacks",
+        json={
+            "rollback_id": "rb-spoof-test",
+            "status": "approved",
+            "actor": "approver",
+            "source_command_id": "cmd-spoof",
+        },
+        headers={"Authorization": "Bearer op-user-4:operator"},
+    )
+    assert spoof_resp.status_code == 403
+    assert rollback_store.get("rb-spoof-test")["status"] == "initiated"
 
     tmpdir.cleanup()
 
