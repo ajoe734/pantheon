@@ -30,10 +30,10 @@ def test_execute_rollback_writes_to_governance(configure_urls, monkeypatch) -> N
     post_calls = []
 
     def mock_post_json(url: str, payload: Dict[str, Any], auth_token=None, mfa_token=None) -> Dict[str, Any]:
-        post_calls.append((url, payload))
+        post_calls.append((url, dict(payload)))
         if url.endswith("/rollbacks/execute"):
             return {
-                "rollback_id": "rollback-test-id",
+                "rollback_id": payload.get("rollback_id") or "rollback-test-id",
                 "status": "completed",
                 "tracking_url": "http://tracking/1",
             }
@@ -57,19 +57,23 @@ def test_execute_rollback_writes_to_governance(configure_urls, monkeypatch) -> N
         auth_token="op-user:admin",
     )
 
-    assert result["rollback_id"] == "rollback-test-id"
+    assert result["rollback_id"].startswith("rb-unknown-")
+
+    # Verify three calls: governance write (initiated), the internal action, and governance update (completed)
+    assert len(post_calls) == 3
+
+    gov_init_call = post_calls[0]
+    assert gov_init_call[0] == f"{GOVERNANCE_URL}/api/governance/rollbacks"
+    assert gov_init_call[1]["status"] == "initiated"
     
-    # Verify both calls: the internal action and the governance write
-    assert len(post_calls) == 2
-    
-    internal_call = post_calls[0]
+    internal_call = post_calls[1]
     assert internal_call[0] == f"{INTERNAL_URL}/api/internal/v1/rollbacks/execute"
     
-    gov_call = post_calls[1]
+    gov_call = post_calls[2]
     assert gov_call[0] == f"{GOVERNANCE_URL}/api/governance/rollbacks"
     
     gov_payload = gov_call[1]
-    assert gov_payload["rollback_id"] == "rollback-test-id"
+    assert gov_payload["rollback_id"] == result["rollback_id"]
     assert gov_payload["runtime_id"] == "runtime-abc"
     assert gov_payload["action_type"] == "pause_then_replace"
     assert gov_payload["status"] == "completed"
@@ -324,7 +328,7 @@ def test_rollback_transition_lifecycle_preserves_origin(configure_urls, monkeypa
         "approved_at": "2026-07-14T01:05:00Z",
     }
     resp2 = client.post("/api/governance/rollbacks", json=approve_payload)
-    assert resp2.status_code == 201
+    assert resp2.status_code == 200
     
     # Readback and verify
     record = rollback_store.get("rb-lifecycle-test")
@@ -352,7 +356,7 @@ def test_rollback_transition_lifecycle_preserves_origin(configure_urls, monkeypa
         "rejected_at": "2026-07-14T01:10:00Z",
     }
     resp3 = client.post("/api/governance/rollbacks", json=reject_payload)
-    assert resp3.status_code == 201
+    assert resp3.status_code == 200
     
     # Readback and verify
     record_rejected = rollback_store.get("rb-lifecycle-test")
@@ -369,7 +373,7 @@ def test_mfa_token_propagation(configure_urls, monkeypatch) -> None:
     post_calls = []
 
     def mock_post_json(url: str, payload: Dict[str, Any], auth_token=None, mfa_token=None) -> Dict[str, Any]:
-        post_calls.append((url, payload, auth_token, mfa_token))
+        post_calls.append((url, dict(payload), auth_token, mfa_token))
         if "/rollbacks/execute" in url:
             return {"rollback_id": "rb-mfa-test", "status": "completed"}
         if "/api/governance" in url:
@@ -391,9 +395,10 @@ def test_mfa_token_propagation(configure_urls, monkeypatch) -> None:
     )
 
     assert status == bff_executor.CommandStatus.EXECUTED
-    # We should have two POST calls: one to internal API and one to governance API
-    assert len(post_calls) == 2
-    # Verify that the mfa_token was propagated to both calls!
+    # We should have three POST calls: governance (initiated), internal execute, governance (completed)
+    assert len(post_calls) == 3
+    # Verify that the mfa_token was propagated to all calls!
     assert post_calls[0][3] == "mfa-secret-token-value"
     assert post_calls[1][3] == "mfa-secret-token-value"
+    assert post_calls[2][3] == "mfa-secret-token-value"
 

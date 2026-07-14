@@ -1,10 +1,10 @@
 # OCLAW-PMEM-002 Follow-up 13 Sidecar BFF Handoff
 
-Status: support-only composition packet; not canonical truth or runtime proof  
-Parent sidecar: `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13`  
-Helper task: `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13-SIDECAR-BFF-HANDOFF`  
-Owner: Codex  
-Reviewer: Codex2  
+Status: support-only composition packet; not canonical truth or runtime proof
+Parent sidecar: `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13`
+Helper task: `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13-SIDECAR-BFF-HANDOFF`
+Owner: Codex
+Reviewer: Codex2
 Generated: 2026-07-11
 
 ## Recommendation

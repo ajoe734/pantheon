@@ -1024,7 +1024,7 @@ def execute_rollback():
     client = _get_runtime_manager_client()
 
     command_id = f"cmd-rb-{target_id}-{int(datetime.now(timezone.utc).timestamp())}"
-    rollback_id = f"rb-{target_id}-{uuid.uuid4().hex[:8]}"
+    rollback_id = body.get("rollback_id") or f"rb-{target_id}-{uuid.uuid4().hex[:8]}"
 
     try:
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -1257,7 +1257,7 @@ def abort_rollback(rollback_id):
 
 
 @app.route("/api/internal/v1/rollbacks/<rollback_id>/approve", methods=["POST"])
-@require_bearer_token(roles=_INCIDENT_ROLES, mfa_required=True)
+@require_bearer_token(roles=_APPROVER_ROLES, mfa_required=True)
 def approve_rollback(rollback_id):
     """Approve a rollback command (records audit trail and returns status)."""
     body = request.get_json() or {}
@@ -1292,7 +1292,7 @@ def approve_rollback(rollback_id):
 
 
 @app.route("/api/internal/v1/rollbacks/<rollback_id>/reject", methods=["POST"])
-@require_bearer_token(roles=_INCIDENT_ROLES, mfa_required=True)
+@require_bearer_token(roles=_APPROVER_ROLES, mfa_required=True)
 def reject_rollback(rollback_id):
     """Reject a rollback command (records audit trail and returns status)."""
     body = request.get_json() or {}
