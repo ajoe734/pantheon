@@ -1,10 +1,56 @@
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict
+
+_MAX_HEARTBEAT_AGE_SECONDS = 900
+_MAX_FUTURE_SKEW_SECONDS = 60
 
 
-def project_controller_record_to_bff(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Project a Postgres loop_controller_records row into the dict format expected by BFF."""
+def _as_utc(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _controller_status(row: Dict[str, Any], *, now: datetime) -> tuple[str, str | None]:
+    heartbeat = _as_utc(row.get("last_heartbeat_at"))
+    lease_expires = _as_utc(row.get("lease_expires_at"))
+    last_success = _as_utc(row.get("last_success_at"))
+    last_failure = _as_utc(row.get("last_failure_at"))
+    if heartbeat is None:
+        return "unobserved", "controller heartbeat is missing"
+    heartbeat_age = (now - heartbeat).total_seconds()
+    if heartbeat_age > _MAX_HEARTBEAT_AGE_SECONDS:
+        return "degraded", "controller heartbeat is stale"
+    if heartbeat_age < -_MAX_FUTURE_SKEW_SECONDS:
+        return "degraded", "controller heartbeat is in the future"
+    if row.get("lease_expires_at") and lease_expires is None:
+        return "degraded", "controller lease timestamp is invalid"
+    if last_failure is not None and (last_success is None or last_failure > last_success):
+        return "unhealthy", row.get("last_failure_reason") or "latest controller event failed"
+    if lease_expires is not None and lease_expires <= now:
+        return "degraded", "controller lease expired"
+    return "healthy", None
+
+
+def project_controller_record_to_bff(
+    row: Dict[str, Any], *, now: datetime | None = None
+) -> Dict[str, Any]:
+    """Project a durable row without manufacturing liveness or evidence.
+
+    The BFF performs the final catalog/controller admission.  This projector
+    only reports what the row actually contains: missing refs stay missing and
+    expired leases or later failures are never labelled healthy.
+    """
     # Handle datetime serialization safely
     def to_iso(dt: Any) -> Any:
         if isinstance(dt, datetime):
@@ -18,13 +64,8 @@ def project_controller_record_to_bff(row: Dict[str, Any]) -> Dict[str, Any]:
         elif isinstance(row["evidence_refs"], str):
             try:
                 evidence_refs = json.loads(row["evidence_refs"])
-            except Exception:
+            except (TypeError, json.JSONDecodeError):
                 pass
-
-    # Ensure evidence refs are non-empty so that BFF accepts it as valid evidence
-    # _health_record_runtime_refs requires at least one non-archived task ref
-    if not evidence_refs:
-        evidence_refs = ["durable-controller-substrate"]
 
     payload = {}
     if row.get("payload"):
@@ -33,13 +74,11 @@ def project_controller_record_to_bff(row: Dict[str, Any]) -> Dict[str, Any]:
         elif isinstance(row["payload"], str):
             try:
                 payload = json.loads(row["payload"])
-            except Exception:
+            except (TypeError, json.JSONDecodeError):
                 pass
 
-    # Basic heartbeat and status composition
-    # If lease has expired, we might report it as unobserved, but let the BFF check age.
-    # We will map reported status to 'ok' to satisfy _ACCEPTED_CONTROLLER_HEALTH_STATUSES
-    controller_status = "ok"
+    observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    controller_status, degraded_reason = _controller_status(row, now=observed_at)
 
     last_heartbeat_at = to_iso(row.get("last_heartbeat_at"))
     last_tick_at = to_iso(row.get("last_tick_at"))
@@ -51,6 +90,7 @@ def project_controller_record_to_bff(row: Dict[str, Any]) -> Dict[str, Any]:
         "last_heartbeat_at": last_heartbeat_at,
         "last_tick_at": last_tick_at,
         "liveness_metric": "heartbeat",
+        "degraded_reason": degraded_reason,
     }
 
     last_success = None
@@ -76,10 +116,10 @@ def project_controller_record_to_bff(row: Dict[str, Any]) -> Dict[str, Any]:
     downstream_actual_state = None
     if row.get("actual_state_query"):
         downstream_actual_state = {
-            "status": "ok",
+            "status": "unobserved",
             "source": "controller_store",
             "summary": row.get("actual_state_query"),
-            "checked_at": last_heartbeat_at,
+            "checked_at": None,
         }
 
     # Format expected by services/control-plane/bff/loop_inventory.py
@@ -89,7 +129,7 @@ def project_controller_record_to_bff(row: Dict[str, Any]) -> Dict[str, Any]:
         "tenant_id": row.get("tenant_id"),
         "environment": row.get("environment"),
         "truth_level": row.get("truth_level"),
-        "truth_status": "present",
+        "truth_status": "present" if evidence_refs else "missing_evidence",
         "truth_note": f"Durable controller state via Postgres store. Instance: {row.get('controller_id')}",
         "evidence_basis": "controller_runtime",
         "evidence_bases": ["controller_runtime"],
@@ -106,6 +146,7 @@ def project_controller_record_to_bff(row: Dict[str, Any]) -> Dict[str, Any]:
             "highest_truth_level": row.get("truth_level"),
             "refs": evidence_refs,
             "artifacts": evidence_refs,
+            "captured_at": last_tick_at or last_heartbeat_at,
         },
         "lease_expires_at": to_iso(row.get("lease_expires_at")),
         "backlog": row.get("backlog"),

@@ -204,6 +204,35 @@ class TestEvolutionDecisionLifecycle(unittest.TestCase):
         self.assertTrue(decision.is_active(as_of="2026-04-12T00:00:00Z"))
         self.assertFalse(decision.is_active(as_of="2026-04-25T00:00:00Z"))
 
+    def test_execute_rejects_unrecognized_role_cleanly(self):
+        """EVOCHAIN-005 round 2: an actor_role the enum doesn't recognize (e.g.
+        the BFF's "admin" label, which has no EvolutionActorRole member) must
+        raise a domain EvolutionDecisionError, not an unhandled ValueError
+        from EvolutionActorRole("admin") that would surface as a 500."""
+        decision = make_decision()
+        decision.mark_reviewed(
+            EvolutionActorRole.GOVERNANCE_COMMITTEE,
+            "committee-01",
+            "approval-001",
+        )
+        decision.approve(EvolutionActorRole.GOVERNANCE_COMMITTEE, "committee-01")
+        with self.assertRaises(EvolutionDecisionError):
+            decision.execute(
+                "admin",
+                "admin-01",
+                ExecutionResult(
+                    status=ExecutionStatus.SUBMITTED,
+                    plane=ExecutionPlane.RUNTIME,
+                    executed_at="2026-04-10T05:00:00Z",
+                    execution_ref_id="freeze-order-001",
+                    outcome_summary="Freeze order submitted to runtime manager.",
+                ),
+                cooldown_ends_at="2026-04-17T05:00:00Z",
+                observation_window_ends_at="2026-04-24T05:00:00Z",
+            )
+        # Decision state must be unchanged — the rejected role never mutated it.
+        self.assertEqual(decision.decision_state, EvolutionDecisionState.APPROVED)
+
     def test_reject_allows_review_owner_for_medium(self):
         decision = make_decision(
             action_type=EvolutionActionType.MUTATE_PERSONA_ROUTE_POLICY,
