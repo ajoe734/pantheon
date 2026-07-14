@@ -736,18 +736,29 @@ Verified in `test_load_thresholds_missing_file_fails_closed`,
 
 ## Local validation
 
+Counts below are post-merge (`origin/dev` merged into this branch to resolve
+the BEHIND state; `dev` had advanced with unrelated work in the meantime,
+including EVOCHAIN-003's crash-safe delivery admission, which itself touches
+`services/incidents/test_main_routes.py`'s `clean_store` fixture — resolved
+by keeping this task's in-memory `IncidentStore(path=None)` isolation and
+layering EVOCHAIN-003's outbox-file reset on top, since `ReliableOutboxStore`
+has no in-memory mode).
+
 ```sh
 python3 -m pytest services/evolution/test_threshold_sweep_worker.py -q
-# 69 passed (round-8: +1 new test — quarantine tombstone persists across
-# prune/new-candidate/delivery saves, two-tick regression)
+# 70 passed (round-8: +1 new test — quarantine tombstone persists across
+# prune/new-candidate/delivery saves, two-tick regression; +1 more from the
+# dev merge, unrelated to this task)
 
 python3 -m pytest services/evolution -q
-# 197 passed (round-8: +1 in the worker file above, +1 new compose-shape
-# acceptance test in test_compose_activation.py; no regression elsewhere)
+# 213 passed (round-8: +1 in the worker file above, +1 new compose-shape
+# acceptance test in test_compose_activation.py; remainder is unrelated work
+# merged in from dev — no regression)
 
 python3 -m pytest services/incidents -q
-# 59 passed (round-8: +2 new tests — non-boolean `breached` rejection,
-# explicit incident_id collision-across-identities rejection)
+# 64 passed (round-8: +2 new tests — non-boolean `breached` rejection,
+# explicit incident_id collision-across-identities rejection; remainder is
+# unrelated work merged in from dev — no regression)
 
 python3 -m pytest services/incidents/tests/test_incident_replay_suite.py -q
 # 17 passed (round-8: replay-suite `clean_store` fixture converted to an
@@ -755,10 +766,11 @@ python3 -m pytest services/incidents/tests/test_incident_replay_suite.py -q
 # test_main_routes.py; no longer deletes the configured persistent store)
 
 python3 -m pytest services/incident -q
-# 118 passed (no regression in the INC-001 domain layer)
+# 119 passed (no regression in the INC-001 domain layer; +1 from the dev
+# merge, unrelated to this task)
 
 python3 -m pytest services/telemetry -q
-# 231 passed (no regression)
+# 244 passed (no regression; +13 from the dev merge, unrelated to this task)
 
 docker compose config --quiet
 # passed
