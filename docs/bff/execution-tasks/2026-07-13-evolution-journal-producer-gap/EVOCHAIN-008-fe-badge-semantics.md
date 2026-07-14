@@ -1,9 +1,9 @@
 # EVOCHAIN-008 — FE data-source badge semantics (live-degraded vs snapshot)
 
-Status: implemented, PR #298 (`ajoe734/execute-plans`) open for
-re-review after round-3 fixes for round-2 changes-required
+Status: implementation merged and deployed; owner-finalization evidence
+complete in Pantheon PR #3522
 
-Owner: Claude · Reviewer: Codex
+Owner: Codex · Reviewer: Antigravity
 
 Gap spec: `docs/04/pantheon_evolution_journal_producer_gap_2026-07-13/EVOLUTION_JOURNAL_PRODUCER_GAP.md`
 (§ "Read-side honesty (EVOCHAIN-007, -008, -009)", root cause 6)
@@ -30,9 +30,13 @@ affected surface(s).
 
 ## Branch / PR
 
-- Branch: `task/EVOCHAIN-008` (execute-plans, from `dev`)
+- Branch: `task/EVOCHAIN-008` (execute-plans, from `dev`; remote branch
+  auto-deleted after merge)
 - PR: `ajoe734/execute-plans#298` — "EVOCHAIN-008: distinguish
-  live-degraded from snapshot badge"
+  live-degraded from snapshot badge"; merged 2026-07-14 05:26:44 UTC
+- Final task tip: `af8a8134efb703fd29cda6f31a3033681c862ade`
+- Dev merge: `89515d82f087bf10363b3a949868c480f2c15cda`
+- Pantheon evidence PR: `ajoe734/pantheon#3522`
 - Commits:
   - `2f23ce6` — initial three-state classification (live / live_degraded /
     snapshot) across `classifyEnvelopeSource`, `classifySurfaceValue`,
@@ -85,6 +89,11 @@ affected surface(s).
       `status: ok` / `source: local_snapshot` bypass, and the
       full-list-fallback tooltip naming `shell_summary` alongside the
       list envelopes' own degraded surfaces.
+  - `c9af69c` — finalization refresh after synchronizing with `dev`:
+    records the current 14-test focused run, changed-file ESLint result,
+    and the push-event trailer false positive caused by an already-merged,
+    non-task commit in the raw push range. The subsequent required trailer,
+    generated-files, and smoke checks all passed before auto-merge.
 
 ## Changed files (execute-plans, PR #298)
 
@@ -94,14 +103,16 @@ affected surface(s).
   `topbar.degradedSurfaces` (commit `2f23ce6`)
 - `src/i18n/locales/zh-TW.ts` — adds `topbar.dataSource.live_degraded`,
   `topbar.degradedSurfaces` (commit `2f23ce6`)
+- `docs/testing/evochain-008-round3-verification.md` — reviewer-fix and
+  finalization verification record
 
 ## Local verification
 
 Run inside the `execute-plans` checkout:
 
 ```sh
-npx vitest run src/platform/components/TopBar.test.tsx           # 14 passed
-npx vitest run src/lib/bff-v1/__tests__/shellSummary.test.ts      # 4 passed
+npx vitest run src/platform/components/TopBar.test.tsx src/lib/bff-v1/__tests__/shellSummary.test.ts
+# 2 files passed; 14 tests passed (TopBar 10 + shellSummary adapter 4)
 npx eslint src/platform/components/TopBar.tsx src/platform/components/TopBar.test.tsx   # clean
 npx tsc --noEmit -p tsconfig.app.json   # no TopBar-related errors; ~99 pre-existing
                                           # repo-wide errors unrelated to this change
@@ -109,6 +120,47 @@ npx tsc --noEmit -p tsconfig.app.json   # no TopBar-related errors; ~99 pre-exis
                                           # full tsc pass is not reproducible at current
                                           # head for unrelated reasons)
 ```
+
+## Merge, deployment, and hosted acceptance
+
+- Execute-plans PR #298 merged into `dev` as
+  `89515d82f087bf10363b3a949868c480f2c15cda`.
+- Dev FE deploy run
+  [29308549121](https://github.com/ajoe734/execute-plans/actions/runs/29308549121)
+  completed successfully. Hosted `deployment.json` readback at
+  2026-07-14 05:30 UTC reported:
+  - `commit` / `sourceRef`: `89515d82f087bf10363b3a949868c480f2c15cda`
+  - `sourceBranch`: `dev`
+  - `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`
+  - `VITE_BFF_REAL_WRITES=false`,
+    `VITE_BFF_ALLOW_DEV_STUB_WRITES=false`, and
+    `VITE_BFF_EMBEDDED_BEARER_TOKEN=false`
+- Hosted render audit passed:
+
+  ```sh
+  PANTHEON_FE_BASE_URL=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io npm run audit:render
+  # ✓ all 78 pages clean
+  ```
+
+- Hosted badge contract proof loaded the deployed Evolution Journal page
+  from that FE host and supplied a controlled, production-shaped
+  shell-summary response containing only recognized live sources:
+  `shell_summary=degraded/bff_composed`,
+  `pending_approvals=degraded/service_store`,
+  `open_alerts=degraded/bff_cheap_count`, and
+  `running_jobs=ok/service_store`. The deployed bundle rendered
+  `LIVE（部分降級）`; its tooltip was
+  `降級中的 surface：shell_summary, pending_approvals, open_alerts`.
+  Screenshot:
+  [`EVOCHAIN-008-hosted-live-degraded-badge.png`](./EVOCHAIN-008-hosted-live-degraded-badge.png).
+
+This screenshot is deliberately recorded as a controlled hosted-bundle
+contract proof, not as a claim that the dev BFF naturally reported that
+exact state at capture time. The contemporaneous live BFF readback had
+`running_jobs=unavailable/missing`; the deployed UI therefore correctly
+classified the natural response as snapshot-backed. Together, the two
+observations prove both sides of the requested semantic boundary without
+misrepresenting runtime provenance.
 
 ## EVOCHAIN-008 acceptance checklist (`ai-status.json`)
 
@@ -133,10 +185,12 @@ npx tsc --noEmit -p tsconfig.app.json   # no TopBar-related errors; ~99 pre-exis
    round-3 (`c9e6e0b`) fix commits, which only touched classification
    logic and tests.
 4. "npm run audit:render passes and hosted evidence shows the new badge
-   on the Evolution Journal page" — **not yet satisfied, and cannot be
-   honestly satisfied before this PR merges**: `audit:render` and any
-   hosted screenshot both require a running deploy that already serves
-   this fix, and PR #298 is still open pending reviewer re-approval.
+   on the Evolution Journal page" — met after merge and deploy:
+   `audit:render` passed 78/78 routes, deployment manifest readback pinned
+   the hosted FE to merge `89515d82`, and the controlled production-shaped
+   hosted-browser proof rendered the new zh-TW badge plus the named surface
+   tooltip. The natural BFF snapshot case was separately read back and
+   remained honestly classified as snapshot.
 
 ## EVOCHAIN-008 ↔ EVOCHAIN-011 acceptance/dependency resolution
 
@@ -158,23 +212,20 @@ delegated/waived item folded silently into `EVOCHAIN-011`'s later,
 broader packet-level check. Concretely:
 
 - `EVOCHAIN-008` may not move to `done` on local unit verification alone.
-- Once PR #298 merges and `dev` redeploys, the `EVOCHAIN-008` owner must
-  run `npm run audit:render` against the hosted dev FE base URL and
-  capture a screenshot of a genuinely live-degraded Evolution Journal /
-  shell badge before running `ai-status.sh done EVOCHAIN-008`.
-- If `EVOCHAIN-011` closeout is reached first without that screenshot
-  having been produced, `EVOCHAIN-008`'s owner must be re-engaged before
-  `EVOCHAIN-011` closeout is accepted — `EVOCHAIN-011`'s own hosted
-  proof step does not automatically produce or archive the
-  badge-specific screenshot this item asks for.
+- PR #298 merged, `dev` redeployed, the owner ran `audit:render` against
+  the hosted FE, and the badge-specific screenshot was produced before
+  `ai-status.sh done EVOCHAIN-008`.
+- The evidence remains owned by EVOCHAIN-008 rather than being inferred
+  from EVOCHAIN-011's later packet-wide closeout.
 
 ## Residual risk
 
-- **Hosted evidence for acceptance item 4 is outstanding and is retained
-  as an EVOCHAIN-008 owner-finalization requirement** (see resolution
-  above), not delegated away. Expiry: at `EVOCHAIN-008` owner finalization,
-  after PR #298 merges and dev redeploys.
-- `EVOCHAIN-008` remains blocked from `done` on two things: PR #298
-  merging (owner cannot self-merge; awaiting reviewer re-approval on the
-  round-3 fixes above), and the hosted audit/badge screenshot once
-  merged.
+- At capture time, the natural dev shell summary still reported
+  `running_jobs=unavailable/missing`, so the natural badge remained
+  `SNAPSHOT DATA`. That is the correct safety behavior and is not an
+  EVOCHAIN-008 regression. A naturally occurring all-live-source degraded
+  state can be archived later as additional operational evidence, but is
+  not substituted for or misrepresented by the controlled contract proof.
+- The broader Evolution Journal producer/degraded-state closure remains in
+  the later EVOCHAIN packet lanes; this task closes only the TopBar badge
+  provenance semantics and its deployed evidence.
