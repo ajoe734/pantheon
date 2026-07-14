@@ -7,12 +7,14 @@ status, result, and audit data.
 from __future__ import annotations
 
 import json
+import http.client
 import logging
 import os
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import quote
 
 from models import CommandStatus, CommandType
 
@@ -52,6 +54,37 @@ def _governance_url(path: str) -> str:
     base = _configured_base_url(
         "PANTHEON_GOVERNANCE_API_URL",
         "PANTHEON_EVOLUTION_API_URL",
+    )
+    return f"{base}{path}"
+
+
+def _governance_approval_url(path: str) -> str:
+    base = _configured_base_url(
+        "PANTHEON_GOVERNANCE_APPROVAL_API_URL",
+        "PANTHEON_GOVERNANCE_SERVICE_URL",
+    )
+    return f"{base}{path}"
+
+
+def _write_to_governance(
+    path: str,
+    payload: Dict[str, Any],
+    auth_token: Optional[str] = None,
+    mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    url = _governance_approval_url(path)
+    return _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+
+
+def _capital_url(path: str) -> str:
+    """Resolve the Capital service owner API.
+
+    Rebalance and containment execution must terminate at the Capital service;
+    the BFF command store is an audit/receipt surface, not capital authority.
+    """
+    base = _configured_base_url(
+        "PANTHEON_CAPITAL_API_URL",
+        "PANTHEON_CAPITAL_SERVICE_URL",
     )
     return f"{base}{path}"
 
@@ -134,6 +167,231 @@ def _post_json(
     )
     with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def _get_json(
+    url: str,
+    auth_token: Optional[str] = None,
+    mfa_token: Optional[str] = None,
+) -> Any:
+    """GET JSON from an owner API for post-error receipt reconciliation."""
+    headers: Dict[str, str] = {"Accept": "application/json"}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+    if mfa_token:
+        headers["X-MFA-Token"] = mfa_token
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _owner_post_may_have_committed(exc: Exception) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code == 409 or exc.code >= 500
+    return isinstance(
+        exc,
+        (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionError,
+            http.client.IncompleteRead,
+            http.client.RemoteDisconnected,
+            http.client.BadStatusLine,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+            EOFError,
+        ),
+    )
+
+
+def _record_matches(record: Dict[str, Any], expected: Dict[str, Any], fields: tuple[str, ...]) -> bool:
+    return all(
+        field not in expected
+        or expected.get(field) is None
+        or record.get(field) == expected.get(field)
+        for field in fields
+    )
+
+
+_CAPITAL_POOL_SEMANTIC_FIELDS = (
+    "pool_id",
+    "name",
+    "owner_id",
+    "owner_type",
+    "status",
+    "description",
+    "currency",
+    "budget",
+    "risk_policy_ref",
+    "single_runtime_enforced",
+    "metadata",
+)
+
+_CAPITAL_BINDING_SEMANTIC_FIELDS = (
+    "binding_id",
+    "persona_id",
+    "capital_pool_id",
+    "capital_sleeve_id",
+    "role",
+    "allowed_deployment_scope",
+    "mandate",
+    "budget",
+    "effective_from",
+    "effective_to",
+    "created_by",
+    "metadata",
+)
+
+
+def create_capital_pool(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a stable CapitalPool at its owner, reconciling ambiguous outcomes."""
+    pool_id = str(payload.get("pool_id") or "").strip()
+    if not pool_id:
+        raise ValueError("CapitalPool create requires a stable pool_id")
+    try:
+        body = _post_json(_capital_url("/api/capital-pools"), payload)
+    except Exception as exc:
+        if not _owner_post_may_have_committed(exc):
+            raise
+        try:
+            body = _get_json(_capital_url(f"/api/capital-pools/{quote(pool_id, safe='')}"))
+        except Exception:
+            raise exc
+        if not _record_matches(body, payload, _CAPITAL_POOL_SEMANTIC_FIELDS):
+            raise exc
+        body = {**body, "idempotent_replay": True}
+    if str(body.get("pool_id") or body.get("id") or "").strip() != pool_id:
+        raise RuntimeError("Capital authority returned a pool with the wrong stable identity")
+    if not _record_matches(body, payload, _CAPITAL_POOL_SEMANTIC_FIELDS):
+        raise RuntimeError("Capital authority returned a pool with mismatched create semantics")
+    return body
+
+
+def create_capital_binding(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a stable PersonaCapitalBinding at its owner with GET reconciliation."""
+    binding_id = str(payload.get("binding_id") or "").strip()
+    if not binding_id:
+        raise ValueError("PersonaCapitalBinding create requires a stable binding_id")
+    try:
+        body = _post_json(_capital_url("/api/bindings"), payload)
+    except Exception as exc:
+        if not _owner_post_may_have_committed(exc):
+            raise
+        try:
+            body = _get_json(_capital_url(f"/api/bindings/{quote(binding_id, safe='')}"))
+        except Exception:
+            raise exc
+        if not _record_matches(body, payload, _CAPITAL_BINDING_SEMANTIC_FIELDS):
+            raise exc
+        body = {**body, "idempotent_replay": True}
+    if str(body.get("binding_id") or body.get("id") or "").strip() != binding_id:
+        raise RuntimeError("Capital authority returned a binding with the wrong stable identity")
+    if not _record_matches(body, payload, _CAPITAL_BINDING_SEMANTIC_FIELDS):
+        raise RuntimeError("Capital authority returned a binding with mismatched create semantics")
+    return body
+
+
+def create_capital_rebalance_proposal(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist an auditable proposal through the Capital owner boundary."""
+    body = _post_json(_capital_url("/api/rebalances"), payload)
+    rebalance_id = str(body.get("rebalance_id") or body.get("id") or "").strip()
+    if not rebalance_id:
+        raise RuntimeError("Capital authority returned a proposal without rebalance_id")
+    return body
+
+
+def _reconcile_rebalance_apply_receipt(
+    *,
+    rebalance_id: str,
+    command_id: str,
+    approval_ref: str,
+) -> Optional[Dict[str, Any]]:
+    receipt = _get_json(
+        _capital_url(f"/api/rebalances/receipts/{quote(command_id, safe='')}")
+    )
+    try:
+        return _validate_rebalance_apply_receipt(
+            receipt,
+            rebalance_id=rebalance_id,
+            command_id=command_id,
+            approval_ref=approval_ref,
+        )
+    except RuntimeError:
+        return None
+
+
+def _reconcile_containment_receipt(
+    *,
+    command_id: str,
+    persona_id: str,
+    two_man_signature_id: str,
+) -> Optional[Dict[str, Any]]:
+    receipt = _get_json(
+        _capital_url(f"/api/containments/receipts/{quote(command_id, safe='')}")
+    )
+    try:
+        return _validate_containment_receipt(
+            receipt,
+            command_id=command_id,
+            persona_id=persona_id,
+            two_man_signature_id=two_man_signature_id,
+        )
+    except RuntimeError:
+        return None
+
+
+def _validate_rebalance_apply_receipt(
+    body: Any,
+    *,
+    rebalance_id: str,
+    command_id: str,
+    approval_ref: str,
+) -> Dict[str, Any]:
+    if not isinstance(body, dict):
+        raise RuntimeError("Capital authority returned a non-object rebalance receipt")
+    if str(body.get("command_id") or "") != command_id:
+        raise RuntimeError("Capital authority returned a rebalance receipt for the wrong command")
+    if str(body.get("rebalance_id") or "") != rebalance_id:
+        raise RuntimeError("Capital authority returned a rebalance receipt for the wrong proposal")
+    if str(body.get("approval_ref") or "") != approval_ref:
+        raise RuntimeError("Capital authority returned a rebalance receipt for the wrong approval")
+    if body.get("authoritative_capital_readback") is not True:
+        raise RuntimeError(
+            "Capital authority did not confirm authoritative allocation readback"
+        )
+    if body.get("authoritative_capital_state_applied") is not True:
+        raise RuntimeError("Capital authority did not confirm atomic rebalance application")
+    return body
+
+
+def _validate_containment_receipt(
+    body: Any,
+    *,
+    command_id: str,
+    persona_id: str,
+    two_man_signature_id: str,
+) -> Dict[str, Any]:
+    if not isinstance(body, dict):
+        raise RuntimeError("Capital authority returned a non-object containment receipt")
+    if str(body.get("command_id") or "") != command_id:
+        raise RuntimeError("Capital authority returned a containment receipt for the wrong command")
+    if str(body.get("persona_id") or "") != persona_id:
+        raise RuntimeError("Capital authority returned a containment receipt for the wrong Persona")
+    if str(body.get("two_man_signature_id") or "") != two_man_signature_id:
+        raise RuntimeError(
+            "Capital authority returned a containment receipt for the wrong two-man signature"
+        )
+    containment_state = str(
+        body.get("containment_state") or body.get("state") or ""
+    ).strip()
+    if (
+        containment_state not in {"frozen", "suspended", "risk_off", "retired"}
+        or body.get("authoritative_containment_readback") is not True
+        or body.get("authoritative_capital_readback") is not True
+        or body.get("authoritative_capital_state_applied") is not True
+    ):
+        raise RuntimeError("Capital authority did not confirm terminal containment state")
+    return body
 
 
 # --------------------------------------------------------------------------- #
@@ -280,14 +538,41 @@ def _execute_rollback(
         payload["target_artifact_id"] = params.get("target_artifact_id")
     url = _internal_url("/api/internal/v1/rollbacks/execute")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    
+    rollback_id = body.get("rollback_id") or f"rollback-{uuid.uuid4().hex[:12]}"
+    try:
+        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    except Exception:
+        actor_id, actor_role = "operator-command", "operator"
+    timestamp = _utc_now()
+    gov_payload = {
+        "rollback_id": rollback_id,
+        "id": rollback_id,
+        "runtime_id": params.get("runtime_id"),
+        "runtime_binding_id": params.get("runtime_binding_id") or params.get("target_id") or params.get("binding_id"),
+        "action_type": params.get("rollback_action_type") or "replace",
+        "status": body.get("status") or "completed",
+        "target_artifact_id": params.get("target_artifact_id") or params.get("rollback_to_version"),
+        "actor": actor_role,
+        "identity": actor_id,
+        "initiated_at": timestamp,
+        "created_at": timestamp,
+        "requested_at": timestamp,
+        "source_command_id": command_id,
+    }
+    try:
+        _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
+    except Exception as e:
+        log.warning("Failed to persist rollback %s to governance store: %s", rollback_id, e)
+
     return {
-        "rollback_id": body.get("rollback_id"),
+        "rollback_id": rollback_id,
         "command_id": command_id,
         "runtime_id": params.get("runtime_id"),
         "runtime_binding_id": params.get("runtime_binding_id") or params.get("target_id"),
         "target_artifact_id": params.get("target_artifact_id"),
         "rollback_action_type": params.get("rollback_action_type"),
-        "status": body.get("status"),
+        "status": body.get("status") or "completed",
         "tracking_url": body.get("tracking_url"),
     }
 
@@ -305,11 +590,33 @@ def _execute_approve_rollback(
     }
     url = _internal_url(f"/api/internal/v1/rollbacks/{rollback_id}/approve")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    
+    try:
+        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    except Exception:
+        actor_id, actor_role = "operator-command", "operator"
+    timestamp = _utc_now()
+    gov_payload = {
+        "rollback_id": rollback_id,
+        "id": rollback_id,
+        "status": body.get("status") or "approved",
+        "actor": actor_role,
+        "identity": actor_id,
+        "updated_at": timestamp,
+        "approved_at": body.get("approved_at") or timestamp,
+        "source_command_id": command_id,
+        "approval_notes": params.get("approval_notes"),
+    }
+    try:
+        _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
+    except Exception as e:
+        log.warning("Failed to persist rollback %s approval to governance store: %s", rollback_id, e)
+
     return {
         "command_id": command_id,
         "rollback_id": body.get("rollback_id", rollback_id),
         "decision": body.get("decision", "approved"),
-        "status": body.get("status"),
+        "status": body.get("status") or "approved",
         "audit_id": body.get("audit_id"),
         "approved_at": body.get("approved_at"),
     }
@@ -328,11 +635,33 @@ def _execute_reject_rollback(
     }
     url = _internal_url(f"/api/internal/v1/rollbacks/{rollback_id}/reject")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    
+    try:
+        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    except Exception:
+        actor_id, actor_role = "operator-command", "operator"
+    timestamp = _utc_now()
+    gov_payload = {
+        "rollback_id": rollback_id,
+        "id": rollback_id,
+        "status": body.get("status") or "rejected",
+        "actor": actor_role,
+        "identity": actor_id,
+        "updated_at": timestamp,
+        "rejected_at": body.get("rejected_at") or timestamp,
+        "source_command_id": command_id,
+        "rejection_reason": params.get("rejection_reason"),
+    }
+    try:
+        _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
+    except Exception as e:
+        log.warning("Failed to persist rollback %s rejection to governance store: %s", rollback_id, e)
+
     return {
         "command_id": command_id,
         "rollback_id": body.get("rollback_id", rollback_id),
         "decision": body.get("decision", "rejected"),
-        "status": body.get("status"),
+        "status": body.get("status") or "rejected",
         "audit_id": body.get("audit_id"),
         "rejected_at": body.get("rejected_at"),
     }
@@ -354,8 +683,34 @@ def _execute_activate_kill_switch(
         payload["action_override"] = params.get("action_override")
     url = _internal_url("/api/internal/v1/kill-switch")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    
+    kill_switch_order_id = body.get("kill_switch_order_id") or f"ks-{uuid.uuid4().hex[:12]}"
+    try:
+        actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    except Exception:
+        actor_id, actor_role = "operator-command", "operator"
+    timestamp = _utc_now()
+    freeze_order_id = f"freeze-{kill_switch_order_id}"
+    freeze_payload = {
+        "freeze_order_id": freeze_order_id,
+        "id": freeze_order_id,
+        "status": "active",
+        "scope": params.get("scope") or "all",
+        "target_id": params.get("scope_id") or "all",
+        "actor": actor_role,
+        "identity": actor_id,
+        "created_at": timestamp,
+        "issued_at": timestamp,
+        "source_command_id": command_id,
+        "reason": params.get("trigger_reason") or params.get("reason") or "Kill switch activation freeze.",
+    }
+    try:
+        _write_to_governance("/api/governance/freeze-orders", freeze_payload, auth_token=auth_token, mfa_token=mfa_token)
+    except Exception as e:
+        log.warning("Failed to persist freeze order %s to governance store: %s", freeze_order_id, e)
+
     return {
-        "kill_switch_order_id": body.get("kill_switch_order_id"),
+        "kill_switch_order_id": kill_switch_order_id,
         "command_id": command_id,
         "runtime_id": params.get("runtime_id"),
         "runtime_binding_id": params.get("runtime_binding_id"),
@@ -574,6 +929,114 @@ def _execute_reject_mutation(
         "decision_state": body.get("decision_state", "rejected"),
         "approval_decision_id": body.get("approval_decision_id"),
         "risk_level": body.get("risk_level"),
+        "committed_at": committed_at,
+    }
+
+
+def _execute_review_mutation(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Dispatch ReviewMutation to the governance-owned evolution API."""
+    decision_id = str(params.get("decision_id") or params.get("evolution_decision_id") or "").strip()
+    if not decision_id:
+        raise ValueError("ReviewMutation requires decision_id.")
+    approval_decision_id = str(params.get("approval_decision_id") or "").strip()
+    if not approval_decision_id:
+        raise ValueError("ReviewMutation requires approval_decision_id.")
+
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    payload: Dict[str, Any] = {
+        "actor_id": actor_id,
+        "actor_role": actor_role,
+        "approval_decision_id": approval_decision_id,
+    }
+    note = params.get("note") or params.get("rationale")
+    if note:
+        payload["note"] = note
+
+    url = _governance_url(f"/api/evolution/proposals/{decision_id}/review")
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    committed_at = body.get("updated_at") or body.get("decided_at") or _utc_now()
+    return {
+        "command_id": command_id,
+        "command_accepted": True,
+        "decision_id": body.get("decision_id", decision_id),
+        "new_state": body.get("decision_state", "reviewed"),
+        "decision_state": body.get("decision_state", "reviewed"),
+        "approval_decision_id": body.get("approval_decision_id", approval_decision_id),
+        "risk_level": body.get("risk_level"),
+        "committed_at": committed_at,
+    }
+
+
+def _execute_execute_mutation(
+    command_id: str, params: Dict[str, Any],
+    auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Dispatch ExecuteMutation to the governance-owned evolution API."""
+    decision_id = str(params.get("decision_id") or params.get("evolution_decision_id") or "").strip()
+    if not decision_id:
+        raise ValueError("ExecuteMutation requires decision_id.")
+
+    actor_id, actor_role = _actor_context(params, auth_token=auth_token)
+    payload: Dict[str, Any] = {
+        "actor_id": actor_id,
+        "actor_role": actor_role,
+    }
+    for optional_key in (
+        "has_active_runtime",
+        "active_binding_id",
+        "freeze_mode",
+        "rollback_action_type",
+        "fallback_artifact_id",
+        "fallback_artifact_version",
+        "force_stage_freeze",
+    ):
+        if optional_key in params:
+            payload[optional_key] = params.get(optional_key)
+    note = params.get("note") or params.get("rationale")
+    if note:
+        payload["note"] = note
+
+    url = _governance_url(f"/api/evolution/proposals/{decision_id}/execute")
+    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    execution_result = body.get("execution_result") or {}
+    committed_at = body.get("updated_at") or execution_result.get("executed_at") or _utc_now()
+
+    freeze_mode = params.get("freeze_mode")
+    force_stage_freeze = params.get("force_stage_freeze")
+    if freeze_mode or force_stage_freeze:
+        timestamp = _utc_now()
+        freeze_order_id = f"freeze-{decision_id}"
+        freeze_payload = {
+            "freeze_order_id": freeze_order_id,
+            "id": freeze_order_id,
+            "status": "active",
+            "scope": str(freeze_mode or "persona"),
+            "target_id": body.get("target_id") or params.get("persona_id") or params.get("target_id") or "unknown",
+            "actor": actor_role,
+            "identity": actor_id,
+            "created_at": timestamp,
+            "issued_at": timestamp,
+            "source_command_id": command_id,
+            "reason": params.get("note") or params.get("rationale") or "Evolution sweep freeze.",
+        }
+        try:
+            _write_to_governance("/api/governance/freeze-orders", freeze_payload, auth_token=auth_token, mfa_token=mfa_token)
+        except Exception as e:
+            log.warning("Failed to persist freeze order %s to governance store: %s", freeze_order_id, e)
+
+    return {
+        "command_id": command_id,
+        "command_accepted": True,
+        "decision_id": body.get("decision_id", decision_id),
+        "new_state": body.get("decision_state", "executed"),
+        "decision_state": body.get("decision_state", "executed"),
+        "execution_result": execution_result,
+        "execution_ref_id": execution_result.get("execution_ref_id"),
+        "cooldown_ends_at": body.get("cooldown_ends_at"),
+        "observation_window_ends_at": body.get("observation_window_ends_at"),
         "committed_at": committed_at,
     }
 
@@ -1000,6 +1463,163 @@ def _execute_bff_action_adapter(
     return result
 
 
+def _execute_approved_rebalance_apply(
+    command_id: str,
+    params: Dict[str, Any],
+    auth_token: Optional[str] = None,
+    mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Atomically apply the server-persisted proposal at Capital authority."""
+    del auth_token, mfa_token
+    entity_id = str(params.get("entity_id") or "").strip()
+    requested_rebalance_id = str(params.get("rebalance_id") or "").strip()
+    if entity_id and requested_rebalance_id and entity_id != requested_rebalance_id:
+        raise ValueError("ApprovedApply rebalance_id does not match trusted target identity")
+    if str(params.get("entity_type") or "Rebalance") != "Rebalance":
+        raise ValueError("ApprovedApply requires trusted entity_type=Rebalance")
+    rebalance_id = entity_id or requested_rebalance_id
+    if not rebalance_id:
+        raise ValueError("ApprovedApply requires a trusted rebalance_id")
+    approval_ref = str(params.get("approval_ref") or "").strip()
+    if params.get("approval_required") and not approval_ref:
+        raise ValueError("ApprovedApply requires approval_ref")
+
+    payload = {
+        "command_id": command_id,
+        "idempotency_key": str(params.get("idempotency_key") or command_id),
+        "request_hash": str(params.get("request_hash") or ""),
+        "approval_ref": approval_ref,
+        "actor_id": str(params.get("actor_id") or "operator-bff"),
+        "actor_role": str(params.get("actor_role") or "operator"),
+        "proposal_version": params.get("proposal_version"),
+    }
+    try:
+        body = _post_json(
+            _capital_url(f"/api/rebalances/{quote(rebalance_id, safe='')}/apply"),
+            payload,
+        )
+    except Exception as exc:
+        if not _owner_post_may_have_committed(exc):
+            raise
+        try:
+            reconciled = _reconcile_rebalance_apply_receipt(
+                rebalance_id=rebalance_id,
+                command_id=command_id,
+                approval_ref=approval_ref,
+            )
+        except Exception:
+            raise exc
+        if reconciled is None:
+            raise exc
+        body = {**reconciled, "owner_receipt_reconciled": True}
+    body = _validate_rebalance_apply_receipt(
+        body,
+        rebalance_id=rebalance_id,
+        command_id=command_id,
+        approval_ref=approval_ref,
+    )
+    return {
+        **body,
+        "command_id": command_id,
+        "dispatch_path": "capital_service_rebalance_authority",
+        "status": body.get("status") or "applied",
+        "action_id": "apply",
+        "entity_type": "Rebalance",
+        "entity_id": rebalance_id,
+        "approval_ref": approval_ref,
+        "live_capital_side_effects": False,
+    }
+
+
+def _execute_emergency_containment_authority(
+    command_id: str,
+    params: Dict[str, Any],
+    auth_token: Optional[str] = None,
+    mfa_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Persist a risk-decreasing containment terminal state at Capital authority."""
+    del auth_token, mfa_token
+    entity_id = str(params.get("entity_id") or "").strip()
+    requested_persona_id = str(params.get("persona_id") or "").strip()
+    if entity_id and requested_persona_id and entity_id != requested_persona_id:
+        raise ValueError("EmergencyContainment persona_id does not match trusted target identity")
+    if str(params.get("entity_type") or "Persona") != "Persona":
+        raise ValueError("EmergencyContainment requires trusted entity_type=Persona")
+    persona_id = entity_id or requested_persona_id
+    if not persona_id:
+        raise ValueError("EmergencyContainment requires a trusted Persona identity")
+    two_man_signature_id = str(params.get("two_man_signature_id") or "").strip()
+    if not two_man_signature_id:
+        raise ValueError("EmergencyContainment requires validated two-man evidence")
+
+    # Admission already validates the risk-decreasing-only contract.  Send the
+    # admitted fields plus trusted command identity; the owner validates again.
+    payload = {
+        key: value
+        for key, value in params.items()
+        if key
+        not in {
+            "command_id",
+            "entity_type",
+            "entity_id",
+            "action_id",
+            "actor_id",
+            "actor_role",
+        }
+    }
+    payload.update(
+        {
+            "command_id": command_id,
+            "idempotency_key": str(params.get("idempotency_key") or command_id),
+            "request_hash": str(params.get("request_hash") or ""),
+            "persona_id": persona_id,
+            "two_man_signature_id": two_man_signature_id,
+            "entity_type": "Persona",
+            "entity_id": persona_id,
+            "actor_id": str(params.get("actor_id") or "operator-bff"),
+            "actor_role": str(params.get("actor_role") or "operator"),
+        }
+    )
+    try:
+        body = _post_json(_capital_url("/api/containments"), payload)
+    except Exception as exc:
+        if not _owner_post_may_have_committed(exc):
+            raise
+        try:
+            reconciled = _reconcile_containment_receipt(
+                command_id=command_id,
+                persona_id=persona_id,
+                two_man_signature_id=two_man_signature_id,
+            )
+        except Exception:
+            raise exc
+        if reconciled is None:
+            raise exc
+        body = {**reconciled, "owner_receipt_reconciled": True}
+    body = _validate_containment_receipt(
+        body,
+        command_id=command_id,
+        persona_id=persona_id,
+        two_man_signature_id=two_man_signature_id,
+    )
+    containment_state = str(
+        body.get("containment_state") or body.get("state") or ""
+    ).strip()
+    return {
+        **body,
+        "command_id": command_id,
+        "dispatch_path": "capital_service_containment_authority",
+        "status": body.get("status") or "applied",
+        "action_id": "EmergencyContainment",
+        "entity_type": "Persona",
+        "entity_id": persona_id,
+        "containment": True,
+        "containment_state": containment_state,
+        "risk_direction": "decrease_only",
+        "live_capital_side_effects": False,
+    }
+
+
 # Dispatch table: CommandType -> execution function
 _EXECUTORS = {
     CommandType.ADVANCE_LIFECYCLE: _execute_advance_lifecycle,
@@ -1029,6 +1649,8 @@ _EXECUTORS = {
     CommandType.EXECUTE_EVOLUTION_ACTION: _execute_evolution_action,
     CommandType.APPROVE_MUTATION: _execute_approve_mutation,
     CommandType.REJECT_MUTATION: _execute_reject_mutation,
+    CommandType.REVIEW_MUTATION: _execute_review_mutation,
+    CommandType.EXECUTE_MUTATION: _execute_execute_mutation,
     CommandType.REMEDIATE_SENTINEL_INTERVENTION: _execute_remediate_sentinel_intervention,
     CommandType.CAPITAL_POOL_ACTION: _execute_bff_action_adapter,
     CommandType.RANKING_FORMULA_ACTION: _execute_bff_action_adapter,
@@ -1062,8 +1684,8 @@ _EXECUTORS = {
     CommandType.DEMOTE: _execute_bff_action_adapter,
     CommandType.PROMOTE_CANDIDATE: _execute_bff_action_adapter,
     CommandType.REBALANCE_PROPOSAL: _execute_bff_action_adapter,
-    CommandType.APPROVED_APPLY: _execute_bff_action_adapter,
-    CommandType.EMERGENCY_CONTAINMENT: _execute_bff_action_adapter,
+    CommandType.APPROVED_APPLY: _execute_approved_rebalance_apply,
+    CommandType.EMERGENCY_CONTAINMENT: _execute_emergency_containment_authority,
 }
 
 
@@ -1112,12 +1734,14 @@ def execute_command_with_status(
         result["execution_completed_at"] = completed_at
         return CommandStatus.EXECUTED, result, None
     except urllib.error.HTTPError as exc:
+        retryable = exc.code >= 500
         error = {
             "code": "DOWNSTREAM_ERROR",
             "message": f"Command backend returned {exc.code} for {command_id}",
             "started_at": started_at,
             "failed_at": _utc_now(),
             "downstream_status": exc.code,
+            "retryable": retryable,
             "suggestion": "Check internal/governance API health and retry if appropriate",
         }
         log.error("Command %s HTTP error: %s", command_id, error["message"])
@@ -1133,6 +1757,7 @@ def execute_command_with_status(
             "message": f"Command backend unreachable for {command_id}: {reason}",
             "started_at": started_at,
             "failed_at": _utc_now(),
+            "retryable": True,
             "suggestion": "Check internal/governance API availability and network connectivity",
         }
         log.error("Command %s URL error: %s", command_id, error["message"])
@@ -1143,16 +1768,40 @@ def execute_command_with_status(
             "message": f"Command {command_id} timed out after {_REQUEST_TIMEOUT}s",
             "started_at": started_at,
             "failed_at": _utc_now(),
+            "retryable": True,
             "suggestion": "Retry the command or escalate if downstream is unresponsive",
         }
         log.error("Command %s timed out", command_id)
         return CommandStatus.TIMEOUT, None, error
+    except (
+        ConnectionError,
+        http.client.IncompleteRead,
+        http.client.RemoteDisconnected,
+        http.client.BadStatusLine,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        EOFError,
+    ) as exc:
+        # The owner POST may have committed while its response was truncated,
+        # reset, or unparsable.  A failed receipt reconciliation leaves the
+        # outcome unknown, so same-key retry must remain available.
+        error = {
+            "code": "DOWNSTREAM_AMBIGUOUS",
+            "message": f"Command owner outcome is ambiguous for {command_id}: {exc}",
+            "started_at": started_at,
+            "failed_at": _utc_now(),
+            "retryable": True,
+            "suggestion": "Retry with the same idempotency key so the owner receipt can be reconciled",
+        }
+        log.error("Command %s ambiguous owner outcome: %s", command_id, exc)
+        return CommandStatus.FAILED, None, error
     except RuntimeError as exc:
         error = {
             "code": "COMMAND_BACKEND_UNCONFIGURED",
             "message": f"Command backend is not configured for {command_id}: {exc}",
             "started_at": started_at,
             "failed_at": _utc_now(),
+            "retryable": False,
             "suggestion": "Configure the internal/governance API URL or use the secondary control path.",
         }
         log.error("Command %s backend configuration error: %s", command_id, error["message"])
@@ -1163,6 +1812,7 @@ def execute_command_with_status(
             "message": f"Unexpected error executing command {command_id}: {exc}",
             "started_at": started_at,
             "failed_at": _utc_now(),
+            "retryable": False,
             "suggestion": "Review command parameters and retry, or escalate to platform team",
         }
         log.exception("Command %s execution error", command_id)

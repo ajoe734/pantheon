@@ -11,18 +11,27 @@ Pantheon normal operation is NOT "services return 200". It is: the multi-persona
 **closed loops** can each actually run, under the safety invariants, and be proven by
 telemetry/lineage. The canonical loop inventory (the acceptance checklist):
 
-11 main loops (`LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md` Section 6):
+12 canonical L1 loops (`LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md` Section 6):
 1 Source Ingestion; 2 Strategy Distillation; 3 Alpha Replication; 4 Persona Teaching;
-5 Human Imitation; 6 Consultation; 7 Promotion/Deployment; 8 Capital Pool Execution
-(LEAN, the only true continuous loop); 9 Telemetry/Reconciliation; 10 Evolution;
-11 BFF Health Monitoring.
+5 Agora / Human Trader Interaction Evidence; 6 Human Imitation / Shadow Evaluation;
+7 Consultation; 8 Promotion/Deployment; 9 Capital Pool Execution (LEAN, the only
+continuously resident execution loop); 10 Telemetry/Reconciliation; 11 Evolution;
+12 BFF Health Monitoring.
 
-Plus 5 governance/safety state-machine loops layered on top:
-12 paper->canary->live promotion ladder (`PAPER_CANARY_LIVE_POLICY.md`);
-13 Evolution decision lifecycle (`EVOLUTION_REVIEW_AND_THRESHOLDS.md`);
-14 Kill-switch + Safe-mode (`KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md`);
-15 Rollback + Position reconciliation (`ROLLBACK_AND_POSITION_SEMANTICS.md`);
-16 Delivery closure loop-state (`DELIVERY_CLOSURE_AND_LOOP_STATES.md`).
+The separately classified `per_persona_ooda` entry is a `composite_overlay`, not
+a thirteenth L1 loop. Its `composed_of` metadata maps Observe to source/Agora/
+telemetry, Orient to distillation/alpha/consultation, Decide and proposal-only Act
+to consultation/deployment, and Learn to teaching/imitation/telemetry/evolution.
+It is not continuous and grants no direct LEAN, broker, or live-capital authority.
+
+Five governance/safety state-machine overlays remain verification lenses rather
+than additional canonical loop rows:
+
+- paper->canary->live promotion ladder (`PAPER_CANARY_LIVE_POLICY.md`)
+- Evolution decision lifecycle (`EVOLUTION_REVIEW_AND_THRESHOLDS.md`)
+- Kill-switch + Safe-mode (`KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md`)
+- Rollback + Position reconciliation (`ROLLBACK_AND_POSITION_SEMANTICS.md`)
+- Delivery closure loop-state (`DELIVERY_CLOSURE_AND_LOOP_STATES.md`)
 
 Each loop is tracked as a 3-state cell: **design has / API has / actually runs**.
 

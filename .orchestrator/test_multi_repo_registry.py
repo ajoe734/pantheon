@@ -13,7 +13,7 @@ class MultiRepoRegistryTests(unittest.TestCase):
 
         self.assertEqual(repo["display_name"], "execute-plans")
         self.assertEqual(repo["repo"], "ajoe734/execute-plans")
-        self.assertEqual(repo["default_branch"], "main")
+        self.assertEqual(repo["default_branch"], "dev")
         self.assertEqual(repo["resolved_local_path"], multi_repo_registry.resolve_path("../execute-plans"))
 
     def test_execute_plans_artifact_prefix_routes_to_sibling_repo(self) -> None:

@@ -1,0 +1,123 @@
+{
+  "task_id": "PPL-ALLOC-009",
+  "captured_at": "2026-07-13T04:57:49Z",
+  "environment": "dev",
+  "deployment": {
+    "frontend": {
+      "commit": "c62c0e8b9a49643c42f67614c542578afb233e84",
+      "deployed_at": "20260713T040033Z",
+      "source_branch": "dev",
+      "bff_mode": "live",
+      "bff_fallback": "strict"
+    },
+    "bff": {
+      "health_status": 200,
+      "health_service": "operator-bff",
+      "dev_deploy_run": 29225028783,
+      "dev_deploy_source_sha": "276eb9c0312871aeb2ebb2f14545720da040e46a",
+      "deploy_conclusion": "success",
+      "commit_identity_endpoint": false
+    }
+  },
+  "paper_bundle": {
+    "initial_transport_result": "timeout_after_30_seconds",
+    "queried_before_retry": true,
+    "idempotent_replay_status": 201,
+    "persona_id": "persona-20260713-b4e3818e",
+    "state": "paper_running",
+    "capital_mode": "paper",
+    "deployment_stage": "paper",
+    "paper_ledger_id": "paper-ledger-persona-20260713-b4e3818e",
+    "runtime_id": "runtime-persona-20260713-b4e3818e-paper",
+    "runtime_binding_id": "binding-persona-20260713-b4e3818e-paper",
+    "capital_pool_id": null,
+    "data_source_binding_count": 2,
+    "live_capital_side_effects": false,
+    "human_review_required_for_live": true
+  },
+  "promotion_review": {
+    "recommendation_id": "pm12-2026-q3-persona-20260528-cfedeed5-reduce_capital_access",
+    "submit_status": 200,
+    "decision_status": 202,
+    "decision": "reject",
+    "decision_admission": "accepted",
+    "human_inbox_id": "promotion_review:pm12-2026-q3-persona-20260528-cfedeed5-reduce_capital_access",
+    "readback_status": 200,
+    "live_capital_mutation": false
+  },
+  "allocation_contract_probe": {
+    "authoritative_ranking_join": false,
+    "ranking_snapshot_id": "ppl-alloc-009-20260713T041416Z",
+    "evaluate_status": 200,
+    "persona_id": "persona-ppl-alloc-009-contract",
+    "stage": "live_running",
+    "current_weight": 0.04,
+    "target_weight": 0.05,
+    "delta": 0.01,
+    "cap_reasons": [
+      "live_b_tier_cap",
+      "quarterly_increase_cap_25pct"
+    ],
+    "requires_human_approval": true,
+    "rebalance_id": "rb-20260713-001",
+    "proposal_create_status": 202,
+    "proposal_read_status": 200,
+    "proposal_applied_before_command": false,
+    "apply_without_approval_status": 409,
+    "apply_without_approval_error": "PRECONDITION_FAILED",
+    "apply_with_approval_status": 202,
+    "apply_command_id": "7a3e7310-0596-4805-81d6-40b75fd7a412",
+    "apply_command_status_after_polls": "submitted",
+    "proposal_applied_after_command": false,
+    "terminal_receipt_recheck": {
+      "previous_rebalance_read_after_deploy_status": 404,
+      "restart_persistence_preserved": false,
+      "rebalance_id": "rb-20260713-002",
+      "proposal_create_status": 202,
+      "apply_without_approval_status": 409,
+      "apply_without_approval_error": "PRECONDITION_FAILED",
+      "apply_with_approval_status": 202,
+      "apply_command_id": "a729a21d-2d92-40ad-a8f4-95cf767cbac7",
+      "apply_command_status": "executed",
+      "dispatch_path": "bff_action_adapter",
+      "entity_type": "Rebalance",
+      "entity_id": "rb-20260713-002",
+      "live_capital_side_effects": false,
+      "proposal_status_after_command": "pending",
+      "proposal_applied_after_command": false,
+      "readback_source": "local_snapshot",
+      "readback_status": "degraded"
+    },
+    "authoritative_capital_readback": false
+  },
+  "emergency_containment": {
+    "promotion_attempt_status": 422,
+    "allocation_increase_attempt_status": 422,
+    "unsafe_error": "Emergency containment cannot promote or increase allocation",
+    "safe_freeze_without_confirmation_status": 428,
+    "confirm_token_create_status": 201,
+    "safe_freeze_without_two_man_status": 409,
+    "safe_freeze_blocker": "TWO_MAN_SIGNATURE_REQUIRED",
+    "safe_action_admitted": false,
+    "unsafe_side_effect_observed": false
+  },
+  "frontend": {
+    "browser_probe": {
+      "page": "/management/persona-fleet",
+      "pass": true,
+      "intended_bff_requests": 5,
+      "required_responses_complete": true,
+      "failed_requests": 0,
+      "old_bff_hits": 0,
+      "seed_fallback_armed": false,
+      "console_errors": 0
+    },
+    "created_persona_linked_page_test": {
+      "status": "failed_harness_assertion",
+      "product_row_rendered": true,
+      "rendered_persona_id": "persona-20260713-b4e3818e",
+      "failure": "test hard-codes Crypto-Alt-Hunter instead of the selected persona name"
+    }
+  },
+  "verdict": "blocked"
+}

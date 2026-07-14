@@ -472,6 +472,18 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["merge_target_sha"], "devsha")
         self.assertTrue(delivery["head_merged_to_target"])
 
+    def test_delivery_merge_target_branch_uses_dev_for_execute_plans(self) -> None:
+        # execute-plans mirrors Pantheon's per-task-PR-into-dev model; its
+        # GitHub-configured default branch is `dev`, not `main`. Regression
+        # guard for OPS-EP-BRANCH-TARGETING-001: a stale `main` value here
+        # made the done-finalize gate check ancestry against the wrong
+        # branch, which pushed FE task PRs to target `main` directly and
+        # drift it out of sync with `dev`.
+        self.assertEqual(
+            ai_status.delivery_merge_target_branch({}, "execute_plans"),
+            "dev",
+        )
+
 
 class ArchiveWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:

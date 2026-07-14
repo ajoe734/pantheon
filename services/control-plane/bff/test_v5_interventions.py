@@ -26,7 +26,6 @@ from models import (
     InterventionRecord,
     InterventionStatus,
     ObjectType,
-    TargetObject,
 )
 from read_store import ReadSurfaceStore
 
@@ -83,24 +82,32 @@ def _seed_approval_decision(approval_id: str, target_id: str) -> None:
     bff_main.read_store._save()
 
 
-def _seed_two_man_signature(signature_id: str, target_id: str) -> None:
-    bff_main.command_store.submit_command(
-        command_id=f"two-man-{signature_id}",
-        command_type=CommandType.APPROVE_DECISION,
-        target=TargetObject(type=ObjectType.CONFIRM_TOKEN, id=signature_id),
-        submitted_at="2026-06-01T00:02:00Z",
-        params={
-            "twoManSignatureId": signature_id,
-            "command": CommandType.REMEDIATE_SENTINEL_INTERVENTION.value,
-            "target": {"type": ObjectType.SENTINEL_INTERVENTION.value, "id": target_id},
-            "signerOperatorIds": ["op-v5-admin", "op-v5-second"],
-        },
-        audit_context={
-            "operator_id": "op-v5-admin",
-            "second_operator_id": "op-v5-second",
-            "reason": "test two-man signature",
-        },
-    )
+def _seed_two_man_signature(
+    client: TestClient,
+    signature_id: str,
+    target_id: str,
+) -> None:
+    for operator_id, authorization in (
+        ("op-v5-admin", ADMIN_MFA_TOKEN),
+        ("op-v5-second", "Bearer op-v5-second:operator"),
+    ):
+        response = client.post(
+            f"/bff/v5/interventions/{target_id}/two-man-sign",
+            headers={
+                "Authorization": authorization,
+                "Idempotency-Key": f"sign-{signature_id}-{operator_id}",
+            },
+            json={
+                "twoManSignatureId": signature_id,
+                "command": CommandType.REMEDIATE_SENTINEL_INTERVENTION.value,
+                "target": {
+                    "type": ObjectType.SENTINEL_INTERVENTION.value,
+                    "id": target_id,
+                },
+                "reason": "authenticated test operator signed remediation",
+            },
+        )
+        assert response.status_code == 202, response.text
 
 
 def _create_confirm_token(client: TestClient, token_id: str, target_id: str) -> None:
@@ -132,7 +139,7 @@ def _authorize_remediation(
     if approval_id:
         _seed_approval_decision(approval_id, target_id)
     if two_man_signature_id:
-        _seed_two_man_signature(two_man_signature_id, target_id)
+        _seed_two_man_signature(client, two_man_signature_id, target_id)
 
 
 # --------------------------------------------------------------------------- #

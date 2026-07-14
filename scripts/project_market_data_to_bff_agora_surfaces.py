@@ -55,7 +55,7 @@ def project(records: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]
             "asOf": observed_at,
             "source_ref": source_ref,
             "sourceId": source_id,
-            "ingestRunId": metadata.get("ingest_run_id"),
+            "ingestRunId": metadata.get("source_ingest_run_id") or metadata.get("ingest_run_id"),
             "connectorId": CONNECTOR_ID,
             "projectionOwner": PROJECTOR,
         }

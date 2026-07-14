@@ -1,0 +1,163 @@
+{
+  "schema_version": "ppl_alloc_011_hosted_evidence.v1",
+  "task_id": "PPL-ALLOC-011",
+  "captured_at": "2026-07-13T17:25:07Z",
+  "environment": "dev",
+  "status": "accepted",
+  "delivery": {
+    "implementation_pr": 3536,
+    "implementation_pr_url": "https://github.com/ajoe734/pantheon/pull/3536",
+    "merge_commit": "0e8c06603eb7ede8fd226837e439282e70fefc80",
+    "initial_root_deploy": {
+      "run_id": 29268814057,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/29268814057",
+      "component": "root",
+      "target_ref": "0e8c06603eb7ede8fd226837e439282e70fefc80",
+      "conclusion": "success",
+      "public_bff_smoke": "success",
+      "agora_restart_persistence_smoke": "success"
+    },
+    "exact_sha_restart": {
+      "run_id": 29270122636,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/29270122636",
+      "component": "bff",
+      "target_ref": "0e8c06603eb7ede8fd226837e439282e70fefc80",
+      "conclusion": "success",
+      "workflow_log_source_sha_verified": true,
+      "public_bff_smoke": "success",
+      "agora_restart_persistence_smoke": "success"
+    },
+    "hosted_version": {
+      "source_commit_sha": "0e8c06603eb7ede8fd226837e439282e70fefc80",
+      "commit": "0e8c06603eb7ede8fd226837e439282e70fefc80",
+      "source_commit_known": true
+    }
+  },
+  "preflight": {
+    "bff_ready": true,
+    "broker_live_fail_closed": true,
+    "live_execution_enabled": false,
+    "is_real_capital": false,
+    "is_real_order": false,
+    "capital_pool_id": "pool-ppl011-e103d29e",
+    "persona_id": "persona-ppl011-e103d29e",
+    "capital_sleeve_id": "sleeve-ppl011-e103d29e",
+    "current_weight": 0.01,
+    "allocation_version": 1
+  },
+  "proposal": {
+    "run_id": "ppl011-final-0e8c0660",
+    "rebalance_id": "rb-20260713-9e640fe8e883",
+    "proposal_command_id": "9affb8a8-056e-4e3e-b026-e6f155d14fab",
+    "create_http_status": 202,
+    "same_key_replay_http_status": 202,
+    "same_key_replay_preserved_identity": true,
+    "live_stage": "live_running",
+    "current_weight": 0.01,
+    "target_weight": 0.0101,
+    "unapproved_apply_http_status": 409,
+    "unapproved_apply_left_proposal_pending": true
+  },
+  "governed_admission": {
+    "approval_decision_id": "approval-ppl011-final-0e8c0660",
+    "approval_http_status": 201,
+    "two_man_signature_id": "tms-ppl011-final-0e8c0660",
+    "first_signature_complete": false,
+    "second_distinct_signature_complete": true,
+    "confirm_token_id": "ct-ppl011-final-0e8c0660",
+    "confirm_token_status_after_apply": "redeemed"
+  },
+  "apply": {
+    "command_id": "cmd-29641b43c51241a0a4938a086ca3e180",
+    "admission_http_status": 202,
+    "terminal_status": "executed",
+    "result_status": "applied",
+    "receipt_ref": "capital-rebalance-receipt:rb-20260713-9e640fe8e883:cmd-29641b43c51241a0a4938a086ca3e180",
+    "audit_ref": "capital-audit:rb-20260713-9e640fe8e883:cmd-29641b43c51241a0a4938a086ca3e180",
+    "authoritative_capital_readback": true,
+    "authoritative_capital_state_applied": true,
+    "canonical_write_authority": "capital_service",
+    "live_capital_side_effects": false,
+    "audit_delivery_status": "delivered",
+    "allocation_readback": {
+      "current_weight": 0.0101,
+      "target_weight": 0.0101,
+      "last_rebalance_id": "rb-20260713-9e640fe8e883"
+    },
+    "same_key_replay_http_status": 202,
+    "same_key_replay_preserved_command_id": true,
+    "new_key_consumed_token_reuse_http_status": 428,
+    "new_key_consumed_token_reuse_reason": "CONFIRM_TOKEN_INVALID"
+  },
+  "restart_readback": {
+    "version_matches_exact_sha": true,
+    "proposal_survived": true,
+    "proposal_command_id_preserved": true,
+    "apply_receipt_survived": true,
+    "apply_command_id_preserved": true,
+    "allocation_identity_and_weight_preserved": true,
+    "confirm_token_status": "redeemed",
+    "proposal_same_key_replay_http_status": 202,
+    "apply_same_key_replay_http_status": 202,
+    "same_key_replays_preserved_identities": true,
+    "new_key_consumed_token_reuse_http_status": 428,
+    "new_key_consumed_token_reuse_reason": "CONFIRM_TOKEN_INVALID"
+  },
+  "upgrade_compatibility": {
+    "pre_patch_apply_rebalance_id": "rb-20260713-ea5285b03ff1",
+    "pre_patch_apply_command_id": "cmd-1f8e7a89a8be489d96c6b6a9b510bd12",
+    "pre_patch_apply_terminal_after_two_more_deploys": true,
+    "pre_patch_apply_token_id": "ct-ppl011-e103d29e",
+    "pre_patch_apply_token_inferred_status": "redeemed",
+    "pre_patch_containment_command_id": "cmd-414820143c8240098d5eaceec8e923f9",
+    "pre_patch_containment_token_id": "ct-ppl011-containment-e103d29e",
+    "pre_patch_containment_token_inferred_status": "redeemed",
+    "pre_patch_containment_persona_id": "persona-20260713-9e33e590",
+    "pre_patch_containment_state": "frozen",
+    "pre_patch_containment_authoritative_readback": true
+  },
+  "safety": {
+    "emergency_promotion_http_status": 422,
+    "emergency_promotion_fail_closed": true,
+    "freeze_without_confirmation_http_status": 428,
+    "freeze_without_confirmation_reason": "CONFIRM_TOKEN_MISSING",
+    "guarded_token_single_use": true,
+    "same_key_retry_safe_after_redemption": true,
+    "different_key_reuse_fail_closed": true
+  },
+  "local_validation": {
+    "task_scoped_tests": {
+      "passed": 131,
+      "warnings": 33
+    },
+    "capital_governance_tests_before_final_compatibility_patch": {
+      "passed": 123
+    },
+    "python_compile": "passed",
+    "git_diff_check": "passed",
+    "blocking_patch_review": "no blockers"
+  },
+  "accepted_scope": {
+    "closes": [
+      "terminal approved rebalance apply",
+      "authoritative capital allocation readback",
+      "restart-safe proposal, command receipt, and bound approval reference",
+      "authoritative safe containment execution and readback",
+      "runtime BFF source SHA identity",
+      "single-use guarded confirmation with retry-safe idempotency"
+    ],
+    "does_not_claim": [
+      "real broker or real-capital execution",
+      "multi-replica command-store serialization",
+      "host-volume disaster recovery",
+      "PPL-ALLOC-009 ranking join completeness",
+      "PPL-ALLOC-009 frontend IA supersession acceptance",
+      "PPL-ALLOC-009 dependency vulnerability remediation"
+    ]
+  },
+  "residual_risks": [
+    "The dev BFF is currently a single-writer deployment; the serialized JSONL transaction is process-local and does not claim multi-replica coordination.",
+    "Durability was proven across controlled exact-SHA BFF redeploys on the existing dev host volume, not host-volume loss.",
+    "The deploy workflow emitted a non-blocking GitHub Actions Node.js 20 deprecation annotation."
+  ]
+}

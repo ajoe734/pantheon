@@ -958,9 +958,27 @@ def _compact_bulk_market_record(record: SourceRecord, storage_refs: dict[str, An
     )
 
 
+def _with_source_ingest_run(record: SourceRecord, ingest_run_id: str) -> SourceRecord:
+    """Keep the producing run on the durable SourceRecord projection."""
+    return SourceRecord(
+        source_id=record.source_id,
+        connector_id=record.connector_id,
+        source_type=record.source_type.value,
+        title=record.title,
+        content_ref=record.content_ref,
+        status=record.status.value,
+        metadata={**record.metadata, "source_ingest_run_id": ingest_run_id},
+        trace_id=record.trace_id,
+        created_at=record.created_at,
+    )
+
+
 def _persist_source_evidence_refs(result: Any, storage_refs: dict[str, Any] | None = None) -> dict[str, Any]:
     source_records = [
-        _compact_bulk_market_record(record, storage_refs)
+        _with_source_ingest_run(
+            _compact_bulk_market_record(record, storage_refs),
+            result.run.ingest_run_id,
+        )
         for record in result.records
         if not record.is_rejected
     ]

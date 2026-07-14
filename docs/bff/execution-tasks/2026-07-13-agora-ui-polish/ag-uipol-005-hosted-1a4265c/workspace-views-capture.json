@@ -1,0 +1,190 @@
+{
+  "capturedAt": "2026-07-13T13:25:07.746Z",
+  "deploySha": "1a4265c770825818396badbdf960ec2deaa44763",
+  "results": [
+    {
+      "captures": [
+        {
+          "filename": "workspace-view-01-strategy_overview-desktop.png",
+          "label": "Strategy overview",
+          "viewId": "strategy_overview"
+        },
+        {
+          "filename": "workspace-view-02-candidates_entry-desktop.png",
+          "label": "Candidates and entry",
+          "viewId": "candidates_entry"
+        },
+        {
+          "filename": "workspace-view-03-winner_branch_intelligence-desktop.png",
+          "label": "Winner branch intelligence",
+          "viewId": "winner_branch_intelligence"
+        },
+        {
+          "filename": "workspace-view-04-related_party_flow_migration-desktop.png",
+          "label": "Branch relationships and capital migration",
+          "viewId": "related_party_flow_migration"
+        },
+        {
+          "filename": "workspace-view-05-event_lead-desktop.png",
+          "label": "Event lead",
+          "viewId": "event_lead"
+        },
+        {
+          "filename": "workspace-view-06-positions_exit-desktop.png",
+          "label": "Positions, adds, reductions, and exits",
+          "viewId": "positions_exit"
+        },
+        {
+          "filename": "workspace-view-07-evidence_monitoring-desktop.png",
+          "label": "Evidence and monitoring rules",
+          "viewId": "evidence_monitoring"
+        }
+      ],
+      "consoleErrors": [],
+      "deploySha": "1a4265c770825818396badbdf960ec2deaa44763",
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/bff/events/stream",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/bff/agora/trading-room/decision-events",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/bff/agora/trading-room",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/bff/agora/strategies/full003-live-1783268175-13279b/trading-room/proposals",
+          "status": 201
+        },
+        {
+          "method": "POST",
+          "path": "/bff/agora/strategies/full003-live-1783268175-13279b/trading-room/proposals/trp_c1eeaecdeadc/accept",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/bff/agora/trading-room/workspaces/trw_1cf87f0ae8bd/versions",
+          "status": 200
+        }
+      ],
+      "strategyId": "full003-live-1783268175-13279b",
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/trading-room/full003-live-1783268175-13279b?nocache=1a4265c770825818396badbdf960ec2deaa44763&readinessAssessmentId=ready_0bb956f7-0f2a-4318-9cb3-c6feae58306d_1&readinessGate=trading_room&strategyVersion=full003-live-1783268175-13279b",
+      "viewport": {
+        "label": "desktop",
+        "width": 1440,
+        "height": 960
+      },
+      "writes": [
+        {
+          "method": "POST",
+          "path": "/bff/agora/strategies/full003-live-1783268175-13279b/trading-room/proposals",
+          "status": 201
+        },
+        {
+          "method": "POST",
+          "path": "/bff/agora/strategies/full003-live-1783268175-13279b/trading-room/proposals/trp_c1eeaecdeadc/accept",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "captures": [
+        {
+          "filename": "workspace-view-01-strategy_overview-narrow.png",
+          "label": "Strategy overview",
+          "viewId": "strategy_overview"
+        },
+        {
+          "filename": "workspace-view-02-candidates_entry-narrow.png",
+          "label": "Candidates and entry",
+          "viewId": "candidates_entry"
+        },
+        {
+          "filename": "workspace-view-03-winner_branch_intelligence-narrow.png",
+          "label": "Winner branch intelligence",
+          "viewId": "winner_branch_intelligence"
+        },
+        {
+          "filename": "workspace-view-04-related_party_flow_migration-narrow.png",
+          "label": "Branch relationships and capital migration",
+          "viewId": "related_party_flow_migration"
+        },
+        {
+          "filename": "workspace-view-05-event_lead-narrow.png",
+          "label": "Event lead",
+          "viewId": "event_lead"
+        },
+        {
+          "filename": "workspace-view-06-positions_exit-narrow.png",
+          "label": "Positions, adds, reductions, and exits",
+          "viewId": "positions_exit"
+        },
+        {
+          "filename": "workspace-view-07-evidence_monitoring-narrow.png",
+          "label": "Evidence and monitoring rules",
+          "viewId": "evidence_monitoring"
+        }
+      ],
+      "consoleErrors": [],
+      "deploySha": "1a4265c770825818396badbdf960ec2deaa44763",
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/bff/events/stream",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/bff/agora/trading-room/decision-events",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/bff/agora/trading-room",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/bff/agora/strategies/full003-live-1783268175-13279b/trading-room/proposals",
+          "status": 201
+        },
+        {
+          "method": "POST",
+          "path": "/bff/agora/strategies/full003-live-1783268175-13279b/trading-room/proposals/trp_e1c5e2e604b2/accept",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/bff/agora/trading-room/workspaces/trw_93b659efa99c/versions",
+          "status": 200
+        }
+      ],
+      "strategyId": "full003-live-1783268175-13279b",
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/trading-room/full003-live-1783268175-13279b?nocache=1a4265c770825818396badbdf960ec2deaa44763&readinessAssessmentId=ready_0bb956f7-0f2a-4318-9cb3-c6feae58306d_1&readinessGate=trading_room&strategyVersion=full003-live-1783268175-13279b",
+      "viewport": {
+        "label": "narrow",
+        "width": 390,
+        "height": 844
+      },
+      "writes": [
+        {
+          "method": "POST",
+          "path": "/bff/agora/strategies/full003-live-1783268175-13279b/trading-room/proposals",
+          "status": 201
+        },
+        {
+          "method": "POST",
+          "path": "/bff/agora/strategies/full003-live-1783268175-13279b/trading-room/proposals/trp_e1c5e2e604b2/accept",
+          "status": 200
+        }
+      ]
+    }
+  ]
+}
