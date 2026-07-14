@@ -15,6 +15,11 @@ POST  /api/runtimes/deploy
     Optional strategy_id is preserved in RuntimeBinding.metadata for read-side
     adapter binding checks.
 
+POST  /api/runtimes/<runtime_id>/replace
+    Forward same-stage replacement of one RuntimeBinding from an approved plan.
+    Body: ReplaceRuntimeRequest fields (see service.py for field documentation).
+    Returns: operation, old_binding, new_binding, cutover_at, position_lineage.
+
 GET   /api/runtime-bindings
     List all RuntimeBindings, optionally filtered by pool_id or plan_id.
 
@@ -240,6 +245,72 @@ def deploy():
     except RuntimeBindingError as exc:
         status_code = 409 if "single-runtime" in str(exc).lower() else 422
         return jsonify({"error": {"code": "BINDING_ERROR", "message": str(exc)}}), status_code
+    except Exception as exc:
+        return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
+
+
+@app.route("/api/runtimes/<runtime_id>/replace", methods=["POST"])
+@require_authn(roles=_OPERATOR_ROLES, mfa_required=True)
+def replace_runtime(runtime_id):
+    """Forward-replace one binding while preserving its runtime identity.
+
+    The body is a normal approved deploy descriptor plus
+    ``current_binding_id``.  The path runtime is authoritative: an optional
+    body ``runtime_id`` must match it exactly.  Pool, stage, and
+    PersonaCapitalBinding continuity are enforced by the service.
+    """
+    body = request.get_json(force=True) or {}
+    body_runtime_id = body.get("runtime_id")
+    if body_runtime_id and body_runtime_id != runtime_id:
+        return (
+            jsonify({
+                "error": {
+                    "code": "PRECONDITION_FAILED",
+                    "message": (
+                        f"Body runtime_id={body_runtime_id!r} does not match path "
+                        f"runtime_id={runtime_id!r}."
+                    ),
+                }
+            }),
+            422,
+        )
+    body["runtime_id"] = runtime_id
+
+    required_fields = [
+        "current_binding_id",
+        "plan_id",
+        "plan_status",
+        "target_stage",
+        "artifact_id",
+        "artifact_version",
+        "capital_pool_id",
+        "persona_capital_binding_id",
+        "persona_capital_binding_status",
+        "allowed_deployment_scope",
+    ]
+    missing = [field for field in required_fields if not body.get(field)]
+    if "loader_checks_passed" not in body:
+        missing.append("loader_checks_passed")
+    if missing:
+        return (
+            jsonify({
+                "error": {
+                    "code": "MISSING_FIELDS",
+                    "message": f"Missing required fields: {missing}",
+                }
+            }),
+            400,
+        )
+
+    svc = _get_service()
+    try:
+        result = svc.replace(body)
+        return jsonify(result), 201
+    except RuntimeManagerError as exc:
+        return jsonify({"error": {"code": "PRECONDITION_FAILED", "message": str(exc)}}), 422
+    except RuntimeBindingError as exc:
+        code = 404 if "not found" in str(exc).lower() else 422
+        return jsonify({"error": {"code": "BINDING_ERROR", "message": str(exc)}}), code
     except Exception as exc:
         return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
 
