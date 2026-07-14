@@ -48,6 +48,8 @@ build-on-top edges are declared.
 | 1 | `EVOLOOP-006` | Codex2 | Claude | Promote pipeline: registry -> deployment plan -> replace one rescue binding with a pipeline-managed binding (rollback tested). |
 | 2 | `EVOLOOP-007` | Claude | Codex | Strategy-driven signals for the promoted binding via normal ingest; generic feeder disabled for that binding only. |
 | 2 | `EVOLOOP-008` | Codex | Claude | Full-cycle live verifier (breach -> ... -> artifact v2 trading -> journal); added to run_e2e_verifiers.sh. |
+| 1 | `EVOLOOP-010` | Codex2 | Claude | Conversation-plane proposal intake: seven-stage discussion-loop spec + unified suggestion -> EvolutionDecisionProposal contract; first adapter = consultation sponsor_decision_bridge caller. |
+| 2 | `EVOLOOP-011` | Claude | Codex | Learning feedback: executed-decision / postmortem outcomes written into persona memory (OpenClaw SOUL/trainer) so personas reference real outcomes in future discussions. |
 | 3 | `EVOLOOP-009` | Codex2 | Human/Ops | Deploy + closeout: hosted console evidence, live curl, residual risks. |
 
 ## Dependencies
@@ -61,8 +63,40 @@ EVOLOOP-005: EVOLOOP-002, EVOLOOP-003
 EVOLOOP-006: EVOLOOP-003
 EVOLOOP-007: EVOLOOP-006
 EVOLOOP-008: EVOLOOP-002, EVOLOOP-004, EVOLOOP-006
-EVOLOOP-009: EVOLOOP-005, EVOLOOP-007, EVOLOOP-008
+EVOLOOP-010: EVOLOOP-001
+EVOLOOP-011: EVOLOOP-004
+EVOLOOP-009: EVOLOOP-005, EVOLOOP-007, EVOLOOP-008, EVOLOOP-010, EVOLOOP-011
 ```
+
+## Convergence with LOOP-PROD (2026-07-14 sponsor ruling)
+
+The `2026-07-13-loop-product-level-remediation` packet (36 tasks) covers the
+same execution spine at full-matrix product depth. Division of labor:
+
+- **EVOLOOP is the thin vertical slice**: prove ONE loop end-to-end fast on
+  one binding/artifact. **LOOP-PROD is the full-matrix productization**: it
+  MUST consume EVOLOOP outputs, not recreate them.
+- Overlap map (EVOLOOP goes first; LOOP-PROD consumes and generalizes):
+  - `EVOLOOP-001` deploys the dispatch worker → `LOOP-PROD-EVO-001` replaces
+    synthetic SUBMITTED with target-plane readback on that deployed worker.
+  - `EVOLOOP-003`/`EVOLOOP-004` define the artifact contract and first
+    retrain → `LOOP-PROD-DIST-001`/`LOOP-PROD-ALPHA-001` build the durable
+    consumers on that contract.
+  - `EVOLOOP-006` promotes one binding via service APIs →
+    `LOOP-PROD-DEP-001` generalizes the same runtime-manager path with
+    outbox apply + readback.
+  - `EVOLOOP-007` moves one binding to strategy signals →
+    `LOOP-PROD-CAP-001`'s first-class producer adopts that binding as its
+    first tenant.
+  - `EVOLOOP-008` full-cycle verifier → consumed/extended by
+    `LOOP-PROD-VERIFY-EXEC-001`.
+  - `EVOLOOP-009` closes THIS packet only; `LOOP-PROD-CLOSE-001` is global.
+- `EVOLOOP-002`/`EVOLOOP-005` (PnL mark-to-market, drawdown, governed
+  baselines) exist ONLY here — the LOOP-PROD catalog has zero coverage of
+  performance-metric supply; its TEL/CAP tasks must treat them as upstream
+  dependencies.
+- Any LOOP-PROD addendum must list consumed `EVOCHAIN-*`/`EVOLOOP-*` IDs as
+  external dependencies instead of re-dispatching the same scope.
 
 ## Hard Rules
 
