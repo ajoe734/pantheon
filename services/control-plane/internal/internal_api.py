@@ -1015,6 +1015,26 @@ def execute_rollback():
 
     Persists the command with full audit trail including rollback metadata.
     """
+    # This legacy request shape cannot carry the exact fallback DeploymentPlan,
+    # Registry, Governance, and Capital identities required by the canonical
+    # Runtime Manager rollback boundary.  It previously retired the source
+    # binding without creating a replacement, bypassing both four-owner
+    # revalidation and the single-runtime cutover invariant.  Keep the route as
+    # an explicit migration response, but never translate it into mutations.
+    return (
+        jsonify({
+            "error": {
+                "code": "CANONICAL_ROLLBACK_REQUIRED",
+                "message": (
+                    "legacy rollback execution is disabled; submit the exact "
+                    "governed rollback request to /api/rollback"
+                ),
+                "canonical_endpoint": "/api/rollback",
+            }
+        }),
+        409,
+    )
+
     body = request.get_json() or {}
     target_type = body.get("rollback_target_type", "deployment")
     target_id = body.get("target_id", "unknown")

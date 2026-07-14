@@ -345,6 +345,8 @@ app = FastAPI(title="Pantheon Training Session Service", version="0.1.0")
 STORE_BACKEND = os.getenv("TRAINING_SESSION_EVENT_STORE_BACKEND", "jsonl").strip().lower() or "jsonl"
 PERSISTENCE_POSTURE = require_persistence_posture("training-session")
 store = build_training_session_store(_data_dir())
+def get_store():
+    return store
 register_fastapi_health_routes(
     app,
     "training-session",

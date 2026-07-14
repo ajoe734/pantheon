@@ -45,6 +45,9 @@ def _valid_deploy_request(**overrides):
         "target_stage": "paper",
         "artifact_id": "artifact-hardening",
         "artifact_version": "1.0.0",
+        "strategy_id": "strategy-hardening",
+        "approval_decision_id": "approval-hardening",
+        "sponsor_persona_id": "persona-hardening",
         "capital_pool_id": "pool-hardening-001",
         "persona_capital_binding_id": "pcb-hardening-001",
         "persona_capital_binding_status": "active",
@@ -101,9 +104,21 @@ class AuthAndRbacTests(unittest.TestCase):
         self.store_path = Path(self.tempdir.name) / "bindings.json"
         self.command_state_path = Path(self.tempdir.name) / "commands.json"
         self.main = _load_main_module(self.store_path, self.command_state_path)
+        self.authority_patcher = mock.patch.object(
+            self.main,
+            "verify_deploy_authorities",
+            return_value={
+                "status": "passed",
+                "authority": "test-canonical",
+                "persona_capital_binding_status": "active",
+                "allowed_deployment_scope": "live",
+            },
+        )
+        self.authority_patcher.start()
         self.client = self.main.app.test_client()
 
     def tearDown(self):
+        self.authority_patcher.stop()
         self.tempdir.cleanup()
         self.env.__exit__(None, None, None)
 
@@ -316,14 +331,15 @@ class LegacyKillSwitchIdempotencyTests(unittest.TestCase):
             snapshot_data.get("foundation_idempotency"),
             f"foundation_idempotency missing from durable snapshot {snapshot_path}",
         )
-        # Sanity: at least one entry is in SUCCEEDED status, proving the
-        # legacy path went through the same execute_kill_switch lifecycle as
-        # the canonical /api/kill-switch/dispatch route.
+        # With no RuntimeBinding to contain, the admitted command must remain
+        # EXECUTING.  Recording SUCCEEDED here would turn a fail-closed
+        # telemetry result into a misleading terminal acknowledgement.
         statuses = [
             (record.get("idempotency_record") or {}).get("status")
             for record in snapshot_data["foundation_idempotency"].values()
         ]
-        self.assertIn("succeeded", statuses)
+        self.assertIn("executing", statuses)
+        self.assertNotIn("succeeded", statuses)
 
 
 class ApproveDeploymentDeploymentAuthorityTests(unittest.TestCase):
