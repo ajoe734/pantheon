@@ -18,6 +18,7 @@ class CommandStore:
     def __init__(self, file_path: str = "commands.jsonl"):
         self.file_path = file_path
         self._lock = RLock()
+        self._cache: Optional[List[Dict[str, Any]]] = None
         parent = os.path.dirname(os.path.abspath(self.file_path))
         os.makedirs(parent, exist_ok=True)
         # Initialize the file if it doesn't exist
@@ -38,17 +39,23 @@ class CommandStore:
                 f.write(json.dumps(command) + "\n")
                 f.flush()
                 os.fsync(f.fileno())
+            if self._cache is not None:
+                self._cache.append(command)
 
     def _get_all_commands(self) -> List[Dict[str, Any]]:
         with self._lock:
+            if self._cache is not None:
+                return list(self._cache)
             commands = []
             if not os.path.exists(self.file_path):
-                return commands
+                self._cache = commands
+                return list(commands)
             with open(self.file_path, "r", encoding="utf-8") as f:
                 for line in f:
                     if line.strip():
                         commands.append(json.loads(line))
-            return commands
+            self._cache = commands
+            return list(commands)
 
     def _update_commands(self, commands: List[Dict[str, Any]]):
         with self._lock:
@@ -59,6 +66,7 @@ class CommandStore:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(temp_path, self.file_path)
+            self._cache = list(commands)
 
     def submit_command(
         self,

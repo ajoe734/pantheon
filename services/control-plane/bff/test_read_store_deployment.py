@@ -265,8 +265,78 @@ def test_canonical_overlay():
                 os.environ[key] = value
 
 
+def test_missing_reference_query_count_regression():
+    tracked_env = {
+        "PANTHEON_GOVERNANCE_DATA_DIR": os.environ.get("PANTHEON_GOVERNANCE_DATA_DIR"),
+        "PANTHEON_RUNTIME_DATA_DIR": os.environ.get("PANTHEON_RUNTIME_DATA_DIR"),
+    }
+
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            governance_dir = root / "governance"
+            runtime_dir = root / "runtime"
+
+            # 2 plans pointing to absent decisions
+            _write_json(
+                governance_dir / "deployment_plans.json",
+                {
+                    "plan-missing-1": {
+                        "plan_id": "plan-missing-1",
+                        "approval_decision_id": "approval-absent-1",
+                        "status": "pending_review",
+                        "target_stage": "paper",
+                        "current_stage": "none",
+                        "created_at": "2026-04-11T10:00:00Z",
+                    },
+                    "plan-missing-2": {
+                        "plan_id": "plan-missing-2",
+                        "approval_decision_id": "approval-absent-2",
+                        "status": "pending_review",
+                        "target_stage": "paper",
+                        "current_stage": "none",
+                        "created_at": "2026-04-11T10:00:00Z",
+                    }
+                },
+            )
+            # Empty approval decisions, so approval-absent-1 and approval-absent-2 are not found
+            _write_json(governance_dir / "approval_decisions.json", {})
+
+            os.environ["PANTHEON_GOVERNANCE_DATA_DIR"] = str(governance_dir)
+            os.environ["PANTHEON_RUNTIME_DATA_DIR"] = str(runtime_dir)
+
+            store_path = os.path.join(td, "read_surfaces.json")
+            store = ReadSurfaceStore(store_path, allow_local_snapshot_fallback=False)
+
+            # Spy on get_approval_decision
+            original_get_approval_decision = store.get_approval_decision
+            call_count = 0
+            def spied_get_approval_decision(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                return original_get_approval_decision(*args, **kwargs)
+            store.get_approval_decision = spied_get_approval_decision
+
+            # Call list_governance_review_queue_items
+            items = store.list_governance_review_queue_items()
+            assert len(items) == 2
+            
+            # Assert that no redundant single get_approval_decision calls were made (regression count is 0)
+            assert call_count == 0, f"Expected 0 calls to get_approval_decision, but got {call_count}"
+
+            print("✅ Regression test: missing-reference query-count is 0")
+    finally:
+        for key, value in tracked_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 if __name__ == "__main__":
     test_seeded_review_summary()
     test_canonical_overlay()
+    test_missing_reference_query_count_regression()
     print("\n" + "=" * 50)
     print("Deployment review read_store tests: ALL PASSED")
+
