@@ -130,6 +130,26 @@ def test_viewer_cannot_call_any_workshop_mutation(monkeypatch, path, body):
     _assert_write_forbidden(client.post(path, **kwargs))
 
 
+def test_admin_can_use_shared_agora_mutation_role(monkeypatch):
+    client = _client(monkeypatch)
+    suffix = uuid.uuid4().hex
+    admin = _headers("admin")
+
+    workshop = client.post(
+        "/bff/agora/workshops",
+        headers={**admin, "Idempotency-Key": f"workshop-admin-{suffix}"},
+        json={"initial_message": "Admin authority regression"},
+    )
+    assert workshop.status_code == 201, workshop.text
+
+    proposal = client.post(
+        "/bff/agora/proposals",
+        headers={**admin, "Idempotency-Key": f"proposal-admin-{suffix}"},
+        json=_proposal_payload(),
+    )
+    assert proposal.status_code == 201, proposal.text
+
+
 def test_viewer_cannot_bypass_agora_write_authority(monkeypatch):
     client = _client(monkeypatch)
     suffix = uuid.uuid4().hex
