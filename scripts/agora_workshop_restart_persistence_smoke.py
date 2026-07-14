@@ -72,6 +72,10 @@ def command_scope(*, tenant_id: str, user_id: str) -> str:
     return f"deploy-smoke:{tenant_id}:{user_id}"
 
 
+def recovery_command_key(workshop_id: str) -> str:
+    return f"{workshop_id}:recovery"
+
+
 def command_result(workshop_id: str) -> dict[str, Any]:
     return {
         "interaction_id": f"interaction-{workshop_id}",
@@ -155,17 +159,31 @@ def seed(
         )
 
     result = command_result(workshop_id)
+    scope = command_scope(tenant_id=tenant_id, user_id=user_id)
+    fingerprint = payload_fingerprint(result)
     once = proposal_store.once(
-        command_scope(tenant_id=tenant_id, user_id=user_id),
+        scope,
         workshop_id,
-        payload_fingerprint(result),
+        fingerprint,
         lambda: result,
     )
     if once.run_side_effects:
-        proposal_store.complete_side_effects(
-            command_scope(tenant_id=tenant_id, user_id=user_id),
-            workshop_id,
+        proposal_store.complete_side_effects(scope, workshop_id)
+
+    recovery_key = recovery_command_key(workshop_id)
+    recoverable = proposal_store.once(
+        scope,
+        recovery_key,
+        fingerprint,
+        lambda: result,
+    )
+    if not recoverable.run_side_effects:
+        raise RuntimeError(
+            f"proposal {base['proposal_id']!r} recovery outbox was not claimable"
         )
+    # Model a handled partial side-effect failure.  The pending row must be
+    # reclaimed by the fresh helper process after operator-bff restarts.
+    proposal_store.release_side_effects(scope, recovery_key)
 
 
 def verify_workshop_record(
@@ -241,15 +259,48 @@ def verify(
         raise RuntimeError(f"proposal {proposal_id!r} idempotent replay was not durable")
 
     result = command_result(workshop_id)
+    scope = command_scope(tenant_id=tenant_id, user_id=user_id)
+    fingerprint = payload_fingerprint(result)
     once = proposal_store.once(
-        command_scope(tenant_id=tenant_id, user_id=user_id),
+        scope,
         workshop_id,
-        payload_fingerprint(result),
+        fingerprint,
         lambda: result,
     )
     if not once.replayed or once.run_side_effects or once.data != result:
         raise RuntimeError(
             f"proposal {proposal_id!r} outbox replay was not exactly-once"
+        )
+
+    recovery_key = recovery_command_key(workshop_id)
+    recovered = proposal_store.once(
+        scope,
+        recovery_key,
+        fingerprint,
+        lambda: result,
+    )
+    if (
+        not recovered.replayed
+        or not recovered.run_side_effects
+        or recovered.data != result
+    ):
+        raise RuntimeError(
+            f"proposal {proposal_id!r} pending outbox was not recovered after restart"
+        )
+    proposal_store.complete_side_effects(scope, recovery_key)
+    recovered_replay = proposal_store.once(
+        scope,
+        recovery_key,
+        fingerprint,
+        lambda: result,
+    )
+    if (
+        not recovered_replay.replayed
+        or recovered_replay.run_side_effects
+        or recovered_replay.data != result
+    ):
+        raise RuntimeError(
+            f"proposal {proposal_id!r} recovered outbox was not completed exactly once"
         )
     if len(proposal_store.history(proposal_id, tenant_id, user_id)) != 3:
         raise RuntimeError(f"proposal {proposal_id!r} replay created duplicate revisions")
@@ -278,9 +329,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         tenant_id=args.tenant_id,
         user_id=args.user_id,
     )
+    outbox_status = (
+        "completed_outbox=completed recovery_outbox=pending"
+        if args.action == "seed"
+        else "completed_outbox=replayed recovery_outbox=recovered"
+    )
     print(
         f"{args.action} ok: workshop={args.workshop_id} "
-        f"proposal={proposal_id_for(args.workshop_id)}"
+        f"proposal={proposal_id_for(args.workshop_id)} {outbox_status}"
     )
     return 0
 

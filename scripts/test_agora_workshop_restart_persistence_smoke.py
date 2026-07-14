@@ -44,6 +44,13 @@ def test_helper_seeds_and_verifies_workshop_proposal_and_outbox() -> None:
         tenant_id="tenant",
         user_id="viewer",
     )
+
+    scope = helper.command_scope(tenant_id="tenant", user_id="viewer")
+    completed_key = f"{scope}:ws-run-1"
+    recovery_key = f"{scope}:{helper.recovery_command_key('ws-run-1')}"
+    assert proposals._commands[completed_key]["side_effect_state"] == "completed"
+    assert proposals._commands[recovery_key]["side_effect_state"] == "pending"
+
     helper.verify(
         store,
         proposals,
@@ -66,6 +73,8 @@ def test_helper_seeds_and_verifies_workshop_proposal_and_outbox() -> None:
         "modify",
         "validate",
     ]
+    assert proposals._commands[completed_key]["side_effect_state"] == "completed"
+    assert proposals._commands[recovery_key]["side_effect_state"] == "completed"
 
 
 def test_helper_fails_closed_without_postgres_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -129,7 +138,7 @@ def test_workflow_uses_internal_fresh_process_persistence_proof() -> None:
     assert step.count("docker compose -p pantheon -f docker-compose.yml exec -T operator-bff") == 2
     assert 'test "${ready}" = true' in step
     assert "proposal-${workshop_id}" in step
-    assert "exactly-once replay" in step
+    assert "exactly-once replay and pending outbox recovery" in step
 
 
 def test_workflow_log_and_inspect_probes_consume_complete_input_under_pipefail() -> None:
