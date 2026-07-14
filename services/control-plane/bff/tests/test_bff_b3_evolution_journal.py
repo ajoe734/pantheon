@@ -245,6 +245,7 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
                     "status": "proposed",
                     "action_type": "retrain",
                     "risk_level": "low",
+                    "proposed_changes": {"summary": "Retrain dec-1"},
                     "created_at": "2026-07-14T00:00:00Z"
                 },
                 "dec-10": {
@@ -255,6 +256,7 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
                     "status": "proposed",
                     "action_type": "retrain",
                     "risk_level": "low",
+                    "proposed_changes": {"summary": "Retrain dec-10"},
                     "created_at": "2026-07-14T00:01:00Z"
                 },
                 "dec-decoy": {
@@ -267,6 +269,7 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
                     "risk_level": "low",
                     "title": "Decoy for persona-1",
                     "summary": "This is a decoy mentioning persona-1 but not associated with it",
+                    "proposed_changes": {"summary": "Decoy"},
                     "created_at": "2026-07-14T00:02:00Z"
                 },
                 "evo-vslice-1": {
@@ -277,6 +280,7 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
                     "status": "proposed",
                     "action_type": "retrain",
                     "risk_level": "low",
+                    "proposed_changes": {"summary": "Vslice"},
                     "created_at": "2026-07-14T00:03:00Z"
                 },
                 "dec-live": {
@@ -290,6 +294,7 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
                     "metadata": {
                         "origin": "live"
                     },
+                    "proposed_changes": {"summary": "Live"},
                     "created_at": "2026-07-14T00:04:00Z"
                 },
                 "dec-explicit-unknown": {
@@ -303,6 +308,7 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
                     "metadata": {
                         "origin": "unknown"
                     },
+                    "proposed_changes": {"summary": "Unknown"},
                     "created_at": "2026-07-14T00:05:00Z"
                 }
             },
@@ -350,6 +356,7 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
             resp = client.get("/bff/management/evolution-journal", headers=OPERATOR_HEADERS)
             assert resp.status_code == 200, resp.text
             items = resp.json()["data"]["items"]
+            # 6 decisions + 6 mutation reviews + 6 backfilled default items = 18 total items
             assert len(items) == 18
 
             by_id_and_type = {(item["source_id"], item["entry_type"]): item for item in items}
@@ -358,21 +365,92 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
             assert by_id_and_type[("dec-explicit-unknown", "evolution_decision")]["origin"] == "unknown"
             assert by_id_and_type[("dec-1", "evolution_decision")]["origin"] == "unknown"
 
+            # Verify mutation reviews also preserve the correct origin
+            assert by_id_and_type[("evo-vslice-1", "mutation_review")]["origin"] == "seed"
+            assert by_id_and_type[("dec-live", "mutation_review")]["origin"] == "live"
+            assert by_id_and_type[("dec-explicit-unknown", "mutation_review")]["origin"] == "unknown"
+            assert by_id_and_type[("dec-1", "mutation_review")]["origin"] == "unknown"
+
             # 4. Test filtered total plus next token (paging)
-            resp = client.get("/bff/management/evolution-journal?page_size=2", headers=OPERATOR_HEADERS)
+            # Querying for persona-1 with page_size=1 should return exactly 1 item and total=2 (dec-1 decision + dec-1 mutation_review)
+            resp = client.get("/bff/management/evolution-journal?persona=persona-1&page_size=1", headers=OPERATOR_HEADERS)
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["page_info"]["total"] == 18
-            assert len(body["data"]["items"]) == 2
+            assert body["page_info"]["total"] == 2
+            assert len(body["data"]["items"]) == 1
             next_token = body["page_info"]["next_page_token"]
             assert next_token is not None
 
             # Get next page
-            resp = client.get(f"/bff/management/evolution-journal?page_size=2&page_token={next_token}", headers=OPERATOR_HEADERS)
+            resp = client.get(f"/bff/management/evolution-journal?persona=persona-1&page_size=1&page_token={next_token}", headers=OPERATOR_HEADERS)
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert len(body["data"]["items"]) == 2
-            assert body["page_info"]["total"] == 18
+            assert len(body["data"]["items"]) == 1
+            assert body["page_info"]["total"] == 2
+            assert body["page_info"]["next_page_token"] is None
 
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_evochain_007_filter_dependency_failure() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        try:
+            # Create a TestClient with raise_server_exceptions=False to allow FastAPI exception handler to return 500
+            bff_main.read_store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=True,
+            )
+            client = TestClient(bff_main.app, raise_server_exceptions=False)
+            
+            # Mock read_store.list_personas to raise a RuntimeError exception
+            def mock_list_personas(*args, **kwargs):
+                raise RuntimeError("Database connection lost")
+            
+            bff_main.read_store.list_personas = mock_list_personas
+            
+            # Querying with persona filter should fail with 500
+            resp = client.get("/bff/management/evolution-journal?persona=persona-1", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 500
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_evochain_007_persona_mutation_review_collision() -> None:
+    import json
+    with tempfile.TemporaryDirectory() as td:
+        mock_data = {
+            "personas": {},
+            "runtime_bindings": {},
+            "incidents": {},
+            "evolution_decisions": {
+                "dec-1": {
+                    "id": "dec-1",
+                    "decision_id": "dec-1",
+                    "target_type": "candidate_artifact",
+                    "target_id": "artifact-1",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "Retrain dec-1"},
+                    "created_at": "2026-07-14T00:00:00Z"
+                }
+            },
+            "postmortems": {},
+            "freeze_orders": {},
+            "rollbacks": {}
+        }
+        with open(os.path.join(td, "read_surfaces.json"), "w") as f:
+            json.dump(mock_data, f)
+
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            # Querying with persona=mutation_review should NOT match mutation reviews unless there is a matching persona
+            resp = client.get("/bff/management/evolution-journal?persona=mutation_review", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert len(body["data"]["items"]) == 0
         finally:
             bff_main.read_store = original_store
