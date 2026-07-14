@@ -12,7 +12,9 @@ import copy
 import hashlib
 import json
 import math
+import re
 from decimal import Decimal, InvalidOperation
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -38,6 +40,15 @@ BUILTIN_STRATEGY_ARTIFACT_PATHS = (
     / "strategy-artifacts"
     / "tw-session-momentum-v1.registration.json",
 )
+STRATEGY_ARTIFACT_REGISTRATION_CHECKSUM_KEY = (
+    "strategy_artifact_registration_checksum"
+)
+_RFC3339_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
+_PYTHON_REF_RE = re.compile(
+    r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$"
+)
 
 
 class StrategyArtifactValidationError(RegistryError):
@@ -54,15 +65,19 @@ def _canonical_json(payload: Mapping[str, Any]) -> str:
     )
 
 
-def strategy_artifact_checksum(artifact: Mapping[str, Any]) -> str:
-    """Return the deterministic checksum used by the generic registry entry."""
+def _mapping_checksum(payload: Mapping[str, Any], label: str) -> str:
     try:
-        canonical = _canonical_json(artifact)
+        canonical = _canonical_json(payload)
     except (TypeError, ValueError) as exc:
         raise StrategyArtifactValidationError(
-            f"StrategyArtifact is not canonical JSON: {exc}"
+            f"{label} is not canonical JSON: {exc}"
         ) from exc
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+
+
+def strategy_artifact_checksum(artifact: Mapping[str, Any]) -> str:
+    """Return the deterministic checksum used by the generic registry entry."""
+    return _mapping_checksum(artifact, "StrategyArtifact")
 
 
 @lru_cache(maxsize=1)
@@ -86,12 +101,18 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _is_finite_number(value: Any) -> bool:
+    if not _is_number(value):
+        return False
+    return not isinstance(value, float) or math.isfinite(value)
+
+
 def _decimal(value: Any, label: str) -> Decimal:
-    if not _is_number(value) or not math.isfinite(float(value)):
+    if not _is_finite_number(value):
         raise StrategyArtifactValidationError(f"{label} must be a finite number")
     try:
         return Decimal(str(value))
-    except InvalidOperation as exc:
+    except (InvalidOperation, ValueError) as exc:
         raise StrategyArtifactValidationError(f"{label} must be a finite number") from exc
 
 
@@ -166,8 +187,40 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
         )
 
     for identifier in ("artifact_id", "strategy_id"):
-        if not str(artifact[identifier]).strip():
-            raise StrategyArtifactValidationError(f"{identifier} must not be blank")
+        value = artifact[identifier]
+        if not value.strip() or value != value.strip():
+            raise StrategyArtifactValidationError(
+                f"{identifier} must be a canonical non-blank id"
+            )
+
+    algorithm_ref = artifact["algorithm_ref"]
+    for field in (
+        "repository",
+        "path",
+        "entrypoint",
+        "signal_interface",
+        "signal_schema_version",
+        "logic_interpreter",
+    ):
+        value = algorithm_ref[field]
+        if not value.strip() or value != value.strip():
+            raise StrategyArtifactValidationError(
+                f"algorithm_ref.{field} must be a canonical non-blank string"
+            )
+    algorithm_path = algorithm_ref["path"]
+    if (
+        algorithm_path.startswith("/")
+        or "\\" in algorithm_path
+        or any(part in {"", ".", ".."} for part in algorithm_path.split("/"))
+    ):
+        raise StrategyArtifactValidationError(
+            "algorithm_ref.path must be a normalized repository-relative path"
+        )
+    for field in ("entrypoint", "signal_interface", "logic_interpreter"):
+        if not _PYTHON_REF_RE.fullmatch(algorithm_ref[field]):
+            raise StrategyArtifactValidationError(
+                f"algorithm_ref.{field} must be a module:object Python reference"
+            )
 
     parameters = artifact["parameters"]
     mutation_surface = artifact["mutation_surface"]
@@ -191,6 +244,7 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
                 f"mutation control {key!r} current_value must equal parameters[{key!r}]"
             )
         _validate_control_value(control, control["current_value"])
+        _validate_control_value(control, parameters[key])
 
     mutable_keys = set(control_by_key)
     immutable_keys = set(immutable_parameters)
@@ -214,10 +268,30 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
         )
 
     for key, value in parameters.items():
-        if _is_number(value) and not math.isfinite(float(value)):
+        if _is_number(value) and not _is_finite_number(value):
             raise StrategyArtifactValidationError(
                 f"parameter {key!r} must be a finite number"
             )
+
+    lineage = artifact["lineage"]
+    for field in (
+        "parent_registry_ids",
+        "source_run_ids",
+        "source_dataset_refs",
+    ):
+        for value in lineage.get(field, []):
+            if not value.strip() or value != value.strip():
+                raise StrategyArtifactValidationError(
+                    f"lineage.{field} must contain canonical non-blank ids"
+                )
+    source_strategy_spec_id = lineage.get("source_strategy_spec_id")
+    if source_strategy_spec_id is not None and (
+        not source_strategy_spec_id.strip()
+        or source_strategy_spec_id != source_strategy_spec_id.strip()
+    ):
+        raise StrategyArtifactValidationError(
+            "lineage.source_strategy_spec_id must be a canonical non-blank id"
+        )
 
     strategy_logic = artifact["strategy_logic"]
     lookback_key = strategy_logic["lookback_parameter"]
@@ -240,6 +314,41 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
         raise StrategyArtifactValidationError(
             "zero_momentum_action must match strategy_logic.non_positive_action"
         )
+
+    binding_intent = artifact.get("binding_intent") or {}
+    for field, value in binding_intent.items():
+        if field in {
+            "observed_at",
+            "observed_effective_at",
+            "observed_deployment_mode",
+        }:
+            continue
+        if isinstance(value, str) and (
+            not value.strip() or value != value.strip()
+        ):
+            raise StrategyArtifactValidationError(
+                f"binding_intent.{field} must be a canonical non-blank string"
+            )
+    for field in ("observed_at", "observed_effective_at"):
+        value = binding_intent.get(field)
+        if value is None:
+            continue
+        if not _RFC3339_RE.fullmatch(value):
+            raise StrategyArtifactValidationError(
+                f"binding_intent.{field} must be an RFC3339 date-time with timezone"
+            )
+        try:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise StrategyArtifactValidationError(
+                f"binding_intent.{field} must be a valid RFC3339 date-time"
+            ) from exc
+
+    for value in artifact.get("provenance_refs", []):
+        if not value.strip() or value != value.strip():
+            raise StrategyArtifactValidationError(
+                "provenance_refs must contain canonical non-blank references"
+            )
 
     # Force canonical serialization here so NaN/Infinity hidden in nested
     # optional fields also fail closed.
@@ -285,10 +394,16 @@ def build_strategy_artifact_registry_payload(
     if lineage.is_empty():
         raise StrategyArtifactValidationError("StrategyArtifact lineage must not be empty")
 
-    metadata_value = registration.get("metadata") or {}
-    if not isinstance(metadata_value, Mapping):
+    metadata_value = registration.get("metadata")
+    if metadata_value is None:
+        metadata_value = {}
+    elif not isinstance(metadata_value, Mapping):
         raise StrategyArtifactValidationError("metadata must be a JSON object")
     metadata = copy.deepcopy(dict(metadata_value))
+    if STRATEGY_ARTIFACT_REGISTRATION_CHECKSUM_KEY in metadata:
+        raise StrategyArtifactValidationError(
+            f"metadata.{STRATEGY_ARTIFACT_REGISTRATION_CHECKSUM_KEY} is reserved"
+        )
     embedded = metadata.get("strategy_artifact")
     if embedded is not None and embedded != artifact:
         raise StrategyArtifactValidationError(
@@ -296,8 +411,10 @@ def build_strategy_artifact_registry_payload(
         )
     metadata["strategy_artifact"] = artifact
 
-    evaluation_value = registration.get("evaluation_summary") or {}
-    if not isinstance(evaluation_value, Mapping):
+    evaluation_value = registration.get("evaluation_summary")
+    if evaluation_value is None:
+        evaluation_value = {}
+    elif not isinstance(evaluation_value, Mapping):
         raise StrategyArtifactValidationError(
             "evaluation_summary must be a JSON object"
         )
@@ -314,6 +431,35 @@ def build_strategy_artifact_registry_payload(
     if not producer_run_id and source_run_ids:
         producer_run_id = source_run_ids[-1]
 
+    rollback_target = registration.get("rollback_target")
+    if rollback_target is not None:
+        if not isinstance(rollback_target, str) or not rollback_target.strip():
+            raise StrategyArtifactValidationError(
+                "rollback_target must be a non-blank string when provided"
+            )
+        if rollback_target != rollback_target.strip():
+            raise StrategyArtifactValidationError(
+                "rollback_target must not have leading or trailing whitespace"
+            )
+
+    registration_identity = {
+        "registry_id": registry_id,
+        "artifact_state": artifact_state.value,
+        "artifact_checksum": strategy_artifact_checksum(artifact),
+        "producer_run_id": producer_run_id or None,
+        "evaluation_summary": evaluation_summary,
+        "rollback_target": rollback_target,
+        "supplemental_metadata": {
+            key: value
+            for key, value in metadata.items()
+            if key != "strategy_artifact"
+        },
+    }
+    metadata[STRATEGY_ARTIFACT_REGISTRATION_CHECKSUM_KEY] = _mapping_checksum(
+        registration_identity,
+        "StrategyArtifact registration envelope",
+    )
+
     payload = RegistryEntryCreate(
         artifact_type=ArtifactType.EXECUTION_BUNDLE,
         strategy_id=artifact["strategy_id"],
@@ -327,7 +473,7 @@ def build_strategy_artifact_registry_payload(
         checksum=strategy_artifact_checksum(artifact),
         producer_run_id=producer_run_id or None,
         evaluation_summary=evaluation_summary,
-        rollback_target=registration.get("rollback_target"),
+        rollback_target=rollback_target,
         metadata=metadata,
     )
     return registry_id, payload
@@ -348,22 +494,31 @@ def ensure_builtin_strategy_artifacts(
     for path in BUILTIN_STRATEGY_ARTIFACT_PATHS:
         registration = load_strategy_artifact_registration(path)
         registry_id, payload = build_strategy_artifact_registry_payload(registration)
-        existing = registry_service.store.get(registry_id)
-        if existing is None:
-            views.append(registry_service.register(payload, registry_id))
+        view, created = registry_service.register_if_absent(payload, registry_id)
+        if created:
+            views.append(view)
             continue
 
+        existing = view.entry
         existing_artifact = (existing.metadata or {}).get("strategy_artifact")
         expected_artifact = (payload.metadata or {}).get("strategy_artifact")
         if (
             existing.artifact_type != ArtifactType.EXECUTION_BUNDLE
             or existing.checksum != payload.checksum
             or existing_artifact != expected_artifact
+            or existing.strategy_id != payload.strategy_id
+            or existing.version != payload.version
+            or existing.lineage.to_dict() != payload.lineage.to_dict()
+            or existing.storage_ref.to_dict() != payload.storage_ref.to_dict()
+            or existing.producer_run_id != payload.producer_run_id
+            or existing.evaluation_summary != payload.evaluation_summary
+            or existing.rollback_target != payload.rollback_target
+            or existing.metadata != payload.metadata
         ):
             raise StrategyArtifactValidationError(
                 f"built-in StrategyArtifact id collision: {registry_id}"
             )
-        views.append(registry_service.get(registry_id))
+        views.append(view)
     return views
 
 
@@ -421,12 +576,20 @@ def mutate_strategy_artifact(
             "mutation must change at least one parameter value"
         )
 
+    if isinstance(source_run_ids, (str, bytes)):
+        raise StrategyArtifactValidationError(
+            "source_run_ids must be a sequence of ids, not a string"
+        )
     normalized_source_run_ids: list[str] = []
     for source_run_id in source_run_ids:
-        normalized = str(source_run_id).strip()
-        if not normalized:
+        if not isinstance(source_run_id, str):
             raise StrategyArtifactValidationError(
-                "source_run_ids must contain only non-empty ids"
+                "source_run_ids must contain only string ids"
+            )
+        normalized = source_run_id.strip()
+        if not normalized or normalized != source_run_id:
+            raise StrategyArtifactValidationError(
+                "source_run_ids must contain only canonical non-empty ids"
             )
         if normalized not in normalized_source_run_ids:
             normalized_source_run_ids.append(normalized)
@@ -474,12 +637,14 @@ def evaluate_strategy_action(
     latest = closes[-1]
     if not _is_number(anchor) or not _is_number(latest):
         raise StrategyArtifactValidationError("closes must contain numeric values")
-    if not math.isfinite(float(anchor)) or not math.isfinite(float(latest)):
+    if not _is_finite_number(anchor) or not _is_finite_number(latest):
         raise StrategyArtifactValidationError("closes must contain finite values")
-    if float(anchor) == 0.0:
+    anchor_decimal = _decimal(anchor, "momentum anchor close")
+    latest_decimal = _decimal(latest, "momentum latest close")
+    if anchor_decimal == 0:
         raise StrategyArtifactValidationError("momentum anchor close must not be zero")
 
-    momentum = float(latest) / float(anchor) - 1.0
-    if momentum > float(threshold):
+    momentum = latest_decimal / anchor_decimal - Decimal("1")
+    if momentum > _decimal(threshold, "momentum threshold"):
         return logic["positive_action"]
     return logic["non_positive_action"]

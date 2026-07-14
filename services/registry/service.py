@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -41,14 +42,25 @@ from .strategy_artifact import (
     build_strategy_artifact_registry_payload,
     ensure_builtin_strategy_artifacts,
     mutate_strategy_artifact,
+    strategy_artifact_checksum,
+    validate_strategy_artifact,
 )
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def registry_lifespan(_: FastAPI):
+    """Fail service startup if a checked-in built-in cannot be registered."""
+    get_registry_service()
+    yield
+
 
 app = FastAPI(
     title="Pantheon Registry Service",
     description="Artifact-state and deployment-stage split API per BP5-SVC-002",
     version="0.1.0",
+    lifespan=registry_lifespan,
 )
 
 
@@ -200,15 +212,36 @@ def _ensure_strategy_artifact_view(
     view: RegistryEntryView,
     registry_id: str,
 ) -> RegistryEntryView:
-    embedded = (view.entry.metadata or {}).get("strategy_artifact")
-    if (
-        view.entry.artifact_type != ArtifactType.EXECUTION_BUNDLE
-        or not isinstance(embedded, dict)
-    ):
+    if not _is_strategy_artifact_view(view):
         raise RegistryNotFoundError(
             f"StrategyArtifact registry entry not found: {registry_id}"
         )
     return view
+
+
+def _is_strategy_artifact_view(view: RegistryEntryView) -> bool:
+    """Require a valid embedded payload and a fully consistent envelope."""
+    entry = view.entry
+    embedded = (entry.metadata or {}).get("strategy_artifact")
+    if (
+        entry.artifact_type != ArtifactType.EXECUTION_BUNDLE
+        or not isinstance(embedded, dict)
+    ):
+        return False
+    try:
+        validate_strategy_artifact(embedded)
+        checksum = strategy_artifact_checksum(embedded)
+    except RegistryError:
+        return False
+    return bool(
+        entry.registry_id == embedded["artifact_id"]
+        and entry.strategy_id == embedded["strategy_id"]
+        and entry.version == embedded["version"]
+        and entry.lineage.to_dict() == embedded["lineage"]
+        and entry.checksum == checksum
+        and entry.storage_ref.backend == StorageBackend.INLINE
+        and entry.storage_ref.path == "$.entry.metadata.strategy_artifact"
+    )
 
 
 def _strategy_artifact_registration(
@@ -230,18 +263,23 @@ def _register_strategy_artifact(
     registration: dict[str, Any],
 ) -> RegistryEntryView:
     registry_id, create_payload = build_strategy_artifact_registry_payload(registration)
-    existing = registry_service.store.get(registry_id)
-    if existing is None:
-        return registry_service.register(create_payload, registry_id)
-
-    view = _ensure_strategy_artifact_view(
-        registry_service.get(registry_id), registry_id
-    )
+    view, created = registry_service.register_if_absent(create_payload, registry_id)
+    if created:
+        return view
+    view = _ensure_strategy_artifact_view(view, registry_id)
     expected_artifact = (create_payload.metadata or {}).get("strategy_artifact")
     existing_artifact = (view.entry.metadata or {}).get("strategy_artifact")
     if (
         view.entry.checksum != create_payload.checksum
         or existing_artifact != expected_artifact
+        or view.entry.strategy_id != create_payload.strategy_id
+        or view.entry.version != create_payload.version
+        or view.entry.lineage.to_dict() != create_payload.lineage.to_dict()
+        or view.entry.storage_ref.to_dict() != create_payload.storage_ref.to_dict()
+        or view.entry.producer_run_id != create_payload.producer_run_id
+        or view.entry.evaluation_summary != create_payload.evaluation_summary
+        or view.entry.rollback_target != create_payload.rollback_target
+        or view.entry.metadata != create_payload.metadata
     ):
         raise RegistryError(
             f"StrategyArtifact registry_id already exists with different content: {registry_id}"
@@ -464,8 +502,7 @@ async def list_strategy_artifact_entries(
     views = [
         view
         for view in get_registry_service().list_by_strategy(strategy_id)
-        if view.entry.artifact_type == ArtifactType.EXECUTION_BUNDLE
-        and isinstance((view.entry.metadata or {}).get("strategy_artifact"), dict)
+        if _is_strategy_artifact_view(view)
     ]
     if artifact_state is not None:
         views = [view for view in views if view.entry.artifact_state == artifact_state]
