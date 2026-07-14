@@ -75,6 +75,11 @@ research job or artifact has completed. Research completion belongs to
   hosted probe with a sanitized request ledger. Its initial phase performs only
   create/review/approve mutations; its verify phase is read-only and checks the
   same exact ref and single execution step after a Compose restart.
+- Added `services/evolution/hosted_compose_probe.py` and the explicit,
+  default-off `run_evolution_dispatch_probe` manual deploy input. This lets the
+  existing GitHub WIF identity—not a worker's expiring personal GCP token—run
+  the exact-ref ownership/source/API/restart probe and upload its JSON artifact.
+  Push-triggered and ordinary manual deployments remain unchanged.
 
 ## Dispatch Metadata Contract
 
@@ -119,7 +124,8 @@ git diff --check
 Results:
 
 - Focused worker, hosted-probe, and Compose contract:
-  `43 passed in 10.45s`.
+  `45 passed in 20.92s` (including exact Compose label/source and orphan
+  rejection tests).
 - Post-refresh full evolution service suite: `218 passed, 2 warnings in 44.77s`;
   both
   warnings are existing FastAPI `on_event` deprecations in the incidents
@@ -225,6 +231,24 @@ Pending after publication of the remediated task ref. The accepted probe must:
   tick, then prove neither decision was double-dispatched; and
 - capture the command sequence and secret-free normalized output here before
   requesting re-review.
+
+The governed exact-ref invocation is:
+
+```bash
+gh workflow run nonprod-deploy.yml \
+  --ref task/EVOLOOP-001 \
+  -f environment=dev \
+  -f component=root \
+  -f ref=<exact-task-sha> \
+  -f allow_dirty=false \
+  -f allow_example_env=false \
+  -f run_evolution_dispatch_probe=true
+```
+
+The probe input defaults to `false` and is accepted only for a manual
+`dev/root` run. The workflow executes the probe from
+`/home/lupin/pantheon-ci-deploy/dev-root` after deployment and uploads a
+30-day task artifact through `actions/upload-artifact`.
 
 The API portion is reproducible with the task-owned probe:
 

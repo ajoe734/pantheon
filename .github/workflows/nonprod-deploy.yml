@@ -37,6 +37,11 @@ on:
         required: false
         default: false
         type: boolean
+      run_evolution_dispatch_probe:
+        description: "Dev root only: run and upload the EVOLOOP-001 hosted dispatch probe"
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       # publish/v* push  → auto-redeploy DEV VM with the publish snapshot.
@@ -146,6 +151,48 @@ jobs:
           fi
 
           bash scripts/deploy_nonprod_vm.sh "${args[@]}"
+
+      - name: Dev evolution dispatch hosted probe
+        id: evolution-dispatch-probe
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe && env.TARGET_ENV == 'dev' && env.TARGET_COMPONENT == 'root' }}
+        env:
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || '/home/lupin/pantheon-ci-deploy/dev-root' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}
+          DEPLOY_SHA: ${{ steps.sha.outputs.sha }}
+        run: |
+          set -euo pipefail
+          evidence_name="evoloop-001-hosted-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          remote_evidence="/tmp/${evidence_name}"
+          local_evidence="/tmp/${evidence_name}"
+          prefix="evoloop-001-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf -v worktree_q '%q' "${DEV_DEPLOY_WORKTREE}"
+          printf -v deploy_sha_q '%q' "${DEPLOY_SHA}"
+          printf -v remote_evidence_q '%q' "${remote_evidence}"
+          printf -v prefix_q '%q' "${prefix}"
+          gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
+            --zone "${DEV_ZONE}" \
+            --project "${GCP_DEPLOY_PROJECT_ID}" \
+            --ssh-flag=-T \
+            --command "set -euo pipefail; cd ${worktree_q}; python3 -m services.evolution.hosted_compose_probe --expected-sha ${deploy_sha_q} --prefix ${prefix_q} --output ${remote_evidence_q}"
+          gcloud compute scp \
+            --zone "${DEV_ZONE}" \
+            --project "${GCP_DEPLOY_PROJECT_ID}" \
+            "${REMOTE_USER}@${DEV_VM}:${remote_evidence}" \
+            "${local_evidence}"
+          echo "artifact_path=${local_evidence}" >> "$GITHUB_OUTPUT"
+          echo "Hosted evolution dispatch evidence: ${evidence_name}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload evolution dispatch hosted evidence
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe && env.TARGET_ENV == 'dev' && env.TARGET_COMPONENT == 'root' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: evoloop-001-hosted-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.evolution-dispatch-probe.outputs.artifact_path }}
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Dev OpenClaw assistant live smoke
         if: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') }}

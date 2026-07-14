@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
+import json
 
+import pytest
+
+from services.evolution import hosted_compose_probe as compose_probe
 from services.evolution import hosted_dispatch_probe as probe
 
 
@@ -119,3 +124,87 @@ def test_verify_probe_is_read_only_and_preserves_exact_execution_ref(monkeypatch
     )
     assert output["research"]["executed_step_count"] == 1
     assert output["freeze"]["decision_state"] == "approved"
+
+
+def test_compose_ownership_snapshot_requires_exact_labels_and_source(
+    monkeypatch, tmp_path
+):
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "services/evolution/dispatch_worker.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("print('exact ref')\n", encoding="utf-8")
+    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    expected_sha = "a" * 40
+    container_id = "b" * 64
+    labels = {
+        "com.docker.compose.project": "pantheon",
+        "com.docker.compose.service": "evolution-dispatch-worker",
+        "com.docker.compose.project.working_dir": str(tmp_path),
+        "com.docker.compose.project.config_files": str(tmp_path / "docker-compose.yml"),
+    }
+    inspect = [
+        {
+            "Name": "/pantheon-evolution-dispatch-worker-1",
+            "Image": "sha256:image",
+            "Config": {"Labels": labels},
+            "State": {"Running": True, "Health": {"Status": "healthy"}},
+        }
+    ]
+
+    def fake_run(args):
+        if args[:3] == ["git", "rev-parse", "HEAD"]:
+            return expected_sha
+        if args[-2:] == ["config", "--services"]:
+            return "evolution\nevolution-dispatch-worker"
+        if "ps" in args and "-q" in args:
+            return container_id
+        if args[:2] == ["docker", "inspect"]:
+            return json.dumps(inspect)
+        if args[:2] == ["docker", "exec"]:
+            return source_hash
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(compose_probe, "_run", fake_run)
+
+    snapshot = compose_probe._ownership_snapshot(expected_sha=expected_sha)
+
+    assert snapshot["checkout_sha"] == expected_sha
+    assert snapshot["container_id"] == container_id
+    assert snapshot["labels"] == labels
+    assert snapshot["host_source_sha256"] == source_hash
+    assert snapshot["container_source_sha256"] == source_hash
+
+
+def test_compose_ownership_snapshot_rejects_orphan_label(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "services/evolution/dispatch_worker.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("print('exact ref')\n", encoding="utf-8")
+    expected_sha = "a" * 40
+
+    def fake_run(args):
+        if args[:3] == ["git", "rev-parse", "HEAD"]:
+            return expected_sha
+        if args[-2:] == ["config", "--services"]:
+            return "evolution-dispatch-worker"
+        if "ps" in args and "-q" in args:
+            return "container-id"
+        if args[:2] == ["docker", "inspect"]:
+            return json.dumps(
+                [
+                    {
+                        "Config": {
+                            "Labels": {
+                                "com.docker.compose.project": "different-project"
+                            }
+                        },
+                        "State": {"Running": True, "Health": {"Status": "healthy"}},
+                    }
+                ]
+            )
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(compose_probe, "_run", fake_run)
+
+    with pytest.raises(probe.ProbeError, match="container label"):
+        compose_probe._ownership_snapshot(expected_sha=expected_sha)
