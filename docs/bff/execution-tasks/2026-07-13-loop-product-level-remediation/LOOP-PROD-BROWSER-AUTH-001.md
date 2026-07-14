@@ -4,7 +4,7 @@ Status: starts only after auth bootstrap, strict BFF auth, credential-free FE, d
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `3142b25a27d8c6072874ab4e598bd6e0805f357bf9d3e6248781bf8fac41084a`
+Canonical contract SHA-256: `0873761320365a3489ea1b06f7110c82b8a3a8a7f87e9d0708e30f48cd6a273c`
 The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 
@@ -69,7 +69,7 @@ activation authority for this cutover.
 - bundle, source maps, storage, DOM, URL, body, screenshots, logs, traces, videos, and third-party requests contain no reusable bearer, signing key, client secret, fixed browser credential, or privileged capability
 - read-only console access uses an authorized short-lived server-mediated Secure HttpOnly SameSite session; unauthenticated public viewer mode is separately reviewed, capability-free, disabled by default, and cannot mint, refresh, upgrade, or write
 - the catalog binds `fixtures/browser-auth-incidents.v1.json` at
-  `4b9077480aad612145e78e691404f93a2f6c4ac983c952af75bf9606292b1624`
+  `71038929281e844b26a3d8ba6c48f167a94b9d6281183dbdf45f2627b549eb19`
   and `fixtures/browser-auth-route-matrix.v1.json` at
   `8e465fc657e09e8be982181de5fd5929d2719392fcac472245df2c30563d3531`
 - the content-addressed complete route union materializes 118 exact rows and

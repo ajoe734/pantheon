@@ -125,7 +125,7 @@
   "contract_fixtures": {
     "browser_auth_incidents_v1": {
       "path": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/fixtures/browser-auth-incidents.v1.json",
-      "sha256": "4b9077480aad612145e78e691404f93a2f6c4ac983c952af75bf9606292b1624",
+      "sha256": "71038929281e844b26a3d8ba6c48f167a94b9d6281183dbdf45f2627b549eb19",
       "schema_version": 1,
       "fixture_set_id": "loop-product-browser-auth-incidents-v1",
       "required_fixture_ids": [
@@ -3673,7 +3673,7 @@
         "exact task, run, provider, slot, worktree, scope, branch, remote, and merge-target admission manifest",
         "changed-path and planner-nonimplementation negative evidence",
         "formal distinct-runtime-identity exact-head review evidence",
-        "browser_auth_incidents_v1 digest 4b9077480aad612145e78e691404f93a2f6c4ac983c952af75bf9606292b1624 and exact 3557, 3587, 3588, and 323 replay matrix",
+        "browser_auth_incidents_v1 digest 71038929281e844b26a3d8ba6c48f167a94b9d6281183dbdf45f2627b549eb19 and exact 3557, 3587, 3588, and 323 replay matrix",
         "restart, reassignment, duplicate, stale-head, forged-trailer, and direct-merge adversarial evidence",
         "merged PR, merge SHA, protected checks, checksummed audit, and independent residual-risk verdict"
       ],
@@ -4022,7 +4022,7 @@
       ],
       "proof_required": [
         "exact current and candidate FE and BFF commit, asset, image, policy, environment, origin, and safe-write manifests",
-        "browser_auth_incidents_v1 digest 4b9077480aad612145e78e691404f93a2f6c4ac983c952af75bf9606292b1624 and browser_auth_route_matrix_v1 digest 8e465fc657e09e8be982181de5fd5929d2719392fcac472245df2c30563d3531",
+        "browser_auth_incidents_v1 digest 71038929281e844b26a3d8ba6c48f167a94b9d6281183dbdf45f2627b549eb19 and browser_auth_route_matrix_v1 digest 8e465fc657e09e8be982181de5fd5929d2719392fcac472245df2c30563d3531",
         "complete generated positive and negative method, path, callsite, identity, transport, origin, cookie, auth-decision, router-status, product-success, capability, tenant, MFA, approval, refresh, SSE, CORS, expected-reason, and state-delta matrix",
         "secret-free prerequisite and PR, fork, unprotected-ref, staging, preview, bundle, source-map, storage, DOM, URL, body, log, trace, video, screenshot, and third-party no-leak evidence",
         "single-lease BFF-first, frontend-first, stale, partial, duplicate, failure, and paired rollback incident replay",
@@ -4565,7 +4565,7 @@
         "the other 47 primary tasks and every required external dependency are done with no weaker substitute outcome; successful protected guarded finalization transitions the 48th task",
         "Knowledge, Execution, Human Interaction, and Management Repair scenarios pass from clean target-dev",
         "every product delivery resolves to canonical fleet admission and exact task, run, worktree, scope, branch, PR, formal distinct-runtime review, merge, and deployment provenance with no planner-authored product artifact or duplicate repair",
-        "the protected closeout manifest binds the exact browser_auth_incidents_v1 digest 4b9077480aad612145e78e691404f93a2f6c4ac983c952af75bf9606292b1624 and browser_auth_route_matrix_v1 digest 8e465fc657e09e8be982181de5fd5929d2719392fcac472245df2c30563d3531",
+        "the protected closeout manifest binds the exact browser_auth_incidents_v1 digest 71038929281e844b26a3d8ba6c48f167a94b9d6281183dbdf45f2627b549eb19 and browser_auth_route_matrix_v1 digest 8e465fc657e09e8be982181de5fd5929d2719392fcac472245df2c30563d3531",
         "the coordinated credential-free browser auth matrix passes for exact FE and BFF identities with safe writes false, one cutover lease, signed viewer cookies, complete generated browser callsite coverage, separate privileged identities, zero credential leakage, and paired rollback",
         "incident replay rejects 3557 BFF-first and 323 frontend-first before switch, records exact 401 near-match versus exact 403 permissive-environment reason semantics, accepts 3587 as the one effective rollback, and rejects 3588 as a zero-tree duplicate with no second deploy",
         "worker exact CAS, zero-member cleanup, environment lease, scheduler starvation, and corrupt-state matrices pass",

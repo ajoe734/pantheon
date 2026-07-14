@@ -497,7 +497,7 @@ EXPECTED_CONTRACT_FIXTURES = {
             "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/"
             "fixtures/browser-auth-incidents.v1.json"
         ),
-        "sha256": "4b9077480aad612145e78e691404f93a2f6c4ac983c952af75bf9606292b1624",
+        "sha256": "71038929281e844b26a3d8ba6c48f167a94b9d6281183dbdf45f2627b549eb19",
         "schema_version": 1,
         "fixture_set_id": "loop-product-browser-auth-incidents-v1",
         "required_fixture_ids": [

@@ -4,7 +4,7 @@ Status: final program gate; starts only after every dependency is done
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `9bb7682a944be61fc3eaa84efb071d88e711f550985cdb9183e3eba72daeded8`
+Canonical contract SHA-256: `96d4d4b321070569e0f4d5f140225e5d1870de42256061898d07395eaffcac2b`
 The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 
@@ -74,7 +74,7 @@ finalization 才可完成第 48 個任務並宣告 program 完成。
 - baseline Knowledge, Execution, Human Interaction, and Management Repair scenarios pass from a clean target-dev baseline
 - every delivery has canonical fleet admission and exact task/run/worktree/scope/branch/PR/formal distinct-runtime review/merge/deployment provenance, with no planner-authored product artifact or duplicate repair
 - protected closeout binds incident fixture
-  `4b9077480aad612145e78e691404f93a2f6c4ac983c952af75bf9606292b1624`
+  `71038929281e844b26a3d8ba6c48f167a94b9d6281183dbdf45f2627b549eb19`
   and route-matrix fixture
   `8e465fc657e09e8be982181de5fd5929d2719392fcac472245df2c30563d3531`
 - coordinated credential-free auth passes with signed viewer cookies, exact

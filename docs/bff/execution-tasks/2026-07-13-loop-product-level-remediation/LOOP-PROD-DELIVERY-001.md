@@ -5,7 +5,7 @@ dispatcher materializes this task
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `3b8a135f0f26f9b913c77569b4a35fa6cba1f6fd63c95af422292348f04f3749`
+Canonical contract SHA-256: `5ff12f3d8e233020db524a892bbd5fe02bd690688ec25382694b5df230b3719b`
 The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 
@@ -38,7 +38,7 @@ additive work is admitted.
 
 The immutable incident catalog is
 `fixtures/browser-auth-incidents.v1.json`, SHA-256
-`4b9077480aad612145e78e691404f93a2f6c4ac983c952af75bf9606292b1624`.
+`71038929281e844b26a3d8ba6c48f167a94b9d6281183dbdf45f2627b549eb19`.
 
 ## Dependencies
 
