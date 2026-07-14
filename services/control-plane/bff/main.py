@@ -449,10 +449,6 @@ _CORS_EXPOSE_HEADERS = [
 app = _build_bff_app()
 _OPENAPI_HTTP_CONTEXT: ContextVar[bool] = ContextVar("openapi_http_context", default=False)
 _REQUEST_DRY_RUN_CONTEXT: ContextVar[bool] = ContextVar("request_dry_run_context", default=False)
-_REQUEST_HTTP_METHOD_CONTEXT: ContextVar[Optional[str]] = ContextVar(
-    "request_http_method_context",
-    default=None,
-)
 
 
 def _schema_with_legacy_action_path_for_http(schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -612,28 +608,6 @@ async def _bff_session_rbac_contract(request: Request, call_next):
         return _pack_d_http_exception_response(request, exc)
 
     return await call_next(request)
-
-
-@app.middleware("http")
-async def _public_browser_viewer_read_only(request: Request, call_next):
-    """Keep the public browser credential off every mutating HTTP route."""
-
-    method_token = _REQUEST_HTTP_METHOD_CONTEXT.set(request.method.upper())
-    try:
-        authorization = request.headers.get("authorization")
-        if not _authorization_targets_public_browser_subject(authorization):
-            return await call_next(request)
-        try:
-            _extract_identity(
-                authorization,
-                mfa_token=request.headers.get("x-mfa-token"),
-                session_cookie=request.cookies.get("pantheon_session"),
-            )
-        except HTTPException as exc:
-            return _pack_d_http_exception_response(request, exc)
-        return await call_next(request)
-    finally:
-        _REQUEST_HTTP_METHOD_CONTEXT.reset(method_token)
 
 
 # --------------------------------------------------------------------------- #
@@ -1254,31 +1228,14 @@ def _extract_identity(
     mfa_token: Optional[str] = None,
     session_cookie: Optional[str] = None,
 ) -> OperatorIdentity:
-    public_browser_identity = _extract_exact_public_browser_viewer(authorization)
-    if public_browser_identity is not None:
-        return _enforce_public_browser_read_method(public_browser_identity)
-    if (
-        not authorization
-        and session_cookie
-        and _authorization_targets_public_browser_subject(f"Bearer {session_cookie}")
-    ):
-        raise _bff_error(
-            status_code=403,
-            code=ErrorCode.FORBIDDEN,
-            message="Public browser bearer cannot be used as a session cookie",
-            reason="AUTH_PUBLIC_BROWSER_COOKIE_FORBIDDEN",
-            suggestion="Use a signed JWT session cookie or the exact dev viewer Authorization header",
-        )
     if _bff_auth_stub_enabled():
-        return _enforce_public_browser_identity(_extract_identity_stub(authorization))
+        return _extract_identity_stub(authorization)
     # Cookie session: treat cookie value as a bearer token when no Authorization header present.
     if not authorization and session_cookie:
         identity = _extract_identity_jwt(f"Bearer {session_cookie}", mfa_token=mfa_token)
         identity = identity.model_copy(update={"token_kind": "cookie"})
-        return _enforce_public_browser_identity(identity)
-    return _enforce_public_browser_identity(
-        _extract_identity_jwt(authorization, mfa_token=mfa_token)
-    )
+        return identity
+    return _extract_identity_jwt(authorization, mfa_token=mfa_token)
 
 
 def _resolve_session_kind(identity: OperatorIdentity) -> str:
@@ -1288,139 +1245,6 @@ def _resolve_session_kind(identity: OperatorIdentity) -> str:
     if identity.token_kind == "cookie":
         return "cookie"
     return "bearer"
-
-
-_PUBLIC_BROWSER_OPERATOR_ID = "pantheon-dev-browser"
-_PUBLIC_BROWSER_VIEWER_TOKEN = f"Bearer {_PUBLIC_BROWSER_OPERATOR_ID}:viewer"
-_PUBLIC_BROWSER_ALLOWED_ENVIRONMENTS = {"dev", "local"}
-_PUBLIC_BROWSER_READ_METHODS = {"GET", "HEAD"}
-_PUBLIC_BROWSER_CAPABILITY_CLAIMS = (
-    "capabilities",
-    "capability",
-    "permissions",
-    "scp",
-    "scope",
-)
-
-
-def _authorization_targets_public_browser_subject(
-    authorization: Optional[str],
-) -> bool:
-    raw = str(authorization or "")
-    normalized = raw.strip()
-    parts = re.split(r"\s+", normalized, maxsplit=1)
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        return False
-    credential = parts[1].strip()
-    if ":" not in credential:
-        return False
-    subject = credential.split(":", 1)[0].strip().lower()
-    return subject == _PUBLIC_BROWSER_OPERATOR_ID.lower()
-
-
-def _public_browser_viewer_environment_allowed() -> bool:
-    if _bff_auth_mode() != "strict":
-        return False
-    configured = [
-        value
-        for value in (
-            os.getenv("PANTHEON_ENV", "").strip().lower(),
-            os.getenv("PANTHEON_DEPLOYMENT_STAGE", "").strip().lower(),
-        )
-        if value
-    ]
-    return bool(configured) and all(
-        value in _PUBLIC_BROWSER_ALLOWED_ENVIRONMENTS for value in configured
-    )
-
-
-def _enforce_public_browser_read_method(identity: OperatorIdentity) -> OperatorIdentity:
-    method = _REQUEST_HTTP_METHOD_CONTEXT.get()
-    if method is None or method in _PUBLIC_BROWSER_READ_METHODS:
-        return identity
-    raise _bff_error(
-        status_code=403,
-        code=ErrorCode.FORBIDDEN,
-        message="Public browser identity is restricted to read-only HTTP methods",
-        reason="AUTH_PUBLIC_BROWSER_READ_ONLY",
-        precondition_failed="http_method",
-        suggestion="Use signed JWT or cookie authentication for mutating routes",
-        details_extra={
-            "method": method,
-            "allowed_methods": sorted(_PUBLIC_BROWSER_READ_METHODS),
-        },
-    )
-
-
-def _extract_exact_public_browser_viewer(
-    authorization: Optional[str],
-) -> Optional[OperatorIdentity]:
-    """Admit one explicitly public, capability-free read identity in strict mode."""
-
-    if not _authorization_targets_public_browser_subject(authorization):
-        return None
-    if str(authorization or "") != _PUBLIC_BROWSER_VIEWER_TOKEN:
-        raise _bff_error(
-            status_code=401,
-            code=ErrorCode.AUTH_REQUIRED,
-            message="Public browser bearer token must match the canonical viewer credential",
-            reason="AUTH_PUBLIC_BROWSER_TOKEN_NEAR_MATCH",
-            suggestion="Use the exact public viewer bearer without case or whitespace changes",
-        )
-    if not _public_browser_viewer_environment_allowed():
-        raise _bff_error(
-            status_code=403,
-            code=ErrorCode.FORBIDDEN,
-            message="Public browser bearer is available only in strict dev/local environments",
-            reason="AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN",
-            suggestion="Use signed JWT or cookie authentication outside strict dev/local mode",
-        )
-    return OperatorIdentity(
-        operator_id=_PUBLIC_BROWSER_OPERATOR_ID,
-        roles=["viewer"],
-        mfa_verified=False,
-        claims={
-            "sub": _PUBLIC_BROWSER_OPERATOR_ID,
-            "roles": ["viewer"],
-            "capabilities": [],
-            "token_use": "public-browser-viewer",
-        },
-        token_kind="public",
-    )
-
-
-def _enforce_public_browser_identity(identity: OperatorIdentity) -> OperatorIdentity:
-    """Reserve the browser-build subject for capability-free viewer access.
-
-    A Vite bearer is public by construction.  Historical bundles used this
-    stable subject with operator/admin roles, so treating only newly built
-    bundles as safe would leave retained assets privileged.  Enforce the
-    subject boundary at the BFF regardless of which old bundle sent it.
-    """
-
-    if identity.operator_id != _PUBLIC_BROWSER_OPERATOR_ID:
-        return identity
-    roles = [str(role).strip().lower() for role in identity.roles if str(role).strip()]
-    claims = dict(identity.claims or {})
-    has_capability_claim = any(
-        bool(value.strip()) if isinstance(value, str) else bool(value)
-        for value in (claims.get(key) for key in _PUBLIC_BROWSER_CAPABILITY_CLAIMS)
-    )
-    if roles != ["viewer"] or identity.mfa_verified or has_capability_claim:
-        raise _bff_error(
-            status_code=403,
-            code=ErrorCode.FORBIDDEN,
-            message="Public browser identity is restricted to viewer access",
-            reason="AUTH_PUBLIC_BROWSER_IDENTITY_PRIVILEGED",
-            suggestion="Use an interactive cookie or session token for operator actions",
-        )
-    for key in _PUBLIC_BROWSER_CAPABILITY_CLAIMS:
-        claims.pop(key, None)
-    claims["roles"] = ["viewer"]
-    claims["capabilities"] = []
-    return identity.model_copy(
-        update={"roles": ["viewer"], "mfa_verified": False, "claims": claims}
-    )
 
 
 def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
@@ -1488,14 +1312,6 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
             if len(parts) > 3 and parts[3]:
                 token_capabilities = parts[3].split(",")
                 
-    if operator_id.strip().lower() == _PUBLIC_BROWSER_OPERATOR_ID.lower():
-        raise _bff_error(
-            status_code=403,
-            code=ErrorCode.FORBIDDEN,
-            message="Public browser bearer is unavailable through stub authentication",
-            reason="AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN",
-            suggestion="Use the exact public viewer bearer in strict dev/local mode",
-        )
     capabilities = _stub_identity_capabilities(token_capabilities)
     claims = {"sub": operator_id, "roles": roles, "capabilities": capabilities}
     if tenant_ids:
@@ -1523,14 +1339,6 @@ def _stub_identity_capabilities(token_capabilities: List[str]) -> List[str]:
 def _with_structured_identity_capabilities(identity: OperatorIdentity) -> OperatorIdentity:
     if identity.token_kind != "structured":
         return identity
-    if identity.operator_id.strip().lower() == _PUBLIC_BROWSER_OPERATOR_ID.lower():
-        raise _bff_error(
-            status_code=403,
-            code=ErrorCode.FORBIDDEN,
-            message="Public browser bearer is unavailable through permissive authentication",
-            reason="AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN",
-            suggestion="Use the exact public viewer bearer in strict dev/local mode",
-        )
     claims = dict(identity.claims or {})
     raw_capabilities = claims.get("capabilities") or claims.get("capability") or []
     if isinstance(raw_capabilities, str):
@@ -6455,9 +6263,6 @@ def _capabilities_for_identity(identity: OperatorIdentity) -> List[str]:
     are not provided by upstream auth. It is intentionally permissive for
     admin and conservative for other roles.
     """
-    if identity.operator_id == _PUBLIC_BROWSER_OPERATOR_ID:
-        return []
-
     caps: List[str] = []
     for role in identity.roles:
         mapped = _ROLE_CAPABILITY_MAP.get(role)
