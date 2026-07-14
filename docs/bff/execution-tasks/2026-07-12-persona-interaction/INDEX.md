@@ -17,6 +17,7 @@ Planning source: `docs/product/persona-interaction-and-governed-action-plan.md`
 | `PINT-008` | Antigravity | Gemini2 | 2 | `PINT-002`, `PINT-003`, `PTJ-007` | Add Trade Journal/Performance reflection and governed learning handoffs |
 | `PINT-009` | Claude | Antigravity | 2 | `PINT-002`, `PINT-005`, `MGMT-PERF-IA-006` | Add Persona Detail and Human Inbox contextual entry links/readback |
 | `PINT-010` | Codex2 | Claude | 3 | `PINT-003`–`PINT-009` | Cross-repo integration, security, dev deploy, hosted E2E, and closeout |
+| `PINT-010-R2` | fleet-assigned owner | distinct reviewer | 3R | merged `PINT-010` feature work | Close residual authority, durability, exact-SHA deployment, hosted proof, and evidence truth |
 
 Owners are initial fleet routing recommendations. The supervisor may reassign
 for provider readiness or occupancy, but owner and reviewer must remain
@@ -219,6 +220,64 @@ Acceptance:
 - final record lists PRs, merge commits, deployment run, and any explicitly
   deferred non-blocking scope.
 
+### PINT-010-R2 — Residual authority, deployment, and evidence closure
+
+This remediation task carries the original `PINT-010` acceptance after the
+feature branches were reconciled. It must not reopen or duplicate completed
+feature implementation.
+
+Artifacts:
+
+- Pantheon authority and persistence regression tests;
+- `execute-plans` strict-live capability/write controls and cross-repo hosted
+  E2E;
+- BFF and frontend deployment provenance with exact paired commits;
+- `docs/bff/execution-tasks/2026-07-12-persona-interaction/PINT-010-R2-EVIDENCE.md`
+  containing final PR, merge, deploy, hosted-run, and recovery evidence.
+
+Execution lanes:
+
+1. **BFF authority and durability:** enforce operator/admin mutation access and
+   viewer denial across context, interaction, Workshop, and proposal commands;
+   persist proposal revisions, idempotency, audit/outbox state, and deterministic
+   restart recovery.
+2. **Exact governed approval:** bind approval to proposal id, exact revision,
+   immutable target version, proposal-content digest, validation digest, actor,
+   decision time, and expiry; reject stale, revised, revoked, cross-tenant, and
+   self-approval cases.
+3. **Frontend integration:** consume the authoritative Agora capability
+   manifest, gate mutation controls without treating a capability as role
+   elevation, show proposal diff/revision/validation readback, and contain no
+   embedded bearer credential.
+4. **Deployment:** merge and deploy the Pantheon BFF first, then merge and
+   deploy `execute-plans` against that exact 40-character BFF commit. Require
+   live mode, strict fallback, safe write defaults, a frontend deployment
+   manifest with both exact commits, and `/bff/version` agreement.
+5. **Hosted acceptance:** run authenticated desktop and mobile positive flows
+   for Persona context, interaction, independent reflection, proposal creation,
+   revision and validation, plus direct-API and UI viewer mutation negatives.
+   Read back the durable proposal/audit records after the write flow.
+6. **Closeout:** record successful run URLs and artifacts, known failed runs and
+   their resolution, final deployment manifests, PRs and merge SHAs; only then
+   move the task through distinct reviewer approval to `done`.
+
+Acceptance:
+
+- Persona/Servant output remains advice or a governed proposal and cannot
+  directly execute a trade, mutate capital/binding/memory, or self-approve;
+- viewer mutations fail with `401`/`403` even when an Agora capability is
+  present, while an authorized operator can complete the same governed flow;
+- modify creates a new revision and any approval/validation for another
+  revision or digest fails closed;
+- proposal and recovery evidence survives a BFF process restart without
+  duplicate side effects;
+- BFF deploy, frontend deploy, and cross-repo integration gates succeed against
+  the exact recorded commits;
+- hosted desktop and mobile proof covers the positive governed flow, viewer
+  negatives, durable readback, and strict-live/no-embedded-token boundary;
+- stale or conflicting evidence is superseded rather than merged as a second
+  implementation truth, and the final evidence record has a distinct reviewer.
+
 ## Dispatch policy
 
 Wave 0 starts immediately. Wave 1 tasks may be placed on the board with
@@ -227,5 +286,6 @@ Before touching Workshop, Performance, Trading Room, or Trade Journal files,
 each owner must reconcile the active `AG-DYNUI-LIVE-*` lane and current
 `PTJ-007` deployment truth to avoid overlapping edits.
 Wave 2 may start only after its listed contracts and BFF capabilities merge.
-`PINT-010` owns final integration and hosted completion; individual feature
+`PINT-010` owns final integration and hosted completion; `PINT-010-R2` carries
+only its residual remediation and evidence obligations. Individual feature
 tasks do not independently claim whole-program delivery.

@@ -64109,6 +64109,7 @@ app.include_router(
     _create_agora_router(
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
+        require_write_role=_require_operator_role,
         bff_error=_bff_error,
         utc_now=utc_now,
         get_read_store=lambda: read_store,

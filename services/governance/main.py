@@ -530,6 +530,12 @@ def propose_approval(body: ProposeApprovalRequest) -> ApprovalDecisionResponse:
         risk_level=body.risk_level.value,
         capital_pool_id=body.capital_pool_id,
         persona_id=body.persona_id,
+        tenant_id=body.tenant_id,
+        owner_user_id=body.owner_user_id,
+        proposal_id=body.proposal_id,
+        proposal_revision=body.proposal_revision,
+        proposal_content_digest=body.proposal_content_digest,
+        validation_result_digest=body.validation_result_digest,
     )
 
     errors = decision.validate()
