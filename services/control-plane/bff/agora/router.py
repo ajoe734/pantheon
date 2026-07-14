@@ -187,6 +187,9 @@ def create_agora_router(
         get_read_store=get_read_store,
         workshop_store=workshop_store,
     ))
-    router.include_router(create_governance_router(**_kw))
+    router.include_router(create_governance_router(
+        **_kw,
+        get_approval_decision=lambda approval_id: get_read_store().get_approval_decision(approval_id),
+    ))
 
     return router
