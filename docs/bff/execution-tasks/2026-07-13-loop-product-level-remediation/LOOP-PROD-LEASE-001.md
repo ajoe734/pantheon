@@ -4,7 +4,7 @@ Status: ready for fleet dispatch after dependencies are done
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `64937b9652dfd2ad3df97d49517dc90e580d2cacc65c16cae1fce6a5a2a51cc8`
+Canonical contract SHA-256: `6948bd26a7c42c14390ae7f795095ac71cab12222307ba964c27ebdd66d7dc35`
 The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
 the prose sections below are explanatory renderings.
 
@@ -54,6 +54,7 @@ controller-issued environment lease；候選 payload 不得繼承 runner cloud c
 ## Acceptance
 
 - all four mutation lanes bind exact lease id, candidate SHA, VM, zone, project, job, and payload identity
+- every smoke/mutation lane obtains a short-lived scoped identity only after auth bootstrap and strict auth qualification; fixed, hardcoded, bundle-derived, and historical development bearers are rejected
 - deploy runner credentials and Cloud SDK state are absent from candidate processes; direct gcloud is unavailable inside the payload boundary
 - OpenClaw and Agora use distinct one-shot sockets and cannot replay or substitute another lane's authorization
 - secrets travel only through a non-logged protected channel and never through argv, debug logs, staging lanes, or committed artifacts
@@ -61,6 +62,7 @@ controller-issued environment lease；候選 payload 不得繼承 runner cloud c
 - lease release is rejected until controller-authored cleanup ACK and exact target readback exist
 - duplicate, wrong lease/SHA/lane, replay, network, and cleanup-failure negatives pass
 - exact PR, merge SHA, checks, target-dev proof, review, and checksummed evidence are archived
+- PR `#3558` and its local worktree are non-authoritative inputs; the fleet rebases after auth delivery and may adopt, rewrite, or discard them
 
 ## Required proof
 
@@ -84,6 +86,7 @@ Reviewer approval must set `review_file` under:
 
 ## Dispatch and closeout rules
 
+- planner does not implement these artifacts; PR `#3558` requires a fresh admitted fleet run and distinct formal exact-head review
 - rebase after strict-auth workflow delivery and preserve every auth boundary
 - never run an unleased shared-dev mutation as qualification evidence
 - a workflow receipt without zero-member cleanup is not terminal success

@@ -7,8 +7,11 @@
     "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_GAP_ADDENDUM_2026-07-13.md"
   ],
   "additive_task_ids": [
+    "LOOP-PROD-DELIVERY-001",
+    "LOOP-PROD-AUTH-BOOT-001",
     "LOOP-PROD-WORKER-001",
     "LOOP-PROD-LEASE-001",
+    "LOOP-PROD-BROWSER-AUTH-001",
     "LOOP-PROD-FLEET-001",
     "LOOP-PROD-ATTEST-001",
     "LOOP-PROD-AUTH-OPS-001",
@@ -20,7 +23,7 @@
   "task_doc_contract_source": "tasks.json",
   "catalog_migrations": [
     {
-      "id": "loop-product-gap-addendum-v2",
+      "id": "loop-product-gap-addendum-v4",
       "from_catalog_sha256": "2b5183712e7e0d4dbdf21214aaa215b4d16fe186b8c83a7cea5420dea0022b91",
       "required_live_task_patches": [
         {
@@ -44,12 +47,54 @@
             "LOOP-PROD-TJ-001"
           ],
           "append_dependencies": [
-            "LOOP-PROD-WORKER-001"
+            "LOOP-PROD-WORKER-001",
+            "LOOP-PROD-BROWSER-AUTH-001"
           ]
         }
       ]
     }
   ],
+  "execution_authority": {
+    "planner_role": "plan_archive_dispatch_monitor_review_only",
+    "implementation_role": "supervisor_admitted_fleet_worker",
+    "review_role": "distinct_supervisor_admitted_fleet_reviewer",
+    "planner_controller_identity": "/root",
+    "planner_may_edit_declared_product_artifacts": false,
+    "draft_input_policy": "open draft PRs, local diffs, and unmerged worktrees are non-authoritative inputs that an admitted fleet may audit, adopt, rewrite, or discard",
+    "required_worker_bindings": [
+      "task_id",
+      "run_id",
+      "worker_provider",
+      "worker_slot",
+      "task_worktree",
+      "declared_scope",
+      "expected_branch",
+      "merge_target"
+    ],
+    "formal_review_required": true,
+    "owner_reviewer_must_be_distinct_runtime_identities": true
+  },
+  "loop_scope": {
+    "canonical_l1_loop_ids": [
+      "source_ingestion",
+      "strategy_distillation",
+      "alpha_replication",
+      "persona_teaching",
+      "agora_interaction_evidence",
+      "human_imitation_shadow_evaluation",
+      "consultation",
+      "promotion_deployment",
+      "capital_pool_execution",
+      "telemetry_reconciliation",
+      "evolution",
+      "bff_health_monitoring"
+    ],
+    "composite_overlay_ids": [
+      "per_persona_ooda"
+    ],
+    "final_authority_requires_exact_union": true,
+    "each_loop_requires_non_close_product_level_task": true
+  },
   "completion_authority": {
     "task_id": "LOOP-PROD-CLOSE-002",
     "checkpoint_only_task_ids": [
@@ -60,6 +105,7 @@
     "verdict_binding_fields": [
       "program_id",
       "catalog_sha256",
+      "task_id",
       "closeout_manifest_sha256",
       "target_environment",
       "frontend_sha",
@@ -115,11 +161,15 @@
   "universal_dispatch_rules": [
     "start only after every dependency is done; superseded does not satisfy a dependency",
     "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+    "the planning and dispatch controller may plan, archive, dispatch, monitor, and review only; it must not implement any declared product artifact",
+    "implementation may be performed only by a supervisor-admitted fleet worker bound to the exact task, run, provider, slot, clean worktree, scope, branch, and merge target",
+    "owner and reviewer must be distinct admitted fleet runtime identities; a self-authored trailer, same-session subagent note, or planner review is not independent review",
+    "open draft PRs, local diffs, and unmerged worktrees are inputs only; the admitted fleet must audit the exact head and may adopt, rewrite, or discard them",
     "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
     "reviewer must set review_file to the checksummed machine evidence manifest before approval",
     "deploy and verify exact target identity when the task changes a deployed capability"
   ],
-  "task_count": 45,
+  "task_count": 48,
   "tasks": [
     {
       "id": "LOOP-PROD-000",
@@ -2209,7 +2259,8 @@
         "LOOP-PROD-002",
         "LOOP-PROD-REC-001",
         "LOOP-PROD-TJ-001",
-        "LOOP-PROD-WORKER-001"
+        "LOOP-PROD-WORKER-001",
+        "LOOP-PROD-BROWSER-AUTH-001"
       ],
       "artifacts": [
         "services/control-plane/bff",
@@ -3119,6 +3170,161 @@
       "requires_human_ops_signoff": true
     },
     {
+      "id": "LOOP-PROD-DELIVERY-001",
+      "title": "Fleet-only delivery provenance and independent review admission",
+      "summary_zh": "把 planner、fleet worker、fleet reviewer 的權限邊界做成 fail-closed delivery gate；沒有 canonical task、exact run/worktree/scope binding、獨立正式 review 或唯一 lease 的 PR 一律不能合併。",
+      "phase": "Loop Product-Level Remediation / Addendum Wave 0",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-002"
+      ],
+      "artifacts": [
+        ".github/workflows/task-delivery-provenance.yml",
+        ".orchestrator/supervisor.py",
+        ".orchestrator/test_supervisor.py",
+        "scripts/validate_task_delivery_provenance.py",
+        "scripts/test_validate_task_delivery_provenance.py",
+        "docs/deployment/fleet-only-delivery-provenance.md",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-DELIVERY-001"
+      ],
+      "acceptance": [
+        "every implementation commit, branch, PR, review, merge, and deployment Task-ID resolves to one canonical active or archived execution task with an exact plan, packet, catalog, task-contract, and execution-authority source_ref",
+        "the planning and dispatch controller can create plans, task packets, catalog migrations, dispatch records, monitoring reports, and review verdicts but is fail-closed from changing a task's declared product artifacts",
+        "implementation starts only in a supervisor-admitted clean task worktree bound to exact task id, run id, provider, worker slot, declared scope, expected branch, remote, and merge target",
+        "changed paths, commit trailers, PR head, and deployment candidate must remain inside the admitted task scope and exact run binding; stale, foreign, planner-authored, or cross-scope heads fail closed",
+        "owner and reviewer are distinct supervisor-admitted runtime identities and the repository records a formal exact-head review; self-review, same-session subagent notes, commit trailers, or an unrequested planner review do not satisfy independence",
+        "a task and repair lease admits at most one active branch, PR, cutover, revert, or retry for the same intent; duplicate repairs and semantically empty second merges are rejected before merge",
+        "missing task brief, live or archived task record, source_ref, dispatch admission, review evidence, or archive handoff blocks merge instead of generating an ad hoc Task-ID",
+        "incident fixtures for Pantheon PR 3557, Pantheon PRs 3587 and 3588, and execute-plans PR 323 prove rejection of untracked planner implementation, self-review, frontend/backend split activation, and duplicate repair",
+        "restart, concurrent enqueue, reassignment, supersede, stale-head, forged trailer, duplicate-PR, and direct-merge adversarial tests preserve one canonical delivery outcome and append-only audit evidence"
+      ],
+      "next": "Implement the fleet-only provenance gate, replay the 3557/3587/3588/323 incident fixtures, and require an independent exact-head fleet review before enabling later additive work.",
+      "wave": 0,
+      "fleet_lane": "fleet-only-delivery-provenance",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "bff_health_monitoring",
+        "per_persona_ooda"
+      ],
+      "current_maturity": "planner and worker identities can be conflated and PR provenance is not bound to canonical task admission",
+      "target_maturity": "proven-live",
+      "desired_state_sources": [
+        "planner versus fleet execution authority contract",
+        "canonical supervisor task and worktree admission",
+        "independent exact-head repository review policy"
+      ],
+      "actual_state_sources": [
+        "canonical live and archived task records",
+        "supervisor runtime admission and task-worktree bindings",
+        "git branch, commit, PR, review, merge, deployment, and audit identities",
+        "Pantheon 3557, 3587, 3588 and execute-plans 323 incident fixtures"
+      ],
+      "proof_required": [
+        "exact task, run, provider, slot, worktree, scope, branch, remote, and merge-target admission manifest",
+        "changed-path and planner-nonimplementation negative evidence",
+        "formal distinct-runtime-identity exact-head review evidence",
+        "3557, 3587, 3588, and 323 incident replay matrix",
+        "restart, reassignment, duplicate, stale-head, forged-trailer, and direct-merge adversarial evidence",
+        "merged PR, merge SHA, protected checks, checksummed audit, and independent residual-risk verdict"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "the planner may author this task contract and dispatch it but must not implement the declared delivery-gate artifacts",
+        "use one supervisor-admitted clean task worktree in the declared repository and merge to dev through a formal review from a distinct admitted fleet runtime identity",
+        "open draft PRs, local diffs, and unmerged worktrees are non-authoritative inputs that the admitted fleet may audit, adopt, rewrite, or discard",
+        "do not merge or deploy any implementation lacking an exact canonical task, run, scope, lease, and review binding"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DELIVERY-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-DELIVERY-001.md",
+      "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-AUTH-BOOT-001",
+      "title": "Authorized dev auth credential bootstrap",
+      "summary_zh": "在 strict auth hosted 驗收之前，由獲授權 Human/Ops 於受保護環境建立 dev signing、dev-login client 與最小權限身份；fleet 僅能驗證 redacted metadata，不能產生、讀取或輸出 secret。",
+      "phase": "Loop Product-Level Remediation / Addendum Wave 0",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-002",
+        "LOOP-PROD-DELIVERY-001"
+      ],
+      "artifacts": [
+        "docs/deployment/dev-auth-bootstrap-authorization.md",
+        "scripts/validate_dev_auth_bootstrap_record.py",
+        "scripts/test_validate_dev_auth_bootstrap_record.py",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-AUTH-BOOT-001"
+      ],
+      "acceptance": [
+        "an authorized Human or Ops actor approves and provisions the dev signing, dev-login client, and scoped identity material in protected environment storage before strict hosted auth qualification begins",
+        "fleet workers and candidate jobs cannot create, read, print, rotate, export, or downgrade the protected credential values",
+        "viewer, operator, approver, risk owner, operator A, operator B, and least-capability Management AI profiles have distinct subjects with explicit role, tenant, capability, MFA, issuer, audience, TTL, and environment bindings",
+        "a protected redacted bootstrap record binds environment, secret version identifiers, client subjects, policy version, authorization actor, issued time, expiry or review time, and revocation path without containing credential values",
+        "blank, partial, expired, duplicate-subject, cross-tenant, cross-environment, excessive-role, missing-MFA, and unauthorized provisioning records fail closed before cloud or hosted mutation",
+        "protected availability, rollback, revocation, restart, and no-leak checks pass while public, browser, staging, argv, logs, and candidate environments remain secret-free",
+        "missing external authorization or provisioning remains an explicit blocker and cannot be replaced by stub auth, a repository secret, a fixed bearer, or synthetic evidence",
+        "independent security review and Human or Ops verdict bind the exact bootstrap record, catalog, task, target environment, and policy"
+      ],
+      "next": "Prepare the redacted bootstrap validator, then wait for authorized Human/Ops provisioning and protected proof before unblocking strict hosted auth.",
+      "wave": 0,
+      "fleet_lane": "dev-auth-credential-bootstrap",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "bff_health_monitoring",
+        "per_persona_ooda"
+      ],
+      "current_maturity": "strict auth code work began without a completed governed external credential bootstrap",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "strict dev auth credential contract",
+        "environment protection and least-capability policy",
+        "Human or Ops provisioning authority"
+      ],
+      "actual_state_sources": [
+        "protected environment secret version metadata",
+        "redacted client subject and access-policy records",
+        "protected availability, negative, rollback, and revocation evidence"
+      ],
+      "proof_required": [
+        "protected redacted provisioning authorization and secret version metadata",
+        "distinct subject, role, tenant, capability, MFA, issuer, audience, TTL, and environment matrix",
+        "blank, partial, expired, cross-boundary, excessive-role, and unauthorized negative evidence",
+        "argv, environment, log, repository, browser, staging, and candidate no-leak scan",
+        "rollback, revocation, restart, independent security review, protected attestation, and Human or Ops verdict"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "fleet work may implement the validator and redacted runbook but only authorized Human or Ops may provision or revoke external credentials",
+        "credential values must never enter source, task state, activity logs, evidence, argv, browser bundles, or candidate processes",
+        "reviewer must validate protected metadata and negatives without requesting or observing secret values"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AUTH-BOOT-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-AUTH-BOOT-001.md",
+      "requires_human_ops_signoff": true
+    },
+    {
       "id": "LOOP-PROD-WORKER-001",
       "title": "Exact-CAS worker outcome and forced termination integrity",
       "summary_zh": "所有 launch、resume、retry 與 terminal outcome 都必須以 exact task/event/owner/run/payload signature 做 admission/CAS；失去 ownership 的 process group 與 file-inbox payload 必須確認歸零。",
@@ -3128,7 +3334,8 @@
       "status": "todo",
       "depends_on": [
         "LOOP-PROD-001",
-        "LOOP-PROD-002"
+        "LOOP-PROD-002",
+        "LOOP-PROD-DELIVERY-001"
       ],
       "artifacts": [
         ".gitignore",
@@ -3145,6 +3352,7 @@
         "scripts/planning_state.py",
         "scripts/test_ai_status.py",
         "scripts/test_planning_state.py",
+        "scripts/test_supervisor.py",
         "docs/deployment/evidence/loop-product-level/LOOP-PROD-WORKER-001"
       ],
       "acceptance": [
@@ -3152,10 +3360,15 @@
         "task-state and runtime-state whole-file RMW paths use compatible locks and cannot stale-overwrite newer controller truth",
         "same-run restart recovery re-admits started work instead of skipping the exact guard",
         "superseded or re-owned work terminates its complete process group and removes file-inbox payload before terminal publication",
+        "temporary approval permissions use a durable two-phase cleanup state: the attempt is inactive before cleanup starts, cleanup-pending is retryable after restart, and no terminal or retired marker is published until permission removal is authoritatively confirmed",
+        "approval resume captures the exact admitted identity before spawn, persists the post-spawn process-group binding before work can publish, and on final CAS failure proves the exact spawned process group is dead before recording the attempt retired",
+        "a terminal worker remains a recoverable cleanup record until file-inbox payload, temporary permission, queue reservation, process group, and runtime admission cleanup are all confirmed exactly once",
+        "watchdog and safe-mode recovery perform a fresh locked read-modify-write and cannot overwrite a newer workers array, queue, ownership, reviewer, failure, or quota record",
         "stale attempts cannot mutate provider pause, quota, failure streak, or retry state",
         "malformed retry and corrupt timestamp records are quarantined without crashing or permanently biasing a cycle",
         "deterministic races, SIGTERM-ignoring children, restart, duplicate, and corrupt-state tests pass",
-        "exact delivery and checksummed evidence receive independent exact-head review"
+        "exact delivery and checksummed evidence receive independent exact-head review",
+        "Pantheon PR 3554 and its local worktree are treated as non-authoritative input; the admitted fleet audits the exact head and may adopt, rewrite, or discard it"
       ],
       "next": "Close every reproduced worker outcome race, prove process and payload cleanup, then rerun an exact-head adversarial review.",
       "wave": 1,
@@ -3195,6 +3408,8 @@
       "dispatch_rules": [
         "start only after every dependency is done; superseded does not satisfy a dependency",
         "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "the planner must not implement these artifacts; the supervisor-admitted fleet worker owns implementation and a distinct admitted runtime identity owns formal review",
+        "PR 3554 and all local worker-guard diffs are input only and do not establish acceptance, authorship, or review provenance",
         "never commit generated runtime state or test-mutated activity logs",
         "reviewer must replay every reproduced race against the exact proposed head",
         "terminal success requires confirmed process and payload cleanup"
@@ -3227,13 +3442,15 @@
       ],
       "acceptance": [
         "deploy, OpenClaw, public smoke, and Agora bind exact lease, candidate SHA, VM, zone, project, job, and payload identity",
+        "all smoke and mutation lanes obtain a short-lived scoped identity only after AUTH-BOOT-001 and AUTH-001 are qualified; fixed, hardcoded, bundle-derived, or historical development bearers are rejected",
         "candidate payloads inherit no runner cloud credentials or Cloud SDK state and cannot invoke direct gcloud",
         "lane-specific one-shot authorization cannot be replayed or substituted across payloads",
         "secrets never enter argv, debug logs, staging lanes, or committed evidence",
         "timeout, cancellation, supersede, signal, and runner crash escalate termination and wait for local and remote zero members",
         "lease release fails until controller cleanup ACK and exact target readback exist",
         "duplicate, wrong identity, replay, isolation, network, and cleanup negatives pass",
-        "target-dev evidence and exact-head review are archived"
+        "target-dev evidence and exact-head review are archived",
+        "Pantheon PR 3558 and its local worktree are non-authoritative inputs that the admitted fleet rebases after auth delivery and may adopt, rewrite, or discard"
       ],
       "next": "Rebase after strict-auth delivery, preserve its secret boundaries, and qualify every mutation lane under one protected lease.",
       "wave": 1,
@@ -3274,6 +3491,7 @@
       "dispatch_rules": [
         "start only after every dependency is done; superseded does not satisfy a dependency",
         "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "the planner must not implement these artifacts; PR 3558 is input only and requires a fresh supervisor-admitted fleet run plus distinct exact-head review",
         "never run an unleased shared-dev mutation as qualification evidence",
         "a workflow receipt without zero-member cleanup is not terminal success",
         "deploy and verify exact target identity when the task changes a deployed capability"
@@ -3282,6 +3500,96 @@
       "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-LEASE-001/",
       "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-LEASE-001.md",
       "requires_human_ops_signoff": false
+    },
+    {
+      "id": "LOOP-PROD-BROWSER-AUTH-001",
+      "title": "Coordinated credential-free browser auth cutover",
+      "summary_zh": "把 BFF strict auth、execute-plans credential-free build、完整 viewer route matrix 與 hosted browser 驗收綁成同一 cutover lease；任一側未就緒就不得啟用，且可原子回滾兩側。",
+      "phase": "Loop Product-Level Remediation / Addendum Wave 1",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [
+        "LOOP-PROD-AUTH-BOOT-001",
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-FE-001",
+        "LOOP-PROD-DELIVERY-001",
+        "LOOP-PROD-LEASE-001",
+        "LOOP-PROD-AUTH-OPS-001"
+      ],
+      "artifacts": [
+        ".github/workflows/public-browser-auth-cutover.yml",
+        "scripts/qualify_public_browser_auth_cutover.py",
+        "scripts/test_qualify_public_browser_auth_cutover.py",
+        "docs/deployment/public-browser-auth-cutover.md",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-BROWSER-AUTH-001"
+      ],
+      "acceptance": [
+        "the browser bundle, source maps, storage, DOM, URLs, request bodies, screenshots, logs, traces, videos, and third-party requests contain no reusable bearer, signing key, client secret, privileged capability, or fixed public-browser credential",
+        "the read-only console uses an authorized short-lived server-mediated Secure HttpOnly SameSite session; any unauthenticated public viewer mode is a separately reviewed capability-free policy that is disabled by default and cannot mint, refresh, upgrade, or carry write privileges",
+        "an explicit method and route matrix admits every boot-critical GET or HEAD including me, personas, dashboard summary, management read models, incidents, and authenticated SSE while denying logout, refresh, cookie confusion, method override, mutation, websocket, cross-origin, near-match subject, role, MFA, approval, and kernel-capability bypasses",
+        "viewer, operator, approver, risk owner, operator A, and operator B remain distinct short-lived subjects; viewer cannot freeze, rollback, approve, execute tools, activate control mode, prepare repair worktrees, or invoke any other write or privileged route",
+        "exact frontend and BFF origins, CORS, redirect, callback, cookie domain and path, issuer, audience, tenant, and environment values pass a secret-free prerequisite job before any protected identity can be requested",
+        "pull-request, fork, unprotected ref, staging, preview, and candidate asset jobs receive no live token, session, signing, database, cloud, or kernel material",
+        "BFF and frontend changes may merge dormant, but LOOP-PROD-BROWSER-AUTH-001 is the sole coordinated activation authority; AUTH-001, FE-001, PR 3557, PR 3572, execute-plans PR 311, or execute-plans PR 323 alone cannot satisfy or activate the cutover",
+        "one protected environment lease binds exact BFF and frontend commits, images and assets, policy version, route matrix, origins, target, candidate probes, activation order, and rollback pair; candidate probes pass before switch and any post-switch failure restores and re-probes both prior identities",
+        "hosted 1440px desktop and 390px mobile boot, navigation, reload, logout, expiry, SSE reconnect, degraded mode, and recovery pass with zero unexpected 401, 403, console, CORS, chunk, mixed-content, cookie, or BFF errors",
+        "real writes and dev-stub writes are false by default; authenticated write qualification uses separate least-privilege identities and Candidate Pool mutations require the exact captured quoted ETag, including weak ETags, plus unique idempotency and request identifiers while rejecting wildcard or unquoted validators",
+        "secret-bearing Playwright jobs disable trace, video, and automatic screenshots; only redacted allowlisted evidence that passes credential, cookie, header, DOM, URL, log, source-map, and artifact scans may be archived",
+        "incident replay proves BFF-first 3557-like activation, frontend-first 323-like activation, exact-viewer 403, old privileged bundle token, duplicate reverts 3587 and 3588, stale deploy, partial rollback, refresh and cookie bypass, and simultaneous rollback all fail closed without leaving the console or write boundary inconsistent",
+        "runtime qualification records the actual current deployed FE and BFF hashes, safe-write flags, route results, policy version, cutover lease, prior pair, candidate pair, rollback result, formal independent review, and residual-risk owner and expiry"
+      ],
+      "next": "Reconcile the exact deployed FE and BFF heads, qualify the complete route and identity matrix without browser credentials, then perform one leased two-sided cutover and rollback drill.",
+      "wave": 1,
+      "fleet_lane": "coordinated-browser-auth-cutover",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": [
+        "bff_health_monitoring",
+        "per_persona_ooda"
+      ],
+      "current_maturity": "BFF and frontend auth changes can activate independently; the 3557 and 323 sequence produced rejected viewer reads and an unusable hosted console",
+      "target_maturity": "product-level",
+      "desired_state_sources": [
+        "strict dev auth and credential-free browser contracts",
+        "complete frontend boot-critical route and method matrix",
+        "protected two-repository cutover and rollback policy",
+        "Pantheon 3557, 3587, 3588 and execute-plans 311 and 323 incident evidence"
+      ],
+      "actual_state_sources": [
+        "exact deployed frontend deployment manifest and BFF version identity",
+        "hosted network, DOM, console, cookie, CORS, SSE, auth, and route readbacks",
+        "protected session, identity, policy, environment lease, cutover, and rollback records",
+        "redacted repository, bundle, source-map, artifact, log, and browser leakage scans"
+      ],
+      "proof_required": [
+        "exact current and candidate FE and BFF commit, asset, image, policy, environment, origin, and safe-write manifests",
+        "complete positive and negative method, route, identity, capability, tenant, MFA, approval, cookie, refresh, SSE, and CORS matrix",
+        "secret-free prerequisite and PR, fork, unprotected-ref, staging, preview, bundle, source-map, storage, DOM, URL, body, log, trace, video, screenshot, and third-party no-leak evidence",
+        "single-lease BFF-first, frontend-first, stale, partial, duplicate, failure, and paired rollback incident replay",
+        "hosted desktop and mobile boot, reload, logout, expiry, reconnect, degraded, recovery, accessibility, performance, and zero-unexpected-error evidence",
+        "separate write-identity and exact quoted ETag, idempotency, request-id, two-person, and kernel-capability negative evidence",
+        "formal distinct-runtime-identity exact-head review, checksummed protected attestation, Human or Ops security verdict, and residual-risk owner and expiry"
+      ],
+      "non_goals": [
+        "No panel-only closure",
+        "No seed fixture as live proof",
+        "No approval gate bypass",
+        "No synthetic receipt as terminal execution proof",
+        "No live-capital or live-broker side effect"
+      ],
+      "dispatch_rules": [
+        "start only after every dependency is done; superseded does not satisfy a dependency",
+        "the planner may author and dispatch this contract but only supervisor-admitted fleet workers may implement or activate declared artifacts",
+        "AUTH-001 or FE-001 merge and deployment evidence is input only and never coordinated browser cutover authority",
+        "re-read both repositories and both deployed identities at task start; audit PRs 3557, 3572, 3587, 3588, 311, and 323 by exact head and adopt, rewrite, or discard their work as needed",
+        "never send a fixed bearer or privileged credential to browser code and never weaken route authorization to make the console appear green",
+        "activate and roll back only under one protected environment lease after candidate probes, and archive only scanned redacted evidence"
+      ],
+      "product_level_required": true,
+      "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-BROWSER-AUTH-001/",
+      "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-BROWSER-AUTH-001.md",
+      "requires_human_ops_signoff": true
     },
     {
       "id": "LOOP-PROD-FLEET-001",
@@ -3457,12 +3765,17 @@
       "acceptance": [
         "authorized Human or Ops provisions external environment secrets and archives only redacted identifiers and timestamps",
         "direct and workflow dev deployment fail before cloud access for blank, partial, expired, or unavailable credentials",
+        "the local symmetric verifier key is distinct from every external JWKS trust root; algorithm and issuer routing is one-way and never falls back from an external issuer or asymmetric algorithm to the local development verifier",
+        "the deploy workflow authorizes the protected source repository, branch, commit, workflow, environment, and actor before requesting any secret, cloud identity, or target access; arbitrary or unprotected refs cannot inherit credentials",
+        "a normal deploy preserves and reads back the complete running trust contract including issuer, audience, algorithm allowlist, JWKS or local-key version, tenant, session TTL, cookie posture, environment, and revocation policy",
+        "application secrets are provided only through mode-0600 protected files or equivalent child-scoped channels and are absent from broad environment exports, process argv, shell traces, debug output, logs, artifacts, and unintended child processes",
         "staging, public, and browser lanes receive no dev signing, client, database, or privileged token material",
         "dev-login issues short-lived scoped role and tenant identities with explicit TTL, issuer, audience, and replay protection",
         "Management AI qualification uses an independently authorized least-capability assistant.kernel identity",
         "identity validation precedes mutation and cleanup deactivates control mode on success and failure",
         "rotation proves overlap, cutover, expiry, revocation, restart, and rollback without secret leakage",
-        "Human or Ops approves capability policy and residual risks; missing approval remains blocked"
+        "Human or Ops approves capability policy and residual risks; missing approval remains blocked",
+        "Pantheon PR 3572 and any prior strict-auth worktree are non-authoritative inputs; the admitted fleet audits the exact head and may adopt, rewrite, or discard them"
       ],
       "next": "Complete the runbook and qualification harness, then wait for authorized provisioning and capability-policy approval before hosted proof.",
       "wave": 1,
@@ -3502,6 +3815,7 @@
       "dispatch_rules": [
         "start only after every dependency is done; superseded does not satisfy a dependency",
         "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+        "the planner must not implement these artifacts; PR 3572 is input only and requires a fresh admitted fleet owner and distinct formal exact-head reviewer",
         "fleet work cannot invent, disclose, or rotate external secrets without authorization",
         "missing provisioning or approval remains an explicit blocker and never enables a stub fallback",
         "reviewer must set review_file to protected redacted evidence before approval"
@@ -3755,16 +4069,18 @@
     },
     {
       "id": "LOOP-PROD-CLOSE-002",
-      "title": "Additive final 45-task product closeout",
-      "summary_zh": "從 clean target-dev 重跑 baseline 四大 scenarios 與 additive safety matrix；其餘 44 個 primary tasks、protected evidence、strict auth ops、fleet fairness、worker/lease integrity、受保護簽核與 warning-free frontend 全部通過後，guarded finalization 才可完成第 45 個任務。",
+      "title": "Additive final 48-task product closeout",
+      "summary_zh": "從 clean target-dev 重跑 baseline 四大 scenarios 與 additive safety matrix；其餘 47 個 primary tasks、fleet-only delivery provenance、coordinated browser auth、protected evidence、strict auth bootstrap/ops、fleet fairness、worker/lease integrity、受保護簽核與 warning-free frontend 全部通過後，guarded finalization 才可完成第 48 個任務。",
       "phase": "Loop Product-Level Remediation / Wave 5",
       "owner": "Codex2",
       "reviewer": "Codex",
       "status": "todo",
       "depends_on": [
         "LOOP-PROD-CLOSE-001",
+        "LOOP-PROD-DELIVERY-001",
         "LOOP-PROD-WORKER-001",
         "LOOP-PROD-LEASE-001",
+        "LOOP-PROD-BROWSER-AUTH-001",
         "LOOP-PROD-FLEET-001",
         "LOOP-PROD-ATTEST-001",
         "LOOP-PROD-AUTH-OPS-001",
@@ -3777,8 +4093,11 @@
         "docs/deployment/evidence/loop-product-level/LOOP-PROD-CLOSE-002"
       ],
       "acceptance": [
-        "the other 44 primary tasks and every required external dependency are done with no weaker substitute outcome; successful protected guarded finalization transitions the 45th task",
+        "the other 47 primary tasks and every required external dependency are done with no weaker substitute outcome; successful protected guarded finalization transitions the 48th task",
         "Knowledge, Execution, Human Interaction, and Management Repair scenarios pass from clean target-dev",
+        "every product delivery resolves to canonical fleet admission and exact task, run, worktree, scope, branch, PR, formal distinct-runtime review, merge, and deployment provenance with no planner-authored product artifact or duplicate repair",
+        "the coordinated credential-free browser auth matrix passes for exact FE and BFF identities with safe writes false, one cutover lease, complete viewer reads, separate privileged identities, zero credential leakage, and paired rollback",
+        "incident replay rejects a 3557-like BFF-first activation, a 323-like frontend-first activation, a 3588-like duplicate repair, exact-viewer 403, stale deployment, partial activation, and simultaneous rollback without inconsistent hosted state",
         "worker exact CAS, zero-member cleanup, environment lease, scheduler starvation, and corrupt-state matrices pass",
         "every accepted assertion verifies the protected trust root and exact FE, BFF, run, job, target, and lease identities",
         "governed auth provisioning, least capability, expiry, rotation, deactivation, and secret isolation pass with Human or Ops approval",
@@ -3812,7 +4131,7 @@
       "target_maturity": "product-level",
       "desired_state_sources": [
         "baseline master plan and additive gap addendum",
-        "all other 44 primary and external task evidence",
+        "all other 47 primary and external task evidence",
         "clean target-dev scenario and additive adversarial specifications"
       ],
       "actual_state_sources": [
@@ -3824,6 +4143,8 @@
       "proof_required": [
         "clean target-dev full scenario rerun",
         "all additive adversarial and recovery matrices",
+        "canonical fleet-only delivery provenance and 3557, 3587, 3588, and 323 incident replay",
+        "coordinated browser route, identity, credential-isolation, cutover, and paired rollback matrix",
         "exact FE, BFF, image, lease, and attestation identities",
         "checksummed evidence inventory and independent review",
         "explicit Human or Ops final verdict"

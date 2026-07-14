@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from copy import deepcopy
 from datetime import datetime, timezone
 import fcntl
+import gzip
 import hashlib
 import json
 import os
@@ -86,6 +88,71 @@ LIVE_ADMISSION_FIELDS = {
     "worker_pid",
     "worker_run_id",
 }
+TASK_CONTRACT_FIELDS = REQUIRED_TASK_FIELDS - {"owner", "reviewer", "status", "next"}
+ACTIVITY_OUTBOX_SCHEMA_VERSION = 1
+ACTIVITY_CORE_FIELDS = {"ts", "agent", "type", "task_id", "message"}
+ACTIVITY_BINDING_FIELDS = {
+    "activity_schema_version",
+    "activity_transaction_id",
+    "activity_ordinal",
+    "activity_event_count",
+    "program_id",
+    "catalog_sha256",
+    "event_id",
+}
+ACTIVITY_EVENT_TYPES = {"assign", "dependency_migration"}
+EXPECTED_EXECUTION_AUTHORITY = {
+    "planner_role": "plan_archive_dispatch_monitor_review_only",
+    "implementation_role": "supervisor_admitted_fleet_worker",
+    "review_role": "distinct_supervisor_admitted_fleet_reviewer",
+    "planner_controller_identity": "/root",
+    "planner_may_edit_declared_product_artifacts": False,
+    "draft_input_policy": (
+        "open draft PRs, local diffs, and unmerged worktrees are "
+        "non-authoritative inputs that an admitted fleet may audit, adopt, "
+        "rewrite, or discard"
+    ),
+    "required_worker_bindings": [
+        "task_id",
+        "run_id",
+        "worker_provider",
+        "worker_slot",
+        "task_worktree",
+        "declared_scope",
+        "expected_branch",
+        "merge_target",
+    ],
+    "formal_review_required": True,
+    "owner_reviewer_must_be_distinct_runtime_identities": True,
+}
+EXPECTED_LOOP_SCOPE = {
+    "canonical_l1_loop_ids": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring",
+    ],
+    "composite_overlay_ids": ["per_persona_ooda"],
+    "final_authority_requires_exact_union": True,
+    "each_loop_requires_non_close_product_level_task": True,
+}
+REQUIRED_LOOP_IDS = set(EXPECTED_LOOP_SCOPE["canonical_l1_loop_ids"]) | set(
+    EXPECTED_LOOP_SCOPE["composite_overlay_ids"]
+)
+REQUIRED_AUTHORITY_DISPATCH_RULES = {
+    "the planning and dispatch controller may plan, archive, dispatch, monitor, and review only; it must not implement any declared product artifact",
+    "implementation may be performed only by a supervisor-admitted fleet worker bound to the exact task, run, provider, slot, clean worktree, scope, branch, and merge target",
+    "owner and reviewer must be distinct admitted fleet runtime identities; a self-authored trailer, same-session subagent note, or planner review is not independent review",
+    "open draft PRs, local diffs, and unmerged worktrees are inputs only; the admitted fleet must audit the exact head and may adopt, rewrite, or discard them",
+}
 
 
 class DispatchError(RuntimeError):
@@ -135,6 +202,18 @@ def canonical_json_sha256(value: Any) -> str:
         sort_keys=True,
     ).encode("utf-8")
     return sha256_bytes(encoded)
+
+
+def task_contract_sha256(task: dict[str, Any]) -> str:
+    """Bind immutable catalog fields while allowing normal runtime ownership/state."""
+
+    return canonical_json_sha256(
+        {field: task.get(field) for field in sorted(TASK_CONTRACT_FIELDS)}
+    )
+
+
+def execution_authority_sha256(catalog: dict[str, Any]) -> str:
+    return canonical_json_sha256(catalog.get("execution_authority"))
 
 
 def artifact_overlaps(left: str, right: str) -> bool:
@@ -199,6 +278,28 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
             raise DispatchError("schema v2 task_doc_contract_source must be tasks.json")
     additive_ids = {str(item) for item in additive_task_ids}
 
+    execution_authority = payload.get("execution_authority")
+    if execution_authority != EXPECTED_EXECUTION_AUTHORITY:
+        raise DispatchError(
+            "catalog execution_authority must exactly preserve planner, fleet worker, "
+            "and distinct fleet reviewer boundaries"
+        )
+    if payload.get("loop_scope") != EXPECTED_LOOP_SCOPE:
+        raise DispatchError(
+            "catalog loop_scope must exactly declare twelve canonical L1 loops "
+            "and the Per-Persona OODA composite overlay"
+        )
+    universal_dispatch_rules = payload.get("universal_dispatch_rules")
+    if (
+        not isinstance(universal_dispatch_rules, list)
+        or not REQUIRED_AUTHORITY_DISPATCH_RULES.issubset(
+            set(map(str, universal_dispatch_rules))
+        )
+    ):
+        raise DispatchError(
+            "catalog universal_dispatch_rules are missing planner/fleet authority gates"
+        )
+
     by_id: dict[str, dict[str, Any]] = {}
     for index, raw_task in enumerate(tasks):
         if not isinstance(raw_task, dict):
@@ -242,6 +343,13 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
                 raise DispatchError(f"{task_id} {field} must be a non-empty list")
             if len(value) != len(set(str(item) for item in value)):
                 raise DispatchError(f"{task_id} {field} contains duplicates")
+        task_loop_ids = {str(item).strip() for item in task["loop_ids"]}
+        if "" in task_loop_ids or not task_loop_ids.issubset(REQUIRED_LOOP_IDS):
+            unknown = sorted(task_loop_ids - REQUIRED_LOOP_IDS)
+            raise DispatchError(
+                f"{task_id} loop_ids contains blank or undeclared loops: "
+                + ", ".join(unknown or ["<blank>"])
+            )
         if task_id in task["depends_on"]:
             raise DispatchError(f"{task_id} depends on itself")
         if not REQUIRED_NON_GOALS.issubset(set(task["non_goals"])):
@@ -436,14 +544,47 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
             )
         if ancestor_memo[authority_id] != set(by_id) - {authority_id}:
             raise DispatchError("every other primary task must be an ancestor of final authority")
+        if set(map(str, by_id[authority_id]["loop_ids"])) != REQUIRED_LOOP_IDS:
+            raise DispatchError(
+                "completion authority must cover the exact twelve-loop plus OODA union"
+            )
+        inventory = by_id.get("LOOP-PROD-000")
+        if not isinstance(inventory, dict) or set(
+            map(str, inventory.get("loop_ids") or [])
+        ) != REQUIRED_LOOP_IDS:
+            raise DispatchError(
+                "LOOP-PROD-000 must inventory the exact twelve-loop plus OODA union"
+            )
+        checkpoint_ids_with_inventory = {
+            authority_id,
+            "LOOP-PROD-000",
+            *checkpoint_ids,
+        }
+        uncovered = sorted(
+            loop_id
+            for loop_id in REQUIRED_LOOP_IDS
+            if not any(
+                loop_id in set(map(str, task["loop_ids"]))
+                and task["target_maturity"] == "product-level"
+                and task_id not in checkpoint_ids_with_inventory
+                for task_id, task in by_id.items()
+            )
+        )
+        if uncovered:
+            raise DispatchError(
+                "loops missing a non-close product-level task: "
+                + ", ".join(uncovered)
+            )
         bindings = authority.get("verdict_binding_fields")
         required_bindings = {
             "program_id",
             "catalog_sha256",
+            "task_id",
             "closeout_manifest_sha256",
             "target_environment",
             "frontend_sha",
             "bff_sha",
+            "attestation_policy",
             "actor_id",
             "actor_role",
             "decision",
@@ -517,6 +658,19 @@ def validate_live_state(
     active_tasks = state.get("tasks")
     if not isinstance(active_tasks, list):
         raise DispatchError("ai-status.json tasks must be a list")
+    active_ids = [
+        str(task.get("id") or "").strip()
+        for task in active_tasks
+        if isinstance(task, dict) and str(task.get("id") or "").strip()
+    ]
+    duplicate_ids = sorted(
+        task_id for task_id, count in Counter(active_ids).items() if count > 1
+    )
+    if duplicate_ids:
+        raise DispatchError(
+            "ai-status.json contains duplicate live task IDs: "
+            + ", ".join(duplicate_ids)
+        )
     active_by_id = {
         str(task.get("id")): task
         for task in active_tasks
@@ -587,14 +741,346 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             temp_path.unlink()
 
 
+def activity_log_sources(*, since: datetime | None = None) -> list[Path]:
+    """Return rotated history followed by the active append-only log.
+
+    Both rotation implementations currently used by Pantheon retain an exact
+    tail in the next file.  Exact copies across different source files are
+    therefore valid, while duplicates within one source or conflicting uses of
+    one event ID are corruption and must stop recovery.
+    """
+
+    archives = sorted(
+        (STATUS_ROOT / "archive" / "logs").glob("ai-activity-log.jsonl-*.gz")
+    )
+    archives.extend(
+        sorted(
+            (STATUS_ROOT / ".orchestrator" / "logs" / "activity-log-archive").glob(
+                "ai-activity-log-*.jsonl.gz"
+            )
+        )
+    )
+    if since is not None:
+        # A pending event cannot have been rotated into an archive created
+        # before its own bound timestamp.  Use a small filesystem timestamp
+        # grace instead of re-reading years of unrelated compressed history.
+        cutoff = since.timestamp() - 300
+        archives = [path for path in archives if path.stat().st_mtime >= cutoff]
+    sources = archives
+    if LOG_PATH.is_file():
+        sources.append(LOG_PATH)
+    return sources
+
+
+def _read_activity_source(path: Path) -> str:
+    try:
+        if path.suffix == ".gz":
+            with gzip.open(path, "rt", encoding="utf-8", errors="strict") as handle:
+                return handle.read()
+        return path.read_text(encoding="utf-8", errors="strict")
+    except (OSError, UnicodeError) as exc:
+        raise DispatchError(
+            f"activity audit source is unreadable: {path}: {type(exc).__name__}"
+        ) from exc
+
+
+def activity_event_ids(*, since: datetime | None = None) -> set[str]:
+    event_payloads: dict[str, str] = {}
+    for path in activity_log_sources(since=since):
+        source_ids: set[str] = set()
+        for line_number, line in enumerate(_read_activity_source(path).splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise DispatchError(
+                    f"malformed activity audit JSON in {path}:{line_number}"
+                ) from exc
+            if not isinstance(entry, dict):
+                raise DispatchError(
+                    f"activity audit entry must be an object in {path}:{line_number}"
+                )
+            if "event_id" not in entry:
+                continue
+            event_id = entry.get("event_id")
+            if not isinstance(event_id, str) or not event_id.strip():
+                raise DispatchError(
+                    f"activity audit event_id is invalid in {path}:{line_number}"
+                )
+            if event_id in source_ids:
+                raise DispatchError(
+                    f"duplicate activity audit event_id {event_id} in {path}"
+                )
+            source_ids.add(event_id)
+            payload_digest = canonical_json_sha256(entry)
+            previous_digest = event_payloads.get(event_id)
+            if previous_digest is not None and previous_digest != payload_digest:
+                raise DispatchError(
+                    f"conflicting activity audit event_id {event_id} across rotated logs"
+                )
+            event_payloads[event_id] = payload_digest
+    return set(event_payloads)
+
+
+def parse_activity_timestamp(raw: Any) -> datetime:
+    if not isinstance(raw, str) or not raw.endswith("Z"):
+        raise DispatchError("activity timestamp must be an exact UTC ISO-8601 string")
+    try:
+        parsed = datetime.fromisoformat(raw.removesuffix("Z") + "+00:00")
+    except ValueError as exc:
+        raise DispatchError("activity timestamp is malformed") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise DispatchError("activity timestamp must be UTC")
+    return parsed
+
+
 def append_logs(entries: list[dict[str, Any]]) -> None:
     if not entries:
         return
-    with LOG_PATH.open("a", encoding="utf-8") as handle:
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with LOG_PATH.open("a+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() > 0:
+            handle.seek(-1, os.SEEK_END)
+            if handle.read(1) != b"\n":
+                handle.seek(0, os.SEEK_END)
+                handle.write(b"\n")
+        handle.seek(0, os.SEEK_END)
         for entry in entries:
-            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            handle.write(
+                (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8")
+            )
         handle.flush()
         os.fsync(handle.fileno())
+
+
+def enqueue_activity_outbox(
+    state: dict[str, Any],
+    entries: list[dict[str, Any]],
+    *,
+    program_id: str,
+    catalog_digest: str,
+) -> None:
+    pending = state.get("program_activity_outbox")
+    if pending is None:
+        pending = []
+    if not isinstance(pending, list) or any(not isinstance(item, dict) for item in pending):
+        raise DispatchError("program_activity_outbox must be a list of objects")
+    if pending:
+        raise DispatchError("program_activity_outbox must be recovered before enqueue")
+    if not entries:
+        raise DispatchError("cannot enqueue an empty activity transaction")
+
+    cores: list[dict[str, Any]] = []
+    for raw_entry in entries:
+        if set(raw_entry) - (ACTIVITY_CORE_FIELDS | {"migration_id"}):
+            raise DispatchError("activity event contains fields outside the bound schema")
+        event_type = str(raw_entry.get("type") or "")
+        expected_fields = set(ACTIVITY_CORE_FIELDS)
+        if event_type == "dependency_migration":
+            expected_fields.add("migration_id")
+        if set(raw_entry) != expected_fields:
+            raise DispatchError(f"{event_type or 'activity'} event schema is incomplete")
+        if event_type not in ACTIVITY_EVENT_TYPES:
+            raise DispatchError(f"unsupported activity event type: {event_type!r}")
+        if any(
+            not isinstance(raw_entry.get(field), str)
+            or not str(raw_entry.get(field)).strip()
+            for field in expected_fields
+        ):
+            raise DispatchError("activity event string fields must be non-empty")
+        cores.append(deepcopy(raw_entry))
+
+    transaction_id = "loop-product-tx-" + canonical_json_sha256(
+        {
+            "activity_schema_version": ACTIVITY_OUTBOX_SCHEMA_VERSION,
+            "program_id": program_id,
+            "catalog_sha256": catalog_digest,
+            "entries": cores,
+        }
+    )
+    prepared: list[dict[str, Any]] = []
+    for index, core in enumerate(cores):
+        entry = {
+            **core,
+            "activity_schema_version": ACTIVITY_OUTBOX_SCHEMA_VERSION,
+            "activity_transaction_id": transaction_id,
+            "activity_ordinal": index,
+            "activity_event_count": len(cores),
+            "program_id": program_id,
+            "catalog_sha256": catalog_digest,
+        }
+        entry["event_id"] = "loop-product-event-" + canonical_json_sha256(entry)
+        prepared.append(entry)
+    state["program_activity_outbox"] = prepared
+
+
+def _migration_record_by_id(state: dict[str, Any], migration_id: str) -> dict[str, Any] | None:
+    records = state.get("program_catalog_migrations") or []
+    if not isinstance(records, list):
+        return None
+    matches = [
+        record
+        for record in records
+        if isinstance(record, dict) and record.get("id") == migration_id
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def validate_activity_outbox(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    catalog_digest: str,
+) -> list[dict[str, Any]]:
+    pending = state.get("program_activity_outbox")
+    if not isinstance(pending, list) or not pending or any(
+        not isinstance(item, dict) for item in pending
+    ):
+        raise DispatchError("program_activity_outbox must be a non-empty list of objects")
+
+    expected_program = str(catalog["program_id"])
+    catalog_task_ids = {str(task["id"]) for task in catalog["tasks"]}
+    active_by_id = {
+        str(task.get("id")): task
+        for task in state.get("tasks") or []
+        if isinstance(task, dict) and str(task.get("id") or "").strip()
+    }
+    cores: list[dict[str, Any]] = []
+    transaction_ids: set[str] = set()
+    event_ids: set[str] = set()
+    for expected_ordinal, entry in enumerate(pending):
+        event_type = str(entry.get("type") or "")
+        core_fields = set(ACTIVITY_CORE_FIELDS)
+        if event_type == "dependency_migration":
+            core_fields.add("migration_id")
+        if set(entry) != core_fields | ACTIVITY_BINDING_FIELDS:
+            raise DispatchError("program_activity_outbox event schema is not exact")
+        if entry.get("activity_schema_version") != ACTIVITY_OUTBOX_SCHEMA_VERSION:
+            raise DispatchError("program_activity_outbox schema version mismatch")
+        if entry.get("program_id") != expected_program:
+            raise DispatchError("program_activity_outbox program binding mismatch")
+        if entry.get("catalog_sha256") != catalog_digest:
+            raise DispatchError("program_activity_outbox catalog binding mismatch")
+        if entry.get("activity_ordinal") != expected_ordinal:
+            raise DispatchError("program_activity_outbox ordinal sequence is invalid")
+        if entry.get("activity_event_count") != len(pending):
+            raise DispatchError("program_activity_outbox event count mismatch")
+        transaction_id = entry.get("activity_transaction_id")
+        event_id = entry.get("event_id")
+        if not isinstance(transaction_id, str) or not transaction_id.strip():
+            raise DispatchError("program_activity_outbox transaction binding is missing")
+        if not isinstance(event_id, str) or not event_id.strip() or event_id in event_ids:
+            raise DispatchError("program_activity_outbox event_id is missing or duplicated")
+        if event_type not in ACTIVITY_EVENT_TYPES:
+            raise DispatchError("program_activity_outbox event type is unsupported")
+        if any(
+            not isinstance(entry.get(field), str) or not str(entry.get(field)).strip()
+            for field in core_fields
+        ):
+            raise DispatchError("program_activity_outbox core strings must be non-empty")
+        parse_activity_timestamp(entry["ts"])
+        if entry["agent"] not in set(catalog.get("allowed_owners") or []):
+            raise DispatchError("program_activity_outbox agent binding is invalid")
+        task_id = str(entry["task_id"])
+        if task_id not in catalog_task_ids or task_id not in active_by_id:
+            raise DispatchError("program_activity_outbox task binding is not live")
+
+        live_task = active_by_id[task_id]
+        if event_type == "assign":
+            source_ref = live_task.get("source_ref") or {}
+            authority_digest = execution_authority_sha256(catalog)
+            expected_message = (
+                f"Assigned {task_id} to {live_task.get('owner')} "
+                f"with reviewer {live_task.get('reviewer')} from {expected_program}"
+            )
+            if (
+                source_ref.get("program_id") != expected_program
+                or source_ref.get("catalog_sha256") != catalog_digest
+                or source_ref.get("execution_authority_sha256")
+                != authority_digest
+                or live_task.get("auto_created_by") != AUTO_BY
+                or entry.get("ts") != live_task.get("created_at")
+                or entry.get("message") != expected_message
+            ):
+                raise DispatchError("assignment activity is not bound to its live task")
+        else:
+            migration_id = str(entry["migration_id"])
+            record = _migration_record_by_id(state, migration_id)
+            patches = (record or {}).get("patches") or []
+            patch_ids = {
+                str(patch.get("task_id"))
+                for patch in patches
+                if isinstance(patch, dict)
+            }
+            if (
+                record is None
+                or task_id not in patch_ids
+                or entry.get("ts") != record.get("applied_at")
+                or entry.get("message")
+                != f"Applied {migration_id} exact dependency migration to {task_id}"
+            ):
+                raise DispatchError("migration activity is not bound to its audit record")
+
+        core = {field: deepcopy(entry[field]) for field in core_fields}
+        cores.append(core)
+        transaction_ids.add(transaction_id)
+        event_ids.add(event_id)
+        expected_event = {key: deepcopy(value) for key, value in entry.items() if key != "event_id"}
+        expected_event_id = "loop-product-event-" + canonical_json_sha256(expected_event)
+        if event_id != expected_event_id:
+            raise DispatchError("program_activity_outbox event_id binding mismatch")
+
+    if len(transaction_ids) != 1:
+        raise DispatchError("program_activity_outbox mixes transactions")
+    expected_transaction_id = "loop-product-tx-" + canonical_json_sha256(
+        {
+            "activity_schema_version": ACTIVITY_OUTBOX_SCHEMA_VERSION,
+            "program_id": expected_program,
+            "catalog_sha256": catalog_digest,
+            "entries": cores,
+        }
+    )
+    if transaction_ids != {expected_transaction_id}:
+        raise DispatchError("program_activity_outbox transaction digest mismatch")
+    return pending
+
+
+def flush_activity_outbox(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    catalog_digest: str,
+) -> bool:
+    pending = state.get("program_activity_outbox")
+    if pending in (None, []):
+        return False
+    pending = validate_activity_outbox(state, catalog, catalog_digest)
+    earliest_event = min(parse_activity_timestamp(entry["ts"]) for entry in pending)
+    existing = activity_event_ids(since=earliest_event)
+    append_logs(
+        [entry for entry in pending if str(entry["event_id"]) not in existing]
+    )
+    if os.environ.get("LOOP_PRODUCT_DISPATCH_FAIL_AFTER_ACTIVITY_APPEND") == "1":
+        raise DispatchError(
+            "injected failure after activity append; status outbox remains pending"
+        )
+    state["program_activity_outbox"] = []
+    atomic_write_json(STATUS_PATH, state)
+    return True
+
+
+def expected_completion_role(task_id: str, catalog: dict[str, Any]) -> str:
+    authority = catalog.get("completion_authority") or {}
+    authority_id = str(authority.get("task_id") or "")
+    checkpoint_ids = {
+        str(item) for item in authority.get("checkpoint_only_task_ids") or []
+    }
+    completion_role = "ordinary"
+    if task_id == authority_id:
+        completion_role = "final_authority"
+    elif task_id in checkpoint_ids:
+        completion_role = "checkpoint_only"
+    return completion_role
 
 
 def build_task(
@@ -604,16 +1090,7 @@ def build_task(
     timestamp: str,
 ) -> dict[str, Any]:
     result = deepcopy(task)
-    authority = catalog.get("completion_authority") or {}
-    authority_id = str(authority.get("task_id") or "")
-    checkpoint_ids = {
-        str(item) for item in authority.get("checkpoint_only_task_ids") or []
-    }
-    completion_role = "ordinary"
-    if task["id"] == authority_id:
-        completion_role = "final_authority"
-    elif task["id"] in checkpoint_ids:
-        completion_role = "checkpoint_only"
+    completion_role = expected_completion_role(str(task["id"]), catalog)
     selected_catalog_path = catalog_path()
     try:
         catalog_ref = str(selected_catalog_path.relative_to(REPO_ROOT))
@@ -630,11 +1107,19 @@ def build_task(
             "mutates_canonical": True,
             "helper_kind": "loop_product_level_execution_slice",
             "completion_role": completion_role,
+            "execution_role": catalog["execution_authority"]["implementation_role"],
+            "review_role": catalog["execution_authority"]["review_role"],
+            "planner_controller_identity": catalog["execution_authority"]
+            ["planner_controller_identity"],
+            "planner_may_edit_declared_product_artifacts": False,
+            "formal_review_required": True,
             "source_ref": {
                 "plan": catalog["source_plan"],
                 "packet": catalog["packet"],
                 "catalog": catalog_ref,
                 "catalog_sha256": catalog_digest,
+                "task_contract_sha256": task_contract_sha256(task),
+                "execution_authority_sha256": execution_authority_sha256(catalog),
                 "program_id": catalog["program_id"],
             },
         }
@@ -654,8 +1139,134 @@ def archived_primary_status(task_id: str) -> str | None:
     return status
 
 
+def validate_additive_collision(
+    existing: dict[str, Any],
+    task: dict[str, Any],
+    catalog: dict[str, Any],
+    catalog_digest: str,
+    *,
+    source: str,
+) -> None:
+    """Reject foreign or stale rows that collide with an additive authority ID."""
+
+    task_id = str(task["id"])
+    source_ref = existing.get("source_ref")
+    expected_contract = task_contract_sha256(task)
+    actual_contract = task_contract_sha256(existing)
+    expected_metadata = {
+        "task_class": "execution",
+        "auto_created_by": AUTO_BY,
+        "auto_generated": True,
+        "delivery_layer": "primary",
+        "mutates_canonical": True,
+        "helper_kind": "loop_product_level_execution_slice",
+        "completion_role": expected_completion_role(task_id, catalog),
+        "execution_role": catalog["execution_authority"]["implementation_role"],
+        "review_role": catalog["execution_authority"]["review_role"],
+        "planner_controller_identity": catalog["execution_authority"]
+        ["planner_controller_identity"],
+        "planner_may_edit_declared_product_artifacts": False,
+        "formal_review_required": True,
+    }
+    metadata_matches = all(
+        existing.get(field) == value for field, value in expected_metadata.items()
+    )
+    source_matches = bool(
+        isinstance(source_ref, dict)
+        and source_ref.get("program_id") == catalog.get("program_id")
+        and source_ref.get("catalog_sha256") == catalog_digest
+        and source_ref.get("task_contract_sha256") == expected_contract
+        and source_ref.get("execution_authority_sha256")
+        == execution_authority_sha256(catalog)
+    )
+    if not metadata_matches or not source_matches or actual_contract != expected_contract:
+        raise DispatchError(
+            f"foreign or stale {source} collision for additive task {task_id}; "
+            "program, catalog, contract, or completion role is not exact"
+        )
+
+
 def _has_live_admission(task: dict[str, Any]) -> bool:
     return any(task.get(field) not in (None, "", 0, False, [], {}) for field in LIVE_ADMISSION_FIELDS)
+
+
+def expected_migration_patches(migration: dict[str, Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for patch in migration["required_live_task_patches"]:
+        before = [str(item) for item in patch["before_depends_on"]]
+        appended = [str(item) for item in patch["append_dependencies"]]
+        after = [*before, *appended]
+        result.append(
+            {
+                "task_id": str(patch["task_id"]),
+                "before_depends_on_sha256": canonical_json_sha256(before),
+                "after_depends_on_sha256": canonical_json_sha256(after),
+                "appended_dependencies": appended,
+            }
+        )
+    return result
+
+
+def expected_migration_record(
+    migration: dict[str, Any],
+    catalog: dict[str, Any],
+    catalog_digest: str,
+    applied_at: str,
+) -> dict[str, Any]:
+    return {
+        "id": str(migration["id"]),
+        "program_id": str(catalog["program_id"]),
+        "from_catalog_sha256": str(migration["from_catalog_sha256"]),
+        "to_catalog_sha256": catalog_digest,
+        "applied_at": applied_at,
+        "patches": expected_migration_patches(migration),
+    }
+
+
+def validate_migration_records(
+    records: Any,
+    catalog: dict[str, Any],
+    catalog_digest: str,
+) -> dict[str, dict[str, Any]]:
+    if not isinstance(records, list):
+        raise DispatchError("program_catalog_migrations must be a list")
+    record_by_id: dict[str, dict[str, Any]] = {}
+    for index, record in enumerate(records):
+        if not isinstance(record, dict):
+            raise DispatchError(f"program_catalog_migrations[{index}] must be an object")
+        migration_id = record.get("id")
+        if not isinstance(migration_id, str) or not migration_id.strip():
+            raise DispatchError(f"program_catalog_migrations[{index}] has no valid id")
+        if migration_id in record_by_id:
+            raise DispatchError(f"duplicate program catalog migration record: {migration_id}")
+        record_by_id[migration_id] = record
+
+    known = {str(item["id"]): item for item in catalog.get("catalog_migrations") or []}
+    unknown_ids = sorted(set(record_by_id) - set(known))
+    if unknown_ids:
+        raise DispatchError(
+            "unknown program catalog migration records: " + ", ".join(unknown_ids)
+        )
+    for migration_id, migration in known.items():
+        record = record_by_id.get(migration_id)
+        if record is None:
+            continue
+        applied_at = record.get("applied_at")
+        if not isinstance(applied_at, str) or not applied_at.strip():
+            raise DispatchError(
+                f"{migration_id} migration audit record has invalid applied_at"
+            )
+        expected = expected_migration_record(
+            migration,
+            catalog,
+            catalog_digest,
+            applied_at,
+        )
+        if record != expected:
+            raise DispatchError(
+                f"{migration_id} migration audit record is not canonical and exact"
+            )
+    return record_by_id
 
 
 def apply_catalog_migrations(
@@ -678,13 +1289,7 @@ def apply_catalog_migrations(
     records = state.get("program_catalog_migrations")
     if records is None:
         records = []
-    if not isinstance(records, list):
-        raise DispatchError("program_catalog_migrations must be a list")
-    record_by_id = {
-        str(record.get("id")): record
-        for record in records
-        if isinstance(record, dict) and str(record.get("id") or "").strip()
-    }
+    record_by_id = validate_migration_records(records, catalog, catalog_digest)
 
     migrated: list[str] = []
     logs: list[dict[str, Any]] = []
@@ -706,7 +1311,6 @@ def apply_catalog_migrations(
             )
 
         modes: list[str] = []
-        patch_records: list[dict[str, Any]] = []
         for patch in patches:
             task_id = str(patch["task_id"])
             existing = active_by_id[task_id]
@@ -734,14 +1338,6 @@ def apply_catalog_migrations(
                     f"{migration_id} {task_id} is no longer pristine todo; no write performed"
                 )
             modes.append("before")
-            patch_records.append(
-                {
-                    "task_id": task_id,
-                    "before_depends_on_sha256": canonical_json_sha256(before),
-                    "after_depends_on_sha256": canonical_json_sha256(after),
-                    "appended_dependencies": list(map(str, patch["append_dependencies"])),
-                }
-            )
 
         if len(set(modes)) != 1:
             raise DispatchError(
@@ -750,20 +1346,38 @@ def apply_catalog_migrations(
         if modes[0] == "after":
             record = record_by_id.get(migration_id)
             if record is None:
-                source_digests = {
-                    str(active_by_id[str(patch["task_id"])].get("source_ref", {}).get("catalog_sha256") or "")
-                    for patch in patches
+                catalog_by_id = {
+                    str(task["id"]): task for task in catalog.get("tasks") or []
                 }
-                if source_digests != {catalog_digest}:
-                    raise DispatchError(
-                        f"{migration_id} dependencies changed without an audit record"
+                direct_current_catalog = True
+                for patch in patches:
+                    task_id = str(patch["task_id"])
+                    existing = active_by_id[task_id]
+                    expected_task = catalog_by_id.get(task_id)
+                    source_ref = existing.get("source_ref") or {}
+                    expected_contract = (
+                        task_contract_sha256(expected_task)
+                        if isinstance(expected_task, dict)
+                        else ""
                     )
-            elif (
-                record.get("from_catalog_sha256") != migration["from_catalog_sha256"]
-                or record.get("to_catalog_sha256") != catalog_digest
-            ):
-                raise DispatchError(f"{migration_id} audit record digest mismatch")
+                    direct_current_catalog = direct_current_catalog and bool(
+                        expected_task
+                        and existing.get("auto_created_by") == AUTO_BY
+                        and source_ref.get("program_id") == catalog["program_id"]
+                        and source_ref.get("catalog_sha256") == catalog_digest
+                        and source_ref.get("task_contract_sha256") == expected_contract
+                        and task_contract_sha256(existing) == expected_contract
+                    )
+                if not direct_current_catalog:
+                    raise DispatchError(
+                        f"{migration_id} dependencies changed without an exact audit record"
+                    )
             continue
+
+        if migration_id in record_by_id:
+            raise DispatchError(
+                f"{migration_id} audit record exists while live tasks remain at the preimage"
+            )
 
         for patch in patches:
             task_id = str(patch["task_id"])
@@ -778,18 +1392,17 @@ def apply_catalog_migrations(
                     "agent": os.environ.get("AI_NAME", "Codex"),
                     "type": "dependency_migration",
                     "task_id": task_id,
+                    "migration_id": migration_id,
                     "message": f"Applied {migration_id} exact dependency migration to {task_id}",
                 }
             )
         pending_records.append(
-            {
-                "id": migration_id,
-                "program_id": catalog["program_id"],
-                "from_catalog_sha256": migration["from_catalog_sha256"],
-                "to_catalog_sha256": catalog_digest,
-                "applied_at": timestamp,
-                "patches": patch_records,
-            }
+            expected_migration_record(
+                migration,
+                catalog,
+                catalog_digest,
+                timestamp,
+            )
         )
 
     if not migrated:
@@ -817,16 +1430,39 @@ def materialize(
     archived: list[str] = []
     logs: list[dict[str, Any]] = []
     state_changed = False
+    additive_ids = {str(item) for item in catalog.get("additive_task_ids") or []}
 
     for task in tasks:
         task_id = task["id"]
         archive_state = archived_primary_status(task_id)
         if archive_state is not None:
+            if task_id in additive_ids:
+                archive_payload = read_json(ARCHIVE_ROOT / f"{task_id}.json")
+                archived_task = archive_payload.get("task")
+                if not isinstance(archived_task, dict):
+                    raise DispatchError(
+                        f"archive collision for additive task {task_id} has no task record"
+                    )
+                validate_additive_collision(
+                    archived_task,
+                    task,
+                    catalog,
+                    catalog_digest,
+                    source="archive",
+                )
             archived.append(f"{task_id}:{archive_state}")
             continue
 
         existing = active_by_id.get(task_id)
         if existing is not None:
+            if task_id in additive_ids:
+                validate_additive_collision(
+                    existing,
+                    task,
+                    catalog,
+                    catalog_digest,
+                    source="active",
+                )
             preserved.append(f"{task_id}:{existing.get('status', 'unknown')}")
             continue
 
@@ -899,9 +1535,10 @@ def main() -> int:
     catalog_bytes = selected_catalog_path.read_bytes()
     catalog = read_json(selected_catalog_path)
     tasks = validate_catalog(catalog, selected_catalog_path)
+    catalog_digest = sha256_bytes(catalog_bytes)
     print(
         f"Catalog valid: program={catalog['program_id']} tasks={len(tasks)} "
-        f"sha256={sha256_bytes(catalog_bytes)}"
+        f"sha256={catalog_digest}"
     )
     if args.validate_only:
         return 0
@@ -926,8 +1563,15 @@ def main() -> int:
             raise DispatchError("ai-status.json must contain an object")
 
         validate_live_state(state, catalog, tasks)
+        if not args.dry_run and flush_activity_outbox(
+            state,
+            catalog,
+            catalog_digest,
+        ):
+            print("Recovered pending activity audit outbox.")
+            original_signature = file_signature(STATUS_PATH)
+
         timestamp = iso_now()
-        catalog_digest = sha256_bytes(catalog_bytes)
         migrated, migration_logs, migration_changed = apply_catalog_migrations(
             state,
             catalog,
@@ -954,8 +1598,18 @@ def main() -> int:
             raise DispatchError(
                 "ai-status.json changed concurrently; no write performed, rerun dispatch"
             )
+        enqueue_activity_outbox(
+            state,
+            logs,
+            program_id=str(catalog["program_id"]),
+            catalog_digest=catalog_digest,
+        )
         atomic_write_json(STATUS_PATH, state)
-        append_logs(logs)
+        if os.environ.get("LOOP_PRODUCT_DISPATCH_FAIL_AFTER_STATUS_COMMIT") == "1":
+            raise DispatchError(
+                "injected failure after status commit; activity audit remains in outbox"
+            )
+        flush_activity_outbox(state, catalog, catalog_digest)
         print(f"Updated {STATUS_PATH} atomically.")
         print(
             "Run PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon "

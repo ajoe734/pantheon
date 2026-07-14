@@ -1,10 +1,10 @@
-# LOOP-PROD-CLOSE-002 — Additive final 45-task product closeout
+# LOOP-PROD-CLOSE-002 — Additive final 48-task product closeout
 
 Status: final program gate; starts only after every dependency is done
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `d6d5ac4172b21c17dcb054f0ee7d773bd560db906167320217d9dee7a91ec330`
+Canonical contract SHA-256: `00e60635aee105e82de7bc5fb1eb37acba63fc515d79707bc52e56f8c8a1cfc8`
 The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
 the prose sections below are explanatory renderings.
 
@@ -27,16 +27,19 @@ Source addendum:
 
 ## Product outcome
 
-以 clean target-dev 重跑完整四大 scenarios 與 additive safety matrix；其餘 44 個
-primary tasks、所有 external dependencies、protected attestation、strict auth ops、
-fleet fairness、worker/lease integrity、受保護簽核與 warning-free frontend 全部
-通過後，guarded finalization 才可完成第 45 個任務並宣告 program 完成。
+以 clean target-dev 重跑完整四大 scenarios 與 additive safety matrix；其餘 47 個
+primary tasks、所有 external dependencies、fleet-only delivery provenance、
+coordinated browser auth、protected attestation、strict auth ops、fleet fairness、
+worker/lease integrity、受保護簽核與 warning-free frontend 全部通過後，guarded
+finalization 才可完成第 48 個任務並宣告 program 完成。
 
 ## Dependencies
 
 - `LOOP-PROD-CLOSE-001`
+- `LOOP-PROD-DELIVERY-001`
 - `LOOP-PROD-WORKER-001`
 - `LOOP-PROD-LEASE-001`
+- `LOOP-PROD-BROWSER-AUTH-001`
 - `LOOP-PROD-FLEET-001`
 - `LOOP-PROD-ATTEST-001`
 - `LOOP-PROD-AUTH-OPS-001`
@@ -67,8 +70,11 @@ fleet fairness、worker/lease integrity、受保護簽核與 warning-free fronte
 
 ## Acceptance
 
-- the other 44 primary tasks and every required external dependency are done with no weaker substitute outcome; successful protected guarded finalization transitions the 45th task
+- the other 47 primary tasks and every required external dependency are done with no weaker substitute outcome; successful protected guarded finalization transitions the 48th task
 - baseline Knowledge, Execution, Human Interaction, and Management Repair scenarios pass from a clean target-dev baseline
+- every delivery has canonical fleet admission and exact task/run/worktree/scope/branch/PR/formal distinct-runtime review/merge/deployment provenance, with no planner-authored product artifact or duplicate repair
+- coordinated credential-free browser auth passes for exact FE/BFF identities, complete viewer reads, safe writes false, separate privileged identities, one cutover lease, zero credential leakage, and paired rollback
+- incident replay rejects 3557-like BFF-first activation, 323-like FE-first activation, 3588-like duplicate repair, exact-viewer 403, stale deploy, partial activation, and simultaneous rollback
 - worker exact-CAS, process/payload zero-member, environment lease, scheduler starvation, and corrupt-state matrices pass
 - every accepted assertion verifies the protected trust root and exact FE/BFF/run/job/target/lease identities
 - governed auth provisioning, scoped privileged capability, expiry, rotation, deactivation, and secret-isolation evidence passes with Human/Ops approval
@@ -82,6 +88,8 @@ fleet fairness、worker/lease integrity、受保護簽核與 warning-free fronte
 
 - clean target-dev full scenario rerun
 - all additive adversarial and recovery matrices
+- canonical fleet-only delivery provenance and 3557/3587/3588/323 incident replay
+- coordinated browser route, identity, credential-isolation, cutover, and paired rollback matrix
 - exact FE/BFF/image/lease/attestation identities
 - checksummed evidence inventory and independent review
 - explicit Human/Ops final verdict

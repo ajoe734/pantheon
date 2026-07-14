@@ -18,7 +18,7 @@ Dispatcher tests:
 
 ## Product contract
 
-This packet contains 45 primary execution tasks. It is a build-and-proof DAG,
+This packet contains 48 primary execution tasks. It is a build-and-proof DAG,
 not a checklist that can be closed from component tests. The program remains
 active until the twelve canonical L1 loops plus the Per-Persona OODA composite
 overlay have default runtime ownership, real canonical effects or explicit
@@ -28,6 +28,23 @@ hosted product evidence required by the master plan.
 Only `done` satisfies a dependency. A task that is blocked, cancelled,
 superseded, submitted, merged-but-not-deployed, registry-only, fixture-only, or
 missing its terminal downstream readback does not open the next frontier.
+
+## Planner and fleet authority
+
+The planner/controller for this program may author and archive plans, generate
+and dispatch task packets, monitor state, and issue acceptance or rejection
+verdicts. It must not implement any task's declared product artifacts. Product
+implementation belongs only to a supervisor-admitted fleet worker in a clean
+task worktree bound to the exact task, run, provider, worker slot, declared
+scope, expected branch, remote, and merge target.
+
+Owner and reviewer labels are insufficient by themselves. The execution record
+must prove distinct admitted runtime identities and a formal exact-head review.
+A planner review, self-authored trailer, same-session subagent note, draft PR,
+local diff, or unmerged worktree is not independent review or completion proof.
+Such work is input that the admitted fleet may audit, adopt, rewrite, or
+discard. `LOOP-PROD-DELIVERY-001` makes this boundary fail closed before later
+additive implementation is admitted.
 
 ## Audited baseline
 
@@ -46,6 +63,12 @@ The 2026-07-13 audit established these starting facts:
 - the BFF did not expose an exact git SHA/image identity, hosted auth still
   admitted a broad development bearer posture, and several frontend features
   were not on the exact deployed branch.
+- Pantheon PR `#3557` was implemented by the planner without a canonical task
+  or independent review, activated a BFF-only browser-auth restriction, and
+  left the exact viewer unable to read the hosted console. execute-plans PR
+  `#323` then changed the frontend independently; Pantheon PRs `#3587` and
+  `#3588` duplicated the same revert. These are incident inputs, not accepted
+  delivery evidence.
 - Strategy Workshop still had six intentionally fail-closed 501 operations.
   Honest unavailability is preferable to a fake success, but it is not product
   completion.
@@ -58,13 +81,13 @@ baseline.
 
 | Gate | Fail-closed admission |
 | --- | --- |
-| G0 | 12 canonical loops + OODA overlay, unique IDs, valid one-repo routing, acyclic dependencies, explicit existing-task convergence |
-| G1 | strict scoped dev auth, no browser credential, safe writes false, exact-SHA gate-before-deploy, candidate probe, rollback, FE/BFF build identities |
+| G0 | 12 canonical loops + OODA overlay, unique IDs, valid one-repo routing, acyclic dependencies, explicit existing-task convergence, planner/fleet separation, canonical task/run/worktree/scope provenance, and distinct formal review |
+| G1 | strict scoped dev auth, no browser bearer/secret, complete viewer route matrix, safe writes false, exact-SHA paired FE/BFF gate-before-deploy, one cutover lease, candidate probe, and two-sided rollback |
 | G2 | default deployment owner, durable trigger, real canonical effect, terminal target readback |
 | G3 | duplicate/lease/timeout/DLQ/replay and worker/BFF/DB/full-stack recovery; controller truth, not registry metadata |
 | G4 | Knowledge, Execution, Human Interaction, and Management Repair target-dev paths |
 | G5 | authenticated desktop/mobile, strict performance, accessibility, SSE recovery, degraded/error, RBAC/tenant/MFA/two-person matrix |
-| G6 | protected signed attestations with checksums only as in-envelope content digests, exact PR/merge/deploy identities, independent review, protected Human/Ops verdict, evidence-derived maturity, zero blocking risk |
+| G6 | protected signed attestations with checksums only as in-envelope content digests, canonical fleet delivery provenance, exact PR/merge/deploy identities, distinct-runtime formal review, protected Human/Ops verdict, evidence-derived maturity, zero blocking risk |
 
 ## Primary DAG
 
@@ -75,7 +98,7 @@ baseline.
 | [LOOP-PROD-000](LOOP-PROD-000.md) | Codex / Codex2 | `pantheon` | none | Canonical loop inventory and OODA overlay truth |
 | [LOOP-PROD-001](LOOP-PROD-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-000` | Durable controller truth substrate |
 | [LOOP-PROD-002](LOOP-PROD-002.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-000`<br>`LOOP-PROD-001` | Product evidence schema and anti-false-close gate |
-| [LOOP-PROD-AUTH-001](LOOP-PROD-AUTH-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-002` | Strict dev auth cutover and exact BFF build identity |
+| [LOOP-PROD-AUTH-001](LOOP-PROD-AUTH-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-002` | Strict dev auth cutover and exact BFF build identity; not browser activation authority |
 | [LOOP-PROD-FE-001](LOOP-PROD-FE-001.md) | Codex / Codex2 | `execute-plans` | `LOOP-PROD-002`<br>`LOOP-PROD-AUTH-001` | Gate-before-deploy safe execute-plans release |
 | [LOOP-PROD-REC-001](LOOP-PROD-REC-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-001`<br>`LOOP-PROD-002` | Full-stack loop recovery and fault-injection harness |
 
@@ -107,7 +130,7 @@ baseline.
 | [LOOP-PROD-PER-001](LOOP-PROD-PER-001.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-DEP-001`<br>`LOOP-PROD-CAP-001`<br>`LOOP-PROD-OODA-001`<br>`PPL-ALLOC-010`<br>`PPL-ALLOC-011` | Persona provisioning through binding and first-evaluation readback |
 | [LOOP-PROD-TJ-001](LOOP-PROD-TJ-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-DEP-001`<br>`LOOP-PROD-CAP-001`<br>`LOOP-PROD-TEL-002`<br>`LOOP-PROD-EVO-001`<br>`LOOP-PROD-AUTH-001`<br>`TJ-E2E-014`<br>`LOOP-PROD-PER-001` | Canonical Trade Journey governed action backend |
 | [LOOP-PROD-TJ-002](LOOP-PROD-TJ-002.md) | Codex / Codex2 | `execute-plans` | `LOOP-PROD-TJ-001`<br>`LOOP-PROD-FE-001`<br>`MGMT-SSE-001`<br>`OPS-EP-DEV-MAIN-RECONCILE-001`<br>`LOOP-PROD-AGORA-003` | Hosted Trade Journey action controls |
-| [LOOP-PROD-MAI-001](LOOP-PROD-MAI-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-AUTH-001`<br>`LOOP-PROD-001`<br>`LOOP-PROD-002`<br>`LOOP-PROD-REC-001`<br>`LOOP-PROD-TJ-001`<br>`LOOP-PROD-WORKER-001` | Hosted Management AI repair and dev-bridge backend proof |
+| [LOOP-PROD-MAI-001](LOOP-PROD-MAI-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-AUTH-001`<br>`LOOP-PROD-001`<br>`LOOP-PROD-002`<br>`LOOP-PROD-REC-001`<br>`LOOP-PROD-TJ-001`<br>`LOOP-PROD-WORKER-001`<br>`LOOP-PROD-BROWSER-AUTH-001` | Hosted Management AI repair and dev-bridge backend proof |
 | [LOOP-PROD-MAI-002](LOOP-PROD-MAI-002.md) | Codex / Codex2 | `execute-plans` | `LOOP-PROD-MAI-001`<br>`LOOP-PROD-FE-001`<br>`MGMT-SSE-001`<br>`OPS-EP-DEV-MAIN-RECONCILE-001`<br>`LOOP-PROD-TJ-002` | Hosted Management AI repair product UI |
 | [LOOP-PROD-VERIFY-KNOW-001](LOOP-PROD-VERIFY-KNOW-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-SRC-001`<br>`LOOP-PROD-DIST-001`<br>`LOOP-PROD-ALPHA-001`<br>`LOOP-PROD-TEACH-001`<br>`LOOP-PROD-AGORA-001`<br>`LOOP-PROD-AGORA-002`<br>`LOOP-PROD-AGORA-003`<br>`LOOP-PROD-CONS-001`<br>`LOOP-PROD-IMIT-001`<br>`LOOP-PROD-BFF-001` | Target-dev Knowledge spine product verifier |
 | [LOOP-PROD-VERIFY-EXEC-001](LOOP-PROD-VERIFY-EXEC-001.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-PER-001`<br>`LOOP-PROD-DEP-001`<br>`LOOP-PROD-CAP-001`<br>`LOOP-PROD-TEL-001`<br>`LOOP-PROD-TEL-002`<br>`LOOP-PROD-EVO-001`<br>`LOOP-PROD-BFF-001`<br>`PPL-ALLOC-012` | Target-dev Execution spine product verifier |
@@ -132,15 +155,23 @@ baseline.
 `LOOP-PROD-CLOSE-001` is retained because the baseline record may already be
 live. It is a checkpoint, not the final program verdict after this addendum.
 
-### Addendum Wave 1 — Worker, lease, fairness, attestation, and auth operations
+### Addendum Wave 0 — Fleet delivery authority and authorized auth bootstrap
 
 | Task | Owner / reviewer | Repo | True dependencies | Outcome |
 | --- | --- | --- | --- | --- |
-| [LOOP-PROD-WORKER-001](LOOP-PROD-WORKER-001.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-001`<br>`LOOP-PROD-002` | Exact-CAS worker outcome and forced termination integrity |
+| [LOOP-PROD-DELIVERY-001](LOOP-PROD-DELIVERY-001.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-002` | Fleet-only delivery provenance and independent review admission |
+| [LOOP-PROD-AUTH-BOOT-001](LOOP-PROD-AUTH-BOOT-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-002`<br>`LOOP-PROD-DELIVERY-001` | Authorized dev auth credential bootstrap |
+
+### Addendum Wave 1 — Worker, lease, browser auth, fairness, attestation, and auth operations
+
+| Task | Owner / reviewer | Repo | True dependencies | Outcome |
+| --- | --- | --- | --- | --- |
+| [LOOP-PROD-WORKER-001](LOOP-PROD-WORKER-001.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-001`<br>`LOOP-PROD-002`<br>`LOOP-PROD-DELIVERY-001` | Exact-CAS worker outcome and forced termination integrity |
 | [LOOP-PROD-LEASE-001](LOOP-PROD-LEASE-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-AUTH-001`<br>`LOOP-PROD-WORKER-001` | Protected shared-dev mutation lease and payload isolation |
 | [LOOP-PROD-FLEET-001](LOOP-PROD-FLEET-001.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-WORKER-001` | Fair, quota-aware, starvation-bounded fleet admission |
 | [LOOP-PROD-ATTEST-001](LOOP-PROD-ATTEST-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-002`<br>`LOOP-PROD-WORKER-001`<br>`LOOP-PROD-LEASE-001` | Protected product attestation trust root |
 | [LOOP-PROD-AUTH-OPS-001](LOOP-PROD-AUTH-OPS-001.md) | Codex / Codex2 | `pantheon` | `LOOP-PROD-AUTH-001`<br>`LOOP-PROD-LEASE-001`<br>`LOOP-PROD-ATTEST-001` | Governed dev credential and privileged-capability lifecycle |
+| [LOOP-PROD-BROWSER-AUTH-001](LOOP-PROD-BROWSER-AUTH-001.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-AUTH-BOOT-001`<br>`LOOP-PROD-AUTH-001`<br>`LOOP-PROD-FE-001`<br>`LOOP-PROD-DELIVERY-001`<br>`LOOP-PROD-LEASE-001`<br>`LOOP-PROD-AUTH-OPS-001` | Coordinated credential-free browser auth cutover and paired rollback |
 
 ### Addendum Wave 3 — Final execute-plans evidence and build qualification
 
@@ -159,7 +190,7 @@ live. It is a checkpoint, not the final program verdict after this addendum.
 
 | Task | Owner / reviewer | Repo | True dependencies | Outcome |
 | --- | --- | --- | --- | --- |
-| [LOOP-PROD-CLOSE-002](LOOP-PROD-CLOSE-002.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-CLOSE-001`<br>`LOOP-PROD-WORKER-001`<br>`LOOP-PROD-LEASE-001`<br>`LOOP-PROD-FLEET-001`<br>`LOOP-PROD-ATTEST-001`<br>`LOOP-PROD-AUTH-OPS-001`<br>`LOOP-PROD-FE-EVID-001`<br>`LOOP-PROD-FE-BUILD-001`<br>`LOOP-PROD-SIGNOFF-001` | Sole final 45-task product verdict |
+| [LOOP-PROD-CLOSE-002](LOOP-PROD-CLOSE-002.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-CLOSE-001`<br>`LOOP-PROD-DELIVERY-001`<br>`LOOP-PROD-WORKER-001`<br>`LOOP-PROD-LEASE-001`<br>`LOOP-PROD-BROWSER-AUTH-001`<br>`LOOP-PROD-FLEET-001`<br>`LOOP-PROD-ATTEST-001`<br>`LOOP-PROD-AUTH-OPS-001`<br>`LOOP-PROD-FE-EVID-001`<br>`LOOP-PROD-FE-BUILD-001`<br>`LOOP-PROD-SIGNOFF-001` | Sole final 48-task product verdict |
 
 Wave 1 deliberately carries additional delivery dependencies between tasks
 that share the root `docker-compose.yml` integration surface. Those edges
@@ -204,6 +235,14 @@ In particular:
 - `AG-GAP-005` preserved the six unavailable operations honestly; the new
   Agora tasks implement them. `AG-GAP-013/014` evidence is consumed rather
   than re-dispatched.
+- Pantheon PR `#3554`, `#3558`, and `#3572`, execute-plans PR `#310` and
+  `#311`, and any associated local worktrees are non-authoritative draft
+  inputs. Their admitted fleet owners must audit exact heads and may adopt,
+  rewrite, or discard them.
+- Pantheon PR `#3557`, reverts `#3587/#3588`, and execute-plans PR `#323` are
+  incident fixtures. A merge, revert, or deployment from that sequence is not
+  proof that browser authorization, delivery provenance, or paired rollout is
+  complete.
 
 ## Repository routing
 
@@ -224,15 +263,27 @@ The dispatcher must be merged before live use. It:
 
 - validates every required field, task document, owner/reviewer, loop metadata,
   one-repo routing, dependency existence, and DAG acyclicity;
+- requires the exact twelve canonical L1 loop IDs plus the OODA composite
+  overlay, exact inventory/final-authority union, and at least one non-close
+  product-level task for every loop;
+- validates the immutable planner/fleet/reviewer authority contract and binds
+  its digest into every newly materialized task;
 - rejects a frozen planning wave;
-- serializes dispatcher instances with an exclusive lock;
+- serializes every canonical status writer with the stable task-state lock and
+  holds runtime admission serialization before the task-state transaction;
+- fails closed when any migration/additive target is queued, running,
+  approval-suspended, execution-admitted, or backed by unavailable/malformed
+  live runtime state;
 - checks both active and archived task IDs;
 - never resurrects an archived terminal ID;
-- preserves an existing active task record in full;
+- preserves baseline active records in full and accepts additive collisions
+  only when program, catalog, immutable contract, provenance, and completion
+  role are exact;
 - never rewrites `agents[].current_task_ids`, status, or next action; the live
   supervisor alone owns capacity and frontier activation;
 - performs an atomic fsync + replace of `ai-status.json`;
-- appends assignment events only for newly inserted tasks;
+- commits assignment/migration audit events through an idempotent transactional
+  outbox so a crash cannot permanently lose or duplicate activity records;
 - supports catalog validation and mutation-free dry run.
 
 Validate locally:
@@ -277,5 +328,5 @@ platform-protected keyed identity over the bound manifest and its digests.
 
 The baseline `LOOP-PROD-CLOSE-001` checkpoint cannot declare program
 completion. The final `LOOP-PROD-CLOSE-002` task requires an independent
-Human/Ops verdict and zero unresolved blocking product risk across all 45
+Human/Ops verdict and zero unresolved blocking product risk across all 48
 tasks.

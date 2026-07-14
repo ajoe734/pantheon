@@ -4,7 +4,7 @@ Status: ready for fleet dispatch after the additive packet is merged
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `6d92e9ebe8b808450a4a6a863b77302814983817c53706c3853b853a52b01c42`
+Canonical contract SHA-256: `cf4effcf2861731f6b35db1a39cb110a98621cfcd732b5dd7baa67c771cfae34`
 The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
 the prose sections below are explanatory renderings.
 
@@ -37,6 +37,7 @@ guard and prove restart-safe RPO=0 behavior.
 
 - `LOOP-PROD-001`
 - `LOOP-PROD-002`
+- `LOOP-PROD-DELIVERY-001`
 
 Only `done` satisfies a dependency.
 
@@ -61,6 +62,7 @@ Only `done` satisfies a dependency.
 - `scripts/planning_state.py`
 - `scripts/test_ai_status.py`
 - `scripts/test_planning_state.py`
+- `scripts/test_supervisor.py`
 - `docs/deployment/evidence/loop-product-level/LOOP-PROD-WORKER-001`
 
 ## Acceptance
@@ -69,10 +71,15 @@ Only `done` satisfies a dependency.
 - task-state and runtime-state whole-file RMW paths use compatible shared locks and cannot stale-overwrite a newer guard, assignment, worker, or failure streak
 - a started same-run recovery is re-admitted after restart instead of being skipped by equality shortcuts
 - supersede/reassign/done after launch terminates the complete process group, escalates after grace, waits for zero members, and deletes file-inbox payloads before terminal publication
+- temporary approval permission cleanup is durable and two-phase: the attempt becomes inactive first, cleanup-pending survives restart, and no terminal/retired marker precedes authoritative permission removal
+- approval resume captures the admitted identity before spawn, persists the process-group binding immediately after spawn, and proves that exact group dead after final CAS failure before retirement
+- terminal workers remain recoverable cleanup records until payload, permission, queue reservation, process group, and runtime admission cleanup are confirmed exactly once
+- watchdog/safe-mode recovery performs fresh locked RMW and cannot overwrite newer workers, queue, ownership, reviewer, failure, or quota truth
 - auth/provider pause and retry mutations occur only after final admission; stale attempts cannot leave quota or blocked-until state
 - malformed retry snapshots and corrupt failure timestamps are quarantined with an observable reason and cannot crash or permanently bias the supervisor cycle
 - deterministic interleavings, SIGTERM-ignoring children, restart, duplicate, and corrupt-state tests pass
 - exact PR, merge SHA, checks, reviewer verdict, and checksummed evidence are archived
+- PR `#3554` and its local worktree are non-authoritative inputs; the admitted fleet audits the exact head and may adopt, rewrite, or discard it
 
 ## Required proof
 
@@ -96,6 +103,8 @@ Reviewer approval must set `review_file` under:
 
 ## Dispatch and closeout rules
 
+- planner does not implement these artifacts; one admitted fleet runtime owns implementation and a different admitted runtime owns formal review
+- PR `#3554` and local worker-guard diffs are input only, never acceptance or independent-review proof
 - use a clean task worktree and never commit generated runtime state
 - preserve unrelated live supervisor state and restore test-generated tracked artifacts
 - do not close from unit tests alone; exercise real subprocess termination and restart

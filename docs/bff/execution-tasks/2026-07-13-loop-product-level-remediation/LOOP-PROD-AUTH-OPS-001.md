@@ -4,7 +4,7 @@ Status: requires ordinary fleet work plus authorized Human/Ops provisioning
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `98a5b0d0d8428f35b63ee5db0484cd7dccddeb0584cc53c284f8c2f749b91dfa`
+Canonical contract SHA-256: `cf098d11410d13f68d512a25373a01f623fa8a6dc50a33dbb03146c35d1cfb05`
 The catalog acceptance, proof, and dispatch arrays are machine-authoritative;
 the prose sections below are explanatory renderings.
 
@@ -53,12 +53,17 @@ Source addendum:
 
 - an authorized operator provisions the three environment secrets outside source and records only redacted identifiers and timestamps
 - direct and workflow dev deploy fail before cloud access when any credential is blank, partial, expired, or unavailable
+- local symmetric verifier keys are distinct from external JWKS roots; algorithm/issuer routing is one-way and cannot fall back from external/asymmetric trust to the local verifier
+- protected source repository, branch, commit, workflow, environment, and actor authorization occurs before any secret, cloud identity, or target access is requested
+- normal deployment preserves and reads back the complete running trust contract: issuer, audience, algorithm allowlist, key/JWKS version, tenant, TTL, cookie posture, environment, and revocation policy
+- application secrets use mode-0600 protected files or equivalent child-scoped channels, never broad environment exports, argv, shell traces, logs, artifacts, or unintended child processes
 - staging/control/exec/all and public/browser lanes receive no dev signing, client, database, or privileged token material
 - dev-login issues short-lived role/tenant identities with explicit TTL, audience, issuer, and replay protection
 - privileged Management AI qualification uses an independently authorized identity carrying only required `assistant.kernel.debug` or `assistant.kernel.repair` capability
 - token validation happens before any container, VM, worktree, control-mode, or file mutation; cleanup deactivates control mode on success and failure
 - rotation drill proves old/new overlap, cutover, expiry/revocation, restart, and rollback without evidence/log/browser leakage
 - Human/Ops approves capability policy and residual risks; missing approval keeps the task blocked
+- PR `#3572` and earlier strict-auth worktrees are non-authoritative inputs; the admitted fleet audits the exact head and may adopt, rewrite, or discard them
 
 ## Required proof
 
@@ -82,6 +87,7 @@ Reviewer approval must set `review_file` under:
 
 ## Dispatch and closeout rules
 
+- planner does not implement these artifacts; PR `#3572` is input only and requires a fresh admitted fleet owner plus a distinct formal exact-head reviewer
 - fleet work may implement validation and runbooks but cannot invent or rotate external secrets without authorization
 - evidence must redact values and retain only non-sensitive fingerprints
 - no temporary stub/all-role bearer is an acceptable unblock
