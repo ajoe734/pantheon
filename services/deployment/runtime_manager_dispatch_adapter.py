@@ -138,7 +138,7 @@ def _build_deploy_request(
 
     Optional fields in deploy_context:
       plan_status (default "approved"), runtime_id, idempotency_key,
-      metadata, rollback_parent, rollback_action_type
+      metadata, promotion_gate, rollback_parent, rollback_action_type
     """
     return {
         "plan_id": saga["plan_id"],
@@ -157,6 +157,7 @@ def _build_deploy_request(
         "rollback_parent": deploy_context.get("rollback_parent"),
         "rollback_action_type": deploy_context.get("rollback_action_type"),
         "metadata": deploy_context.get("metadata") or {},
+        "promotion_gate": deploy_context.get("promotion_gate") or {},
     }
 
 
@@ -165,6 +166,7 @@ def validate_authoritative_readback(
     saga: Dict[str, Any],
     binding: Dict[str, Any],
     expected_binding_id: str,
+    expected_persona_capital_binding_id: str | None = None,
 ) -> Optional[str]:
     """Return a fail-closed mismatch description for a RuntimeBinding readback.
 
@@ -180,8 +182,11 @@ def validate_authoritative_readback(
         "artifact_id": saga.get("artifact_id"),
         "artifact_version": saga.get("artifact_version"),
         "deployment_mode": saga.get("target_stage"),
+        "execution_mode": saga.get("target_stage"),
         "status": _ACTIVE_BINDING_STATUS,
     }
+    if expected_persona_capital_binding_id:
+        expected["persona_capital_binding_id"] = expected_persona_capital_binding_id
     mismatches = [
         f"{field} expected {expected_value!r}, got {binding.get(field)!r}"
         for field, expected_value in expected.items()
@@ -210,7 +215,8 @@ def dispatch_to_runtime_manager(
         approval workflow.  Required keys: persona_capital_binding_id,
         persona_capital_binding_status, allowed_deployment_scope,
         loader_checks_passed.  Optional: plan_status, runtime_id,
-        idempotency_key, metadata, rollback_parent, rollback_action_type.
+        idempotency_key, metadata, promotion_gate, rollback_parent,
+        rollback_action_type.
     client:
         RuntimeManagerClient instance.  If None, one is constructed using
         environment defaults (PANTHEON_RUNTIME_MANAGER_URL).
@@ -262,6 +268,9 @@ def dispatch_to_runtime_manager(
             saga=saga,
             binding=binding,
             expected_binding_id=existing_binding_id,
+            expected_persona_capital_binding_id=deploy_context.get(
+                "persona_capital_binding_id"
+            ),
         )
         if mismatch:
             return DispatchResult(
@@ -342,6 +351,9 @@ def dispatch_to_runtime_manager(
         saga=saga,
         binding=authoritative,
         expected_binding_id=binding_id,
+        expected_persona_capital_binding_id=deploy_context.get(
+            "persona_capital_binding_id"
+        ),
     )
     if mismatch:
         return DispatchResult(

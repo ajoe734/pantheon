@@ -1009,6 +1009,25 @@ class KillSwitchServiceTests(unittest.TestCase):
         self.assertEqual(ack["runtime_status_after"], "paused")
         self.assertEqual(ack["telemetry_event_type"], "kill_switch_action")
 
+    def test_execute_kill_switch_acknowledges_already_paused_binding(self):
+        binding = self._deploy_active_binding()
+        self.service.transition(binding.binding_id, "pending_pause")
+        self.service.transition(binding.binding_id, "paused")
+
+        result = self.service.execute_kill_switch({
+            "reason": HardTriggerReason.SEVERITY_1_INCIDENT.value,
+            "capital_pool_id": "pool-ks-svc",
+            "actor_id": "deployment-outbox-consumer",
+            "binding_id": binding.binding_id,
+            "action_override": "pause",
+            "idempotency_key": "compensation-paused-binding-001",
+        })
+
+        self.assertEqual(result["binding_action"]["binding"]["status"], "paused")
+        self.assertEqual(result["safe_mode_after"], SafeModeState.PAUSED.value)
+        self.assertEqual(result["telemetry_ack"]["ack_status"], "acknowledged")
+        self.assertTrue(result["telemetry_ack"]["ack_received"])
+
     def test_execute_kill_switch_populates_audit_trail(self):
         self._deploy_active_binding()
         self.service.execute_kill_switch({

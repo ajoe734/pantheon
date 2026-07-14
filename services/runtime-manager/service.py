@@ -1741,9 +1741,19 @@ class RuntimeManagerService:
                     self._store.transition_status(
                         binding_id, RuntimeBindingStatus.PENDING_PAUSE.value
                     )
-                updated = self._store.transition_status(
-                    binding_id, RuntimeBindingStatus.PAUSED.value
-                )
+                    b = self._store.require(binding_id)
+                if b.status == RuntimeBindingStatus.PENDING_PAUSE.value:
+                    updated = self._store.transition_status(
+                        binding_id, RuntimeBindingStatus.PAUSED.value
+                    )
+                elif b.status == RuntimeBindingStatus.PAUSED.value:
+                    # A prior kill may have won the race before this compensation
+                    # event arrived.  Treat the authoritative paused state as an
+                    # idempotent success so telemetry acknowledgement remains
+                    # fail-closed and truthful instead of reporting no side effect.
+                    updated = b
+                else:
+                    return None
                 return {"action": action_type, "binding": updated.to_dict()}
 
             elif action_type == KillSwitchActionType.REPLACE.value:

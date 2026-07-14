@@ -491,6 +491,45 @@ Supported filters:
 
 ---
 
+### Default outbox dispatcher convergence contract
+
+The supervised `deployment-outbox-consumer` owns the apply side effect for
+`runtime.binding.requested`, `runtime.load.requested`, and
+`deployment.compensation.requested`.
+
+Forward dispatch invariants:
+
+- the fetched DeploymentPlan must explicitly attest literal
+  `metadata.loader_checks_passed = true`; missing, false, string-valued, or
+  contradictory values are terminal and no RuntimeBinding mutation is sent
+- Runtime Manager POST bodies are submission receipts only
+- success requires a separate GET of the exact active RuntimeBinding, including
+  plan, pool, artifact/version, deployment/execution mode, and governance
+  binding identity
+- paper success additionally requires a completed fleet reconciliation cycle
+  and exactly one matching running worker with a live process id
+- the worker then requires a joined DEP-003 projection whose plan, saga, and
+  runtime sources are canonical and terminal before it writes the inbox receipt
+
+Compensation invariants:
+
+- the applied inbox sequence is read before any side effect; an earlier DLQ
+  must be replayed first and the blocked event does not consume retry budget
+- `abort_plan` proves no RuntimeBinding exists, then writes only
+  `DeploymentPlan.status = aborted`
+- `mark_binding_failed_inactive` writes only the exact RuntimeBinding status and
+  requires authoritative `failed` readback
+- `request_rollback` uses only `DeploymentPlan.rollback`, an exact fallback
+  loader attestation, and prior fallback binding/plan lineage; response-loss
+  recovery finds the unique rollback child before any new POST
+- `enter_safe_mode_and_raise_incident` requires acknowledged kill-switch
+  follow-through, paused safe-mode/binding GET readback, and an exact stable
+  IncidentCase
+- finalize happens before consume; replay of a terminal saga validates the
+  projection and does not repeat runtime mutation
+
+---
+
 ### `GET /health`
 
 Liveness probe.

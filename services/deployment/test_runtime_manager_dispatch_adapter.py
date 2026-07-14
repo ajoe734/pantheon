@@ -77,6 +77,8 @@ def _make_binding(binding_id: str = "rb-abc123") -> Dict[str, Any]:
         "artifact_id": "artifact-001",
         "artifact_version": "v1.0.0",
         "deployment_mode": "paper",
+        "execution_mode": "paper",
+        "persona_capital_binding_id": "pcb-001",
         "status": "active",
     }
 
@@ -128,7 +130,11 @@ class TestNewDispatch:
     def test_deploy_request_uses_saga_and_context_fields(self):
         client = _make_client(deploy_return=_make_binding())
         saga = _make_saga()
-        ctx = _make_deploy_context(runtime_id="rt-custom-001", idempotency_key="idem-key")
+        ctx = _make_deploy_context(
+            runtime_id="rt-custom-001",
+            idempotency_key="idem-key",
+            promotion_gate={"promotion_gate_decision_id": "gate-001"},
+        )
         dispatch_to_runtime_manager(saga=saga, deploy_context=ctx, client=client)
 
         call_args = client.deploy.call_args[0][0]
@@ -145,6 +151,9 @@ class TestNewDispatch:
         assert call_args["plan_status"] == "approved"
         assert call_args["runtime_id"] == "rt-custom-001"
         assert call_args["idempotency_key"] == "idem-key"
+        assert call_args["promotion_gate"] == {
+            "promotion_gate_decision_id": "gate-001"
+        }
 
     def test_new_dispatch_requires_authoritative_get_readback(self):
         client = _make_client(deploy_return=_make_binding())
@@ -197,6 +206,30 @@ class TestNewDispatch:
         assert result.outcome == DispatchOutcome.TERMINAL_ERROR
         assert result.error_code == "BINDING_READBACK_MISMATCH"
         assert "artifact_version" in (result.error_message or "")
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("execution_mode", "live"),
+            ("persona_capital_binding_id", "pcb-tampered"),
+        ],
+    )
+    def test_governance_or_execution_identity_mismatch_is_terminal(
+        self, field, value
+    ):
+        readback = _make_binding()
+        readback[field] = value
+        client = _make_client(deploy_return=_make_binding(), get_return=readback)
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(),
+            deploy_context=_make_deploy_context(),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.TERMINAL_ERROR
+        assert result.error_code == "BINDING_READBACK_MISMATCH"
+        assert field in (result.error_message or "")
 
 
 # ---------------------------------------------------------------------------

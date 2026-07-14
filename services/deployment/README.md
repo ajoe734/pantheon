@@ -32,6 +32,7 @@ The service can now:
 |---|---|
 | `models.py` | Pydantic request / response models for plans, stage planner checks, sagas, outbox, inbox |
 | `service.py` | FastAPI app plus file-backed planner / orchestration service |
+| `outbox_consumer_worker.py` | Default dispatcher, authoritative runtime/controller readback, retry/DLQ/replay, and compensation execution |
 | `test_service.py` | In-process API coverage via `TestClient` |
 | `smoke_test.py` | HTTP smoke test against a live server |
 | `contract.md` | Canonical deployable API contract |
@@ -68,6 +69,29 @@ DEP-003 projection lookups read RuntimeBinding rows from
 `PANTHEON_RUNTIME_BINDING_STORE_PATH`, or
 `${PANTHEON_RUNTIME_DATA_DIR}/runtime_bindings.json`, or
 `/tmp/pantheon/runtime-manager/bindings.json`.
+
+## Default dispatcher safety
+
+`deployment-outbox-consumer` is part of the default Compose service set.  It
+does not treat a POST response as successful execution.  It reads the exact
+`RuntimeBinding`, paper fleet controller state where applicable, and the joined
+DEP-003 terminal projection before consuming the corresponding outbox event.
+
+Forward dispatch accepts loader readiness only when the canonical fetched plan
+contains literal `metadata.loader_checks_passed: true` (or the compatible
+top-level literal field with no contradiction).  Missing, false, string-valued,
+or conflicting assertions fail closed before a runtime-manager client is
+constructed.  This is an upstream attestation boundary; it is not a substitute
+for the future durable EX-001 LoaderReport.
+
+Compensation events execute the DEP-002 owner-scoped command before their inbox
+receipt is written.  Abort mutates only `DeploymentPlan.status`; binding
+failure, rollback, and safe-mode commands mutate only their canonical runtime
+or incident owners.  Rollback additionally requires an exact
+`metadata.rollback_loader_attestation` (`artifact_id`, `artifact_version`,
+literal `passed: true`, and non-empty `proof_ref`) and prior binding/plan
+lineage.  Missing proof or a kill-wins state routes to paused safe mode plus an
+exact IncidentCase instead of a blind replacement.
 
 ## Tests
 
