@@ -117,10 +117,30 @@ rollback binding so the final dev state is the promoted artifact.
 
 ## Validation and evidence
 
-Implementation and integration command results, live dev identifiers, and the
-rollback/re-promote readbacks are added here during task closeout. Until those
-records are present, this document describes the required procedure but does
-not claim live acceptance.
+Implementation validation on the task branch after merging current `dev`:
+
+| Validation | Result |
+|---|---|
+| `python3 -m pytest services/deployment -q` | 103 passed |
+| `python3 -m pytest services/registry -q` | 139 passed |
+| `python3 -m pytest services/runtime-manager/test_runtime_manager.py services/execution/runtime-manager/test_paper_fleet_reconciler.py -q` | 102 passed |
+| `python3 -m pytest services/control-plane/governance/test_deployment_plan.py -q` | 33 passed, 3 subtests passed |
+| focused Registry/Deployment cross-set | 105 passed |
+| Python compile and `git diff --check` | passed |
+
+The focused pipeline proof contains six cases:
+
+1. real Registry + Deployment + Runtime Manager API promote, rollback, and
+   re-promote with fleet worker environment construction;
+2. wrong runtime identity fails before runtime replacement;
+3. an approved registry entry without the canonical decision link fails;
+4. a partial post-cutover saga never returns a synthetic success receipt;
+5. a lost rollback projection response replays from authoritative state; and
+6. a receipt-tampered rollback target is rejected.
+
+The live dev identifiers, `/readyz`, process environment, rollback, and final
+re-promote readbacks will be appended after the implementation merge SHA is
+deployed. Until then, this section claims local service-API acceptance only.
 
 ## Residual risks
 
