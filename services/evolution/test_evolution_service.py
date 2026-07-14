@@ -23,6 +23,7 @@ import sys
 import tempfile
 import uuid
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,12 @@ if str(_CP_GOV) not in sys.path:
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from services.foundation import (  # noqa: E402
+    EnvironmentName,
+    EnvironmentScope,
+    EventEnvelope,
+    TraceContext,
+)
 from services.evolution import main as evo_main  # noqa: E402
 from services.evolution import scheduler_worker  # noqa: E402
 from services.evolution.main import app  # noqa: E402
@@ -83,6 +90,7 @@ def reset_store():
     evo_main.store._decisions.clear()
     if evo_main.store._storage_path and evo_main.store._storage_path.exists():
         evo_main.store._storage_path.unlink()
+    evo_main.proposal_inbox.clear()
     evo_main.incident_store._incidents.clear()
     evo_main.incident_store._postmortems.clear()
     if evo_main.incident_store._path and evo_main.incident_store._path.exists():
@@ -92,6 +100,7 @@ def reset_store():
     evo_main.store._decisions.clear()
     if evo_main.store._storage_path and evo_main.store._storage_path.exists():
         evo_main.store._storage_path.unlink()
+    evo_main.proposal_inbox.clear()
     evo_main.incident_store._incidents.clear()
     evo_main.incident_store._postmortems.clear()
     if evo_main.incident_store._path and evo_main.incident_store._path.exists():
@@ -163,6 +172,67 @@ HIGH_RISK_BODY = dict(
         }
     ],
 )
+
+
+def postmortem_delivery_request(
+    *,
+    proposal: dict[str, Any] | None = None,
+    idempotency_key: str | None = None,
+    payload_extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    proposal_payload = dict(
+        proposal
+        or {
+            "decision_id": uid(),
+            "target_type": "candidate_artifact",
+            "target_id": "artifact-published-postmortem",
+            "target_version": "v7",
+            "action_type": "flag_for_review",
+            "rationale": "Published postmortem requires a governed follow-up review.",
+            "created_by_id": "postmortem-bridge",
+            "linked_incident_id": "inc-delivery-001",
+            "linked_postmortem_id": "pm-delivery-001",
+            "metadata": {"source": "postmortem.published"},
+        }
+    )
+    postmortem_id = str(proposal_payload["linked_postmortem_id"])
+    incident_id = str(proposal_payload["linked_incident_id"])
+    event_payload: dict[str, Any] = {
+        "postmortem_id": postmortem_id,
+        "incident_id": incident_id,
+        "decision_id": proposal_payload["decision_id"],
+        "proposal": proposal_payload,
+        "postmortem": {
+            "postmortem_id": postmortem_id,
+            "incident_id": incident_id,
+            "status": "published",
+            "published_at": "2026-07-14T12:00:00Z",
+        },
+        "incident": {
+            "incident_id": incident_id,
+            "severity": "medium",
+        },
+    }
+    if payload_extra:
+        event_payload.update(payload_extra)
+    trace = TraceContext.new(
+        environment=EnvironmentScope(name=EnvironmentName.SANDBOX),
+        source_system="postmortem-svc",
+        idempotency_key=idempotency_key,
+    )
+    event = EventEnvelope.new(
+        event_type="postmortem.published",
+        aggregate_type="postmortem",
+        aggregate_id=postmortem_id,
+        sequence_no=1,
+        trace=trace,
+        payload=event_payload,
+        producer_service="postmortem-svc",
+        idempotency_key=idempotency_key,
+    )
+    event_dict = event.to_dict()
+    event_dict["payload"]["postmortem"]["published_event_id"] = event.event_id
+    return {**proposal_payload, "delivery_event": event_dict}
 
 
 def propose(extra: dict | None = None) -> dict:
@@ -950,6 +1020,260 @@ def test_propose_with_unknown_postmortem_returns_422():
 
 
 # ---------------------------------------------------------------------------
+# EVOCHAIN-003: durable postmortem.published delivery to generic proposals
+# ---------------------------------------------------------------------------
+
+def test_generic_proposal_accepts_self_contained_postmortem_delivery():
+    body = postmortem_delivery_request()
+    postmortem_id = body["linked_postmortem_id"]
+    assert evo_main.incident_store.get_postmortem(postmortem_id) is None
+
+    response = client.post("/api/evolution/proposals", json=body)
+
+    assert response.status_code == 201, response.text
+    decision = response.json()
+    assert decision["decision_state"] == "proposed"
+    assert decision["linked_postmortem_id"] == postmortem_id
+    assert decision["linked_incident_id"] == body["linked_incident_id"]
+    inbox_records = json.loads(evo_main.proposal_inbox.path.read_text(encoding="utf-8"))
+    assert list(inbox_records) == [body["delivery_event"]["event_id"]]
+    receipt = next(iter(inbox_records.values()))["receipt"]
+    assert receipt["status"] == "applied"
+    assert receipt["audit_action_ref"] == body["decision_id"]
+
+
+def test_exact_delivery_replay_returns_200_without_resetting_review_state():
+    body = postmortem_delivery_request()
+    decision_id = body["decision_id"]
+    created = client.post("/api/evolution/proposals", json=body)
+    assert created.status_code == 201, created.text
+    advance_to_reviewed(decision_id)
+
+    replay = client.post("/api/evolution/proposals", json=body)
+
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["decision_state"] == "reviewed"
+    assert len(evo_main.store.list_all()) == 1
+    inbox_records = json.loads(evo_main.proposal_inbox.path.read_text(encoding="utf-8"))
+    assert len(inbox_records) == 1
+
+
+def test_ordinary_proposal_cannot_bypass_delivery_binding_or_reset_review_state():
+    body = postmortem_delivery_request()
+    decision_id = body["decision_id"]
+    created = client.post("/api/evolution/proposals", json=body)
+    assert created.status_code == 201, created.text
+    advance_to_reviewed(decision_id)
+
+    no_envelope = dict(body["delivery_event"]["payload"]["proposal"])
+    bypass = client.post("/api/evolution/proposals", json=no_envelope)
+
+    assert bypass.status_code == 409, bypass.text
+    assert "durable delivery event" in bypass.json()["detail"]
+    assert evo_main.store.get(decision_id).decision_state == "reviewed"
+    assert len(evo_main.store.list_all()) == 1
+
+
+def test_same_idempotency_delivery_with_new_commit_event_is_conflict():
+    first = postmortem_delivery_request()
+    proposal = dict(first["delivery_event"]["payload"]["proposal"])
+    idempotency_key = first["delivery_event"]["idempotency_key"]
+    regenerated = postmortem_delivery_request(
+        proposal=proposal,
+        idempotency_key=idempotency_key,
+    )
+    assert regenerated["delivery_event"]["event_id"] != first["delivery_event"]["event_id"]
+
+    created = client.post("/api/evolution/proposals", json=first)
+    replay = client.post("/api/evolution/proposals", json=regenerated)
+
+    assert created.status_code == 201, created.text
+    assert replay.status_code == 409, replay.text
+    assert "divergent semantics" in replay.json()["detail"]
+    assert len(evo_main.store.list_all()) == 1
+
+
+def test_delivery_event_identity_rejects_divergent_envelope():
+    body = postmortem_delivery_request()
+    created = client.post("/api/evolution/proposals", json=body)
+    assert created.status_code == 201, created.text
+    divergent = json.loads(json.dumps(body))
+    divergent["delivery_event"]["payload"]["incident"]["severity"] = "critical"
+
+    conflict = client.post("/api/evolution/proposals", json=divergent)
+
+    assert conflict.status_code == 409
+    assert "divergent" in conflict.json()["detail"]
+
+
+def test_delivery_event_rejects_outer_proposal_divergence():
+    body = postmortem_delivery_request()
+    body["rationale"] = "A different proposal was placed outside the signed snapshot."
+
+    conflict = client.post("/api/evolution/proposals", json=body)
+
+    assert conflict.status_code == 409
+    assert "snapshot diverges" in conflict.json()["detail"]
+    assert evo_main.store.get(body["decision_id"]) is None
+
+
+def test_delivery_recovers_matching_decision_without_receipt_or_overwrite():
+    body = postmortem_delivery_request()
+    request = evo_main.ProposeRequest(**body)
+    existing = evo_main._build_proposed_decision(
+        request,
+        require_local_postmortem=False,
+    )
+    evo_main.store.put(existing)
+    advance_to_reviewed(body["decision_id"])
+    assert not evo_main.proposal_inbox.path.exists()
+
+    recovered = client.post("/api/evolution/proposals", json=body)
+
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["decision_state"] == "reviewed"
+    assert evo_main.proposal_inbox.path.exists()
+    assert len(evo_main.store.list_all()) == 1
+
+
+def test_delivery_rejects_preexisting_divergent_decision_without_receipt():
+    body = postmortem_delivery_request()
+    request = evo_main.ProposeRequest(**body)
+    existing = evo_main._build_proposed_decision(
+        request,
+        require_local_postmortem=False,
+    )
+    existing.rationale = "A different proposal already owns this decision ID."
+    evo_main.store.put(existing)
+
+    conflict = client.post("/api/evolution/proposals", json=body)
+
+    assert conflict.status_code == 409
+    assert "occupied" in conflict.json()["detail"]
+    assert evo_main.store.get(body["decision_id"]).rationale == existing.rationale
+    assert not evo_main.proposal_inbox.path.exists()
+
+
+def test_delivery_requires_published_postmortem_snapshot():
+    body = postmortem_delivery_request()
+    body["delivery_event"]["payload"]["postmortem"]["status"] = "draft"
+
+    response = client.post("/api/evolution/proposals", json=body)
+
+    assert response.status_code == 422
+    assert "must be published" in response.json()["detail"]
+    assert evo_main.store.get(body["decision_id"]) is None
+
+
+def test_delivery_rejects_non_postmortem_producer():
+    body = postmortem_delivery_request()
+    body["delivery_event"]["producer_service"] = "untrusted-producer"
+
+    response = client.post("/api/evolution/proposals", json=body)
+
+    assert response.status_code == 422
+    assert "producer_service" in response.json()["detail"]
+    assert evo_main.store.get(body["decision_id"]) is None
+
+
+def test_delivery_rejects_mismatched_publication_commit_marker():
+    body = postmortem_delivery_request()
+    body["delivery_event"]["payload"]["postmortem"]["published_event_id"] = "evt-other"
+
+    response = client.post("/api/evolution/proposals", json=body)
+
+    assert response.status_code == 409
+    assert "published_event_id" in response.json()["detail"]
+    assert evo_main.store.get(body["decision_id"]) is None
+
+
+@pytest.mark.parametrize("snapshot_name", ["postmortem", "incident"])
+def test_delivery_requires_complete_owner_snapshots(snapshot_name: str):
+    body = postmortem_delivery_request()
+    body["delivery_event"]["payload"].pop(snapshot_name)
+
+    response = client.post("/api/evolution/proposals", json=body)
+
+    assert response.status_code == 422
+    assert f"{snapshot_name} snapshot is required" in response.json()["detail"]
+    assert evo_main.store.get(body["decision_id"]) is None
+
+
+def test_proposal_inbox_two_instances_preserve_concurrent_records(tmp_path):
+    path = tmp_path / "proposal-inbox.json"
+    first_inbox = evo_main._EvolutionProposalInbox(path)
+    second_inbox = evo_main._EvolutionProposalInbox(path)
+    bodies = [postmortem_delivery_request() for _ in range(24)]
+
+    def record(index: int) -> None:
+        body = bodies[index]
+        event = EventEnvelope.from_dict(body["delivery_event"])
+        selected = first_inbox if index % 2 == 0 else second_inbox
+        proposal = body["delivery_event"]["payload"]["proposal"]
+        with selected.locked():
+            selected.record_applied_unlocked(
+                event=event,
+                decision_id=body["decision_id"],
+                event_fingerprint=evo_main.sha256_checksum(event.to_dict()),
+                semantic_event_fingerprint=evo_main.sha256_checksum(event.to_dict()),
+                proposal_fingerprint=evo_main.sha256_checksum(proposal),
+                decision_fingerprint=f"decision-{index}",
+                notes="concurrent inbox test",
+            )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(record, range(len(bodies))))
+
+    restarted = evo_main._EvolutionProposalInbox(path)
+    with restarted.locked():
+        records = restarted._read_unlocked()
+    assert len(records) == len(bodies)
+    assert set(records) == {
+        body["delivery_event"]["event_id"] for body in bodies
+    }
+
+
+def test_proposal_inbox_write_failure_keeps_previous_json_restartable(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "proposal-inbox.json"
+    inbox = evo_main._EvolutionProposalInbox(path)
+    first = postmortem_delivery_request()
+    second = postmortem_delivery_request()
+
+    def append(body: dict[str, Any]) -> None:
+        event = EventEnvelope.from_dict(body["delivery_event"])
+        proposal = body["delivery_event"]["payload"]["proposal"]
+        with inbox.locked():
+            inbox.record_applied_unlocked(
+                event=event,
+                decision_id=body["decision_id"],
+                event_fingerprint=evo_main.sha256_checksum(event.to_dict()),
+                semantic_event_fingerprint=evo_main.sha256_checksum(event.to_dict()),
+                proposal_fingerprint=evo_main.sha256_checksum(proposal),
+                decision_fingerprint=body["decision_id"],
+                notes="write failure test",
+            )
+
+    append(first)
+    original_replace = evo_main.os.replace
+
+    def fail_replace(*_args, **_kwargs):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(evo_main.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="disk unavailable"):
+        append(second)
+    monkeypatch.setattr(evo_main.os, "replace", original_replace)
+
+    restarted = evo_main._EvolutionProposalInbox(path)
+    with restarted.locked():
+        records = restarted._read_unlocked()
+    assert list(records) == [first["delivery_event"]["event_id"]]
+
+
+# ---------------------------------------------------------------------------
 # MGMT-EVO-002: proposal creation from incident / postmortem
 # ---------------------------------------------------------------------------
 
@@ -1177,20 +1501,16 @@ def test_propose_from_postmortem_published_unrelated_decision_not_deduped():
     assert r1.status_code == 201, r1.text
     dec_id = r1.json()["decision_id"]
 
-    # 2. Put an unrelated decision into store with same dec_id
-    unrelated_dec = evo_main.EvolutionDecision.create_proposed(
-        decision_id=dec_id,
-        target_type="candidate_artifact",
-        target_id="different-artifact",
-        target_version="v99",
-        action_type="freeze",
-        target_stage="live",
-        rationale="fake decision occupying the ID",
-        created_by_id="some-other-proposer",
-        created_by_role="operator",
-        linked_postmortem_id="different-pm-id",
-        linked_incident_id="different-inc-id",
-    )
+    # 2. Simulate an authorized update that makes the stored record unrelated.
+    # A newly constructed object with the same ID is intentionally rejected by
+    # the store's blind-overwrite guard, so mutate the versioned snapshot that
+    # was actually read from storage.
+    unrelated_dec = evo_main.store.get(dec_id)
+    unrelated_dec.target_id = "different-artifact"
+    unrelated_dec.target_version = "v99"
+    unrelated_dec.rationale = "decision no longer belongs to this postmortem"
+    unrelated_dec.linked_postmortem_id = "different-pm-id"
+    unrelated_dec.linked_incident_id = "different-inc-id"
     evo_main.store.put(unrelated_dec)
 
     # 3. Requesting it again with the same pm_id should conflict with 409
