@@ -9,7 +9,7 @@
     {
       "metric_name": "rolling_drawdown_multiple",
       "signal_type": "performance_degradation",
-      "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1",
+      "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1; docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-005-governed-baselines.md#governance-decision",
       "summary_field": "drawdown",
       "ratio_baseline_key": "expected_drawdown",
       "telemetry_event_type": "drawdown_snapshot",
