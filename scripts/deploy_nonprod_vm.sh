@@ -8,6 +8,17 @@
 
 set -euo pipefail
 
+# GitHub Actions and operator shells may export these values. Keep them
+# available to this Bash process, but remove them from the inherited
+# environment before even path-resolution helpers are invoked.
+export -n GITHUB_TOKEN DEV_BFF_JWT_SECRET DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON \
+  DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH DEV_MANAGEMENT_AI_DB_PASSWORD \
+  DEV_MANAGEMENT_AI_DATABASE_URL PANTHEON_BFF_JWT_SECRET \
+  PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON \
+  PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH \
+  PANTHEON_MANAGEMENT_AI_DB_PASSWORD MANAGEMENT_AI_STORE_DSN \
+  MANAGEMENT_AI_DATABASE_URL 2>/dev/null || true
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
@@ -25,6 +36,10 @@ DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"
 DEV_BFF_JWT_SECRET="${DEV_BFF_JWT_SECRET:-}"
 DEV_BFF_JWT_ISSUER="${DEV_BFF_JWT_ISSUER:-pantheon-dev}"
 DEV_BFF_JWT_AUDIENCE="${DEV_BFF_JWT_AUDIENCE:-bff-operators}"
+DEV_BFF_JWKS_URI="${DEV_BFF_JWKS_URI-}"
+DEV_BFF_OIDC_DISCOVERY_URL="${DEV_BFF_OIDC_DISCOVERY_URL-}"
+DEV_BFF_OIDC_ISSUER="${DEV_BFF_OIDC_ISSUER-}"
+DEV_BFF_OIDC_AUDIENCE="${DEV_BFF_OIDC_AUDIENCE-}"
 DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON="${DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON:-}"
 DEV_BFF_DEV_LOGIN_TTL_SECONDS="${DEV_BFF_DEV_LOGIN_TTL_SECONDS:-900}"
 # Retired shared dev-login variables must neither configure the BFF nor leak to
@@ -32,9 +47,16 @@ DEV_BFF_DEV_LOGIN_TTL_SECONDS="${DEV_BFF_DEV_LOGIN_TTL_SECONDS:-900}"
 unset DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET
 DEV_BFF_TENANT_ID="${DEV_BFF_TENANT_ID:-tenant-dev}"
 DEV_BFF_ALLOWED_TENANTS="${DEV_BFF_ALLOWED_TENANTS:-${DEV_BFF_TENANT_ID},pantheon-dev}"
+DEV_BFF_ROLE_CLAIMS="${DEV_BFF_ROLE_CLAIMS:-roles,role}"
+DEV_BFF_ROLE_MAP="${DEV_BFF_ROLE_MAP-}"
+DEV_BFF_ROLE_MAP_MODE="${DEV_BFF_ROLE_MAP_MODE:-passthrough}"
+DEV_BFF_MFA_REQUIRED="${DEV_BFF_MFA_REQUIRED:-false}"
+DEV_BFF_MFA_CLAIMS="${DEV_BFF_MFA_CLAIMS:-amr,acr,mfa,mfa_verified}"
+DEV_BFF_MFA_VALUES="${DEV_BFF_MFA_VALUES:-true,1,yes,mfa,otp,totp,webauthn}"
 DEV_ASSISTANT_KERNEL_ENABLED="${DEV_ASSISTANT_KERNEL_ENABLED:-true}"
 DEV_ASSISTANT_CONTROL_MODE_STORE_PATH="${DEV_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}"
 DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}"
+DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH="${DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH-}"
 DEV_ASSISTANT_REPAIR_REPO_URL="${DEV_ASSISTANT_REPAIR_REPO_URL:-/workspace/status-root}"
 DEV_ASSISTANT_REPAIR_REMOTE_URL="${DEV_ASSISTANT_REPAIR_REMOTE_URL:-https://github.com/ajoe734/pantheon.git}"
 DEV_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${DEV_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}"
@@ -100,11 +122,15 @@ Environment overrides:
   DEV_BFF_CANONICAL_CORS_ORIGIN DEV_BFF_CORS_ORIGINS
   DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB DEV_BFF_AUTH_MODE
   DEV_BFF_JWT_SECRET DEV_BFF_JWT_ISSUER DEV_BFF_JWT_AUDIENCE
+  DEV_BFF_JWKS_URI DEV_BFF_OIDC_DISCOVERY_URL
+  DEV_BFF_OIDC_ISSUER DEV_BFF_OIDC_AUDIENCE
   DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON
   DEV_BFF_DEV_LOGIN_TTL_SECONDS
   DEV_BFF_TENANT_ID DEV_BFF_ALLOWED_TENANTS
+  DEV_BFF_ROLE_CLAIMS DEV_BFF_ROLE_MAP DEV_BFF_ROLE_MAP_MODE
+  DEV_BFF_MFA_REQUIRED DEV_BFF_MFA_CLAIMS DEV_BFF_MFA_VALUES
   DEV_ASSISTANT_KERNEL_ENABLED DEV_ASSISTANT_CONTROL_MODE_STORE_PATH
-  DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS
+  DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH
   DEV_ASSISTANT_REPAIR_REPO_URL DEV_ASSISTANT_REPAIR_REMOTE_URL
   DEV_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS
   DEV_BFF_STUB_CAPABILITIES
@@ -139,6 +165,15 @@ emit_remote_export() {
   local value="$2"
   [[ "$name" =~ ^[A-Z][A-Z0-9_]*$ ]] || error "invalid remote environment name"
   printf 'export %s=%q\n' "$name" "$value"
+}
+
+emit_remote_assignment() {
+  local name="$1"
+  local value="$2"
+  [[ "$name" =~ ^[A-Z][A-Z0-9_]*$ ]] || error "invalid remote environment name"
+  # Sensitive streamed values stay as shell-local variables.  The remote
+  # script persists them to mode-0600 files before invoking any helper child.
+  printf '%s=%q\n' "$name" "$value"
 }
 
 append_csv_unique() {
@@ -305,9 +340,11 @@ case "$DEPLOY_ENV" in
     # Dev-only credentials must not be inherited by staging subprocesses or
     # forwarded to a staging host, even when the caller exported them.
     unset DEV_BFF_JWT_SECRET DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON
+    unset DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH
     unset DEV_MANAGEMENT_AI_DB_PASSWORD DEV_MANAGEMENT_AI_DATABASE_URL
     DEV_BFF_JWT_SECRET=""
     DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON=""
+    DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH=""
     DEV_MANAGEMENT_AI_DB_PASSWORD=""
     DEV_MANAGEMENT_AI_DATABASE_URL=""
     ;;
@@ -362,8 +399,10 @@ fi
 
 # Keep deploy credentials in this shell only. Remote delivery uses the SSH
 # stdin stream below; gcloud never receives them in argv or its environment.
-export -n GITHUB_TOKEN DEV_BFF_JWT_SECRET DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON 2>/dev/null || true
+export -n GITHUB_TOKEN DEV_BFF_JWT_SECRET DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON \
+  DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH 2>/dev/null || true
 unset PANTHEON_BFF_JWT_SECRET PANTHEON_BFF_OIDC_CLIENT_ID PANTHEON_BFF_OIDC_CLIENT_SECRET PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON
+unset PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH
 export -n DEV_MANAGEMENT_AI_DB_PASSWORD DEV_MANAGEMENT_AI_DATABASE_URL 2>/dev/null || true
 export -n PANTHEON_MANAGEMENT_AI_DB_PASSWORD 2>/dev/null || true
 export -n MANAGEMENT_AI_STORE_DSN MANAGEMENT_AI_DATABASE_URL 2>/dev/null || true
@@ -404,22 +443,33 @@ ssh_bash() {
     emit_remote_export PANTHEON_DEPLOY_PROJECT_ID "$PROJECT_ID"
     emit_remote_export PANTHEON_REMOTE_DIR "$remote_dir"
     emit_remote_export PANTHEON_DEPLOY_WORKTREE_ROOT "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}"
-    emit_remote_export PANTHEON_GITHUB_TOKEN "${GITHUB_TOKEN:-}"
+    emit_remote_assignment PANTHEON_GITHUB_TOKEN "${GITHUB_TOKEN:-}"
     emit_remote_export PANTHEON_ALLOW_DIRTY_DEPLOY "$ALLOW_DIRTY"
     emit_remote_export PANTHEON_ALLOW_EXAMPLE_ENV "$ALLOW_EXAMPLE_ENV"
     emit_remote_export PANTHEON_DEV_BFF_CORS_ORIGINS "$DEV_BFF_CORS_ORIGINS"
     emit_remote_export PANTHEON_DEV_BFF_AUTH_STUB "$DEV_BFF_AUTH_STUB"
     emit_remote_export PANTHEON_DEV_BFF_AUTH_MODE "$DEV_BFF_AUTH_MODE"
-    emit_remote_export PANTHEON_DEV_BFF_JWT_SECRET "$DEV_BFF_JWT_SECRET"
+    emit_remote_assignment PANTHEON_DEV_BFF_JWT_SECRET "$DEV_BFF_JWT_SECRET"
     emit_remote_export PANTHEON_DEV_BFF_JWT_ISSUER "$DEV_BFF_JWT_ISSUER"
     emit_remote_export PANTHEON_DEV_BFF_JWT_AUDIENCE "$DEV_BFF_JWT_AUDIENCE"
-    emit_remote_export PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON "$DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON"
+    emit_remote_export PANTHEON_DEV_BFF_JWKS_URI "$DEV_BFF_JWKS_URI"
+    emit_remote_export PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL "$DEV_BFF_OIDC_DISCOVERY_URL"
+    emit_remote_export PANTHEON_DEV_BFF_OIDC_ISSUER "$DEV_BFF_OIDC_ISSUER"
+    emit_remote_export PANTHEON_DEV_BFF_OIDC_AUDIENCE "$DEV_BFF_OIDC_AUDIENCE"
+    emit_remote_assignment PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON "$DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON"
     emit_remote_export PANTHEON_DEV_BFF_DEV_LOGIN_TTL_SECONDS "$DEV_BFF_DEV_LOGIN_TTL_SECONDS"
     emit_remote_export PANTHEON_DEV_BFF_TENANT_ID "$DEV_BFF_TENANT_ID"
     emit_remote_export PANTHEON_DEV_BFF_ALLOWED_TENANTS "$DEV_BFF_ALLOWED_TENANTS"
+    emit_remote_export PANTHEON_DEV_BFF_ROLE_CLAIMS "$DEV_BFF_ROLE_CLAIMS"
+    emit_remote_export PANTHEON_DEV_BFF_ROLE_MAP "$DEV_BFF_ROLE_MAP"
+    emit_remote_export PANTHEON_DEV_BFF_ROLE_MAP_MODE "$DEV_BFF_ROLE_MAP_MODE"
+    emit_remote_export PANTHEON_DEV_BFF_MFA_REQUIRED "$DEV_BFF_MFA_REQUIRED"
+    emit_remote_export PANTHEON_DEV_BFF_MFA_CLAIMS "$DEV_BFF_MFA_CLAIMS"
+    emit_remote_export PANTHEON_DEV_BFF_MFA_VALUES "$DEV_BFF_MFA_VALUES"
     emit_remote_export PANTHEON_ASSISTANT_KERNEL_ENABLED "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}"
     emit_remote_export PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH "${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}"
     emit_remote_export PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS "${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-}"
+    emit_remote_assignment PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH "$DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH"
     emit_remote_export PANTHEON_ASSISTANT_REPAIR_REPO_URL "${PANTHEON_ASSISTANT_REPAIR_REPO_URL:-}"
     emit_remote_export PANTHEON_ASSISTANT_REPAIR_REMOTE_URL "${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL:-}"
     emit_remote_export PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS "${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-}"
@@ -431,18 +481,53 @@ ssh_bash() {
     emit_remote_export PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}"
     emit_remote_export MANAGEMENT_AI_STORE_BACKEND "${MANAGEMENT_AI_STORE_BACKEND:-}"
     emit_remote_export MANAGEMENT_AI_STORE_SCHEMA "${MANAGEMENT_AI_STORE_SCHEMA:-}"
-    emit_remote_export MANAGEMENT_AI_STORE_DSN "${MANAGEMENT_AI_STORE_DSN:-}"
-    emit_remote_export MANAGEMENT_AI_DATABASE_URL "${MANAGEMENT_AI_DATABASE_URL:-}"
+    emit_remote_assignment MANAGEMENT_AI_STORE_DSN "${MANAGEMENT_AI_STORE_DSN:-}"
+    emit_remote_assignment MANAGEMENT_AI_DATABASE_URL "${MANAGEMENT_AI_DATABASE_URL:-}"
     emit_remote_export PANTHEON_MGMT_AI_ATTACH_BUCKET "${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
     emit_remote_export PANTHEON_MGMT_AI_ATTACH_LOCATION "${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-}"
     emit_remote_export PANTHEON_MANAGEMENT_AI_DB_USER "${DEV_MANAGEMENT_AI_DB_USER:-}"
-    emit_remote_export PANTHEON_MANAGEMENT_AI_DB_PASSWORD "${DEV_MANAGEMENT_AI_DB_PASSWORD:-}"
+    emit_remote_assignment PANTHEON_MANAGEMENT_AI_DB_PASSWORD "${DEV_MANAGEMENT_AI_DB_PASSWORD:-}"
     emit_remote_export PANTHEON_MANAGEMENT_AI_DB_NAME "${DEV_MANAGEMENT_AI_DB_NAME:-}"
     emit_remote_export PANTHEON_MANAGEMENT_AI_APP_DB_USER "${DEV_APP_DB_USER:-pantheon_app}"
     emit_remote_export PANTHEON_STAGING_EXEC_HEALTH_URL "$STAGING_EXEC_HEALTH_URL"
     emit_remote_export PANTHEON_STAGING_BFF_CORS_ORIGINS "$STAGING_BFF_CORS_ORIGINS"
     cat <<'REMOTE'
 set -euo pipefail
+
+# Streamed credentials arrive as non-exported shell assignments. Persist them
+# before invoking any helper so unrelated child processes never inherit them.
+PANTHEON_REMOTE_SECRET_DIR="$(mktemp -d)"
+chmod 0700 "${PANTHEON_REMOTE_SECRET_DIR}"
+cleanup_remote_secrets() {
+  rm -rf "${PANTHEON_REMOTE_SECRET_DIR}"
+}
+trap cleanup_remote_secrets EXIT
+
+persist_remote_secret() {
+  local variable_name="$1"
+  local file_name="$2"
+  local value="${!variable_name-}"
+  (umask 077; printf '%s' "${value}" >"${PANTHEON_REMOTE_SECRET_DIR}/${file_name}")
+  printf -v "${variable_name}" '%s' ""
+  export -n "${variable_name}" 2>/dev/null || true
+}
+
+load_remote_secret() {
+  local file_name="$1"
+  local target_name="$2"
+  local value
+  value="$(<"${PANTHEON_REMOTE_SECRET_DIR}/${file_name}")"
+  printf -v "${target_name}" '%s' "${value}"
+  export -n "${target_name}" 2>/dev/null || true
+}
+
+persist_remote_secret PANTHEON_GITHUB_TOKEN github-token
+persist_remote_secret PANTHEON_DEV_BFF_JWT_SECRET dev-bff-jwt-secret
+persist_remote_secret PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON dev-bff-login-profiles
+persist_remote_secret PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH assistant-control-passphrase-hash
+persist_remote_secret MANAGEMENT_AI_STORE_DSN management-ai-store-dsn
+persist_remote_secret MANAGEMENT_AI_DATABASE_URL management-ai-database-url
+persist_remote_secret PANTHEON_MANAGEMENT_AI_DB_PASSWORD management-ai-db-password
 
 info() {
   echo "[remote-deploy] $*"
@@ -480,6 +565,174 @@ assert_bff_source_sha() {
     error "BFF source SHA mismatch: expected ${PANTHEON_DEPLOY_SHA}, got ${actual:-missing}"
   fi
   info "BFF source SHA verified: ${actual}"
+}
+
+DEV_BFF_TRUST_SNAPSHOT_AVAILABLE=false
+DEV_BFF_TRUST_EXPECTED_FILE="${PANTHEON_REMOTE_SECRET_DIR}/dev-bff-trust-expected.json"
+DEV_BFF_TRUST_ACTUAL_FILE="${PANTHEON_REMOTE_SECRET_DIR}/dev-bff-trust-actual.json"
+DEV_BFF_TRUST_NAMES_FILE="${PANTHEON_REMOTE_SECRET_DIR}/dev-bff-trust-names.txt"
+DEV_BFF_CREDENTIAL_EXPECTED_FILE="${PANTHEON_REMOTE_SECRET_DIR}/dev-bff-credential-expected.json"
+DEV_BFF_CREDENTIAL_NAMES_FILE="${PANTHEON_REMOTE_SECRET_DIR}/dev-bff-credential-names.txt"
+dev_bff_trust_names=(
+  PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH
+  PANTHEON_BFF_JWT_ISSUER
+  PANTHEON_BFF_JWT_AUDIENCE
+  PANTHEON_BFF_JWKS_URI
+  PANTHEON_BFF_OIDC_DISCOVERY_URL
+  PANTHEON_BFF_OIDC_ISSUER
+  PANTHEON_BFF_OIDC_AUDIENCE
+  PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS
+  PANTHEON_BFF_TENANT_ID
+  PANTHEON_BFF_ALLOWED_TENANTS
+  PANTHEON_BFF_ROLE_CLAIMS
+  PANTHEON_BFF_ROLE_MAP
+  PANTHEON_BFF_ROLE_MAP_MODE
+  PANTHEON_BFF_MFA_REQUIRED
+  PANTHEON_BFF_MFA_CLAIMS
+  PANTHEON_BFF_MFA_VALUES
+)
+(umask 077; printf '%s\n' "${dev_bff_trust_names[@]}" >"${DEV_BFF_TRUST_NAMES_FILE}")
+(umask 077; printf '%s\n' \
+  PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH \
+  PANTHEON_BFF_JWT_SECRET \
+  PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON \
+  >"${DEV_BFF_CREDENTIAL_NAMES_FILE}")
+
+capture_dev_bff_trust_snapshot() {
+  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" ]]; then
+    return
+  fi
+
+  local container_id
+  container_id="$(docker compose -p pantheon -f docker-compose.yml ps -q operator-bff)"
+  if [[ -z "${container_id}" ]]; then
+    info "operator-bff is not running; using governed bootstrap trust inputs"
+    return
+  fi
+  if ! docker inspect --format '{{json .Config.Env}}' "${container_id}" >"${DEV_BFF_TRUST_EXPECTED_FILE}"; then
+    error "unable to snapshot the running operator-bff trust environment"
+  fi
+  chmod 0600 "${DEV_BFF_TRUST_EXPECTED_FILE}"
+  DEV_BFF_TRUST_SNAPSHOT_AVAILABLE=true
+  info "captured authoritative operator-bff trust for exact post-deploy readback"
+}
+
+snapshot_env_value() {
+  local name="$1"
+  local target_name="$2"
+  local value
+  IFS= read -r -d '' value < <(
+    python3 - "${DEV_BFF_TRUST_EXPECTED_FILE}" "${name}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+entries = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+prefix = f"{sys.argv[2]}="
+matches = [entry[len(prefix):] for entry in entries if entry.startswith(prefix)]
+if len(matches) != 1:
+    raise SystemExit(1)
+sys.stdout.write(matches[0])
+PY
+    printf '\0'
+  ) || error "running operator-bff lacks an unambiguous ${name} trust value"
+  printf -v "${target_name}" '%s' "${value}"
+}
+
+apply_dev_bff_trust_policy() {
+  local passphrase_hash
+  if [[ "${DEV_BFF_TRUST_SNAPSHOT_AVAILABLE}" == "true" ]]; then
+    python3 services/control-plane/bff/dev_auth_validation.py compare-env \
+      --expected-file "${DEV_BFF_TRUST_EXPECTED_FILE}" \
+      --actual-file "${DEV_BFF_TRUST_EXPECTED_FILE}" \
+      --names-file "${DEV_BFF_TRUST_NAMES_FILE}" >/dev/null \
+      || error "running operator-bff trust snapshot is incomplete or ambiguous"
+    snapshot_env_value PANTHEON_BFF_JWT_ISSUER PANTHEON_DEV_BFF_JWT_ISSUER
+    snapshot_env_value PANTHEON_BFF_JWT_AUDIENCE PANTHEON_DEV_BFF_JWT_AUDIENCE
+    snapshot_env_value PANTHEON_BFF_JWKS_URI PANTHEON_DEV_BFF_JWKS_URI
+    snapshot_env_value PANTHEON_BFF_OIDC_DISCOVERY_URL PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL
+    snapshot_env_value PANTHEON_BFF_OIDC_ISSUER PANTHEON_DEV_BFF_OIDC_ISSUER
+    snapshot_env_value PANTHEON_BFF_OIDC_AUDIENCE PANTHEON_DEV_BFF_OIDC_AUDIENCE
+    snapshot_env_value PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS PANTHEON_DEV_BFF_DEV_LOGIN_TTL_SECONDS
+    snapshot_env_value PANTHEON_BFF_TENANT_ID PANTHEON_DEV_BFF_TENANT_ID
+    snapshot_env_value PANTHEON_BFF_ALLOWED_TENANTS PANTHEON_DEV_BFF_ALLOWED_TENANTS
+    snapshot_env_value PANTHEON_BFF_ROLE_CLAIMS PANTHEON_DEV_BFF_ROLE_CLAIMS
+    snapshot_env_value PANTHEON_BFF_ROLE_MAP PANTHEON_DEV_BFF_ROLE_MAP
+    snapshot_env_value PANTHEON_BFF_ROLE_MAP_MODE PANTHEON_DEV_BFF_ROLE_MAP_MODE
+    snapshot_env_value PANTHEON_BFF_MFA_REQUIRED PANTHEON_DEV_BFF_MFA_REQUIRED
+    snapshot_env_value PANTHEON_BFF_MFA_CLAIMS PANTHEON_DEV_BFF_MFA_CLAIMS
+    snapshot_env_value PANTHEON_BFF_MFA_VALUES PANTHEON_DEV_BFF_MFA_VALUES
+    snapshot_env_value PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH passphrase_hash
+    (umask 077; printf '%s' "${passphrase_hash}" >"${PANTHEON_REMOTE_SECRET_DIR}/assistant-control-passphrase-hash")
+  else
+    load_remote_secret assistant-control-passphrase-hash passphrase_hash
+  fi
+
+  if [[ "${PANTHEON_ASSISTANT_KERNEL_ENABLED}" == "true" \
+    && ! "${passphrase_hash}" =~ [^[:space:]] ]]; then
+    error "dev kernel deployment requires a governed control-passphrase hash"
+  fi
+  passphrase_hash=""
+}
+
+prepare_dev_bff_credential_readback() {
+  python3 - \
+    "${DEV_BFF_CREDENTIAL_EXPECTED_FILE}" \
+    "${PANTHEON_REMOTE_SECRET_DIR}/assistant-control-passphrase-hash" \
+    "${PANTHEON_REMOTE_SECRET_DIR}/dev-bff-jwt-secret" \
+    "${PANTHEON_REMOTE_SECRET_DIR}/dev-bff-login-profiles" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+output, passphrase_file, jwt_file, profiles_file = map(Path, sys.argv[1:])
+entries = [
+    "PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH=" + passphrase_file.read_text(encoding="utf-8"),
+    "PANTHEON_BFF_JWT_SECRET=" + jwt_file.read_text(encoding="utf-8"),
+    "PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON=" + profiles_file.read_text(encoding="utf-8"),
+]
+output.write_text(json.dumps(entries, separators=(",", ":")), encoding="utf-8")
+PY
+  chmod 0600 "${DEV_BFF_CREDENTIAL_EXPECTED_FILE}"
+}
+
+verify_dev_bff_trust_readback() {
+  local container_id
+  container_id="$(docker compose -p pantheon -f docker-compose.yml ps -q operator-bff)"
+  [[ -n "${container_id}" ]] || error "operator-bff missing during trust readback"
+  docker inspect --format '{{json .Config.Env}}' "${container_id}" >"${DEV_BFF_TRUST_ACTUAL_FILE}"
+  chmod 0600 "${DEV_BFF_TRUST_ACTUAL_FILE}"
+  if [[ "${DEV_BFF_TRUST_SNAPSHOT_AVAILABLE}" == "true" ]]; then
+    python3 services/control-plane/bff/dev_auth_validation.py compare-env \
+      --expected-file "${DEV_BFF_TRUST_EXPECTED_FILE}" \
+      --actual-file "${DEV_BFF_TRUST_ACTUAL_FILE}" \
+      --names-file "${DEV_BFF_TRUST_NAMES_FILE}" >/dev/null \
+      || error "operator-bff deployment changed preserved trust configuration"
+  fi
+  python3 services/control-plane/bff/dev_auth_validation.py compare-env \
+    --expected-file "${DEV_BFF_CREDENTIAL_EXPECTED_FILE}" \
+    --actual-file "${DEV_BFF_TRUST_ACTUAL_FILE}" \
+    --names-file "${DEV_BFF_CREDENTIAL_NAMES_FILE}" >/dev/null \
+    || error "operator-bff credential/passphrase readback does not match the governed inputs"
+  info "operator-bff preserved trust readback passed"
+}
+
+load_dev_compose_secrets() {
+  load_remote_secret dev-bff-jwt-secret PANTHEON_DEV_BFF_JWT_SECRET
+  load_remote_secret dev-bff-login-profiles PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON
+  load_remote_secret assistant-control-passphrase-hash PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH
+  load_remote_secret management-ai-store-dsn MANAGEMENT_AI_STORE_DSN
+  load_remote_secret management-ai-database-url MANAGEMENT_AI_DATABASE_URL
+  load_remote_secret management-ai-db-password PANTHEON_MANAGEMENT_AI_DB_PASSWORD
+}
+
+clear_dev_compose_secrets() {
+  PANTHEON_DEV_BFF_JWT_SECRET=""
+  PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON=""
+  PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH=""
+  MANAGEMENT_AI_STORE_DSN=""
+  MANAGEMENT_AI_DATABASE_URL=""
+  PANTHEON_MANAGEMENT_AI_DB_PASSWORD=""
 }
 
 snapshot_remote_state() {
@@ -564,17 +817,21 @@ require_clean_checkout() {
 
 git_fetch_origin() {
   local prune_flag=()
+  local github_token
   if [[ "${1:-}" == "--prune" ]]; then
     prune_flag=(--prune)
     shift
   fi
 
-  if [[ -n "${PANTHEON_GITHUB_TOKEN:-}" ]]; then
+  load_remote_secret github-token github_token
+  if [[ -n "${github_token}" ]]; then
     local github_basic_auth
-    github_basic_auth="$(printf 'x-access-token:%s' "${PANTHEON_GITHUB_TOKEN}" | base64 | tr -d '\n')"
+    github_basic_auth="$(printf 'x-access-token:%s' "${github_token}" | base64 | tr -d '\n')"
+    github_token=""
     info "fetch auth: github token present"
     git -c "http.extraheader=AUTHORIZATION: basic ${github_basic_auth}" \
       fetch --recurse-submodules=no "${prune_flag[@]}" origin "$@"
+    github_basic_auth=""
   else
     info "fetch auth: no github token"
     git fetch --recurse-submodules=no "${prune_flag[@]}" origin "$@"
@@ -765,7 +1022,9 @@ ensure_dev_management_ai_postgres_role() {
   fi
 
   local mgmt_user="${PANTHEON_MANAGEMENT_AI_DB_USER:-pantheon_management_ai}"
-  local mgmt_pass="${PANTHEON_MANAGEMENT_AI_DB_PASSWORD:-pantheon_management_ai_dev}"
+  local mgmt_pass
+  load_remote_secret management-ai-db-password mgmt_pass
+  mgmt_pass="${mgmt_pass:-pantheon_management_ai_dev}"
   local mgmt_db="${PANTHEON_MANAGEMENT_AI_DB_NAME:-pantheon}"
   local mgmt_schema="${MANAGEMENT_AI_STORE_SCHEMA:-management_ai}"
   local app_user="${PANTHEON_MANAGEMENT_AI_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
@@ -1030,11 +1289,14 @@ prune_dev_docker_storage_for_build() {
 
 cd "${PANTHEON_REMOTE_DIR}"
 git rev-parse --is-inside-work-tree >/dev/null
+capture_dev_bff_trust_snapshot
 
 case "${PANTHEON_DEPLOY_COMPONENT}" in
   root)
     snapshot_remote_state pantheon docker-compose.yml
     prepare_deploy_worktree
+    apply_dev_bff_trust_policy
+    prepare_dev_bff_credential_readback
     # Dev deploys activate every documented compose profile. Each profile is
     # either a long-running daemon, an init container, or a one-shot smoke
     # whose Dockerfile + smoke script have been verified to build and pass
@@ -1058,10 +1320,12 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
       docker compose -p pantheon -f docker-compose.yml config --quiet
     prune_dev_docker_storage_for_build
+    load_dev_compose_secrets
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     PANTHEON_ENV=dev \
+    PANTHEON_DEPLOYMENT_STAGE=dev \
     PANTHEON_LIVE_BROKER_ENABLED=false \
     BROKER_PAPER_ENABLED=true \
     AGORA_WORKSHOP_STORE_BACKEND=postgres \
@@ -1076,16 +1340,29 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
     PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+    PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS= \
     PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
     PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
     PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
+    PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}" \
+    PANTHEON_BFF_OIDC_DISCOVERY_URL="${PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL}" \
+    PANTHEON_BFF_OIDC_ISSUER="${PANTHEON_DEV_BFF_OIDC_ISSUER}" \
+    PANTHEON_BFF_OIDC_AUDIENCE="${PANTHEON_DEV_BFF_OIDC_AUDIENCE}" \
     PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON="${PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON}" \
     PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS="${PANTHEON_DEV_BFF_DEV_LOGIN_TTL_SECONDS}" \
     PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
     PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
+    PANTHEON_BFF_ROLE_CLAIMS="${PANTHEON_DEV_BFF_ROLE_CLAIMS}" \
+    PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}" \
+    PANTHEON_BFF_ROLE_MAP_MODE="${PANTHEON_DEV_BFF_ROLE_MAP_MODE}" \
+    PANTHEON_BFF_DEFAULT_ROLE=viewer \
+    PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" \
+    PANTHEON_BFF_MFA_CLAIMS="${PANTHEON_DEV_BFF_MFA_CLAIMS}" \
+    PANTHEON_BFF_MFA_VALUES="${PANTHEON_DEV_BFF_MFA_VALUES}" \
     PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
     PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
     PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
+    PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH}" \
     PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL}" \
     PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL}" \
     PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}" \
@@ -1093,13 +1370,19 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
     PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST}" \
     PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER}" \
+    MANAGEMENT_AI_STORE_DSN="${MANAGEMENT_AI_STORE_DSN}" \
+    MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
+    PANTHEON_MANAGEMENT_AI_DB_PASSWORD="${PANTHEON_MANAGEMENT_AI_DB_PASSWORD}" \
       docker compose -p pantheon -f docker-compose.yml up -d --build \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    clear_dev_compose_secrets
     curl_with_retry http://127.0.0.1:18001/health \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    verify_dev_bff_trust_readback \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     verify_dev_evolution_daily_sweep \
       || { dump_dev_root_failure_diagnostics; exit 1; }
@@ -1118,10 +1401,14 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # pressure that a full root-stack rebuild causes on the dev VM.
     snapshot_remote_state pantheon docker-compose.yml
     prepare_deploy_worktree
+    apply_dev_bff_trust_policy
+    prepare_dev_bff_credential_readback
+    load_dev_compose_secrets
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="" \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     PANTHEON_ENV=dev \
+    PANTHEON_DEPLOYMENT_STAGE=dev \
     PANTHEON_LIVE_BROKER_ENABLED=false \
     BROKER_PAPER_ENABLED=true \
     AGORA_WORKSHOP_STORE_BACKEND=postgres \
@@ -1136,16 +1423,29 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
     PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+    PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS= \
     PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
     PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
     PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
+    PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}" \
+    PANTHEON_BFF_OIDC_DISCOVERY_URL="${PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL}" \
+    PANTHEON_BFF_OIDC_ISSUER="${PANTHEON_DEV_BFF_OIDC_ISSUER}" \
+    PANTHEON_BFF_OIDC_AUDIENCE="${PANTHEON_DEV_BFF_OIDC_AUDIENCE}" \
     PANTHEON_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON="${PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON}" \
     PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS="${PANTHEON_DEV_BFF_DEV_LOGIN_TTL_SECONDS}" \
     PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
     PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
+    PANTHEON_BFF_ROLE_CLAIMS="${PANTHEON_DEV_BFF_ROLE_CLAIMS}" \
+    PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}" \
+    PANTHEON_BFF_ROLE_MAP_MODE="${PANTHEON_DEV_BFF_ROLE_MAP_MODE}" \
+    PANTHEON_BFF_DEFAULT_ROLE=viewer \
+    PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" \
+    PANTHEON_BFF_MFA_CLAIMS="${PANTHEON_DEV_BFF_MFA_CLAIMS}" \
+    PANTHEON_BFF_MFA_VALUES="${PANTHEON_DEV_BFF_MFA_VALUES}" \
     PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
     PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
     PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
+    PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH}" \
     PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL}" \
     PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL}" \
     PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}" \
@@ -1155,16 +1455,21 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER}" \
     MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND}" \
     MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA}" \
+    MANAGEMENT_AI_STORE_DSN="${MANAGEMENT_AI_STORE_DSN}" \
     MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
+    PANTHEON_MANAGEMENT_AI_DB_PASSWORD="${PANTHEON_MANAGEMENT_AI_DB_PASSWORD}" \
     PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
     PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
       docker compose -p pantheon -f docker-compose.yml up -d --build --no-deps operator-bff \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    clear_dev_compose_secrets
     curl_with_retry http://127.0.0.1:18001/health \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    verify_dev_bff_trust_readback \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     ;;
 

@@ -160,7 +160,10 @@ def validate_dev_login_configuration(
 
     profiles: Dict[str, Dict[str, Any]] = {}
     subject_keys: set[str] = set()
-    secret_digests: List[bytes] = []
+    # A client credential must never double as the HS256 signing key.  Anyone
+    # holding a low-privilege profile secret can mint arbitrary JWT claims when
+    # those values are equal, bypassing the governed role/MFA/capability map.
+    secret_digests: List[bytes] = [_constant_time_digest(jwt_secret)]
     for raw_client_id, raw_profile in decoded.items():
         client_id = _clean_string(
             raw_client_id,
@@ -180,7 +183,9 @@ def validate_dev_login_configuration(
         secret = validate_secret(raw_profile["secret"], label=f"profile {client_id} secret")
         secret_digest = _constant_time_digest(secret)
         if any(hmac.compare_digest(secret_digest, other) for other in secret_digests):
-            raise DevAuthValidationError("dev-login client profile secrets must be distinct")
+            raise DevAuthValidationError(
+                "dev-login signing and client profile secrets must be distinct"
+            )
         secret_digests.append(secret_digest)
 
         subject = _clean_string(

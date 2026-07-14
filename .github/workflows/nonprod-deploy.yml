@@ -23,7 +23,7 @@ on:
           - exec
           - all
       ref:
-        description: "Commit SHA, branch, or tag to deploy. Leave blank for the workflow ref."
+        description: "Protected dev/master head, or an exact publish/v* snapshot for dev."
         required: false
         default: ""
         type: string
@@ -72,15 +72,88 @@ jobs:
       ALLOW_DIRTY: ${{ github.event_name == 'push' && 'false' || inputs.allow_dirty }}
       ALLOW_EXAMPLE_ENV: ${{ github.event_name == 'push' && 'false' || inputs.allow_example_env }}
     steps:
-      - name: Checkout requested ref
+      - name: Checkout trusted workflow ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.TARGET_REF }}
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          submodules: false
+
+      - name: Resolve and authorize target commit
+        id: sha
+        env:
+          TRIGGER_EVENT: ${{ github.event_name }}
+          TRIGGER_REF: ${{ github.ref_name }}
+          TRIGGER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            '+refs/heads/dev:refs/remotes/origin/dev' \
+            '+refs/heads/master:refs/remotes/origin/master'
+          if [[ "${TARGET_REF}" =~ ^publish/v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$ ]]; then
+            git fetch --no-tags origin \
+              "+refs/heads/${TARGET_REF}:refs/remotes/origin/${TARGET_REF}"
+          fi
+          target_sha="$(git rev-parse --verify --end-of-options "${TARGET_REF}^{commit}")" || {
+            echo "::error::Deployment target ref does not resolve to a commit in this repository."
+            exit 1
+          }
+
+          case "${TARGET_ENV}" in
+            dev)
+              if [[ "${TRIGGER_EVENT}" == "push" && "${TRIGGER_REF}" == publish/* ]]; then
+                [[ "${target_sha}" == "${TRIGGER_SHA}" ]] || {
+                  echo "::error::Publish push may deploy only its triggering commit."
+                  exit 1
+                }
+                git merge-base --is-ancestor "${target_sha}" refs/remotes/origin/dev || {
+                  echo "::error::Publish snapshot must originate from protected dev history."
+                  exit 1
+                }
+              elif [[ "${TARGET_REF}" =~ ^publish/v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$ ]]; then
+                [[ "${target_sha}" == "$(git rev-parse "refs/remotes/origin/${TARGET_REF}")" ]] || {
+                  echo "::error::Manual publish deploy target must be the exact remote snapshot head."
+                  exit 1
+                }
+                git merge-base --is-ancestor "${target_sha}" refs/remotes/origin/dev || {
+                  echo "::error::Publish snapshot must originate from protected dev history."
+                  exit 1
+                }
+              else
+                [[ "${target_sha}" == "$(git rev-parse refs/remotes/origin/dev)" ]] || {
+                  echo "::error::Manual dev deploy target must be the protected origin/dev head."
+                  exit 1
+                }
+              fi
+              ;;
+            staging-live)
+              [[ "${target_sha}" == "$(git rev-parse refs/remotes/origin/master)" ]] || {
+                echo "::error::Staging deploy target must be the protected origin/master head."
+                exit 1
+              }
+              ;;
+            *)
+              echo "::error::Unknown deployment environment ${TARGET_ENV}."
+              exit 1
+              ;;
+          esac
+          echo "sha=${target_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout authorized target commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.sha.outputs.sha }}
+          fetch-depth: 0
           submodules: recursive
 
-      - name: Resolve commit SHA
-        id: sha
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Verify authorized checkout
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "${actual_sha}" == "${{ steps.sha.outputs.sha }}" ]] || {
+            echo "::error::Authorized checkout SHA changed unexpectedly."
+            exit 1
+          }
 
       - name: Validate target and compose contract
         run: |
@@ -106,6 +179,7 @@ jobs:
           DEV_BFF_CI_CLIENT_SECRET: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_CI_CLIENT_SECRET || '' }}
         run: |
           set -euo pipefail
+          export -n DEV_BFF_JWT_SECRET DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON DEV_BFF_CI_CLIENT_SECRET
           auth_validation_dir="$(mktemp -d)"
           chmod 0700 "${auth_validation_dir}"
           trap 'rm -rf "${auth_validation_dir}"' EXIT
@@ -115,7 +189,6 @@ jobs:
           (umask 077; printf '%s' "${DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON}" >"${profiles_file}")
           (umask 077; printf '%s' "${DEV_BFF_JWT_SECRET}" >"${jwt_secret_file}")
           (umask 077; printf '%s' "${DEV_BFF_CI_CLIENT_SECRET}" >"${ci_secret_file}")
-          export -n DEV_BFF_JWT_SECRET DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON DEV_BFF_CI_CLIENT_SECRET
           if ! python3 services/control-plane/bff/dev_auth_validation.py profiles \
             --profiles-file "${profiles_file}" \
             --jwt-secret-file "${jwt_secret_file}" \
@@ -155,7 +228,23 @@ jobs:
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
           DEV_BFF_JWT_SECRET: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_JWT_SECRET || '' }}
+          DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
+          DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
+          DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI }}
+          DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL }}
+          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER }}
+          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE }}
           DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && secrets.DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON || '' }}
+          DEV_BFF_DEV_LOGIN_TTL_SECONDS: ${{ vars.DEV_BFF_DEV_LOGIN_TTL_SECONDS || '900' }}
+          DEV_BFF_TENANT_ID: ${{ vars.DEV_BFF_TENANT_ID || 'tenant-dev' }}
+          DEV_BFF_ALLOWED_TENANTS: ${{ vars.DEV_BFF_ALLOWED_TENANTS || 'tenant-dev,pantheon-dev' }}
+          DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'roles,role' }}
+          DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP }}
+          DEV_BFF_ROLE_MAP_MODE: ${{ vars.DEV_BFF_ROLE_MAP_MODE || 'passthrough' }}
+          DEV_BFF_MFA_REQUIRED: ${{ vars.DEV_BFF_MFA_REQUIRED || 'false' }}
+          DEV_BFF_MFA_CLAIMS: ${{ vars.DEV_BFF_MFA_CLAIMS || 'amr,acr,mfa,mfa_verified' }}
+          DEV_BFF_MFA_VALUES: ${{ vars.DEV_BFF_MFA_VALUES || 'true,1,yes,mfa,otp,totp,webauthn' }}
+          DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH: ${{ env.TARGET_ENV == 'dev' && secrets.DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH || '' }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
           DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}

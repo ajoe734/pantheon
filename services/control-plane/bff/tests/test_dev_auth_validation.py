@@ -97,6 +97,14 @@ def test_full_map_validator_rejects_duplicate_json_keys() -> None:
         validate_dev_login_configuration(raw, JWT_SECRET)
 
 
+def test_full_map_validator_rejects_profile_secret_equal_to_jwt_signing_key() -> None:
+    profiles = _profiles()
+    profiles["risk-owner"]["secret"] = JWT_SECRET
+
+    with pytest.raises(DevAuthValidationError, match="signing and client profile secrets"):
+        validate_dev_login_configuration(json.dumps(profiles), JWT_SECRET)
+
+
 @pytest.mark.parametrize("wrapper", [lambda raw: f" {raw}", lambda raw: f"{raw}\n"])
 def test_full_map_validator_rejects_outer_whitespace(wrapper) -> None:
     with pytest.raises(DevAuthValidationError):

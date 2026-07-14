@@ -804,6 +804,7 @@ def test_nonprod_workflow_uses_dev_login_instead_of_a_tracked_privileged_token()
     for name in (
         "DEV_BFF_JWT_SECRET",
         "DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON",
+        "DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH",
         "DEV_MANAGEMENT_AI_DB_PASSWORD",
         "DEV_MANAGEMENT_AI_DATABASE_URL",
     ):
@@ -816,6 +817,62 @@ def test_nonprod_workflow_uses_dev_login_instead_of_a_tracked_privileged_token()
     assert workflow.index("Require dev short-lived auth qualification prerequisites") < workflow.index(
         "Authenticate to Google Cloud via Workload Identity Federation"
     ) < workflow.index("Deploy requested VM stack")
+
+
+def test_nonprod_workflow_authorizes_target_before_target_code_or_cloud_credentials() -> None:
+    workflow = (REPO_ROOT / ".github" / "workflows" / "nonprod-deploy.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Checkout trusted workflow ref" in workflow
+    assert "ref: ${{ github.sha }}" in workflow
+    assert "ref: ${{ env.TARGET_REF }}" not in workflow
+    assert "Resolve and authorize target commit" in workflow
+    assert "Checkout authorized target commit" in workflow
+    assert "protected origin/dev head" in workflow
+    assert "protected origin/master head" in workflow
+    assert "exact remote snapshot head" in workflow
+    assert "git merge-base --is-ancestor" in workflow
+    assert "^publish/v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}\\.[0-9]+$" in workflow
+    assert workflow.index("Checkout trusted workflow ref") < workflow.index(
+        "Resolve and authorize target commit"
+    ) < workflow.index("Checkout authorized target commit") < workflow.index(
+        "Require dev short-lived auth qualification prerequisites"
+    ) < workflow.index("Authenticate to Google Cloud via Workload Identity Federation")
+
+
+def test_dev_deploy_scopes_streamed_secrets_and_preserves_running_trust() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    for name in (
+        "PANTHEON_GITHUB_TOKEN",
+        "PANTHEON_DEV_BFF_JWT_SECRET",
+        "PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON",
+        "PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH",
+        "MANAGEMENT_AI_STORE_DSN",
+        "MANAGEMENT_AI_DATABASE_URL",
+        "PANTHEON_MANAGEMENT_AI_DB_PASSWORD",
+    ):
+        assert f"emit_remote_assignment {name}" in script
+        assert f"emit_remote_export {name}" not in script
+
+    assert 'PANTHEON_REMOTE_SECRET_DIR="$(mktemp -d)"' in script
+    assert 'chmod 0700 "${PANTHEON_REMOTE_SECRET_DIR}"' in script
+    assert "umask 077" in script
+    assert "capture_dev_bff_trust_snapshot" in script
+    assert "apply_dev_bff_trust_policy" in script
+    assert "verify_dev_bff_trust_readback" in script
+    assert script.count("dev_auth_validation.py compare-env") >= 2
+    for name in (
+        "PANTHEON_BFF_JWKS_URI",
+        "PANTHEON_BFF_OIDC_DISCOVERY_URL",
+        "PANTHEON_BFF_OIDC_ISSUER",
+        "PANTHEON_BFF_OIDC_AUDIENCE",
+        "PANTHEON_BFF_ROLE_MAP",
+        "PANTHEON_BFF_MFA_REQUIRED",
+        "PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH",
+    ):
+        assert name in script
 
 
 def test_nonprod_workflow_missing_dev_login_is_a_hard_block(tmp_path: Path) -> None:

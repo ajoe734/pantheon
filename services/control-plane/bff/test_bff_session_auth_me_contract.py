@@ -1076,6 +1076,21 @@ def test_bff_profiled_dev_login_proves_distinct_operator_a_b_contracts(monkeypat
     assert results["operator-b"]["session"]["mfa_verified"] is False
 
 
+def test_risk_owner_is_readable_but_not_a_generic_operator_writer() -> None:
+    identity = bff_main.OperatorIdentity(
+        operator_id="risk-owner-a",
+        roles=["risk_owner"],
+        mfa_verified=True,
+        claims={"sub": "risk-owner-a", "roles": ["risk_owner"]},
+        token_kind="jwt",
+    )
+
+    bff_main._require_read_role(identity)
+    with pytest.raises(Exception) as exc_info:
+        bff_main._require_operator_role(identity)
+    assert getattr(exc_info.value, "status_code", None) == 403
+
+
 def test_bff_profiled_dev_login_rejects_duplicate_actor_subjects(monkeypatch) -> None:
     _strict_auth_env(monkeypatch)
     profiles = _governed_dev_login_profiles()

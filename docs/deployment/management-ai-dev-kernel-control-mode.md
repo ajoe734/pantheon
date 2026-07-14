@@ -134,6 +134,25 @@ kernel overlay during root stack deployment:
 - `PANTHEON_STATUS_ROOT_HOST=<dev remote repo root by default>`
 - `PANTHEON_STATUS_ROOT_CONTAINER=/workspace/status-root`
 
+For a normal root or BFF redeploy, the running `operator-bff` is the
+authoritative source for JWT issuer/audience, JWKS and OIDC verifier settings,
+login TTL, tenant scope, role mapping, MFA policy, and the control-passphrase
+hash. The deploy captures those values before checkout in a mode-0600 file,
+injects the exact values only into the Compose process, and compares a fresh
+`docker inspect` against the snapshot after health and source-SHA checks. A
+missing, duplicate, or changed trust value blocks the deployment. This is an
+exact preservation/readback guard, not proof that an external IdP is reachable
+or correctly provisioned.
+
+If no BFF is running, the operation is a bootstrap, not a preservation proof.
+It uses the governed `DEV_BFF_*` inputs and requires
+`DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH` whenever kernel mode is enabled. The
+first hosted authentication and control-mode smokes still have to establish the
+live result. Streamed GitHub, BFF, control-passphrase, and Management AI database
+credentials remain non-exported on the VM, are stored only in a temporary
+mode-0600 directory, are passed to the specific Git/Compose/database operation
+that needs them, and are deleted on exit.
+
 Override `DEV_STATUS_ROOT_HOST` when the supervisor drains from a different
 runtime root than the deploy checkout. The deploy script rejects attempts to
 enable auth stub, permissive mode, or stub capabilities before SSH. The
@@ -152,7 +171,8 @@ profile is invalid. The login request cannot request or override claims and raw
 client id/secret whitespace is not trimmed. Issued profile tenant scope and
 capabilities are authoritative and do not inherit global tenant/capability
 fallbacks. Kernel operator profiles may carry
-`assistant.kernel.*`; `risk_owner` is supported as a governed role. The Agora
+`assistant.kernel.*`; `risk_owner` is supported for governed risk read/review
+identity but is not a generic operator write role. The Agora
 deploy CI profile must be the distinct subject `pantheon-dev-ci-agora`, role
 `operator` only, tenant `tenant-dev` only, capabilities exactly `[]`, and
 `mfa_verified=false`. Do not restore a shared OIDC dev-login client, role/MFA
@@ -160,6 +180,11 @@ defaults, structured-token fallback, or stub-capability fallback.
 Any two-person operator/approval proof must use separately provisioned A/B
 profiles with distinct client secrets and subjects; their roles, tenant scope,
 MFA state, and capabilities come only from their respective profile.
+Every profile secret must also differ from the HS256 signing key; otherwise the
+holder could mint arbitrary claims. Locally issued `HS256` tokens are verified
+only by that local key. External `RS256`/`ES256` tokens are verified only through
+configured JWKS/OIDC discovery. A failed verifier never falls back to the other
+trust domain.
 The dev-login endpoint also requires at least one explicit environment marker,
 and every configured `PANTHEON_ENV`/`PANTHEON_DEPLOYMENT_STAGE` value must be
 exactly one of `dev`, `local`, `test`, or `testing`. Empty-only, staging,
@@ -176,6 +201,13 @@ streams secrets through SSH stdin; they are absent from gcloud argv and its
 environment. A local dry-run may omit them
 to inspect the safe configuration, but the governed GitHub workflow blocks
 every dev root/BFF deployment until all four exist.
+For a first kernel-enabled bootstrap, it must additionally provide
+`DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH`; later deploys preserve the running
+hash. Optional repository variables configure the JWKS/OIDC, role-map, and MFA
+bootstrap values. Manual workflow targets are restricted to the protected
+`dev`/`master` head or an exact `publish/vYYYY.MM.DD.N` snapshot derived from
+protected dev history; arbitrary input refs are rejected before target code,
+cloud federation, or environment secrets are used.
 
 The non-prod workflow treats missing GitHub dev-login credentials as a hard
 `BLOCKED` outcome before cloud authentication or deployment. When credentials

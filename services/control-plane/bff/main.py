@@ -1081,7 +1081,7 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 #   PANTHEON_BFF_MFA_REQUIRED  - "true" to enforce X-MFA-Token on mfa_required routes
 #   PANTHEON_BFF_DEFAULT_ROLE  - default role for JWT sub without explicit roles claim
 #
-# OIDC/JWKS mode (optional; activated when PANTHEON_BFF_JWKS_URI is non-empty):
+# External OIDC/JWKS verifier (optional; coexists with the local HS256 verifier):
 #   PANTHEON_BFF_JWKS_URI      - JWKS endpoint URI (e.g. https://idp/.well-known/jwks.json)
 #   PANTHEON_BFF_OIDC_DISCOVERY_URL - OIDC discovery metadata URL used to resolve jwks_uri
 #   PANTHEON_BFF_OIDC_ISSUER   - expected iss claim for OIDC tokens (overrides JWT_ISSUER)
@@ -1095,7 +1095,8 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 #       unique subject/roles/tenant/capabilities/MFA profiles. It is the only
 #       supported dev-login credential source; shared OIDC client credentials
 #       and role/tenant/MFA defaults are intentionally not accepted.
-#   When JWKS_URI is set, RS256/ES256 JWKS path is used instead of HS256.
+#   RS256/ES256 use JWKS/OIDC only; HS256 uses JWT_SECRET only. There is no
+#   cross-verifier fallback after a validation failure.
 #   Strict default still applies: stub tokens are not accepted in strict mode.
 
 
@@ -1596,7 +1597,7 @@ def _extract_identity_jwt(
         "PANTHEON_RUNTIME_JWT_AUDIENCE": os.getenv("PANTHEON_BFF_JWT_AUDIENCE", ""),
         "PANTHEON_RUNTIME_DEFAULT_ROLE": os.getenv("PANTHEON_BFF_DEFAULT_ROLE", "viewer"),
         "PANTHEON_RUNTIME_MFA_REQUIRED": os.getenv("PANTHEON_BFF_MFA_REQUIRED", "false"),
-        # OIDC/JWKS optional path — active only when JWKS_URI is set.
+        # External OIDC/JWKS path; algorithm routing keeps it separate from HS256.
         "PANTHEON_RUNTIME_JWKS_URI": os.getenv("PANTHEON_BFF_JWKS_URI", ""),
         "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL": os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", ""),
         "PANTHEON_RUNTIME_OIDC_ISSUER": os.getenv("PANTHEON_BFF_OIDC_ISSUER", ""),
@@ -1631,6 +1632,7 @@ def _extract_identity_jwt(
             "JWKS_NO_MATCHING_KEY",
             "JWKS_INVALID_KEY",
             "JWKS_LIBRARY_UNAVAILABLE",
+            "JWKS_CONFIGURATION_MISSING",
             "OIDC_DISCOVERY_FAILED",
         }
         if exc.code in _opaque_codes:
@@ -6390,7 +6392,7 @@ _VALIDATORS = {
 # --------------------------------------------------------------------------- #
 
 _READ_ROLES = {"viewer", "operator", "approver", "admin", "reviewer", "risk_owner"}
-_WRITE_ROLES = {"operator", "approver", "admin", "reviewer", "risk_owner"}
+_WRITE_ROLES = {"operator", "approver", "admin", "reviewer"}
 
 
 def _require_read_role(identity: OperatorIdentity) -> None:
@@ -6413,7 +6415,7 @@ def _require_operator_role(identity: OperatorIdentity) -> None:
             "Operator command access requires operator-level role",
             "Operator does not hold the required command role",
             precondition_failed="role_check",
-            suggestion="Escalate to a user with operator, approver, admin, reviewer, or risk_owner role",
+            suggestion="Escalate to a user with operator, approver, admin, or reviewer role",
         )
 
 

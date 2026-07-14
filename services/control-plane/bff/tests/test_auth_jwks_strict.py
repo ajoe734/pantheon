@@ -19,6 +19,7 @@ sys.path.insert(0, str(BFF_DIR))
 sys.path.insert(0, str(REPO_ROOT))
 
 import main as bff_main
+from services.runtime_auth_inbound import encode_jwt_hs256
 
 try:
     from cryptography.hazmat.backends import default_backend
@@ -322,6 +323,134 @@ def test_jwks_strict_accepts_configured_issuer_and_audience(monkeypatch) -> None
 
     assert identity.operator_id == "op-jwks"
     assert "operator" in identity.roles
+
+
+def test_hs256_dev_login_uses_only_local_verifier_when_jwks_is_also_configured(
+    monkeypatch,
+) -> None:
+    secret = "dual-trust-local-signing-secret-2026-000000"
+    token = encode_jwt_hs256(
+        {
+            "sub": "local-kernel-operator",
+            "roles": ["operator"],
+            "iss": "pantheon-dev",
+            "aud": "bff-operators",
+            "exp": int(time.time()) + 3600,
+            "token_use": "pantheon-bff-dev-login",
+            "mfa_verified": True,
+            "capabilities": ["assistant.kernel.repair"],
+        },
+        secret=secret,
+    )
+    env = {
+        **JWKS_ENV,
+        "PANTHEON_BFF_JWT_SECRET": secret,
+        "PANTHEON_BFF_JWT_ISSUER": "pantheon-dev",
+        "PANTHEON_BFF_JWT_AUDIENCE": "bff-operators",
+        "PANTHEON_BFF_ROLE_CLAIMS": "groups",
+        "PANTHEON_BFF_ROLE_MAP": "external-operators=operator",
+        "PANTHEON_BFF_ROLE_MAP_MODE": "strict",
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+    with patch("services.runtime_auth_inbound._fetch_jwks_keys") as fetch:
+        identity = bff_main._extract_identity_jwt(f"Bearer {token}")
+
+    fetch.assert_not_called()
+    assert identity.operator_id == "local-kernel-operator"
+    assert identity.roles == ["operator"]
+    assert identity.mfa_verified is True
+
+
+def test_bad_hs256_signature_never_falls_back_to_jwks(monkeypatch) -> None:
+    token = encode_jwt_hs256(
+        {
+            "sub": "forged-local",
+            "roles": ["admin"],
+            "iss": "pantheon-dev",
+            "aud": "bff-operators",
+            "exp": int(time.time()) + 3600,
+        },
+        secret="wrong-signing-secret-2026-000000000000",
+    )
+    env = {
+        **JWKS_ENV,
+        "PANTHEON_BFF_JWT_SECRET": "real-signing-secret-2026-0000000000000",
+        "PANTHEON_BFF_JWT_ISSUER": "pantheon-dev",
+        "PANTHEON_BFF_JWT_AUDIENCE": "bff-operators",
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+    with patch("services.runtime_auth_inbound._fetch_jwks_keys") as fetch:
+        with pytest.raises(HTTPException) as exc_info:
+            bff_main._extract_identity_jwt(f"Bearer {token}")
+
+    fetch.assert_not_called()
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.parametrize(
+    ("claim_overrides", "expected_reason"),
+    [
+        ({"iss": "external-idp"}, "AUTH_JWT_ISSUER_MISMATCH"),
+        ({"aud": "external-audience"}, "AUTH_JWT_AUDIENCE_MISMATCH"),
+        ({"token_use": "some-other-local-use"}, "AUTH_JWT_TOKEN_USE_MISMATCH"),
+    ],
+)
+def test_dual_trust_hs256_requires_local_issuer_audience_and_token_use_without_fallback(
+    monkeypatch, claim_overrides: dict[str, str], expected_reason: str
+) -> None:
+    secret = "dual-trust-local-signing-secret-2026-000000"
+    claims = {
+        "sub": "local-operator",
+        "roles": ["operator"],
+        "iss": "pantheon-dev",
+        "aud": "bff-operators",
+        "exp": int(time.time()) + 3600,
+        "token_use": "pantheon-bff-dev-login",
+    }
+    claims.update(claim_overrides)
+    token = encode_jwt_hs256(claims, secret=secret)
+    env = {
+        **JWKS_ENV,
+        "PANTHEON_BFF_JWT_SECRET": secret,
+        "PANTHEON_BFF_JWT_ISSUER": "pantheon-dev",
+        "PANTHEON_BFF_JWT_AUDIENCE": "bff-operators",
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+    with patch("services.runtime_auth_inbound._fetch_jwks_keys") as fetch:
+        with pytest.raises(HTTPException) as exc_info:
+            bff_main._extract_identity_jwt(f"Bearer {token}")
+
+    fetch.assert_not_called()
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail["error"]["details"]["reason"] == expected_reason
+
+
+@pytest.mark.skipif(not CRYPTO_AVAILABLE, reason="cryptography package not installed")
+def test_rs256_uses_only_jwks_when_local_secret_is_also_configured(monkeypatch) -> None:
+    private_pem, jwk = _rsa_fixture("kid-dual")
+    token = _make_rs256_jwt(private_pem, kid="kid-dual")
+    env = {
+        **JWKS_ENV,
+        "PANTHEON_BFF_JWT_SECRET": "local-secret-must-not-verify-rs256-2026000",
+        "PANTHEON_BFF_JWT_ISSUER": "pantheon-dev",
+        "PANTHEON_BFF_JWT_AUDIENCE": "local-audience",
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+    with patch(
+        "services.runtime_auth_inbound._fetch_jwks_keys", return_value=[jwk]
+    ) as fetch:
+        identity = bff_main._extract_identity_jwt(f"Bearer {token}")
+
+    fetch.assert_called_once()
+    assert identity.operator_id == "op-jwks"
 
 
 @pytest.mark.skipif(not CRYPTO_AVAILABLE, reason="cryptography package not installed")

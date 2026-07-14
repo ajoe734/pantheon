@@ -161,12 +161,24 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
     assert 'PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST:-${DEV_STATUS_ROOT_HOST:-$DEV_REMOTE_DIR}}"' in script
     assert 'emit_remote_export PANTHEON_ASSISTANT_KERNEL_ENABLED' in script
     assert 'emit_remote_export PANTHEON_DEV_BFF_AUTH_MODE' in script
-    assert 'emit_remote_export PANTHEON_DEV_BFF_JWT_SECRET' in script
-    assert 'emit_remote_export PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON' in script
+    assert 'emit_remote_assignment PANTHEON_DEV_BFF_JWT_SECRET' in script
+    assert 'emit_remote_assignment PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON' in script
+    assert 'emit_remote_assignment PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH' in script
+    assert 'persist_remote_secret PANTHEON_DEV_BFF_JWT_SECRET' in script
+    assert 'persist_remote_secret PANTHEON_DEV_BFF_DEV_LOGIN_CLIENT_PROFILES_JSON' in script
+    assert 'chmod 0600 "${DEV_BFF_TRUST_EXPECTED_FILE}"' in script
+    assert "capture_dev_bff_trust_snapshot" in script
+    assert "apply_dev_bff_trust_policy" in script
+    assert "verify_dev_bff_trust_readback" in script
     assert '--command="bash -s"' in script
     assert 'PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \\' in script
     assert script.count('PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \\') == 2
     assert script.count('PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \\') == 2
+    assert script.count('PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}" \\') == 2
+    assert script.count('PANTHEON_BFF_OIDC_DISCOVERY_URL="${PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL}" \\') == 2
+    assert script.count('PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}" \\') == 2
+    assert script.count('PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" \\') == 2
+    assert script.count('PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH}" \\') == 2
     assert 'emit_remote_export PANTHEON_DEV_BFF_OIDC_CLIENT_ID' not in script
     assert 'emit_remote_export PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET' not in script
     assert 'PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \\' not in script

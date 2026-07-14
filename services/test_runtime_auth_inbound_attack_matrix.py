@@ -97,3 +97,14 @@ def test_tampered_signature_rejected():
     h, p, s = t.split(".")
     with pytest.raises(A.AuthError):
         _v(f"{h}.{p}.{s[:-2]}AA")
+
+
+def test_malformed_payload_base64_is_an_auth_failure_not_a_server_error():
+    token = A.encode_jwt_hs256(_claims(), secret=SECRET)
+    header, _payload, signature = token.split(".")
+
+    with pytest.raises(A.AuthError) as exc:
+        _v(f"{header}.a.{signature}")
+
+    assert exc.value.code == "AUTH_JWT_DECODE_FAILED"
+    assert exc.value.status_code == 401

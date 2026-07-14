@@ -121,10 +121,9 @@ class AuthError(Exception):
 
 
 # --------------------------------------------------------------------------- #
-# JWT (HS256) verification — implemented against stdlib so the runtime-manager
-# requirements stay minimal. We accept only HS256; production deployments
-# choose the secret rotation cadence. Asymmetric algorithms can be added by
-# replacing the signature step without touching the call sites.
+# JWT verification. Local service tokens use stdlib-only HS256; external IdP
+# tokens use the isolated JWKS verifier below. Algorithm routing is one-way so
+# a failed token is never retried across trust boundaries.
 # --------------------------------------------------------------------------- #
 
 
@@ -137,6 +136,27 @@ def _looks_like_jwt(token: str) -> bool:
     if ":" in token:
         return False
     return token.count(".") == 2 and all(part for part in token.split("."))
+
+
+def _jwt_algorithm(token: str) -> str:
+    """Return the exact JWT header algorithm for one-way verifier routing.
+
+    Verifier selection happens before any network access.  A token is sent to
+    exactly one verifier based on this value and is never retried through the
+    other trust boundary after a signature or claims failure.
+    """
+
+    try:
+        header_b64, _payload_b64, _signature_b64 = token.split(".")
+        header = json.loads(_b64url_decode(header_b64))
+    except (binascii.Error, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise AuthError("AUTH_JWT_MALFORMED", "Bearer token is not a valid JWT", 401) from exc
+    if not isinstance(header, dict):
+        raise AuthError("AUTH_JWT_MALFORMED", "JWT header must be an object", 401)
+    alg = header.get("alg")
+    if not isinstance(alg, str) or not alg:
+        raise AuthError("AUTH_JWT_ALG_UNSUPPORTED", "JWT alg is not supported", 401)
+    return alg
 
 
 def _verify_jwt_hs256(
@@ -162,7 +182,7 @@ def _verify_jwt_hs256(
         header = json.loads(_b64url_decode(header_b64))
         payload = json.loads(_b64url_decode(payload_b64))
         signature = _b64url_decode(signature_b64)
-    except (ValueError, json.JSONDecodeError) as exc:
+    except (binascii.Error, UnicodeError, ValueError, json.JSONDecodeError) as exc:
         raise AuthError("AUTH_JWT_DECODE_FAILED", "JWT decode failed", 401) from exc
 
     alg = header.get("alg")
@@ -699,59 +719,79 @@ def validate_request_auth(
         mfa_values = _DEFAULT_MFA_VALUES
 
     if _looks_like_jwt(token):
+        algorithm = _jwt_algorithm(token)
         jwks_uri = _env(env, "PANTHEON_RUNTIME_JWKS_URI")
         oidc_discovery_url = _env(env, "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL")
-        if jwks_uri:
-            # OIDC/JWKS path: active when PANTHEON_RUNTIME_JWKS_URI is configured.
-            # OIDC-specific issuer/audience override the generic JWT ones when set.
-            oidc_issuer = _env(env, "PANTHEON_RUNTIME_OIDC_ISSUER") or issuer
-            oidc_audience = _env(env, "PANTHEON_RUNTIME_OIDC_AUDIENCE") or audience
-            claims = _verify_jwt_jwks(
-                token,
-                jwks_uri=jwks_uri,
-                issuer=oidc_issuer,
-                audience=oidc_audience,
-            )
-            ctx = _claims_to_context(
-                claims,
-                default_role=default_role,
-                role_claims=role_claims,
-                role_map=role_map,
-                role_map_mode=role_map_mode,
-                mfa_claims=mfa_claims,
-                mfa_values=mfa_values,
-            )
-        elif oidc_discovery_url:
-            metadata = _fetch_oidc_metadata(oidc_discovery_url)
-            oidc_issuer = _env(env, "PANTHEON_RUNTIME_OIDC_ISSUER") or str(metadata.get("issuer") or "").strip() or issuer
-            oidc_audience = _env(env, "PANTHEON_RUNTIME_OIDC_AUDIENCE") or audience
-            claims = _verify_jwt_jwks(
-                token,
-                jwks_uri=str(metadata["jwks_uri"]).strip(),
-                issuer=oidc_issuer,
-                audience=oidc_audience,
-            )
-            ctx = _claims_to_context(
-                claims,
-                default_role=default_role,
-                role_claims=role_claims,
-                role_map=role_map,
-                role_map_mode=role_map_mode,
-                mfa_claims=mfa_claims,
-                mfa_values=mfa_values,
-            )
-        elif not secret and mode == "strict":
-            raise AuthError(
-                "AUTH_JWT_SECRET_MISSING",
-                "Strict auth mode requires PANTHEON_RUNTIME_JWT_SECRET",
-                500,
-            )
-        elif secret:
+
+        if algorithm == "HS256":
+            # Local HS256 and external JWKS/OIDC trust can coexist, but a local
+            # token is never offered to the external verifier after failure.
+            if not secret:
+                raise AuthError(
+                    "AUTH_JWT_SECRET_MISSING",
+                    "HS256 JWT verification requires PANTHEON_RUNTIME_JWT_SECRET",
+                    500 if mode == "strict" else 401,
+                )
             claims = _verify_jwt_hs256(
                 token,
                 secret=secret,
                 issuer=issuer,
                 audience=audience,
+            )
+            if (jwks_uri or oidc_discovery_url) and claims.get(
+                "token_use"
+            ) != "pantheon-bff-dev-login":
+                raise AuthError(
+                    "AUTH_JWT_TOKEN_USE_MISMATCH",
+                    "Local JWT token use is not accepted by this verifier",
+                    401,
+                )
+            if claims.get("token_use") == "pantheon-bff-dev-login":
+                # Governed dev-login claims are already the canonical internal
+                # roles/MFA contract.  External IdP role maps must not erase or
+                # reinterpret them when both trust paths are configured.
+                ctx = _claims_to_context(
+                    claims,
+                    default_role=default_role,
+                    role_claims=("roles",),
+                    role_map={},
+                    role_map_mode="passthrough",
+                    mfa_claims=("mfa_verified",),
+                    mfa_values=_DEFAULT_MFA_VALUES,
+                )
+            else:
+                ctx = _claims_to_context(
+                    claims,
+                    default_role=default_role,
+                    role_claims=role_claims,
+                    role_map=role_map,
+                    role_map_mode=role_map_mode,
+                    mfa_claims=mfa_claims,
+                    mfa_values=mfa_values,
+                )
+        elif algorithm in _JWKS_ALLOWED_ALGS:
+            # RS256/ES256 tokens have one external verifier.  A missing JWKS
+            # configuration is an authentication failure, never an HS fallback.
+            if jwks_uri:
+                resolved_jwks_uri = jwks_uri
+                discovered_issuer = ""
+            elif oidc_discovery_url:
+                metadata = _fetch_oidc_metadata(oidc_discovery_url)
+                resolved_jwks_uri = str(metadata["jwks_uri"]).strip()
+                discovered_issuer = str(metadata.get("issuer") or "").strip()
+            else:
+                raise AuthError(
+                    "JWKS_CONFIGURATION_MISSING",
+                    "RS256/ES256 JWT verification requires JWKS or OIDC discovery",
+                    401,
+                )
+            oidc_issuer = _env(env, "PANTHEON_RUNTIME_OIDC_ISSUER") or discovered_issuer or issuer
+            oidc_audience = _env(env, "PANTHEON_RUNTIME_OIDC_AUDIENCE") or audience
+            claims = _verify_jwt_jwks(
+                token,
+                jwks_uri=resolved_jwks_uri,
+                issuer=oidc_issuer,
+                audience=oidc_audience,
             )
             ctx = _claims_to_context(
                 claims,
@@ -763,11 +803,7 @@ def validate_request_auth(
                 mfa_values=mfa_values,
             )
         else:
-            raise AuthError(
-                "AUTH_JWT_UNVERIFIED",
-                "JWT bearer token cannot be verified without PANTHEON_RUNTIME_JWT_SECRET",
-                401,
-            )
+            raise AuthError("AUTH_JWT_ALG_UNSUPPORTED", "JWT alg is not supported", 401)
     else:
         if mode == "strict":
             raise AuthError(
