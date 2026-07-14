@@ -190,6 +190,21 @@ def _actor_context(
     return str(actor_id), str(actor_role)
 
 
+# The BFF authorizes 'admin' operators to execute evolution mutations
+# (_MUTATION_EXECUTION_ROLES / the admin-gated checks in bff/main.py), but
+# services/control-plane/governance/evolution_decision.py's EvolutionActorRole
+# enum has no 'admin' member — EXECUTION_ROLES only recognizes
+# evolution_controller/operator. Sending "admin" straight through used to
+# raise an unhandled ValueError inside the evolution service instead of a
+# clean 4xx. Map it onto the equivalent domain role the execute path already
+# grants operator-level authority to.
+_EVOLUTION_EXECUTION_ROLE_ALIASES = {"admin": "operator"}
+
+
+def _evolution_actor_role(actor_role: str) -> str:
+    return _EVOLUTION_EXECUTION_ROLE_ALIASES.get(actor_role, actor_role)
+
+
 def _post_json(
     url: str,
     payload: Dict[str, Any],
@@ -246,6 +261,15 @@ def _owner_post_may_have_committed(exc: Exception) -> bool:
             EOFError,
         ),
     )
+
+
+# The real internal rollback-execute API (services/control-plane/internal/
+# internal_api.py::execute_rollback) reports its terminal state as "executed",
+# not "completed". The governance canonical status is normalized to
+# "completed" for any of these so the same-command replay short-circuit below
+# actually recognizes a prior completion instead of re-dispatching the
+# rollback action on every retry.
+_ROLLBACK_TERMINAL_STATUSES = frozenset({"completed", "executed", "succeeded", "success"})
 
 
 def _record_matches(record: Dict[str, Any], expected: Dict[str, Any], fields: tuple[str, ...]) -> bool:
@@ -586,7 +610,7 @@ def _execute_rollback(
     except Exception:
         pass
 
-    if existing_gov and existing_gov.get("status") == "completed":
+    if existing_gov and existing_gov.get("status") in _ROLLBACK_TERMINAL_STATUSES:
         return {
             "rollback_id": rollback_id,
             "command_id": command_id,
@@ -604,11 +628,22 @@ def _execute_rollback(
         actor_id = _extract_actor_id(auth_token)
         actor_role = "operator"
 
+    # The canonical governance record requires runtime_id; callers commonly
+    # only supply target_id (see _ROLLBACK_REQUIRED in bff/main.py, which does
+    # not list runtime_id). Derive it from the runtime/binding identifiers we
+    # already have rather than sending a bare POST that 400s.
+    runtime_id = (
+        params.get("runtime_id")
+        or params.get("runtime_binding_id")
+        or params.get("binding_id")
+        or target_id
+    )
+
     timestamp = _utc_now()
     gov_payload = {
         "rollback_id": rollback_id,
         "id": rollback_id,
-        "runtime_id": params.get("runtime_id"),
+        "runtime_id": runtime_id,
         "runtime_binding_id": params.get("runtime_binding_id") or params.get("target_id") or params.get("binding_id"),
         "action_type": params.get("rollback_action_type") or "replace",
         "status": "initiated",
@@ -650,7 +685,9 @@ def _execute_rollback(
             pass
         raise exc
 
-    gov_payload["status"] = body.get("status") or "completed"
+    raw_status = body.get("status") or "completed"
+    normalized_status = "completed" if raw_status in _ROLLBACK_TERMINAL_STATUSES else raw_status
+    gov_payload["status"] = normalized_status
     gov_payload["transition_actor"] = actor_role
     gov_payload["transition_identity"] = actor_id
     gov_payload["transition_source_command_id"] = command_id
@@ -659,11 +696,11 @@ def _execute_rollback(
     return {
         "rollback_id": rollback_id,
         "command_id": command_id,
-        "runtime_id": params.get("runtime_id"),
+        "runtime_id": runtime_id,
         "runtime_binding_id": params.get("runtime_binding_id") or params.get("target_id"),
         "target_artifact_id": params.get("target_artifact_id"),
         "rollback_action_type": params.get("rollback_action_type"),
-        "status": body.get("status") or "completed",
+        "status": normalized_status,
         "tracking_url": body.get("tracking_url"),
     }
 
@@ -920,7 +957,7 @@ def _execute_evolution_action(
     actor_id, actor_role = _actor_context(params, auth_token=auth_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
-        "actor_role": actor_role,
+        "actor_role": _evolution_actor_role(actor_role),
     }
     for optional_key in (
         "has_active_runtime",
@@ -1095,7 +1132,7 @@ def _execute_execute_mutation(
     actor_id, actor_role = _actor_context(params, auth_token=auth_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
-        "actor_role": actor_role,
+        "actor_role": _evolution_actor_role(actor_role),
     }
     for optional_key in (
         "has_active_runtime",

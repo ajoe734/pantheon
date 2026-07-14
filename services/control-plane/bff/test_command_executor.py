@@ -430,11 +430,14 @@ class TestEvolutionActionExecutor(unittest.TestCase):
         self.assertEqual(result["command_id"], "cmd-006")
         self.assertEqual(result["decision_state"], "executed")
         self.assertEqual(result["execution_ref_id"], "exec-002")
+        # actor_role is normalized from the BFF-level "admin" to the
+        # evolution service's domain role "operator" (EvolutionActorRole has
+        # no "admin" member; see _evolution_actor_role).
         mock_post.assert_called_once_with(
             "http://localhost:5001/api/evolution/proposals/evo-002/execute",
             {
                 "actor_id": "op-admin",
-                "actor_role": "admin",
+                "actor_role": "operator",
                 "has_active_runtime": True,
                 "active_binding_id": "rb-002",
                 "freeze_mode": "governance_only",
@@ -475,7 +478,7 @@ class TestEvolutionActionExecutor(unittest.TestCase):
             "http://localhost:5001/api/evolution/proposals/evo-reval-002/execute",
             {
                 "actor_id": "op-admin",
-                "actor_role": "admin",
+                "actor_role": "operator",
                 "note": "Execute approved revalidation",
             },
             auth_token=auth_token,
