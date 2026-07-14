@@ -249,8 +249,13 @@ class ApprovalDecision:
     capital_pool_id: Optional[str] = None
     persona_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
-    tenant_id: Optional[str] = None
-    owner_user_id: Optional[str] = None
+    tenant_id: str = ""
+    owner_user_id: str = ""
+    proposal_id: Optional[str] = None
+    proposal_revision: Optional[int] = None
+    proposal_content_digest: Optional[str] = None
+    validation_result_digest: Optional[str] = None
+    revoked_at: Optional[str] = None
 
     # -- factory helpers -----------------------------------------------------
 
@@ -266,6 +271,10 @@ class ApprovalDecision:
         persona_id: Optional[str] = None,
         tenant_id: Optional[str] = None,
         owner_user_id: Optional[str] = None,
+        proposal_id: Optional[str] = None,
+        proposal_revision: Optional[int] = None,
+        proposal_content_digest: Optional[str] = None,
+        validation_result_digest: Optional[str] = None,
     ) -> "ApprovalDecision":
         """Create a new decision in the *proposed* state."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -284,8 +293,14 @@ class ApprovalDecision:
             risk_level=risk_level,
             capital_pool_id=capital_pool_id,
             persona_id=persona_id,
-            tenant_id=tenant_id,
-            owner_user_id=owner_user_id,
+            # Legacy internal callers derive a non-ambiguous system scope;
+            # wire APIs require both values explicitly.
+            tenant_id=tenant_id or os.getenv("PANTHEON_DEFAULT_TENANT_ID", "pantheon-system"),
+            owner_user_id=owner_user_id or persona_id or "pantheon-system",
+            proposal_id=proposal_id,
+            proposal_revision=proposal_revision,
+            proposal_content_digest=proposal_content_digest,
+            validation_result_digest=validation_result_digest,
         )
 
     def accept_review(self, actor_role: ActorRole | str, actor_id: str) -> None:
@@ -360,6 +375,7 @@ class ApprovalDecision:
         self.decision_state = DecisionState.REVOKED
         self.actor_role = normalized_role
         self.actor_id = actor_id
+        self.revoked_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def supersede(self, superseded_by: str) -> None:
         """Mark this decision as superseded by a newer one."""
@@ -378,6 +394,10 @@ class ApprovalDecision:
             errors.append("target_id is required")
         if not self.target_version:
             errors.append("target_version is required")
+        if not self.tenant_id:
+            errors.append("tenant_id is required")
+        if not self.owner_user_id:
+            errors.append("owner_user_id is required")
         if self.decision_state in (
             DecisionState.UNDER_REVIEW,
             DecisionState.DECIDED,
@@ -483,8 +503,13 @@ class ApprovalDecision:
             capital_pool_id=data.get("capital_pool_id"),
             persona_id=data.get("persona_id"),
             metadata=data.get("metadata"),
-            tenant_id=data.get("tenant_id"),
-            owner_user_id=data.get("owner_user_id") or data.get("user_id"),
+            tenant_id=data.get("tenant_id") or "pantheon-system",
+            owner_user_id=data.get("owner_user_id") or data.get("user_id") or data.get("persona_id") or "pantheon-system",
+            proposal_id=data.get("proposal_id"),
+            proposal_revision=data.get("proposal_revision"),
+            proposal_content_digest=data.get("proposal_content_digest"),
+            validation_result_digest=data.get("validation_result_digest"),
+            revoked_at=data.get("revoked_at"),
         )
 
     @classmethod
@@ -510,6 +535,8 @@ def validate_decision_json(data: Dict[str, Any]) -> List[str]:
         "target_version",
         "decision_state",
         "created_at",
+        "tenant_id",
+        "owner_user_id",
     ]
     for key in required:
         if key not in data or data[key] is None:
