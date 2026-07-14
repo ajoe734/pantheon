@@ -48,14 +48,15 @@
       "status": "pass"
     },
     {
-      "blocking_until": "updated PR head checks pass, Claude records review verdict, and PR #3586 merges",
       "evidence_refs": [
-        "implementation_delivery",
+        "https://github.com/ajoe734/pantheon/pull/3586",
+        "merge:33338aa761946eafa147ab5d7a8853883d92129e",
+        "ai-status.json#LOOP-PROD-REC-001:review_approved",
         "residual_risks"
       ],
       "id": "AC-05",
       "statement": "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
-      "status": "pending_independent_review_and_merge"
+      "status": "pass"
     },
     {
       "evidence_refs": [
@@ -236,7 +237,93 @@
         "subject": "LOOP-PROD-REC-001: preserve recovery runner executability"
       }
     ],
-    "required_checks": []
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "56dd88e828385e89101cd003cdecd5cd3df0f925",
+      "merge_sha": "33338aa761946eafa147ab5d7a8853883d92129e",
+      "merged_at": "2026-07-14T08:25:30Z",
+      "number": 3586,
+      "url": "https://github.com/ajoe734/pantheon/pull/3586"
+    },
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "56dd88e828385e89101cd003cdecd5cd3df0f925",
+        "jobs": {
+          "Commit trailers": "success"
+        },
+        "run_id": 29317897127,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29317897127/job/87036043334",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "56dd88e828385e89101cd003cdecd5cd3df0f925",
+        "jobs": {
+          "Commit trailers": "success"
+        },
+        "run_id": 29317896036,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29317896036/job/87036039395",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "56dd88e828385e89101cd003cdecd5cd3df0f925",
+        "jobs": {
+          "Forward to orchestrator": "success"
+        },
+        "run_id": 29317968956,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29317968956/job/87036262037",
+        "workflow": "Orchestrator Sync"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "56dd88e828385e89101cd003cdecd5cd3df0f925",
+        "jobs": {
+          "Runtime mirror guard": "success"
+        },
+        "run_id": 29317897127,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29317897127/job/87036043404",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "56dd88e828385e89101cd003cdecd5cd3df0f925",
+        "jobs": {
+          "Runtime mirror guard": "success"
+        },
+        "run_id": 29317896036,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29317896036/job/87036039392",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "56dd88e828385e89101cd003cdecd5cd3df0f925",
+        "jobs": {
+          "Smoke acceptance": "success"
+        },
+        "run_id": 29317897127,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29317897127/job/87036090098",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "56dd88e828385e89101cd003cdecd5cd3df0f925",
+        "jobs": {
+          "Smoke acceptance": "success"
+        },
+        "run_id": 29317896036,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29317896036/job/87036089568",
+        "workflow": "Branch CI Gate"
+      }
+    ]
   },
   "integrity": {
     "algorithm": "sha256",
@@ -277,6 +364,23 @@
       "reviewer": "Claude",
       "sequence": 2,
       "status": "pending_independent_review"
+    },
+    {
+      "actor": "Claude",
+      "kind": "independent_review_observed",
+      "recorded_at": "2026-07-14T08:27:46.803326Z",
+      "reference": "ai-status.json#LOOP-PROD-REC-001",
+      "sequence": 3,
+      "status": "approved"
+    },
+    {
+      "actor": "Codex",
+      "kind": "primary_delivery_merge_observed",
+      "recorded_at": "2026-07-14T08:27:46.803326Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/3586",
+      "sequence": 4,
+      "sha": "33338aa761946eafa147ab5d7a8853883d92129e",
+      "status": "pass"
     }
   ],
   "residual_risks": {
@@ -359,11 +463,11 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-14T08:02:28.638929Z",
-    "evidence_cut_semantics": "Isolated target-dev contract stack with real worker, BFF, PostgreSQL, and full-stack process restarts.",
+    "evidence_cut_at": "2026-07-14T08:27:46.803326Z",
+    "evidence_cut_semantics": "Merged contract recovery capture with exact-head checks and independent review; not product-loop or hosted-live maturity.",
     "id": "LOOP-PROD-REC-001",
-    "overall_admission": "review_required_evidence_only",
-    "owner": "Codex",
+    "overall_admission": "accepted_contract_evidence",
+    "owner": "Antigravity",
     "phase": "Loop Product-Level Remediation / Wave 0",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",

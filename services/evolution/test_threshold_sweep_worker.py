@@ -187,12 +187,11 @@ def _seed_real_summary(store: RuntimeSummaryProjectionStore, **event_overrides) 
 # load_thresholds — fail-closed on bad live config; disabled entries dropped
 # ---------------------------------------------------------------------------
 
-def test_default_config_file_loads_only_enabled_thresholds():
+def test_default_config_file_keeps_uncalibrated_pnl_disabled():
     thresholds = load_thresholds(DEFAULT_CONFIG_PATH)
-    metric_names = {t["metric_name"] for t in thresholds}
-    assert "rolling_drawdown_multiple" in metric_names
-    # The PnL floor is an unapproved placeholder and must not be default-on.
-    assert "rolling_pnl_floor" not in metric_names
+    by_metric = {threshold["metric_name"]: threshold for threshold in thresholds}
+    assert set(by_metric) == {"rolling_drawdown_multiple"}
+    assert "EVOLOOP-005-governed-baselines.md" in by_metric["rolling_drawdown_multiple"]["policy_source"]
 
 
 def test_load_thresholds_missing_file_fails_closed():
@@ -305,10 +304,30 @@ def test_load_thresholds_drops_huge_integer_threshold_value_without_raising(tmp_
 # load_baselines — fail-closed on missing/malformed live config
 # ---------------------------------------------------------------------------
 
-def test_default_baselines_file_loads_empty_mapping():
-    # Ships with no approved baselines; the drawdown threshold fails closed
-    # until an operator adds one.
-    assert load_baselines(DEFAULT_BASELINES_PATH) == {}
+def test_default_baselines_file_loads_governed_v1_baseline():
+    baselines = load_baselines(DEFAULT_BASELINES_PATH)
+    v1 = baselines["artifact-tw-session-momentum-v1"]
+    assert v1["expected_drawdown"] == 0.0303
+    assert "EVOLOOP-005-governed-baselines.md" in v1["policy_source"]
+
+
+def test_default_governed_v1_config_has_no_baseline_missing_diagnostic():
+    payloads, diagnostics = evaluate_breaches(
+        [
+            _summary(
+                artifact_id="artifact-tw-session-momentum-v1",
+                drawdown=0.0303,
+                pnl=-4990.0,
+            )
+        ],
+        load_thresholds(DEFAULT_CONFIG_PATH),
+        window_bucket="2026-07-14",
+        baselines=load_baselines(DEFAULT_BASELINES_PATH),
+        now=_NOW,
+    )
+
+    assert payloads == []
+    assert diagnostics == []
 
 
 def test_load_baselines_missing_file_fails_closed():

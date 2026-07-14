@@ -245,7 +245,13 @@ def _ensure_role_allowed(
     allowed: set[EvolutionActorRole],
     message: str,
 ) -> EvolutionActorRole:
-    normalized = EvolutionActorRole(role)
+    try:
+        normalized = EvolutionActorRole(role)
+    except ValueError as exc:
+        allowed_labels = ", ".join(sorted(item.value for item in allowed))
+        raise EvolutionDecisionError(
+            f"{message}. '{role}' is not a recognized actor role. Allowed roles: {allowed_labels}"
+        ) from exc
     if normalized not in allowed:
         allowed_labels = ", ".join(sorted(item.value for item in allowed))
         raise EvolutionDecisionError(f"{message}. Allowed roles: {allowed_labels}")
