@@ -263,6 +263,68 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
         self.assertEqual(summary["engine_bridge_commit"], "abc1234")
         self.assertEqual(stats["runtime_summary_projection"]["summary_count"], 1)
 
+    def test_paired_performance_events_validate_and_project_independent_as_of_values(self):
+        async def scenario():
+            summary_store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+            svc = TelemetryIngestService(
+                schema_path=SCHEMA_PATH,
+                binding_store=_StubBindingStore(),
+                runtime_summary_store=summary_store,
+                batch_size=10,
+                batch_interval=0.01,
+            )
+            await svc.start()
+            emitter = RuntimeTelemetryEmitter(_runtime_identity(), _FakeBindingResolver())
+            pnl_event = emitter.build_event(
+                "pnl_snapshot",
+                {
+                    "pnl": 125.75,
+                    "pnl_as_of": "2026-05-01T00:00:05Z",
+                    "valuation_fill_count": 3,
+                },
+                event_id=str(uuid.uuid4()),
+                created_at="2026-05-01T00:01:00Z",
+            )
+            drawdown_event = emitter.build_event(
+                "drawdown_snapshot",
+                {
+                    "drawdown": 0.0425,
+                    "drawdown_as_of": "2026-05-01T00:00:07Z",
+                    "valuation_fill_count": 3,
+                },
+                event_id=str(uuid.uuid4()),
+                created_at="2026-05-01T00:01:01Z",
+            )
+            self.assertIsNotNone(pnl_event)
+            self.assertIsNotNone(drawdown_event)
+            self.assertIn("pnl", pnl_event["metrics"])
+            self.assertNotIn("drawdown", pnl_event["metrics"])
+            self.assertNotIn("drawdown_pct", pnl_event["metrics"])
+            self.assertEqual(pnl_event["pnl_as_of"], "2026-05-01T00:00:05Z")
+            self.assertNotIn("drawdown_as_of", pnl_event)
+            self.assertIn("drawdown", drawdown_event["metrics"])
+            self.assertNotIn("pnl", drawdown_event["metrics"])
+            self.assertEqual(drawdown_event["drawdown_as_of"], "2026-05-01T00:00:07Z")
+            self.assertNotIn("pnl_as_of", drawdown_event)
+
+            accepted = [await svc.ingest(pnl_event), await svc.ingest(drawdown_event)]
+            await asyncio.sleep(0.05)
+            summary = svc.get_runtime_summary("rt-paper-contract")
+            await svc.stop(graceful=True)
+            stats = svc.stats()
+            return accepted, summary, stats
+
+        accepted, summary, stats = asyncio.run(scenario())
+
+        self.assertEqual(accepted, [True, True])
+        self.assertEqual(stats["service"]["total_ingested"], 2)
+        self.assertEqual(stats["service"]["total_rejected"], 0)
+        self.assertEqual(stats["writer"]["total_written"], 2)
+        self.assertEqual(summary["pnl"], 125.75)
+        self.assertEqual(summary["pnl_at"], "2026-05-01T00:00:05Z")
+        self.assertEqual(summary["drawdown"], 0.0425)
+        self.assertEqual(summary["drawdown_at"], "2026-05-01T00:00:07Z")
+
 
 if __name__ == "__main__":
     unittest.main()
