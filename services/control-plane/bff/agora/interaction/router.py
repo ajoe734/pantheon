@@ -370,7 +370,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             synthesis_status = "more_research_required"
             consensus_summary_text = "Confidence thresholds not met. More research required before version promotion."
             conditions.append("Extend observation window and rerun backtest with at least 500 samples.")
-        
+
         if has_homogeneity:
             risk_notes.append("Homogeneity warning: High correlation between participant models detected.")
 
@@ -472,10 +472,10 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         if not set(body.participant_persona_ids).issubset(eligible):
             from models import ErrorCode
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "One or more participants are ineligible", "participant_eligibility_failed")
-        
         command_scope = f"command:{resolved.tenant_id}:{resolved.user_id}"
         request_payload = body.model_dump(mode="json")
         command_fingerprint = payload_fingerprint(request_payload)
+        trace_id = session.get("openclaw_session_id") or f"trace-{uuid.uuid4().hex[:12]}"
 
         def build() -> Dict[str, Any]:
             interaction_id = body.interaction_id or "int_" + hashlib.sha256(

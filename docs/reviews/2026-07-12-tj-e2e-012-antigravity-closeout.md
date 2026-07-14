@@ -170,7 +170,7 @@ graph TD
         fill -->|books ledger| bk[booking_id]
         bk -->|reconciles| recon[reconciliation_id]
     end
-    
+
     %% Reverse Index Resolution
     rj & sl & dec & bp & co & bo & fill & bk & recon -.->|Resolves via reverse index| jid[journey_id]
 ```

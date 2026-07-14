@@ -1,17 +1,17 @@
 # AG-BE-DYNUI-001 Sidecar Acceptance Packet
 
-**Sidecar task:** `AG-BE-DYNUI-001-SIDECAR-ACCEPTANCE`  
-**Helper parent:** `AG-BE-DYNUI-001`  
-**Helper kind:** `acceptance_packet`  
-**Parent title:** Trading Room workspace proposal contract  
-**Parent owner:** `Codex`  
-**Parent reviewer:** `Claude2`  
+**Sidecar task:** `AG-BE-DYNUI-001-SIDECAR-ACCEPTANCE`
+**Helper parent:** `AG-BE-DYNUI-001`
+**Helper kind:** `acceptance_packet`
+**Parent title:** Trading Room workspace proposal contract
+**Parent owner:** `Codex`
+**Parent reviewer:** `Claude2`
 **Parent status at packet preparation:** `in_progress` in central L0 state on
 2026-06-29; parent implementation later merged to `dev` before sidecar
 closeout
-**Sidecar owner:** `Codex2`  
-**Sidecar reviewer:** `Codex`  
-**Date:** `2026-06-29`  
+**Sidecar owner:** `Codex2`
+**Sidecar reviewer:** `Codex`
+**Date:** `2026-06-29`
 **Status:** `review approved; owner closeout`
 
 > Scope constraint: support artifact only. This packet packages acceptance

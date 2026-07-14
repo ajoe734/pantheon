@@ -1,9 +1,9 @@
 # PPL-ALLOC-006 BFF / Frontend Handoff Packet
 
-Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF`  
-Parent: `PPL-ALLOC-006`  
-Owner: Codex  
-Reviewer: Claude  
+Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF`
+Parent: `PPL-ALLOC-006`
+Owner: Codex
+Reviewer: Claude
 Kind: support-only `bff_handoff_packet`
 
 ## Purpose And Boundary
@@ -132,9 +132,9 @@ new BFF contract:
 
 ## Composition Notes For Parent Owner
 
-Owned here: support mapping and fail-closed frontend handoff guidance.  
+Owned here: support mapping and fail-closed frontend handoff guidance.
 Not changing: canonical policy, BFF routes/contracts, runtime/registry/
-governance implementation, frontend code, or route pruning.  
+governance implementation, frontend code, or route pruning.
 Compose with: `PPL-ALLOC-003` normalized binding reads, `PPL-ALLOC-004`
 allocation/rebalance policy, the `PPL-ALLOC-006` execute-plans workbench, and
 later `PPL-ALLOC-007`/`PPL-ALLOC-008` route and emergency slices.

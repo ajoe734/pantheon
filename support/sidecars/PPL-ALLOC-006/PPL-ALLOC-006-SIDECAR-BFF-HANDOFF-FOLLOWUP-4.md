@@ -1,10 +1,10 @@
 # PPL-ALLOC-006 BFF / Frontend Handoff Follow-Up 4
 
-Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4`  
-Parent: `PPL-ALLOC-006`  
-Owner: Codex  
-Reviewer: Claude  
-Kind: support-only `bff_handoff_packet`  
+Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-4`
+Parent: `PPL-ALLOC-006`
+Owner: Codex
+Reviewer: Claude
+Kind: support-only `bff_handoff_packet`
 Generated: 2026-07-11
 
 ## Boundary
@@ -114,10 +114,10 @@ enrichment. Refresh failure must never erase `review_id`, `rebalance_id`,
 ## Composition And Review
 
 Owned here: support-only capability gating, query-gap decisions, recovery
-states, and frontend acceptance guidance.  
+states, and frontend acceptance guidance.
 Not changing: L1/L2 canonical truth, BFF routes/contracts or implementation,
 runtime/registry/governance behavior, frontend source, routing, or parent task
-lifecycle.  
+lifecycle.
 Composes with: `PPL-ALLOC-003` binding reads, `PPL-ALLOC-004` allocation
 policy, parent `PPL-ALLOC-006`, and the preceding PPL-ALLOC-006 BFF handoff
 packets.

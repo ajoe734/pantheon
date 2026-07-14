@@ -175,13 +175,13 @@ def check_task(task: dict[str, Any]) -> list[str]:
             for proof_item in bp.values():
                 if isinstance(proof_item, dict) and "proof" in proof_item:
                     bp_texts.extend(proof_item["proof"])
-            
+
             combined_bp = " ".join(str(t) for t in bp_texts).lower()
             combined_notes = " ".join(str(n) for n in (task.get("review_notes_zh") or [])).lower()
-            
+
             bp_flagged = next((sig for sig in _FIXTURE_ONLY_SIGNALS if sig in combined_bp), None)
             notes_flagged = next((sig for sig in _FIXTURE_ONLY_SIGNALS if sig in combined_notes), None)
-            
+
             if bp_flagged or notes_flagged:
                 gaps.append(
                     f"mock-only live claim detected (flagged: '{bp_flagged or notes_flagged}') violating live maturity target"
@@ -192,7 +192,7 @@ def check_task(task: dict[str, Any]) -> list[str]:
         hosted_rb = evidence_data.get("hosted_readback") or {}
         ct_rb = hosted_rb.get("capture_time_hosted_readback")
         pre_dep = hosted_rb.get("pre_deploy")
-        
+
         if not ct_rb and not pre_dep:
             gaps.append("missing terminal readback evidence in hosted_readback")
         else:
@@ -239,7 +239,7 @@ def check_task(task: dict[str, Any]) -> list[str]:
             gaps.append("missing reviewer: task must have a reviewer assigned")
         elif task.get("reviewer") == task.get("owner"):
             gaps.append("invalid reviewer: reviewer cannot be the owner")
-        
+
         record_log = evidence_data.get("record_log") or []
         reviewer_approved = False
         for log_item in record_log:
@@ -255,7 +255,7 @@ def check_task(task: dict[str, Any]) -> list[str]:
         impl_delivery = evidence_data.get("implementation_delivery") or {}
         pr = impl_delivery.get("pull_request") or {}
         prs = impl_delivery.get("pull_requests") or []
-        
+
         has_pr = bool(pr.get("number") or any(item.get("number") for item in prs))
         if task.get("repository") == "execute-plans" and not has_pr:
             gaps.append("phantom cross-repo delivery rejected: missing PR records in implementation_delivery")

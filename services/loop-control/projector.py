@@ -20,7 +20,7 @@ def project_controller_record_to_bff(row: Dict[str, Any]) -> Dict[str, Any]:
                 evidence_refs = json.loads(row["evidence_refs"])
             except Exception:
                 pass
-                
+
     # Ensure evidence refs are non-empty so that BFF accepts it as valid evidence
     # _health_record_runtime_refs requires at least one non-archived task ref
     if not evidence_refs:
@@ -40,10 +40,10 @@ def project_controller_record_to_bff(row: Dict[str, Any]) -> Dict[str, Any]:
     # If lease has expired, we might report it as unobserved, but let the BFF check age.
     # We will map reported status to 'ok' to satisfy _ACCEPTED_CONTROLLER_HEALTH_STATUSES
     controller_status = "ok"
-    
+
     last_heartbeat_at = to_iso(row.get("last_heartbeat_at"))
     last_tick_at = to_iso(row.get("last_tick_at"))
-    
+
     controller_health = {
         "status": controller_status,
         "controller_name": row.get("controller_name"),

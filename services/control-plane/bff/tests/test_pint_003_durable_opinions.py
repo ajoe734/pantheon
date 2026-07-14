@@ -41,7 +41,7 @@ def context_payload(version="v1"):
 
 def test_durable_opinions_debate_and_synthesis_flow(monkeypatch):
     c = client(monkeypatch)
-    
+
     # 1. Resolve context
     resolve_headers = {**AUTH, "Idempotency-Key": f"idem-context-{uuid.uuid4().hex[:8]}"}
     resolved = c.post("/bff/agora/interactions/context:resolve", headers=resolve_headers, json=context_payload()).json()["data"]
@@ -56,22 +56,22 @@ def test_durable_opinions_debate_and_synthesis_flow(monkeypatch):
         "participant_persona_ids": ["ready"],
         "context_refs": context_payload()["context_refs"]
     }
-    
+
     # We use a unique idempotency key
     headers = {**AUTH, "Idempotency-Key": f"idem-interaction-{uuid.uuid4().hex[:8]}"}
     response = c.post("/bff/agora/interactions", headers=headers, json=payload)
     assert response.status_code == 202, response.text
-    
+
     # Verify events were created in the store
     events_response = c.get(f"/bff/agora/workshops/{workshop_id}/events", headers=AUTH)
     assert events_response.status_code == 200, events_response.text
     events = events_response.json()["data"]
     assert len(events) >= 3  # opinion_requested, opinion_offered, thread_closed
-    
+
     # Check opinion_offered event
     offered_ev = next(e for e in events if e["event_type"] == "opinion_offered")
     assert offered_ev["actor_type"] == "persona_session"
-    
+
     # Verify the full payload survived persistence/readback
     full_payload = offered_ev["payload_refs_json"]
     assert full_payload["spec_version"] == "1.0"
@@ -84,7 +84,7 @@ def test_durable_opinions_debate_and_synthesis_flow(monkeypatch):
     cards_response = c.get(f"/bff/agora/workshops/{workshop_id}/cards", headers=AUTH)
     assert cards_response.status_code == 200, cards_response.text
     cards = cards_response.json()["data"]
-    
+
     # Verify consult_result card is present
     consult_card = next(card for card in cards if card["card_type"] == "consult_result")
     assert consult_card["status"] == "completed"
@@ -106,11 +106,11 @@ def test_durable_opinions_no_consensus_flow(monkeypatch):
         "participant_persona_ids": ["ready"],
         "context_refs": context_payload()["context_refs"]
     }
-    
+
     headers = {**AUTH, "Idempotency-Key": f"idem-interaction-{uuid.uuid4().hex[:8]}"}
     response = c.post("/bff/agora/interactions", headers=headers, json=payload)
     assert response.status_code == 202, response.text
-    
+
     # Verify consult_result card has no_consensus status
     cards = c.get(f"/bff/agora/workshops/{workshop_id}/cards", headers=AUTH).json()["data"]
     consult_card = next(card for card in cards if card["card_type"] == "consult_result")
@@ -132,11 +132,11 @@ def test_durable_opinions_more_research_flow(monkeypatch):
         "participant_persona_ids": ["ready"],
         "context_refs": context_payload()["context_refs"]
     }
-    
+
     headers = {**AUTH, "Idempotency-Key": f"idem-interaction-{uuid.uuid4().hex[:8]}"}
     response = c.post("/bff/agora/interactions", headers=headers, json=payload)
     assert response.status_code == 202, response.text
-    
+
     # Verify consult_result card has more_research_required status and conditions
     cards = c.get(f"/bff/agora/workshops/{workshop_id}/cards", headers=AUTH).json()["data"]
     consult_card = next(card for card in cards if card["card_type"] == "consult_result")
@@ -158,11 +158,11 @@ def test_durable_opinions_homogeneity_warning_flow(monkeypatch):
         "participant_persona_ids": ["ready"],
         "context_refs": context_payload()["context_refs"]
     }
-    
+
     headers = {**AUTH, "Idempotency-Key": f"idem-interaction-{uuid.uuid4().hex[:8]}"}
     response = c.post("/bff/agora/interactions", headers=headers, json=payload)
     assert response.status_code == 202, response.text
-    
+
     # Verify consult_result card contains homogeneity warning in risk notes
     cards = c.get(f"/bff/agora/workshops/{workshop_id}/cards", headers=AUTH).json()["data"]
     consult_card = next(card for card in cards if card["card_type"] == "consult_result")
@@ -184,11 +184,11 @@ def test_durable_opinions_degraded_path_flow(monkeypatch):
         "participant_persona_ids": ["ready"],
         "context_refs": context_payload()["context_refs"]
     }
-    
+
     headers = {**AUTH, "Idempotency-Key": f"idem-interaction-{uuid.uuid4().hex[:8]}"}
     response = c.post("/bff/agora/interactions", headers=headers, json=payload)
     assert response.status_code == 202, response.text
-    
+
     # Check that events contain openclaw.degraded or abstain stance
     events_response = c.get(f"/bff/agora/workshops/{workshop_id}/events", headers=AUTH)
     assert events_response.status_code == 200, events_response.text
@@ -200,7 +200,7 @@ def test_durable_opinions_degraded_path_flow(monkeypatch):
 def test_sse_replay_database_fallback(monkeypatch):
     from agora.router import make_workshop_store
     store = make_workshop_store()
-    
+
     # 1. Create a dummy workshop and events directly in store
     workshop_id = f"ws-{uuid.uuid4().hex[:8]}"
     store.create_session({
@@ -209,7 +209,7 @@ def test_sse_replay_database_fallback(monkeypatch):
         "user_id": "test-user",
         "status": "open"
     })
-    
+
     ev1_id = f"evt-1-{uuid.uuid4().hex[:8]}"
     store.create_event({
         "event_id": ev1_id,
@@ -219,7 +219,7 @@ def test_sse_replay_database_fallback(monkeypatch):
         "payload_refs_json": {"topic": "test"},
         "trace_id": "trace-1"
     })
-    
+
     ev2_id = f"evt-2-{uuid.uuid4().hex[:8]}"
     store.create_event({
         "event_id": ev2_id,

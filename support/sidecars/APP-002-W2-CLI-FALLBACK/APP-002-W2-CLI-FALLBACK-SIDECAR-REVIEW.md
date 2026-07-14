@@ -1,13 +1,13 @@
 # APP-002-W2-CLI-FALLBACK Sidecar Review Packet
 
-**Task**: `APP-002-W2-CLI-FALLBACK-SIDECAR-REVIEW`  
-**Parent Task**: `APP-002-W2-CLI-FALLBACK`  
-**Parent Owner**: Codex  
-**Parent Reviewer**: Qwen  
-**Sidecar Owner**: Qwen  
-**Sidecar Reviewer**: Codex  
-**Helper Kind**: `review_packet`  
-**Prepared**: 2026-04-12  
+**Task**: `APP-002-W2-CLI-FALLBACK-SIDECAR-REVIEW`
+**Parent Task**: `APP-002-W2-CLI-FALLBACK`
+**Parent Owner**: Codex
+**Parent Reviewer**: Qwen
+**Sidecar Owner**: Qwen
+**Sidecar Reviewer**: Codex
+**Helper Kind**: `review_packet`
+**Prepared**: 2026-04-12
 
 > Support artifact only. No canonical truth, contract, or core runtime/registry/governance implementations were modified.
 
@@ -88,7 +88,7 @@ Turn the CLI and internal API from scaffolds into a usable **secondary control p
 
 ## 7. Decision Support
 
-**Recommendation**: Approve `APP-002-W2-CLI-FALLBACK`.  
+**Recommendation**: Approve `APP-002-W2-CLI-FALLBACK`.
 **Reason**: CLI now executes real internal API actions, internal API routing is authoritative, MFA and audit trails enforced, and tests pass. Open items are explicitly documented and non-blocking for v1.
 
 ---
@@ -99,4 +99,3 @@ Turn the CLI and internal API from scaffolds into a usable **secondary control p
 **From**: Qwen (sidecar owner; evidence summary)
 **Status**: Handed off for review approval (2026-04-11T18:10:58Z)
 **Next**: Codex reviews and approves → parent owner (Codex) finalizes APP-002-W2-CLI-FALLBACK as done
-

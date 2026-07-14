@@ -1,13 +1,13 @@
 # OCLAW-PMEM-004 BFF and Frontend Handoff Packet
 
-**Sidecar Task ID**: `OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF`  
-**Parent Task**: `OCLAW-PMEM-004`  
-**Parent Owner**: `Claude2`  
-**Parent Reviewer**: `Codex`  
-**Sidecar Owner**: `Codex`  
+**Sidecar Task ID**: `OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF`
+**Parent Task**: `OCLAW-PMEM-004`
+**Parent Owner**: `Claude2`
+**Parent Reviewer**: `Codex`
+**Sidecar Owner**: `Codex`
 **Sidecar Reviewer**: `Claude`
-**Helper Kind**: `bff_handoff_packet`  
-**Generated**: 2026-07-11  
+**Helper Kind**: `bff_handoff_packet`
+**Generated**: 2026-07-11
 **Mutates Canonical**: `no`
 
 This is support material only. It does not change L1 truth, Memory Plane,

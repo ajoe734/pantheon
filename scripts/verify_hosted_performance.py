@@ -31,7 +31,7 @@ def measure_call(base, path, token):
 def main():
     base = os.environ.get("BFF_BASE", "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io")
     token = "lupin:admin:pantheon-dev"
-    
+
     endpoints = [
         "/bff/management/trade-journeys?tenant_id=pantheon-dev&environment=paper",
         "/bff/management/trade-journeys/tj-scenario-1?tenant_id=pantheon-dev&environment=paper",
@@ -48,26 +48,26 @@ def main():
         latencies = []
         # Warmup
         measure_call(base, path, token)
-        
+
         # 10 iterations
         for i in range(10):
             lat, status = measure_call(base, path, token)
             latencies.append(lat)
             print(f"  Iteration {i+1}: status={status}, latency={lat:.2f}ms")
             time.sleep(0.1)
-        
+
         latencies.sort()
         min_lat = latencies[0]
         max_lat = latencies[-1]
         avg_lat = sum(latencies) / len(latencies)
         p95_lat = latencies[int(len(latencies) * 0.95)]
-        
+
         print(f"  --- Statistics ---")
         print(f"  Min: {min_lat:.2f}ms")
         print(f"  Max: {max_lat:.2f}ms")
         print(f"  Avg: {avg_lat:.2f}ms")
         print(f"  p95: {p95_lat:.2f}ms")
-        
+
         # Assertions
         if avg_lat > 500.0:
             print("  FAIL: Average latency exceeds 500ms SLO threshold")

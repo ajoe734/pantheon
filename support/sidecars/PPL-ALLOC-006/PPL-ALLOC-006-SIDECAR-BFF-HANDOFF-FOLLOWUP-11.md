@@ -1,10 +1,10 @@
 # PPL-ALLOC-006 BFF / Frontend Handoff Follow-Up 11
 
-Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11`  
-Parent: `PPL-ALLOC-006`  
-Owner: Codex  
-Reviewer: Claude  
-Kind: support-only `bff_handoff_packet`  
+Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11`
+Parent: `PPL-ALLOC-006`
+Owner: Codex
+Reviewer: Claude
+Kind: support-only `bff_handoff_packet`
 Generated: 2026-07-11
 
 ## Boundary
@@ -87,10 +87,10 @@ Request changes if the parent or frontend:
 ## Review And Composition
 
 Owned here: support-only no-delta checkpoint, BFF query-gap disposition,
-operator journey, and reviewer handoff.  
+operator journey, and reviewer handoff.
 Not changing: L1/L2 truth, BFF/frontend implementation, route contracts,
 runtime/registry/governance behavior, dependency ownership, PR state, or
-parent lifecycle.  
+parent lifecycle.
 Composes with: parent `PPL-ALLOC-006`, `PPL-ALLOC-003` binding reads,
 `PPL-ALLOC-004` allocation semantics, `PPL-ALLOC-008` emergency containment,
 and the preceding PPL-ALLOC-006 BFF handoff packets.

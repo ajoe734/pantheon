@@ -59,7 +59,7 @@ class TestTradeEpisodeProjectionStore(unittest.TestCase):
 
     def test_out_of_order_sequencing(self) -> None:
         episode_id = str(uuid.uuid4())
-        
+
         # 1. Update event with seq 2 (comes first!)
         updated_event = {
             "event_id": str(uuid.uuid4()),
@@ -122,7 +122,7 @@ class TestTradeEpisodeProjectionStore(unittest.TestCase):
 
     def test_as_of_queries(self) -> None:
         episode_id = str(uuid.uuid4())
-        
+
         opened_event = {
             "event_id": str(uuid.uuid4()),
             "schema_version": "1.0",
@@ -254,7 +254,7 @@ class TestTradeEpisodeProjectionStore(unittest.TestCase):
 
     def test_regular_telemetry_event_joins(self) -> None:
         episode_id = str(uuid.uuid4())
-        
+
         # Opened event
         opened_event = {
             "event_id": str(uuid.uuid4()),
@@ -298,7 +298,7 @@ class TestTradeEpisodeProjectionStore(unittest.TestCase):
             },
             "sequence_number": 2
         }
-        
+
         proj = self.store.project_event(fill_event)
         self.assertIsNotNone(proj)
         self.assertEqual(proj["filled_quantity"], 50.0)
