@@ -66,17 +66,46 @@
   "implementation_delivery": {
     "anchor_commits": [
       {
-        "sha": "8bc2abdde",
+        "sha": "8bc2abddeca19580b5d22578ef6c8b9bc6db138e",
         "subject": "LOOP-PROD-DIST-001: anchor distillation controller substrate"
+      },
+      {
+        "sha": "99941274f6fd1b3b09bea4eba9ecce8ce0be854f",
+        "subject": "LOOP-PROD-DIST-001: prepare checksummed review cut"
       }
     ],
     "pull_request": {
-      "number": null,
-      "url": null,
-      "head_sha": null,
+      "number": 3653,
+      "url": "https://github.com/ajoe734/pantheon/pull/3653",
+      "head_sha": "99941274f6fd1b3b09bea4eba9ecce8ce0be854f",
       "base": "dev"
     },
-    "required_checks": []
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "event": "push",
+        "run_id": 29329279808,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29329279808",
+        "head_sha": "99941274f6fd1b3b09bea4eba9ecce8ce0be854f",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Orchestrator Sync",
+        "event": "push",
+        "run_id": 29329279805,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29329279805",
+        "head_sha": "99941274f6fd1b3b09bea4eba9ecce8ce0be854f",
+        "jobs": {
+          "Forward sync": "success"
+        },
+        "conclusion": "success"
+      }
+    ]
   },
   "validation": {
     "commands": [
@@ -88,6 +117,11 @@
       {
         "command": "python3 -m pytest services/source_ingestion/tests/test_distillation_worker.py",
         "conclusion": "36 passed in 5.44s",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m pytest services/source_ingestion/tests/ -q",
+        "conclusion": "673 passed, 1 skipped in 187.07s",
         "result": "pass"
       },
       {
