@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-14T11:00:55Z",
-    "evidence_cut_semantics": "Owner implementation, immutable behavioral proof, latest-dev rebase validation, and isolated post-rebase terminal identity capture; post-rebase push checks, independent review, merge, and shared hosted-dev admission are not asserted.",
+    "evidence_cut_at": "2026-07-14T11:06:35Z",
+    "evidence_cut_semantics": "Owner implementation, immutable behavioral proof, latest-dev rebase validation, isolated post-rebase terminal identity capture, and successful post-rebase PR checks; independent review, merge, and shared hosted-dev admission are not asserted.",
     "id": "LOOP-PROD-SRC-001",
     "overall_admission": "review_required_evidence_only",
     "owner": "Codex2",
@@ -126,10 +126,37 @@
     "pull_request": {
       "number": 3648,
       "url": "https://github.com/ajoe734/pantheon/pull/3648",
-      "head_sha": "289424f17bcc30c7ebc1001d0a7e5db82ea9aeda",
+      "head_sha": "81da86dafc80b7519f4e7e6b643d84f0a9fa9ab5",
       "base": "dev"
     },
-    "required_checks": []
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "event": "push",
+        "run_id": 29327672476,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29327672476",
+        "head_sha": "81da86dafc80b7519f4e7e6b643d84f0a9fa9ab5",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "run_id": 29327675822,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29327675822",
+        "head_sha": "81da86dafc80b7519f4e7e6b643d84f0a9fa9ab5",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      }
+    ]
   },
   "validation": {
     "commands": [
@@ -351,7 +378,7 @@
       "id": "AC-05",
       "statement": "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
       "status": "pending_independent_review_and_merge",
-      "blocking_until": "PR is opened, required checks pass, reviewer Codex approves this exact checksummed cut, and the PR is merged to dev",
+      "blocking_until": "Reviewer Codex approves this exact checksummed cut and PR #3648 is merged to dev; the post-rebase required checks are already observed as successful",
       "evidence_refs": [
         "implementation_delivery",
         "record_log",
@@ -554,6 +581,25 @@
       "sha": "289424f17bcc30c7ebc1001d0a7e5db82ea9aeda",
       "reference": "validation",
       "note": "700 source-ingestion tests passed with 1 skipped; foundation replay 6 passed; loop-control 7 passed; Compose config, py_compile, and diff check passed."
+    },
+    {
+      "sequence": 7,
+      "recorded_at": "2026-07-14T11:06:35Z",
+      "kind": "post_rebase_required_checks_observed",
+      "status": "pass",
+      "actor": "Codex2",
+      "reference": "https://github.com/ajoe734/pantheon/pull/3648",
+      "sha": "81da86dafc80b7519f4e7e6b643d84f0a9fa9ab5",
+      "note": "Push and pull_request Branch CI Gate runs passed Commit trailers, Runtime mirror guard, and Smoke acceptance on the post-rebase evidence head."
+    },
+    {
+      "sequence": 8,
+      "recorded_at": "2026-07-14T11:06:35Z",
+      "kind": "superseding_evidence_ready_for_independent_review",
+      "status": "pending_independent_review",
+      "actor": "Codex2",
+      "reference": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/evidence.json",
+      "reviewer": "Codex"
     }
   ]
 }
