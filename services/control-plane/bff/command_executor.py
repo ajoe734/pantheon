@@ -12,6 +12,7 @@ import logging
 import os
 import urllib.request
 import urllib.error
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote
@@ -543,7 +544,12 @@ def _execute_rollback(
     try:
         actor_id, actor_role = _actor_context(params, auth_token=auth_token)
     except Exception:
-        actor_id, actor_role = "operator-command", "operator"
+        actor_id = "operator-command"
+        if auth_token:
+            parts = auth_token.split(":")
+            if parts and parts[0].strip():
+                actor_id = parts[0].strip()
+        actor_role = "operator"
     timestamp = _utc_now()
     gov_payload = {
         "rollback_id": rollback_id,
@@ -560,10 +566,7 @@ def _execute_rollback(
         "requested_at": timestamp,
         "source_command_id": command_id,
     }
-    try:
-        _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
-    except Exception as e:
-        log.warning("Failed to persist rollback %s to governance store: %s", rollback_id, e)
+    _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
 
     return {
         "rollback_id": rollback_id,
@@ -594,7 +597,12 @@ def _execute_approve_rollback(
     try:
         actor_id, actor_role = _actor_context(params, auth_token=auth_token)
     except Exception:
-        actor_id, actor_role = "operator-command", "operator"
+        actor_id = "operator-command"
+        if auth_token:
+            parts = auth_token.split(":")
+            if parts and parts[0].strip():
+                actor_id = parts[0].strip()
+        actor_role = "operator"
     timestamp = _utc_now()
     gov_payload = {
         "rollback_id": rollback_id,
@@ -607,10 +615,7 @@ def _execute_approve_rollback(
         "source_command_id": command_id,
         "approval_notes": params.get("approval_notes"),
     }
-    try:
-        _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
-    except Exception as e:
-        log.warning("Failed to persist rollback %s approval to governance store: %s", rollback_id, e)
+    _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
 
     return {
         "command_id": command_id,
@@ -639,7 +644,12 @@ def _execute_reject_rollback(
     try:
         actor_id, actor_role = _actor_context(params, auth_token=auth_token)
     except Exception:
-        actor_id, actor_role = "operator-command", "operator"
+        actor_id = "operator-command"
+        if auth_token:
+            parts = auth_token.split(":")
+            if parts and parts[0].strip():
+                actor_id = parts[0].strip()
+        actor_role = "operator"
     timestamp = _utc_now()
     gov_payload = {
         "rollback_id": rollback_id,
@@ -652,10 +662,7 @@ def _execute_reject_rollback(
         "source_command_id": command_id,
         "rejection_reason": params.get("rejection_reason"),
     }
-    try:
-        _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
-    except Exception as e:
-        log.warning("Failed to persist rollback %s rejection to governance store: %s", rollback_id, e)
+    _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
 
     return {
         "command_id": command_id,
@@ -688,7 +695,12 @@ def _execute_activate_kill_switch(
     try:
         actor_id, actor_role = _actor_context(params, auth_token=auth_token)
     except Exception:
-        actor_id, actor_role = "operator-command", "operator"
+        actor_id = "operator-command"
+        if auth_token:
+            parts = auth_token.split(":")
+            if parts and parts[0].strip():
+                actor_id = parts[0].strip()
+        actor_role = "operator"
     timestamp = _utc_now()
     freeze_order_id = f"freeze-{kill_switch_order_id}"
     freeze_payload = {
@@ -704,10 +716,7 @@ def _execute_activate_kill_switch(
         "source_command_id": command_id,
         "reason": params.get("trigger_reason") or params.get("reason") or "Kill switch activation freeze.",
     }
-    try:
-        _write_to_governance("/api/governance/freeze-orders", freeze_payload, auth_token=auth_token, mfa_token=mfa_token)
-    except Exception as e:
-        log.warning("Failed to persist freeze order %s to governance store: %s", freeze_order_id, e)
+    _write_to_governance("/api/governance/freeze-orders", freeze_payload, auth_token=auth_token, mfa_token=mfa_token)
 
     return {
         "kill_switch_order_id": kill_switch_order_id,
@@ -1006,7 +1015,8 @@ def _execute_execute_mutation(
 
     freeze_mode = params.get("freeze_mode")
     force_stage_freeze = params.get("force_stage_freeze")
-    if freeze_mode or force_stage_freeze:
+    is_real_freeze = freeze_mode and freeze_mode != "governance_only"
+    if is_real_freeze or force_stage_freeze:
         timestamp = _utc_now()
         freeze_order_id = f"freeze-{decision_id}"
         freeze_payload = {
@@ -1022,10 +1032,7 @@ def _execute_execute_mutation(
             "source_command_id": command_id,
             "reason": params.get("note") or params.get("rationale") or "Evolution sweep freeze.",
         }
-        try:
-            _write_to_governance("/api/governance/freeze-orders", freeze_payload, auth_token=auth_token, mfa_token=mfa_token)
-        except Exception as e:
-            log.warning("Failed to persist freeze order %s to governance store: %s", freeze_order_id, e)
+        _write_to_governance("/api/governance/freeze-orders", freeze_payload, auth_token=auth_token, mfa_token=mfa_token)
 
     return {
         "command_id": command_id,

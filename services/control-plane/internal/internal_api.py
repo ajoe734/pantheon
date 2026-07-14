@@ -1256,6 +1256,78 @@ def abort_rollback(rollback_id):
     )
 
 
+@app.route("/api/internal/v1/rollbacks/<rollback_id>/approve", methods=["POST"])
+@require_bearer_token(roles=_INCIDENT_ROLES, mfa_required=True)
+def approve_rollback(rollback_id):
+    """Approve a rollback command (records audit trail and returns status)."""
+    body = request.get_json() or {}
+    approval_notes = body.get("approval_notes", "")
+    command_id = f"cmd-rb-approve-{rollback_id}-{int(datetime.now(timezone.utc).timestamp())}"
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    record = {
+        "command_id": command_id,
+        "type": "ApproveRollback",
+        "target": {"type": "Rollback", "id": rollback_id},
+        "status": "executed",
+        "submitted_at": now,
+        "result": {
+            "rollback_id": rollback_id,
+            "status_after": "approved",
+            "approval_notes": approval_notes,
+        },
+        "error": None,
+    }
+    _record_command(command_id, record)
+    return (
+        jsonify({
+            "rollback_id": rollback_id,
+            "command_id": command_id,
+            "status": "approved",
+            "decision": "approved",
+            "approved_at": now,
+            "approval_notes": approval_notes,
+        }),
+        200,
+    )
+
+
+@app.route("/api/internal/v1/rollbacks/<rollback_id>/reject", methods=["POST"])
+@require_bearer_token(roles=_INCIDENT_ROLES, mfa_required=True)
+def reject_rollback(rollback_id):
+    """Reject a rollback command (records audit trail and returns status)."""
+    body = request.get_json() or {}
+    rejection_reason = body.get("rejection_reason", "")
+    command_id = f"cmd-rb-reject-{rollback_id}-{int(datetime.now(timezone.utc).timestamp())}"
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    record = {
+        "command_id": command_id,
+        "type": "RejectRollback",
+        "target": {"type": "Rollback", "id": rollback_id},
+        "status": "executed",
+        "submitted_at": now,
+        "result": {
+            "rollback_id": rollback_id,
+            "status_after": "rejected",
+            "rejection_reason": rejection_reason,
+        },
+        "error": None,
+    }
+    _record_command(command_id, record)
+    return (
+        jsonify({
+            "rollback_id": rollback_id,
+            "command_id": command_id,
+            "status": "rejected",
+            "decision": "rejected",
+            "rejected_at": now,
+            "rejection_reason": rejection_reason,
+        }),
+        200,
+    )
+
+
+
+
 @app.route("/api/internal/v1/kill-switch", methods=["GET"])
 @require_bearer_token()
 def kill_switch_status():

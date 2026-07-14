@@ -316,6 +316,27 @@ def record_freeze_order(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         body["created_at"] = _utc_now()
         body["issued_at"] = body["created_at"]
 
+    existing = freeze_order_store.get(freeze_order_id)
+    if existing:
+        merged = dict(existing)
+        for k, v in body.items():
+            if v is not None:
+                merged[k] = v
+        # Preserve original fields and audit origin on transitions
+        for field in ["scope", "target_id", "created_at", "issued_at", "actor", "identity", "source_command_id"]:
+            if field in existing and existing[field] not in (None, ""):
+                if field in ["actor", "identity", "source_command_id"] and body.get(field) != existing[field]:
+                    merged[f"transition_{field}"] = body.get(field)
+                merged[field] = existing[field]
+        body = merged
+
+    body["updated_at"] = _utc_now()
+
+    # Enforce required audit fields on final payload
+    for field in ["status", "actor", "identity", "source_command_id", "scope", "target_id"]:
+        if not body.get(field):
+            raise HTTPException(status_code=400, detail=f"Missing required audit field: {field}")
+
     freeze_order_store.put(body)
     log.info("Recorded freeze order %s: %s", freeze_order_id, body)
     return body
@@ -339,6 +360,27 @@ def record_rollback(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         body["created_at"] = _utc_now()
         body["initiated_at"] = body["created_at"]
         body["requested_at"] = body["created_at"]
+
+    existing = rollback_store.get(rollback_id)
+    if existing:
+        merged = dict(existing)
+        for k, v in body.items():
+            if v is not None:
+                merged[k] = v
+        # Preserve original fields and audit origin on transitions
+        for field in ["runtime_id", "runtime_binding_id", "action_type", "target_artifact_id", "created_at", "initiated_at", "requested_at", "actor", "identity", "source_command_id"]:
+            if field in existing and existing[field] not in (None, ""):
+                if field in ["actor", "identity", "source_command_id"] and body.get(field) != existing[field]:
+                    merged[f"transition_{field}"] = body.get(field)
+                merged[field] = existing[field]
+        body = merged
+
+    body["updated_at"] = _utc_now()
+
+    # Enforce required audit fields on final payload
+    for field in ["status", "actor", "identity", "source_command_id", "runtime_id", "action_type"]:
+        if not body.get(field):
+            raise HTTPException(status_code=400, detail=f"Missing required audit field: {field}")
 
     rollback_store.put(body)
     log.info("Recorded rollback %s: %s", rollback_id, body)
