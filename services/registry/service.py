@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -37,19 +38,37 @@ from .models import (
 )
 from .split_api import RegistryError, RegistryNotFoundError, RegistryService
 from .storage import get_store
+from .strategy_artifact import (
+    build_strategy_artifact_registry_payload,
+    ensure_builtin_strategy_artifacts,
+    mutate_strategy_artifact,
+    strategy_artifact_checksum,
+    validate_strategy_artifact,
+)
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def registry_lifespan(_: FastAPI):
+    """Fail service startup if a checked-in built-in cannot be registered."""
+    get_registry_service()
+    yield
+
 
 app = FastAPI(
     title="Pantheon Registry Service",
     description="Artifact-state and deployment-stage split API per BP5-SVC-002",
     version="0.1.0",
+    lifespan=registry_lifespan,
 )
 
 
 def get_registry_service() -> RegistryService:
-    """Build the service against the current store singleton at request time."""
-    return RegistryService(get_store())
+    """Build the service and idempotently expose checked-in built-in artifacts."""
+    registry_service = RegistryService(get_store())
+    ensure_builtin_strategy_artifacts(registry_service)
+    return registry_service
 
 
 # -- Request/Response wrappers --------------------------------------------
@@ -57,6 +76,7 @@ def get_registry_service() -> RegistryService:
 class AdvanceRequest(BaseModel):
     target_state: ArtifactState
     approver: Optional[str] = None
+    approval_decision_id: Optional[str] = None
 
 
 class DeploymentSummaryUpdate(BaseModel):
@@ -79,6 +99,23 @@ class StrategySpecRegisterRequest(BaseModel):
     rollback_target: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
     strategy_spec: Optional[dict[str, Any]] = None
+
+
+class StrategyArtifactRegisterRequest(BaseModel):
+    registry_id: Optional[str] = None
+    artifact_state: ArtifactState = ArtifactState.CANDIDATE
+    strategy_artifact: dict[str, Any]
+    producer_run_id: Optional[str] = None
+    evaluation_summary: Optional[dict[str, Any]] = None
+    rollback_target: Optional[str] = None
+    metadata: Optional[dict[str, Any]] = None
+
+
+class StrategyArtifactMutationRequest(BaseModel):
+    new_artifact_id: str
+    new_version: str
+    parameter_updates: dict[str, Any]
+    source_run_ids: list[str]
 
 
 # -- Error handling -------------------------------------------------------
@@ -172,6 +209,85 @@ def _ensure_strategy_spec_view(view: RegistryEntryView, registry_id: str) -> Reg
     return view
 
 
+def _ensure_strategy_artifact_view(
+    view: RegistryEntryView,
+    registry_id: str,
+) -> RegistryEntryView:
+    if not _is_strategy_artifact_view(view):
+        raise RegistryNotFoundError(
+            f"StrategyArtifact registry entry not found: {registry_id}"
+        )
+    return view
+
+
+def _is_strategy_artifact_view(view: RegistryEntryView) -> bool:
+    """Require a valid embedded payload and a fully consistent envelope."""
+    entry = view.entry
+    embedded = (entry.metadata or {}).get("strategy_artifact")
+    if (
+        entry.artifact_type != ArtifactType.EXECUTION_BUNDLE
+        or not isinstance(embedded, dict)
+    ):
+        return False
+    try:
+        validate_strategy_artifact(embedded)
+        checksum = strategy_artifact_checksum(embedded)
+    except RegistryError:
+        return False
+    return bool(
+        entry.registry_id == embedded["artifact_id"]
+        and entry.strategy_id == embedded["strategy_id"]
+        and entry.version == embedded["version"]
+        and entry.lineage.to_dict() == embedded["lineage"]
+        and entry.checksum == checksum
+        and entry.storage_ref.backend == StorageBackend.INLINE
+        and entry.storage_ref.path == "$.entry.metadata.strategy_artifact"
+    )
+
+
+def _strategy_artifact_registration(
+    payload: StrategyArtifactRegisterRequest,
+) -> dict[str, Any]:
+    return {
+        "registry_id": payload.registry_id,
+        "artifact_state": payload.artifact_state.value,
+        "strategy_artifact": payload.strategy_artifact,
+        "producer_run_id": payload.producer_run_id,
+        "evaluation_summary": payload.evaluation_summary,
+        "rollback_target": payload.rollback_target,
+        "metadata": payload.metadata,
+    }
+
+
+def _register_strategy_artifact(
+    registry_service: RegistryService,
+    registration: dict[str, Any],
+) -> RegistryEntryView:
+    registry_id, create_payload = build_strategy_artifact_registry_payload(registration)
+    view, created = registry_service.register_if_absent(create_payload, registry_id)
+    if created:
+        return view
+    view = _ensure_strategy_artifact_view(view, registry_id)
+    expected_artifact = (create_payload.metadata or {}).get("strategy_artifact")
+    existing_artifact = (view.entry.metadata or {}).get("strategy_artifact")
+    if (
+        view.entry.checksum != create_payload.checksum
+        or existing_artifact != expected_artifact
+        or view.entry.strategy_id != create_payload.strategy_id
+        or view.entry.version != create_payload.version
+        or view.entry.lineage.to_dict() != create_payload.lineage.to_dict()
+        or view.entry.storage_ref.to_dict() != create_payload.storage_ref.to_dict()
+        or view.entry.producer_run_id != create_payload.producer_run_id
+        or view.entry.evaluation_summary != create_payload.evaluation_summary
+        or view.entry.rollback_target != create_payload.rollback_target
+        or view.entry.metadata != create_payload.metadata
+    ):
+        raise RegistryError(
+            f"StrategyArtifact registry_id already exists with different content: {registry_id}"
+        )
+    return view
+
+
 # -- Registry entry endpoints (§8 operations) -----------------------------
 
 @app.post("/api/registry/entries", response_model=RegistryEntryView)
@@ -217,7 +333,10 @@ async def advance_state(registry_id: str, body: AdvanceRequest):
     registry_service = get_registry_service()
     try:
         return registry_service.advance_artifact_state(
-            registry_id, body.target_state, approver=body.approver
+            registry_id,
+            body.target_state,
+            approver=body.approver,
+            approval_decision_id=body.approval_decision_id,
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -338,6 +457,117 @@ async def advance_strategy_spec_state(registry_id: str, body: AdvanceRequest):
             registry_id,
             body.target_state,
             approver=body.approver,
+            approval_decision_id=body.approval_decision_id,
+        )
+    except RegistryNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RegistryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# -- Evolvable StrategyArtifact registry facade (EVOLOOP-003) ------------
+
+@app.post("/api/registry/strategy-artifacts", response_model=RegistryEntryView)
+async def register_strategy_artifact(payload: StrategyArtifactRegisterRequest):
+    """Register a schema-valid StrategyArtifact as an execution_bundle."""
+    registry_service = get_registry_service()
+    try:
+        return _register_strategy_artifact(
+            registry_service,
+            _strategy_artifact_registration(payload),
+        )
+    except RegistryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get(
+    "/api/registry/strategy-artifacts/{registry_id}",
+    response_model=RegistryEntryView,
+)
+async def get_strategy_artifact_entry(registry_id: str):
+    """Read one execution_bundle carrying a StrategyArtifact overlay."""
+    registry_service = get_registry_service()
+    try:
+        return _ensure_strategy_artifact_view(
+            registry_service.get(registry_id), registry_id
+        )
+    except RegistryError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get(
+    "/api/registry/strategies/{strategy_id}/strategy-artifacts",
+    response_model=list[RegistryEntryView],
+)
+async def list_strategy_artifact_entries(
+    strategy_id: str,
+    artifact_state: Optional[ArtifactState] = None,
+):
+    """List StrategyArtifact revisions for a strategy family."""
+    views = [
+        view
+        for view in get_registry_service().list_by_strategy(strategy_id)
+        if _is_strategy_artifact_view(view)
+    ]
+    if artifact_state is not None:
+        views = [view for view in views if view.entry.artifact_state == artifact_state]
+    return views
+
+
+@app.post(
+    "/api/registry/strategy-artifacts/{registry_id}/mutate",
+    response_model=RegistryEntryView,
+)
+async def mutate_strategy_artifact_entry(
+    registry_id: str,
+    body: StrategyArtifactMutationRequest,
+):
+    """Create a candidate child revision from declared mutable parameters."""
+    registry_service = get_registry_service()
+    try:
+        parent_view = _ensure_strategy_artifact_view(
+            registry_service.get(registry_id), registry_id
+        )
+        parent_artifact = (parent_view.entry.metadata or {})["strategy_artifact"]
+        child_artifact = mutate_strategy_artifact(
+            parent_artifact,
+            new_artifact_id=body.new_artifact_id,
+            new_version=body.new_version,
+            parameter_updates=body.parameter_updates,
+            source_run_ids=body.source_run_ids,
+            parent_registry_id=registry_id,
+        )
+        return _register_strategy_artifact(
+            registry_service,
+            {
+                "registry_id": child_artifact["artifact_id"],
+                "artifact_state": ArtifactState.CANDIDATE.value,
+                "strategy_artifact": child_artifact,
+                "producer_run_id": body.source_run_ids[-1]
+                if body.source_run_ids
+                else None,
+            },
+        )
+    except RegistryNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RegistryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post(
+    "/api/registry/strategy-artifacts/{registry_id}/advance",
+    response_model=RegistryEntryView,
+)
+async def advance_strategy_artifact_state(registry_id: str, body: AdvanceRequest):
+    """Advance a StrategyArtifact through the generic governed lifecycle."""
+    registry_service = get_registry_service()
+    try:
+        _ensure_strategy_artifact_view(registry_service.get(registry_id), registry_id)
+        return registry_service.advance_artifact_state(
+            registry_id,
+            body.target_state,
+            approver=body.approver,
+            approval_decision_id=body.approval_decision_id,
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -571,6 +801,7 @@ async def advance_allocation_policy_artifact_state(
             registry_id,
             body.target_state,
             approver=body.approver,
+            approval_decision_id=body.approval_decision_id,
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

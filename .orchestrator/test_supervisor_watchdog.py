@@ -140,6 +140,144 @@ class SupervisorWatchdogTests(unittest.TestCase):
         watchdog_state = json.loads((self.root / "watchdog-state.json").read_text(encoding="utf-8"))
         self.assertTrue(watchdog_state["circuit"]["open"])
 
+    def test_pressure_circuit_early_closes_once_pressure_clears(self) -> None:
+        # Case A: circuit opened for a transient load spike; next tick reports
+        # clean pressure -> the circuit must early-close and allow a restart,
+        # not wait out the full 30-minute cooldown.
+        now = datetime.now(timezone.utc)
+        self.write_pid(123)
+        self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}})
+        (self.root / "watchdog-state.json").write_text(
+            json.dumps(
+                {
+                    "restart_attempts": [],
+                    "circuit": {
+                        "open": True,
+                        "reason": "resource_pressure:load_above_threshold",
+                        "opened_at": supervisor_watchdog.isoformat_utc(now - supervisor_watchdog.timedelta(seconds=60)),
+                        "until": supervisor_watchdog.isoformat_utc(now + supervisor_watchdog.timedelta(seconds=1700)),
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        log_path = self.root / "restart.log"
+
+        with (
+            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+            mock.patch.object(supervisor_watchdog, "start_supervisor", return_value=(999, log_path)),
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result["decision"], "restart_supervisor")
+        watchdog_state = json.loads((self.root / "watchdog-state.json").read_text(encoding="utf-8"))
+        self.assertFalse(watchdog_state["circuit"]["open"])
+
+    def test_non_pressure_circuit_stays_suppressed_during_cooldown(self) -> None:
+        # Case B: circuit opened for a genuine crash-loop reason (restart
+        # budget exhausted); pressure being clean this tick must NOT early-
+        # close it, since that is not a resource_pressure circuit.
+        now = datetime.now(timezone.utc)
+        self.write_pid(123)
+        self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}})
+        (self.root / "watchdog-state.json").write_text(
+            json.dumps(
+                {
+                    "restart_attempts": [],
+                    "circuit": {
+                        "open": True,
+                        "reason": "restart_budget_window_exhausted",
+                        "opened_at": supervisor_watchdog.isoformat_utc(now - supervisor_watchdog.timedelta(seconds=60)),
+                        "until": supervisor_watchdog.isoformat_utc(now + supervisor_watchdog.timedelta(seconds=1700)),
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with (
+            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result["decision"], "suppress_restart")
+        self.assertEqual(result["reason"], "watchdog_circuit_open")
+        watchdog_state = json.loads((self.root / "watchdog-state.json").read_text(encoding="utf-8"))
+        self.assertTrue(watchdog_state["circuit"]["open"])
+
+    def test_circuit_stays_open_while_pressure_persists(self) -> None:
+        # Case C: pressure is still present this tick -> must remain
+        # suppressed regardless of the early-close change.
+        now = datetime.now(timezone.utc)
+        self.write_pid(123)
+        self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}})
+        (self.root / "watchdog-state.json").write_text(
+            json.dumps(
+                {
+                    "restart_attempts": [],
+                    "circuit": {
+                        "open": True,
+                        "reason": "resource_pressure:load_above_threshold",
+                        "opened_at": supervisor_watchdog.isoformat_utc(now - supervisor_watchdog.timedelta(seconds=60)),
+                        "until": supervisor_watchdog.isoformat_utc(now + supervisor_watchdog.timedelta(seconds=1700)),
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        pressure = self.ok_resource()
+        pressure["load_1m"] = 99.0
+
+        with (
+            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=pressure),
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result["decision"], "suppress_restart")
+        self.assertIn("resource_pressure", result["reason"])
+        watchdog_state = json.loads((self.root / "watchdog-state.json").read_text(encoding="utf-8"))
+        self.assertTrue(watchdog_state["circuit"]["open"])
+
+    def test_budget_suppression_reason_early_closes_cleared_pressure_circuit(self) -> None:
+        now = datetime.now(timezone.utc)
+        watchdog_state = {
+            "circuit": {
+                "open": True,
+                "reason": "resource_pressure:load_above_threshold",
+                "opened_at": supervisor_watchdog.isoformat_utc(now - supervisor_watchdog.timedelta(seconds=60)),
+                "until": supervisor_watchdog.isoformat_utc(now + supervisor_watchdog.timedelta(seconds=1700)),
+            },
+            "restart_attempts": [],
+        }
+        reason = supervisor_watchdog.budget_suppression_reason(
+            watchdog_state, now, self.config["watchdog"], pressure_reasons=[]
+        )
+        self.assertIsNone(reason)
+        self.assertFalse(watchdog_state["circuit"]["open"])
+
+    def test_budget_suppression_reason_keeps_non_pressure_circuit_open(self) -> None:
+        now = datetime.now(timezone.utc)
+        watchdog_state = {
+            "circuit": {
+                "open": True,
+                "reason": "restart_budget_window_exhausted",
+                "opened_at": supervisor_watchdog.isoformat_utc(now - supervisor_watchdog.timedelta(seconds=60)),
+                "until": supervisor_watchdog.isoformat_utc(now + supervisor_watchdog.timedelta(seconds=1700)),
+            },
+            "restart_attempts": [],
+        }
+        reason = supervisor_watchdog.budget_suppression_reason(
+            watchdog_state, now, self.config["watchdog"], pressure_reasons=[]
+        )
+        self.assertEqual(reason, "watchdog_circuit_open")
+        self.assertTrue(watchdog_state["circuit"]["open"])
+
     def hold_lock(self, pid: int = 999):
         """Create supervisor.lock and hold an exclusive flock for the test's lifetime."""
         lock_path = self.state_file.parent / "supervisor.lock"

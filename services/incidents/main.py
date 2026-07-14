@@ -67,16 +67,16 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import sys
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import Body, FastAPI, HTTPException, Query, Response
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Response
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 import asyncio
-import json
 from services.foundation import (
     EventEnvelope,
     OutboxRecord,
@@ -84,8 +84,12 @@ from services.foundation import (
     EnvironmentScope,
     EnvironmentName,
 )
-from services.foundation.postgres_json_store import PostgresJsonOwnerStore
-from services.foundation.outbox import OutboxRecordStatus
+from services.foundation.reliable_delivery import (
+    ReliableOutboxRecord,
+    ReliableOutboxStore,
+    reconcile_prepared,
+)
+from services.foundation.serialization import sha256_checksum
 
 # ---------------------------------------------------------------------------
 # Bootstrap domain layer from sibling services/incident/ directory
@@ -165,69 +169,9 @@ PERSISTENCE_POSTURE = require_persistence_posture("incidents")
 store: IncidentStore = build_incident_store(STORE_PATH)
 reference_validator = CanonicalReferenceValidator()
 
-# ---------------------------------------------------------------------------
-# Outbox Primitives & Store
-# ---------------------------------------------------------------------------
-
-class JsonOutboxStoreHelper:
-    def __init__(self, path: Path):
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-
-    def _read(self) -> dict:
-        if not self.path.exists():
-            return {}
-        try:
-            with open(self.path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-
-    def _write(self, data: dict):
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, sort_keys=True)
-
-    def put(self, record_id: str, payload: dict) -> None:
-        data = self._read()
-        data[record_id] = payload
-        self._write(data)
-
-    def list_all(self) -> list[dict]:
-        data = self._read()
-        return list(data.values())
-
-class UnifiedOutboxStore:
-    def __init__(self, backend: str, dsn: str | None, table_name: str | None, json_path: Path, owner_service: str):
-        self.backend = backend.strip().lower()
-        if self.backend == "postgres":
-            if not dsn:
-                raise ValueError("DSN required for postgres outbox")
-            self.impl = PostgresJsonOwnerStore(
-                dsn=dsn,
-                table=table_name,
-                owner_service=owner_service,
-                bootstrap=True
-            )
-        else:
-            self.impl = JsonOutboxStoreHelper(json_path)
-
-    def put(self, record: OutboxRecord) -> None:
-        self.impl.put(record.outbox_id, record.to_dict())
-
-    def list_pending_and_failed(self) -> list[OutboxRecord]:
-        records = []
-        for payload in self.impl.list_all():
-            try:
-                rec = OutboxRecord.from_dict(payload)
-                if rec.status in {OutboxRecordStatus.PENDING, OutboxRecordStatus.FAILED}:
-                    records.append(rec)
-            except Exception as exc:
-                log.warning("Failed to parse outbox record: %s", exc)
-        return records
-
 OUTBOX_BACKEND = STORE_BACKEND
 OUTBOX_DSN = os.getenv("INCIDENT_STORE_DSN") or os.getenv("DATABASE_URL")
-outbox_store = UnifiedOutboxStore(
+outbox_store = ReliableOutboxStore(
     backend=OUTBOX_BACKEND,
     dsn=OUTBOX_DSN,
     table_name="incident.incidents_outbox",
@@ -464,36 +408,111 @@ def get_incident(incident_id: str) -> IncidentResponse:
 # Routes — status transitions
 # ---------------------------------------------------------------------------
 
-def _publish_to_postmortems_if_resolved(incident_id: str) -> None:
-    from datetime import datetime, timezone
-    trace = TraceContext.new(
-        environment=EnvironmentScope(name=EnvironmentName.SANDBOX),
-        source_system="incident-svc",
+_TERMINAL_INCIDENT_STATUSES = {"resolved", "closed"}
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _nonnegative_float_env(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default
+
+
+def _incident_delivery_ids(incident_id: str) -> tuple[str, str, str]:
+    digest = sha256_checksum({"incident_id": incident_id, "transition": "terminal"})[:24]
+    return (
+        f"evt-incident-terminal-{digest}",
+        f"idmp-incident-terminal-{digest}",
+        f"outbox-incident-terminal-{digest}",
     )
-    event = EventEnvelope.new(
+
+
+def _delivery_environment(deployment_stage: str | None) -> EnvironmentName:
+    normalized = str(deployment_stage or "").strip().lower()
+    if normalized == "frozen":
+        normalized = EnvironmentName.LIVE.value
+    try:
+        return EnvironmentName(normalized)
+    except ValueError:
+        configured = os.getenv("PANTHEON_EVENT_ENVIRONMENT", EnvironmentName.DEV.value)
+        try:
+            return EnvironmentName(configured.strip().lower())
+        except ValueError:
+            return EnvironmentName.DEV
+
+
+def _prepare_postmortem_delivery(incident_id: str, terminal_status: str) -> ReliableOutboxRecord:
+    incident = store.get_incident(incident_id)
+    if incident is None:
+        raise ValueError(f"incident not found while preparing delivery: {incident_id}")
+    event_id, idempotency_key, outbox_id = _incident_delivery_ids(incident_id)
+    trace = TraceContext.new(
+        environment=EnvironmentScope(name=_delivery_environment(incident.deployment_stage)),
+        source_system="incident-svc",
+        idempotency_key=idempotency_key,
+    )
+    event = EventEnvelope(
+        event_id=event_id,
         event_type="incident.resolved",
         aggregate_type="incident",
         aggregate_id=incident_id,
         sequence_no=1,
         trace=trace,
-        payload={"incident_id": incident_id},
+        payload={"incident_id": incident_id, "terminal_status": terminal_status},
+        idempotency_key=idempotency_key,
         producer_service="incident-svc",
     )
-    record = OutboxRecord.new(owner_service="incident-svc", event=event)
-    outbox_store.put(record)
-    log.info("AUDIT: Enqueued resolved incident %s to outbox", incident_id)
+    record = OutboxRecord(
+        outbox_id=outbox_id,
+        owner_service="incident-svc",
+        event=event,
+    )
+    prepared = outbox_store.prepare(
+        record=record,
+        transition={
+            "aggregate_type": "incident",
+            "aggregate_id": incident_id,
+            "expected_statuses": sorted(_TERMINAL_INCIDENT_STATUSES),
+        },
+    )
+    log.info("AUDIT: Prepared resolved incident %s in outbox %s", incident_id, outbox_id)
+    return prepared
+
+
+def _incident_transition_applied(transition: Dict[str, Any]) -> bool:
+    if transition.get("aggregate_type") != "incident":
+        return False
+    incident_id = str(transition.get("aggregate_id") or "")
+    incident = store.get_incident(incident_id)
+    expected = set(transition.get("expected_statuses") or [])
+    return incident is not None and incident.status in expected
+
+
+def reconcile_incidents_outbox() -> int:
+    return reconcile_prepared(outbox_store, transition_applied=_incident_transition_applied)
 
 
 # background delivery loop for incidents
 async def process_incidents_outbox():
-    records = outbox_store.list_pending_and_failed()
+    reconcile_incidents_outbox()
+    records = outbox_store.list_due()
     if not records:
         return
 
     import httpx
-    from datetime import datetime, timezone
     postmortems_url = os.getenv("POSTMORTEMS_URL", "http://localhost:8091").strip()
     url = f"{postmortems_url}/api/postmortems/consume-resolved-incident"
+    max_attempts = _positive_int_env("INCIDENTS_OUTBOX_MAX_ATTEMPTS", 8)
+    base_delay = _nonnegative_float_env("INCIDENTS_OUTBOX_BACKOFF_BASE_SECONDS", 1.0)
 
     async with httpx.AsyncClient(timeout=5.0) as client:
         for record in records:
@@ -501,20 +520,34 @@ async def process_incidents_outbox():
             log.info("AUDIT: Outbox worker attempting delivery of resolved incident %s to %s", incident_id, url)
 
             try:
-                resp = await client.post(url, json={"incident_id": incident_id})
+                resp = await client.post(
+                    url,
+                    json={"incident_id": incident_id, "event": record.event.to_dict()},
+                )
                 if resp.status_code in {200, 201}:
                     log.info("AUDIT: Successfully delivered resolved incident %s to postmortems via outbox. Status: %d", incident_id, resp.status_code)
                     outbox_store.put(record.mark_published())
                 else:
                     err_msg = f"status_code={resp.status_code} body={resp.text}"
-                    dead_letter = record.delivery_attempts + 1 >= 3
                     log.warning("AUDIT: Outbox delivery attempt %d for resolved incident %s returned error: %s", record.delivery_attempts + 1, incident_id, err_msg)
-                    outbox_store.put(record.mark_failed(err_msg, dead_lettered=dead_letter))
+                    outbox_store.put(
+                        record.mark_failed(
+                            err_msg,
+                            max_attempts=max_attempts,
+                            base_delay_seconds=base_delay,
+                            permanent=resp.status_code in {400, 409, 422},
+                        )
+                    )
             except Exception as exc:
                 err_msg = str(exc)
-                dead_letter = record.delivery_attempts + 1 >= 3
                 log.warning("AUDIT: Outbox delivery attempt %d for resolved incident %s failed with exception: %s", record.delivery_attempts + 1, incident_id, err_msg)
-                outbox_store.put(record.mark_failed(err_msg, dead_lettered=dead_letter))
+                outbox_store.put(
+                    record.mark_failed(
+                        err_msg,
+                        max_attempts=max_attempts,
+                        base_delay_seconds=base_delay,
+                    )
+                )
 
 async def incidents_outbox_loop():
     while True:
@@ -522,7 +555,7 @@ async def incidents_outbox_loop():
             await process_incidents_outbox()
         except Exception as exc:
             log.exception("Error in incidents outbox delivery loop: %s", exc)
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(_nonnegative_float_env("INCIDENTS_OUTBOX_POLL_SECONDS", 2.0))
 
 @app.on_event("startup")
 def start_incidents_outbox_worker():
@@ -530,6 +563,40 @@ def start_incidents_outbox_worker():
     if "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST"):
         return
     asyncio.create_task(incidents_outbox_loop())
+
+
+@app.post("/api/incidents/outbox/{outbox_id}/redrive")
+def redrive_incident_outbox(
+    outbox_id: str,
+    body: Dict[str, Any] = Body(...),
+    redrive_token: Optional[str] = Header(None, alias="X-Pantheon-Outbox-Redrive-Token"),
+) -> Dict[str, Any]:
+    expected_token = os.getenv("INCIDENTS_OUTBOX_REDRIVE_TOKEN", "").strip()
+    if not expected_token:
+        raise HTTPException(status_code=503, detail="incident outbox redrive is not configured")
+    if not redrive_token or not secrets.compare_digest(redrive_token, expected_token):
+        raise HTTPException(status_code=403, detail="invalid incident outbox redrive token")
+    actor_id = str(body.get("actor_id") or "").strip()
+    actor_role = str(body.get("actor_role") or "").strip()
+    approval_ref = str(body.get("approval_ref") or "").strip()
+    reason = str(body.get("reason") or "").strip()
+    if actor_role not in {"operator", "risk_owner"} or not actor_id or not approval_ref or not reason:
+        raise HTTPException(
+            status_code=422,
+            detail="actor_id, operator/risk_owner actor_role, approval_ref, and reason are required",
+        )
+    try:
+        record = outbox_store.redrive(
+            outbox_id,
+            actor=f"{actor_role}:{actor_id}",
+            note=f"approval_ref={approval_ref}; {reason}",
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"outbox record not found: {outbox_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    log.warning("AUDIT: Redrove incident outbox %s by %s:%s", outbox_id, actor_role, actor_id)
+    return record.to_dict()
 
 
 @app.post(
@@ -547,20 +614,47 @@ def update_status(
 
     resolved_at is auto-set when transitioning to resolved or closed.
     """
-    _get_or_404(incident_id)
+    previous = _get_or_404(incident_id)
+    crosses_terminal_boundary = (
+        previous.status not in _TERMINAL_INCIDENT_STATUSES
+        and body.status in _TERMINAL_INCIDENT_STATUSES
+    )
+    prepared: ReliableOutboxRecord | None = None
+    if crosses_terminal_boundary:
+        try:
+            prepared = _prepare_postmortem_delivery(incident_id, body.status)
+        except Exception as exc:
+            log.exception("AUDIT: Could not prepare incident outbox for %s", incident_id)
+            raise HTTPException(
+                status_code=503,
+                detail=f"incident status not changed because delivery intent could not be persisted: {exc}",
+            ) from exc
     try:
         updated = store.update_incident_status(
             incident_id,
             body.status,
-            resolved_at=body.resolved_at,
+            resolved_at=body.resolved_at or previous.resolved_at,
         )
     except IncidentError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
     log.info("IncidentCase %s → status=%s", incident_id, body.status)
 
-    if body.status in {"resolved", "closed"}:
-        _publish_to_postmortems_if_resolved(incident_id)
+    if prepared is not None:
+        try:
+            outbox_store.activate(prepared)
+        except Exception as exc:
+            log.exception(
+                "AUDIT: Incident %s transitioned but its durable prepared outbox could not be activated",
+                incident_id,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "incident status changed and durable delivery intent is awaiting reconciliation: "
+                    f"{exc}"
+                ),
+            ) from exc
 
     return _to_response(updated)
 
