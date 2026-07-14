@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from services.knowledge.evidence import JsonlEvidenceRepository
+from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanDatasetAdapter
 from services.source_ingestion.source_health import SourceHealth, SourceHealthStore
 
 
@@ -208,6 +210,59 @@ def test_market_data_storage_refs_include_raw_retention_and_gzip_policy(client) 
     with gzip.open(raw_ref["uri"], "rt", encoding="utf-8") as handle:
         raw_line = json.loads(handle.readline())
     assert raw_line["source_id"] == "src-high-volume-market-1"
+
+
+def test_finmind_price_identity_survives_bulk_compaction_and_jsonl_reload(client) -> None:
+    _, data_dir, module = client
+    record = FinMindTaiwanDatasetAdapter().records_from_data_payload(
+        "TaiwanStockPrice",
+        {"data": [{"date": "2026-06-08", "stock_id": "2330", "close": 955.0}]},
+        trace_id="trace-finmind-price-persistence",
+    )[0]
+
+    compacted = module._compact_bulk_market_record(
+        record,
+        {
+            "raw_refs": [
+                {
+                    "dataset": "TaiwanStockPrice",
+                    "uri": "file:///market-data/raw/finmind-price.jsonl.gz",
+                }
+            ]
+        },
+    )
+    assert "raw_row" not in compacted.metadata
+    assert "body" not in compacted.metadata
+
+    evidence_path = data_dir / "finmind-price-evidence.jsonl"
+    JsonlEvidenceRepository(evidence_path).add_source_record(compacted)
+    restored = JsonlEvidenceRepository(evidence_path).get_source_record(record.source_id)
+
+    assert restored is not None
+    assert restored.source_id == record.source_id
+    assert restored.content_ref == record.content_ref
+    normalized_row = restored.metadata["normalized_row"]
+    assert normalized_row == {
+        "schema_version": "tw_price_daily.v1",
+        "target_table": "tw_price_daily",
+        "provider": "FinMind",
+        "market": "TW",
+        "symbol": "2330",
+        "symbol_canonical": "2330.TW",
+        "dataset": "tw_price_daily",
+        "source_dataset": "TaiwanStockPrice",
+        "trade_date": "2026-06-08",
+        "close": 955.0,
+    }
+    assert normalized_row["close"] == 955.0
+    assert (
+        normalized_row["provider"],
+        normalized_row["market"],
+        normalized_row["symbol_canonical"],
+        normalized_row["source_dataset"],
+        normalized_row["trade_date"],
+    ) == ("FinMind", "TW", "2330.TW", "TaiwanStockPrice", "2026-06-08")
+    assert restored.metadata["raw_storage_refs"][0]["dataset"] == "TaiwanStockPrice"
 
 
 def test_zero_row_runs_fail_unless_provider_marks_no_new_data(client) -> None:

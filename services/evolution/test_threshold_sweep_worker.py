@@ -349,6 +349,85 @@ def test_evaluate_breaches_detects_drawdown_breach_from_real_projection():
     assert not any("rolling_drawdown_multiple" in d for d in diagnostics)
 
 
+def test_explicit_pnl_and_drawdown_as_of_are_evaluated_from_real_projection():
+    """Separate performance events reach the real sweep as fresh numbers.
+
+    EVOLOOP-002 emits PnL and drawdown independently and stamps each metric
+    with its market-observation time.  Exercise that production-shaped path
+    through RuntimeSummaryProjectionStore and the real breach selector so a
+    fresh heartbeat cannot hide a missing/stale-field skip.
+    """
+    projection_store = RuntimeSummaryProjectionStore(path=None)
+    identity = {
+        "runtime_id": "runtime-evochain-001",
+        "binding_id": "rb-evochain-001",
+        "deployment_stage": "paper",
+        "capital_pool_id": "pool-evochain-001",
+        "artifact_id": "artifact-evochain-001",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-evochain-001",
+        "persona_capital_binding_id": "pcb-evochain-001",
+    }
+    projection_store.project_event(
+        {
+            **identity,
+            "event_id": "evt-explicit-as-of-heartbeat",
+            "event_type": "heartbeat",
+            "created_at": "2026-07-13T00:00:00Z",
+            "metadata": {"connectivity_status": "connected"},
+            "metrics": {"heartbeat": 1},
+        }
+    )
+    projection_store.project_event(
+        {
+            **identity,
+            "event_id": "evt-explicit-as-of-pnl",
+            "event_type": "pnl_snapshot",
+            "created_at": "2026-07-13T00:00:20Z",
+            "pnl_as_of": "2026-07-13T00:00:05Z",
+            "metrics": {"pnl": -600.0},
+        }
+    )
+    projection_store.project_event(
+        {
+            **identity,
+            "event_id": "evt-explicit-as-of-drawdown",
+            "event_type": "drawdown_snapshot",
+            "created_at": "2026-07-13T00:00:25Z",
+            "drawdown_as_of": "2026-07-13T00:00:06Z",
+            "metrics": {"drawdown_pct": 0.18},
+        }
+    )
+
+    summary = projection_store.get(identity["runtime_id"], now=_NOW)
+    assert summary["pnl"] == -600.0
+    assert summary["pnl_at"] == "2026-07-13T00:00:05Z"
+    assert summary["drawdown"] == 0.18
+    assert summary["drawdown_at"] == "2026-07-13T00:00:06Z"
+
+    payloads, diagnostics = evaluate_breaches(
+        [summary],
+        THRESHOLDS,
+        window_bucket="2026-07-13",
+        baselines=BASELINES,
+        now=_NOW,
+    )
+
+    by_metric = {
+        payload["threshold_snapshot"]["metric_name"]: payload
+        for payload in payloads
+    }
+    assert diagnostics == []
+    assert set(by_metric) == {"rolling_drawdown_multiple", "rolling_pnl_floor"}
+    assert by_metric["rolling_drawdown_multiple"]["threshold_snapshot"]["raw_observed_value"] == 0.18
+    assert by_metric["rolling_drawdown_multiple"]["threshold_snapshot"]["observed_value"] == 1.5
+    assert by_metric["rolling_drawdown_multiple"]["telemetry_event"]["metrics"] == {
+        "drawdown_pct": 0.18
+    }
+    assert by_metric["rolling_pnl_floor"]["threshold_snapshot"]["observed_value"] == -600.0
+    assert by_metric["rolling_pnl_floor"]["telemetry_event"]["metrics"] == {"pnl": -600.0}
+
+
 def test_evaluate_breaches_missing_baseline_is_diagnostic_only_fail_closed():
     payloads, diagnostics = evaluate_breaches(
         [_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines={}, now=_NOW
@@ -1720,6 +1799,7 @@ def test_runtime_summary_projection_store_reset_on_binding_rollover():
         "binding_id": "binding-a",
         "runtime_id": "rt-1",
         "metrics": {"drawdown_pct": 0.15},
+        "metadata": {"runtime_binding_effective_at": "2026-07-13T00:00:00Z"},
     }
 
     # Project binding A
@@ -1737,6 +1817,7 @@ def test_runtime_summary_projection_store_reset_on_binding_rollover():
         "binding_id": "binding-b",
         "runtime_id": "rt-1",
         "metrics": {}, # No metrics in this event
+        "metadata": {"runtime_binding_effective_at": "2026-07-13T00:01:00Z"},
     }
     summary_b = store.project_event(event_binding_b)
 
@@ -1791,7 +1872,6 @@ def test_evaluate_breaches_validates_metric_provenance():
 
     assert not payloads
     assert any("metric provenance mismatch: metric binding 'binding-a' does not match current summary binding 'binding-b'" in d for d in diagnostics)
-
 
 def test_run_tick_never_raises_on_corrupt_wal_records(tmp_path):
     """Verify that run_tick never raises even when WAL contains corrupt or incomplete records."""

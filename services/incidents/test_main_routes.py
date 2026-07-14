@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient
 from services.incident.incident import IncidentStore
 from services.incident.reference_validation import CanonicalReferenceError
 from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
-from services.incidents.main import app, store
+from services.incidents.main import app, outbox_store, store
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +34,7 @@ from services.incidents.main import app, store
 
 @pytest.fixture(autouse=True)
 def clean_store(monkeypatch):
-    """Give each test an isolated in-memory IncidentStore.
+    """Give each test an isolated in-memory IncidentStore, plus a clean outbox.
 
     The module-level `store` defaults to a persistent store backed by the
     developer/runtime-shared `/tmp/pantheon/incidents/incidents.json` file.
@@ -43,19 +43,29 @@ def clean_store(monkeypatch):
     Instead, inject a fresh in-memory `IncidentStore(path=None)` for the
     route module *and* this test module's own `store` name (both must point
     at the same object: route handlers read the module global directly, and
-    tests assert against the locally-imported name), so tests never touch
-    disk at all (round-7 review point 5).
+    tests assert against the locally-imported name), so incident data never
+    touches disk (round-7 review point 5). `outbox_store` has no in-memory
+    mode (`AtomicJsonRecordStore` always requires a real path — see
+    EVOCHAIN-003's crash-safe delivery admission), so its JSON file is still
+    reset between tests the old way.
     """
     class _AcceptAllValidator:
         def validate_incident(self, incident):
             return None
 
     monkeypatch.setattr("services.incidents.main.reference_validator", _AcceptAllValidator())
-    monkeypatch.setattr("services.incidents.main._publish_to_postmortems_if_resolved", lambda incident_id: None)
     fresh_store = IncidentStore(path=None)
     monkeypatch.setattr("services.incidents.main.store", fresh_store)
     monkeypatch.setattr(sys.modules[__name__], "store", fresh_store)
+    _reset_outbox()
     yield
+    _reset_outbox()
+
+
+def _reset_outbox():
+    outbox_path = getattr(outbox_store.impl, "path", None)
+    if outbox_path is not None and outbox_path.exists():
+        outbox_path.unlink()
 
 
 client = TestClient(app)

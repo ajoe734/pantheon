@@ -24,11 +24,20 @@ The canonical JSON schema lives at:
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+import threading
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, Iterator, List, Mapping, Optional
+
+try:  # pragma: no cover - Linux production and CI provide fcntl.
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 from approval_decision import EvidenceRef, EvidenceRefType, RiskLevel
 
@@ -959,7 +968,18 @@ def validate_evolution_decision(decision: EvolutionDecision) -> List[str]:
 
 
 class EvolutionDecisionStore:
-    """In-memory store for EvolutionDecision with optional persistence."""
+    """EvolutionDecision store with optional concurrent-safe JSON persistence.
+
+    JSON-backed instances coordinate through a path-scoped thread lock and an
+    advisory file lock.  Every write reloads the latest durable snapshot while
+    holding both locks, applies the mutation, and atomically replaces the data
+    file only after it has been flushed.  This makes two workers pointing at
+    the same file a serialized read-modify-write sequence instead of a
+    last-snapshot-wins race.
+    """
+
+    _path_locks_guard = threading.Lock()
+    _path_locks: Dict[str, threading.RLock] = {}
 
     def __init__(
         self,
@@ -970,23 +990,116 @@ class EvolutionDecisionStore:
         self._storage_path = Path(storage_path) if storage_path else None
         self._incident_store = incident_store
         self._decisions: Dict[str, EvolutionDecision] = {}
+        self._memory_lock = threading.RLock()
+        self._thread_lock = self._lock_for_path(self._storage_path)
+        self._lock_path = (
+            self._storage_path.with_name(f".{self._storage_path.name}.lock")
+            if self._storage_path
+            else None
+        )
         if self._storage_path and self._storage_path.exists():
             self._load()
+
+    @classmethod
+    def _lock_for_path(cls, path: Path | None) -> threading.RLock:
+        if path is None:
+            return threading.RLock()
+        key = str(path.expanduser().resolve())
+        with cls._path_locks_guard:
+            lock = cls._path_locks.get(key)
+            if lock is None:
+                lock = threading.RLock()
+                cls._path_locks[key] = lock
+            return lock
+
+    @contextmanager
+    def _locked(self, *, exclusive: bool) -> Iterator[None]:
+        if self._storage_path is None or self._lock_path is None:
+            with self._memory_lock:
+                yield
+            return
+
+        with self._thread_lock:
+            self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor = os.open(self._lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                if fcntl is not None:
+                    mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                    fcntl.flock(descriptor, mode)
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
+
+    @staticmethod
+    def _fingerprint(decision: EvolutionDecision) -> str:
+        return json.dumps(
+            decision.to_dict(),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @classmethod
+    def _copy_for_caller(cls, decision: EvolutionDecision) -> EvolutionDecision:
+        copied = EvolutionDecision.from_dict(decision.to_dict())
+        setattr(copied, "_store_snapshot", cls._fingerprint(decision))
+        return copied
 
     def put(self, decision: EvolutionDecision) -> None:
         errors = validate_evolution_decision(decision)
         if errors:
             raise EvolutionDecisionError(f"Invalid EvolutionDecision: {errors}")
-        self._enforce_single_active_rule(decision)
-        self._decisions[decision.decision_id] = decision
+        expected_snapshot = getattr(decision, "_store_snapshot", None)
+        with self._locked(exclusive=True):
+            if self._storage_path is not None:
+                self._load_unlocked()
+            durable_before = dict(self._decisions)
+            try:
+                current = self._decisions.get(decision.decision_id)
+                if current is None and expected_snapshot is not None:
+                    raise EvolutionDecisionError(
+                        "concurrent modification detected: EvolutionDecision was removed"
+                    )
+                if current is not None:
+                    current_snapshot = self._fingerprint(current)
+                    if expected_snapshot is None:
+                        if self._fingerprint(decision) != current_snapshot:
+                            raise EvolutionDecisionError(
+                                "decision_id already exists; blind overwrite is not allowed"
+                            )
+                    elif expected_snapshot != current_snapshot:
+                        raise EvolutionDecisionError(
+                            "concurrent modification detected for EvolutionDecision "
+                            f"{decision.decision_id}"
+                        )
+                self._enforce_single_active_rule(decision)
+                durable_copy = EvolutionDecision.from_dict(decision.to_dict())
+                self._decisions[decision.decision_id] = durable_copy
+                self._save_unlocked()
+            except Exception:
+                # The atomic replace leaves the prior file intact.  Mirror that
+                # durable state in memory as well so a failed write cannot look
+                # committed to subsequent callers in this process.
+                self._decisions = durable_before
+                raise
+            snapshot = self._fingerprint(durable_copy)
+            setattr(durable_copy, "_store_snapshot", snapshot)
+            setattr(decision, "_store_snapshot", snapshot)
         self._sync_postmortem_link(decision)
-        self._save()
 
     def get(self, decision_id: str) -> Optional[EvolutionDecision]:
-        return self._decisions.get(decision_id)
+        with self._locked(exclusive=False):
+            if self._storage_path is not None:
+                self._load_unlocked()
+            decision = self._decisions.get(decision_id)
+            return self._copy_for_caller(decision) if decision is not None else None
 
     def list_all(self) -> List[EvolutionDecision]:
-        return list(self._decisions.values())
+        with self._locked(exclusive=False):
+            if self._storage_path is not None:
+                self._load_unlocked()
+            return [self._copy_for_caller(item) for item in self._decisions.values()]
 
     def find_by_target(
         self,
@@ -996,12 +1109,15 @@ class EvolutionDecisionStore:
         target_type_value = (
             target_type.value if isinstance(target_type, EvolutionTargetType) else target_type
         )
-        return [
-            decision
-            for decision in self._decisions.values()
-            if decision.target_id == target_id
-            and decision.to_dict()["target_type"] == target_type_value
-        ]
+        with self._locked(exclusive=False):
+            if self._storage_path is not None:
+                self._load_unlocked()
+            return [
+                self._copy_for_caller(decision)
+                for decision in self._decisions.values()
+                if decision.target_id == target_id
+                and decision.to_dict()["target_type"] == target_type_value
+            ]
 
     def find_active_by_target(
         self,
@@ -1017,11 +1133,14 @@ class EvolutionDecisionStore:
         ]
 
     def find_by_postmortem(self, postmortem_id: str) -> List[EvolutionDecision]:
-        return [
-            decision
-            for decision in self._decisions.values()
-            if decision.linked_postmortem_id == postmortem_id
-        ]
+        with self._locked(exclusive=False):
+            if self._storage_path is not None:
+                self._load_unlocked()
+            return [
+                self._copy_for_caller(decision)
+                for decision in self._decisions.values()
+                if decision.linked_postmortem_id == postmortem_id
+            ]
 
     def _enforce_single_active_rule(self, candidate: EvolutionDecision) -> None:
         if not candidate.is_active():
@@ -1048,6 +1167,16 @@ class EvolutionDecisionStore:
         )
 
     def _save(self) -> None:
+        """Persist the current snapshot under the store lock.
+
+        Kept as a public-ish compatibility hook for existing callers.  Normal
+        mutations should use :meth:`put`, which performs the locked reload and
+        rollback around this write.
+        """
+        with self._locked(exclusive=True):
+            self._save_unlocked()
+
+    def _save_unlocked(self) -> None:
         if not self._storage_path:
             return
         self._storage_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1055,17 +1184,57 @@ class EvolutionDecisionStore:
             decision_id: decision.to_dict()
             for decision_id, decision in self._decisions.items()
         }
-        self._storage_path.write_text(json.dumps(data, indent=2))
+        handle = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=self._storage_path.parent,
+            prefix=f".{self._storage_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        )
+        temporary_path = Path(handle.name)
+        try:
+            with handle:
+                json.dump(data, handle, indent=2, sort_keys=True)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, self._storage_path)
+            directory_fd = os.open(self._storage_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
 
     def _load(self) -> None:
+        with self._locked(exclusive=False):
+            self._load_unlocked()
+
+    def _load_unlocked(self) -> None:
         if not self._storage_path or not self._storage_path.exists():
+            self._decisions = {}
             return
-        text = self._storage_path.read_text()
+        text = self._storage_path.read_text(encoding="utf-8")
         if not text.strip():
+            self._decisions = {}
             return
         raw = json.loads(text)
+        if not isinstance(raw, Mapping):
+            raise EvolutionDecisionError(
+                "EvolutionDecisionStore JSON must contain an object"
+            )
+        loaded: Dict[str, EvolutionDecision] = {}
         for decision_id, data in raw.items():
-            self._decisions[decision_id] = EvolutionDecision.from_dict(data)
+            if not isinstance(data, Mapping):
+                raise EvolutionDecisionError(
+                    f"Invalid EvolutionDecision record: {decision_id}"
+                )
+            decision = EvolutionDecision.from_dict(data)
+            setattr(decision, "_store_snapshot", self._fingerprint(decision))
+            loaded[str(decision_id)] = decision
+        self._decisions = loaded
 
 
 def to_audit_event(decision: EvolutionDecision, event_type: str) -> Dict[str, Any]:
