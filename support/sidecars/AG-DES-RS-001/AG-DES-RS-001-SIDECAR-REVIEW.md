@@ -1,10 +1,10 @@
 # AG-DES-RS-001 — Review Packet & Evidence Summary
 
-**Sidecar kind:** review_packet  
-**Parent task:** AG-DES-RS-001 (Research Facade / Stage Routing / Run Projection)  
-**Prepared by:** Claude (AG-DES-RS-001-SIDECAR-REVIEW)  
-**Reviewer target:** Claude2  
-**Date:** 2026-06-21  
+**Sidecar kind:** review_packet
+**Parent task:** AG-DES-RS-001 (Research Facade / Stage Routing / Run Projection)
+**Prepared by:** Claude (AG-DES-RS-001-SIDECAR-REVIEW)
+**Reviewer target:** Claude2
+**Date:** 2026-06-21
 **Status:** ready for reviewer
 
 ---

@@ -71,7 +71,7 @@ class TradeEpisodeProjectionStore:
     def project_event(self, event: dict[str, Any]) -> Optional[dict[str, Any]]:
         """
         Ingest a telemetry or trade journal event and update the corresponding projection.
-        
+
         Performs idempotent deduplication by event_id.
         """
         trade_episode_id = event.get("trade_episode_id")
@@ -79,7 +79,7 @@ class TradeEpisodeProjectionStore:
             trade_episode_id = event.get("payload", {}).get("trade_episode_id")
         if not trade_episode_id:
             trade_episode_id = event.get("metadata", {}).get("trade_episode_id")
-            
+
         event_id = event.get("event_id")
         if not trade_episode_id or not event_id:
             return None
@@ -112,7 +112,7 @@ class TradeEpisodeProjectionStore:
     ) -> Optional[dict[str, Any]]:
         """
         Get a projection for a trade episode.
-        
+
         If as_of or as_of_sequence is specified, the projection is rebuilt on-the-fly.
         """
         with self._lock:
@@ -142,7 +142,7 @@ class TradeEpisodeProjectionStore:
     ) -> dict[str, Any]:
         """
         List projections with filters, sorting, and cursor pagination.
-        
+
         Returns a dict with {"projections": [...], "next_cursor": str or None, "count": int}.
         """
         with self._lock:
@@ -535,26 +535,26 @@ class TradeEpisodeProjectionStore:
             elif event_type in ("order_filled", "paper_fill_simulated", "fill_observation", "fill_received"):
                 if not proj:
                     proj = self._init_minimal_projection(ev)
-                
+
                 fill_id = ev.get("event_id")
                 if fill_id and fill_id not in proj["fill_ids"]:
                     proj["fill_ids"].append(fill_id)
 
                 metrics = ev.get("metrics") or {}
-                
+
                 fill_qty = float(metrics.get("fill_quantity") or metrics.get("quantity") or 0.0)
                 fill_price = float(metrics.get("fill_price") or metrics.get("price") or 0.0)
-                
+
                 if fill_qty > 0:
                     prev_qty = proj["filled_quantity"]
                     prev_vwap = proj["vwap"] or 0.0
-                    
+
                     new_qty = prev_qty + fill_qty
                     proj["filled_quantity"] = new_qty
-                    
+
                     if new_qty > 0:
                         proj["vwap"] = (prev_vwap * prev_qty + fill_price * fill_qty) / new_qty
-                    
+
                     req_qty = proj["requested_quantity"]
                     if req_qty > 0 and new_qty >= req_qty:
                         proj["status"] = "open"
@@ -586,7 +586,7 @@ class TradeEpisodeProjectionStore:
                 snap_id = ev.get("event_id")
                 if snap_id and snap_id not in proj["position_snapshot_refs"]:
                     proj["position_snapshot_refs"].append(snap_id)
-                
+
                 metrics = ev.get("metrics") or {}
                 pos_qty = float(metrics.get("position_quantity") or metrics.get("quantity") or 0.0)
                 if pos_qty == 0.0 and proj["status"] in ("open", "reducing", "partially_filled"):
@@ -594,7 +594,7 @@ class TradeEpisodeProjectionStore:
                     proj["closed_at"] = ev.get("occurred_at") or ev.get("created_at")
                 elif pos_qty > 0.0 and proj["status"] == "partially_filled":
                     proj["status"] = "open"
-                
+
                 proj["coverage"]["as_of"] = ev.get("occurred_at") or ev.get("created_at")
 
             elif event_type in ("pnl_snapshot", "drawdown_snapshot"):

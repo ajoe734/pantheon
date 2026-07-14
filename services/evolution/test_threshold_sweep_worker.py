@@ -1776,3 +1776,77 @@ def test_evaluate_breaches_validates_metric_provenance():
     assert any("metric provenance mismatch: metric binding 'binding-a' does not match current summary binding 'binding-b'" in d for d in diagnostics)
 
 
+def test_run_tick_never_raises_on_corrupt_wal_records(tmp_path):
+    """Verify that run_tick never raises even when WAL contains corrupt or incomplete records."""
+    state_path = tmp_path / "corrupt_wal.json"
+    # Write a WAL record that has missing event_id inside telemetry_event, or invalid fields
+    corrupt_data = {
+        "evt-1": {
+            "window_bucket": "2026-07-13",
+            "telemetry_event": {
+                # missing event_id!
+                "event_type": "drawdown_snapshot",
+                "metrics": {"drawdown_pct": 0.15}
+            },
+            "threshold_snapshot": {
+                "metric_name": "rolling_drawdown_multiple"
+            },
+            "delivered": False
+        },
+        "evt-2": {
+            # missing threshold_snapshot!
+            "window_bucket": "2026-07-13",
+            "telemetry_event": {
+                "event_id": "evt-2",
+                "event_type": "drawdown_snapshot",
+                "metrics": {"drawdown_pct": 0.15}
+            },
+            "delivered": False
+        }
+    }
+    state_path.write_text(json.dumps(corrupt_data), encoding="utf-8")
+
+    # This should run without raising KeyError or any other error,
+    # as corrupt records are safely filtered out by _load_pending_evidence.
+    result = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        state_path=str(state_path),
+        now=_NOW,
+    )
+    assert isinstance(result, dict)
+    assert result["errors"] == 0
+
+
+def test_load_thresholds_rejects_empty_metric_name_or_policy_source(tmp_path):
+    """Verify that config entries with empty/whitespace metric_name or policy_source are rejected."""
+    cfg = tmp_path / "cfg.json"
+    
+    # 1. Empty metric_name
+    bad_entry_1 = dict(THRESHOLDS[0])
+    bad_entry_1["metric_name"] = "  "
+    cfg.write_text(json.dumps({"thresholds": [bad_entry_1]}), encoding="utf-8")
+    assert load_thresholds(str(cfg)) == []
+
+    # 2. Empty policy_source
+    bad_entry_2 = dict(THRESHOLDS[0])
+    bad_entry_2["policy_source"] = ""
+    cfg.write_text(json.dumps({"thresholds": [bad_entry_2]}), encoding="utf-8")
+    assert load_thresholds(str(cfg)) == []
+
+
+def test_load_thresholds_handles_non_utf8_config_file(tmp_path):
+    """Verify that load_thresholds returns [] and does not raise UnicodeDecodeError for non-UTF8 config files."""
+    cfg = tmp_path / "cfg.json"
+    cfg.write_bytes(b"\xff\xfe\xfd\xfc")
+    assert load_thresholds(str(cfg)) == []
+
+
+def test_load_baselines_handles_non_utf8_baselines_file(tmp_path):
+    """Verify that load_baselines returns {} and does not raise UnicodeDecodeError for non-UTF8 baselines files."""
+    cfg = tmp_path / "baselines.json"
+    cfg.write_bytes(b"\xff\xfe\xfd\xfc")
+    assert load_baselines(str(cfg)) == {}
+
+
+

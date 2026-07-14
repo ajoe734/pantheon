@@ -1,14 +1,14 @@
 # AG-BE-ID-002 Sidecar Acceptance Packet
 
-**Sidecar task:** `AG-BE-ID-002-SIDECAR-ACCEPTANCE`  
-**Helper parent:** `AG-BE-ID-002`  
-**Helper kind:** `acceptance_packet`  
-**Parent owner:** `Claude2`  
-**Parent reviewer:** `Claude` (acting as reviewer/clarifier)  
-**Parent status:** `blocked`  
+**Sidecar task:** `AG-BE-ID-002-SIDECAR-ACCEPTANCE`
+**Helper parent:** `AG-BE-ID-002`
+**Helper kind:** `acceptance_packet`
+**Parent owner:** `Claude2`
+**Parent reviewer:** `Claude` (acting as reviewer/clarifier)
+**Parent status:** `blocked`
 **Sidecar owner:** `Codex2` (finalization owner; packet prepared by `Antigravity`)
 **Sidecar reviewer:** `Codex`
-**Date:** `2026-06-20`  
+**Date:** `2026-06-20`
 **Status:** `review-approved; owner-closeout prepared`
 
 > Scope constraint: support artifact only. This packet summarizes acceptance
@@ -20,9 +20,9 @@
 
 ## 1. Executive Summary
 
-`AG-BE-ID-002` is a parent task with the title `OpenClaw ensure/provision/reconcile servant`. Its goal is to implement the `POST /bff/agora/servant/ensure` endpoint to provision or reconcile the user-private Agora servant persona. 
+`AG-BE-ID-002` is a parent task with the title `OpenClaw ensure/provision/reconcile servant`. Its goal is to implement the `POST /bff/agora/servant/ensure` endpoint to provision or reconcile the user-private Agora servant persona.
 
-The system design for the Agora v1 contract foundation has been frozen under `docs/04/pantheon_agora_cross_repo_2026-06-20/SD_2026-06-20.md`. 
+The system design for the Agora v1 contract foundation has been frozen under `docs/04/pantheon_agora_cross_repo_2026-06-20/SD_2026-06-20.md`.
 
 This sidecar organizes the acceptance criteria and dependency map based on the frozen design and the schema requirements of the `ServantProfile`. Importantly, it outlines the **OpenClaw provisioning facade gap**, **safety policy guardrails**, and **tenant boundaries** that the parent owner (`Claude2`) must address during implementation.
 
@@ -84,7 +84,7 @@ Before starting implementation, the parent owner (`Claude2`) and reviewer (`Clau
 graph TD
     SD_Agora["docs/.../SD_2026-06-20.md"] --> AG_BE_ID_002["AG-BE-ID-002<br/>OpenClaw Servant Provisioning"]
     AG_BE_ID_001["AG-BE-ID-001<br/>User Scope & Servant Policy"] -->|upstream dep| AG_BE_ID_002
-    
+
     AG_BE_ID_002 -->|downstream dep| AG_BE_ID_003["AG-BE-ID-003<br/>Interactive Session BFF Facade"]
     AG_BE_ID_002 -->|downstream dep| AG_BE_ID_004["AG-BE-ID-004<br/>ContextBundle Redaction Gate"]
     AG_BE_ID_002 -->|downstream dep| AG_FE_ID_001["AG-FE-ID-001<br/>Agora app shell & status check"]
@@ -118,7 +118,7 @@ The parent owner (`Claude2`) should perform the following steps to verify implem
 
 - No L1 canonical policy or architecture document has been edited or superseded.
 - No main runtime, registry, BFF router, or frontend code was changed.
-- The intended sidecar artifact is this file:  
+- The intended sidecar artifact is this file:
   `support/sidecars/AG-BE-ID-002/AG-BE-ID-002-SIDECAR-ACCEPTANCE.md`.
 
 ---

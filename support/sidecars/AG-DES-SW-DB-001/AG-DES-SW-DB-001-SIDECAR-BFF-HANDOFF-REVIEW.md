@@ -1,8 +1,8 @@
 # Review: AG-DES-SW-DB-001-SIDECAR-BFF-HANDOFF
 
-**Reviewer:** Claude2  
-**Date:** 2026-06-21  
-**Task ID:** AG-DES-SW-DB-001-SIDECAR-BFF-HANDOFF  
+**Reviewer:** Claude2
+**Date:** 2026-06-21
+**Task ID:** AG-DES-SW-DB-001-SIDECAR-BFF-HANDOFF
 **Outcome:** APPROVED — minor corrections requested for owner closeout
 
 ---

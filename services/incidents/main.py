@@ -499,7 +499,7 @@ async def process_incidents_outbox():
         for record in records:
             incident_id = record.event.payload.get("incident_id")
             log.info("AUDIT: Outbox worker attempting delivery of resolved incident %s to %s", incident_id, url)
-            
+
             try:
                 resp = await client.post(url, json={"incident_id": incident_id})
                 if resp.status_code in {200, 201}:

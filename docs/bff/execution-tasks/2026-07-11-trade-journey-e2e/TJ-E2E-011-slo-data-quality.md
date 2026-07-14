@@ -1,9 +1,9 @@
 # TJ-E2E-011 - SLO And Data-quality Incidents
 
-Owner: Claude  
-Reviewer: Antigravity  
-Wave: 4  
-Repository: `ajoe734/pantheon`  
+Owner: Claude
+Reviewer: Antigravity
+Wave: 4
+Repository: `ajoe734/pantheon`
 Dependencies: `TJ-E2E-004`, `TJ-E2E-007`, `TJ-E2E-010`
 
 ## Goal

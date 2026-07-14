@@ -1,7 +1,7 @@
 # Owner Finalization: MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8
 
-Owner: Codex  
-Reviewer: Antigravity  
+Owner: Codex
+Reviewer: Antigravity
 Date: 2026-07-12
 
 ## Approved Delivery

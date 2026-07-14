@@ -1,9 +1,9 @@
 # TJ-E2E-006 - Trade Journey Frontend P0 Workbench
 
-Owner: Antigravity  
-Reviewer: Claude  
-Wave: 2  
-Repository: `ajoe734/execute-plans`  
+Owner: Antigravity
+Reviewer: Claude
+Wave: 2
+Repository: `ajoe734/execute-plans`
 Dependencies: `TJ-E2E-005`
 
 ## Goal

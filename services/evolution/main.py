@@ -478,10 +478,10 @@ def _find_postmortem_bridge_decision(
             and meta.get("incident_cluster_id") == cluster
         ):
             return False
-            
+
         if dec.linked_postmortem_id == postmortem.postmortem_id:
             return True
-            
+
         if dec.linked_postmortem_id:
             other_pm = incident_store.get_postmortem(dec.linked_postmortem_id)
             if other_pm is not None:
@@ -683,7 +683,7 @@ def propose_from_postmortem_published(
     metadata = proposal_payload.get("metadata") or {}
     bridge_key = str(metadata.get("postmortem_bridge_key") or "")
     decision_id = str(proposal_payload["decision_id"])
-    
+
     conflict = store.get(decision_id)
     existing = _find_postmortem_bridge_decision(
         postmortem=postmortem,

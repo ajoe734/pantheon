@@ -1,15 +1,15 @@
 # EVO-001 Sidecar Acceptance Packet
 
-**Sidecar task:** `EVO-001-SIDECAR-ACCEPTANCE`  
-**Helper parent:** `EVO-001`  
-**Helper kind:** `acceptance_packet`  
-**Parent owner:** `Claude`  
-**Parent reviewer:** `Codex`  
-**Sidecar owner:** `Codex`  
-**Sidecar reviewer:** `Claude`  
-**Generated:** `2026-05-16T11:42:52Z`  
-**Review approved:** `2026-05-16T11:48:34Z` by `Claude`  
-**Owner closeout verification:** `2026-05-16T12:15:00Z` by `Codex`  
+**Sidecar task:** `EVO-001-SIDECAR-ACCEPTANCE`
+**Helper parent:** `EVO-001`
+**Helper kind:** `acceptance_packet`
+**Parent owner:** `Claude`
+**Parent reviewer:** `Codex`
+**Sidecar owner:** `Codex`
+**Sidecar reviewer:** `Claude`
+**Generated:** `2026-05-16T11:42:52Z`
+**Review approved:** `2026-05-16T11:48:34Z` by `Claude`
+**Owner closeout verification:** `2026-05-16T12:15:00Z` by `Codex`
 **Status:** `review-approved; owner-closeout-ready`
 
 > Scope constraint: support artifact only. This packet summarizes acceptance

@@ -1,7 +1,7 @@
 # TJ-E2E-008 Governed Journey Actions — Owner Handoff
 
-Owner: Codex  
-Reviewer: Claude  
+Owner: Codex
+Reviewer: Claude
 Anchor: `800b37ea8`
 
 ## Delivered scope

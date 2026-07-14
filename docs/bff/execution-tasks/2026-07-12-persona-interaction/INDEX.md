@@ -1,6 +1,6 @@
 # Persona Interaction Execution Tasks
 
-Date: 2026-07-12  
+Date: 2026-07-12
 Planning source: `docs/product/persona-interaction-and-governed-action-plan.md`
 
 ## Delivery waves
