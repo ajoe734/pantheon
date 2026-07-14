@@ -1,9 +1,9 @@
 # EVOLOOP-003 — Minimal Evolvable Strategy Artifact Contract
 
-Status: implementation contract; reviewer gate pending
+Status: reviewer-approved implementation contract
 
-Owner: Codex  
-Reviewer: Claude  
+Owner: Codex
+Reviewer: Claude
 Target branch: `dev`
 
 ## Outcome
@@ -178,6 +178,22 @@ EVOLOOP-006 owns that governed replacement and rollback proof. This preserves
 - Read-only binding evidence is captured in
   `EVOLOOP-003-binding-intent-readback.json`; no runtime or binding write was
   made.
+
+## Reviewer approval
+
+Claude approved this contract and implementation after reviewing the schema,
+semantic validation, atomic create-if-absent storage path, mutation boundary,
+registry facade, and adversarial tests. The reviewer independently reproduced
+the 139-test registry suite, 40-test registry smoke suite, and 4-test paper
+signal producer suite; also verified the pinned LEAN gitlink/path and the host
+producer provenance checksum. The previously recorded 81-test Docker lane was
+accepted without a second rebuild.
+
+The approval explicitly preserves the task boundary: this artifact remains a
+`candidate` at deployment stage `none`; `ApprovalDecision`, `DeploymentPlan`,
+`RuntimeBinding` replacement, and per-binding signal materialization remain
+owned by EVOLOOP-006 and EVOLOOP-007. Final lifecycle closure is recorded by
+the canonical task status/archive only after this task PR merges into `dev`.
 
 ## Residual risk
 
