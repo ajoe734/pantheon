@@ -10512,6 +10512,21 @@ class ReadSurfaceStore:
         decision_id = raw.get("decision_id") or raw.get("id")
         target_type = raw.get("target_type") or raw.get("decision_type")
         target_id = raw.get("target_id")
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        tenant_id = (
+            raw.get("tenant_id")
+            or raw.get("tenantId")
+            or metadata.get("tenant_id")
+            or metadata.get("tenantId")
+        )
+        owner_user_id = (
+            raw.get("owner_user_id")
+            or raw.get("user_id")
+            or raw.get("userId")
+            or metadata.get("owner_user_id")
+            or metadata.get("user_id")
+            or metadata.get("userId")
+        )
         deployment_ref = {}
         if str(target_type or "") == "DeploymentPlan" and target_id:
             deployment_ref = {
@@ -10525,6 +10540,8 @@ class ReadSurfaceStore:
             "target_type": target_type,
             "target_id": target_id,
             "target_version": raw.get("target_version"),
+            "tenant_id": tenant_id,
+            "owner_user_id": owner_user_id,
             "deployment_ref": deployment_ref,
             "outcome": raw.get("decision") or raw.get("outcome"),
             "reviewer": raw.get("actor_id") or raw.get("reviewer"),
