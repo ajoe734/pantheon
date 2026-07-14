@@ -1,0 +1,189 @@
+{
+  "schema_version": 1,
+  "fixture_set_id": "loop-product-catalog-v1-migration-preimages",
+  "canonicalization": "utf8-json-sort-keys-compact",
+  "source_catalog": {
+    "repository": "ajoe734/pantheon",
+    "git_commit": "9ad17546abc0573c8a362aa8ee1e864d1b04c711",
+    "path": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/tasks.json",
+    "byte_sha256": "2b5183712e7e0d4dbdf21214aaa215b4d16fe186b8c83a7cea5420dea0022b91",
+    "schema_version": 1,
+    "program_id": "loop-product-level-remediation-2026-07-13"
+  },
+  "task_contract_algorithm": {
+    "algorithm": "sha256",
+    "encoding": "utf-8",
+    "serialization": "json-sort-keys-compact",
+    "projection": "all required task fields except owner, reviewer, status, and next"
+  },
+  "historical_source_ref": {
+    "value": {
+      "plan": "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md",
+      "packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/INDEX.md",
+      "catalog": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/tasks.json",
+      "catalog_sha256": "2b5183712e7e0d4dbdf21214aaa215b4d16fe186b8c83a7cea5420dea0022b91",
+      "program_id": "loop-product-level-remediation-2026-07-13"
+    },
+    "sha256": "b26b21c22a3046dd4b81e65059128f7d6200cadcca59afc0b3a160c8327e581a"
+  },
+  "historical_dispatcher_metadata": {
+    "value": {
+      "task_class": "execution",
+      "auto_created_by": "dispatch_loop_product_level_remediation_2026-07-13",
+      "auto_generated": true,
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "loop_product_level_execution_slice"
+    },
+    "sha256": "5924447bd5c13b03fc4ba5437cf934b2c03f2d03cf470b240b5365c05278ab8d"
+  },
+  "allowed_mutable_live_fields": [
+    "owner",
+    "reviewer",
+    "next",
+    "created_at",
+    "last_update"
+  ],
+  "targets": [
+    {
+      "task_id": "LOOP-PROD-AGORA-002",
+      "before_task_contract_sha256": "a07bf709dfc1cc300a6cf96ad307b92f4dfd0634fea09482215c30634b8e9c64",
+      "after_task_contract_sha256": "232f29eb1b92fffe6843e3fe1eb5322bce87ed499d6dfb315490bd733ff21240",
+      "allowed_contract_field_changes": [
+        "depends_on"
+      ],
+      "before_contract_field_values": {
+        "depends_on": [
+          "LOOP-PROD-CONS-001",
+          "LOOP-PROD-ALPHA-001",
+          "AG-GAP-005"
+        ]
+      },
+      "before_depends_on": [
+        "LOOP-PROD-CONS-001",
+        "LOOP-PROD-ALPHA-001",
+        "AG-GAP-005"
+      ],
+      "after_depends_on": [
+        "LOOP-PROD-CONS-001",
+        "LOOP-PROD-ALPHA-001",
+        "AG-GAP-005",
+        "LOOP-PROD-ATTEST-001"
+      ],
+      "before_runtime_fields": {},
+      "after_runtime_fields": {}
+    },
+    {
+      "task_id": "LOOP-PROD-MAI-001",
+      "before_task_contract_sha256": "300ffcc4eb81417ab74a998345aa654d28bacf1a2ca0ece196f6a088f6e08bae",
+      "after_task_contract_sha256": "70289123a84536a11ab343fe1ba4e693128ce039925c719304c7365d5e13e2f2",
+      "allowed_contract_field_changes": [
+        "depends_on"
+      ],
+      "before_contract_field_values": {
+        "depends_on": [
+          "LOOP-PROD-AUTH-001",
+          "LOOP-PROD-001",
+          "LOOP-PROD-002",
+          "LOOP-PROD-REC-001",
+          "LOOP-PROD-TJ-001"
+        ]
+      },
+      "before_depends_on": [
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-TJ-001"
+      ],
+      "after_depends_on": [
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-TJ-001",
+        "LOOP-PROD-WORKER-001",
+        "LOOP-PROD-BROWSER-AUTH-001"
+      ],
+      "before_runtime_fields": {},
+      "after_runtime_fields": {}
+    },
+    {
+      "task_id": "LOOP-PROD-CLOSE-001",
+      "before_task_contract_sha256": "78e927013a680120787c077b0df928bd5df3d7804f971df388f818f12b1c89f4",
+      "after_task_contract_sha256": "1e7ee295ddc306f605845270e31857ba68a14c3d0e82dd6ece0f3b394f186ebb",
+      "allowed_contract_field_changes": [
+        "acceptance",
+        "dispatch_rules",
+        "proof_required"
+      ],
+      "before_contract_field_values": {
+        "acceptance": [
+          "all primary dependencies and required external dependencies are done, never superseded to a weaker outcome",
+          "clean target-dev rerun passes Knowledge, Execution, Human Interaction, and Management Repair scenarios",
+          "twelve canonical loop rows plus OODA overlay have fresh controller records and no accepted registry-only/snapshot/seed truth",
+          "exact PR, checks, merge SHAs, FE/BFF/image identities, evidence checksums, reviewer verdicts, and residual risks are archived",
+          "independent Human/Ops accepts zero unresolved blocking product risk; otherwise the program remains active",
+          "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+          "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+          "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+          "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+          "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+          "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed"
+        ],
+        "dispatch_rules": [
+          "start only after every dependency is done; superseded does not satisfy a dependency",
+          "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
+          "do not silently narrow acceptance; record an evidence-backed blocker when the product outcome cannot be met",
+          "reviewer must set review_file to the checksummed machine evidence manifest before approval",
+          "deploy and verify exact target identity when the task changes a deployed capability"
+        ],
+        "proof_required": [
+          "focused and adjacent local validation",
+          "merged PR and merge SHA",
+          "target deployment identity where applicable",
+          "canonical request, receipt, and terminal downstream readback correlation",
+          "duplicate and restart/recovery evidence",
+          "failure, degraded, rollback or compensation evidence",
+          "security negative evidence and independent review"
+        ]
+      },
+      "before_depends_on": [
+        "LOOP-PROD-002",
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-FE-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-VERIFY-KNOW-001",
+        "LOOP-PROD-VERIFY-EXEC-001",
+        "LOOP-PROD-VERIFY-HUMAN-001",
+        "LOOP-PROD-VERIFY-OODA-001",
+        "LOOP-PROD-PPL-001",
+        "LOOP-PROD-TJ-003",
+        "LOOP-PROD-PINT-001",
+        "LOOP-PROD-MAI-003"
+      ],
+      "after_depends_on": [
+        "LOOP-PROD-002",
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-FE-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-VERIFY-KNOW-001",
+        "LOOP-PROD-VERIFY-EXEC-001",
+        "LOOP-PROD-VERIFY-HUMAN-001",
+        "LOOP-PROD-VERIFY-OODA-001",
+        "LOOP-PROD-PPL-001",
+        "LOOP-PROD-TJ-003",
+        "LOOP-PROD-PINT-001",
+        "LOOP-PROD-MAI-003"
+      ],
+      "before_runtime_fields": {
+        "completion_role": {
+          "presence": "absent"
+        }
+      },
+      "after_runtime_fields": {
+        "completion_role": "checkpoint_only"
+      }
+    }
+  ]
+}
