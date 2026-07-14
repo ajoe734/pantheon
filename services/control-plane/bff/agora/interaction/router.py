@@ -5,10 +5,18 @@ import hashlib
 import json
 import threading
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Header, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field, model_validator
+
+from ..governance.router import (
+    ProposalCreate,
+    authoritative_approval_availability,
+    build_proposal_record,
+)
+from ..governance.store import ProposalConflict, ProposalStore
 
 
 class ContextRef(BaseModel):
@@ -74,9 +82,11 @@ def _environment_allowed(persona: Dict[str, Any], environment: str) -> bool:
 def create_interaction_router(*, extract_identity: Callable[..., Any], require_read_role: Callable[..., None],
                               bff_error: Callable[..., HTTPException], utc_now: Callable[[], str],
                               get_read_store: Callable[[], Any], workshop_store: Any,
+                              proposal_store: ProposalStore,
                               interaction_store: Optional[InteractionStore] = None) -> APIRouter:
     router = APIRouter(tags=["agora-interaction"])
     store = interaction_store or InteractionStore()
+    proposals = proposal_store
 
     def scope(auth: Optional[str], tenant: Optional[str]) -> Any:
         from ..identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
@@ -173,6 +183,8 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         tenant_id: str,
         user_id: str,
         trace_id: str,
+        proposal_snapshot: Optional[Dict[str, Any]] = None,
+        proposal_etag: Optional[str] = None,
     ) -> None:
         from agora.strategy_workshop.router import _ws_publish
 
@@ -357,18 +369,55 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             "freshness": utc_now()
         }
 
-        # Record the card in workshop store
-        workshop_store.record_workshop_card({
-            "card_id": f"card_consult_{interaction_id}",
-            "card_type": "consult_result",
-            "workshop_id": workshop_id,
-            "status": "completed",
-            "title": "Strategy consultation synthesized",
-            "summary": consensus_summary_text,
-            "payload": card_payload,
-            "evidence_refs": evidence_refs,
-            "allowed_actions": {},
-        })
+        if mode == "propose_action" and proposal_snapshot:
+            authoritative_refs = list(
+                proposal_snapshot.get("available_approval_decision_refs") or []
+            )
+            proposal_payload = {
+                "proposal_id": proposal_snapshot["proposal_id"],
+                "proposal_ref": proposal_snapshot["proposal_id"],
+                "proposal_refs": [proposal_snapshot["proposal_id"]],
+                "proposal": proposal_snapshot,
+                "etag": proposal_etag,
+                "proposal_etag": proposal_etag,
+                "approval_refs": authoritative_refs,
+                "available_approval_decision_refs": authoritative_refs,
+                "approval_decision_refs_authority": "canonical_read_store",
+                "approval_decision_readiness": proposal_snapshot.get(
+                    "approval_decision_readiness"
+                ),
+                "execution_authority": "none",
+                "no_capital_authority_proof": "governed_proposal_no_capital_or_order_authority",
+            }
+            workshop_store.record_workshop_card({
+                "card_id": f"card_proposal_{interaction_id}",
+                "card_type": "governed_proposal",
+                "workshop_id": workshop_id,
+                "status": "informational",
+                "title": "Governed candidate measure proposed",
+                "summary": consensus_summary_text,
+                "payload": proposal_payload,
+                "evidence_refs": evidence_refs,
+                "allowed_actions": {},
+            })
+            _ws_publish(workshop_id, "proposal.created", {
+                "interaction_id": interaction_id,
+                "proposal_id": proposal_snapshot["proposal_id"],
+                "execution_authority": "none",
+                "trace_id": trace_id,
+            })
+        else:
+            workshop_store.record_workshop_card({
+                "card_id": f"card_consult_{interaction_id}",
+                "card_type": "consult_result",
+                "workshop_id": workshop_id,
+                "status": "completed",
+                "title": "Strategy consultation synthesized",
+                "summary": consensus_summary_text,
+                "payload": card_payload,
+                "evidence_refs": evidence_refs,
+                "allowed_actions": {},
+            })
 
         _ws_publish(workshop_id, "consultation.completed", {
             "interaction_id": interaction_id,
@@ -390,6 +439,14 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             raise bff_error(400, ErrorCode.VALIDATION_FAILED, "Idempotency-Key header is required", "missing_idempotency_key")
         session = session_for(body.workshop_id, resolved)
         strategy = next((r for r in body.context_refs if r.type == "strategy"), None)
+        if body.mode == "propose_action" and strategy is None:
+            from models import ErrorCode
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Propose action requires immutable strategy context",
+                "proposal_strategy_context_required",
+            )
         if strategy and (session.get("active_strategy_spec_registry_id") != strategy.id or session.get("selected_version_id") != strategy.version_id):
             from models import ErrorCode
             raise bff_error(409, ErrorCode.CONFLICT, "Interaction context does not match immutable workshop strategy", "strategy_context_mismatch")
@@ -401,11 +458,95 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         trace_id = session.get("openclaw_session_id") or f"trace-{uuid.uuid4().hex[:12]}"
 
         def build() -> Dict[str, Any]:
-            return {"interaction_id": body.interaction_id or str(uuid.uuid4()), "workshop_id": body.workshop_id,
+            interaction_id = body.interaction_id or str(uuid.uuid4())
+            data = {"interaction_id": interaction_id, "workshop_id": body.workshop_id,
                     "mode": body.mode, "topic": body.topic, "participants": body.participant_persona_ids,
                     "context_refs": [r.model_dump() for r in body.context_refs], "status": "queued",
                     "execution_authority": "none", "no_capital_authority_proof": "persona_interaction_event_no_capital_or_order_authority",
                     "submitted_at": utc_now()}
+            if body.mode != "propose_action" or strategy is None:
+                return data
+            proposal_body = ProposalCreate(
+                proposal_type="strategy_patch",
+                target_kind="strategy",
+                target_id=strategy.id,
+                target_version=strategy.version_id or "",
+                current_value={
+                    "strategy_id": strategy.id,
+                    "strategy_version": strategy.version_id,
+                },
+                proposed_value={
+                    "candidate_measure": body.topic,
+                    "participant_persona_ids": body.participant_persona_ids,
+                    "context_refs": [ref.model_dump() for ref in body.context_refs],
+                },
+                rationale=f"Persona interaction proposed a governed candidate measure: {body.topic}",
+                evidence_refs=[f"interaction:{interaction_id}"],
+                confidence=0.9,
+                expected_benefit="Evaluate the candidate measure through governed validation before any execution.",
+                adverse_scenarios=[
+                    "The candidate measure may underperform outside the reviewed context.",
+                    "The supporting evidence may become stale before validation.",
+                ],
+                environment_ceiling=body.environment,
+                expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+                validation_plan={
+                    "environment": body.environment,
+                    "required_checks": ["paper_validation", "risk_review"],
+                },
+                rollback_trigger="Governed validation fails or risk review is withdrawn.",
+                rollback_action="Discard the candidate measure and retain the current strategy version.",
+                required_permissions=["strategy.review"],
+                required_reviewers=["risk"],
+                human_gate=True,
+                consultation_refs=[interaction_id],
+                workshop_refs=[body.workshop_id],
+                dependency_refs=[
+                    f"{ref.type}:{ref.id}{'@' + ref.version_id if ref.version_id else ''}"
+                    for ref in body.context_refs
+                ],
+            )
+            proposal = build_proposal_record(
+                proposal_body,
+                tenant_id=resolved.tenant_id,
+                owner_user_id=resolved.user_id,
+                proposer=resolved.operator_id,
+                now=utc_now(),
+            )
+            try:
+                proposal = proposals.create(
+                    proposal,
+                    f"interaction:{idempotency_key}",
+                )
+            except ProposalConflict as exc:
+                raise HTTPException(409, detail=str(exc)) from exc
+            try:
+                availability = authoritative_approval_availability(
+                    current=proposal,
+                    decisions=get_read_store().list_approval_decisions(),
+                )
+            except Exception as exc:
+                raise HTTPException(
+                    503,
+                    detail="authoritative approval store is unavailable",
+                ) from exc
+            proposal_view = {
+                **proposal,
+                "available_approval_decision_refs": availability["refs"],
+                "approval_decision_refs_authority": "canonical_read_store",
+                "approval_decision_readiness": {
+                    key: availability[key]
+                    for key in ("ready", "reason", "missing_required_reviewers")
+                },
+            }
+            data.update({
+                "proposal_id": proposal["proposal_id"],
+                "proposal_ref": proposal["proposal_id"],
+                "proposal_refs": [proposal["proposal_id"]],
+                "proposal": proposal_view,
+                "proposal_etag": proposals.etag(proposal),
+            })
+            return data
         data = store.once(f"command:{resolved.tenant_id}:{resolved.user_id}", idempotency_key, build)
 
         # Trigger simulated async debate and synthesis
@@ -419,7 +560,9 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             context_refs=body.context_refs,
             tenant_id=resolved.tenant_id,
             user_id=resolved.user_id,
-            trace_id=trace_id
+            trace_id=trace_id,
+            proposal_snapshot=data.get("proposal"),
+            proposal_etag=data.get("proposal_etag"),
         )
 
         return {"data": data, "meta": {"snapshot_at": utc_now(), "capability": "agora.persona.interaction.v1"}}

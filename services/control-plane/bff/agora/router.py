@@ -37,6 +37,7 @@ from .management_projection.router import create_management_projection_router
 from .dataset_extraction.router import create_dataset_extraction_router
 from .interaction.router import create_interaction_router
 from .governance.router import create_governance_router
+from .governance.store import ProposalStore
 
 
 _CAPABILITY_MANIFEST_PATH = os.path.join(
@@ -83,6 +84,7 @@ def create_agora_router(
     """
     router = APIRouter(tags=["agora"])
     workshop_store = make_workshop_store()
+    proposal_store = ProposalStore()
 
     # ------------------------------------------------------------------ #
     # GET /bff/agora/me  — operator identity and capability scope (§18 envelope)
@@ -187,11 +189,14 @@ def create_agora_router(
         **_kw,
         get_read_store=get_read_store,
         workshop_store=workshop_store,
+        proposal_store=proposal_store,
     ))
     router.include_router(create_governance_router(
         **_kw,
         require_write_role=require_write_role,
         get_approval_decision=lambda approval_id: get_read_store().get_approval_decision(approval_id),
+        list_approval_decisions=lambda: get_read_store().list_approval_decisions(),
+        store=proposal_store,
     ))
 
     return router

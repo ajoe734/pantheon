@@ -163,6 +163,14 @@
       "type": "string",
       "description": "Optional: the persona this approval applies to. If absent, approval is persona-agnostic."
     },
+    "tenant_id": {
+      "type": "string",
+      "description": "Optional tenant scope that owns this approval decision."
+    },
+    "owner_user_id": {
+      "type": "string",
+      "description": "Optional user-private scope that owns this approval decision."
+    },
     "metadata": {
       "type": "object",
       "description": "Additional metadata for downstream consumers."

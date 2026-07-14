@@ -87,6 +87,8 @@ def authoritative_approval(*, approval_id="approval-risk-1", reviewer="risk-revi
         "target_type": "strategy_spec",
         "target_id": "s-1",
         "target_version": "v1",
+        "tenant_id": "pantheon-dev",
+        "owner_user_id": "proposal-owner",
         "reviewer": reviewer,
         "actor_role": "risk_owner",
         "decided_at": "2026-07-14T00:00:00Z",
@@ -319,6 +321,76 @@ def test_create_idempotency_replays_and_payload_mismatch_conflicts(monkeypatch):
     assert c.post("/bff/agora/proposals", headers=headers, json=changed).status_code == 409
 
 
+def test_proposal_exposes_only_authoritative_available_approval_refs(monkeypatch):
+    c = client(monkeypatch)
+    # Stub auth scopes the private proposal to the actor id rather than the
+    # strict JWT user_id used by the approval action tests below.
+    monkeypatch.setattr(
+        bff_main.read_store,
+        "list_approval_decisions",
+        lambda: [
+            authoritative_approval(
+                approval_id="approval-risk-valid",
+                owner_user_id="proposal-user",
+            ),
+            authoritative_approval(
+                approval_id="approval-self",
+                reviewer="proposal-user",
+                owner_user_id="proposal-user",
+            ),
+            authoritative_approval(
+                approval_id="approval-wrong-target",
+                target_id="s-other",
+                owner_user_id="proposal-user",
+            ),
+            authoritative_approval(
+                approval_id="approval-pending",
+                state="pending",
+                owner_user_id="proposal-user",
+            ),
+            authoritative_approval(
+                approval_id="approval-other-tenant",
+                tenant_id="tenant-other",
+                owner_user_id="proposal-user",
+            ),
+        ],
+    )
+    proposal_payload = payload()
+    proposal_payload["required_reviewers"] = ["risk", "governance_committee"]
+    created = c.post(
+        "/bff/agora/proposals",
+        headers={**HEADERS, "Idempotency-Key": "authoritative-refs"},
+        json=proposal_payload,
+    )
+
+    assert created.status_code == 201, created.text
+    data = created.json()["data"]
+    assert data["available_approval_decision_refs"] == ["approval-risk-valid"]
+    assert data["approval_decision_refs_authority"] == "canonical_read_store"
+    assert data["approval_decision_readiness"] == {
+        "ready": False,
+        "reason": "required_authoritative_reviewers_missing",
+        "missing_required_reviewers": ["governance_committee"],
+    }
+    assert data["execution_authority"] == "none"
+
+    injected = c.post(
+        f"/bff/agora/proposals/{data['proposal_id']}/actions",
+        headers={
+            "Authorization": HEADERS["Authorization"],
+            "If-Match": created.headers["etag"],
+        },
+        json={
+            "action": "validate",
+            "reason": "attempt to attach unverified ref",
+            "validation_result": {"status": "passed"},
+            "approval_refs": ["payload-controlled"],
+        },
+    )
+    assert injected.status_code == 422
+    assert "only accepted for approve" in injected.text
+
+
 def test_approval_rejects_non_authoritative_ref_and_operator_role(monkeypatch):
     c = strict_client(monkeypatch)
     proposer_auth = jwt_authorization("proposal-user", ["operator"])
@@ -361,6 +433,10 @@ def test_approval_rejects_self_approval_and_target_mismatch(monkeypatch):
         "approval-other-target": authoritative_approval(
             approval_id="approval-other-target",
             target_id="s-other",
+        ),
+        "approval-other-tenant": authoritative_approval(
+            approval_id="approval-other-tenant",
+            tenant_id="tenant-other",
         ),
     }
     monkeypatch.setattr(bff_main.read_store, "get_approval_decision", approvals.get)
@@ -411,6 +487,18 @@ def test_approval_rejects_self_approval_and_target_mismatch(monkeypatch):
     assert wrong_target.status_code == 422
     assert "target id mismatch" in wrong_target.text
 
+    wrong_tenant = c.post(
+        f"/bff/agora/proposals/{pid}/actions",
+        headers={"Authorization": reviewer_auth, "If-Match": validated.headers["etag"]},
+        json={
+            "action": "approve",
+            "reason": "cross-tenant decision id",
+            "approval_refs": ["approval-other-tenant"],
+        },
+    )
+    assert wrong_tenant.status_code == 422
+    assert "scope mismatch" in wrong_tenant.text
+
 
 def test_approval_accepts_matching_canonical_decision(monkeypatch):
     c = strict_client(monkeypatch)
@@ -424,6 +512,8 @@ def test_approval_accepts_matching_canonical_decision(monkeypatch):
             "target_type": "strategy_spec",
             "target_id": "s-1",
             "target_version": "v1",
+            "tenant_id": "pantheon-dev",
+            "owner_user_id": "proposal-owner",
             "actor_id": "risk-reviewer",
             "actor_role": "risk_owner",
             "decided_at": "2026-07-14T00:00:00Z",
