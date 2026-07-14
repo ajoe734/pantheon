@@ -254,6 +254,32 @@ supplying or trusting `artifact_type` themselves. It must still preserve:
 - `storage_ref` and `checksum` on every registered StrategySpec artifact
 - the same `artifact_state` / `deployment_stage` split as the generic registry entry API
 
+### Evolvable StrategyArtifact facade
+
+`EVOLOOP-003` defines an executable StrategyArtifact as an additive payload
+overlay on the existing `execution_bundle` artifact type. The portable payload
+schema is `services/registry/strategy_artifact.schema.json`; the generic
+registry envelope stores it inline at `metadata.strategy_artifact` with a
+deterministic checksum. This does not add a second lifecycle or a new artifact
+type.
+
+| HTTP operation | Description |
+|---|---|
+| `POST /api/registry/strategy-artifacts` | validate and atomically register a `draft` or `candidate` StrategyArtifact; only the same normalized registration envelope (initial state, artifact, producer, evaluation, rollback, and supplemental metadata) is an idempotent retry, while any same-id difference fails closed |
+| `GET /api/registry/strategy-artifacts/{registry_id}` | read only an `execution_bundle` carrying the StrategyArtifact overlay |
+| `GET /api/registry/strategies/{strategy_id}/strategy-artifacts` | list StrategyArtifact revisions for a family, optionally filtered by `artifact_state` |
+| `POST /api/registry/strategy-artifacts/{registry_id}/mutate` | create a new `candidate` id/version by changing only declared controls and recording direct-parent plus producing-run lineage |
+| `POST /api/registry/strategy-artifacts/{registry_id}/advance` | use the same governed `draft -> candidate -> approved -> retired` lifecycle |
+
+Checked-in built-in registration requests are registered idempotently through
+`RegistryService` during the FastAPI lifespan startup and guarded again at
+request-time after a test/store reset. Atomic `create_if_absent` prevents
+concurrent same-id mutations from overwriting one another. This is startup
+seeding, not direct store mutation. A StrategyArtifact's optional
+`binding_intent` records a non-authoritative target only; approval,
+`DeploymentPlan`, and `RuntimeBinding` replacement remain outside the registry
+facade.
+
 ---
 
 ## 9. Open Items Held for Later Lock
