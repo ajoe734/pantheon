@@ -68,19 +68,53 @@ def _finite(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def _symbol_aliases(value: Any) -> frozenset[str]:
+_VENUE_SUFFIXES = frozenset(
+    {
+        "US",
+        "TW",
+        "TWSE",
+        "TWO",
+        "TPEX",
+        "TAIFEX",
+        "NYSE",
+        "NASDAQ",
+        "KRAKEN",
+        "BINANCE",
+        "COINBASE",
+        "CRYPTO",
+    }
+)
+_CRYPTO_QUOTES = ("USDT", "USDC", "USD", "BTC", "ETH", "BNB")
+
+
+def _symbol_aliases(value: Any, quote_currency: str | None = None) -> frozenset[str]:
     text = str(value or "").strip().upper().replace(" ", "")
     if not text:
         return frozenset()
     aliases = {text}
+    pair_candidates: set[str] = set()
     if "." in text:
         base, suffix = text.rsplit(".", 1)
-        if suffix in {"US", "TW", "TWSE", "TWO", "TPEX", "TAIFEX", "NYSE", "NASDAQ"}:
-            aliases.add(base)
-    if text.endswith("-USD"):
-        aliases.add(text[:-4] + "/USD")
-    if text.endswith("/USD"):
-        aliases.add(text[:-4] + "-USD")
+        if suffix in _VENUE_SUFFIXES:
+            if suffix == "CRYPTO" and quote_currency:
+                pair_candidates.add(f"{base}/{str(quote_currency).strip().upper()}")
+            else:
+                aliases.add(base)
+                pair_candidates.add(base)
+    else:
+        pair_candidates.add(text)
+    for candidate in tuple(pair_candidates):
+        normalized_pair = candidate.replace("-", "/")
+        if "/" in normalized_pair:
+            base, quote = normalized_pair.rsplit("/", 1)
+            if base and quote in _CRYPTO_QUOTES:
+                aliases.update({f"{base}/{quote}", f"{base}-{quote}", f"{base}{quote}"})
+                continue
+        for quote in _CRYPTO_QUOTES:
+            if candidate.endswith(quote) and len(candidate) > len(quote):
+                base = candidate[: -len(quote)]
+                aliases.update({f"{base}/{quote}", f"{base}-{quote}", f"{base}{quote}"})
+                break
     return frozenset(aliases)
 
 
@@ -104,14 +138,18 @@ class MarketMark:
     price: float
     as_of: str
     source_ref: str
+    quote_currency: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "symbol": self.symbol,
             "price": self.price,
             "as_of": self.as_of,
             "source_ref": self.source_ref,
         }
+        if self.quote_currency:
+            payload["quote_currency"] = self.quote_currency
+        return payload
 
 
 @dataclass(frozen=True)
@@ -131,7 +169,16 @@ class PerformanceSample:
             round(self.pnl, 10),
             round(self.portfolio_value, 10),
             self.fill_count,
-            tuple((mark.symbol, round(mark.price, 10), mark.as_of) for mark in self.marks),
+            tuple(
+                (
+                    mark.symbol,
+                    round(mark.price, 10),
+                    mark.as_of,
+                    mark.source_ref,
+                    mark.quote_currency,
+                )
+                for mark in self.marks
+            ),
         )
 
 
@@ -310,7 +357,7 @@ class SourceIngestMarkProvider:
             metadata = raw_record.get("metadata")
             metadata = metadata if isinstance(metadata, Mapping) else {}
             row_candidates: list[Mapping[str, Any]] = []
-            for key in ("normalized_row", "row", "quote", "market_data"):
+            for key in ("normalized_row", "row", "quote", "market_data", "raw_row"):
                 candidate = metadata.get(key)
                 if isinstance(candidate, Mapping):
                     row_candidates.append(candidate)
@@ -319,11 +366,15 @@ class SourceIngestMarkProvider:
                 mark = cls._mark_from_row(raw_record, metadata, row)
                 if mark is None:
                     continue
-                for alias in _symbol_aliases(mark.symbol):
+                for alias in _symbol_aliases(mark.symbol, mark.quote_currency):
                     existing = indexed.get(alias)
                     if alias in indexed and existing is None:
                         continue
-                    if existing is not None and not (_symbol_aliases(existing.symbol) & {mark.symbol.upper()}):
+                    if existing is not None and (
+                        existing.symbol.upper() != mark.symbol.upper()
+                        or (existing.quote_currency or "").upper()
+                        != (mark.quote_currency or "").upper()
+                    ):
                         # A base alias such as ``AAPL`` must not silently pick
                         # one venue when two canonical instruments collide.
                         indexed[alias] = None
@@ -399,6 +450,11 @@ class SourceIngestMarkProvider:
             price=price,
             as_of=_iso(parsed),
             source_ref=source_ref,
+            quote_currency=(
+                str(_first(row, ("quote_currency", "vs_currency"))).upper()
+                if _first(row, ("quote_currency", "vs_currency")) not in (None, "")
+                else None
+            ),
         )
 
 
@@ -438,6 +494,14 @@ def value_portfolio(
             continue
         normalized_positions.append((symbol, quantity))
 
+    ledger_as_of = _parse_rfc3339(last_fill_at)
+    if normalized_positions and ledger_as_of is None:
+        return ValuationResult(
+            status="invalid_ledger",
+            sample=None,
+            diagnostic={**base_diagnostic, "code": "open_book_missing_fill_as_of"},
+        )
+
     missing = sorted(symbol for symbol, _ in normalized_positions if symbol not in marks)
     if missing:
         return ValuationResult(
@@ -461,6 +525,7 @@ def value_portfolio(
         )
     reference_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     stale: list[str] = []
+    predating_ledger: list[str] = []
     for symbol, quantity in normalized_positions:
         mark = marks[symbol]
         observed = _parse_rfc3339(mark.as_of)
@@ -480,6 +545,9 @@ def value_portfolio(
         ):
             stale.append(symbol)
             continue
+        if ledger_as_of is not None and observed < ledger_as_of:
+            predating_ledger.append(symbol)
+            continue
         portfolio_value += quantity * mark.price
         used_marks.append(mark)
 
@@ -492,6 +560,18 @@ def value_portfolio(
                 "code": "stale_or_future_market_marks",
                 "missing_symbols": sorted(stale),
                 "max_mark_age_seconds": max(float(max_mark_age_seconds), 0.0),
+            },
+        )
+
+    if predating_ledger:
+        return ValuationResult(
+            status="marks_unavailable",
+            sample=None,
+            diagnostic={
+                **base_diagnostic,
+                "code": "market_marks_predate_ledger",
+                "missing_symbols": sorted(predating_ledger),
+                "ledger_as_of": _iso(ledger_as_of) if ledger_as_of else None,
             },
         )
 

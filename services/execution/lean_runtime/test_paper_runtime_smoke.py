@@ -207,11 +207,13 @@ class _FixedSourceIngestMarkProvider:
 
     def __init__(self, price: float = 101.0):
         self.price = float(price)
-        self.as_of = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
-            "+00:00", "Z"
-        )
+        self.as_of = None
 
     def resolve(self, symbols):
+        if self.as_of is None:
+            self.as_of = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+                "+00:00", "Z"
+            )
         marks = {
             symbol: MarketMark(
                 symbol=symbol,

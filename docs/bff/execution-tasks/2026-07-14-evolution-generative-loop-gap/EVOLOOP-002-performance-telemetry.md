@@ -1,10 +1,13 @@
 # EVOLOOP-002 — Real performance telemetry supply
 
-Status: implementation in progress; post-change validation and hosted acceptance pending
+Status: local implementation and validation complete; review and hosted acceptance pending
 
-Owner: Codex2  
-Reviewer: Claude  
-Branch: `task/EVOLOOP-002`  
+Owner: Codex2
+
+Reviewer: Claude
+
+Branch: `task/EVOLOOP-002`
+
 Merge target: `dev`
 
 ## Decision and scope
@@ -95,13 +98,18 @@ An accepted mark must:
   reference, and market-observation timestamp;
 - be no older than the configured freshness ceiling (task default: 172,800
   seconds) and no farther in the future than the clock-skew tolerance;
+- be at or after the latest fill-ledger mutation. A mark observed before the
+  current holdings/cash state existed cannot timestamp that state;
 - resolve to exactly one instrument. A base-symbol collision across venues
   fails closed rather than selecting one arbitrarily.
 
 Source-record availability time or ingest `created_at` is not a substitute for
 market-observation time. Signal/fill prices and opt-in synthetic prices may
 support execution simulation, but are not authoritative marks unless the
-signal carries validated market source and observation provenance.
+signal's dedicated `metadata.market_data` object carries its own price,
+market source reference, and observation time. Canonical runtime valuation
+uses only marks returned by the current source-ingest resolve cycle, so a
+prior cached security price cannot survive a provider failure.
 
 For an open book, the atomic valuation `as_of` is the oldest observation time
 among all marks used in that valuation. This prevents a multi-symbol portfolio
@@ -179,10 +187,18 @@ breach as a replacement snapshot.
 ## Restart continuity
 
 Each binding owns a durable `paper_performance_ledger.v1` state file containing
-initial cash, current cash, open holdings, fill count, last-fill time, and
-execution prices. Fill accounting is persisted atomically after each fill and
-restored before valuation. Restored execution prices are hints only and are
+initial cash, current cash, open holdings, fill count, first/last-fill times,
+execution prices, and the accepted 20-day drawdown window. Fill accounting and
+the ordered high-water series are persisted atomically and restored before
+valuation. The first accepted window is seeded with initial funded equity at
+the first-fill time, so an immediate loss is measured instead of becoming a
+false zero drawdown. Restored execution prices are hints only and are
 explicitly non-authoritative until refreshed from source-ingest.
+
+The state also embeds its RuntimeBinding id. Fleet workers receive a
+binding-specific filename; the static runtime additionally checks the embedded
+id before every drain. A binding rollover therefore cannot reuse an old cash
+ledger merely because a service-level state path stayed the same.
 
 A corrupt or incompatible state file blocks snapshots and produces a
 diagnostic; the runtime must not silently reset the ledger and publish a new
@@ -204,6 +220,7 @@ final closeout must reconcile this list with the merged diff:
 - `services/execution/lean_runtime/paper_runtime.py`
 - `services/execution/lean_runtime/executor.py`
 - `services/execution/runtime-manager/paper_fleet_reconciler.py`
+- `services/source_ingestion/connectors/finmind_taiwan.py`
 - `services/telemetry/telemetry_event.schema.json`
 - `services/telemetry/runtime_summary.py`
 - paper-runtime, runtime-summary, ingest-contract, and threshold-sweep tests
@@ -212,30 +229,31 @@ final closeout must reconcile this list with the merged diff:
 
 ## Validation checklist
 
-All items below are pending post-change validation; no pending row is evidence
-of acceptance.
+The checked items below have local automated evidence on the task branch.
+Hosted rows remain open and are not implied by local validation.
 
-- [ ] Unit tests prove long, short, partial-close, flat-book, and fill-derived
+- [x] Unit tests prove long, short, partial-close, flat-book, and fill-derived
   cash/PnL arithmetic.
-- [ ] Mark-provider tests accept normalized fresh market observations and
+- [x] Mark-provider tests accept normalized fresh market observations and
   reject non-market datasets, stale/future data, missing symbols, malformed
   values, and venue alias collisions.
-- [ ] Missing or partial marks produce heartbeat diagnostics and zero
+- [x] Missing or partial marks produce heartbeat diagnostics and zero
   performance events.
-- [ ] The drawdown window spans 20 calendar days, uses fractional units, and
+- [x] The drawdown window spans 20 calendar days, uses fractional units, and
   suppresses duplicate and out-of-order samples.
-- [ ] A process restart restores the ledger, does not treat restored execution
+- [x] A process restart restores the ledger and drawdown high-water window,
+  does not treat restored execution
   prices as marks, and continues the same performance series after fresh
   marks arrive.
-- [ ] Both event types independently validate against the canonical telemetry
+- [x] Both event types independently validate against the canonical telemetry
   schema and pass through telemetry ingest.
-- [ ] Runtime-summary projection preserves independent `pnl_at` and
+- [x] Runtime-summary projection preserves independent `pnl_at` and
   `drawdown_at` values and rejects per-field timestamp regression.
-- [ ] Bracket-order logs do not increment executed-fill counters; Taiwan buy
+- [x] Bracket-order logs do not increment executed-fill counters; Taiwan buy
   and sell fills update signed holdings and cash consistently.
-- [ ] Threshold sweep evaluates real numeric/fresh projected PnL and drawdown
+- [x] Threshold sweep evaluates real numeric/fresh projected PnL and drawdown
   instead of reporting missing/stale input.
-- [ ] Relevant execution, telemetry, evolution, JSON-schema, and compose
+- [x] Relevant execution, telemetry, evolution, JSON-schema, and compose
   validation suites pass on the final branch.
 - [ ] Hosted dev exposes moving numeric `pnl` and `drawdown` with per-field
   as-of stamps for active marked bindings.
@@ -250,6 +268,7 @@ of acceptance.
 | Direct source-ingest/telemetry inspection | Pending | Internal endpoints were not reachable from the worker during the current evidence attempt. |
 | Dev VM inspection/deployment identity | Blocked for current attempt | Local `gcloud` credentials require interactive re-authentication; no deployment or hosted commit identity is claimed here. |
 | Post-change hosted performance proof | Pending | Requires a merged/deployed candidate plus fresh authoritative source-ingest marks. |
+| Task-branch automated validation | Passed | Execution lean runtime: 197 passed, 3 skipped; runtime manager: 100 passed; telemetry: 239 passed; targeted projection/evolution bundle: 120 passed; telemetry schema JSON and compose rendering passed. |
 
 Until the last row passes, the hosted acceptance condition remains open even
 if local tests pass.

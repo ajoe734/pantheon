@@ -328,9 +328,10 @@ def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
     if market_price is not None:
         context["market_price"] = market_price
         market_as_of = _signal_market_as_of(signal)
-        if market_as_of:
+        market_source = _signal_market_source(signal)
+        if market_as_of and market_source:
             context["market_price_as_of"] = market_as_of
-            context["market_price_source"] = _signal_market_source(signal)
+            context["market_price_source"] = market_source
     if "quantity" in signal:
         try:
             context["requested_quantity"] = float(signal["quantity"])
@@ -356,13 +357,15 @@ def _seed_signal_market_price(algo: Any, lean_symbol: Any, signal: dict[str, Any
     if price is None:
         return
     market_as_of = _signal_market_as_of(signal)
+    market_source = _signal_market_source(signal)
+    evidence_price = _signal_market_evidence_price(signal)
     mark_setter = getattr(algo, "SetSecurityMark", None)
-    if callable(mark_setter) and market_as_of:
+    if callable(mark_setter) and evidence_price is not None and market_as_of and market_source:
         mark_setter(
             lean_symbol,
-            price,
+            evidence_price,
             as_of=market_as_of,
-            source=_signal_market_source(signal),
+            source=market_source,
         )
         return
     setter = getattr(algo, "SetSecurityPrice", None)
@@ -387,32 +390,40 @@ def _signal_market_price(signal: dict[str, Any]) -> float | None:
     return None
 
 
+def _signal_market_evidence_price(signal: dict[str, Any]) -> float | None:
+    metadata = signal.get("metadata") if isinstance(signal.get("metadata"), dict) else {}
+    market_data = metadata.get("market_data") if isinstance(metadata.get("market_data"), dict) else {}
+    for key in ("last_price", "market_price", "close", "price"):
+        value = market_data.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            price = float(value)
+        except (TypeError, ValueError):
+            continue
+        if price > 0:
+            return price
+    return None
+
+
 def _signal_market_as_of(signal: dict[str, Any]) -> str:
     metadata = signal.get("metadata") if isinstance(signal.get("metadata"), dict) else {}
     market_data = metadata.get("market_data") if isinstance(metadata.get("market_data"), dict) else {}
-    for source in (market_data, metadata, signal):
-        for key in (
-            "as_of",
-            "as_of_time",
-            "event_time",
-            "timestamp",
-            "signal_timestamp",
-        ):
-            value = source.get(key)
-            if value not in (None, ""):
-                return str(value)
+    for key in ("as_of", "as_of_time", "event_time", "trade_date", "timestamp"):
+        value = market_data.get(key)
+        if value not in (None, ""):
+            return str(value)
     return ""
 
 
 def _signal_market_source(signal: dict[str, Any]) -> str:
     metadata = signal.get("metadata") if isinstance(signal.get("metadata"), dict) else {}
     market_data = metadata.get("market_data") if isinstance(metadata.get("market_data"), dict) else {}
-    for source in (market_data, metadata):
-        for key in ("source_ref", "market_data_ref", "content_ref", "source"):
-            value = source.get(key)
-            if value not in (None, ""):
-                return str(value)
-    return "signal_market_data"
+    for key in ("source_ref", "market_data_ref", "content_ref"):
+        value = market_data.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return ""
 
 
 def _handle_bracket_order(

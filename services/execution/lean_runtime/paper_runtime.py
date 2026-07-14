@@ -237,6 +237,9 @@ class PaperExecutionAlgorithm:
         self._first_fill_at: str | None = None
         self._last_fill_at: str | None = None
         self._performance_window_state: dict[str, Any] = {}
+        self._performance_binding_id: str | None = None
+        self._state_binding_error: str | None = None
+        self._loaded_state_missing_binding_id = False
         self._state_path = Path(state_path) if state_path else None
         self._state_error: str | None = None
         self._state_load_error: str | None = None
@@ -728,6 +731,7 @@ class PaperExecutionAlgorithm:
 
     def performance_ledger(self) -> dict[str, Any]:
         return {
+            "binding_id": self._performance_binding_id,
             "initial_cash": float(self._initial_cash),
             "cash": float(self._cash),
             "positions": self.positions(),
@@ -738,7 +742,33 @@ class PaperExecutionAlgorithm:
             "state_path": str(self._state_path) if self._state_path else None,
             "state_error": self._state_error,
             "state_load_error": self._state_load_error,
+            "state_binding_error": self._state_binding_error,
         }
+
+    def BindPerformanceBinding(self, binding_id: str | None) -> bool:  # noqa: N802
+        if self._state_load_error:
+            return False
+        if self._loaded_state_missing_binding_id:
+            return False
+        candidate = str(binding_id or "").strip()
+        if not candidate:
+            self._state_binding_error = "performance binding identity is missing"
+            return False
+        if self._performance_binding_id:
+            if self._performance_binding_id != candidate:
+                self._state_binding_error = (
+                    "performance ledger binding mismatch: "
+                    f"state={self._performance_binding_id} runtime={candidate}"
+                )
+                return False
+            self._state_binding_error = None
+            if self._state_error:
+                self._persist_state()
+            return self._state_error is None
+        self._performance_binding_id = candidate
+        self._state_binding_error = None
+        self._persist_state()
+        return self._state_error is None
 
     def performance_window_state(self) -> dict[str, Any]:
         return json.loads(json.dumps(self._performance_window_state))
@@ -803,6 +833,14 @@ class PaperExecutionAlgorithm:
             if not isinstance(performance_window, dict):
                 raise ValueError("paper performance window must be an object")
             self._performance_window_state = dict(performance_window)
+            self._performance_binding_id = (
+                str(payload.get("binding_id") or "").strip() or None
+            )
+            if self._performance_binding_id is None:
+                self._loaded_state_missing_binding_id = True
+                self._state_binding_error = (
+                    "loaded performance ledger is missing binding identity"
+                )
             self._state_error = None
         except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
             self._state_error = f"{type(exc).__name__}: {exc}"
@@ -813,6 +851,7 @@ class PaperExecutionAlgorithm:
             return
         payload = {
             "schema_version": "paper_performance_ledger.v1",
+            "binding_id": self._performance_binding_id,
             "initial_cash": float(self._initial_cash),
             "cash": float(self._cash),
             "fill_count": int(self._fill_count),
@@ -1383,6 +1422,18 @@ class PaperRuntimeService:
                     raise RuntimeError(
                         "RuntimeBinding is required before paper execution can drain signals"
                     )
+                binding_id = str(
+                    binding.get("binding_id")
+                    or binding.get("runtime_binding_id")
+                    or ""
+                )
+                if not self._algo.BindPerformanceBinding(binding_id):
+                    ledger = self._algo.performance_ledger()
+                    raise RuntimeError(
+                        ledger.get("state_binding_error")
+                        or ledger.get("state_error")
+                        or "paper performance ledger binding failed"
+                    )
                 binding_status = str(binding.get("status") or "").lower()
                 if binding_status in _HALT_BINDING_STATUSES:
                     # Safety gate (KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY):
@@ -1762,15 +1813,19 @@ class PaperRuntimeService:
 
         symbols = self._algo.mark_symbols()
         provider_diagnostic: dict[str, Any]
+        provider_marks: dict[str, MarketMark] = {}
         if symbols:
             provider_marks, provider_diagnostic = self._mark_provider.resolve(symbols)
             self._algo.apply_market_marks(provider_marks)
         else:
             provider_diagnostic = self._mark_provider.snapshot(requested_symbols=[])
-        current_marks = self._algo.authoritative_marks()
 
         ledger = self._algo.performance_ledger()
-        if ledger.get("state_load_error") or self._performance_state_restore_error:
+        if (
+            ledger.get("state_load_error")
+            or ledger.get("state_binding_error")
+            or self._performance_state_restore_error
+        ):
             self._performance_telemetry = {
                 "status": "invalid_ledger",
                 "code": "performance_ledger_load_failed",
@@ -1778,15 +1833,27 @@ class PaperRuntimeService:
                 "state_path": ledger.get("state_path"),
                 "detail": (
                     ledger.get("state_load_error")
+                    or ledger.get("state_binding_error")
                     or self._performance_state_restore_error
                 ),
+            }
+            return
+        if ledger.get("state_error"):
+            self._performance_telemetry = {
+                "status": "invalid_ledger",
+                "code": "performance_ledger_persist_failed",
+                "attempted_at": _iso_now(),
+                "state_path": ledger.get("state_path"),
+                "detail": ledger.get("state_error"),
             }
             return
         valuation = value_portfolio(
             initial_cash=ledger["initial_cash"],
             cash=ledger["cash"],
             positions=ledger["positions"],
-            marks=current_marks,
+            # Use only this resolve cycle.  A prior algorithm/security mark
+            # must not survive a source timeout or a newly missing symbol.
+            marks=provider_marks,
             fill_count=ledger["fill_count"],
             last_fill_at=ledger["last_fill_at"],
             mark_diagnostic=provider_diagnostic,

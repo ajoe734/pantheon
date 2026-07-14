@@ -78,12 +78,13 @@ class SourceIngestMarkProviderTest(unittest.TestCase):
             _source_record("MSFT.US", 501.0, "2026-07-14T11:00:00Z", source_type="news"),
             _source_record("NVDA.US", 175.0, "2026-07-14T11:00:00Z", status="rejected"),
             _source_record("TSLA.US", 320.0, "2026-07-14T11:00:00Z", dataset="fundamentals"),
+            _source_record("BROKEN.US", float("nan"), "2026-07-14T11:00:00Z"),
             # Ingest availability time is not a market observation time.
             _source_record("AMZN.US", 230.0, None, created_at="2026-07-14T11:59:00Z"),
         ]
 
         marks, diagnostic = _provider(records).resolve(
-            ["AAPL.US", "MSFT.US", "NVDA.US", "TSLA.US", "AMZN.US"]
+            ["AAPL.US", "MSFT.US", "NVDA.US", "TSLA.US", "BROKEN.US", "AMZN.US"]
         )
 
         self.assertEqual(set(marks), {"AAPL.US"})
@@ -91,7 +92,7 @@ class SourceIngestMarkProviderTest(unittest.TestCase):
         self.assertEqual(marks["AAPL.US"].as_of, "2026-07-14T11:00:00Z")
         self.assertEqual(
             diagnostic["missing_symbols"],
-            ["AMZN.US", "MSFT.US", "NVDA.US", "TSLA.US"],
+            ["AMZN.US", "BROKEN.US", "MSFT.US", "NVDA.US", "TSLA.US"],
         )
 
     def test_stale_and_future_marks_fail_closed(self):
@@ -118,6 +119,47 @@ class SourceIngestMarkProviderTest(unittest.TestCase):
         self.assertEqual(marks["AAPL.US"].price, 211.5)
         self.assertEqual(marks["AAPL.TW"].price, 812.0)
         self.assertEqual(diagnostic["missing_symbols"], ["AAPL"])
+
+    def test_crypto_canonical_symbol_resolves_only_the_matching_quote_pair(self):
+        record = _source_record(
+            "BTC.CRYPTO",
+            68_500.0,
+            "2026-07-14T11:00:00Z",
+            dataset="crypto_spot_price",
+        )
+        record["metadata"]["normalized_row"]["vs_currency"] = "usd"
+
+        marks, diagnostic = _provider([record]).resolve(
+            ["BTC/USD.KRAKEN", "BTCUSD", "BTCUSDT"]
+        )
+
+        self.assertEqual(set(marks), {"BTC/USD.KRAKEN", "BTCUSD"})
+        self.assertEqual(marks["BTC/USD.KRAKEN"].quote_currency, "USD")
+        self.assertEqual(diagnostic["missing_symbols"], ["BTCUSDT"])
+
+    def test_finmind_raw_price_shape_is_admissible_when_normalized_row_is_absent(self):
+        record = {
+            "source_id": "finmind:TaiwanStockPrice:2330",
+            "content_ref": "finmind://data/TaiwanStockPrice/2330/2026-07-14",
+            "source_type": "market",
+            "status": "normalized",
+            "metadata": {
+                "dataset": "TaiwanStockPrice",
+                "symbol": "2330",
+                "event_time": "2026-07-14",
+                "raw_row": {
+                    "stock_id": "2330",
+                    "date": "2026-07-14",
+                    "close": 955.0,
+                },
+            },
+        }
+
+        marks, diagnostic = _provider([record]).resolve(["2330.TW"])
+
+        self.assertEqual(marks["2330.TW"].price, 955.0)
+        self.assertEqual(marks["2330.TW"].as_of, "2026-07-14T00:00:00Z")
+        self.assertEqual(diagnostic["missing_symbols"], [])
 
     def test_failed_refresh_does_not_reuse_a_previously_cached_mark(self):
         responses = iter(
@@ -202,6 +244,29 @@ class PortfolioValuationTest(unittest.TestCase):
         self.assertEqual(result.diagnostic["code"], "missing_market_marks")
         self.assertEqual(result.diagnostic["missing_symbols"], ["MSFT"])
 
+    def test_mark_older_than_latest_fill_cannot_value_the_new_ledger_state(self):
+        result = value_portfolio(
+            initial_cash=100_000,
+            cash=99_000,
+            positions=[{"symbol": "AAPL", "quantity": 10}],
+            marks={
+                "AAPL": MarketMark(
+                    "AAPL",
+                    110.0,
+                    "2026-07-14T10:59:59Z",
+                    "source-ingest://aapl",
+                )
+            },
+            fill_count=1,
+            last_fill_at="2026-07-14T11:00:00Z",
+            now=_NOW,
+        )
+
+        self.assertEqual(result.status, "marks_unavailable")
+        self.assertIsNone(result.sample)
+        self.assertEqual(result.diagnostic["code"], "market_marks_predate_ledger")
+        self.assertEqual(result.diagnostic["missing_symbols"], ["AAPL"])
+
 
 class RollingDrawdownTrackerTest(unittest.TestCase):
     def test_first_loss_is_measured_against_initial_funded_equity(self):
@@ -285,7 +350,7 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
             positions=ledger["positions"],
             marks=algorithm.authoritative_marks(),
             fill_count=ledger["fill_count"],
-            last_fill_at=ledger["last_fill_at"],
+            last_fill_at="2026-07-14T10:00:00Z",
             now=_NOW,
         )
 
@@ -337,6 +402,7 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_dir:
             state_path = Path(temporary_dir) / "paper-ledger.json"
             first = PaperExecutionAlgorithm(initial_cash=100_000, state_path=str(state_path))
+            self.assertTrue(first.BindPerformanceBinding("binding-a"))
             first.SetSecurityPrice(
                 "AAPL",
                 100.0,
@@ -367,7 +433,7 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
                 positions=ledger["positions"],
                 marks=restored.authoritative_marks(),
                 fill_count=ledger["fill_count"],
-                last_fill_at=ledger["last_fill_at"],
+                last_fill_at="2026-07-14T10:00:00Z",
                 now=_NOW,
             )
 
@@ -378,6 +444,7 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_dir:
             state_path = Path(temporary_dir) / "paper-ledger.json"
             first = PaperExecutionAlgorithm(initial_cash=100.0, state_path=str(state_path))
+            self.assertTrue(first.BindPerformanceBinding("binding-a"))
             first.SetSecurityPrice("AAPL", 10.0)
             first.MarketOrder("AAPL", 1)
             tracker = RollingDrawdownTracker(window_days=20)
@@ -394,6 +461,46 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
 
             self.assertAlmostEqual(metrics["drawdown_pct"], 0.25)
             self.assertEqual(metrics["peak_portfolio_value"], 120.0)
+
+    def test_persisted_ledger_refuses_a_different_runtime_binding(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            state_path = Path(temporary_dir) / "paper-ledger.json"
+            first = PaperExecutionAlgorithm(initial_cash=100.0, state_path=str(state_path))
+            self.assertTrue(first.BindPerformanceBinding("binding-a"))
+            first.SetSecurityPrice("AAPL", 10.0)
+            first.MarketOrder("AAPL", 1)
+
+            restored = PaperExecutionAlgorithm(state_path=str(state_path))
+
+            self.assertFalse(restored.BindPerformanceBinding("binding-b"))
+            ledger = restored.performance_ledger()
+            self.assertEqual(ledger["binding_id"], "binding-a")
+            self.assertIn("binding mismatch", ledger["state_binding_error"])
+
+    def test_corrupt_ledger_is_not_overwritten_when_binding_is_attached(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            state_path = Path(temporary_dir) / "paper-ledger.json"
+            state_path.write_text("not-json", encoding="utf-8")
+            algorithm = PaperExecutionAlgorithm(state_path=str(state_path))
+
+            self.assertFalse(algorithm.BindPerformanceBinding("binding-a"))
+            self.assertEqual(state_path.read_text(encoding="utf-8"), "not-json")
+            self.assertIn("JSONDecodeError", algorithm.performance_ledger()["state_load_error"])
+
+    def test_loaded_unscoped_ledger_cannot_be_claimed_by_a_binding(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            state_path = Path(temporary_dir) / "paper-ledger.json"
+            unscoped = PaperExecutionAlgorithm(initial_cash=100.0, state_path=str(state_path))
+            unscoped.SetSecurityPrice("AAPL", 10.0)
+            unscoped.MarketOrder("AAPL", 1)
+
+            restored = PaperExecutionAlgorithm(state_path=str(state_path))
+
+            self.assertFalse(restored.BindPerformanceBinding("binding-a"))
+            self.assertIn(
+                "missing binding identity",
+                restored.performance_ledger()["state_binding_error"],
+            )
 
     def test_taiwan_sell_fill_is_signed_and_credits_cash(self):
         events = []

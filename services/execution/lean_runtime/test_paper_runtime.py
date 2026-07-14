@@ -78,11 +78,13 @@ class _FakeTelemetryEmitter:
 class _FakeMarkProvider:
     def __init__(self, *, price=105.0, as_of=None):
         self.price = float(price)
-        self.as_of = as_of or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
-            "+00:00", "Z"
-        )
+        self.as_of = as_of
 
     def resolve(self, symbols):
+        if self.as_of is None:
+            self.as_of = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+                "+00:00", "Z"
+            )
         marks = {
             symbol: MarketMark(
                 symbol=symbol,
@@ -277,6 +279,27 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(
             snapshot["paper_state"]["performance_telemetry"]["code"],
             "performance_snapshots_emitted",
+        )
+
+        mark_provider.resolve = lambda symbols: (
+            {},
+            {
+                "source": "source_ingest",
+                "enabled": True,
+                "requested_symbols": list(symbols),
+                "resolved_symbols": [],
+                "missing_symbols": list(symbols),
+            },
+        )
+        second_snapshot = service.drain_once()
+
+        self.assertEqual(
+            len([event for event in telemetry.events if event["event_type"] == "pnl_snapshot"]),
+            1,
+        )
+        self.assertEqual(
+            second_snapshot["paper_state"]["performance_telemetry"]["code"],
+            "missing_market_marks",
         )
 
     def test_drain_once_does_not_execute_when_binding_halted(self):

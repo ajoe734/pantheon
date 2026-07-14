@@ -5,6 +5,7 @@ from services.execution.lean_runtime.executor import (
     BRACKET_ORDER_STATUS_SUBMITTED_TO_BROKER,
     ExecutionError,
     _build_bracket_legs,
+    _seed_signal_market_price,
     _signal_context_metadata,
     execute,
 )
@@ -209,6 +210,65 @@ class ExecutorBracketOrderTests(unittest.TestCase):
         )
 
         self.assertEqual(context["correlation_envelope"], envelope)
+
+    def test_signal_timestamp_and_unscoped_price_are_execution_only(self):
+        calls = []
+
+        class Algo:
+            def SetSecurityPrice(self, symbol, price):  # noqa: N802
+                calls.append(("price", symbol, price))
+
+            def SetSecurityMark(self, symbol, price, *, as_of, source):  # noqa: N802
+                calls.append(("mark", symbol, price, as_of, source))
+
+        signal = {
+            "timestamp": "2026-07-14T12:00:00Z",
+            "metadata": {"market_price": 101.5},
+        }
+
+        _seed_signal_market_price(Algo(), "AAPL", signal)
+
+        self.assertEqual(calls, [("price", "AAPL", 101.5)])
+        context = _signal_context_metadata(signal)
+        self.assertNotIn("market_price_as_of", context)
+        self.assertNotIn("market_price_source", context)
+
+    def test_dedicated_market_evidence_can_seed_an_authoritative_mark(self):
+        calls = []
+
+        class Algo:
+            def SetSecurityPrice(self, symbol, price):  # noqa: N802
+                calls.append(("price", symbol, price))
+
+            def SetSecurityMark(self, symbol, price, *, as_of, source):  # noqa: N802
+                calls.append(("mark", symbol, price, as_of, source))
+
+        signal = {
+            "timestamp": "2026-07-14T12:00:10Z",
+            "metadata": {
+                "market_price": 999.0,
+                "market_data": {
+                    "close": 101.5,
+                    "as_of": "2026-07-14T12:00:00Z",
+                    "source_ref": "source-ingest://aapl-price",
+                },
+            },
+        }
+
+        _seed_signal_market_price(Algo(), "AAPL", signal)
+
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "mark",
+                    "AAPL",
+                    101.5,
+                    "2026-07-14T12:00:00Z",
+                    "source-ingest://aapl-price",
+                )
+            ],
+        )
 
     def test_hold_signal_records_noop_feedback_without_order(self):
         algo = _SpyAlgo()
