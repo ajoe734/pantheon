@@ -1330,6 +1330,29 @@ services:
       retries: 10
       start_period: 5s
 
+  evolution-dispatch-worker:
+    build:
+      context: .
+      dockerfile: services/evolution/Dockerfile
+    command: ["python", "-m", "services.evolution.dispatch_worker"]
+    restart: unless-stopped
+    environment:
+      EVOLUTION_API_URL: http://evolution:8093
+      EVOLUTION_DISPATCH_ACTOR_ID: ${EVOLUTION_DISPATCH_ACTOR_ID:-evolution-dispatch-worker}
+      EVOLUTION_DISPATCH_INTERVAL_SECONDS: ${EVOLUTION_DISPATCH_INTERVAL_SECONDS:-30}
+      EVOLUTION_DISPATCH_MAX_TICKS: ${EVOLUTION_DISPATCH_MAX_TICKS:-0}
+      EVOLUTION_DISPATCH_TIMEOUT_SECONDS: ${EVOLUTION_DISPATCH_TIMEOUT_SECONDS:-10}
+      EVOLUTION_DISPATCH_HEALTH_FILE: ${EVOLUTION_DISPATCH_HEALTH_FILE:-/tmp/evolution-dispatch-health.json}
+    depends_on:
+      evolution:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.evolution.dispatch_worker", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
   evolution-daily-sweep-scheduler:
     build:
       context: .
