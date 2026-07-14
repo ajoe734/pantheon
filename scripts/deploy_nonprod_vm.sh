@@ -996,6 +996,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     AGORA_WORKSHOP_STORE_BACKEND=postgres \
     AGORA_WORKSHOP_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
     AGORA_WORKSHOP_STORE_SCHEMA=agora \
+    AGORA_GOVERNANCE_STORE_BACKEND=postgres \
+    AGORA_GOVERNANCE_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_GOVERNANCE_STORE_SCHEMA=agora \
     AGORA_RESEARCH_STORE_BACKEND=postgres \
     AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
     AGORA_RESEARCH_STORE_SCHEMA=agora_research \
@@ -1050,6 +1053,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     AGORA_WORKSHOP_STORE_BACKEND=postgres \
     AGORA_WORKSHOP_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
     AGORA_WORKSHOP_STORE_SCHEMA=agora \
+    AGORA_GOVERNANCE_STORE_BACKEND=postgres \
+    AGORA_GOVERNANCE_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_GOVERNANCE_STORE_SCHEMA=agora \
     AGORA_RESEARCH_STORE_BACKEND=postgres \
     AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
     AGORA_RESEARCH_STORE_SCHEMA=agora_research \

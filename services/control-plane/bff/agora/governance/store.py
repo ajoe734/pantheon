@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import logging
 import os
 import threading
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ BACKEND_ENV = "AGORA_GOVERNANCE_STORE_BACKEND"
 DSN_ENV = "AGORA_GOVERNANCE_STORE_DSN"
 SCHEMA_ENV = "AGORA_GOVERNANCE_STORE_SCHEMA"
 DEFAULT_SCHEMA = "agora"
+_logger = logging.getLogger(__name__)
 
 
 class ProposalConflict(Exception):
@@ -55,6 +57,7 @@ class ProposalStore:
         self._idempotency: Dict[str, tuple[str, str]] = {}
         self._commands: Dict[str, Dict[str, Any]] = {}
         if self.backend == "memory":
+            _logger.info("Agora governance store initialized backend=memory")
             return
         if self.backend != "postgres":
             raise RuntimeError(f"Unknown {BACKEND_ENV}={resolved!r}; expected off or postgres")
@@ -67,6 +70,10 @@ class ProposalStore:
         self._idem_table = f'{q}."governed_proposal_idempotency"'
         self._command_table = f'{q}."interaction_command_outbox"'
         self._bootstrap()
+        _logger.info(
+            "Agora governance store initialized backend=postgres schema=%s",
+            self.schema,
+        )
 
     def _connect(self) -> Any:
         try:
