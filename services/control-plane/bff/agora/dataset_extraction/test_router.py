@@ -265,3 +265,77 @@ class TestListDatasetRecords:
         resp = client.get("/bff/agora/datasets/observe?page_size=3")
         body = resp.json()
         assert len(body["items"]) == 3
+
+
+class TestDatasetBacklogAndWorkerRoutes:
+    def test_backlog_routes(self) -> None:
+        store = AgoraDatasetStore()
+        client = _make_client(store)
+
+        # 1. Backlog is initially empty
+        resp = client.get("/bff/agora/dataset-worker/backlog")
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 0
+
+        # 2. Add an item directly to the store inbox (or through POST /bff/agora/interaction-evidence)
+        # Note: POST triggers synchronous worker in extract_evidence, so to test backlog/DLQ we can manually insert to store._inbox
+        store._inbox["ev-pending-1"] = {
+            "evidence_id": "ev-pending-1", "tenant_id": "tenant-test", "user_id": "user-test",
+            "interaction_kind": "ask", "persona_id": "p", "session_id": None,
+            "content": {}, "source_refs": [], "learning_eligible": True,
+            "captured_at": "2026", "status": "pending", "extracted_at": "2026",
+        }
+
+        # Verify backlog endpoint now returns 1 item
+        resp = client.get("/bff/agora/dataset-worker/backlog")
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 1
+        assert resp.json()["items"][0]["evidence_id"] == "ev-pending-1"
+
+        # 3. Manually run worker
+        resp = client.post("/bff/agora/dataset-worker/process")
+        assert resp.status_code == 200
+        assert resp.json()["data"]["processed"] == 1
+
+        # Backlog is empty again
+        resp = client.get("/bff/agora/dataset-worker/backlog")
+        assert resp.json()["total"] == 0
+
+        # Verify handoffs lists the new handoff
+        resp = client.get("/bff/agora/dataset-worker/handoffs")
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 1
+        assert resp.json()["items"][0]["authority_limit"] == "Observe/Learn"
+
+    def test_dlq_and_replay_routes(self) -> None:
+        store = AgoraDatasetStore()
+        client = _make_client(store)
+
+        # 1. Add failed item to DLQ
+        store._inbox["ev-fail-1"] = {
+            "evidence_id": "ev-fail-1", "tenant_id": "tenant-test", "user_id": "user-test",
+            "interaction_kind": "invalid-kind", "persona_id": "p", "session_id": None,
+            "content": {}, "source_refs": [], "learning_eligible": True,
+            "captured_at": "2026", "status": "failed", "extracted_at": "2026",
+            "error_message": "Some validation error",
+        }
+
+        # Verify DLQ returns it
+        resp = client.get("/bff/agora/dataset-worker/dlq")
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 1
+        assert resp.json()["items"][0]["evidence_id"] == "ev-fail-1"
+
+        # 2. Replay DLQ item
+        resp = client.post("/bff/agora/dataset-worker/dlq/ev-fail-1/replay")
+        assert resp.status_code == 200
+
+        # Now DLQ is empty, backlog has it
+        resp = client.get("/bff/agora/dataset-worker/dlq")
+        assert resp.json()["total"] == 0
+
+        resp = client.get("/bff/agora/dataset-worker/backlog")
+        assert resp.json()["total"] == 1
+        assert resp.json()["items"][0]["evidence_id"] == "ev-fail-1"
+
+

@@ -9,6 +9,8 @@ Covers:
 """
 from __future__ import annotations
 
+import os
+import uuid
 import threading
 from typing import Any
 
@@ -291,3 +293,93 @@ class TestAgoraInteractionEvidenceRequest:
                 persona_id="p",
                 captured_at="2026-06-27T00:00:00Z",
             )
+
+
+class TestDurableInboxAndHandoffWorker:
+    def test_backlog_worker_and_handoff_lifecycle_memory(self) -> None:
+        store = AgoraDatasetStore(backend="memory")
+        self._run_lifecycle_test(store)
+
+    def test_backlog_worker_and_handoff_lifecycle_postgres(self) -> None:
+        dsn = os.getenv("TEST_DATABASE_URL")
+        if not dsn:
+            pytest.skip("TEST_DATABASE_URL is not set")
+        schema = f"agora_ds_{uuid.uuid4().hex[:12]}"
+        store = AgoraDatasetStore(backend="postgres", dsn=dsn, schema=schema)
+        try:
+            self._run_lifecycle_test(store)
+        finally:
+            with store._connect() as conn:
+                conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+
+    def _run_lifecycle_test(self, store: AgoraDatasetStore) -> None:
+        # Add a record to inbox but do NOT run worker yet
+        evidence = _make_evidence(evidence_id="ev-backlog-1", interaction_kind="ask")
+        store.add_to_inbox(evidence, "tenant-test", "user-test", "2026-06-27T10:00:00Z")
+
+        # Verify it is in backlog
+        backlog = store.get_backlog("tenant-test", "user-test")
+        assert len(backlog) == 1
+        assert backlog[0]["evidence_id"] == "ev-backlog-1"
+        assert backlog[0]["status"] == "pending"
+
+        # Verify dataset records doesn't have it yet
+        assert store.get("ev-backlog-1") is None
+
+        # Run worker
+        result = store.process_inbox()
+        assert result["processed"] == 1
+        assert result["failed"] == 0
+        assert result["handoffs_created"] == 1
+
+        # Verify backlog is empty
+        assert len(store.get_backlog("tenant-test", "user-test")) == 0
+
+        # Verify dataset record exists with version 1
+        record = store.get("ev-backlog-1")
+        assert record is not None
+        assert record.version == 1
+        assert record.dataset_kind == DatasetKind.OBSERVE
+
+        # Verify handoff generated
+        handoffs = store.list_handoffs(tenant_id="tenant-test", user_id="user-test")
+        assert len(handoffs) == 1
+        assert handoffs[0]["dataset_kind"] == "observe"
+        assert handoffs[0]["authority_limit"] == "Observe/Learn"
+        assert "ev-backlog-1" in handoffs[0]["evidence_ids"]
+
+        # Test DLQ and replay
+        if store.backend == "memory":
+            store._inbox["ev-fail"] = {
+                "evidence_id": "ev-fail", "tenant_id": "tenant-test", "user_id": "user-test",
+                "interaction_kind": "invalid-kind", "persona_id": "p", "session_id": None,
+                "content": {}, "source_refs": [], "learning_eligible": True,
+                "captured_at": "2026", "status": "pending", "extracted_at": "2026",
+            }
+        else:
+            with store._connect() as conn:
+                conn.execute(
+                    f"INSERT INTO {store._inbox_table} (evidence_id, tenant_id, user_id, interaction_kind, "
+                    f"persona_id, content, source_refs, learning_eligible, captured_at, extracted_at, status) "
+                    f"VALUES ('ev-fail', 'tenant-test', 'user-test', 'invalid-kind', 'p', '{{}}', '[]', true, '2026', '2026', 'pending')"
+                )
+        
+        # Run worker - it should fail to process and land in DLQ
+        result2 = store.process_inbox()
+        assert result2["failed"] == 1
+
+        # Check DLQ
+        dlq = store.get_dlq("tenant-test", "user-test")
+        assert len(dlq) == 1
+        assert dlq[0]["evidence_id"] == "ev-fail"
+        assert dlq[0]["status"] == "failed"
+        assert dlq[0]["error_message"] is not None
+
+        # Replay DLQ item
+        replayed = store.replay_dlq_item("ev-fail")
+        assert replayed is True
+        
+        # Check that it's back in backlog
+        assert len(store.get_dlq("tenant-test", "user-test")) == 0
+        assert len(store.get_backlog("tenant-test", "user-test")) == 1
+
