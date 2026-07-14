@@ -157,10 +157,17 @@ have passed equally on an empty/still-loading page.
     files this task touches. Consistent with the systemic integration-gate
     residual already noted above (failing broadly across recent unrelated
     `dev` pushes).
+- `execute-plans` fallback-assertion fix PR: [#343](https://github.com/ajoe734/execute-plans/pull/343),
+  merged (mergedAt `2026-07-14T06:34:04Z`) — replaces the blind 5s wait in
+  `e2e/evochain009.spec.ts` with a positive assertion of the fallback card's
+  headline, focus banner, and target field (see "Handoff / history
+  reconciliation" below).
 - `pantheon` initial PR: [#3527](https://github.com/ajoe734/pantheon/pull/3527), merged.
 - `pantheon` doc-reconcile PR: [#3616](https://github.com/ajoe734/pantheon/pull/3616), merged
   (merge commit `c30bf618249f9f43604edd058b4e2ca34c892e07`, mergedAt
   `2026-07-14T05:23:22Z`).
+- `pantheon` fallback-assertion doc-reconcile PR: [#3626](https://github.com/ajoe734/pantheon/pull/3626),
+  merged (mergedAt `2026-07-14T07:58:14Z`).
 - Dev FE deployment verified at commit `936f252e09fa3bb887c88e733e24b6941cac644e` (descendant of `b5d6485`).
 - Current `dev` FE deploy identity (as of this reconcile pass, 2026-07-14):
   latest successful "Pantheon Dev FE Deploy" run on `execute-plans` `dev` is
@@ -183,15 +190,18 @@ have passed equally on an empty/still-loading page.
     for the region plus a fixed 5s timeout and asserted absence of raw
     keys/NaN/Fixture/Approval, without ever positively asserting the
     fallback card rendered — an empty or still-loading page would have
-    passed the same way. Addressed in this pass: the spec now waits for the
-    region's loading placeholder to clear and positively asserts the
-    fallback card's headline, focus banner, and target fields (see
-    "Verification" above); the archived fallback screenshot was
-    re-captured and now visibly shows the `persona_fleet_summary` card;
-    this doc's focused-test evidence count and owner/reviewer were
-    reconciled to current truth (Claude/Codex), and PR #339's merge SHA,
-    the pantheon PR #3616 merge SHA, and PR #339's integration-gate run
-    terminal outcome are recorded above.
+    passed the same way. Addressed in `execute-plans` PR
+    [#343](https://github.com/ajoe734/execute-plans/pull/343), merged
+    (mergedAt `2026-07-14T06:34:04Z`): the spec now waits for the region's
+    loading placeholder to clear and positively asserts the fallback card's
+    headline, focus banner, and target fields (see "Verification" above);
+    the archived fallback screenshot was re-captured and now visibly shows
+    the `persona_fleet_summary` card; this doc's focused-test evidence count
+    and owner/reviewer were reconciled to current truth (Claude/Codex) in
+    pantheon PR [#3626](https://github.com/ajoe734/pantheon/pull/3626),
+    merged (mergedAt `2026-07-14T07:58:14Z`), and PR #339's merge SHA, the
+    pantheon PR #3616 merge SHA, and PR #339's integration-gate run terminal
+    outcome are recorded above.
 - Hosted evidence captured via Playwright test `e2e/evochain009.spec.ts` against the live dev frontend:
   - Formal state (Fixture badge + Approval status visible):
     ![Hosted Evolution Journal Evidence](evolution_journal_hosted_evidence.png)
