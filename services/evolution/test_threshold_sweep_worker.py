@@ -1786,6 +1786,7 @@ def test_runtime_summary_projection_store_reset_on_binding_rollover():
         "binding_id": "binding-a",
         "runtime_id": "rt-1",
         "metrics": {"drawdown_pct": 0.15},
+        "metadata": {"runtime_binding_effective_at": "2026-07-13T00:00:00Z"},
     }
     
     # Project binding A
@@ -1803,6 +1804,7 @@ def test_runtime_summary_projection_store_reset_on_binding_rollover():
         "binding_id": "binding-b",
         "runtime_id": "rt-1",
         "metrics": {}, # No metrics in this event
+        "metadata": {"runtime_binding_effective_at": "2026-07-13T00:01:00Z"},
     }
     summary_b = store.project_event(event_binding_b)
     

@@ -73,6 +73,11 @@ def _sample(value: float, as_of: datetime, *, fill_count: int = 1) -> Performanc
 
 class SourceIngestMarkProviderTest(unittest.TestCase):
     def test_only_normalized_market_price_records_with_observation_time_are_admissible(self):
+        missing_source_ref = _source_record(
+            "NOREF.US", 42.0, "2026-07-14T11:00:00Z"
+        )
+        missing_source_ref.pop("source_id")
+        missing_source_ref.pop("content_ref")
         records = [
             _source_record("AAPL.US", 211.5, "2026-07-14T11:00:00Z"),
             _source_record("MSFT.US", 501.0, "2026-07-14T11:00:00Z", source_type="news"),
@@ -81,10 +86,19 @@ class SourceIngestMarkProviderTest(unittest.TestCase):
             _source_record("BROKEN.US", float("nan"), "2026-07-14T11:00:00Z"),
             # Ingest availability time is not a market observation time.
             _source_record("AMZN.US", 230.0, None, created_at="2026-07-14T11:59:00Z"),
+            missing_source_ref,
         ]
 
         marks, diagnostic = _provider(records).resolve(
-            ["AAPL.US", "MSFT.US", "NVDA.US", "TSLA.US", "BROKEN.US", "AMZN.US"]
+            [
+                "AAPL.US",
+                "MSFT.US",
+                "NVDA.US",
+                "TSLA.US",
+                "BROKEN.US",
+                "AMZN.US",
+                "NOREF.US",
+            ]
         )
 
         self.assertEqual(set(marks), {"AAPL.US"})
@@ -92,7 +106,7 @@ class SourceIngestMarkProviderTest(unittest.TestCase):
         self.assertEqual(marks["AAPL.US"].as_of, "2026-07-14T11:00:00Z")
         self.assertEqual(
             diagnostic["missing_symbols"],
-            ["AMZN.US", "BROKEN.US", "MSFT.US", "NVDA.US", "TSLA.US"],
+            ["AMZN.US", "BROKEN.US", "MSFT.US", "NOREF.US", "NVDA.US", "TSLA.US"],
         )
 
     def test_stale_and_future_marks_fail_closed(self):
@@ -119,6 +133,54 @@ class SourceIngestMarkProviderTest(unittest.TestCase):
         self.assertEqual(marks["AAPL.US"].price, 211.5)
         self.assertEqual(marks["AAPL.TW"].price, 812.0)
         self.assertEqual(diagnostic["missing_symbols"], ["AAPL"])
+
+    def test_conflicting_prices_at_the_same_observation_time_fail_closed(self):
+        records = [
+            _source_record(
+                "AAPL.US",
+                211.5,
+                "2026-07-14T11:00:00Z",
+                source_id="price-a",
+            ),
+            _source_record(
+                "AAPL.US",
+                212.5,
+                "2026-07-14T11:00:00Z",
+                source_id="price-b",
+            ),
+        ]
+
+        marks, diagnostic = _provider(records).resolve(["AAPL.US"])
+
+        self.assertEqual(marks, {})
+        self.assertEqual(diagnostic["missing_symbols"], ["AAPL.US"])
+
+    def test_newer_unambiguous_price_supersedes_an_older_conflict(self):
+        records = [
+            _source_record(
+                "AAPL.US",
+                210.0,
+                "2026-07-14T10:00:00Z",
+                source_id="older-a",
+            ),
+            _source_record(
+                "AAPL.US",
+                220.0,
+                "2026-07-14T10:00:00Z",
+                source_id="older-b",
+            ),
+            _source_record(
+                "AAPL.US",
+                215.0,
+                "2026-07-14T11:00:00Z",
+                source_id="latest",
+            ),
+        ]
+
+        marks, diagnostic = _provider(records).resolve(["AAPL.US"])
+
+        self.assertEqual(marks["AAPL.US"].price, 215.0)
+        self.assertEqual(diagnostic["missing_symbols"], [])
 
     def test_crypto_canonical_symbol_resolves_only_the_matching_quote_pair(self):
         record = _source_record(
@@ -300,6 +362,26 @@ class RollingDrawdownTrackerTest(unittest.TestCase):
         self.assertEqual(expired_peak["drawdown_pct"], 0.0)
         self.assertEqual(expired_peak["peak_portfolio_value"], 90.0)
         self.assertEqual(expired_peak["window_observations"], 1)
+
+    def test_same_as_of_revision_replaces_the_superseded_high_water_sample(self):
+        tracker = RollingDrawdownTracker(window_days=20)
+        seed_as_of = (_NOW - timedelta(hours=1)).isoformat()
+
+        self.assertEqual(
+            tracker.observe(
+                _sample(120.0, _NOW),
+                initial_equity_as_of=seed_as_of,
+            )["peak_portfolio_value"],
+            120.0,
+        )
+        revised = tracker.observe(
+            _sample(80.0, _NOW, fill_count=2),
+            initial_equity_as_of=seed_as_of,
+        )
+
+        self.assertEqual(revised["peak_portfolio_value"], 100.0)
+        self.assertAlmostEqual(revised["drawdown_pct"], 0.2)
+        self.assertEqual(revised["window_observations"], 2)
 
     def test_restored_window_preserves_high_water_across_process_restart(self):
         tracker = RollingDrawdownTracker(window_days=20)

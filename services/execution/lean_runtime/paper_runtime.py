@@ -87,6 +87,35 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _finite_float(value: Any, *, field: str, positive: bool = False) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be numeric") from exc
+    if not math.isfinite(result):
+        raise ValueError(f"{field} must be finite")
+    if positive and result <= 0:
+        raise ValueError(f"{field} must be positive")
+    return result
+
+
+def _parse_ledger_timestamp(value: Any, *, field: str) -> tuple[str, datetime]:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"paper performance ledger {field} is missing")
+    normalized = value.strip()
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            f"paper performance ledger {field} is not a valid timestamp"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(
+            f"paper performance ledger {field} must include a timezone"
+        )
+    return normalized, parsed.astimezone(timezone.utc)
+
+
 def _runtime_context_identity_env(
     context: PantheonRuntimeContext,
     base_env: Mapping[str, str],
@@ -222,9 +251,17 @@ class PaperExecutionAlgorithm:
         bracket_order_execution_enabled: bool = True,
         state_path: str | None = None,
     ) -> None:
-        self._initial_cash = initial_cash
-        self._cash = initial_cash
-        self._default_price = default_price
+        self._initial_cash = _finite_float(
+            initial_cash,
+            field="initial_cash",
+            positive=True,
+        )
+        self._cash = self._initial_cash
+        self._default_price = _finite_float(
+            default_price,
+            field="default_price",
+            positive=True,
+        )
         self._event_sink = event_sink
         self.DeploymentStage = str(deployment_stage or "paper").strip().lower()
         self.BracketOrderExecutionEnabled = bool(bracket_order_execution_enabled)
@@ -237,6 +274,7 @@ class PaperExecutionAlgorithm:
         self._first_fill_at: str | None = None
         self._last_fill_at: str | None = None
         self._performance_window_state: dict[str, Any] = {}
+        self._pending_performance_pair: dict[str, Any] | None = None
         self._performance_binding_id: str | None = None
         self._state_binding_error: str | None = None
         self._loaded_state_missing_binding_id = False
@@ -264,8 +302,13 @@ class PaperExecutionAlgorithm:
         source: str = "runtime_price",
         authoritative: bool = False,
     ) -> None:
+        validated_price = _finite_float(
+            price,
+            field="security price",
+            positive=True,
+        )
         security = self._security(str(symbol))
-        security.Price = float(price)
+        security.Price = validated_price
         security.MarkAsOf = str(as_of) if as_of else None
         security.MarkSource = str(source) if source else None
         security.MarkAuthoritative = bool(authoritative and as_of and source)
@@ -291,6 +334,34 @@ class PaperExecutionAlgorithm:
 
     def ClearCurrentSignalContext(self) -> None:  # noqa: N802
         self._current_signal_metadata = {}
+
+    def _reject_invalid_paper_fill(
+        self,
+        symbol: str,
+        action: str,
+        *,
+        reason: str,
+        broker_submission_status: str = "invalid_paper_fill",
+        submitted_to_broker: bool = False,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        diagnostic = {
+            "reject_reason": reason,
+            "rejection_status": "rejected",
+            "order_status": "rejected",
+            "rejected_order_count": 1,
+        }
+        if metadata:
+            diagnostic.update(dict(metadata))
+        self._publish(
+            "order_rejection",
+            str(symbol),
+            0.0,
+            action,
+            broker_submission_status=broker_submission_status,
+            submitted_to_broker=submitted_to_broker,
+            metadata=diagnostic,
+        )
 
     def SubmitTaiwanBrokerOrder(  # noqa: N802
         self,
@@ -334,7 +405,28 @@ class PaperExecutionAlgorithm:
             log.warning("[%s] TW order rejected: unsupported quantity_type=%s", signal_id, quantity_type)
             return
 
-        qty = abs(float(quantity))
+        try:
+            qty = _finite_float(
+                quantity,
+                field="Taiwan order quantity",
+                positive=True,
+            )
+            if limit_price is not None:
+                limit_price = _finite_float(
+                    limit_price,
+                    field="Taiwan limit price",
+                    positive=True,
+                )
+        except ValueError as exc:
+            self._reject_invalid_paper_fill(
+                str(symbol),
+                action,
+                reason="invalid_taiwan_order_input",
+                broker_submission_status="tw_invalid_order_input",
+                metadata={**base_metadata, "diagnostic": str(exc)},
+            )
+            log.warning("[%s] TW order rejected before broker: %s", signal_id, exc)
+            return
         broker_url = os.getenv("PANTHEON_BROKER_PAPER_URL", "http://broker:8102").rstrip("/")
         payload = {
             "capital_pool_id": os.getenv("PANTHEON_CAPITAL_POOL_ID", "") or self._taiwan_capital_pool_id(),
@@ -363,22 +455,52 @@ class PaperExecutionAlgorithm:
             log.error("[%s] TW broker order failed for %s: %s", signal_id, symbol, exc)
             return
 
-        fill_price = float(order.get("fill_price") or 0.0)
-        fill_qty = float(order.get("fill_qty") or qty)
-        order_id = str(order.get("order_id") or "")
-        if fill_price > 0:
-            self.SetSecurityPrice(
-                str(symbol),
-                fill_price,
-                as_of=str(order.get("filled_at") or order.get("updated_at") or _iso_now()),
-                source=str(order.get("quote_source") or "shioaji_paper_fill"),
-                authoritative=False,
+        try:
+            fill_price = _finite_float(
+                order.get("fill_price"),
+                field="Taiwan broker fill_price",
+                positive=True,
             )
-        holding = self._holding(str(symbol))
-        signed_fill_qty = fill_qty if side == "buy" else -fill_qty
-        holding.Quantity += signed_fill_qty
-        self._cash -= signed_fill_qty * fill_price
-        self._record_fill()
+            fill_qty = _finite_float(
+                order.get("fill_qty"),
+                field="Taiwan broker fill_qty",
+                positive=True,
+            )
+            signed_fill_qty = fill_qty if side == "buy" else -fill_qty
+            current_quantity = _finite_float(
+                self._holding(str(symbol)).Quantity,
+                field="Taiwan current holding quantity",
+            )
+            current_cash = _finite_float(self._cash, field="Taiwan current cash")
+            next_quantity = current_quantity + signed_fill_qty
+            next_cash = current_cash - (signed_fill_qty * fill_price)
+            if not math.isfinite(next_quantity) or not math.isfinite(next_cash):
+                raise ValueError("Taiwan broker fill produces non-finite ledger values")
+        except ValueError as exc:
+            self._reject_invalid_paper_fill(
+                str(symbol),
+                action,
+                reason="invalid_taiwan_broker_fill",
+                broker_submission_status="tw_invalid_broker_fill",
+                submitted_to_broker=True,
+                metadata={
+                    **base_metadata,
+                    "diagnostic": str(exc),
+                    "broker_fill_qty": repr(order.get("fill_qty")),
+                    "broker_fill_price": repr(order.get("fill_price")),
+                },
+            )
+            log.error("[%s] TW broker returned invalid fill for %s: %s", signal_id, symbol, exc)
+            return
+        order_id = str(order.get("order_id") or "")
+        self._commit_fill(
+            str(symbol),
+            next_quantity=next_quantity,
+            next_cash=next_cash,
+            execution_price=fill_price,
+            price_as_of=str(order.get("filled_at") or order.get("updated_at") or _iso_now()),
+            price_source=str(order.get("quote_source") or "shioaji_paper_fill"),
+        )
         self._publish(
             "paper_fill_simulated", str(symbol), signed_fill_qty, action,
             broker_submission_status="filled",
@@ -428,6 +550,14 @@ class PaperExecutionAlgorithm:
         if self._event_sink is None:
             return
         security = self._security(symbol)
+        try:
+            event_quantity = _finite_float(quantity, field="event quantity")
+        except ValueError:
+            event_quantity = 0.0
+        try:
+            event_price = _finite_float(security.Price, field="event fill price")
+        except ValueError:
+            event_price = 0.0
         event_metadata = dict(self._current_signal_metadata)
         if metadata:
             event_metadata.update(metadata)
@@ -435,8 +565,8 @@ class PaperExecutionAlgorithm:
             OrderEvent(
                 event_type=event_type,
                 symbol=str(symbol),
-                quantity=float(quantity),
-                fill_price=float(security.Price),
+                quantity=event_quantity,
+                fill_price=event_price,
                 action=action,
                 submitted_to_broker=submitted_to_broker,
                 broker_submission_status=broker_submission_status,
@@ -446,10 +576,35 @@ class PaperExecutionAlgorithm:
 
     def SetHoldings(self, symbol: str, target_percent: float) -> None:  # noqa: N802
         security = self._security(symbol)
-        target_quantity = (self._initial_cash * float(target_percent)) / max(float(security.Price), 0.01)
         holding = self._holding(symbol)
-        current_quantity = holding.Quantity
-        delta = target_quantity - current_quantity
+        try:
+            target_percent_value = _finite_float(
+                target_percent,
+                field="target percent",
+            )
+            price = _finite_float(
+                security.Price,
+                field="paper fill price",
+                positive=True,
+            )
+            current_quantity = _finite_float(
+                holding.Quantity,
+                field="current holding quantity",
+            )
+            current_cash = _finite_float(self._cash, field="current cash")
+            target_quantity = (self._initial_cash * target_percent_value) / price
+            delta = target_quantity - current_quantity
+            next_cash = current_cash - (delta * price)
+            if not all(math.isfinite(value) for value in (target_quantity, delta, next_cash)):
+                raise ValueError("SetHoldings produced non-finite ledger values")
+        except ValueError as exc:
+            self._reject_invalid_paper_fill(
+                str(symbol),
+                "set_holdings",
+                reason="invalid_set_holdings_fill",
+                metadata={"diagnostic": str(exc)},
+            )
+            return
         if abs(delta) <= 1e-12:
             metadata: dict[str, Any] = {
                 "noop_reason": "set_holdings_no_delta",
@@ -458,8 +613,8 @@ class PaperExecutionAlgorithm:
                 "computed_quantity": 0.0,
                 "position_quantity": float(current_quantity),
                 "target_quantity": float(target_quantity),
-                "target_percent": float(target_percent),
-                "price": float(security.Price),
+                "target_percent": target_percent_value,
+                "price": price,
             }
             for field in ("signal_id", "requested_quantity", "quantity_type", "order_type"):
                 value = self._current_signal_metadata.get(field)
@@ -475,35 +630,104 @@ class PaperExecutionAlgorithm:
                 metadata=metadata,
             )
             return
-        holding.Quantity = target_quantity
-        self._cash -= delta * float(security.Price)
-        self._record_fill()
+        self._commit_fill(
+            str(symbol),
+            next_quantity=target_quantity,
+            next_cash=next_cash,
+        )
         self._publish("paper_fill_simulated", symbol, delta, "set_holdings")
 
     def MarketOrder(self, symbol: str, quantity: float) -> None:  # noqa: N802
         security = self._security(symbol)
-        self._holding(symbol).Quantity += float(quantity)
-        self._cash -= float(quantity) * float(security.Price)
-        self._record_fill()
-        self._publish("paper_fill_simulated", symbol, quantity, "market_order")
+        holding = self._holding(symbol)
+        try:
+            fill_quantity = _finite_float(quantity, field="market fill quantity")
+            if fill_quantity == 0:
+                raise ValueError("market fill quantity must be non-zero")
+            price = _finite_float(
+                security.Price,
+                field="market fill price",
+                positive=True,
+            )
+            current_quantity = _finite_float(
+                holding.Quantity,
+                field="current holding quantity",
+            )
+            current_cash = _finite_float(self._cash, field="current cash")
+            next_quantity = current_quantity + fill_quantity
+            next_cash = current_cash - (fill_quantity * price)
+            if not math.isfinite(next_quantity) or not math.isfinite(next_cash):
+                raise ValueError("market fill produces non-finite ledger values")
+        except ValueError as exc:
+            self._reject_invalid_paper_fill(
+                str(symbol),
+                "market_order",
+                reason="invalid_market_fill",
+                metadata={"diagnostic": str(exc)},
+            )
+            return
+        self._commit_fill(
+            str(symbol),
+            next_quantity=next_quantity,
+            next_cash=next_cash,
+        )
+        self._publish("paper_fill_simulated", symbol, fill_quantity, "market_order")
 
     def LimitOrder(self, symbol: str, quantity: float, limit_price: float) -> None:  # noqa: N802
         security = self._security(symbol)
-        self.SetSecurityPrice(
-            symbol,
-            float(limit_price),
-            as_of=_iso_now(),
-            source="paper_limit_fill",
-            authoritative=False,
+        holding = self._holding(symbol)
+        try:
+            fill_quantity = _finite_float(quantity, field="limit fill quantity")
+            if fill_quantity == 0:
+                raise ValueError("limit fill quantity must be non-zero")
+            fill_price = _finite_float(
+                limit_price,
+                field="limit fill price",
+                positive=True,
+            )
+            current_quantity = _finite_float(
+                holding.Quantity,
+                field="current holding quantity",
+            )
+            current_cash = _finite_float(self._cash, field="current cash")
+            next_quantity = current_quantity + fill_quantity
+            next_cash = current_cash - (fill_quantity * fill_price)
+            if not math.isfinite(next_quantity) or not math.isfinite(next_cash):
+                raise ValueError("limit fill produces non-finite ledger values")
+        except ValueError as exc:
+            self._reject_invalid_paper_fill(
+                str(symbol),
+                "limit_order",
+                reason="invalid_limit_fill",
+                metadata={"diagnostic": str(exc)},
+            )
+            return
+        self._commit_fill(
+            str(symbol),
+            next_quantity=next_quantity,
+            next_cash=next_cash,
+            execution_price=fill_price,
+            price_as_of=_iso_now(),
+            price_source="paper_limit_fill",
         )
-        self._holding(symbol).Quantity += float(quantity)
-        self._cash -= float(quantity) * float(security.Price)
-        self._record_fill()
-        self._publish("paper_fill_simulated", symbol, quantity, "limit_order")
+        self._publish("paper_fill_simulated", symbol, fill_quantity, "limit_order")
 
     def Liquidate(self, symbol: str) -> None:  # noqa: N802
         security = self._security(symbol)
-        quantity = self._holding(symbol).Quantity
+        holding = self._holding(symbol)
+        try:
+            quantity = _finite_float(
+                holding.Quantity,
+                field="liquidation quantity",
+            )
+        except ValueError as exc:
+            self._reject_invalid_paper_fill(
+                str(symbol),
+                "liquidate",
+                reason="invalid_liquidation_fill",
+                metadata={"diagnostic": str(exc)},
+            )
+            return
         if quantity == 0:
             metadata: dict[str, Any] = {
                 "noop_reason": "liquidate_without_position",
@@ -527,9 +751,29 @@ class PaperExecutionAlgorithm:
                 metadata=metadata,
             )
             return
-        self._holding(symbol).Quantity = 0.0
-        self._cash += quantity * float(security.Price)
-        self._record_fill()
+        try:
+            price = _finite_float(
+                security.Price,
+                field="liquidation fill price",
+                positive=True,
+            )
+            current_cash = _finite_float(self._cash, field="current cash")
+            next_cash = current_cash + (quantity * price)
+            if not math.isfinite(next_cash):
+                raise ValueError("liquidation produces non-finite cash")
+        except ValueError as exc:
+            self._reject_invalid_paper_fill(
+                str(symbol),
+                "liquidate",
+                reason="invalid_liquidation_fill",
+                metadata={"diagnostic": str(exc)},
+            )
+            return
+        self._commit_fill(
+            str(symbol),
+            next_quantity=0.0,
+            next_cash=next_cash,
+        )
         self._publish("paper_fill_simulated", symbol, -quantity, "liquidate")
 
     def SubmitBracketOrder(  # noqa: N802
@@ -730,6 +974,7 @@ class PaperExecutionAlgorithm:
         return marks
 
     def performance_ledger(self) -> dict[str, Any]:
+        pending = self._pending_performance_pair or {}
         return {
             "binding_id": self._performance_binding_id,
             "initial_cash": float(self._initial_cash),
@@ -739,6 +984,7 @@ class PaperExecutionAlgorithm:
             "ledger_started_at": self._ledger_started_at,
             "first_fill_at": self._first_fill_at,
             "last_fill_at": self._last_fill_at,
+            "pending_performance_pair_id": pending.get("pair_id"),
             "state_path": str(self._state_path) if self._state_path else None,
             "state_error": self._state_error,
             "state_load_error": self._state_load_error,
@@ -773,9 +1019,185 @@ class PaperExecutionAlgorithm:
     def performance_window_state(self) -> dict[str, Any]:
         return json.loads(json.dumps(self._performance_window_state))
 
+    def pending_performance_pair(self) -> dict[str, Any] | None:
+        if self._pending_performance_pair is None:
+            return None
+        return json.loads(json.dumps(self._pending_performance_pair))
+
+    @staticmethod
+    def _validated_performance_pair(
+        payload: Mapping[str, Any],
+        *,
+        binding_id: str,
+    ) -> dict[str, Any]:
+        try:
+            candidate = json.loads(json.dumps(dict(payload), allow_nan=False))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"pending performance pair is not strict JSON: {exc}") from exc
+        if candidate.get("schema_version") != "paper_performance_pair.v1":
+            raise ValueError("unsupported pending performance pair schema")
+        pair_id = str(candidate.get("pair_id") or "").strip()
+        try:
+            uuid.UUID(pair_id)
+        except (ValueError, AttributeError) as exc:
+            raise ValueError("pending performance pair_id must be a UUID") from exc
+        if str(candidate.get("binding_id") or "").strip() != binding_id:
+            raise ValueError("pending performance pair binding mismatch")
+        valuation_as_of, _ = _parse_ledger_timestamp(
+            candidate.get("valuation_as_of"),
+            field="pending_performance_pair.valuation_as_of",
+        )
+        staged_at, _ = _parse_ledger_timestamp(
+            candidate.get("staged_at"),
+            field="pending_performance_pair.staged_at",
+        )
+        next_window = candidate.get("next_window")
+        if not isinstance(next_window, dict):
+            raise ValueError("pending performance pair next_window must be an object")
+        # Validate the staged window before it can ever replace the committed
+        # drawdown state. This also rejects malformed/non-finite observations.
+        staged_tracker = RollingDrawdownTracker()
+        staged_tracker.restore(next_window)
+        if str(next_window.get("latest_as_of") or "") != valuation_as_of:
+            raise ValueError("pending performance pair next_window as-of mismatch")
+        events = candidate.get("events")
+        expected_types = ("pnl_snapshot", "drawdown_snapshot")
+        if not isinstance(events, dict) or set(events) != set(expected_types):
+            raise ValueError("pending performance pair must contain exactly two event legs")
+        event_ids: set[str] = set()
+        validated_events: dict[str, Any] = {}
+        for event_type in expected_types:
+            leg = events.get(event_type)
+            if not isinstance(leg, dict) or not isinstance(leg.get("acked"), bool):
+                raise ValueError(f"pending {event_type} leg must contain boolean acked")
+            event_payload = leg.get("payload")
+            if not isinstance(event_payload, dict):
+                raise ValueError(f"pending {event_type} payload must be an object")
+            if event_payload.get("event_type") != event_type:
+                raise ValueError(f"pending {event_type} payload type mismatch")
+            event_created_at, _ = _parse_ledger_timestamp(
+                event_payload.get("created_at"),
+                field=f"pending_performance_pair.{event_type}.created_at",
+            )
+            if event_created_at != staged_at:
+                raise ValueError(f"pending {event_type} created_at mismatch")
+            event_id = str(event_payload.get("event_id") or "").strip()
+            try:
+                uuid.UUID(event_id)
+            except (ValueError, AttributeError) as exc:
+                raise ValueError(f"pending {event_type} event_id must be a UUID") from exc
+            if event_id in event_ids:
+                raise ValueError("pending performance pair event IDs must be distinct")
+            event_ids.add(event_id)
+            if str(event_payload.get("binding_id") or "").strip() != binding_id:
+                raise ValueError(f"pending {event_type} payload binding mismatch")
+            if str(event_payload.get(f"{'pnl' if event_type == 'pnl_snapshot' else 'drawdown'}_as_of") or "") != valuation_as_of:
+                raise ValueError(f"pending {event_type} as-of mismatch")
+            metadata = event_payload.get("metadata")
+            if not isinstance(metadata, dict) or metadata.get("performance_pair_id") != pair_id:
+                raise ValueError(f"pending {event_type} pair metadata mismatch")
+            if metadata.get("performance_pair_leg") != event_type:
+                raise ValueError(f"pending {event_type} leg metadata mismatch")
+            metrics = event_payload.get("metrics")
+            if not isinstance(metrics, dict):
+                raise ValueError(f"pending {event_type} metrics must be an object")
+            if event_type == "pnl_snapshot":
+                if "pnl" not in metrics or "drawdown_pct" in metrics or "drawdown" in metrics:
+                    raise ValueError("pending pnl leg has invalid primary metrics")
+                _finite_float(metrics["pnl"], field="pending pnl metric")
+            else:
+                if "drawdown_pct" not in metrics or "pnl" in metrics:
+                    raise ValueError("pending drawdown leg has invalid primary metrics")
+                drawdown = _finite_float(
+                    metrics["drawdown_pct"],
+                    field="pending drawdown metric",
+                )
+                if not 0 <= drawdown <= 1:
+                    raise ValueError("pending drawdown metric must be in [0, 1]")
+            validated_events[event_type] = leg
+        candidate.update(
+            {
+                "pair_id": pair_id,
+                "binding_id": binding_id,
+                "valuation_as_of": valuation_as_of,
+                "staged_at": staged_at,
+                "events": validated_events,
+            }
+        )
+        return candidate
+
+    def stage_performance_pair(self, payload: Mapping[str, Any]) -> bool:
+        if self._pending_performance_pair is not None:
+            self._state_error = "pending performance pair already exists"
+            return False
+        binding_id = str(self._performance_binding_id or "").strip()
+        if not binding_id:
+            self._state_error = "pending performance pair requires a bound ledger"
+            return False
+        try:
+            candidate = self._validated_performance_pair(payload, binding_id=binding_id)
+        except (TypeError, ValueError) as exc:
+            self._state_error = f"{type(exc).__name__}: {exc}"
+            return False
+        self._pending_performance_pair = candidate
+        if not self._persist_state():
+            self._pending_performance_pair = None
+            return False
+        return True
+
+    def ack_performance_pair_leg(self, pair_id: str, event_type: str) -> bool:
+        pending = self._pending_performance_pair
+        if pending is None or pending.get("pair_id") != pair_id:
+            self._state_error = "pending performance pair identity mismatch"
+            return False
+        leg = pending.get("events", {}).get(event_type)
+        if not isinstance(leg, dict):
+            self._state_error = "pending performance pair leg is missing"
+            return False
+        if leg.get("acked") is True:
+            return True
+        previous = json.loads(json.dumps(pending))
+        leg["acked"] = True
+        if not self._persist_state():
+            self._pending_performance_pair = previous
+            return False
+        return True
+
+    def finalize_performance_pair(self, pair_id: str) -> bool:
+        pending = self._pending_performance_pair
+        if pending is None or pending.get("pair_id") != pair_id:
+            self._state_error = "pending performance pair identity mismatch"
+            return False
+        events = pending.get("events", {})
+        if not all(
+            isinstance(events.get(event_type), dict)
+            and events[event_type].get("acked") is True
+            for event_type in ("pnl_snapshot", "drawdown_snapshot")
+        ):
+            self._state_error = "pending performance pair is not fully acknowledged"
+            return False
+        previous_window = self._performance_window_state
+        previous_pending = pending
+        self._performance_window_state = json.loads(json.dumps(pending["next_window"]))
+        self._pending_performance_pair = None
+        if not self._persist_state():
+            self._performance_window_state = previous_window
+            self._pending_performance_pair = previous_pending
+            return False
+        return True
+
     def save_performance_window(self, payload: Mapping[str, Any]) -> bool:
-        self._performance_window_state = json.loads(json.dumps(dict(payload)))
-        self._persist_state()
+        try:
+            serialized = json.dumps(dict(payload), allow_nan=False)
+            candidate = json.loads(serialized)
+        except (TypeError, ValueError) as exc:
+            self._state_error = f"{type(exc).__name__}: {exc}"
+            return False
+        previous = self._performance_window_state
+        self._performance_window_state = candidate
+        if not self._persist_state():
+            self._performance_window_state = previous
+            return False
         return self._state_error is None
 
     def _record_fill(self) -> None:
@@ -784,58 +1206,203 @@ class PaperExecutionAlgorithm:
             self._first_fill_at = filled_at
         self._fill_count += 1
         self._last_fill_at = filled_at
-        self._persist_state()
+        if not self._persist_state():
+            raise RuntimeError(
+                "paper fill ledger persistence failed: "
+                f"{self._state_error or 'unknown persistence error'}"
+            )
+
+    def _commit_fill(
+        self,
+        symbol: str,
+        *,
+        next_quantity: float,
+        next_cash: float,
+        execution_price: float | None = None,
+        price_as_of: str | None = None,
+        price_source: str = "paper_fill",
+    ) -> None:
+        """Atomically mutate and persist a fill before any fill event is published."""
+        holding = self._holding(symbol)
+        security = self._security(symbol)
+        checkpoint = {
+            "quantity": holding.Quantity,
+            "cash": self._cash,
+            "fill_count": self._fill_count,
+            "first_fill_at": self._first_fill_at,
+            "last_fill_at": self._last_fill_at,
+            "price": security.Price,
+            "mark_as_of": security.MarkAsOf,
+            "mark_source": security.MarkSource,
+            "mark_authoritative": security.MarkAuthoritative,
+        }
+        try:
+            if execution_price is not None:
+                self.SetSecurityPrice(
+                    symbol,
+                    execution_price,
+                    as_of=price_as_of,
+                    source=price_source,
+                    authoritative=False,
+                )
+            holding.Quantity = next_quantity
+            self._cash = next_cash
+            self._record_fill()
+        except Exception:
+            holding.Quantity = checkpoint["quantity"]
+            self._cash = checkpoint["cash"]
+            self._fill_count = checkpoint["fill_count"]
+            self._first_fill_at = checkpoint["first_fill_at"]
+            self._last_fill_at = checkpoint["last_fill_at"]
+            security.Price = checkpoint["price"]
+            security.MarkAsOf = checkpoint["mark_as_of"]
+            security.MarkSource = checkpoint["mark_source"]
+            security.MarkAuthoritative = checkpoint["mark_authoritative"]
+            raise
 
     def _load_state(self) -> None:
         if self._state_path is None or not self._state_path.exists():
             return
         try:
             payload = json.loads(self._state_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("paper performance ledger must be an object")
             if payload.get("schema_version") != "paper_performance_ledger.v1":
                 raise ValueError("unsupported paper performance ledger schema")
-            initial_cash = float(payload["initial_cash"])
-            cash = float(payload["cash"])
-            fill_count = int(payload["fill_count"])
-            if not math.isfinite(initial_cash) or initial_cash <= 0 or not math.isfinite(cash):
-                raise ValueError("paper performance ledger contains invalid cash values")
+            initial_cash = _finite_float(
+                payload["initial_cash"],
+                field="paper performance ledger initial_cash",
+                positive=True,
+            )
+            cash = _finite_float(
+                payload["cash"],
+                field="paper performance ledger cash",
+            )
+            raw_fill_count = payload["fill_count"]
+            if isinstance(raw_fill_count, bool) or not isinstance(raw_fill_count, int):
+                raise ValueError("paper performance ledger fill_count must be an integer")
+            fill_count = raw_fill_count
+            if fill_count < 0:
+                raise ValueError("paper performance ledger fill_count must be non-negative")
             holdings = payload.get("holdings")
             if not isinstance(holdings, dict):
                 raise ValueError("paper performance ledger holdings must be an object")
             restored: dict[str, _Holding] = {}
             for symbol, raw_quantity in holdings.items():
-                quantity = float(raw_quantity)
-                if not math.isfinite(quantity):
-                    raise ValueError(f"paper performance ledger has invalid quantity for {symbol}")
-                restored[str(symbol)] = _Holding(quantity)
-            execution_prices = payload.get("execution_prices")
-            if isinstance(execution_prices, dict):
-                for symbol, raw_price in execution_prices.items():
-                    price = float(raw_price)
-                    if math.isfinite(price) and price > 0:
-                        # Restored fill/execution prices are deliberately not
-                        # authoritative marks; source-ingest must refresh them.
-                        self._security(str(symbol)).Price = price
+                if not isinstance(symbol, str) or not symbol.strip():
+                    raise ValueError("paper performance ledger contains an empty symbol")
+                normalized_symbol = symbol.strip()
+                quantity = _finite_float(
+                    raw_quantity,
+                    field=f"paper performance ledger quantity for {normalized_symbol}",
+                )
+                if quantity == 0:
+                    raise ValueError(
+                        f"paper performance ledger stores zero quantity for {normalized_symbol}"
+                    )
+                if normalized_symbol in restored:
+                    raise ValueError(
+                        f"paper performance ledger contains duplicate symbol {normalized_symbol}"
+                    )
+                restored[normalized_symbol] = _Holding(quantity)
+            execution_prices = payload.get("execution_prices", {})
+            if not isinstance(execution_prices, dict):
+                raise ValueError("paper performance ledger execution_prices must be an object")
+            restored_prices: dict[str, float] = {}
+            for symbol, raw_price in execution_prices.items():
+                if not isinstance(symbol, str) or not symbol.strip():
+                    raise ValueError(
+                        "paper performance ledger execution_prices contains an empty symbol"
+                    )
+                normalized_symbol = symbol.strip()
+                price = _finite_float(
+                    raw_price,
+                    field=f"paper performance ledger execution price for {normalized_symbol}",
+                    positive=True,
+                )
+                if normalized_symbol in restored_prices:
+                    raise ValueError(
+                        "paper performance ledger execution_prices contains duplicate symbol "
+                        f"{normalized_symbol}"
+                    )
+                restored_prices[normalized_symbol] = price
+
+            ledger_started_at, ledger_started_dt = _parse_ledger_timestamp(
+                payload.get("ledger_started_at"),
+                field="ledger_started_at",
+            )
+            first_fill_at_raw = payload.get("first_fill_at")
+            last_fill_at_raw = payload.get("last_fill_at")
+            if fill_count == 0:
+                if first_fill_at_raw is not None or last_fill_at_raw is not None:
+                    raise ValueError(
+                        "paper performance ledger without fills must not have fill timestamps"
+                    )
+                if restored:
+                    raise ValueError(
+                        "paper performance ledger without fills cannot contain holdings"
+                    )
+                if not math.isclose(cash, initial_cash, rel_tol=0.0, abs_tol=1e-9):
+                    raise ValueError(
+                        "paper performance ledger without fills must retain initial cash"
+                    )
+                first_fill_at = None
+                last_fill_at = None
+            else:
+                first_fill_at, first_fill_dt = _parse_ledger_timestamp(
+                    first_fill_at_raw,
+                    field="first_fill_at",
+                )
+                last_fill_at, last_fill_dt = _parse_ledger_timestamp(
+                    last_fill_at_raw,
+                    field="last_fill_at",
+                )
+                if ledger_started_dt > first_fill_dt:
+                    raise ValueError(
+                        "paper performance ledger ledger_started_at is after first_fill_at"
+                    )
+                if first_fill_dt > last_fill_dt:
+                    raise ValueError(
+                        "paper performance ledger first_fill_at is after last_fill_at"
+                    )
+
+            performance_window = payload.get("performance_window", {})
+            if not isinstance(performance_window, dict):
+                raise ValueError("paper performance window must be an object")
+            # Reject Python's permissive NaN/Infinity JSON extensions anywhere
+            # in the persisted auxiliary state before mutating the live ledger.
+            json.dumps(performance_window, allow_nan=False)
+
+            binding_value = payload.get("binding_id")
+            if binding_value is not None and not isinstance(binding_value, str):
+                raise ValueError("paper performance ledger binding_id must be a string")
+            normalized_binding_id = str(binding_value or "").strip()
+            pending_performance_pair = payload.get("pending_performance_pair")
+            if pending_performance_pair is not None:
+                if not normalized_binding_id:
+                    raise ValueError("pending performance pair requires ledger binding identity")
+                if not isinstance(pending_performance_pair, dict):
+                    raise ValueError("pending performance pair must be an object")
+                pending_performance_pair = self._validated_performance_pair(
+                    pending_performance_pair,
+                    binding_id=normalized_binding_id,
+                )
+
             self._initial_cash = initial_cash
             self._cash = cash
             self.Portfolio = restored
-            self._fill_count = max(fill_count, 0)
-            self._last_fill_at = str(payload.get("last_fill_at") or "") or None
-            self._first_fill_at = (
-                str(payload.get("first_fill_at") or "")
-                or (self._last_fill_at if self._fill_count else None)
-            )
-            self._ledger_started_at = (
-                str(payload.get("ledger_started_at") or "")
-                or self._first_fill_at
-                or _iso_now()
-            )
-            performance_window = payload.get("performance_window") or {}
-            if not isinstance(performance_window, dict):
-                raise ValueError("paper performance window must be an object")
+            self.Securities = {}
+            for symbol, price in restored_prices.items():
+                # Restored fill/execution prices are deliberately not
+                # authoritative marks; source-ingest must refresh them.
+                self._security(symbol).Price = price
+            self._fill_count = fill_count
+            self._last_fill_at = last_fill_at
+            self._first_fill_at = first_fill_at
+            self._ledger_started_at = ledger_started_at
             self._performance_window_state = dict(performance_window)
-            self._performance_binding_id = (
-                str(payload.get("binding_id") or "").strip() or None
-            )
+            self._pending_performance_pair = pending_performance_pair
+            self._performance_binding_id = normalized_binding_id or None
             if self._performance_binding_id is None:
                 self._loaded_state_missing_binding_id = True
                 self._state_binding_error = (
@@ -846,9 +1413,14 @@ class PaperExecutionAlgorithm:
             self._state_error = f"{type(exc).__name__}: {exc}"
             self._state_load_error = self._state_error
 
-    def _persist_state(self) -> None:
+    def _persist_state(self) -> bool:
         if self._state_path is None:
-            return
+            return True
+        if self._state_load_error:
+            # Never replace a ledger that failed validation during load.  The
+            # operator needs the original bytes for diagnosis/recovery.
+            self._state_error = self._state_load_error
+            return False
         payload = {
             "schema_version": "paper_performance_ledger.v1",
             "binding_id": self._performance_binding_id,
@@ -859,6 +1431,7 @@ class PaperExecutionAlgorithm:
             "first_fill_at": self._first_fill_at,
             "last_fill_at": self._last_fill_at,
             "performance_window": self._performance_window_state,
+            "pending_performance_pair": self._pending_performance_pair,
             "holdings": {
                 symbol: float(holding.Quantity)
                 for symbol, holding in sorted(self.Portfolio.items())
@@ -870,14 +1443,23 @@ class PaperExecutionAlgorithm:
                 if math.isfinite(float(security.Price)) and float(security.Price) > 0
             },
         }
+        temporary: Path | None = None
         try:
+            serialized = json.dumps(payload, sort_keys=True, allow_nan=False)
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
             temporary = self._state_path.with_name(f"{self._state_path.name}.{uuid.uuid4().hex}.tmp")
-            temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+            temporary.write_text(serialized, encoding="utf-8")
             os.replace(temporary, self._state_path)
             self._state_error = None
-        except OSError as exc:
+            return True
+        except (OSError, TypeError, ValueError) as exc:
             self._state_error = f"{type(exc).__name__}: {exc}"
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return False
 
     def open_bracket_orders(self) -> list[dict[str, Any]]:
         return [dict(order) for order in self._open_bracket_orders]
@@ -1157,7 +1739,25 @@ class RuntimeTelemetryEmitter:
         if payload is None:
             return False
 
-        body = json.dumps(payload).encode("utf-8")
+        return self.emit_payload(payload)
+
+    def emit_payload(self, payload: Mapping[str, Any]) -> bool:
+        """Deliver an already-built immutable event for exact retry.
+
+        Important producer events are staged durably before this method is
+        called.  Retrying the stored payload preserves its event ID, metrics,
+        metadata, and correlation envelope so telemetry idempotency can safely
+        collapse an accepted response that was lost in transit.
+        """
+        if not self._enabled:
+            return False
+
+        try:
+            body = json.dumps(dict(payload), allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            self._failed += 1
+            self._last_error = f"{type(exc).__name__}: {exc}"
+            return False
         request = urllib.request.Request(
             f"{self._url}/api/telemetry/ingest",
             data=body,
@@ -1225,6 +1825,11 @@ class RuntimeTelemetryEmitter:
         metadata: dict[str, Any] = {
             "runtime_role": self._identity.runtime_role,
         }
+        binding_effective_at = binding.get("effective_at") or binding.get(
+            "binding_effective_at"
+        )
+        if binding_effective_at not in (None, ""):
+            metadata["runtime_binding_effective_at"] = str(binding_effective_at)
         if self._runtime_context is not None:
             metadata.update(
                 {
@@ -1417,6 +2022,7 @@ class PaperRuntimeService:
             self._last_poll_at = _iso_now()
             before = len(self._consumer._processed_signal_ids)
             binding = self._binding_resolver.resolve()
+            ledger_binding_failed = False
             try:
                 if not binding:
                     raise RuntimeError(
@@ -1429,6 +2035,19 @@ class PaperRuntimeService:
                 )
                 if not self._algo.BindPerformanceBinding(binding_id):
                     ledger = self._algo.performance_ledger()
+                    ledger_binding_failed = True
+                    self._performance_telemetry = {
+                        "status": "invalid_ledger",
+                        "code": "performance_ledger_load_failed",
+                        "attempted_at": _iso_now(),
+                        "state_path": ledger.get("state_path"),
+                        "detail": (
+                            ledger.get("state_load_error")
+                            or ledger.get("state_binding_error")
+                            or ledger.get("state_error")
+                            or "paper performance ledger binding failed"
+                        ),
+                    }
                     raise RuntimeError(
                         ledger.get("state_binding_error")
                         or ledger.get("state_error")
@@ -1457,6 +2076,10 @@ class PaperRuntimeService:
                 if self._synthetic_market is not None:
                     self._synthetic_market.advance(self._algo)
                 self._maybe_emit_performance_snapshots()
+                self._maybe_emit_heartbeat()
+            elif ledger_binding_failed:
+                # Execution remains blocked, but surface the durable-ledger
+                # failure through the normal heartbeat diagnostics path.
                 self._maybe_emit_heartbeat()
             return self.snapshot()
 
@@ -1811,6 +2434,10 @@ class PaperRuntimeService:
         if not self._telemetry.enabled:
             return
 
+        if self._algo.pending_performance_pair() is not None:
+            self._flush_pending_performance_pair()
+            return
+
         symbols = self._algo.mark_symbols()
         provider_diagnostic: dict[str, Any]
         provider_marks: dict[str, MarketMark] = {}
@@ -1917,71 +2544,208 @@ class PaperRuntimeService:
             "valuation_mark_count": len(sample.marks),
             **self._performance_snapshot_metrics(),
         }
-        pnl_sent = self._telemetry.emit_pnl_snapshot(
-            sample.pnl,
-            metadata=metadata,
-            extra_metrics={
+        pair_id = str(uuid.uuid4())
+        staged_at = _iso_now()
+        pnl_metadata = {
+            **metadata,
+            "performance_pair_id": pair_id,
+            "performance_pair_leg": "pnl_snapshot",
+        }
+        drawdown_metadata = {
+            **metadata,
+            "performance_pair_id": pair_id,
+            "performance_pair_leg": "drawdown_snapshot",
+        }
+        pnl_payload = self._build_performance_event_payload(
+            "pnl_snapshot",
+            {
+                "pnl": sample.pnl,
                 **common_metrics,
                 "pnl_as_of": sample.as_of,
             },
+            pnl_metadata,
+            event_id=str(uuid.uuid4()),
+            created_at=staged_at,
+            binding_id=str(ledger.get("binding_id") or ""),
         )
-        emit_drawdown = getattr(self._telemetry, "emit_drawdown_snapshot", None)
-        if callable(emit_drawdown):
-            drawdown_sent = emit_drawdown(
-                drawdown_metrics["drawdown_pct"],
-                metadata=metadata,
-                extra_metrics={
-                    **common_metrics,
-                    **{
-                        key: value
-                        for key, value in drawdown_metrics.items()
-                        if key != "drawdown_pct"
-                    },
-                },
-            )
-        else:
-            drawdown_sent = self._telemetry.emit(
-                "drawdown_snapshot",
-                {
-                    "drawdown_pct": drawdown_metrics["drawdown_pct"],
-                    **common_metrics,
-                    **{
-                        key: value
-                        for key, value in drawdown_metrics.items()
-                        if key != "drawdown_pct"
-                    },
-                },
-                metadata=metadata,
-            )
-        self._performance_telemetry.update(
+        drawdown_payload = self._build_performance_event_payload(
+            "drawdown_snapshot",
             {
-                "status": "emitted" if pnl_sent and drawdown_sent else "emit_failed",
-                "code": (
-                    "performance_snapshots_emitted"
-                    if pnl_sent and drawdown_sent
-                    else "performance_snapshot_emit_failed"
-                ),
-                "as_of": sample.as_of,
-                "pnl": sample.pnl,
                 "drawdown_pct": drawdown_metrics["drawdown_pct"],
-                "pnl_snapshot_sent": bool(pnl_sent),
-                "drawdown_snapshot_sent": bool(drawdown_sent),
-            }
+                **common_metrics,
+                **{
+                    key: value
+                    for key, value in drawdown_metrics.items()
+                    if key != "drawdown_pct"
+                },
+            },
+            drawdown_metadata,
+            event_id=str(uuid.uuid4()),
+            created_at=staged_at,
+            binding_id=str(ledger.get("binding_id") or ""),
         )
-        if pnl_sent and drawdown_sent:
-            if not self._algo.save_performance_window(self._drawdown_tracker.export_state()):
-                self._performance_telemetry.update(
-                    {
-                        "status": "state_persist_failed",
-                        "code": "performance_window_persist_failed",
-                        "detail": self._algo.performance_ledger().get("state_error"),
-                    }
-                )
-        else:
-            # Retry the same observation after a transient telemetry failure;
-            # do not advance the durable high-water series without both
-            # canonical events.
+        if pnl_payload is None or drawdown_payload is None:
             self._drawdown_tracker.restore(tracker_checkpoint)
+            self._performance_telemetry.update(
+                {
+                    "status": "emit_failed",
+                    "code": "performance_snapshot_build_failed",
+                    "detail": getattr(self._telemetry, "snapshot", lambda: {})().get(
+                        "last_error"
+                    ),
+                }
+            )
+            return
+        pair = {
+            "schema_version": "paper_performance_pair.v1",
+            "pair_id": pair_id,
+            "binding_id": str(ledger.get("binding_id") or ""),
+            "valuation_as_of": sample.as_of,
+            "staged_at": staged_at,
+            "next_window": self._drawdown_tracker.export_state(),
+            "events": {
+                "pnl_snapshot": {"payload": pnl_payload, "acked": False},
+                "drawdown_snapshot": {"payload": drawdown_payload, "acked": False},
+            },
+        }
+        if not self._algo.stage_performance_pair(pair):
+            self._drawdown_tracker.restore(tracker_checkpoint)
+            self._performance_telemetry.update(
+                {
+                    "status": "state_persist_failed",
+                    "code": "performance_pair_stage_failed",
+                    "detail": self._algo.performance_ledger().get("state_error"),
+                }
+            )
+            return
+        # The staged next window is not committed until both immutable event
+        # legs have been acknowledged. A crash resumes from the pending pair.
+        self._drawdown_tracker.restore(tracker_checkpoint)
+        self._flush_pending_performance_pair()
+
+    def _build_performance_event_payload(
+        self,
+        event_type: str,
+        metrics: dict[str, Any],
+        metadata: dict[str, Any],
+        *,
+        event_id: str,
+        created_at: str,
+        binding_id: str,
+    ) -> dict[str, Any] | None:
+        builder = getattr(self._telemetry, "build_event", None)
+        if callable(builder):
+            return builder(
+                event_type,
+                metrics,
+                metadata,
+                event_id=event_id,
+                created_at=created_at,
+            )
+        # Narrow compatibility path for in-memory test emitters. Production
+        # RuntimeTelemetryEmitter always persists the complete canonical event.
+        payload = {
+            "event_id": event_id,
+            "event_type": event_type,
+            "created_at": created_at,
+            "binding_id": binding_id,
+            "metrics": dict(metrics),
+            "metadata": dict(metadata),
+        }
+        metric_stamp = "pnl_as_of" if event_type == "pnl_snapshot" else "drawdown_as_of"
+        payload[metric_stamp] = metrics.get(metric_stamp)
+        return payload
+
+    def _emit_staged_performance_payload(self, payload: Mapping[str, Any]) -> bool:
+        sender = getattr(self._telemetry, "emit_payload", None)
+        if callable(sender):
+            return bool(sender(payload))
+        return bool(
+            self._telemetry.emit(
+                str(payload.get("event_type") or ""),
+                dict(payload.get("metrics") or {}),
+                metadata=dict(payload.get("metadata") or {}),
+            )
+        )
+
+    def _flush_pending_performance_pair(self) -> bool:
+        pending = self._algo.pending_performance_pair()
+        if pending is None:
+            return True
+        pair_id = str(pending["pair_id"])
+        events = pending["events"]
+        for event_type in ("pnl_snapshot", "drawdown_snapshot"):
+            leg = events[event_type]
+            if leg["acked"]:
+                continue
+            if not self._emit_staged_performance_payload(leg["payload"]):
+                self._performance_telemetry = {
+                    "status": "emit_failed",
+                    "code": "performance_snapshot_emit_failed",
+                    "attempted_at": _iso_now(),
+                    "pair_id": pair_id,
+                    "failed_leg": event_type,
+                    "as_of": pending["valuation_as_of"],
+                    "pnl_snapshot_sent": bool(events["pnl_snapshot"]["acked"]),
+                    "drawdown_snapshot_sent": bool(
+                        events["drawdown_snapshot"]["acked"]
+                    ),
+                }
+                return False
+            if not self._algo.ack_performance_pair_leg(pair_id, event_type):
+                self._performance_telemetry = {
+                    "status": "state_persist_failed",
+                    "code": "performance_pair_ack_persist_failed",
+                    "attempted_at": _iso_now(),
+                    "pair_id": pair_id,
+                    "failed_leg": event_type,
+                    "detail": self._algo.performance_ledger().get("state_error"),
+                }
+                return False
+            # Refresh the durable ack state before deciding whether to send the
+            # next leg. This makes a process crash resume at the exact boundary.
+            pending = self._algo.pending_performance_pair()
+            assert pending is not None
+            events = pending["events"]
+
+        next_window = pending["next_window"]
+        pnl = float(events["pnl_snapshot"]["payload"]["metrics"]["pnl"])
+        drawdown = float(
+            events["drawdown_snapshot"]["payload"]["metrics"]["drawdown_pct"]
+        )
+        if not self._algo.finalize_performance_pair(pair_id):
+            self._performance_telemetry = {
+                "status": "state_persist_failed",
+                "code": "performance_pair_finalize_failed",
+                "attempted_at": _iso_now(),
+                "pair_id": pair_id,
+                "detail": self._algo.performance_ledger().get("state_error"),
+            }
+            return False
+        try:
+            self._drawdown_tracker.restore(next_window)
+        except ValueError as exc:
+            self._performance_state_restore_error = f"{type(exc).__name__}: {exc}"
+            self._performance_telemetry = {
+                "status": "invalid_drawdown_series",
+                "code": "performance_window_restore_failed",
+                "attempted_at": _iso_now(),
+                "pair_id": pair_id,
+                "detail": self._performance_state_restore_error,
+            }
+            return False
+        self._performance_telemetry = {
+            "status": "emitted",
+            "code": "performance_snapshots_emitted",
+            "attempted_at": _iso_now(),
+            "pair_id": pair_id,
+            "as_of": pending["valuation_as_of"],
+            "pnl": pnl,
+            "drawdown_pct": drawdown,
+            "pnl_snapshot_sent": True,
+            "drawdown_snapshot_sent": True,
+        }
+        return True
 
     # Backward-compatible private hook retained for narrow callers/tests.  It
     # now enforces the paired, fail-closed performance contract.

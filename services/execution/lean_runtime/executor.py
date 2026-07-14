@@ -27,6 +27,7 @@ HOLD     *          *                  paper_order_simulated no-op telemetry
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from .symbol_parser import ParsedSymbol, SymbolParseError, parse as parse_symbol
@@ -114,16 +115,36 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
         For unrecoverable signal errors that should be logged and skipped.
     """
     signal_id = signal.get("signal_id", "<unknown>")
-    signal_context = _signal_context_metadata(signal)
     action = signal["action"]           # BUY | SELL | HOLD | EXIT
     direction = signal["direction"]     # LONG | SHORT
-    quantity = float(signal["quantity"])
+    try:
+        quantity = float(signal["quantity"])
+    except (TypeError, ValueError) as exc:
+        raise ExecutionError(f"[{signal_id}] quantity must be numeric") from exc
+    if not math.isfinite(quantity) or quantity < 0:
+        raise ExecutionError(f"[{signal_id}] quantity must be finite and non-negative")
     quantity_type = signal["quantity_type"]  # SHARES | PERCENT_PORTFOLIO | CASH_VALUE
     order_type = signal.get("order_type", "MARKET")
     limit_price = signal.get("limit_price")
-    confidence = float(
-        (signal.get("metadata") or {}).get("confidence_score", 1.0)
-    )
+    try:
+        confidence = float(
+            (signal.get("metadata") or {}).get("confidence_score", 1.0)
+        )
+    except (TypeError, ValueError) as exc:
+        raise ExecutionError(f"[{signal_id}] confidence_score must be numeric") from exc
+    if not math.isfinite(confidence) or confidence < 0:
+        raise ExecutionError(
+            f"[{signal_id}] confidence_score must be finite and non-negative"
+        )
+    if limit_price is not None:
+        try:
+            parsed_limit_price = float(limit_price)
+        except (TypeError, ValueError) as exc:
+            raise ExecutionError(f"[{signal_id}] limit_price must be numeric") from exc
+        if not math.isfinite(parsed_limit_price) or parsed_limit_price <= 0:
+            raise ExecutionError(f"[{signal_id}] limit_price must be finite and positive")
+        limit_price = parsed_limit_price
+    signal_context = _signal_context_metadata(signal)
 
     # --- Taiwan venues: route to the Shioaji broker boundary, not LEAN ---
     if _is_taiwan_venue_symbol(signal["symbol"]):
@@ -323,20 +344,32 @@ def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
     for key in _ORDER_ADAPTER_CONTEXT_KEYS:
         value = metadata.get(key)
         if value not in (None, "", [], {}):
+            if key == "price":
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(value) or value <= 0:
+                    continue
             context[key] = value
-    market_price = _signal_market_price(signal)
-    if market_price is not None:
-        context["market_price"] = market_price
-        market_as_of = _signal_market_as_of(signal)
-        market_source = _signal_market_source(signal)
-        if market_as_of and market_source:
-            context["market_price_as_of"] = market_as_of
-            context["market_price_source"] = market_source
+    execution_price = _signal_market_price(signal)
+    evidence_price = _signal_market_evidence_price(signal)
+    market_as_of = _signal_market_as_of(signal)
+    market_source = _signal_market_source(signal)
+    if evidence_price is not None and market_as_of and market_source:
+        context["market_price"] = evidence_price
+        context["market_price_as_of"] = market_as_of
+        context["market_price_source"] = market_source
+    elif execution_price is not None:
+        context["market_price"] = execution_price
     if "quantity" in signal:
         try:
-            context["requested_quantity"] = float(signal["quantity"])
+            requested_quantity = float(signal["quantity"])
         except (TypeError, ValueError):
             pass
+        else:
+            if math.isfinite(requested_quantity):
+                context["requested_quantity"] = requested_quantity
     return context
 
 
@@ -385,7 +418,7 @@ def _signal_market_price(signal: dict[str, Any]) -> float | None:
                 price = float(value)
             except (TypeError, ValueError):
                 continue
-            if price > 0:
+            if math.isfinite(price) and price > 0:
                 return price
     return None
 
@@ -401,7 +434,7 @@ def _signal_market_evidence_price(signal: dict[str, Any]) -> float | None:
             price = float(value)
         except (TypeError, ValueError):
             continue
-        if price > 0:
+        if math.isfinite(price) and price > 0:
             return price
     return None
 
@@ -644,6 +677,14 @@ def _build_bracket_legs(
     stop_loss_pct: float,
     take_profit_pct: float,
 ) -> list[dict[str, Any]]:
+    numeric_inputs = (
+        entry_quantity,
+        entry_price,
+        stop_loss_pct,
+        take_profit_pct,
+    )
+    if not all(math.isfinite(value) for value in numeric_inputs):
+        return []
     if entry_quantity <= 0 or entry_price <= 0:
         return []
     if action == "BUY" and direction == "LONG":
@@ -835,6 +876,21 @@ def _place_limit_close_long(
             f"[{signal_id}] LIMIT close failed: PERCENT_PORTFOLIO quantity_type "
             "is not supported for limit orders"
         )
+    if not math.isfinite(quantity) or quantity < 0:
+        raise ExecutionError(
+            f"[{signal_id}] LIMIT close failed: quantity must be finite and non-negative"
+        )
+    try:
+        validated_limit_price = float(limit_price)
+    except (TypeError, ValueError) as exc:
+        raise ExecutionError(
+            f"[{signal_id}] LIMIT close failed: limit_price must be numeric"
+        ) from exc
+    if not math.isfinite(validated_limit_price) or validated_limit_price <= 0:
+        raise ExecutionError(
+            f"[{signal_id}] LIMIT close failed: limit_price must be finite and positive"
+        )
+    limit_price = validated_limit_price
 
     holdings = _get_holdings_quantity(algo, lean_symbol)
     if holdings <= 0:
@@ -895,6 +951,10 @@ def _place_order(
     Place a directional order.  sign=+1 for long, -1 for short.
     Logs lossy float→int conversion for SHARES and CASH_VALUE.
     """
+    if not math.isfinite(quantity) or quantity < 0:
+        raise ExecutionError(
+            f"[{signal_id}] order quantity must be finite and non-negative"
+        )
     if order_type == "LIMIT" and limit_price is None:
         raise ExecutionError(f"[{signal_id}] LIMIT order failed: limit_price is required")
     if order_type == "LIMIT" and quantity_type == "PERCENT_PORTFOLIO":
@@ -902,6 +962,14 @@ def _place_order(
             f"[{signal_id}] LIMIT order failed: PERCENT_PORTFOLIO quantity_type "
             "is not supported for limit orders"
         )
+    if limit_price is not None:
+        try:
+            validated_limit_price = float(limit_price)
+        except (TypeError, ValueError) as exc:
+            raise ExecutionError(f"[{signal_id}] limit_price must be numeric") from exc
+        if not math.isfinite(validated_limit_price) or validated_limit_price <= 0:
+            raise ExecutionError(f"[{signal_id}] limit_price must be finite and positive")
+        limit_price = validated_limit_price
 
     if quantity_type == "PERCENT_PORTFOLIO":
         pct = sign * quantity
@@ -940,12 +1008,12 @@ def _place_order(
 
     elif quantity_type == "CASH_VALUE":
         price = _get_price(algo, lean_symbol)
-        if price <= 0:
+        if not math.isfinite(price) or price <= 0:
             raise ExecutionError(
                 f"[{signal_id}] CASH_VALUE order failed: cannot get price for {lean_symbol}"
             )
         execution_price = float(limit_price) if order_type == "LIMIT" and limit_price is not None else price
-        if execution_price <= 0:
+        if not math.isfinite(execution_price) or execution_price <= 0:
             raise ExecutionError(
                 f"[{signal_id}] CASH_VALUE order failed: cannot get execution price for {lean_symbol}"
             )
@@ -1031,23 +1099,30 @@ def _resolve_lean_enum(enum_class: Any, dotted_name: str, prefix: str) -> Any:
 
 def _get_holdings_quantity(algo: Any, lean_symbol: Any) -> float:
     try:
-        return algo.Portfolio[lean_symbol].Quantity
+        quantity = float(algo.Portfolio[lean_symbol].Quantity)
     except Exception:
         return 0.0
+    if not math.isfinite(quantity):
+        raise ExecutionError(f"invalid non-finite holdings quantity for {lean_symbol}")
+    return quantity
 
 
 def _get_price(algo: Any, lean_symbol: Any) -> float:
     try:
-        return float(algo.Securities[lean_symbol].Price)
+        price = float(algo.Securities[lean_symbol].Price)
     except Exception:
         pass
+    else:
+        if math.isfinite(price) and price > 0:
+            return price
 
     ensure_security = getattr(algo, "EnsureSecurity", None)
     if callable(ensure_security):
         try:
-            return float(ensure_security(lean_symbol).Price)
+            price = float(ensure_security(lean_symbol).Price)
         except Exception:
             return 0.0
+        return price if math.isfinite(price) and price > 0 else 0.0
     return 0.0
 
 

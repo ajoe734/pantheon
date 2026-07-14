@@ -269,6 +269,92 @@ class ExecutorBracketOrderTests(unittest.TestCase):
                 )
             ],
         )
+        context = _signal_context_metadata(signal)
+        self.assertEqual(context["market_price"], 101.5)
+        self.assertEqual(context["market_price_as_of"], "2026-07-14T12:00:00Z")
+        self.assertEqual(context["market_price_source"], "source-ingest://aapl-price")
+
+    def test_nonfinite_signal_prices_are_never_seeded_or_exposed_as_context(self):
+        for invalid_price in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(price=repr(invalid_price)):
+                calls = []
+
+                class Algo:
+                    def SetSecurityPrice(self, symbol, price):  # noqa: N802
+                        calls.append(("price", symbol, price))
+
+                    def SetSecurityMark(self, symbol, price, *, as_of, source):  # noqa: N802
+                        calls.append(("mark", symbol, price, as_of, source))
+
+                signal = {
+                    "metadata": {
+                        "price": invalid_price,
+                        "market_data": {
+                            "price": invalid_price,
+                            "as_of": "2026-07-14T12:00:00Z",
+                            "source_ref": "source-ingest://invalid",
+                        }
+                    }
+                }
+
+                _seed_signal_market_price(Algo(), "AAPL", signal)
+
+                self.assertEqual(calls, [])
+                context = _signal_context_metadata(signal)
+                self.assertNotIn("price", context)
+                self.assertNotIn("market_price", context)
+
+    def test_nonfinite_or_negative_signal_quantities_fail_before_order_dispatch(self):
+        for invalid_quantity in (float("nan"), float("inf"), float("-inf"), -1.0):
+            with self.subTest(quantity=repr(invalid_quantity)):
+                algo = _SpyAlgo()
+                with self.assertRaisesRegex(ExecutionError, "quantity must be finite"):
+                    execute(
+                        {
+                            "signal_id": "sig-invalid-quantity",
+                            "symbol": "AAPL.US",
+                            "action": "BUY",
+                            "direction": "LONG",
+                            "quantity": invalid_quantity,
+                            "quantity_type": "SHARES",
+                        },
+                        algo,
+                    )
+                self.assertEqual(algo.market_orders, [])
+
+    def test_nonfinite_execution_price_and_limit_price_fail_closed(self):
+        cash_algo = _SpyAlgo()
+        cash_algo.Securities["AAPL"].Price = float("inf")
+        with self.assertRaisesRegex(ExecutionError, "cannot get price"):
+            execute(
+                {
+                    "signal_id": "sig-invalid-cash-price",
+                    "symbol": "AAPL.US",
+                    "action": "BUY",
+                    "direction": "LONG",
+                    "quantity": 100.0,
+                    "quantity_type": "CASH_VALUE",
+                },
+                cash_algo,
+            )
+        self.assertEqual(cash_algo.market_orders, [])
+
+        limit_algo = _SpyAlgo()
+        with self.assertRaisesRegex(ExecutionError, "limit_price must be finite"):
+            execute(
+                {
+                    "signal_id": "sig-invalid-limit-price",
+                    "symbol": "AAPL.US",
+                    "action": "BUY",
+                    "direction": "LONG",
+                    "quantity": 1.0,
+                    "quantity_type": "SHARES",
+                    "order_type": "LIMIT",
+                    "limit_price": float("inf"),
+                },
+                limit_algo,
+            )
+        self.assertEqual(limit_algo.limit_orders, [])
 
     def test_hold_signal_records_noop_feedback_without_order(self):
         algo = _SpyAlgo()

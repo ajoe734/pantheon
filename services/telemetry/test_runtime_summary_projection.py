@@ -253,6 +253,157 @@ class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
         self.assertEqual(summary["drawdown"], 0.10)
         self.assertEqual(summary["drawdown_at"], "2026-05-01T00:10:00Z")
 
+    def test_later_created_at_alone_cannot_roll_over_a_legacy_binding(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        old = _event("pnl_snapshot", created_at="2026-05-01T00:05:00Z")
+        old["metrics"] = {"pnl": 50.0, "drawdown_pct": 0.02}
+        store.project_event(old)
+
+        new = _event("heartbeat", created_at="2026-05-01T00:10:00Z")
+        new.update(
+            {
+                "event_id": "evt-binding-002-heartbeat",
+                "binding_id": "rtb-paper-002",
+                "artifact_id": "artifact-paper-002",
+                "artifact_version": "2.0.0",
+                "plan_id": "plan-paper-002",
+            }
+        )
+        summary = store.project_event(new)
+
+        self.assertEqual(summary["binding_id"], "rtb-paper-001")
+        self.assertEqual(summary["artifact_id"], "artifact-paper-001")
+        self.assertEqual(summary["last_event_id"], old["event_id"])
+        self.assertEqual(summary["pnl"], 50.0)
+        self.assertEqual(summary["drawdown"], 0.02)
+        self.assertEqual(
+            summary["projection_diagnostics"]["last_binding_rollover_rejection"][
+                "reason"
+            ],
+            "binding_effective_boundary_unavailable",
+        )
+
+    def test_retired_binding_late_event_cannot_reclaim_after_rollover(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "runtime_summaries.json"
+            store = RuntimeSummaryProjectionStore(path, heartbeat_stale_after_seconds=60)
+            old = _event(created_at="2026-05-01T00:05:00Z")
+            old["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:00:00Z"
+            store.project_event(old)
+
+            new = _event("heartbeat", created_at="2026-05-01T00:10:00Z")
+            new.update(
+                {
+                    "event_id": "evt-binding-002-heartbeat",
+                    "binding_id": "rtb-paper-002",
+                    "artifact_id": "artifact-paper-002",
+                    "artifact_version": "2.0.0",
+                    "plan_id": "plan-paper-002",
+                }
+            )
+            new["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:10:00Z"
+            store.project_event(new)
+
+            # Reload to prove that the generation boundary and retired-binding
+            # tombstone survive the JSON read-model restart.
+            reloaded = RuntimeSummaryProjectionStore(path, heartbeat_stale_after_seconds=60)
+            late_old = _event("pnl_snapshot", created_at="2026-05-01T00:20:00Z")
+            late_old["event_id"] = "evt-late-retired-binding-001"
+            late_old["metrics"] = {"pnl": 999.0, "drawdown_pct": 0.99}
+            summary = reloaded.project_event(late_old)
+
+            self.assertEqual(summary["binding_id"], "rtb-paper-002")
+            self.assertEqual(summary["artifact_id"], "artifact-paper-002")
+            self.assertEqual(summary["last_event_id"], "evt-binding-002-heartbeat")
+            self.assertNotIn("pnl", summary)
+            diagnostic = summary["projection_diagnostics"][
+                "last_binding_rollover_rejection"
+            ]
+            self.assertEqual(diagnostic["reason"], "retired_binding_reclaim")
+            self.assertEqual(diagnostic["candidate_binding_id"], "rtb-paper-001")
+            self.assertEqual(diagnostic["current_binding_id"], "rtb-paper-002")
+
+    def test_projection_first_binding_rejects_unseen_late_binding(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        current = _event("heartbeat", created_at="2026-05-01T00:11:00Z")
+        current.update(
+            {
+                "event_id": "evt-binding-002-first-projected",
+                "binding_id": "rtb-paper-002",
+                "artifact_id": "artifact-paper-002",
+                "artifact_version": "2.0.0",
+                "plan_id": "plan-paper-002",
+            }
+        )
+        current["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:10:00Z"
+        store.project_event(current)
+
+        # B1 was never observed by this projection, so it is not a tombstone.
+        # Its later event time still cannot stand in for binding generation.
+        unseen_old = _event("pnl_snapshot", created_at="2026-05-01T00:20:00Z")
+        unseen_old["event_id"] = "evt-unseen-binding-001-late"
+        unseen_old["metrics"] = {"pnl": 999.0, "drawdown_pct": 0.99}
+        summary = store.project_event(unseen_old)
+
+        self.assertEqual(summary["binding_id"], "rtb-paper-002")
+        self.assertEqual(summary["last_event_id"], "evt-binding-002-first-projected")
+        self.assertNotIn("pnl", summary)
+        self.assertEqual(
+            summary["projection_diagnostics"]["last_binding_rollover_rejection"][
+                "reason"
+            ],
+            "candidate_binding_effective_at_missing",
+        )
+
+    def test_binding_effective_metadata_allows_true_newer_rollover(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        old = _event(created_at="2026-05-01T00:05:00Z")
+        old["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:00:00Z"
+        store.project_event(old)
+
+        new = _event("heartbeat", created_at="2026-05-01T00:11:00Z")
+        new.update(
+            {
+                "event_id": "evt-effective-binding-002",
+                "binding_id": "rtb-paper-002",
+                "artifact_id": "artifact-paper-002",
+                "artifact_version": "2.0.0",
+                "plan_id": "plan-paper-002",
+            }
+        )
+        new["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:10:00Z"
+
+        summary = store.project_event(new)
+
+        self.assertEqual(summary["binding_id"], "rtb-paper-002")
+        self.assertEqual(summary["_binding_effective_at"], "2026-05-01T00:10:00Z")
+        self.assertEqual(
+            summary["_binding_boundary_source"],
+            "metadata.runtime_binding_effective_at",
+        )
+
+    def test_candidate_effective_at_can_upgrade_legacy_binding_boundary(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        store.project_event(_event(created_at="2026-05-01T00:05:00Z"))
+
+        upgraded = _event("heartbeat", created_at="2026-05-01T00:11:00Z")
+        upgraded.update(
+            {
+                "event_id": "evt-effective-upgrade-binding-002",
+                "binding_id": "rtb-paper-002",
+                "artifact_id": "artifact-paper-002",
+                "artifact_version": "2.0.0",
+                "plan_id": "plan-paper-002",
+            }
+        )
+        upgraded["metadata"]["binding_effective_at"] = "2026-05-01T00:10:00Z"
+        summary = store.project_event(upgraded)
+
+        self.assertEqual(summary["binding_id"], "rtb-paper-002")
+        self.assertEqual(summary["artifact_id"], "artifact-paper-002")
+        self.assertEqual(summary["_binding_effective_at"], "2026-05-01T00:10:00Z")
+        self.assertEqual(summary["_retired_binding_ids"], ["rtb-paper-001"])
+
     def test_multiple_stages_coexist_without_collision(self):
         store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
         fresh = datetime(2026, 5, 1, 0, 0, 30, tzinfo=timezone.utc)

@@ -346,7 +346,7 @@ class SourceIngestMarkProvider:
 
     @classmethod
     def _index_records(cls, records: Sequence[Any]) -> dict[str, MarketMark | None]:
-        indexed: dict[str, MarketMark | None] = {}
+        candidates_by_alias: dict[str, list[MarketMark]] = {}
         for raw_record in records:
             if not isinstance(raw_record, Mapping):
                 continue
@@ -367,23 +367,43 @@ class SourceIngestMarkProvider:
                 if mark is None:
                     continue
                 for alias in _symbol_aliases(mark.symbol, mark.quote_currency):
-                    existing = indexed.get(alias)
-                    if alias in indexed and existing is None:
-                        continue
-                    if existing is not None and (
-                        existing.symbol.upper() != mark.symbol.upper()
-                        or (existing.quote_currency or "").upper()
-                        != (mark.quote_currency or "").upper()
-                    ):
-                        # A base alias such as ``AAPL`` must not silently pick
-                        # one venue when two canonical instruments collide.
-                        indexed[alias] = None
-                    elif existing is None or (
-                        (_parse_rfc3339(mark.as_of) or datetime.min.replace(tzinfo=timezone.utc))
-                        > (_parse_rfc3339(existing.as_of) or datetime.min.replace(tzinfo=timezone.utc))
-                    ):
-                        indexed[alias] = mark
+                    candidates_by_alias.setdefault(alias, []).append(mark)
                 break
+
+        indexed: dict[str, MarketMark | None] = {}
+        for alias, candidates in candidates_by_alias.items():
+            identities = {
+                (
+                    mark.symbol.upper(),
+                    (mark.quote_currency or "").upper(),
+                )
+                for mark in candidates
+            }
+            if len(identities) != 1:
+                # A base alias such as ``AAPL`` must not silently pick one
+                # venue when two canonical instruments collide.
+                indexed[alias] = None
+                continue
+            latest_as_of = max(
+                _parse_rfc3339(mark.as_of)
+                or datetime.min.replace(tzinfo=timezone.utc)
+                for mark in candidates
+            )
+            latest = [
+                mark
+                for mark in candidates
+                if _parse_rfc3339(mark.as_of) == latest_as_of
+            ]
+            latest_prices = {mark.price for mark in latest}
+            if len(latest_prices) != 1:
+                # Two different prices for the same instrument and exact
+                # observation boundary have no safe revision precedence.
+                indexed[alias] = None
+                continue
+            # Exact-value duplicates from repeated ingest runs are equivalent.
+            # Pick provenance deterministically so repository ordering cannot
+            # change the emitted evidence.
+            indexed[alias] = min(latest, key=lambda mark: mark.source_ref)
         return indexed
 
     @staticmethod
@@ -439,12 +459,14 @@ class SourceIngestMarkProvider:
         parsed = _parse_rfc3339(observed)
         if parsed is None:
             return None
-        source_ref = str(
+        raw_source_ref = (
             record.get("content_ref")
             or record.get("source_id")
             or metadata.get("market_data_ref")
-            or "source-ingest://unknown"
         )
+        source_ref = str(raw_source_ref or "").strip()
+        if not source_ref:
+            return None
         return MarketMark(
             symbol=str(symbol),
             price=price,
@@ -619,6 +641,7 @@ class RollingDrawdownTracker:
         self._values: deque[tuple[datetime, float]] = deque()
         self._last_fingerprint: tuple[Any, ...] | None = None
         self._latest_as_of: datetime | None = None
+        self._latest_sample_shared_with_seed = False
 
     def export_state(self) -> dict[str, Any]:
         return {
@@ -630,12 +653,14 @@ class RollingDrawdownTracker:
             ],
             "last_fingerprint": self._last_fingerprint,
             "latest_as_of": _iso(self._latest_as_of) if self._latest_as_of else None,
+            "latest_sample_shared_with_seed": self._latest_sample_shared_with_seed,
         }
 
     def restore(self, payload: Mapping[str, Any] | None) -> None:
         self._values.clear()
         self._last_fingerprint = None
         self._latest_as_of = None
+        self._latest_sample_shared_with_seed = False
         if not payload:
             return
         if payload.get("schema_version") != "rolling_drawdown.v1":
@@ -665,6 +690,10 @@ class RollingDrawdownTracker:
             _nested_tuple(fingerprint) if isinstance(fingerprint, (list, tuple)) else None
         )
         self._latest_as_of = latest
+        shared_with_seed = payload.get("latest_sample_shared_with_seed", False)
+        if not isinstance(shared_with_seed, bool):
+            raise ValueError("rolling drawdown seed-sharing flag must be boolean")
+        self._latest_sample_shared_with_seed = shared_with_seed
 
     def observe(
         self,
@@ -677,18 +706,37 @@ class RollingDrawdownTracker:
         as_of = _parse_rfc3339(sample.as_of)
         if as_of is None or (self._latest_as_of is not None and as_of < self._latest_as_of):
             return None
+        same_as_of_revision = self._latest_as_of is not None and as_of == self._latest_as_of
+        if (
+            same_as_of_revision
+            and not self._latest_sample_shared_with_seed
+            and self._values
+            and self._values[-1][0] == as_of
+        ):
+            # A corrected value at the same observation boundary supersedes
+            # the prior sample. Retaining both would let the obsolete value
+            # remain a false high-water mark. A lone entry that also seeds
+            # initial equity is preserved and the revision is added beside it.
+            self._values.pop()
         cutoff = as_of - timedelta(days=self._window_days)
+        seed_appended = False
         if not self._values:
             seed_as_of = _parse_rfc3339(initial_equity_as_of) or as_of
             seed_as_of = min(seed_as_of, as_of)
             if seed_as_of >= cutoff:
                 self._values.append((seed_as_of, float(sample.initial_cash)))
+                seed_appended = True
+        sample_shared_with_seed = False
         if not (
             self._values
             and self._values[-1][0] == as_of
             and self._values[-1][1] == float(sample.portfolio_value)
         ):
             self._values.append((as_of, float(sample.portfolio_value)))
+        elif seed_appended or (
+            same_as_of_revision and self._latest_sample_shared_with_seed
+        ):
+            sample_shared_with_seed = True
         while self._values and self._values[0][0] < cutoff:
             self._values.popleft()
         peak = max(value for _, value in self._values)
@@ -697,6 +745,7 @@ class RollingDrawdownTracker:
         drawdown = min(max((peak - sample.portfolio_value) / peak, 0.0), 1.0)
         self._last_fingerprint = sample.fingerprint
         self._latest_as_of = as_of
+        self._latest_sample_shared_with_seed = sample_shared_with_seed
         return {
             "drawdown_pct": float(drawdown),
             "peak_portfolio_value": float(peak),
