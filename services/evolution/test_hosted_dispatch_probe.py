@@ -65,6 +65,36 @@ class _FakeEvolutionApi:
         return deepcopy(decision)
 
 
+def test_request_ledger_records_per_request_timestamps(monkeypatch):
+    class _Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"ok": true}'
+
+    monkeypatch.setattr(probe.urllib.request, "urlopen", lambda *_args, **_kwargs: _Response())
+    ledger = []
+
+    result = probe._request_json(
+        api_url="http://evolution.test",
+        method="GET",
+        path="/health",
+        payload=None,
+        timeout_seconds=1,
+        request_ledger=ledger,
+    )
+
+    assert result == {"ok": True}
+    assert ledger[0]["requested_at"].endswith("Z")
+    assert ledger[0]["completed_at"].endswith("Z")
+
+
 def test_initial_probe_never_executes_directly_and_leaves_freeze_approved(
     monkeypatch,
 ):
@@ -141,21 +171,30 @@ def test_compose_ownership_snapshot_requires_exact_labels_and_source(
         "com.docker.compose.service": "evolution-dispatch-worker",
         "com.docker.compose.project.working_dir": str(tmp_path),
         "com.docker.compose.project.config_files": str(tmp_path / "docker-compose.yml"),
+        "com.docker.compose.config-hash": "config-hash",
     }
     inspect = [
         {
             "Name": "/pantheon-evolution-dispatch-worker-1",
             "Image": "sha256:image",
-            "Config": {"Labels": labels},
-            "State": {"Running": True, "Health": {"Status": "healthy"}},
+            "Config": {"Labels": labels, "Cmd": ["python", "-m", "worker"]},
+            "State": {
+                "Running": True,
+                "StartedAt": "2026-07-14T00:00:00.000000000Z",
+                "Health": {"Status": "healthy"},
+            },
         }
     ]
 
     def fake_run(args):
         if args[:3] == ["git", "rev-parse", "HEAD"]:
             return expected_sha
+        if args[:2] == ["git", "status"]:
+            return ""
         if args[-2:] == ["config", "--services"]:
             return "evolution\nevolution-dispatch-worker"
+        if args[-3:] == ["config", "--hash", "evolution-dispatch-worker"]:
+            return "evolution-dispatch-worker config-hash"
         if "ps" in args and "-q" in args:
             return container_id
         if args[:2] == ["docker", "inspect"]:
@@ -171,6 +210,8 @@ def test_compose_ownership_snapshot_requires_exact_labels_and_source(
     assert snapshot["checkout_sha"] == expected_sha
     assert snapshot["container_id"] == container_id
     assert snapshot["labels"] == labels
+    assert snapshot["worktree"]["task_scope_clean"] is True
+    assert snapshot["rendered_service_config_hash"] == "config-hash"
     assert snapshot["host_source_sha256"] == source_hash
     assert snapshot["container_source_sha256"] == source_hash
 
@@ -185,6 +226,8 @@ def test_compose_ownership_snapshot_rejects_orphan_label(monkeypatch, tmp_path):
     def fake_run(args):
         if args[:3] == ["git", "rev-parse", "HEAD"]:
             return expected_sha
+        if args[:2] == ["git", "status"]:
+            return ""
         if args[-2:] == ["config", "--services"]:
             return "evolution-dispatch-worker"
         if "ps" in args and "-q" in args:
@@ -208,3 +251,50 @@ def test_compose_ownership_snapshot_rejects_orphan_label(monkeypatch, tmp_path):
 
     with pytest.raises(probe.ProbeError, match="container label"):
         compose_probe._ownership_snapshot(expected_sha=expected_sha)
+
+
+def test_runtime_scope_allows_only_known_live_task_brief_drift(monkeypatch):
+    def fake_run(args):
+        if args[:2] == ["git", "status"] and "--" in args:
+            return ""
+        if args[:2] == ["git", "status"]:
+            return " M .orchestrator/task-briefs/other_task.md\n"
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(compose_probe, "_run", fake_run)
+
+    snapshot = compose_probe._runtime_scope_snapshot()
+
+    assert snapshot["task_scope_clean"] is True
+    assert snapshot["full_worktree_clean"] is False
+    assert snapshot["allowed_runtime_dirty_paths"] == [
+        ".orchestrator/task-briefs/other_task.md"
+    ]
+
+
+def test_runtime_scope_rejects_unexpected_dirty_path(monkeypatch):
+    def fake_run(args):
+        if args[:2] == ["git", "status"] and "--" in args:
+            return ""
+        if args[:2] == ["git", "status"]:
+            return " M services/evolution/main.py\n"
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(compose_probe, "_run", fake_run)
+
+    with pytest.raises(probe.ProbeError, match="unexpected dirty paths"):
+        compose_probe._runtime_scope_snapshot()
+
+
+def test_restart_log_parser_requires_exact_first_tick_one():
+    with pytest.raises(probe.ProbeError, match="exact tick 1"):
+        compose_probe._validated_restart_events(
+            'evolution-dispatch-worker-1 | {"tick": 10, "result": {}}\n'
+        )
+
+    events, ticks = compose_probe._validated_restart_events(
+        'evolution-dispatch-worker-1 | {"tick": 1, "result": {}}\n'
+        'evolution-dispatch-worker-1 | {"tick": 2, "result": {}}\n'
+    )
+    assert ticks == [1, 2]
+    assert len(events) == 2

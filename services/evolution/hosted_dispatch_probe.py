@@ -37,6 +37,7 @@ def _request_json(
     timeout_seconds: float,
     request_ledger: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    requested_at = _utc_now()
     url = api_url.rstrip("/") + path
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     request = urllib.request.Request(
@@ -55,7 +56,15 @@ def _request_json(
     except urllib.error.URLError as exc:
         raise ProbeError(f"{method} {path} failed: {exc}") from exc
 
-    request_ledger.append({"method": method, "path": path, "status": status})
+    request_ledger.append(
+        {
+            "method": method,
+            "path": path,
+            "status": status,
+            "requested_at": requested_at,
+            "completed_at": _utc_now(),
+        }
+    )
     if not response_body.strip():
         raise ProbeError(f"{method} {path} returned an empty response")
     try:
@@ -284,11 +293,22 @@ def _normalized_decision(decision: dict[str, Any]) -> dict[str, Any]:
     execution = decision.get("execution_result") or {}
     steps = _executed_steps(decision)
     metadata = decision.get("metadata") or {}
+    approved_steps = [
+        step
+        for step in decision.get("review_chain", [])
+        if isinstance(step, dict) and step.get("step_type") == "approved"
+    ]
     return {
+        "observed_at": _utc_now(),
         "decision_id": decision.get("decision_id"),
         "action_type": decision.get("action_type"),
+        "risk_level": decision.get("risk_level"),
+        "target_type": decision.get("target_type"),
+        "target_id": decision.get("target_id"),
+        "target_version": decision.get("target_version"),
         "target_stage": decision.get("target_stage"),
         "decision_state": decision.get("decision_state"),
+        "approved_at": approved_steps[-1].get("timestamp") if approved_steps else None,
         "execution_result": execution or None,
         "cooldown_ends_at": decision.get("cooldown_ends_at"),
         "observation_window_ends_at": decision.get("observation_window_ends_at"),
@@ -307,10 +327,24 @@ def _mutation_summary(request_ledger: list[dict[str, Any]]) -> dict[str, Any]:
         if entry["path"].endswith("/execute")
         or entry["path"].endswith("/rollback-followthrough")
     ]
+    unexpected_mutations = [
+        entry
+        for entry in mutations
+        if not (
+            entry["method"] == "POST"
+            and (
+                entry["path"] == "/api/evolution/proposals"
+                or entry["path"].endswith("/review")
+                or entry["path"].endswith("/approve")
+            )
+        )
+    ]
     return {
         "mutating_request_count": len(mutations),
         "mutating_requests": mutations,
         "direct_execute_calls_by_probe": len(direct_execute),
+        "unexpected_mutating_requests": unexpected_mutations,
+        "mutation_whitelist_passed": not unexpected_mutations,
     }
 
 
@@ -399,6 +433,8 @@ def run_initial_probe(
     }
     if output["direct_execute_calls_by_probe"] != 0:
         raise ProbeError("probe request ledger contains a direct execute call")
+    if not output["mutation_whitelist_passed"]:
+        raise ProbeError("probe request ledger contains an unexpected mutation")
     return output
 
 

@@ -172,11 +172,16 @@ jobs:
           printf -v deploy_sha_q '%q' "${DEPLOY_SHA}"
           printf -v remote_evidence_q '%q' "${remote_evidence}"
           printf -v prefix_q '%q' "${prefix}"
+          printf -v requested_ref_q '%q' "${TARGET_REF}"
+          printf -v run_id_q '%q' "${GITHUB_RUN_ID}"
+          printf -v run_attempt_q '%q' "${GITHUB_RUN_ATTEMPT}"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          printf -v run_url_q '%q' "${run_url}"
           gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
             --zone "${DEV_ZONE}" \
             --project "${GCP_DEPLOY_PROJECT_ID}" \
             --ssh-flag=-T \
-            --command "set -euo pipefail; cd ${worktree_q}; python3 -m services.evolution.hosted_compose_probe --expected-sha ${deploy_sha_q} --prefix ${prefix_q} --output ${remote_evidence_q}"
+            --command "set -euo pipefail; cd ${worktree_q}; python3 -m services.evolution.hosted_compose_probe --expected-sha ${deploy_sha_q} --requested-ref ${requested_ref_q} --deploy-run-id ${run_id_q} --deploy-run-attempt ${run_attempt_q} --deploy-run-url ${run_url_q} --prefix ${prefix_q} --output ${remote_evidence_q}"
           gcloud compute scp \
             --zone "${DEV_ZONE}" \
             --project "${GCP_DEPLOY_PROJECT_ID}" \
