@@ -17,6 +17,11 @@ Routes (from service.py)
   GET  /api/registry/strategy-specs/{registry_id}
   GET  /api/registry/strategies/{strategy_id}/strategy-specs
   POST /api/registry/strategy-specs/{registry_id}/advance
+  POST /api/registry/strategy-artifacts
+  GET  /api/registry/strategy-artifacts/{registry_id}
+  GET  /api/registry/strategies/{strategy_id}/strategy-artifacts
+  POST /api/registry/strategy-artifacts/{registry_id}/mutate
+  POST /api/registry/strategy-artifacts/{registry_id}/advance
   GET  /health
 
 Additional
