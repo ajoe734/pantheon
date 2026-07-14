@@ -27,7 +27,6 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
-import jsonschema
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_STATUS_FILE = ROOT / "ai-status.json"
@@ -127,6 +126,12 @@ def check_task(task: dict[str, Any]) -> list[str]:
         # 1. JSON Schema validation
         schema_path = ROOT / "schemas/product-evidence.schema.json"
         if schema_path.exists():
+            try:
+                import jsonschema
+            except ImportError:
+                gaps.append("jsonschema library is not installed on this host (ImportError)")
+                return gaps
+
             try:
                 with open(schema_path, encoding="utf-8") as sfh:
                     schema_data = json.load(sfh)

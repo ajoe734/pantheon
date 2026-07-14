@@ -587,6 +587,13 @@ class TestDeepEvidenceChecks(unittest.TestCase):
         gaps = guardrail.check_task(task_done)
         self.assertTrue(any("missing reviewer verdict" in g for g in gaps), gaps)
 
+    def test_missing_jsonschema_dependency_returns_graceful_gap(self):
+        import sys
+        with mock.patch.dict(sys.modules, {"jsonschema": None}):
+            gaps = guardrail.check_task(self.default_task)
+            self.assertTrue(any("jsonschema library is not installed" in g for g in gaps), gaps)
+
+
 
 if __name__ == "__main__":
     unittest.main()
