@@ -18,7 +18,7 @@
 - [AG-GAP-006 main.py route migration](AG-GAP-006-mainpy-route-migration.md):
   documents the migration of identity, personalization, and conversation routes out
   of main.py to separate sub-routers while preserving compatibility/mocking seams.
-- [AG-GAP-007 capabilities mismatch](AG-GAP-007-capabilities-mismatch.md): fixes the 
+- [AG-GAP-007 capabilities mismatch](AG-GAP-007-capabilities-mismatch.md): fixes the
   BFF /bff/agora/capabilities endpoint silent projection loading failure and documents
   the dev journal dry-run residue cleanup procedure.
 - [AG-GAP-009 private content store](AG-GAP-009-private-content-store.md):

@@ -1,9 +1,9 @@
 # TJ-E2E-012 - Hosted Acceptance And Closeout
 
-Owner: Antigravity  
-Reviewer: Human/Ops  
-Wave: 5  
-Repository: `ajoe734/pantheon` and `ajoe734/execute-plans`  
+Owner: Antigravity
+Reviewer: Human/Ops
+Wave: 5
+Repository: `ajoe734/pantheon` and `ajoe734/execute-plans`
 Dependencies: `TJ-E2E-001` through `TJ-E2E-011`
 
 ## Goal

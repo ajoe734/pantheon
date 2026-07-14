@@ -1,10 +1,10 @@
 # PPL-ALLOC-006 BFF / Frontend Handoff Follow-Up 14
 
-Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-14`  
-Parent: `PPL-ALLOC-006`  
-Owner: Codex  
-Reviewer: Claude  
-Kind: support-only `bff_handoff_packet`  
+Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-14`
+Parent: `PPL-ALLOC-006`
+Owner: Codex
+Reviewer: Claude
+Kind: support-only `bff_handoff_packet`
 Generated: 2026-07-11
 
 ## Boundary
@@ -80,10 +80,10 @@ commit. `git diff --check` also passed for the task-scoped closeout changes.
 ## Review And Composition
 
 Owned here: support-only no-delta checkpoint, parent absorption request, and
-reviewer handoff.  
+reviewer handoff.
 Not changing: L1/L2 truth, BFF/frontend implementation, route contracts,
 runtime/registry/governance behavior, dependency ownership, PR state, or
-parent lifecycle.  
+parent lifecycle.
 Composes with: parent `PPL-ALLOC-006`, `PPL-ALLOC-003` binding reads,
 `PPL-ALLOC-004` allocation semantics, `PPL-ALLOC-008` emergency containment,
 and the preceding PPL-ALLOC-006 BFF handoff packets.

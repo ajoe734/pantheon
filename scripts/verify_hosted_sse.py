@@ -20,25 +20,25 @@ def test_sse_connection(base, token, last_event_id=None):
     }
     if last_event_id:
         headers["Last-Event-ID"] = last_event_id
-        
+
     path = "/bff/management/trade-journeys/events?tenant_id=pantheon-dev&environment=paper"
     url = base.rstrip("/") + path
     req = urllib.request.Request(url, headers=headers)
     ctx = _ctx()
-    
+
     print(f"Connecting to SSE: {url}")
     if last_event_id:
         print(f"  With Last-Event-ID: {last_event_id}")
-        
+
     start_time = time.time()
     event_count = 0
     last_id = None
-    
+
     try:
         with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
             print(f"Connection established! Status={response.status}")
             print(f"Headers: Content-Type={response.headers.get('Content-Type')}")
-            
+
             # Read line by line with a limit of 5 seconds or 2 events
             line_buffer = []
             while time.time() - start_time < 5.0 and event_count < 2:
@@ -58,10 +58,10 @@ def test_sse_connection(base, token, last_event_id=None):
                     if line_buffer:
                         print("  --- end of event block ---")
                         line_buffer = []
-                        
+
     except Exception as e:
         print(f"Connection ended/interrupted: {e}")
-        
+
     return last_id, event_count
 
 def main():

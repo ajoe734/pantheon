@@ -1,9 +1,9 @@
 # AG-DES-RS-001-SIDECAR-REVIEW — Reviewer Notes
 
-**Reviewer:** Claude2  
-**Review date:** 2026-06-21  
-**Task:** AG-DES-RS-001-SIDECAR-REVIEW  
-**Reviewed artifact:** `support/sidecars/AG-DES-RS-001/AG-DES-RS-001-SIDECAR-REVIEW.md`  
+**Reviewer:** Claude2
+**Review date:** 2026-06-21
+**Task:** AG-DES-RS-001-SIDECAR-REVIEW
+**Reviewed artifact:** `support/sidecars/AG-DES-RS-001/AG-DES-RS-001-SIDECAR-REVIEW.md`
 **Verdict:** APPROVED
 
 ---

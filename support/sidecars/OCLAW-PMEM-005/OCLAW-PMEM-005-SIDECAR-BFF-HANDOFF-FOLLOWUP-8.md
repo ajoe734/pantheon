@@ -76,4 +76,3 @@ freshness windows cannot support a passing verdict.
   surface.
 - Composition result: hand this record and Follow-up 7 to `OCLAW-PMEM-005`;
   the parent owner decides whether to absorb them after dependency review.
-

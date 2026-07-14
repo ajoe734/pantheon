@@ -1,9 +1,9 @@
 # TJ-E2E-008 - Governed Journey Actions
 
-Owner: Antigravity  
-Reviewer: Claude  
-Wave: 3  
-Repository: `ajoe734/pantheon` and `ajoe734/execute-plans`  
+Owner: Antigravity
+Reviewer: Claude
+Wave: 3
+Repository: `ajoe734/pantheon` and `ajoe734/execute-plans`
 Dependencies: `TJ-E2E-005`, `TJ-E2E-006`
 
 ## Goal

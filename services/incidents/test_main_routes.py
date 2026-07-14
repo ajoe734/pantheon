@@ -262,6 +262,30 @@ def test_consume_threshold_route_rejects_unbreached_threshold():
     assert store.get_incident("inc-unbreached-threshold") is None
 
 
+def test_consume_threshold_route_rejects_empty_metric_name():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-empty-metric"
+    payload["threshold_snapshot"]["metric_name"] = ""
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "metric_name is required" in r.text
+    assert store.get_incident("inc-empty-metric") is None
+
+
+def test_consume_threshold_route_rejects_empty_policy_source():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-empty-policy-source"
+    payload["threshold_snapshot"]["policy_source"] = "   "
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "policy_source is required" in r.text
+    assert store.get_incident("inc-empty-policy-source") is None
+
+
 def test_consume_drift_report_route_creates_incident_case():
     payload = _drift_report_payload()
     r = client.post("/api/incidents/consume-drift-report", json={"drift_report": payload})

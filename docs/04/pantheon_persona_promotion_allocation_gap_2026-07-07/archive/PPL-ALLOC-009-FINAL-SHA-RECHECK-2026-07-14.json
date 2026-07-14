@@ -1,0 +1,227 @@
+{
+  "schema_version": "ppl_alloc_009_final_sha_recheck.v1",
+  "task_id": "PPL-ALLOC-009",
+  "captured_at": "2026-07-14T02:10:50Z",
+  "environment": "dev",
+  "status": "blocked",
+  "ready_for_review": false,
+  "acceptance": {
+    "required_path": [
+      "create persona -> paper_running bundle",
+      "paper ranking -> promotion review -> human decision",
+      "real ranking -> target weights -> rebalance proposal -> human approval -> apply receipt",
+      "emergency breach -> containment action without promotion/increase side effect"
+    ],
+    "passed_legs": [
+      "create persona -> paper_running bundle",
+      "paper ranking -> promotion review -> human decision",
+      "emergency breach -> containment action without promotion/increase side effect",
+      "independent governed proposal -> approval -> apply -> authoritative Capital receipt/readback"
+    ],
+    "blocking_leg": "one correlated real-ranking response -> target weights -> proposal -> approval/apply receipt -> authoritative Capital readback"
+  },
+  "delivery": {
+    "all_formal_dependencies_terminal": true,
+    "pantheon": {
+      "release_branch": "release/v2026.07.14.0",
+      "deployed_commit": "7475a06873202970dc6a827e4645430b192a536a",
+      "deploy_run_id": 29298791952,
+      "deploy_run_conclusion": "success",
+      "workflow_log_source_sha_verified": true,
+      "runtime_version_http_status": 200,
+      "runtime_source_commit": "7475a06873202970dc6a827e4645430b192a536a",
+      "runtime_source_commit_known": true,
+      "later_dev_deploy": {
+        "run_id": 29299038637,
+        "target_commit": "27cd4652995a53089c77e7c3613bf0cd955971f4",
+        "conclusion": "failure",
+        "failure": "managed deploy worktree dirty: untracked trade_journey_events.json",
+        "replaced_running_release": false
+      }
+    },
+    "execute_plans": {
+      "branch": "dev",
+      "deployed_commit": "b5d64856c9be1caa32078253a9f3758ed5abe07c",
+      "deployed_at": "20260714T015854Z",
+      "deploy_run_id": 29299854068,
+      "deploy_run_conclusion": "success",
+      "branch_gate_run_id": 29299854021,
+      "branch_gate_conclusion": "success",
+      "integration_gate_run_id": 29299854029,
+      "integration_gate_status_at_capture": "in_progress",
+      "integration_gate_completed_steps_at_capture": [
+        "lint",
+        "unit and integration tests",
+        "build",
+        "contract drift",
+        "authenticated BFF smoke",
+        "live dry-run write probe",
+        "management live deep validation",
+        "frontend browser BFF probe",
+        "management route-load baseline"
+      ],
+      "integration_gate_followup": {
+        "observed_at": "2026-07-14T02:19:56Z",
+        "status": "in_progress",
+        "management_hosted_production_acceptance": "success",
+        "playwright_e2e": "in_progress",
+        "proves_identity_correlated_ppl_journey": false
+      },
+      "build_mode": {
+        "VITE_BFF_MODE": "live",
+        "VITE_BFF_FALLBACK": "strict",
+        "VITE_BFF_REAL_WRITES": "false",
+        "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false"
+      },
+      "manifest_bff_commit": "27cd46529c29801db02818aafe4df723cc0f8666",
+      "manifest_bff_commit_resolves_in_fetched_repo": false,
+      "manifest_matches_runtime_bff": false
+    }
+  },
+  "hosted_recheck": {
+    "quarterly_ranking": {
+      "http_status": 200,
+      "snapshot_at": "2026-07-14T01:57:38Z",
+      "ranking_snapshot_id": "ranking-quarterly-2026-q3-689e0bb29c378f1130cd049a",
+      "row_count": 24,
+      "rows_with_same_snapshot_id": 24,
+      "stage_counts": {
+        "not_running": 14,
+        "paper_running": 10
+      },
+      "eligible_rows": 0,
+      "live_or_canary_rows": 0,
+      "rows_with_non_null_current_weight": 0,
+      "rows_missing_policy_join_fields": 0,
+      "field_completeness_passed": true,
+      "positive_real_allocation_join_provable": false
+    },
+    "independent_apply": {
+      "rebalance_id": "rb-20260713-9e640fe8e883",
+      "ranking_snapshot_id": "ranking-ppl011-final-0e8c0660",
+      "proposal_status": "applied",
+      "applied": true,
+      "approval_ref": "approval-ppl011-final-0e8c0660",
+      "command_id": "cmd-29641b43c51241a0a4938a086ca3e180",
+      "command_status": "executed",
+      "result_status": "applied",
+      "persona_id": "persona-ppl011-e103d29e",
+      "persona_authority_http_status": 404,
+      "capital_pool_id": "pool-ppl011-e103d29e",
+      "current_weight_before": 0.01,
+      "target_weight": 0.0101,
+      "authoritative_current_weight_after": 0.0101,
+      "authoritative_capital_readback": true,
+      "authoritative_capital_state_applied": true,
+      "canonical_write_authority": "capital_service",
+      "audit_delivery_status": "delivered",
+      "live_capital_side_effects": false,
+      "correlates_to_current_quarterly_ranking": false
+    },
+    "containment": {
+      "persona_id": "persona-20260713-9e33e590",
+      "persona_http_status": 200,
+      "lifecycle_status": "paper_running",
+      "containment_state": "frozen",
+      "frozen": true,
+      "command_id": "cmd-414820143c8240098d5eaceec8e923f9",
+      "command_status": "executed",
+      "action": "freeze",
+      "two_man_signature_id": "tms-ppl011-containment-e103d29e",
+      "baseline_weight": 0.005,
+      "current_weight": 0.005,
+      "target_weight": 0.005,
+      "authoritative_containment_readback": true,
+      "risk_direction": "decrease_only",
+      "live_capital_side_effects": false
+    }
+  },
+  "dependency_audit": {
+    "deployed_lock_sha256": "bf79a2d545ba11e3a3af51914538019566c678a50060270b7fccf4047be43705",
+    "production": {
+      "command": "npm audit --omit=dev --json",
+      "critical": 0,
+      "high": 7,
+      "moderate": 5,
+      "total": 12,
+      "runtime_relevant_packages": [
+        "@remix-run/router",
+        "react-router",
+        "react-router-dom",
+        "lodash",
+        "dompurify",
+        "echarts"
+      ]
+    },
+    "full_graph": {
+      "command": "npm audit --json",
+      "critical": 1,
+      "high": 12,
+      "moderate": 8,
+      "total": 21,
+      "critical_package": "vitest",
+      "critical_package_dev_only": true
+    }
+  },
+  "local_validation": {
+    "focused_bff_tests": {
+      "passed": 101,
+      "warnings": 110,
+      "duration_seconds": 68.24
+    },
+    "json_parse": "passed",
+    "git_diff_check": "passed"
+  },
+  "blocking_residual_risks": [
+    {
+      "id": "B1",
+      "severity": "S2",
+      "owner": "Persona + Runtime/Telemetry + Capital/BFF owners",
+      "gap": "No one governed identity joins an eligible real/canary ranking row through target calculation, proposal, approval/apply receipt, and authoritative Capital readback.",
+      "expiry": "before PPL-ALLOC-009 review",
+      "recheck": "archive one response-correlated chain using a safe governance-produced fixture"
+    },
+    {
+      "id": "B2",
+      "severity": "S2",
+      "owner": "Platform deployment owner",
+      "gap": "Frontend manifest BFF SHA disagrees with runtime and the direct dev deploy is blocked by dirty managed runtime state.",
+      "expiry": "before next dev frontend publish and PPL-ALLOC-009 review",
+      "recheck": "clean or isolate runtime state, deploy, and make deployment.json agree with /bff/version"
+    },
+    {
+      "id": "B3",
+      "severity": "S2",
+      "owner": "Frontend QA",
+      "gap": "No current desktop and mobile hosted journey proves the joined path after the final fixture and latest frontend changes.",
+      "expiry": "after B1/B2 and before PPL-ALLOC-009 review",
+      "recheck": "rerun and archive route, request, response, and console evidence"
+    },
+    {
+      "id": "B4",
+      "severity": "S2",
+      "owner": "Frontend Platform + Security",
+      "gap": "The deployed production dependency graph has 7 high and 5 moderate findings.",
+      "expiry": "before production-ready declaration",
+      "recheck": "remediate or record explicit time-bounded Security acceptance"
+    },
+    {
+      "id": "B5",
+      "severity": "S2",
+      "owner": "Reviewer Codex",
+      "gap": "The canonical-center IA supersedes the original primary-workbench page contract without a PPL-ALLOC-009 closeout decision.",
+      "expiry": "at PPL-ALLOC-009 review after B1-B4",
+      "recheck": "explicitly accept the supersession or reopen the original page target"
+    }
+  ],
+  "decision": {
+    "verdict": "blocked",
+    "do_not_claim": [
+      "one correlated real-ranking-to-Capital-apply path",
+      "frontend and BFF deployment identity consistency",
+      "current desktop/mobile joined-flow acceptance",
+      "production dependency risk closure",
+      "reviewer acceptance of the IA supersession"
+    ]
+  }
+}

@@ -45,6 +45,8 @@ def _approval_payload(**overrides) -> dict:
         "target_type": "model_artifact",
         "target_id": "artifact-001",
         "target_version": "1.2.3",
+        "tenant_id": "pantheon-dev",
+        "owner_user_id": "strategy-owner-1",
         "risk_level": "medium",
         "capital_pool_id": "pool-001",
         "persona_id": "persona-alpha",
@@ -69,6 +71,17 @@ def _approved_approval(client: TestClient, **overrides) -> dict:
     )
     assert decide.status_code == 200, decide.text
     return decide.json()
+
+
+def test_approval_create_requires_private_scope(client) -> None:
+    test_client, _ = client
+    payload = _approval_payload()
+    payload.pop("tenant_id")
+    payload.pop("owner_user_id")
+
+    response = test_client.post("/api/v1/approvals", json=payload)
+
+    assert response.status_code == 422
 
 
 def _deployment_payload(**overrides) -> dict:
@@ -130,6 +143,8 @@ def test_approval_lifecycle_and_list_filters(client):
     created = test_client.post("/api/v1/approvals", json=_approval_payload())
     assert created.status_code == 201, created.text
     assert created.json()["decision_state"] == "proposed"
+    assert created.json()["tenant_id"] == "pantheon-dev"
+    assert created.json()["owner_user_id"] == "strategy-owner-1"
 
     proposed = test_client.get(
         "/api/v1/approvals",
