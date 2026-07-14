@@ -386,11 +386,88 @@ class PersonaCronRegistrar:
 
     def reconcile_personas(
         self, persona_ids: list[str]
-    ) -> list[PersonaCronRegistrationResult]:
-        """Register missing OODA cron jobs for each persona in *persona_ids*.
+    ) -> tuple[list[PersonaCronRegistrationResult], list[dict[str, Any]], list[dict[str, Any]]]:
+        """Register missing OODA cron jobs for each persona in *persona_ids*
+        and remove orphan cron jobs.
 
         Idempotent backfill for personas that already exist but were created
-        before cron registration worked (or whose best-effort creation-time
-        registration silently no-op'd in dry_run). Returns one result per persona.
+        before cron registration worked, and clean up jobs that do not belong
+        to any persona in *persona_ids* or are not in the workflows catalog.
+
+        Returns a tuple: (registration_results, removed_orphans, remove_failures)
         """
-        return [self.register_for_persona(pid) for pid in persona_ids]
+        # 1. Register/backfill missing jobs for eligible personas
+        results = [self.register_for_persona(pid) for pid in persona_ids]
+
+        removed_orphans: list[dict[str, Any]] = []
+        remove_failures: list[dict[str, Any]] = []
+
+        # 2. Cleanup orphan jobs from the gateway
+        runtime = None if self._dry_run else self._get_runtime()
+        if runtime is not None:
+            try:
+                # Get existing registrations to find orphans
+                offset = 0
+                eligible_set = set(persona_ids)
+                while True:
+                    listing = runtime.gateway_call("cron.list", {"limit": 200, "offset": offset}) or {}
+                    jobs = listing.get("jobs") or []
+                    for job in jobs:
+                        if not isinstance(job, dict):
+                            continue
+                        job_id = job.get("id")
+                        job_name = job.get("name", "")
+                        if not job_id:
+                            continue
+                        
+                        # Only touch jobs starting with "pantheon-"
+                        if not job_name.startswith("pantheon-"):
+                            continue
+
+                        text = (job.get("payload") or {}).get("text")
+                        is_orphan = False
+                        reason = ""
+                        if not text:
+                            is_orphan = True
+                            reason = "missing payload text"
+                        else:
+                            try:
+                                inner = json.loads(text)
+                                pid = inner.get("persona_id")
+                                workflow_id = inner.get("workflow_id")
+                                if not pid or not workflow_id:
+                                    is_orphan = True
+                                    reason = "missing persona_id or workflow_id in payload"
+                                elif pid not in eligible_set:
+                                    is_orphan = True
+                                    reason = f"persona_id '{pid}' not in eligible set"
+                                elif workflow_id not in WORKFLOW_CATALOG:
+                                    is_orphan = True
+                                    reason = f"workflow_id '{workflow_id}' not in catalog"
+                            except (TypeError, ValueError) as exc:
+                                is_orphan = True
+                                reason = f"malformed payload text: {exc}"
+
+                        if is_orphan:
+                            try:
+                                runtime.gateway_call("cron.remove", {"id": job_id})
+                                removed_orphans.append({
+                                    "job_id": job_id,
+                                    "job_name": job_name,
+                                    "reason": reason,
+                                })
+                            except Exception as exc:
+                                remove_failures.append({
+                                    "job_id": job_id,
+                                    "job_name": job_name,
+                                    "error": str(exc),
+                                    "reason": reason,
+                                })
+                    if not listing.get("hasMore"):
+                        break
+                    offset = listing.get("nextOffset", offset + len(jobs))
+            except Exception as exc:
+                # If listing fails, do not remove any jobs to fail safe
+                pass
+
+        return results, removed_orphans, remove_failures
