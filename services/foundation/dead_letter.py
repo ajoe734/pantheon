@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
@@ -138,6 +140,7 @@ class DeadLetterQueue:
     """Dead-letter collection with optional append-only JSONL spill."""
 
     def __init__(self, spill_path: str | Path | None = None, entries: list[DeadLetterEntry] | None = None):
+        self._lock = threading.RLock()
         self._entries: list[DeadLetterEntry] = list(entries or [])
         self._spill_path = Path(spill_path) if spill_path else None
         if self._spill_path:
@@ -152,54 +155,71 @@ class DeadLetterQueue:
         source_ref: str | None = None,
     ) -> DeadLetterEntry:
         entry = DeadLetterEntry.new(event=event, reason=reason, tags=tags, source_ref=source_ref)
-        self._entries.append(entry)
-        self._append_to_spill(entry)
+        with self._lock:
+            # Durable spill is authoritative.  Never publish a state change in
+            # memory before its append is flushed, or a crash can roll terminal
+            # readback back to the prior DLQ status.
+            self._append_to_spill(entry)
+            self._entries.append(entry)
         return entry
 
     def entries(self, *, status: DeadLetterStatus | str | None = None, tag_filter: str | None = None) -> list[DeadLetterEntry]:
-        entries = self._entries
-        if status is not None:
-            effective_status = status if isinstance(status, DeadLetterStatus) else DeadLetterStatus(str(status))
-            entries = [entry for entry in entries if entry.status == effective_status]
-        if tag_filter:
-            entries = [entry for entry in entries if tag_filter in entry.tags]
-        return list(entries)
+        with self._lock:
+            entries = self._entries
+            if status is not None:
+                effective_status = status if isinstance(status, DeadLetterStatus) else DeadLetterStatus(str(status))
+                entries = [entry for entry in entries if entry.status == effective_status]
+            if tag_filter:
+                entries = [entry for entry in entries if tag_filter in entry.tags]
+            return list(entries)
 
     def pending_entries(self, *, tag_filter: str | None = None) -> list[DeadLetterEntry]:
         return self.entries(status=DeadLetterStatus.PENDING, tag_filter=tag_filter)
 
     def replace_entry(self, updated: DeadLetterEntry) -> None:
-        for index, entry in enumerate(self._entries):
-            if entry.entry_id == updated.entry_id:
-                self._entries[index] = updated
-                self._append_to_spill(updated)
-                return
+        with self._lock:
+            for index, entry in enumerate(self._entries):
+                if entry.entry_id == updated.entry_id:
+                    self._append_to_spill(updated)
+                    self._entries[index] = updated
+                    return
         raise FoundationValidationError(f"dead-letter entry not found: {updated.entry_id}")
 
     def load_from_spill(self) -> int:
-        if not self._spill_path or not self._spill_path.exists():
-            return 0
-        loaded_by_id: dict[str, DeadLetterEntry] = {}
-        order: list[str] = []
-        with self._spill_path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if line:
-                    entry = DeadLetterEntry.from_dict(json.loads(line))
-                    if entry.entry_id not in loaded_by_id:
-                        order.append(entry.entry_id)
-                    loaded_by_id[entry.entry_id] = entry
-        self._entries = [loaded_by_id[entry_id] for entry_id in order]
-        return len(self._entries)
+        with self._lock:
+            if not self._spill_path or not self._spill_path.exists():
+                return 0
+            loaded_by_id: dict[str, DeadLetterEntry] = {}
+            order: list[str] = []
+            with self._spill_path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if line:
+                        entry = DeadLetterEntry.from_dict(json.loads(line))
+                        if entry.entry_id not in loaded_by_id:
+                            order.append(entry.entry_id)
+                        loaded_by_id[entry.entry_id] = entry
+            self._entries = [loaded_by_id[entry_id] for entry_id in order]
+            return len(self._entries)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "spill_path": str(self._spill_path) if self._spill_path else None,
-            "entries": [entry.to_dict() for entry in self._entries],
-        }
+        with self._lock:
+            return {
+                "spill_path": str(self._spill_path) if self._spill_path else None,
+                "entries": [entry.to_dict() for entry in self._entries],
+            }
 
     def _append_to_spill(self, entry: DeadLetterEntry) -> None:
         if not self._spill_path:
             return
+        file_preexisted = self._spill_path.exists()
         with self._spill_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry.to_dict(), sort_keys=True, separators=(",", ":")) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if not file_preexisted:
+            directory_fd = os.open(self._spill_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)

@@ -80,16 +80,16 @@ def execute_rollback(body: dict, headers: dict):
     mfa = headers.get("X-MFA-Token", "")
     if mfa and not _check_mfa(mfa):
         return _bad_request("MFA_VALIDATION_FAILED", "MFA token invalid")
-    target_type = (body or {}).get("rollback_target_type") or (body or {}).get("target_type") or "deployment"
-    target_id = (body or {}).get("target_id") or (body or {}).get("target") or "unknown"
-    rollback_id = f"rb-{target_id}-{int(datetime.utcnow().timestamp())}"
-    payload = {
-        "rollback_id": rollback_id,
-        "command_id": f"cmd-{rollback_id}",
-        "status": "submitted",
-        "tracking_url": f"/api/internal/v1/commands/cmd-{rollback_id}",
+    return 409, {
+        "error": {
+            "code": "CANONICAL_ROLLBACK_REQUIRED",
+            "message": (
+                "legacy rollback execution is disabled; submit the exact "
+                "governed rollback request to /api/rollback"
+            ),
+            "canonical_endpoint": "/api/rollback",
+        }
     }
-    return _ok(payload, 202)
 
 
 def kill_switch(body: dict, headers: dict):
