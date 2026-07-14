@@ -128,9 +128,44 @@ the intentionally missing downstream evidence after cancellation. Neither
 conclusion is recorded as proof of a defect in the already-green unit, build,
 contract, or live-validation steps.
 
-Run 29308875940 and the authoritative post-deploy live BFF SHA remain pending
-below. A final gate must run against one stable, recorded FE/BFF pair after the
-external deployment settles.
+That exact pair was intentionally not accepted as final. The subsequent deploy
+chain is recorded below, and a final gate must still run against one stable,
+recorded FE/BFF pair after the external deployments settle.
+
+## Subsequent Pantheon deployment chain
+
+Pantheon deploy run
+[29308875940](https://github.com/ajoe734/pantheon/actions/runs/29308875940)
+completed successfully in `21m14s`. Its checkout, `TARGET_REF`, remote BFF
+source verification, deployment-complete line, and immediate live
+`/bff/version` observation all identified
+`c30bf618249f9f43604edd058b4e2ca34c892e07`. OpenClaw live smoke, Public BFF
+smoke, and the Agora restart-persistence smoke all passed. The restart proof
+seeded `completed_outbox=completed` and `recovery_outbox=pending`, then verified
+`completed_outbox=replayed` and `recovery_outbox=recovered` after restart.
+
+This is valid deployment/recovery evidence, but not yet the final paired BFF
+identity. A newer `Pantheon Nonprod Deploy` run,
+[29309421576](https://github.com/ajoe734/pantheon/actions/runs/29309421576),
+started immediately afterward and completed successfully in `18m33s` after its
+queue wait. The workflow input was tag `publish/v2026.07.14.3`; the governed
+deploy worktree reflog and completed Actions log both resolve its actual source
+to `4a27eb31fcb35c10cfb1519475a596b81e908e20`, PR #3619's merge commit. The
+remote BFF source verification and deployment-complete line recorded the same
+SHA, and Public BFF health/CORS smoke passed.
+
+Post-run probes returned HTTP `200` for `/healthz`, `/readyz`, and
+`/bff/version`. Health and readiness reported `live: true`, `ready: true`, with
+runtime-manager, governance, and deployment dependencies `ok`;
+`source_commit_sha` and `commit` both equalled
+`4a27eb31fcb35c10cfb1519475a596b81e908e20`. `git merge-base --is-ancestor`
+confirmed that PR #3605 merge
+`8de9ed3b09ae1002edc74256f33b9bec1fe3b717` is an ancestor of this live SHA,
+so the later deployment is not a Persona authority rollback. Run 29309421576
+used an older workflow revision and did not contain the newer restart smoke;
+the immediately preceding successful run 29308875940 remains the restart
+persistence proof. At the post-run queue check, no newer nonprod deploy was
+pending or in progress.
 
 ## Pending evidence
 
@@ -143,7 +178,7 @@ frontend deployment.
 | `execute-plans` implementation PR | **PENDING — PR #328 final state, title, review/check result, merge time, and 40-character merge commit must be recorded.** |
 | Frontend exact source commit | **PENDING — must be the GitHub-visible `execute-plans` commit actually built for Pantheon-owned dev hosting.** |
 | Frontend build posture | **PENDING — prove `VITE_BFF_MODE=live`, dev `VITE_BFF_BASE_URL`, `VITE_BFF_FALLBACK=strict`, safe write defaults, and no embedded bearer token.** |
-| Paired deployment manifest | **PENDING — record one manifest pairing frontend exact commit with BFF commit `8de9ed3b09ae1002edc74256f33b9bec1fe3b717`, or record a later exact BFF commit and its successful BFF deployment proof.** |
+| Paired deployment manifest | **PENDING — the current successfully deployed BFF is `4a27eb31fcb35c10cfb1519475a596b81e908e20` from run 29309421576, with #3605 confirmed as an ancestor. The exact frontend commit built and tested against this BFF SHA must still be recorded in one manifest.** |
 | Frontend deployment run | **PENDING — run URL/ID, conclusion, deployed artifact location, and exact paired commits.** |
 | Cross-repository integration gate | **PENDING — attempt 2 of run 29307503475 proved unit/build/contracts/live probes/deep validation under BFF `183cba011d6993029b3e828dc85f13dd166f207c`, then was protectively cancelled before hosted proof because Pantheon deploy 29308875940 would invalidate the exact release pair. A fresh green run against the stable final pair is still required.** |
 | Hosted desktop positive flow | **PENDING — authenticated Persona context, independent opinions/disagreement, governed proposal creation, revision, and validation against Pantheon-owned hosted FE and live BFF.** |
