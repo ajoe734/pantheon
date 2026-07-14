@@ -16,7 +16,7 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-14T10:30:50Z",
+    "evidence_cut_at": "2026-07-14T10:40:12Z",
     "evidence_cut_semantics": "Owner exact-head implementation checks, exhaustive source inventory, and frozen nine-writer registry are complete; independent review/signature, merge, protected installation, restart identity, and zero-write dry-run remain pending.",
     "id": "LOOP-PROD-RUNTIME-BOOT-001",
     "overall_admission": "blocked_pending_exact_head_review_merge_protected_install_and_dry_run",
@@ -94,28 +94,28 @@
   "implementation_delivery": {
     "anchor_commits": [
       {
-        "sha": "5644319fb51c26b0f9f2f632c83a43f93cf81375",
+        "sha": "cb3399ba44656d3160a172b0e39c0fa7a6517c4c",
         "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor stable lock core",
         "delivery_state": "local_task_branch_premerge",
         "hosted_cut_inclusion": false,
         "note": "Rebased owner anchor; not review or merge authority."
       },
       {
-        "sha": "bf2560530967df3838af8b890ad46b7c1bb139e8",
+        "sha": "86b5e2d78fa935d2206a2ef98e830368499e104c",
         "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor process and recovery proof",
         "delivery_state": "local_task_branch_premerge",
         "hosted_cut_inclusion": false,
         "note": "Rebased owner anchor; not review or merge authority."
       },
       {
-        "sha": "d9c9a2c0dc900a03e2c5b89b983f99aa2018434d",
+        "sha": "555fb3ea589ea6ea41f966ecce6294f933081971",
         "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor exhaustive writers and crash recovery",
         "delivery_state": "local_task_branch_premerge",
         "hosted_cut_inclusion": false,
         "note": "Frozen registered source bytes descend from this owner anchor."
       },
       {
-        "sha": "69f22a83082701af257123e02f1e541b9f3bdc4a",
+        "sha": "9a82e847623b206119bb030a91f64d5275058218",
         "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor recovery runbook",
         "delivery_state": "local_task_branch_premerge",
         "hosted_cut_inclusion": false,
@@ -135,22 +135,32 @@
     "commands": [
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q .orchestrator/test_runtime_state.py .orchestrator/test_common.py .orchestrator/test_task_archive_index_legacy_id.py .orchestrator/test_approval_queue.py .orchestrator/test_watch_events.py .orchestrator/test_supervisor_watchdog.py",
-        "result": "75 passed, 17 subtests passed in 12.59s",
+        "result": "75 passed, 17 subtests passed in 13.90s",
         "conclusion": "passed_owner_exact_head"
       },
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q .orchestrator/test_supervisor.py with four named upstream configuration-drift tests deselected",
-        "result": "270 passed, 4 deselected in 36.92s; the unfiltered run was 270 passed and the same 4 documented baseline failures",
+        "result": "270 passed, 4 deselected in 32.63s; the content-identical unfiltered source run was 270 passed and the same 4 documented baseline failures",
         "conclusion": "passed_owner_exact_head"
       },
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_ai_status.py with the existing mixed-repo fallback baseline test deselected",
-        "result": "70 passed, 1 deselected, 8 subtests passed in 15.34s; the unfiltered run was 70 passed with only that documented baseline failure",
+        "result": "70 passed, 1 deselected, 8 subtests passed in 13.84s; the unfiltered run was 70 passed in 14.90s with only that documented baseline failure",
         "conclusion": "passed_owner_exact_head"
       },
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py",
-        "result": "173 passed in 215.15s",
+        "result": "173 passed in 227.05s",
+        "conclusion": "passed_owner_exact_head"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_planning_state.py scripts/test_orchestrator_bundle.py scripts/test_orchestrator_queue_triage.py scripts/git/test_index_safety.py scripts/test_dashboard_server.py .orchestrator/test_task_archive_index_legacy_id.py",
+        "result": "44 passed in 14.86s",
+        "conclusion": "passed_owner_exact_head"
+      },
+      {
+        "command": "python3 -m py_compile selected runtime/task/audit implementation modules and git diff --check",
+        "result": "exit 0",
         "conclusion": "passed_owner_exact_head"
       },
       {
@@ -164,9 +174,10 @@
         "conclusion": "not_admissible_yet"
       }
     ],
-    "validated_at": "2026-07-14T10:30:50Z",
-    "validated_base_sha": "f7d79ac02af7881793ab7e6dfe8e3e0a86f1a106",
-    "validated_head_sha": "69f22a83082701af257123e02f1e541b9f3bdc4a"
+    "validated_at": "2026-07-14T10:40:12Z",
+    "validated_base_sha": "5c7ac28ddcded581740364315d4092e9ef9f7e35",
+    "validated_head_sha": "9a82e847623b206119bb030a91f64d5275058218",
+    "validated_head_semantics": "The validated source head is the final code/runbook anchor. Later commits contain only generated owner evidence whose self-reference cannot be embedded in its own commit identity."
   },
   "deployment": {
     "applicable": true,
@@ -387,7 +398,7 @@
     "self_hash_reason": "This mutable premerge scaffold is intentionally not checksummed and cannot be admitted as final evidence.",
     "source_artifact_sha256_by_epoch": {
       "owner_exact_head": {
-        "checks.json": "91dd07c5d3bdbc1b2af8e19674c84ab21febcbe926c5cf02f234766621737e30",
+        "checks.json": "050d199d7fd84be04330b60c5a137aba268f1f5ae1259dbf172662ae0ff112da",
         "runtime-task-audit-writer-registry.json": "a4815204180314cf8e861d2ffef8dc066bc6c9f2358dad51715b7f207c320522",
         "source_inventory": "d911c5a82095a60b3cad534f9e795f517170e16a1420f3e5a3792a5f680f462e"
       }
@@ -403,11 +414,11 @@
     },
     {
       "sequence": 2,
-      "recorded_at": "2026-07-14T10:30:50Z",
+      "recorded_at": "2026-07-14T10:40:12Z",
       "kind": "owner_exact_head_candidate_frozen",
       "status": "blocked_pending_distinct_review_merge_protected_install_and_dry_run",
       "actor": "Codex2",
-      "checks_sha256": "91dd07c5d3bdbc1b2af8e19674c84ab21febcbe926c5cf02f234766621737e30",
+      "checks_sha256": "050d199d7fd84be04330b60c5a137aba268f1f5ae1259dbf172662ae0ff112da",
       "writer_registry_sha256": "a4815204180314cf8e861d2ffef8dc066bc6c9f2358dad51715b7f207c320522"
     }
   ]

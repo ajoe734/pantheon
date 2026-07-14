@@ -400,27 +400,27 @@
     {
       "command": "PYTHONPATH=.orchestrator:scripts pytest -q .orchestrator/test_runtime_state.py .orchestrator/test_common.py .orchestrator/test_task_archive_index_legacy_id.py .orchestrator/test_approval_queue.py .orchestrator/test_watch_events.py .orchestrator/test_supervisor_watchdog.py",
       "conclusion": "passed",
-      "result": "75 passed, 17 subtests passed in 12.59s"
+      "result": "75 passed, 17 subtests passed in 13.90s"
     },
     {
       "command": "PYTHONPATH=.orchestrator:scripts pytest -q .orchestrator/test_supervisor.py --deselect .orchestrator/test_supervisor.py::RuntimeConfigTests::test_antigravity_workers_are_in_dispatcher_pool --deselect .orchestrator/test_supervisor.py::RuntimeConfigTests::test_claude2_new_work_target_and_concurrency_are_capped --deselect .orchestrator/test_supervisor.py::RuntimeConfigTests::test_claude_concurrency_is_explicitly_capped_at_three --deselect .orchestrator/test_supervisor.py::UnderutilizationSidecarDispatchTests::test_unregistered_runtime_config_agent_is_not_eligible_for_sidecars",
       "conclusion": "passed",
-      "result": "270 passed, 4 deselected in 36.92s"
+      "result": "270 passed, 4 deselected in 32.63s"
     },
     {
       "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_ai_status.py --deselect scripts/test_ai_status.py::DeliveryMetadataValidationTests::test_collect_done_delivery_metadata_falls_back_to_pantheon_for_missing_mixed_repo",
       "conclusion": "passed",
-      "result": "70 passed, 1 deselected, 8 subtests passed in 15.34s"
+      "result": "70 passed, 1 deselected, 8 subtests passed in 13.84s"
     },
     {
       "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py",
       "conclusion": "passed",
-      "result": "173 passed in 215.15s"
+      "result": "173 passed in 227.05s"
     },
     {
       "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_planning_state.py scripts/test_orchestrator_bundle.py scripts/test_orchestrator_queue_triage.py scripts/git/test_index_safety.py scripts/test_dashboard_server.py .orchestrator/test_task_archive_index_legacy_id.py",
       "conclusion": "passed",
-      "result": "44 passed in 16.32s"
+      "result": "44 passed in 14.86s"
     },
     {
       "command": "python3 -m py_compile .orchestrator/common.py .orchestrator/runtime_state.py .orchestrator/supervisor.py .orchestrator/task_archive.py scripts/ai_status.py scripts/canonical_writer_guard.py scripts/dashboard_server.py scripts/dispatch_loop_product_level_remediation_2026-07-13.py scripts/git/worker_commit.py scripts/orchestrator_bundle.py scripts/orchestrator_queue_triage.py scripts/planning_state.py scripts/rebuild_ai_status_from_state.py && git diff --check",
