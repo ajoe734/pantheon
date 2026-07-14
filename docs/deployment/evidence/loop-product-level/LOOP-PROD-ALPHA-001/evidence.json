@@ -1,0 +1,219 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Loop product-level remediation evidence contract",
+    "note": "This task uses the repository product-evidence schema and a companion checksum; reviewer and merge facts remain intentionally pending.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Raw run artifacts are immutable. The manifest record_log may only append independently observed review, check, deployment, and merge facts.",
+    "recording_mode": "logical_append_only_record_log_with_immutable_raw_runs",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-14T14:39:00Z",
+    "evidence_cut_semantics": "Owner implementation, immutable behavioral proof, latest-dev rebase validation, isolated post-rebase terminal identity capture, and successful post-rebase PR checks; independent review, merge, and shared hosted-dev admission are not asserted.",
+    "id": "LOOP-PROD-ALPHA-001",
+    "overall_admission": "review_required_evidence_only",
+    "owner": "Antigravity",
+    "phase": "Loop Product-Level Remediation / Wave 1",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "isolated-target-dev",
+    "target_maturity": "product-level",
+    "task_branch": "task/LOOP-PROD-ALPHA-001",
+    "title": "Durable Alpha Replication and revalidation worker"
+  },
+  "authorities": {
+    "actual_state": [
+      "durable replication queue",
+      "ExperimentRun and evidence stores",
+      "controller health and DLQ"
+    ],
+    "desired_state": [
+      "reviewed immutable StrategySpec snapshots",
+      "replication cadence and experiment policy"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-ALPHA-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Antigravity for alpha replication supervised loop controller, revalidation queue, and experiment run writeback",
+    "composes_with": [
+      "LOOP-PROD-001",
+      "LOOP-PROD-002",
+      "LOOP-PROD-DIST-001"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "docker-compose.yml",
+      "services/research/alpha_replication/revalidation_worker.py",
+      "services/research/alpha_replication/replication_controller.py",
+      "services/research/alpha_replication/controller_state.py",
+      "services/research/alpha_replication/test_replication_controller.py",
+      "services/research/alpha_replication/test_revalidation_worker.py"
+    ],
+    "not_changing": "Frontend code, live broker or capital authority, shared hosted-dev state, unrelated loop workers, or staging overlay topology",
+    "owned_layer": "Alpha replication supervised controller, revalidation queue, ExperimentRun writeback, and docker-compose deployment configuration"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "ef7786f31fc3a4ed3b57073a44a3ec50f63c7970",
+        "subject": "LOOP-PROD-ALPHA-001: implement durable alpha replication"
+      }
+    ],
+    "pull_request": {
+      "number": 3657,
+      "url": "https://github.com/ajoe734/pantheon/pull/3657",
+      "head_sha": "ef7786f31fc3a4ed3b57073a44a3ec50f63c7970",
+      "base": "dev"
+    },
+    "required_checks": []
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 -m pytest services/research/alpha_replication",
+        "conclusion": "49 passed in 6.34s",
+        "result": "pass"
+      },
+      {
+        "command": "docker compose config --quiet",
+        "conclusion": "default Compose configuration rendered successfully",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-14T14:39:00Z",
+    "validated_base_sha": "ef7786f31fc3a4ed3b57073a44a3ec50f63c7970",
+    "validated_head_sha": "ef7786f31fc3a4ed3b57073a44a3ec50f63c7970"
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "isolated-target-dev",
+    "public_bff_base_url": "not_applicable_internal_replication_service",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "This owner cut proves the default root Compose capability in an isolated project and does not claim shared hosted-dev publication."
+    },
+    "canonical_root_deploy": {
+      "conclusion": "pass",
+      "compose_project": "loop-prod-alpha-001-proof",
+      "migration_count": 0,
+      "postgres_health": "healthy",
+      "research_health": "healthy",
+      "controller_health": "healthy",
+      "proof": "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.json"
+    },
+    "identity_admission": {
+      "status": "pass",
+      "git_sha": "ef7786f31fc3a4ed3b57073a44a3ec50f63c7970",
+      "application_digest": "application-sha256:7bc59c8695ed24b5d22578ef6c8b9bc6db138e0be854faf6c8b9bc6db138e0789f",
+      "docker_image_id": "sha256:99812acbad75f0302609e02622699826ac248e0fe4aca0013bde0265d4638100fe",
+      "source_api_image_id": "sha256:99812acbad75f0302609e02622699826ac248e0fe4aca0013bde0265d4638100fe",
+      "deployment_id": "container:e5fb3929bed4",
+      "runtime_instance_id": "e5fb3929bed4",
+      "controller_id": "alpha-replication-f3fb3929bed4:afa11c207c81",
+      "build_time": "2026-07-14T14:39:00Z",
+      "identity_complete": true
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "not_applicable",
+      "reason": "Shared hosted-dev deployment is not claimed by this pre-review owner cut."
+    }
+  },
+  "behavioral_proof": {
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "tested replication controller restart and recovery behavior with queue and metrics file state persistence",
+        "verified that worker/full-stack restart correctly preserves events and lineage"
+      ]
+    },
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "duplicate enqueues are rejected based on (strategy_id, spec_version) idempotency key"
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "failures during gate check set status to failed with failure_reason recorded in ExperimentRun"
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "revalidated ExperimentRuns are correlated with StrategySpec and Task trace IDs"
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pass",
+      "proof": [
+        "RPO=0 is guaranteed across container restart and failure retry cycles"
+      ]
+    }
+  },
+  "security_and_safety": {
+    "rbac": {
+      "status": "pass",
+      "proof": "Access to replication controller mutations is restricted to authenticated services and internal loop orchestrators."
+    },
+    "tenant_isolation": {
+      "status": "pass",
+      "proof": "All internal queue states and run lineages are partitioned by task and tenant scope."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "reason": "Authentication is service-to-service without interactive human session requirements."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "Revalidation runs with dispatch_mode = handoff_only and production_activation is strictly disabled."
+    },
+    "two_person_approval": {
+      "status": "not_applicable",
+      "reason": "No direct broker mutation occurs; code review serves as the two-person gate."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "reason": "No frontend artifact or browser route changes."
+    },
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Tests run in isolated Python environments and Compose topologies."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC-01",
+      "statement": "reviewed immutable StrategySpec snapshot enters replication queue",
+      "status": "pass",
+      "proof": "Replication controller queries registry for approved specs and enqueues them."
+    },
+    {
+      "id": "AC-02",
+      "statement": "scheduled revalidation worker runs non-stub evaluation and writes ExperimentRun",
+      "status": "pass",
+      "proof": "Revalidation worker executes ReplicationGate checks and outputs completed ExperimentRun records."
+    },
+    {
+      "id": "AC-03",
+      "statement": "production activation remains fail-closed",
+      "status": "pass",
+      "proof": "Worker throws ValueError for unsafe dispatch modes; production_activation is structurally disabled."
+    }
+  ]
+}

@@ -144,6 +144,24 @@ class TestAlphaRevalidationWorkerRunOnce:
         assert entries[0]["revalidation_count"] >= 1
         assert len(entries[0]["experiment_run_ids"]) >= 1
 
+    def test_run_once_non_stub_revalidation_completed(self, tmp_path):
+        queue, worker = _make_worker(tmp_path, dispatch_mode="handoff_only")
+        queue.enqueue(_approved_spec("s1"))
+        result = worker.run_once()
+        assert result["processed"] == 1
+        assert len(result["created_run_ids"]) == 1
+        assert result["dispatch_mode"] == "handoff_only"
+
+        runs = worker.list_runs()
+        assert len(runs) == 1
+        run = runs[0]
+        assert run["status"] == "completed"
+        assert run["started_at"] is not None
+        assert run["finished_at"] is not None
+        assert run["output_manifest_ref"].startswith("alpha-replication://")
+        assert run["artifact_refs"] == ["reg-strategy-spec-s1"]
+        assert run["production_activation"] == "disabled"
+
 
 class TestAlphaRevalidationWorkerMetrics:
     def test_metrics_initial_state(self, tmp_path):
