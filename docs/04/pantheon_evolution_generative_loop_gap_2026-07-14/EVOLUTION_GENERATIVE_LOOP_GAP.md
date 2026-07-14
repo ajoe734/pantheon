@@ -177,3 +177,24 @@ inlet) completes one full generative cycle on hosted dev:
 
 No stage may be satisfied by hand-editing stores; every transition must go
 through the service APIs the loop will use unattended.
+
+## Addendum 2026-07-14: conversation-plane connectors + LOOP-PROD convergence
+
+Sponsor-approved additions after cross-checking the
+`2026-07-13-loop-product-level-remediation` (LOOP-PROD) program:
+
+- **EVOLOOP-010 — conversation-plane proposal intake.** The seven-stage
+  discussion loop (討論→建議→模擬→決策→執行→回顧→學習) has no committed
+  spec anywhere in the repo, and none of the three conversation surfaces
+  (management-console persona chat, Agora workshops, consultation committee)
+  has an outlet into evolution governance. EVOLOOP-010 writes the umbrella
+  spec and implements the surface-agnostic intake, starting with a caller
+  for `services/consultation/sponsor_decision_bridge`.
+- **EVOLOOP-011 — persona learning feedback.** Executed-decision and
+  postmortem outcomes flow into persona memory (OpenClaw SOUL/trainer) so
+  the 學習 stage exists on the persona side, not only as machine retrain.
+- **Convergence ruling** with LOOP-PROD lives in
+  `docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/CONVERGENCE-EVOCHAIN-EVOLOOP-2026-07-14.md`:
+  EVOLOOP is the thin vertical slice and goes first on the seven overlap
+  points; LOOP-PROD consumes and generalizes. EVOLOOP-002/005 are the only
+  performance-metric supply tasks in any program.

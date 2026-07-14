@@ -68,6 +68,8 @@ NEXT_BY_TASK = {
     "EVOLOOP-007": "Make the promoted binding trade on strategy-emitted signals via normal ingest; disable the generic feeder for that binding only.",
     "EVOLOOP-008": "Build the full-cycle live verifier with per-segment failure reporting; wire into run_e2e_verifiers.sh.",
     "EVOLOOP-009": "Deploy everything to dev, verify hosted console + live curl evidence, close out with residual risks.",
+    "EVOLOOP-010": "Write the seven-stage discussion-loop spec and unified conversation-plane proposal intake; first adapter = consultation sponsor_decision_bridge caller.",
+    "EVOLOOP-011": "Write executed-decision/postmortem outcomes into persona memory via OpenClaw SOUL/trainer with hosted proof the persona references them.",
 }
 
 
@@ -91,7 +93,7 @@ TASKS = [
             "docker-compose.yml",
             "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-001-dispatch-worker-deploy.md",
         ],
-        {"wave": 0, "fleet_lane": "be-evolution-dispatch-deploy"},
+        {"wave": 0, "fleet_lane": "be-evolution-dispatch-deploy", "convergence": "LOOP-PROD-EVO-001 builds target-plane readback on this deployed worker; it must not redeploy it"},
     ),
     (
         "EVOLOOP-002",
@@ -113,7 +115,7 @@ TASKS = [
             "services/execution",
             "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-002-performance-telemetry.md",
         ],
-        {"wave": 0, "fleet_lane": "be-performance-telemetry-supply"},
+        {"wave": 0, "fleet_lane": "be-performance-telemetry-supply", "convergence": "upstream dependency for LOOP-PROD-TEL-001/CAP-001; LOOP-PROD catalog has no performance-metric supply"},
     ),
     (
         "EVOLOOP-003",
@@ -133,7 +135,7 @@ TASKS = [
             "services/registry",
             "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-strategy-artifact-contract.md",
         ],
-        {"wave": 0, "fleet_lane": "be-strategy-artifact-contract"},
+        {"wave": 0, "fleet_lane": "be-strategy-artifact-contract", "convergence": "LOOP-PROD-DIST-001/ALPHA-001 build durable consumers on this contract"},
     ),
     (
         "EVOLOOP-004",
@@ -155,7 +157,7 @@ TASKS = [
             "services/optimizer-svc",
             "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-004-research-artifact-v2.md",
         ],
-        {"wave": 1, "fleet_lane": "be-research-artifact-production"},
+        {"wave": 1, "fleet_lane": "be-research-artifact-production", "convergence": "LOOP-PROD-ALPHA-001 generalizes this into the durable revalidation worker"},
     ),
     (
         "EVOLOOP-005",
@@ -176,7 +178,7 @@ TASKS = [
             "services/evolution/config/threshold_sweep_thresholds.json",
             "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-005-governed-baselines.md",
         ],
-        {"wave": 1, "fleet_lane": "ops-governed-baselines"},
+        {"wave": 1, "fleet_lane": "ops-governed-baselines", "convergence": "upstream dependency for LOOP-PROD-TEL-001 threshold activation"},
     ),
     (
         "EVOLOOP-006",
@@ -197,7 +199,7 @@ TASKS = [
             "services/registry",
             "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-006-promote-pipeline.md",
         ],
-        {"wave": 1, "fleet_lane": "be-promote-pipeline"},
+        {"wave": 1, "fleet_lane": "be-promote-pipeline", "convergence": "LOOP-PROD-DEP-001 generalizes this runtime-manager path with outbox apply + readback"},
     ),
     (
         "EVOLOOP-007",
@@ -217,7 +219,7 @@ TASKS = [
             "services/signal-store",
             "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-007-strategy-signals.md",
         ],
-        {"wave": 2, "fleet_lane": "be-strategy-signal-producer"},
+        {"wave": 2, "fleet_lane": "be-strategy-signal-producer", "convergence": "LOOP-PROD-CAP-001 adopts this binding as its first tenant"},
     ),
     (
         "EVOLOOP-008",
@@ -238,7 +240,7 @@ TASKS = [
             "scripts",
             "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-008-full-cycle-verifier.md",
         ],
-        {"wave": 2, "fleet_lane": "verify-generative-loop"},
+        {"wave": 2, "fleet_lane": "verify-generative-loop", "convergence": "consumed and extended by LOOP-PROD-VERIFY-EXEC-001"},
     ),
     (
         "EVOLOOP-009",
@@ -247,7 +249,7 @@ TASKS = [
         "Codex2",
         "Human/Ops",
         "Evolution Generative Loop / Wave 3 closeout",
-        ["EVOLOOP-005", "EVOLOOP-007", "EVOLOOP-008"],
+        ["EVOLOOP-005", "EVOLOOP-007", "EVOLOOP-008", "EVOLOOP-010", "EVOLOOP-011"],
         [
             "dev redeployed with all merged packet PRs and all loop services running",
             "hosted console shows the executed decision cycle formal entries and the promoted binding on artifact v2",
@@ -259,6 +261,49 @@ TASKS = [
             "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-009-closeout.md",
         ],
         {"wave": 3, "fleet_lane": "ops-evoloop-closeout"},
+    ),
+    (
+        "EVOLOOP-010",
+        "Conversation-plane proposal intake + discussion-loop spec",
+        "先把七段討論閉環「討論→建議→模擬→決策→執行→回顧→學習」落成正式 spec(傘狀:三個對話面——管理台 persona 對話、Agora 工作坊、諮詢委員會——收斂到同一條治理+執行脊椎,repo 目前沒有這份成文定義)。再實作 surface-agnostic 的建議入口契約:任何對話面經 sponsor 核可的建議 → EvolutionDecisionProposal 進 evolution governance。第一個 adapter = 諮詢委員會:給 services/consultation/sponsor_decision_bridge(純函式、現無 caller)補上正式呼叫端;Agora governed proposal 與 persona 對話兩個 adapter 在 spec 內定義為後續掛點。與 LOOP-PROD-CONS-001 分工:它修委員會 executor 的真實性,本 task 擁有「進 evolution governance 的入口」。",
+        "Codex2",
+        "Claude",
+        "Evolution Generative Loop / Wave 1 conversation intake",
+        ["EVOLOOP-001"],
+        [
+            "seven-stage discussion-loop spec is committed and names the three conversation surfaces and the shared spine",
+            "a sponsor-approved consultation decision reaches evolution governance as an EvolutionDecisionProposal via the bridge caller",
+            "the intake contract is surface-agnostic with documented adapter hooks for Agora and persona chat",
+            "duplicate sponsor decisions do not create duplicate proposals",
+            "the bridge module itself stays a pure transformation",
+        ],
+        [
+            "services/consultation",
+            "docs/04/pantheon_evolution_generative_loop_gap_2026-07-14",
+            "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-010-conversation-intake.md",
+        ],
+        {"wave": 1, "fleet_lane": "be-conversation-proposal-intake"},
+    ),
+    (
+        "EVOLOOP-011",
+        "Execution-outcome feedback into persona memory",
+        "把「回顧→學習」的 persona 側接起來:executed decision 的結果與 postmortem 摘要,經 OpenClaw SOUL/trainer 管道寫入對應 persona 的記憶,讓 persona 在之後的對話中能引用真實執行結果。fail-closed:沒有結果不得造記憶;寫入要冪等(同一 decision 不重複灌)。hosted 證據:對該 persona 發問時,它能引用該筆結果。",
+        "Claude",
+        "Codex",
+        "Evolution Generative Loop / Wave 2 persona learning",
+        ["EVOLOOP-004"],
+        [
+            "executed decision outcomes and postmortem summaries are written into the owning persona memory through the OpenClaw SOUL/trainer path",
+            "writes are idempotent per decision id and fail-closed on missing outcomes",
+            "hosted chat evidence shows the persona referencing the real outcome",
+            "memory entries link back to the decision and journal entry ids",
+        ],
+        [
+            "integrations/openclaw",
+            "services/persona",
+            "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-011-persona-learning-feedback.md",
+        ],
+        {"wave": 2, "fleet_lane": "be-persona-learning-feedback"},
     ),
 ]
 
