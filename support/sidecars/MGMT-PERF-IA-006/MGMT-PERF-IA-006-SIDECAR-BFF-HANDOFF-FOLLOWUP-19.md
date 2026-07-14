@@ -130,4 +130,3 @@ AI_NAME=Antigravity ./scripts/ai-status.sh approve \
 - Changed only this support artifact. No canonical truth, Pantheon runtime,
   BFF contract/implementation, registry/governance logic, or frontend source
   was changed.
-

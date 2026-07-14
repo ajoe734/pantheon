@@ -277,4 +277,3 @@ def test_pre_signal_envelope_validation():
     del invalid_envelope["correlation_id"]
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(instance=invalid_envelope, schema=correlation_envelope_schema)
-

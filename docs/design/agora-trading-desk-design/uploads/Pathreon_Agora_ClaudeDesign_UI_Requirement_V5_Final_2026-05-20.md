@@ -993,4 +993,3 @@ Claude Design 交付稿必須讓人一眼看出：
 Shadow / Journal / Train AI 是橫切工具。
 整體不是散戶 AI 問答工具。
 ```
-

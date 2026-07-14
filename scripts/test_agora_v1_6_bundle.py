@@ -333,4 +333,3 @@ def test_winner_branch_completeness_rejects_incorrect_block_count() -> None:
     })
     errors_long = list(validator.iter_errors(bad_long))
     assert errors_long, "More than 12 blocks must fail validation"
-

@@ -209,4 +209,3 @@ Persona detail 新增 `Trade Journal`：
 
 只有當 canonical joins、reflection worker、BFF、frontend、governance、replay/hosted acceptance
 全部通過，才可稱 Persona Trade Journal 完成。僅有 UI mock、LLM summary 或 local test 都不算完成。
-

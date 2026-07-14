@@ -1483,4 +1483,3 @@ def test_run_tick_retains_undelivered_incidents_across_day_rollover(tmp_path):
     updated_pending = _load_pending_evidence(state_path)
     assert "evt-prior-day" in updated_pending
     assert updated_pending["evt-prior-day"]["delivered"] is True
-

@@ -700,5 +700,3 @@ def test_loop_health_db_store_merge_with_file_store(monkeypatch) -> None:
     assert source_ingestion["truth_source"]["source"] == "controller_store"
     assert bff_health["truth_source"]["source"] == "service_store"
     assert bff_health["evidence_packet"]["packet_id"] == "packet-bff-health-001"
-
-

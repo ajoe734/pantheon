@@ -99,4 +99,3 @@ Turn the CLI and internal API from scaffolds into a usable **secondary control p
 **From**: Qwen (sidecar owner; evidence summary)
 **Status**: Handed off for review approval (2026-04-11T18:10:58Z)
 **Next**: Codex reviews and approves → parent owner (Codex) finalizes APP-002-W2-CLI-FALLBACK as done
-

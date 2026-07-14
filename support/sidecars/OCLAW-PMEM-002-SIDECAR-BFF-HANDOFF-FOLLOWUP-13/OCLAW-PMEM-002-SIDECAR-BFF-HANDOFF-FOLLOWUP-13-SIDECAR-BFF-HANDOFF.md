@@ -112,4 +112,3 @@ and canonical composition authority.
 - `docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/OCLAW-PMEM-002-openclaw-agent-reconcile.md`.
 - Current BFF persona create, patch, and runtime-profile implementation and
   focused contract tests under `services/control-plane/bff`.
-

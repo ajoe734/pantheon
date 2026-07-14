@@ -108,4 +108,3 @@ Claude approves this no-delta checkpoint and returns it to owner Codex for
 formal closeout. Approval covers this support packet only; it does not
 approve or merge PR `#251`, close any BFF query gap, or close
 `PPL-ALLOC-006`.
-

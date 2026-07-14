@@ -401,4 +401,3 @@ def test_mfa_token_propagation(configure_urls, monkeypatch) -> None:
     assert post_calls[0][3] == "mfa-secret-token-value"
     assert post_calls[1][3] == "mfa-secret-token-value"
     assert post_calls[2][3] == "mfa-secret-token-value"
-

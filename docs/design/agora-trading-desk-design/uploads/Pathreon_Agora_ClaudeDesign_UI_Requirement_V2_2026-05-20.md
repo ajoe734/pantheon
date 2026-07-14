@@ -1177,4 +1177,3 @@ Agora 是交易員的一張 AI 交易桌。
 ```
 
 AI 會根據每個交易員、每個策略 lens、每個工作階段，生成不同 dashboard、不同 widget、不同監控邏輯。交易員調整它，AI 記住它，並用 Shadow / Journal / Training 產生高價值訓練資料。
-

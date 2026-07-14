@@ -127,5 +127,3 @@ Verification results:
   - Incidents: All 27 degraded or missing-binding incidents remain visible and quarantined without being incorrectly marked as "covered".
 - **Browser probe**: 0 console errors and 0 failed requests on both desktop and mobile screenshots.
 - **Verdict**: `APPROVE` - All hosted verification checks fully satisfied.
-
-

@@ -109,4 +109,3 @@ Parent owner `Claude2` owns absorption, canonical field names, implementation,
 and frontend dispatch. Reviewer `Antigravity` reviews this artifact only for
 scope discipline, accuracy, and handoff usefulness. Approval of this sidecar
 does not approve the parent, dependencies, frontend readiness, or deployment.
-
