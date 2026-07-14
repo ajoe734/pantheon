@@ -69,7 +69,7 @@ from dispatch_policy import (
 from github_bus import sync_github_bus
 from provider_permissions import provider_capabilities as build_provider_capabilities, write_provider_capabilities
 from rebase_helper import continue_or_skip_empty
-from runtime_state import load_approval_state, load_event_queue, load_runtime_state, prune_worker_records, queue_event_record, save_runtime_state
+from runtime_state import load_approval_state, load_event_queue, load_runtime_state, prune_worker_records, queue_event_record, replace_event_queue, runtime_state_lock, save_runtime_state
 from runtime_state import enqueue_event
 from task_archive import TaskResolver
 from watch_events import queue_delivery_event, run_scan, trim_seen_events
@@ -223,12 +223,13 @@ def clear_supervisor_pid(config: dict[str, Any]) -> None:
         return
     if current == str(os.getpid()):
         try:
-            state = load_runtime_state(config)
-            supervisor_state = state.setdefault("supervisor", {})
-            supervisor_state["pid"] = os.getpid()
-            supervisor_state["lifecycle"] = "stopping"
-            supervisor_state["last_heartbeat_at"] = utc_now()
-            save_runtime_state(config, state)
+            with runtime_state_lock(config, shared=False, nonblocking=False):
+                state = load_runtime_state(config)
+                supervisor_state = state.setdefault("supervisor", {})
+                supervisor_state["pid"] = os.getpid()
+                supervisor_state["lifecycle"] = "stopping"
+                supervisor_state["last_heartbeat_at"] = utc_now()
+                save_runtime_state(config, state)
         except Exception:
             pass
         path.unlink(missing_ok=True)
@@ -768,17 +769,18 @@ def stamp_supervisor_runtime_state(
 
 
 def bootstrap_supervisor_runtime_state(config: dict[str, Any], *, lifecycle: str = "starting") -> dict[str, Any]:
-    heartbeat_at = utc_now()
-    state = load_runtime_state(config)
-    stamp_supervisor_runtime_state(
-        config,
-        state,
-        planning_state=load_discussion_planning_state(),
-        heartbeat_at=heartbeat_at,
-        lifecycle=lifecycle,
-    )
-    save_runtime_state(config, state)
-    return state
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        heartbeat_at = utc_now()
+        state = load_runtime_state(config)
+        stamp_supervisor_runtime_state(
+            config,
+            state,
+            planning_state=load_discussion_planning_state(),
+            heartbeat_at=heartbeat_at,
+            lifecycle=lifecycle,
+        )
+        save_runtime_state(config, state)
+        return state
 
 
 def log_runtime_summary(
@@ -9337,9 +9339,7 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
 
 
 def save_event_queue(config: dict[str, Any], events: list[dict[str, Any]]) -> None:
-    path = config_path(config, "event_queue")
-    payload = "".join(f"{json.dumps(event, ensure_ascii=False)}\n" for event in events)
-    path.write_text(payload, encoding="utf-8")
+    replace_event_queue(config, events)
 
 
 def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -10639,6 +10639,26 @@ def run_once(
     verbose: bool = False,
     once: bool = False,
 ) -> bool:
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        return _run_once_locked(
+            config,
+            watch=watch,
+            replay=replay,
+            quiet=quiet,
+            verbose=verbose,
+            once=once,
+        )
+
+
+def _run_once_locked(
+    config: dict[str, Any],
+    *,
+    watch: bool,
+    replay: bool = False,
+    quiet: bool = False,
+    verbose: bool = False,
+    once: bool = False,
+) -> bool:
     write_supervisor_pid(config)
     loop_started_at = utc_now()
     state = load_runtime_state(config)
@@ -10780,6 +10800,22 @@ def claim_next_task_for_agent(
     release_task_id: str | None = None,
     quiet: bool = False,
 ) -> bool:
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        return _claim_next_task_for_agent_locked(
+            config,
+            agent_name=agent_name,
+            release_task_id=release_task_id,
+            quiet=quiet,
+        )
+
+
+def _claim_next_task_for_agent_locked(
+    config: dict[str, Any],
+    *,
+    agent_name: str,
+    release_task_id: str | None = None,
+    quiet: bool = False,
+) -> bool:
     settings = worker_self_claim_settings(config)
     if not settings.get("enabled", False):
         console_log("worker self-claim disabled", quiet=quiet)
@@ -10826,13 +10862,14 @@ def main() -> int:
     SUPERVISOR_LOG_QUIET = args.quiet
     config = load_config(args.config)
     if args.clear_provider_pause:
-        state = load_runtime_state(config)
-        changed = clear_provider_dispatch_pause(config, state, args.clear_provider_pause)
-        if changed:
-            save_runtime_state(config, state)
-            console_log(f"cleared provider dispatch pause: {args.clear_provider_pause}", quiet=args.quiet)
-        else:
-            console_log(f"no provider dispatch pause found for: {args.clear_provider_pause}", quiet=args.quiet)
+        with runtime_state_lock(config, shared=False, nonblocking=False):
+            state = load_runtime_state(config)
+            changed = clear_provider_dispatch_pause(config, state, args.clear_provider_pause)
+            if changed:
+                save_runtime_state(config, state)
+                console_log(f"cleared provider dispatch pause: {args.clear_provider_pause}", quiet=args.quiet)
+            else:
+                console_log(f"no provider dispatch pause found for: {args.clear_provider_pause}", quiet=args.quiet)
         return 0
     if args.claim_agent:
         claim_next_task_for_agent(

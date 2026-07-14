@@ -28,7 +28,13 @@ from common import (
     utc_now,
     write_activity_log,
 )
-from runtime_state import enqueue_event, load_runtime_state, save_runtime_state
+from runtime_state import (
+    canonical_task_state_lock_file,
+    enqueue_event,
+    load_runtime_state,
+    runtime_state_lock,
+    save_runtime_state,
+)
 from task_archive import DEFAULT_RECENT_LIMIT, recent_terminal_summaries
 
 
@@ -277,6 +283,11 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
 
 
 def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        return _queue_delivery_event_locked(config, event)
+
+
+def _queue_delivery_event_locked(config: dict[str, Any], event: dict[str, Any]) -> bool:
     target_agent = event.get("target_agent")
     if not target_agent:
         write_activity_log(
@@ -290,9 +301,14 @@ def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
         return False
 
     agent = agent_config_for(config, target_agent)
-    context_files = event.get("context_files") or execution_context_files(config, event.get("task_id"))
-    event["context_files"] = context_files
-    message = render_wakeup_message(config, event, target_agent)
+    with canonical_task_state_lock_file(
+        config_path(config, "status_file", "ai-status.json"),
+        shared=True,
+        nonblocking=False,
+    ):
+        context_files = event.get("context_files") or execution_context_files(config, event.get("task_id"))
+        event["context_files"] = context_files
+        message = render_wakeup_message(config, event, target_agent)
     queue_payload = {
         "event_id": new_runtime_id("evt"),
         "created_at": utc_now(),
@@ -333,8 +349,23 @@ def trim_seen_events(state: dict[str, Any], max_entries: int) -> None:
 
 
 def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool, provider_capabilities: dict[str, Any]) -> bool:
-    status = load_status(config)
-    snapshot = build_snapshot(config, status)
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        return _run_scan_locked(
+            config,
+            state,
+            replay=replay,
+            provider_capabilities=provider_capabilities,
+        )
+
+
+def _run_scan_locked(config: dict[str, Any], state: dict[str, Any], replay: bool, provider_capabilities: dict[str, Any]) -> bool:
+    with canonical_task_state_lock_file(
+        config_path(config, "status_file", "ai-status.json"),
+        shared=True,
+        nonblocking=False,
+    ):
+        status = load_status(config)
+        snapshot = build_snapshot(config, status)
     is_first_run = not state.get("initialized_at")
     if is_first_run and not replay and not config.get("watcher", {}).get("replay_on_start", False):
         state["initialized_at"] = utc_now()
@@ -380,18 +411,20 @@ def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool, provid
 def main() -> int:
     args = parse_args()
     config = load_config(args.config)
-    state = load_runtime_state(config)
     provider_capabilities = load_json(config_path(config, "provider_capabilities"), default={})
 
     poll_interval = args.poll_interval or float(config.get("watcher", {}).get("poll_interval_seconds", 2.0))
-    run_scan(config, state, replay=args.replay, provider_capabilities=provider_capabilities)
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        state = load_runtime_state(config)
+        run_scan(config, state, replay=args.replay, provider_capabilities=provider_capabilities)
     if args.once:
         return 0
 
     while True:
         time.sleep(poll_interval)
-        state = load_runtime_state(config)
-        run_scan(config, state, replay=False, provider_capabilities=provider_capabilities)
+        with runtime_state_lock(config, shared=False, nonblocking=False):
+            state = load_runtime_state(config)
+            run_scan(config, state, replay=False, provider_capabilities=provider_capabilities)
 
 
 if __name__ == "__main__":

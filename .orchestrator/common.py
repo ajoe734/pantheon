@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gzip
+import fcntl
 import json
 import os
 import re
@@ -14,9 +15,11 @@ import uuid
 import hashlib
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import local
 from typing import Any, Mapping
 
 from task_archive import TaskResolver
@@ -51,6 +54,172 @@ CLAUDE_OAUTH_REFRESH_HEADERS = {
     "Referer": "https://claude.ai/",
     "User-Agent": "claude-code/2.1.117",
 }
+
+
+RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_VERSION = 1
+RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID = "pantheon-runtime-task-audit-lock-v1"
+RUNTIME_TASK_AUDIT_LOCK_ORDER = (
+    "runtime_admission",
+    "task_state",
+    "activity_audit",
+)
+_LOCK_RANKS = {
+    name: index
+    for index, name in enumerate(RUNTIME_TASK_AUDIT_LOCK_ORDER, start=1)
+}
+_STABLE_LOCK_LOCAL = local()
+
+
+def _stable_lock_state() -> tuple[dict[str, dict[str, Any]], list[str]]:
+    held = getattr(_STABLE_LOCK_LOCAL, "held", None)
+    if held is None:
+        held = {}
+        _STABLE_LOCK_LOCAL.held = held
+    stack = getattr(_STABLE_LOCK_LOCAL, "stack", None)
+    if stack is None:
+        stack = []
+        _STABLE_LOCK_LOCAL.stack = stack
+    return held, stack
+
+
+def _trace_stable_lock(action: str, plane: str, path: Path) -> None:
+    """Append an optional process-test trace without touching canonical audit."""
+
+    trace_value = (
+        os.environ.get("PANTHEON_RUNTIME_LOCK_TRACE")
+        or os.environ.get("LOOP_TEST_LOCK_TRACE")
+        or ""
+    ).strip()
+    if not trace_value:
+        return
+    trace_path = Path(trace_value).expanduser()
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = f"{action}:{plane}:{os.getpid()}:{path}\n".encode("utf-8")
+    descriptor = os.open(trace_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        os.write(descriptor, payload)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
+def stable_sidecar_lock(
+    path: str | Path,
+    *,
+    plane: str,
+    shared: bool = False,
+    nonblocking: bool = False,
+):
+    """Hold one never-replaced flock sidecar and enforce the global lock order.
+
+    Locks are process-thread re-entrant for the same path. A shared lock cannot
+    be upgraded in place, and acquiring an earlier or peer plane while a later
+    plane is held fails before entering the kernel, preventing hidden reverse
+    ordering in nested writer helpers.
+    """
+
+    if plane not in _LOCK_RANKS:
+        raise ValueError(f"unknown canonical lock plane: {plane}")
+    lock_path = Path(path).expanduser().resolve()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    key = str(lock_path)
+    held, stack = _stable_lock_state()
+    existing = held.get(key)
+    if existing is not None:
+        if bool(existing["shared"]) and not shared:
+            raise RuntimeError(
+                f"cannot upgrade shared {plane} lock to exclusive: {lock_path}"
+            )
+        existing["depth"] += 1
+        stack.append(key)
+        try:
+            yield existing["handle"]
+        finally:
+            stack.pop()
+            existing["depth"] -= 1
+        return
+
+    rank = _LOCK_RANKS[plane]
+    active_ranks = [int(held[item]["rank"]) for item in stack if item in held]
+    if active_ranks and rank <= max(active_ranks):
+        active_planes = [str(held[item]["plane"]) for item in stack if item in held]
+        raise RuntimeError(
+            "canonical lock order violation: "
+            f"cannot acquire {plane} after {','.join(active_planes)}"
+        )
+
+    handle = lock_path.open("a+", encoding="utf-8")
+    operation = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
+    if nonblocking:
+        operation |= fcntl.LOCK_NB
+    _trace_stable_lock("request", plane, lock_path)
+    try:
+        fcntl.flock(handle.fileno(), operation)
+    except BaseException:
+        handle.close()
+        raise
+    _trace_stable_lock("acquire", plane, lock_path)
+    held[key] = {
+        "handle": handle,
+        "depth": 1,
+        "rank": rank,
+        "plane": plane,
+        "shared": bool(shared),
+    }
+    stack.append(key)
+    try:
+        yield handle
+    finally:
+        stack.pop()
+        entry = held.pop(key)
+        _trace_stable_lock("release", plane, lock_path)
+        try:
+            fcntl.flock(entry["handle"].fileno(), fcntl.LOCK_UN)
+        finally:
+            entry["handle"].close()
+
+
+def canonical_task_state_lock_path(status_file: str | Path) -> Path:
+    root = Path(status_file).expanduser().resolve().parent
+    return root / ".orchestrator" / "task-state.lock"
+
+
+@contextmanager
+def canonical_task_state_lock_file(
+    status_file: str | Path,
+    *,
+    shared: bool = False,
+    nonblocking: bool = False,
+):
+    with stable_sidecar_lock(
+        canonical_task_state_lock_path(status_file),
+        plane="task_state",
+        shared=shared,
+        nonblocking=nonblocking,
+    ) as handle:
+        yield handle
+
+
+def activity_audit_lock_path(activity_file: str | Path) -> Path:
+    root = Path(activity_file).expanduser().resolve().parent
+    return root / ".orchestrator" / "activity-audit.lock"
+
+
+@contextmanager
+def activity_audit_lock_file(
+    activity_file: str | Path,
+    *,
+    shared: bool = False,
+    nonblocking: bool = False,
+):
+    with stable_sidecar_lock(
+        activity_audit_lock_path(activity_file),
+        plane="activity_audit",
+        shared=shared,
+        nonblocking=nonblocking,
+    ) as handle:
+        yield handle
 
 
 def utc_now() -> str:
@@ -106,6 +275,11 @@ def write_json(path: Path, payload: Any) -> None:
         os.fsync(handle.fileno())
         temp_path = Path(handle.name)
     os.replace(temp_path, path)
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -133,6 +307,8 @@ def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     ensure_parent(path)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def deep_merge(base: Any, overlay: Any) -> Any:
@@ -488,7 +664,7 @@ def _rotate_activity_log_if_needed(config: dict[str, Any], log_path: Path) -> No
         return
     if size <= _activity_log_rotate_threshold(config):
         return
-    archive_dir = ROOT / ACTIVITY_LOG_ARCHIVE_SUBDIR
+    archive_dir = log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR
     archive_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     archive_path = archive_dir / f"{log_path.stem}-{stamp}.jsonl.gz"
@@ -518,8 +694,9 @@ def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
         **entry,
     }
     log_path = config_path(config, "activity_log")
-    _rotate_activity_log_if_needed(config, log_path)
-    append_jsonl(log_path, payload)
+    with activity_audit_lock_file(log_path, shared=False, nonblocking=False):
+        _rotate_activity_log_if_needed(config, log_path)
+        append_jsonl(log_path, payload)
 
 
 def runtime_log_path(prefix: str, target: str) -> Path:
@@ -766,52 +943,53 @@ def task_brief_path(task_id: str | None) -> Path:
 
 def _recent_task_activity(config: dict[str, Any], task_id: str, *, limit: int = 6) -> list[dict[str, Any]]:
     path = config_path(config, "activity_log")
-    if not path.exists():
-        return []
+    with activity_audit_lock_file(path, shared=True, nonblocking=False):
+        if not path.exists():
+            return []
 
-    entries: list[dict[str, Any]] = []
-    chunk_size = 64 * 1024
-    max_scan_bytes = 16 * 1024 * 1024
-    scanned = 0
+        entries: list[dict[str, Any]] = []
+        chunk_size = 64 * 1024
+        max_scan_bytes = 16 * 1024 * 1024
+        scanned = 0
 
-    with path.open("rb") as handle:
-        handle.seek(0, os.SEEK_END)
-        position = handle.tell()
-        buffer = b""
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            position = handle.tell()
+            buffer = b""
 
-        while position > 0 and len(entries) < limit and scanned < max_scan_bytes:
-            read_size = min(chunk_size, position)
-            position -= read_size
-            handle.seek(position)
-            chunk = handle.read(read_size)
-            scanned += read_size
-            buffer = chunk + buffer
-            lines = buffer.splitlines()
+            while position > 0 and len(entries) < limit and scanned < max_scan_bytes:
+                read_size = min(chunk_size, position)
+                position -= read_size
+                handle.seek(position)
+                chunk = handle.read(read_size)
+                scanned += read_size
+                buffer = chunk + buffer
+                lines = buffer.splitlines()
 
-            if position > 0:
-                buffer = lines[0] if lines else buffer
-                complete_lines = lines[1:]
-            else:
-                buffer = b""
-                complete_lines = lines
+                if position > 0:
+                    buffer = lines[0] if lines else buffer
+                    complete_lines = lines[1:]
+                else:
+                    buffer = b""
+                    complete_lines = lines
 
-            for raw_line in reversed(complete_lines):
-                line = raw_line.decode("utf-8", errors="ignore").strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    # Ignore a partially-written tail line rather than stalling dispatch.
-                    continue
-                if str(entry.get("task_id") or "").strip() != task_id:
-                    continue
-                entries.append(entry)
-                if len(entries) >= limit:
-                    break
+                for raw_line in reversed(complete_lines):
+                    line = raw_line.decode("utf-8", errors="ignore").strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        # Ignore a partially-written tail line rather than stalling dispatch.
+                        continue
+                    if str(entry.get("task_id") or "").strip() != task_id:
+                        continue
+                    entries.append(entry)
+                    if len(entries) >= limit:
+                        break
 
-    entries.reverse()
-    return entries
+        entries.reverse()
+        return entries
 
 
 def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None:

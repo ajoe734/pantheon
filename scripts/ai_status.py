@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import os
 import re
@@ -9,9 +10,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import local
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -54,12 +57,25 @@ from multi_repo_registry import (
     task_artifact_repository_ids,
     task_primary_repository_id,
 )
-from runtime_state import load_runtime_state
+from runtime_state import (
+    activity_audit_lock_file,
+    canonical_task_state_lock_file,
+    load_runtime_state_snapshot,
+)
+
+# Derived dashboard rendering intentionally uses an atomic projection-only
+# reader. Canonical mutation/admission callers must use runtime_state's locked
+# APIs instead; taking a runtime lock here while task-state is held would
+# reverse the global runtime -> task -> audit order.
+load_runtime_state = load_runtime_state_snapshot
 
 STATUS_FILE = STATUS_ROOT / "ai-status.json"
 LOG_FILE = STATUS_ROOT / "ai-activity-log.jsonl"
 LOG_ROTATE_MAX_BYTES = int(os.environ.get("AI_STATUS_LOG_ROTATE_MAX_BYTES", str(5 * 1024 * 1024)))
 LOG_ROTATE_KEEP_LINES = int(os.environ.get("AI_STATUS_LOG_ROTATE_KEEP_LINES", "1000"))
+STATUS_ACTIVITY_OUTBOX_KEY = "status_activity_outbox"
+STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION = 1
+_ACTIVITY_TRANSACTION_LOCAL = local()
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
@@ -593,55 +609,67 @@ def load_state() -> dict[str, Any]:
     return state
 
 
+@contextmanager
+def canonical_task_state_lock(*, shared: bool = False, nonblocking: bool = False):
+    with canonical_task_state_lock_file(
+        STATUS_FILE,
+        shared=shared,
+        nonblocking=nonblocking,
+    ):
+        yield
+
+
 def load_logs() -> list[dict[str, Any]]:
-    if not LOG_FILE.exists():
-        return []
-    logs: list[dict[str, Any]] = []
-    for line_no, line in enumerate(LOG_FILE.read_text(encoding="utf-8").splitlines(), start=1):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            logs.append(json.loads(line))
-        except json.JSONDecodeError as exc:
-            print(
-                f"Warning: skipping malformed ai-activity-log.jsonl line {line_no}: {exc}",
-                file=sys.stderr,
-            )
-    return logs
+    with activity_audit_lock_file(LOG_FILE, shared=True, nonblocking=False):
+        if not LOG_FILE.exists():
+            return []
+        logs: list[dict[str, Any]] = []
+        for line_no, line in enumerate(LOG_FILE.read_text(encoding="utf-8").splitlines(), start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                logs.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                print(
+                    f"Warning: skipping malformed ai-activity-log.jsonl line {line_no}: {exc}",
+                    file=sys.stderr,
+                )
+        return logs
 
 
 def load_log_tail_lines(max_lines: int = 5000) -> list[str]:
-    if not LOG_FILE.exists():
-        return []
-    try:
-        with LOG_FILE.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            file_size = handle.tell()
-            block_size = 1 << 16
-            buffer = bytearray()
-            line_count = 0
-            position = file_size
-            while position > 0 and line_count <= max_lines:
-                read_size = min(block_size, position)
-                position -= read_size
-                handle.seek(position)
-                chunk = handle.read(read_size)
-                buffer[0:0] = chunk
-                line_count = buffer.count(b"\n")
-            tail = bytes(buffer)
-        if line_count > max_lines:
-            split_at = -1
-            extra = line_count - max_lines
-            for _ in range(extra):
-                split_at = tail.find(b"\n", split_at + 1)
-                if split_at == -1:
-                    break
-            if split_at != -1:
-                tail = tail[split_at + 1 :]
-        return tail.decode("utf-8", errors="replace").splitlines()
-    except OSError:
-        return []
+    with activity_audit_lock_file(LOG_FILE, shared=True, nonblocking=False):
+        if not LOG_FILE.exists():
+            return []
+        try:
+            with LOG_FILE.open("rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                file_size = handle.tell()
+                block_size = 1 << 16
+                buffer = bytearray()
+                line_count = 0
+                position = file_size
+                while position > 0 and line_count <= max_lines:
+                    read_size = min(block_size, position)
+                    position -= read_size
+                    handle.seek(position)
+                    chunk = handle.read(read_size)
+                    buffer[0:0] = chunk
+                    line_count = buffer.count(b"\n")
+                tail = bytes(buffer)
+            if line_count > max_lines:
+                split_at = -1
+                extra = line_count - max_lines
+                for _ in range(extra):
+                    split_at = tail.find(b"\n", split_at + 1)
+                    if split_at == -1:
+                        break
+                if split_at != -1:
+                    tail = tail[split_at + 1 :]
+            return tail.decode("utf-8", errors="replace").splitlines()
+        except OSError:
+            return []
 
 
 def load_planning_state() -> dict[str, Any] | None:
@@ -858,6 +886,13 @@ def save_state(state: dict[str, Any]) -> None:
         os.fsync(handle.fileno())
         temp_path = Path(handle.name)
     os.replace(temp_path, STATUS_FILE)
+    directory_fd = os.open(STATUS_FILE.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+    if STATUS_FILE.read_text(encoding="utf-8") != serialized:
+        raise RuntimeError("canonical task-state readback mismatch")
 
 
 def ensure_sprint_started_at(state: dict[str, Any]) -> None:
@@ -975,14 +1010,47 @@ def prune_archived_active_tasks(state: dict[str, Any]) -> list[str]:
     return pruned_ids
 
 
-def maybe_rotate_activity_log(path: Path | None = None) -> Path | None:
+def _canonical_json_sha256(value: Any) -> str:
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _activity_event(entry: dict[str, Any]) -> dict[str, Any]:
+    event = deepcopy(entry)
+    if not str(event.get("event_id") or "").strip():
+        event["event_id"] = "ai-status-event-" + _canonical_json_sha256(event)
+    return event
+
+
+@contextmanager
+def buffer_activity_events():
+    previous = getattr(_ACTIVITY_TRANSACTION_LOCAL, "events", None)
+    events: list[dict[str, Any]] = []
+    _ACTIVITY_TRANSACTION_LOCAL.events = events
+    try:
+        yield events
+    finally:
+        if previous is None:
+            try:
+                delattr(_ACTIVITY_TRANSACTION_LOCAL, "events")
+            except AttributeError:
+                pass
+        else:
+            _ACTIVITY_TRANSACTION_LOCAL.events = previous
+
+
+def _maybe_rotate_activity_log_unlocked(log_path: Path) -> Path | None:
     """Archive + truncate ai-activity-log.jsonl when it exceeds LOG_ROTATE_MAX_BYTES.
 
     Returns the gzipped archive path on rotation, None when no rotation happened.
     The active log file is rewritten in place (same inode), so concurrent
     append-mode writers see the truncated file rather than a stale handle.
     """
-    log_path = path if path is not None else LOG_FILE
     if LOG_ROTATE_MAX_BYTES <= 0:
         return None
     try:
@@ -1017,16 +1085,162 @@ def maybe_rotate_activity_log(path: Path | None = None) -> Path | None:
     try:
         # Rewriting via write_bytes truncates the existing inode (O_TRUNC),
         # so any open append-mode handle still writes to this same file.
-        log_path.write_bytes(keep)
+        with log_path.open("wb") as handle:
+            handle.write(keep)
+            handle.flush()
+            os.fsync(handle.fileno())
     except OSError:
         return None
+    directory_fd = os.open(log_path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
     return archive_path
 
 
-def append_log(entry: dict[str, Any]) -> None:
-    maybe_rotate_activity_log()
+def maybe_rotate_activity_log(path: Path | None = None) -> Path | None:
+    log_path = path if path is not None else LOG_FILE
+    with activity_audit_lock_file(log_path, shared=False, nonblocking=False):
+        return _maybe_rotate_activity_log_unlocked(log_path)
+
+
+def _append_log_unlocked(entry: dict[str, Any]) -> None:
+    _maybe_rotate_activity_log_unlocked(LOG_FILE)
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LOG_FILE.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def append_log(entry: dict[str, Any]) -> None:
+    event = _activity_event(entry)
+    buffer = getattr(_ACTIVITY_TRANSACTION_LOCAL, "events", None)
+    if isinstance(buffer, list):
+        buffer.append(event)
+        return
+    with activity_audit_lock_file(LOG_FILE, shared=False, nonblocking=False):
+        _append_log_unlocked(event)
+
+
+def _activity_audit_sources() -> list[Path]:
+    sources = sorted((LOG_FILE.parent / "archive" / "logs").glob(f"{LOG_FILE.name}-*.gz"))
+    sources.extend(
+        sorted(
+            (LOG_FILE.parent / ".orchestrator" / "logs" / "activity-log-archive").glob(
+                "ai-activity-log-*.jsonl.gz"
+            )
+        )
+    )
+    if LOG_FILE.is_file():
+        sources.append(LOG_FILE)
+    return sources
+
+
+def _activity_event_index_unlocked() -> dict[str, str]:
+    result: dict[str, str] = {}
+    for source in _activity_audit_sources():
+        if source.suffix == ".gz":
+            with gzip.open(source, "rt", encoding="utf-8", errors="strict") as handle:
+                text = handle.read()
+        else:
+            text = source.read_text(encoding="utf-8", errors="strict")
+        source_ids: set[str] = set()
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            if not isinstance(entry, dict):
+                raise RuntimeError(
+                    f"activity audit row is not an object: {source}:{line_number}"
+                )
+            event_id = str(entry.get("event_id") or "").strip()
+            if not event_id:
+                continue
+            if event_id in source_ids:
+                raise RuntimeError(
+                    f"duplicate activity event_id in {source}: {event_id}"
+                )
+            source_ids.add(event_id)
+            digest = _canonical_json_sha256(entry)
+            existing = result.get(event_id)
+            if existing is not None and existing != digest:
+                raise RuntimeError(
+                    f"activity event_id payload mismatch: {event_id}"
+                )
+            result[event_id] = digest
+    return result
+
+
+def _validate_status_activity_outbox(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version",
+        "transaction_id",
+        "events",
+    }:
+        raise RuntimeError("status activity outbox schema is not exact")
+    events = value.get("events")
+    if (
+        value.get("schema_version") != STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION
+        or not isinstance(events, list)
+        or not events
+        or any(
+            not isinstance(event, dict)
+            or not str(event.get("event_id") or "").strip()
+            for event in events
+        )
+        or len({str(event["event_id"]) for event in events}) != len(events)
+    ):
+        raise RuntimeError("status activity outbox contract is invalid")
+    expected_id = "ai-status-tx-" + _canonical_json_sha256(events)
+    if value.get("transaction_id") != expected_id:
+        raise RuntimeError("status activity outbox digest mismatch")
+    return value
+
+
+def recover_status_activity_outbox(state: dict[str, Any]) -> bool:
+    pending = state.get(STATUS_ACTIVITY_OUTBOX_KEY)
+    if pending in (None, {}, []):
+        return False
+    pending = _validate_status_activity_outbox(pending)
+    with activity_audit_lock_file(LOG_FILE, shared=False, nonblocking=False):
+        existing = _activity_event_index_unlocked()
+        for event in pending["events"]:
+            event_id = str(event["event_id"])
+            digest = _canonical_json_sha256(event)
+            if event_id in existing:
+                if existing[event_id] != digest:
+                    raise RuntimeError(
+                        f"activity outbox payload conflict: {event_id}"
+                    )
+                continue
+            _append_log_unlocked(event)
+            existing[event_id] = digest
+        final = _activity_event_index_unlocked()
+        if any(
+            final.get(str(event["event_id"])) != _canonical_json_sha256(event)
+            for event in pending["events"]
+        ):
+            raise RuntimeError("status activity outbox append/readback mismatch")
+        state[STATUS_ACTIVITY_OUTBOX_KEY] = None
+        save_state(state)
+    return True
+
+
+def commit_state_with_activity_outbox(
+    state: dict[str, Any],
+    events: list[dict[str, Any]],
+) -> None:
+    if events:
+        state[STATUS_ACTIVITY_OUTBOX_KEY] = {
+            "schema_version": STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION,
+            "transaction_id": "ai-status-tx-" + _canonical_json_sha256(events),
+            "events": deepcopy(events),
+        }
+    save_state(state)
+    if events:
+        recover_status_activity_outbox(state)
 
 
 def ensure_agent(name: str) -> dict[str, Any]:
@@ -3546,7 +3760,9 @@ def sync_all(state: dict[str, Any]) -> None:
     recompute_workload(state)
     ensure_sprint_started_at(state)
     state["updated_at"] = iso_now()
-    save_state(state)
+    buffered = getattr(_ACTIVITY_TRANSACTION_LOCAL, "events", None)
+    events = list(buffered) if isinstance(buffered, list) else []
+    commit_state_with_activity_outbox(state, events)
     logs = load_logs()
     write_current_work(state, logs)
     write_dashboard_bundle(state)
@@ -4146,7 +4362,6 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
 
 
 def main(argv: list[str]) -> int:
-    state = load_state()
     command = argv[1] if len(argv) > 1 else "sync"
     args = argv[2:]
 
@@ -4173,19 +4388,20 @@ def main(argv: list[str]) -> int:
     }
 
     if command in read_only_commands:
-        read_only_commands[command](state, args)
+        with canonical_task_state_lock(shared=True):
+            state = load_state()
+            read_only_commands[command](state, args)
         return 0
 
     if command not in commands:
         raise SystemExit(f"Unknown command: {command}")
 
-    state_before = deepcopy(state)
-    commands[command](state, args)
-    try:
-        sync_all(state)
-    except Exception:
-        save_state(state_before)
-        raise
+    with canonical_task_state_lock(shared=False):
+        state = load_state()
+        recover_status_activity_outbox(state)
+        with buffer_activity_events():
+            commands[command](state, args)
+            sync_all(state)
     return 0
 
 

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from common import agent_config_for, command_exists, delivery_workspace_root, ensure_parent, new_runtime_id, normalize_agent_id, relpath
+from runtime_state import runtime_state_lock
 
 
 class FileInboxAdapter(BaseAdapter):
@@ -24,6 +25,10 @@ class FileInboxAdapter(BaseAdapter):
         )
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
+        with runtime_state_lock(self.config, shared=False, nonblocking=False):
+            return self._deliver_locked(request)
+
+    def _deliver_locked(self, request: DeliveryRequest) -> DeliveryResult:
         agent = agent_config_for(self.config, request.agent_id)
         provider = self.config.get("providers", {}).get(agent.get("provider", request.provider), {})
         inbox_settings = provider.get("file_inbox", {})

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import errno
 import fcntl
+import json
 import os
 import subprocess
 import sys
@@ -18,6 +19,7 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from common import append_jsonl, config_path, load_config, load_json, repo_root_for_config, utc_now, write_activity_log, write_json
+from runtime_state import runtime_state_lock, save_runtime_state
 
 
 ACTIVE_WORKER_STATUSES = {
@@ -268,10 +270,17 @@ def append_watchdog_metric(config: dict[str, Any], payload: dict[str, Any], sett
 def load_runtime_state_file(config: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     path = config_path(config, "state_file")
     try:
-        raw = load_json(path, default={})
+        if not path.is_file():
+            return {}, "runtime_state_missing"
+        text = path.read_text(encoding="utf-8", errors="strict")
+        if not text.strip():
+            return {}, "runtime_state_empty"
+        raw = json.loads(text)
     except Exception as exc:  # noqa: BLE001 - watchdog must report state I/O failures without crashing.
         return {}, f"{type(exc).__name__}: {exc}"
-    return raw if isinstance(raw, dict) else {}, None
+    if not isinstance(raw, dict):
+        return {}, "runtime_state_schema_invalid"
+    return raw, None
 
 
 def resource_snapshot(config: dict[str, Any], runtime_state: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
@@ -454,7 +463,7 @@ def enter_watchdog_safe_mode(config: dict[str, Any], runtime_state: dict[str, An
     watchdog["safe_mode_reason"] = reason
     watchdog["safe_mode_started_at"] = isoformat_utc(now)
     watchdog["last_decision"] = "restart_supervisor"
-    write_json(config_path(config, "state_file"), runtime_state)
+    save_runtime_state(config, runtime_state)
 
 
 def start_supervisor(config: dict[str, Any], settings: dict[str, Any], now: datetime) -> tuple[int, Path]:
@@ -513,6 +522,15 @@ def summarize_decision(
 
 
 def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:
+    with runtime_state_lock(
+        config,
+        shared=False,
+        nonblocking=False,
+    ):
+        return _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
+
+
+def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:
     settings = watchdog_settings(config)
     now = datetime.now(timezone.utc).replace(microsecond=0)
     runtime_state, state_error = load_runtime_state_file(config)
