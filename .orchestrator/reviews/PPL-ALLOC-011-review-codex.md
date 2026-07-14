@@ -1,8 +1,8 @@
 # PPL-ALLOC-011 Formal Review
 
-Reviewer: Codex  
-Owner: Codex2  
-Reviewed at: 2026-07-13T17:51:06Z  
+Reviewer: Codex
+Owner: Codex2
+Reviewed at: 2026-07-13T17:51:06Z
 Disposition: changes required; return to implementation
 
 ## Review conclusion

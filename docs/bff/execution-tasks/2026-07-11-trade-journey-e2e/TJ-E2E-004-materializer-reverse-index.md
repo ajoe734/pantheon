@@ -1,9 +1,9 @@
 # TJ-E2E-004 - Journey Materializer And Reverse Index
 
-Owner: Antigravity  
-Reviewer: Claude  
-Wave: 1  
-Repository: `ajoe734/pantheon`  
+Owner: Antigravity
+Reviewer: Claude
+Wave: 1
+Repository: `ajoe734/pantheon`
 Dependencies: `TJ-E2E-002`, `TJ-E2E-003`
 
 ## Goal

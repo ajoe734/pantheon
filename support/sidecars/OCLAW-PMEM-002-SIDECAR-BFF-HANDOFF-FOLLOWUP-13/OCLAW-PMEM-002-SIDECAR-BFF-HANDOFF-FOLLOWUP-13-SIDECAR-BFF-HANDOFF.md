@@ -1,10 +1,10 @@
 # OCLAW-PMEM-002 Follow-up 13 Sidecar BFF Handoff
 
-Status: support-only composition packet; not canonical truth or runtime proof  
-Parent sidecar: `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13`  
-Helper task: `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13-SIDECAR-BFF-HANDOFF`  
-Owner: Codex  
-Reviewer: Codex2  
+Status: support-only composition packet; not canonical truth or runtime proof
+Parent sidecar: `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13`
+Helper task: `OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13-SIDECAR-BFF-HANDOFF`
+Owner: Codex
+Reviewer: Codex2
 Generated: 2026-07-11
 
 ## Recommendation
@@ -112,4 +112,3 @@ and canonical composition authority.
 - `docs/bff/execution-tasks/2026-07-03-openclaw-persona-memory-gap/OCLAW-PMEM-002-openclaw-agent-reconcile.md`.
 - Current BFF persona create, patch, and runtime-profile implementation and
   focused contract tests under `services/control-plane/bff`.
-

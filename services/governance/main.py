@@ -37,8 +37,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import threading
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException, Query, Body
+from fastapi import FastAPI, HTTPException, Query, Body, Response
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 
@@ -298,13 +299,17 @@ def _utc_now() -> str:
 # Routes — freeze-order and rollback write models
 # ---------------------------------------------------------------------------
 
+_freeze_order_lock = threading.Lock()
+_rollback_lock = threading.Lock()
+
+
 @app.post(
     "/api/governance/freeze-orders",
     response_model=Dict[str, Any],
     status_code=201,
     summary="Record or update a canonical freeze order",
 )
-def record_freeze_order(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+def record_freeze_order(body: Dict[str, Any] = Body(...), response: Response = None) -> Dict[str, Any]:
     """Create or update a FreezeOrder in the canonical store."""
     freeze_order_id = body.get("freeze_order_id") or body.get("id")
     if not freeze_order_id:
@@ -316,29 +321,83 @@ def record_freeze_order(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         body["created_at"] = _utc_now()
         body["issued_at"] = body["created_at"]
 
-    existing = freeze_order_store.get(freeze_order_id)
-    if existing:
-        merged = dict(existing)
-        for k, v in body.items():
-            if v is not None:
-                merged[k] = v
-        # Preserve original fields and audit origin on transitions
-        for field in ["scope", "target_id", "created_at", "issued_at", "actor", "identity", "source_command_id"]:
-            if field in existing and existing[field] not in (None, ""):
-                if field in ["actor", "identity", "source_command_id"] and body.get(field) != existing[field]:
-                    merged[f"transition_{field}"] = body.get(field)
-                merged[field] = existing[field]
-        body = merged
+    with _freeze_order_lock:
+        existing = freeze_order_store.get(freeze_order_id)
+        is_transition = False
+        if existing:
+            is_transition = True
+            if response:
+                response.status_code = 200
 
-    body["updated_at"] = _utc_now()
+            # Validate incoming transition audit fields
+            inc_actor = body.get("transition_actor") or body.get("actor")
+            inc_identity = body.get("transition_identity") or body.get("identity")
+            inc_source_cmd = body.get("transition_source_command_id") or body.get("source_command_id")
 
-    # Enforce required audit fields on final payload
-    for field in ["status", "actor", "identity", "source_command_id", "scope", "target_id"]:
-        if not body.get(field):
-            raise HTTPException(status_code=400, detail=f"Missing required audit field: {field}")
+            if not inc_actor or not inc_identity or not inc_source_cmd:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing required transition audit fields (actor, identity, source_command_id)"
+                )
 
-    freeze_order_store.put(body)
+            merged = dict(existing)
+            for k, v in body.items():
+                if v is not None:
+                    merged[k] = v
+
+            # Set transition audit fields explicitly
+            merged["transition_actor"] = inc_actor
+            merged["transition_identity"] = inc_identity
+            merged["transition_source_command_id"] = inc_source_cmd
+
+            # Preserve original fields and audit origin on transitions
+            for field in ["scope", "target_id", "created_at", "issued_at", "actor", "identity", "source_command_id"]:
+                if field in existing and existing[field] not in (None, ""):
+                    merged[field] = existing[field]
+            body = merged
+
+        body["updated_at"] = _utc_now()
+
+        # Enforce required audit fields on final payload
+        for field in ["status", "actor", "identity", "source_command_id", "scope", "target_id"]:
+            if not body.get(field):
+                raise HTTPException(status_code=400, detail=f"Missing required audit field: {field}")
+
+        # Enforce write authority on transitions
+        if is_transition:
+            new_status = body.get("status")
+            if new_status in ("approved", "rejected", "active"):
+                transition_actor_role = body.get("transition_actor")
+                allowed_roles = {"governance_reviewer", "risk_owner", "governance_committee", "admin", "approver", "approver-role", "rejecter-role"}
+                if transition_actor_role not in allowed_roles:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Role '{transition_actor_role}' is not authorized to transition freeze order to {new_status}."
+                    )
+
+        freeze_order_store.put(body)
+
     log.info("Recorded freeze order %s: %s", freeze_order_id, body)
+
+    # Append audit event
+    try:
+        audit_store.append_event(
+            event_type="freeze_order_state_changed" if is_transition else "freeze_order_created",
+            decision_id=freeze_order_id,
+            actor_id=body.get("transition_identity") or body.get("identity"),
+            actor_role=body.get("transition_actor") or body.get("actor"),
+            target_type="freeze_scope",
+            target_id=body.get("scope"),
+            detail={
+                "status": body.get("status"),
+                "target_id": body.get("target_id"),
+                "source_command_id": body.get("source_command_id"),
+                "transition_source_command_id": body.get("transition_source_command_id"),
+            }
+        )
+    except Exception as exc:
+        log.warning("Audit write failed: %s", exc)
+
     return body
 
 
@@ -348,7 +407,7 @@ def record_freeze_order(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     status_code=201,
     summary="Record or update a canonical rollback record",
 )
-def record_rollback(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+def record_rollback(body: Dict[str, Any] = Body(...), response: Response = None) -> Dict[str, Any]:
     """Create or update a Rollback record in the canonical store."""
     rollback_id = body.get("rollback_id") or body.get("id")
     if not rollback_id:
@@ -361,29 +420,83 @@ def record_rollback(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         body["initiated_at"] = body["created_at"]
         body["requested_at"] = body["created_at"]
 
-    existing = rollback_store.get(rollback_id)
-    if existing:
-        merged = dict(existing)
-        for k, v in body.items():
-            if v is not None:
-                merged[k] = v
-        # Preserve original fields and audit origin on transitions
-        for field in ["runtime_id", "runtime_binding_id", "action_type", "target_artifact_id", "created_at", "initiated_at", "requested_at", "actor", "identity", "source_command_id"]:
-            if field in existing and existing[field] not in (None, ""):
-                if field in ["actor", "identity", "source_command_id"] and body.get(field) != existing[field]:
-                    merged[f"transition_{field}"] = body.get(field)
-                merged[field] = existing[field]
-        body = merged
+    with _rollback_lock:
+        existing = rollback_store.get(rollback_id)
+        is_transition = False
+        if existing:
+            is_transition = True
+            if response:
+                response.status_code = 200
 
-    body["updated_at"] = _utc_now()
+            # Validate incoming transition audit fields
+            inc_actor = body.get("transition_actor") or body.get("actor")
+            inc_identity = body.get("transition_identity") or body.get("identity")
+            inc_source_cmd = body.get("transition_source_command_id") or body.get("source_command_id")
 
-    # Enforce required audit fields on final payload
-    for field in ["status", "actor", "identity", "source_command_id", "runtime_id", "action_type"]:
-        if not body.get(field):
-            raise HTTPException(status_code=400, detail=f"Missing required audit field: {field}")
+            if not inc_actor or not inc_identity or not inc_source_cmd:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing required transition audit fields (actor, identity, source_command_id)"
+                )
 
-    rollback_store.put(body)
+            merged = dict(existing)
+            for k, v in body.items():
+                if v is not None:
+                    merged[k] = v
+
+            # Set transition audit fields explicitly
+            merged["transition_actor"] = inc_actor
+            merged["transition_identity"] = inc_identity
+            merged["transition_source_command_id"] = inc_source_cmd
+
+            # Preserve original fields and audit origin on transitions
+            for field in ["runtime_id", "runtime_binding_id", "action_type", "target_artifact_id", "created_at", "initiated_at", "requested_at", "actor", "identity", "source_command_id"]:
+                if field in existing and existing[field] not in (None, ""):
+                    merged[field] = existing[field]
+            body = merged
+
+        body["updated_at"] = _utc_now()
+
+        # Enforce required audit fields on final payload
+        for field in ["status", "actor", "identity", "source_command_id", "runtime_id", "action_type"]:
+            if not body.get(field):
+                raise HTTPException(status_code=400, detail=f"Missing required audit field: {field}")
+
+        # Enforce write authority on transitions
+        if is_transition:
+            new_status = body.get("status")
+            if new_status in ("approved", "rejected"):
+                transition_actor_role = body.get("transition_actor")
+                allowed_roles = {"governance_reviewer", "risk_owner", "governance_committee", "admin", "approver", "approver-role", "rejecter-role"}
+                if transition_actor_role not in allowed_roles:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Role '{transition_actor_role}' is not authorized to transition rollback to {new_status}."
+                    )
+
+        rollback_store.put(body)
+
     log.info("Recorded rollback %s: %s", rollback_id, body)
+
+    # Append audit event
+    try:
+        audit_store.append_event(
+            event_type="rollback_state_changed" if is_transition else "rollback_created",
+            decision_id=rollback_id,
+            actor_id=body.get("transition_identity") or body.get("identity"),
+            actor_role=body.get("transition_actor") or body.get("actor"),
+            target_type="runtime_binding",
+            target_id=body.get("runtime_binding_id") or body.get("runtime_id"),
+            detail={
+                "status": body.get("status"),
+                "action_type": body.get("action_type"),
+                "source_command_id": body.get("source_command_id"),
+                "transition_source_command_id": body.get("transition_source_command_id"),
+            }
+        )
+    except Exception as exc:
+        log.warning("Audit write failed: %s", exc)
+
     return body
 
 
@@ -419,6 +532,10 @@ def propose_approval(body: ProposeApprovalRequest) -> ApprovalDecisionResponse:
         persona_id=body.persona_id,
         tenant_id=body.tenant_id,
         owner_user_id=body.owner_user_id,
+        proposal_id=body.proposal_id,
+        proposal_revision=body.proposal_revision,
+        proposal_content_digest=body.proposal_content_digest,
+        validation_result_digest=body.validation_result_digest,
     )
 
     errors = decision.validate()

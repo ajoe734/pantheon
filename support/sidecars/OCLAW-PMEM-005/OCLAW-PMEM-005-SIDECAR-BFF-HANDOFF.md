@@ -1,13 +1,13 @@
 # OCLAW-PMEM-005 BFF and Frontend Handoff Packet
 
-**Sidecar Task ID**: `OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF`  
-**Parent Task**: `OCLAW-PMEM-005`  
-**Parent Owner**: `Codex`  
-**Parent Reviewer**: `Claude`  
-**Sidecar Owner**: `Codex2`  
-**Sidecar Reviewer**: `Antigravity`  
-**Helper Kind**: `bff_handoff_packet`  
-**Generated**: 2026-07-11  
+**Sidecar Task ID**: `OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF`
+**Parent Task**: `OCLAW-PMEM-005`
+**Parent Owner**: `Codex`
+**Parent Reviewer**: `Claude`
+**Sidecar Owner**: `Codex2`
+**Sidecar Reviewer**: `Antigravity`
+**Helper Kind**: `bff_handoff_packet`
+**Generated**: 2026-07-11
 **Mutates Canonical**: `no`
 
 This packet is support material only. It does not implement a BFF route,

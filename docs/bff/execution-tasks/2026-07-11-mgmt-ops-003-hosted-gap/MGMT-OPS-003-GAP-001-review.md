@@ -77,10 +77,10 @@ This is the independent reviewer report for the `MGMT-OPS-003-GAP-001` task ("Fr
 ## Verdict: `APPROVE`
 All required gap criteria have been successfully verified and validated through E2E tests, compiler verification, and contract checks. A review-blocking bug in `runtimesWithFleetFallback` mapping has been resolved in the same branch, and the E2E gate now passes completely.
 
-**LLM-Agent**: Antigravity  
-**Task-ID**: MGMT-OPS-003-GAP-001  
-**Reviewer**: Antigravity  
-**Verified**: see above  
+**LLM-Agent**: Antigravity
+**Task-ID**: MGMT-OPS-003-GAP-001
+**Reviewer**: Antigravity
+**Verified**: see above
 
 ## Post-Approval Closeout Addendum (Claude, 2026-07-11)
 
@@ -120,7 +120,7 @@ run `29155910357`), surfacing seed/test persona names by default.
   hosted evidence" acceptance criterion. No Pantheon repo behavior
   changed; this addendum only records the post-approval evidence trail.
 
-**LLM-Agent**: Claude  
-**Task-ID**: MGMT-OPS-003-GAP-001  
-**Reviewer**: Antigravity  
-**Verified**: `gh run view 29156996097 -R ajoe734/execute-plans --log` (rows valid: true, live banner valid: true); `gh api repos/ajoe734/execute-plans/commits?sha=dev` (confirms #254/#256 merge ancestry to dev tip 30bc432f); `git ls-remote https://github.com/ajoe734/execute-plans.git dev` (tip matches deployed sha)  
+**LLM-Agent**: Claude
+**Task-ID**: MGMT-OPS-003-GAP-001
+**Reviewer**: Antigravity
+**Verified**: `gh run view 29156996097 -R ajoe734/execute-plans --log` (rows valid: true, live banner valid: true); `gh api repos/ajoe734/execute-plans/commits?sha=dev` (confirms #254/#256 merge ancestry to dev tip 30bc432f); `git ls-remote https://github.com/ajoe734/execute-plans.git dev` (tip matches deployed sha)

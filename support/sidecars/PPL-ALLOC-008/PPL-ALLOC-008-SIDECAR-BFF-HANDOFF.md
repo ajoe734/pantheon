@@ -1,9 +1,9 @@
 # PPL-ALLOC-008 BFF / Frontend Handoff Packet
 
-Task: `PPL-ALLOC-008-SIDECAR-BFF-HANDOFF`  
-Parent: `PPL-ALLOC-008`  
-Owner: Codex2  
-Reviewer: Codex  
+Task: `PPL-ALLOC-008-SIDECAR-BFF-HANDOFF`
+Parent: `PPL-ALLOC-008`
+Owner: Codex2
+Reviewer: Codex
 Kind: support-only `bff_handoff_packet`
 
 ## Purpose And Boundary
@@ -134,9 +134,9 @@ implement new canonical routes.
 ## Composition Notes For Parent Owner
 
 Owned here: support-only BFF inventory, query-gap analysis, operator journey,
-and fail-closed frontend handoff guidance.  
+and fail-closed frontend handoff guidance.
 Not changing: L1 canonical truth, core contracts, runtime/registry/governance
-implementation, BFF routes, action policy, or frontend code.  
+implementation, BFF routes, action policy, or frontend code.
 Composes with: `PPL-ALLOC-004` allocation/rebalance policy, `PPL-ALLOC-006`
 Promotion & Allocation workbench, the parent `PPL-ALLOC-008` implementation,
 and `PPL-ALLOC-009` hosted closeout evidence.

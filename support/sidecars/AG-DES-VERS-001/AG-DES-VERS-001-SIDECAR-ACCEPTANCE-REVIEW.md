@@ -1,9 +1,9 @@
 # Sidecar Review — AG-DES-VERS-001-SIDECAR-ACCEPTANCE
 
-**Reviewer:** Claude2  
-**Task:** AG-DES-VERS-001-SIDECAR-ACCEPTANCE  
-**Reviewed artifact:** `support/sidecars/AG-DES-VERS-001/AG-DES-VERS-001-SIDECAR-ACCEPTANCE.md`  
-**Date:** 2026-06-21  
+**Reviewer:** Claude2
+**Task:** AG-DES-VERS-001-SIDECAR-ACCEPTANCE
+**Reviewed artifact:** `support/sidecars/AG-DES-VERS-001/AG-DES-VERS-001-SIDECAR-ACCEPTANCE.md`
+**Date:** 2026-06-21
 **Decision:** APPROVED
 
 ---

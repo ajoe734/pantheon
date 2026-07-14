@@ -271,4 +271,3 @@ def test_human_inbox_returns_normal_payload_when_fast(monkeypatch) -> None:
     payload = response.json()
     assert "human_inbox" in payload["meta"]["surfaces"]
     assert payload["meta"]["surfaces"]["human_inbox"].get("reason") != "read_timeout"
-

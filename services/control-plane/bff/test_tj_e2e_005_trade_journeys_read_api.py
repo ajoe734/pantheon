@@ -795,4 +795,3 @@ def test_tj_e2e_005_publish_events_appends_and_saves_to_store_file(tmp_path) -> 
             os.environ["PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"] = original_store_env
         else:
             os.environ.pop("PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE", None)
-
