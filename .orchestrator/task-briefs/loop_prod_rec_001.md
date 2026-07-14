@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Full-stack loop recovery and fault-injection harness
-- Status: review
+- Status: in_progress
 - Owner: Antigravity
 - Reviewer: Claude
-- Next: Completed the recovery matrix script and unit test, generated the evidence files, and opened PR #3586.
+- Next: test dry-run check
 
 ## Summary
 建立可重複的 target-dev recovery harness，在 outbox、downstream mutation、receipt、projection 各切點注入故障，並驗證 duplicate、lease expiry、timeout、worker/BFF/DB/full-stack restart。
