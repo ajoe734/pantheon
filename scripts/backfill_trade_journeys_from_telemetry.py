@@ -69,12 +69,12 @@ def main() -> int:
     backfill = journey_events_from_telemetry(rows, tenant_id=args.tenant)
     store_path = Path(args.store)
     lock_path = store_path.with_suffix(".lock")
-    
+
     try:
         store_path.parent.mkdir(parents=True, exist_ok=True)
         with open(lock_path, "w") as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            
+
             existing = load_store_events(store_path)
             merged = merge_with_store(existing, backfill)
             journeys = {event.get("journey_id") for event in backfill}

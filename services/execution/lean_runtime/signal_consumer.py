@@ -240,7 +240,7 @@ class SignalConsumer:
         """
         Staleness check. Uses algo.Time if available (real-time or backtest time),
         falling back to current UTC time.
-        
+
         Note: algo.Time is naive and represents the exchange's local time.
         For accurate staleness checks, we compare against signal's timestamp
         which should also be in a consistent timezone (typically UTC per schema).
@@ -248,7 +248,7 @@ class SignalConsumer:
         datetimes for comparison.
         """
         sid = signal["signal_id"]
-        
+
         # Determine "now" based on algo context
         if algo and hasattr(algo, "Time"):
             now = algo.Time
@@ -258,7 +258,7 @@ class SignalConsumer:
         ts = _parse_dt(signal["timestamp"])
         if not ts:
             return None
-            
+
         # Normalize both to naive datetimes for comparison (strip timezone info)
         # This handles the case where algo.Time is naive but represents exchange time
         if ts.tzinfo is not None:
@@ -267,16 +267,16 @@ class SignalConsumer:
             now = now.replace(tzinfo=None)
 
         diff_seconds = (now - ts).total_seconds()
-        
+
         # Discard signals >24h old
         if diff_seconds > 86400:
-            log.warning("[%s] Signal timestamp >24h old (now=%s, ts=%s) — discarding as stale", 
+            log.warning("[%s] Signal timestamp >24h old (now=%s, ts=%s) — discarding as stale",
                         sid, now.isoformat(), ts.isoformat())
             return "stale_signal"
-            
+
         # Reject signals >1h in future (anomaly check for clock drift)
         if diff_seconds < -3600:
-             log.warning("[%s] Signal timestamp >1h in future (now=%s, ts=%s) — discarding as anomalous", 
+             log.warning("[%s] Signal timestamp >1h in future (now=%s, ts=%s) — discarding as anomalous",
                          sid, now.isoformat(), ts.isoformat())
              return "future_signal_anomaly"
 

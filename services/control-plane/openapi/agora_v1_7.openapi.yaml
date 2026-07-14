@@ -214,6 +214,7 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/DetailEnvelope"}
+        "403": {$ref: "#/components/responses/Forbidden"}
         "409":
           description: Idempotency key was reused with a different payload
           content:
@@ -269,7 +270,13 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/DetailEnvelope"}
+        "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Proposal is already in a terminal state
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
         "412":
           description: If-Match ETag is stale
           content:

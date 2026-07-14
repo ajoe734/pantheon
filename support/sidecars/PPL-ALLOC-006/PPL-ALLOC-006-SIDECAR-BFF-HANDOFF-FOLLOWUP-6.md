@@ -1,10 +1,10 @@
 # PPL-ALLOC-006 BFF / Frontend Handoff Follow-Up 6
 
-Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6`  
-Parent: `PPL-ALLOC-006`  
-Owner: Codex2  
-Reviewer: Claude  
-Kind: support-only `bff_handoff_packet`  
+Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6`
+Parent: `PPL-ALLOC-006`
+Owner: Codex2
+Reviewer: Claude
+Kind: support-only `bff_handoff_packet`
 Generated: 2026-07-11
 
 ## Boundary
@@ -97,9 +97,9 @@ packet itself claims no runtime delivery.
 ## Review And Absorption
 
 Owned here: support-only absorption order, traceability, parent decisions, and
-review evidence.  
+review evidence.
 Not changing: L1/L2 truth, BFF routes or schemas, BFF/runtime/registry/
-governance implementation, frontend source, navigation, or parent lifecycle.  
+governance implementation, frontend source, navigation, or parent lifecycle.
 Composes with: `PPL-ALLOC-003` binding reads, `PPL-ALLOC-004` allocation
 policy, parent `PPL-ALLOC-006`, and the preceding PPL-ALLOC-006 BFF handoff
 packets.

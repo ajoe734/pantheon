@@ -1092,7 +1092,7 @@ class PaperRuntimeService:
         if self._thread is not None:
             return
         self._emit_deploy_started()
-        
+
         # Ensure outbox directory exists
         outbox_dir = os.path.dirname(self._outbox_path)
         if outbox_dir:
@@ -1301,11 +1301,11 @@ class PaperRuntimeService:
             metadata = event.metadata or {}
             envelope = metadata.get("correlation_envelope") or {}
             signal_id = metadata.get("signal_id") or envelope.get("signal_id")
-            
+
             binding = self._binding_resolver.resolve() or {}
             tenant_id = metadata.get("tenant_id") or envelope.get("tenant_id") or binding.get("tenant_id") or "default"
             environment = metadata.get("environment") or envelope.get("environment") or binding.get("deployment_stage") or "paper"
-            
+
             journey_id = metadata.get("journey_id") or envelope.get("journey_id")
             if not journey_id:
                 journey_id = f"tj-{signal_id}" if signal_id else f"tj-evt-{event.event_id}"
@@ -1339,7 +1339,7 @@ class PaperRuntimeService:
                     stage_status = "noop"
                 elif event.event_type == "order_rejection":
                     stage_status = "rejected"
-                
+
                 journey_events.append({
                     "event_id": f"sig-{signal_id}-order" if signal_id else f"evt-{event.event_id}-order",
                     "journey_id": journey_id,
@@ -1454,7 +1454,7 @@ class PaperRuntimeService:
         bff_url = os.getenv("PANTHEON_BFF_URL", "http://operator-bff:8080").strip().rstrip("/")
         url = f"{bff_url}/bff/management/trade-journeys/events"
         body = json.dumps(events).encode("utf-8")
-        
+
         token = os.getenv("PANTHEON_BFF_TOKEN") or os.getenv("BFF_TOKEN") or "op-dev:admin:mfa"
         headers = {
             "Content-Type": "application/json",

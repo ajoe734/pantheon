@@ -1,9 +1,9 @@
 # TJ-E2E-005 - Canonical BFF Read API
 
-Owner: Claude  
-Reviewer: Antigravity  
-Wave: 2  
-Repository: `ajoe734/pantheon`  
+Owner: Claude
+Reviewer: Antigravity
+Wave: 2
+Repository: `ajoe734/pantheon`
 Dependencies: `TJ-E2E-004`
 
 ## Goal

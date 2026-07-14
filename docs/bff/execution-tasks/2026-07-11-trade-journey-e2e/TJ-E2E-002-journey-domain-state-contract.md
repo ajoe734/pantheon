@@ -1,9 +1,9 @@
 # TJ-E2E-002 - Journey Domain And State Contract
 
-Owner: Antigravity  
-Reviewer: Claude  
-Wave: 0  
-Repository: `ajoe734/pantheon`  
+Owner: Antigravity
+Reviewer: Claude
+Wave: 0
+Repository: `ajoe734/pantheon`
 Dependencies: `TJ-E2E-001`
 
 ## Goal

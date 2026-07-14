@@ -266,7 +266,7 @@ def test_winner_branch_completeness_rejects_missing_required() -> None:
 def test_winner_branch_completeness_rejects_duplicate_dimensions() -> None:
     schema = _load_schema("winner_branch_completeness.schema.json")
     validator = Draft7Validator(schema, format_checker=FormatChecker())
-    
+
     # 7 items, but "governance" is replaced with a duplicate "hypothesis"
     bad = _winner_branch_completeness()
     bad["dimensions"] = [
@@ -333,4 +333,3 @@ def test_winner_branch_completeness_rejects_incorrect_block_count() -> None:
     })
     errors_long = list(validator.iter_errors(bad_long))
     assert errors_long, "More than 12 blocks must fail validation"
-
