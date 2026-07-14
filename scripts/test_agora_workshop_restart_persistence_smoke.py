@@ -1,0 +1,91 @@
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+HELPER_PATH = ROOT / "scripts" / "agora_workshop_restart_persistence_smoke.py"
+WORKFLOW_PATH = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
+
+
+def _load_helper():
+    spec = importlib.util.spec_from_file_location("agora_persistence_smoke", HELPER_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class FakeStore:
+    def __init__(self) -> None:
+        self.sessions: dict[str, dict[str, object]] = {}
+
+    def create_session(self, session: dict[str, object]) -> dict[str, object]:
+        row = {**session, "lock_version": 1}
+        self.sessions[str(row["workshop_id"])] = row
+        return row
+
+    def get_session(self, workshop_id: str):
+        return self.sessions.get(workshop_id)
+
+
+def test_helper_seeds_and_verifies_only_expected_public_fields() -> None:
+    helper = _load_helper()
+    store = FakeStore()
+
+    helper.seed(store, workshop_id="ws-run-1", tenant_id="tenant", user_id="viewer")
+    helper.verify(store, workshop_id="ws-run-1", tenant_id="tenant", user_id="viewer")
+
+    assert store.sessions["ws-run-1"] == {
+        "workshop_id": "ws-run-1",
+        "tenant_id": "tenant",
+        "user_id": "viewer",
+        "status": "open",
+        "lock_version": 1,
+    }
+
+
+def test_helper_fails_closed_without_postgres_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    helper = _load_helper()
+    monkeypatch.setenv(helper.BACKEND_ENV, "off")
+
+    with pytest.raises(RuntimeError, match="requires AGORA_WORKSHOP_STORE_BACKEND=postgres"):
+        helper.require_postgres_backend()
+
+
+def test_helper_rejects_missing_or_wrong_persisted_record() -> None:
+    helper = _load_helper()
+    store = FakeStore()
+
+    with pytest.raises(RuntimeError, match="was not found"):
+        helper.verify(store, workshop_id="missing", tenant_id="tenant", user_id="viewer")
+
+    store.sessions["wrong"] = {
+        "workshop_id": "wrong",
+        "tenant_id": "other",
+        "user_id": "viewer",
+        "status": "open",
+    }
+    with pytest.raises(RuntimeError, match="mismatched fields tenant_id"):
+        helper.verify(store, workshop_id="wrong", tenant_id="tenant", user_id="viewer")
+
+
+def test_workflow_uses_internal_fresh_process_persistence_proof() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    step = workflow.split("- name: Dev Agora workshop restart persistence smoke", 1)[1]
+    step = step.split("- name: Summarize auto-deploy", 1)[0]
+
+    assert "agora-deploy-smoke:operator" not in workflow
+    assert "Authorization:" not in step
+    assert "Bearer " not in step
+    seed = "agora_workshop_restart_persistence_smoke.py seed"
+    restart = "restart operator-bff"
+    verify = "agora_workshop_restart_persistence_smoke.py verify"
+    assert seed in step
+    assert verify in step
+    assert step.index(seed) < step.index(restart) < step.index(verify)
+    assert step.count("docker compose -p pantheon -f docker-compose.yml exec -T operator-bff") == 2
+    assert 'test "${ready}" = true' in step

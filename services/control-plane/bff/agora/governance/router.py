@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import uuid
+import hashlib
+import json
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, Literal, Optional
@@ -114,6 +116,69 @@ def _approval_scope(record: Mapping[str, Any]) -> tuple[str, str]:
     return tenant_id, user_id
 
 
+_CONTENT_DIGEST_FIELDS = (
+    "proposal_type", "target_kind", "target_id", "target_version",
+    "current_value", "proposed_value", "rationale", "evidence_refs",
+    "environment_ceiling", "validation_plan", "rollback_trigger",
+    "rollback_action", "required_permissions", "required_reviewers",
+)
+
+
+def _digest(value: Any) -> str:
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
+    return hashlib.sha256(raw).hexdigest()
+
+
+def proposal_content_digest(record: Mapping[str, Any]) -> str:
+    return _digest({field: record.get(field) for field in _CONTENT_DIGEST_FIELDS})
+
+
+def _parse_time(value: Any) -> Optional[datetime]:
+    raw = _clean(value)
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _approval_binding_error(current: Mapping[str, Any], record: Mapping[str, Any]) -> Optional[str]:
+    now = datetime.now(timezone.utc)
+    proposal_expires_at = _parse_time(current.get("expires_at"))
+    if proposal_expires_at is None or proposal_expires_at <= now:
+        return "proposal is expired"
+    if _clean(record.get("proposal_id")) != _clean(current.get("proposal_id")):
+        return "authoritative approval proposal id mismatch"
+    try:
+        revision_matches = int(record.get("proposal_revision")) == int(current.get("revision"))
+    except (TypeError, ValueError):
+        revision_matches = False
+    if not revision_matches:
+        return "authoritative approval proposal revision mismatch"
+    if _clean(record.get("proposal_content_digest")) != _clean(current.get("proposal_content_digest")):
+        return "authoritative approval proposal content digest mismatch"
+    if not current.get("validation") or not current.get("validation_result_digest"):
+        return "proposal validation is required before approval"
+    if _clean(record.get("validation_result_digest")) != _clean(current.get("validation_result_digest")):
+        return "authoritative approval validation digest mismatch"
+    decided_at = _parse_time(record.get("decided_at"))
+    validated_at = _parse_time(current.get("validated_at"))
+    if decided_at is None or validated_at is None or decided_at < validated_at:
+        return "authoritative approval must be decided after validation"
+    expires_at = _parse_time(record.get("expires_at"))
+    if expires_at is not None and expires_at <= now:
+        return "authoritative approval is expired"
+    if decided_at > proposal_expires_at:
+        return "authoritative approval was decided after proposal expiry"
+    if record.get("superseded_by"):
+        return "authoritative approval is superseded"
+    if record.get("revoked_at") or _clean(record.get("decision_state") or record.get("state")).lower() == "revoked":
+        return "authoritative approval is revoked"
+    return None
+
+
 def build_proposal_record(
     body: ProposalCreate,
     *,
@@ -122,7 +187,7 @@ def build_proposal_record(
     proposer: str,
     now: str,
 ) -> Dict[str, Any]:
-    return {
+    record = {
         **body.model_dump(mode="json"),
         "proposal_id": f"prop_{uuid.uuid4().hex}",
         "revision": 1,
@@ -138,6 +203,8 @@ def build_proposal_record(
         "execution_authority": "none",
         "no_capital_authority_proof": "governed_proposal_no_capital_or_order_authority",
     }
+    record["proposal_content_digest"] = proposal_content_digest(record)
+    return record
 
 
 def authoritative_approval_availability(
@@ -146,6 +213,11 @@ def authoritative_approval_availability(
     decisions: Iterable[Mapping[str, Any]],
 ) -> Dict[str, Any]:
     """Return scoped canonical refs plus collective reviewer readiness for UI."""
+    if not current.get("validation") or not current.get("validation_result_digest"):
+        return {
+            "refs": [], "ready": False, "reason": "proposal_not_validated",
+            "missing_required_reviewers": list(current.get("required_reviewers") or []),
+        }
     proposer = _clean(current.get("proposer"))
     proposal_tenant_id = _clean(current.get("tenant_id"))
     proposal_user_id = _clean(current.get("owner_user_id"))
@@ -184,6 +256,8 @@ def authoritative_approval_availability(
         if _clean(record.get("target_id")) != _clean(current.get("target_id")):
             continue
         if _clean(record.get("target_version")) != _clean(current.get("target_version")):
+            continue
+        if _approval_binding_error(current, record) is not None:
             continue
         reviewer = _approval_actor(record)
         if not reviewer or (proposer and reviewer == proposer):
@@ -283,6 +357,9 @@ def _validate_authoritative_approval_refs(
             raise HTTPException(422, detail="authoritative approval target id mismatch")
         if _clean(record.get("target_version")) != _clean(current.get("target_version")):
             raise HTTPException(422, detail="authoritative approval target version mismatch")
+        binding_error = _approval_binding_error(current, record)
+        if binding_error is not None:
+            raise HTTPException(422, detail=binding_error)
 
         reviewer = _approval_actor(record)
         if not reviewer:
@@ -338,11 +415,12 @@ def create_governance_router(
                 current=row,
                 decisions=list_approval_decisions(),
             )
-        except Exception as exc:
-            raise HTTPException(
-                503,
-                detail="authoritative approval store is unavailable",
-            ) from exc
+        except Exception:
+            availability = {
+                "refs": [], "ready": False,
+                "reason": "authoritative_approval_store_unavailable",
+                "missing_required_reviewers": list(row.get("required_reviewers") or []),
+            }
         projected = {
             **row,
             "available_approval_decision_refs": availability["refs"],
@@ -528,11 +606,15 @@ def create_governance_router(
         if body.action == "modify":
             next_row["proposed_value"] = body.proposed_value
             next_row["state"] = "draft"
+            next_row.pop("validation", None)
+            next_row.pop("validated_at", None)
+            next_row.pop("validation_result_digest", None)
         else:
             next_row["state"] = _TRANSITIONS[body.action]
         next_row["evidence_refs"] = list(
             dict.fromkeys(current["evidence_refs"] + body.evidence_refs)
         )
+        next_row["proposal_content_digest"] = proposal_content_digest(next_row)
         next_row["audit"] = current["audit"] + [
             {
                 "action": body.action,
@@ -544,6 +626,8 @@ def create_governance_router(
         ]
         if body.action == "validate":
             next_row["validation"] = body.validation_result
+            next_row["validated_at"] = now
+            next_row["validation_result_digest"] = _digest(body.validation_result)
             next_row["governed_action_link"] = {
                 "route": "/bff/actions/{type}/{id}/{action}",
                 "target_type": current["target_kind"],
