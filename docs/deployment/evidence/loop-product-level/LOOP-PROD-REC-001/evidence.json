@@ -1,176 +1,24 @@
 {
-  "schema_version": "loop_product_evidence.v1",
-  "schema_status": {
-    "formal_schema_owner": "LOOP-PROD-002",
-    "formalization_trigger": "Self-formalization: This task (LOOP-PROD-REC-001) implements the recovery matrix.",
-    "note": "This is the formal product evidence manifest for loop recovery.",
-    "status": "formalized"
-  },
-  "evidence_policy": {
-    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/evidence.sha256",
-    "missing_or_contradicted_proof_fails_closed": true,
-    "mutation_rule": "Immutable once PR merges.",
-    "recording_mode": "logical_append_only",
-    "redacted": true,
-    "self_hashing": false
-  },
-  "task": {
-    "base_branch": "dev",
-    "evidence_cut_at": "2026-07-14T01:35:30.808385Z",
-    "evidence_cut_semantics": "Capture-time code validation and recovery matrix checks.",
-    "id": "LOOP-PROD-REC-001",
-    "overall_admission": "pass",
-    "owner": "Antigravity",
-    "phase": "Loop Product-Level Remediation / Wave 0",
-    "product_level_required": true,
-    "repository": "ajoe734/pantheon",
-    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/evidence.json",
-    "reviewer": "Claude",
-    "target_environment": "dev",
-    "target_maturity": "contract",
-    "task_branch": "task/LOOP-PROD-REC-001",
-    "title": "Full-stack loop recovery and fault-injection harness"
-  },
-  "authorities": {
-    "actual_state": [
-      "python3 scripts/run_loop_product_recovery_matrix.py"
-    ],
-    "desired_state": [
-      "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-REC-001.md",
-      "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md"
-    ],
-    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-REC-001.md"
-  },
-  "scope": {
-    "authoritative_write_owner": "Antigravity for validation recovery harness script and evidence",
-    "composes_with": [
-      "LOOP-PROD-001",
-      "LOOP-PROD-002"
-    ],
-    "evidence_changed_files": [
-      "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/evidence.json",
-      "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/evidence.sha256"
-    ],
-    "implementation_changed_files": [
-      "scripts/run_loop_product_recovery_matrix.py",
-      "scripts/test_loop_product_recovery_matrix.py"
-    ],
-    "not_changing": "Loop controllers, schedulers, database stores, or frontend UI layout",
-    "owned_layer": "Product level loop recovery harness and matrix validation"
-  },
-  "implementation_delivery": {
-    "anchor_commits": [],
-    "required_checks": []
-  },
-  "validation": {
-    "commands": [
-      {
-        "command": "python3 scripts/run_loop_product_recovery_matrix.py",
-        "result": "pass",
-        "conclusion": "All scenarios passed"
-      }
-    ],
-    "validated_at": "2026-07-14T01:35:30.808423Z",
-    "validated_base_sha": "add901ad82d2e6dfeee1b813f5f66e1db5141e67",
-    "validated_head_sha": "add901ad82d2e6dfeee1b813f5f66e1db5141e67"
-  },
-  "deployment": {
-    "applicable": false,
-    "environment": "dev",
-    "public_bff_base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
-    "publish_cut": {
-      "workflow": "Hourly Publish Cut",
-      "conclusion": "success"
-    },
-    "canonical_root_deploy": {
-      "workflow": "Pantheon Nonprod Deploy",
-      "conclusion": "success"
-    },
-    "identity_admission": {
-      "authoritative_chain": [
-        "PR merges to dev"
-      ]
-    }
-  },
-  "hosted_readback": {
-    "pre_deploy": {
-      "observed_at": "2026-07-14T01:35:30.808466Z",
-      "status": "pass"
-    }
-  },
-  "behavioral_proof": {
-    "duplicate_safety": {
-      "status": "pass",
-      "proof": [
-        "Verified Scenario S8 duplicate delivery rejects second command execution correctly."
-      ]
-    },
-    "failure_and_degraded_behavior": {
-      "status": "pass",
-      "proof": [
-        "Verified Scenario S2 and S3 for fault injection behavior."
-      ]
-    },
-    "request_receipt_downstream_correlation": {
-      "status": "pass",
-      "proof": [
-        "All commands correlate perfectly from outbox to inbox receipt."
-      ]
-    },
-    "restart_and_recovery": {
-      "status": "pass",
-      "proof": [
-        "Verified Scenario S9 for full stack recovery after process failure."
-      ]
-    },
-    "rollback_or_compensation": {
-      "status": "not_applicable",
-      "reason": "Stateless test harness logic."
-    }
-  },
-  "security_and_safety": {
-    "environment_boundary": {
-      "status": "pass"
-    },
-    "hosted_frontend": {
-      "status": "not_applicable"
-    },
-    "mfa": {
-      "status": "not_applicable"
-    },
-    "no_live_capital": {
-      "status": "pass"
-    },
-    "rbac": {
-      "status": "not_applicable"
-    },
-    "tenant_isolation": {
-      "status": "not_applicable"
-    },
-    "two_person_approval": {
-      "status": "pass"
-    }
-  },
   "acceptance": [
     {
       "evidence_refs": [
-        "S1_Success",
-        "S2_Before_Outbox",
-        "S3_After_Outbox",
-        "S4_Before_Mutation",
-        "S5_After_Mutation_Before_Receipt",
-        "S6_Before_Projection"
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F01_BEFORE_OUTBOX_PERSIST",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F02_AFTER_OUTBOX_PERSIST",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F03_BEFORE_DOWNSTREAM_MUTATION",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F04_AFTER_DOWNSTREAM_MUTATION",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F05_AFTER_MUTATION_BEFORE_RECEIPT",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F06_DOWNSTREAM_TIMEOUT_AFTER_COMMIT",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F07_BEFORE_PROJECTION",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F08_AFTER_PROJECTION_BEFORE_PUBLISH",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:FULL_STACK_RESTART"
       ],
       "id": "AC-01",
-      "statement": "harness injects failure before/after outbox persist, before/after downstream mutation, after mutation before receipt, and before projection",
+      "statement": "harness injects every declared outbox, downstream, receipt, and projection cutpoint",
       "status": "pass"
     },
     {
       "evidence_refs": [
-        "S3_After_Outbox",
-        "S4_Before_Mutation",
-        "S5_After_Mutation_Before_Receipt",
-        "S6_Before_Projection"
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04"
       ],
       "id": "AC-02",
       "statement": "admitted commands have RPO=0 and recover within two declared test controller intervals",
@@ -178,70 +26,222 @@
     },
     {
       "evidence_refs": [
-        "S5_After_Mutation_Before_Receipt",
-        "S7_Lease_Expiry",
-        "S8_Duplicate_Delivery",
-        "S9_Full_Stack_Restart"
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:DUPLICATE_DELIVERY",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:LEASE_EXPIRY_FENCING",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:TIMEOUT_DLQ_REPLAY",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:WORKER_RESTART",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:BFF_RESTART",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:DATABASE_RESTART",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:FULL_STACK_RESTART"
       ],
       "id": "AC-03",
-      "statement": "duplicates, retries, lease expiry, timeout, replay, and restarts create no duplicate canonical side effect",
+      "statement": "duplicates, retries, lease expiry, timeout, replay, and real process restarts create no duplicate canonical contract effect",
       "status": "pass"
     },
     {
-      "evidence_refs": [],
+      "evidence_refs": [
+        "security_and_safety.environment_boundary",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04"
+      ],
       "id": "AC-04",
-      "statement": "production cadence is unchanged and all injected effects remain target-dev/paper only",
+      "statement": "production cadence is unchanged and all injected effects remain isolated target-dev contract effects",
       "status": "pass"
     },
     {
-      "evidence_refs": [],
+      "blocking_until": "updated PR head checks pass, Claude records review verdict, and PR #3586 merges",
+      "evidence_refs": [
+        "implementation_delivery",
+        "residual_risks"
+      ],
       "id": "AC-05",
       "statement": "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
-      "status": "pass"
+      "status": "pending_independent_review_and_merge"
     },
     {
       "evidence_refs": [
-        "S1_Success"
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04"
       ],
       "id": "AC-06",
-      "statement": "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+      "statement": "terminal success requires authoritative command/effect/receipt/projection/controller/BFF readback",
       "status": "pass"
     },
     {
       "evidence_refs": [
-        "S3_After_Outbox",
-        "S5_After_Mutation_Before_Receipt",
-        "S8_Duplicate_Delivery",
-        "S9_Full_Stack_Restart"
+        "behavioral_proof",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04"
       ],
       "id": "AC-07",
-      "statement": "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+      "statement": "duplicate, failure/degraded, restart/recovery, and DLQ replay proof has admitted-command RPO=0",
       "status": "pass"
     },
     {
-      "evidence_refs": [],
+      "evidence_refs": [
+        "deployment.identity_admission",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04"
+      ],
       "id": "AC-08",
       "statement": "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
       "status": "pass"
     },
     {
-      "evidence_refs": [],
+      "evidence_refs": [
+        "security_and_safety"
+      ],
       "id": "AC-09",
       "statement": "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
       "status": "pass"
     },
     {
-      "evidence_refs": [],
+      "evidence_refs": [
+        "evidence_policy",
+        "integrity",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04"
+      ],
       "id": "AC-10",
-      "statement": "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed",
+      "statement": "write redacted, logical-append-only checksummed evidence; missing proof fails closed",
       "status": "pass"
     }
   ],
-  "residual_risks": {},
+  "authorities": {
+    "actual_state": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04",
+      "loop_recovery_commands/outbox/effects/receipts/projections",
+      "loop_controller_records",
+      "GET /bff/v5/loop-health/bff_health_monitoring"
+    ],
+    "desired_state": [
+      "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-REC-001.md",
+      "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md",
+      "EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-REC-001.md"
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:DUPLICATE_DELIVERY",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:LEASE_EXPIRY_FENCING"
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F01_BEFORE_OUTBOX_PERSIST",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F02_AFTER_OUTBOX_PERSIST",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F03_BEFORE_DOWNSTREAM_MUTATION",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F04_AFTER_DOWNSTREAM_MUTATION",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F05_AFTER_MUTATION_BEFORE_RECEIPT",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F06_DOWNSTREAM_TIMEOUT_AFTER_COMMIT",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F07_BEFORE_PROJECTION",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:F08_AFTER_PROJECTION_BEFORE_PUBLISH",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:FULL_STACK_RESTART",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:TIMEOUT_DLQ_REPLAY"
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04: every terminal snapshot contains one correlated command, outbox event, canonical contract effect, receipt, projection, and controller record"
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:WORKER_RESTART",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:BFF_RESTART",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:DATABASE_RESTART",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:FULL_STACK_RESTART"
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04:TIMEOUT_DLQ_REPLAY bounded failure, DLQ, explicit replay, and exactly-once convergence"
+      ],
+      "status": "pass"
+    }
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "conclusion": "not_applicable",
+      "reason": "No continuously deployed capability changes in this contract task."
+    },
+    "environment": "isolated-target-dev",
+    "identity_admission": {
+      "authoritative_chain": [
+        "raw run rec-20260714T075736Z-e916e773",
+        "candidate HEAD eadc9ae0b01e005cdad1eeaebb710bbc7e26048a",
+        "disposable PostgreSQL process identity",
+        "fresh worker process identities",
+        "fresh real BFF uvicorn process identities"
+      ]
+    },
+    "public_bff_base_url": "not_applicable_isolated_capture",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "The capture runs a fresh local BFF process against a disposable database."
+    },
+    "reason": "This task delivers a dev-tool contract harness; it does not change a continuously deployed capability."
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Raw run artifacts are immutable; after the corrected owner capture, the manifest may only retain its record log and append independently observed closeout facts.",
+    "recording_mode": "logical_append_only_record_log_with_immutable_raw_runs",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "hosted_readback": {
+    "isolated_target_dev": {
+      "note": "Real BFF app readback is proven locally; public hosted dev deployment is not applicable to this contract-only code change.",
+      "observed_at": "2026-07-14T08:02:28.638929Z",
+      "raw_run_artifact": "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04",
+      "scenario_count": 15,
+      "status": "pass"
+    },
+    "pre_deploy": {
+      "reason": "The task does not claim shared hosted-dev admission.",
+      "status": "not_applicable"
+    }
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "96a59ec31afbca16b2cf724e16267b3a56ed0fbd",
+        "subject": "LOOP-PROD-REC-001: Implement recovery and fault matrix harness"
+      },
+      {
+        "sha": "48060cca44ebe02aff07360be2c1909bbbf524dd",
+        "subject": "LOOP-PROD-REC-001: anchor recovered worktree WIP"
+      },
+      {
+        "sha": "0ef0b50e6db21be85c8a0ce14c1324a1dad4dcf8",
+        "subject": "LOOP-PROD-REC-001: update recovery matrix evidence and task brief"
+      },
+      {
+        "sha": "fcffe2b9cf867ffba68779921b1adc192b37a243",
+        "subject": "LOOP-PROD-REC-001: anchor Codex ownership handoff"
+      },
+      {
+        "sha": "dd86729f5a40ae92579b722dd96b66b70e86c5f9",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/LOOP-PROD-REC-001"
+      },
+      {
+        "sha": "97009d4e7ae2a4ff4b1f238c182a99b1527754e4",
+        "subject": "LOOP-PROD-REC-001: anchor fail-closed recovery contract"
+      },
+      {
+        "sha": "913eaa2e16a68d0af11e0a0974182373d7eb134f",
+        "subject": "LOOP-PROD-REC-001: preserve recovery runner executability"
+      }
+    ],
+    "required_checks": []
+  },
   "integrity": {
     "algorithm": "sha256",
     "checksum_coverage": [
-      "evidence.json"
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/evidence.json"
     ],
     "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/evidence.sha256",
     "hosted_semantic_sha256": {},
@@ -249,15 +249,146 @@
     "normalized_hosted_readback": {},
     "self_hash_omitted": true,
     "self_hash_reason": "The companion file hashes evidence.json to avoid a recursive self-hash.",
-    "source_artifact_sha256_by_epoch": {}
+    "source_artifact_sha256_by_epoch": {
+      "isolated_recovery_capture": {
+        "artifacts": {
+          "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json": "df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04"
+        },
+        "git_sha": "eadc9ae0b01e005cdad1eeaebb710bbc7e26048a"
+      }
+    }
   },
   "record_log": [
     {
+      "actor": "Codex",
+      "kind": "owner_recovery_matrix_capture",
+      "note": "No reviewer verdict or merge completion is asserted by this owner event.",
+      "raw_run_artifact": "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json#sha256=df1944c04c0154157cf9c5779b2ee2d14a3abfb5bfb3d2250c8c6b83994b2c04",
+      "recorded_at": "2026-07-14T08:02:28.638929Z",
+      "run_id": "rec-20260714T075736Z-e916e773",
       "sequence": 1,
-      "recorded_at": "2026-07-14T01:35:30.808488Z",
-      "kind": "implementation_review",
-      "status": "pass",
-      "actor": "Claude"
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "evidence_ready_for_independent_review",
+      "recorded_at": "2026-07-14T08:02:28.638929Z",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/evidence.json",
+      "reviewer": "Claude",
+      "sequence": 2,
+      "status": "pending_independent_review"
     }
-  ]
+  ],
+  "residual_risks": {
+    "RISK-HOSTED-DEV-NOT-EXECUTED": {
+      "blocking_for_this_task": false,
+      "containment": "Shared-dev execution requires the program environment-mutation lease and protected attestation tasks.",
+      "description": "The contract harness runs in an isolated target-dev stack rather than mutating the shared hosted dev database.",
+      "expiry": "2026-08-31T00:00:00Z",
+      "owner": "LOOP-PROD scenario and closeout owners",
+      "recheck_trigger": "G3 hosted recovery qualification",
+      "severity": "low"
+    },
+    "RISK-PRODUCT-ADAPTER-COVERAGE": {
+      "blocking_for_this_task": false,
+      "containment": "Evidence labels the effect as recovery-contract only and BFF must not accept it as catalog-admitted live liveness.",
+      "description": "The shared harness proves its contract stack; each product loop must bind its own authoritative effect/readback adapter before claiming product-level maturity.",
+      "expiry": "2026-08-31T00:00:00Z",
+      "owner": "LOOP-PROD loop implementation owners",
+      "recheck_trigger": "Each downstream loop task integrates this matrix",
+      "severity": "medium"
+    }
+  },
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "LOOP-PROD-002 product evidence schema",
+    "note": "Contract-level recovery evidence; no product loop side effect or hosted-live maturity is asserted.",
+    "status": "formalized"
+  },
+  "schema_version": "loop_product_evidence.v1",
+  "scope": {
+    "authoritative_write_owner": "Codex for recovery contract harness and evidence capture",
+    "composes_with": [
+      "LOOP-PROD-001",
+      "LOOP-PROD-002"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/evidence.sha256",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/runs/rec-20260714T075736Z-e916e773/matrix.json"
+    ],
+    "implementation_changed_files": [
+      "services/loop-control/recovery_harness.py",
+      "services/loop-control/projector.py",
+      "services/loop-control/test_loop_control.py",
+      "scripts/run_loop_product_recovery_matrix.py",
+      "scripts/test_loop_product_recovery_matrix.py"
+    ],
+    "not_changing": "Product-loop workers, production cadence, live broker authority, or canonical business side effects",
+    "owned_layer": "Isolated recovery contract, process restart orchestration, and fail-closed evidence capture"
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "capture requires isolated_database=true and a dev/test/recovery environment",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "reason": "No frontend change",
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "reason": "No privileged command route is added",
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "live broker is rejected and the only effect is an isolated recovery-contract row",
+      "status": "pass"
+    },
+    "rbac": {
+      "reason": "The runner is a local dev tool",
+      "status": "not_applicable"
+    },
+    "tenant_isolation": {
+      "proof": "run-scoped tenant tenant-rec-20260714T075736Z-e916e773 and disposable database",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "reason": "No approval-gated product mutation occurs; independent code review remains pending in AC-05",
+      "status": "not_applicable"
+    }
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-14T08:02:28.638929Z",
+    "evidence_cut_semantics": "Isolated target-dev contract stack with real worker, BFF, PostgreSQL, and full-stack process restarts.",
+    "id": "LOOP-PROD-REC-001",
+    "overall_admission": "review_required_evidence_only",
+    "owner": "Codex",
+    "phase": "Loop Product-Level Remediation / Wave 0",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "isolated-target-dev",
+    "target_maturity": "contract",
+    "task_branch": "task/LOOP-PROD-REC-001",
+    "title": "Full-stack loop recovery and fault-injection harness"
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 scripts/run_loop_product_recovery_matrix.py capture --run-id rec-20260714T075736Z-e916e773",
+        "conclusion": "15 isolated recovery scenarios passed",
+        "result": "pass"
+      },
+      {
+        "command": "-m pytest -q scripts/test_loop_product_recovery_matrix.py services/loop-control/test_loop_control.py services/control-plane/bff/test_loop_health_read_model_contract.py",
+        "conclusion": "39 passed, 1 skipped, 4 warnings in 41.99s",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-14T08:02:28.638929Z",
+    "validated_base_sha": "9d393816acfe322a12ba1b295218f829db36ac28",
+    "validated_head_sha": "eadc9ae0b01e005cdad1eeaebb710bbc7e26048a"
+  }
 }
