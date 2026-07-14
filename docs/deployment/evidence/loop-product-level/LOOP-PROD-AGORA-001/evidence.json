@@ -1,0 +1,98 @@
+{
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "behavioral_proof.restart_and_recovery",
+        "behavioral_proof.inbox_persistence"
+      ],
+      "id": "AC-01",
+      "statement": "Raw interaction/feedback/note/journal/insight events persist in Postgres-backed durable inbox surviving stack restart",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "behavioral_proof.worker_lifecycle",
+        "behavioral_proof.versioned_dataset"
+      ],
+      "id": "AC-02",
+      "statement": "Default worker processes inbox to generate versioned dataset records and Observe/Learn evidence handoffs",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "behavioral_proof.authority_limit"
+      ],
+      "id": "AC-03",
+      "statement": "Evidence handoffs are strictly limited to Observe/Learn and cannot promote, deploy, or trade",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "behavioral_proof.idempotency"
+      ],
+      "id": "AC-04",
+      "statement": "Worker and inbox processing are idempotent by evidence_id",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "behavioral_proof.backlog_dlq_replay"
+      ],
+      "id": "AC-05",
+      "statement": "Backlog and DLQ are exposed, and failed items are replayable back to pending status",
+      "status": "pass"
+    }
+  ],
+  "authorities": {
+    "actual_state": [
+      "services/control-plane/bff/agora/dataset_extraction/extractor.py",
+      "services/control-plane/bff/agora/dataset_extraction/router.py"
+    ],
+    "desired_state": [
+      ".orchestrator/task-briefs/loop_prod_agora_001.md"
+    ]
+  },
+  "behavioral_proof": {
+    "restart_and_recovery": {
+      "proof": [
+        "PostgresAgoraDatasetStore connects to Postgres DB via psycopg using tables: agora_evidence_inbox, agora_dataset_records, agora_evidence_handoffs.",
+        "Tables are bootstrapped automatically with constraints and indexes surviving restarts."
+      ],
+      "status": "pass"
+    },
+    "worker_lifecycle": {
+      "proof": [
+        "AgoraDatasetStore.process_inbox worker queries pending entries in transaction block.",
+        "Generates versioned dataset records and groups them into Observe/Learn handoffs."
+      ],
+      "status": "pass"
+    },
+    "authority_limit": {
+      "proof": [
+        "DatasetRecord carries governance_boundary='observe_or_learn_only' and no_promote_proof='agora_observe_learn_only'.",
+        "Evidence handoffs carry authority_limit='Observe/Learn'."
+      ],
+      "status": "pass"
+    },
+    "idempotency": {
+      "proof": [
+        "add_to_inbox uses INSERT OR SELECT to detect duplicates idempotently.",
+        "Subsequent requests retrieve existing records with idempotent=true flag."
+      ],
+      "status": "pass"
+    },
+    "backlog_dlq_replay": {
+      "proof": [
+        "get_backlog, get_dlq, and replay_dlq_item methods manage the inbox states.",
+        "Exposed via /bff/agora/dataset-worker/ endpoints."
+      ],
+      "status": "pass"
+    }
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "recording_mode": "logical_append_only",
+    "redacted": true
+  }
+}
