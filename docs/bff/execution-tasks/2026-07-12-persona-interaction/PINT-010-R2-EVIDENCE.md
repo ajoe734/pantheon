@@ -91,6 +91,47 @@ restart, readiness wait, and fresh-process verification all completed. The
 failure-to-success chain therefore resolves the observed `exit 141` without
 discarding the failed-run history.
 
+## Frontend integration gate attempt 2: protected cancellation
+
+`execute-plans` PR [#328](https://github.com/ajoe734/execute-plans/pull/328)
+was still open when integration-gate run
+[29307503475, attempt 2](https://github.com/ajoe734/execute-plans/actions/runs/29307503475/attempts/2)
+ran against frontend revision
+`a64cd1de7a06729f9fc6991cbd80c83c132f6d4d`. The gate resolved and recorded
+the release identity as frontend
+`bc2b9a41d552ecc653a287b46117ad6738ecaef2` with live BFF
+`183cba011d6993029b3e828dc85f13dd166f207c`.
+
+The following attempt-2 steps completed successfully before cancellation:
+
+- lint, unit/integration tests, production build, and bundle-size budget;
+- Agora contract drift (`38` schemas, `133` routes, and `49` SHA-256 entries
+  aligned; the focused contract suite passed `7/7`);
+- anonymous route probing, authenticated BFF smoke, and live dry-run write
+  probing;
+- management live deep validation, including the configured RBAC matrix,
+  distinct-operator two-man dry-run race, and long-SSE reconnect check;
+- the local frontend's browser-to-BFF probe and management route-load
+  baseline; and
+- the final cleanup check that the live BFF identity was still
+  `183cba011d6993029b3e828dc85f13dd166f207c`.
+
+The hosted management acceptance step was actively cancelled, and the PINT
+hosted desktop/mobile proof and later Playwright steps were consequently
+skipped. This was a release-integrity protection, not a program-test failure:
+Pantheon deploy run
+[29308875940](https://github.com/ajoe734/pantheon/actions/runs/29308875940)
+had begun while the gate was running and was expected to replace the live BFF
+revision, invalidating an exact FE/BFF identity claim made across the deploy
+boundary. The job therefore concluded `cancelled`; its aggregate gate reported
+the intentionally missing downstream evidence after cancellation. Neither
+conclusion is recorded as proof of a defect in the already-green unit, build,
+contract, or live-validation steps.
+
+Run 29308875940 and the authoritative post-deploy live BFF SHA remain pending
+below. A final gate must run against one stable, recorded FE/BFF pair after the
+external deployment settles.
+
 ## Pending evidence
 
 The following fields are intentionally unresolved. They must not be inferred
@@ -104,7 +145,7 @@ frontend deployment.
 | Frontend build posture | **PENDING — prove `VITE_BFF_MODE=live`, dev `VITE_BFF_BASE_URL`, `VITE_BFF_FALLBACK=strict`, safe write defaults, and no embedded bearer token.** |
 | Paired deployment manifest | **PENDING — record one manifest pairing frontend exact commit with BFF commit `8de9ed3b09ae1002edc74256f33b9bec1fe3b717`, or record a later exact BFF commit and its successful BFF deployment proof.** |
 | Frontend deployment run | **PENDING — run URL/ID, conclusion, deployed artifact location, and exact paired commits.** |
-| Cross-repository integration gate | **PENDING — run URL/ID and green result against the recorded pair.** |
+| Cross-repository integration gate | **PENDING — attempt 2 of run 29307503475 proved unit/build/contracts/live probes/deep validation under BFF `183cba011d6993029b3e828dc85f13dd166f207c`, then was protectively cancelled before hosted proof because Pantheon deploy 29308875940 would invalidate the exact release pair. A fresh green run against the stable final pair is still required.** |
 | Hosted desktop positive flow | **PENDING — authenticated Persona context, independent opinions/disagreement, governed proposal creation, revision, and validation against Pantheon-owned hosted FE and live BFF.** |
 | Hosted mobile positive flow | **PENDING — same governed path at mobile viewport.** |
 | Hosted viewer negatives | **PENDING — UI controls and direct API attempts prove viewer mutation denial without synthetic routing.** |
