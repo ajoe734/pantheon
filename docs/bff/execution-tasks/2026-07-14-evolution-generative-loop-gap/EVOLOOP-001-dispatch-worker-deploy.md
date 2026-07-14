@@ -1,16 +1,20 @@
 # EVOLOOP-001 — Evolution Dispatch Worker Deployment
 
-Status: reviewer remediation implemented; fresh exact-ref Compose proof pending
+Status: refreshed to current dev; final exact-ref Compose proof waiting on the
+acknowledged PINT-010-R2 stable-deploy window
 
-- Owner: Codex2
-- Reviewer: Codex
+- Owner: Codex
+- Reviewer: Claude
+- Initial implementation and reviewer remediation: Codex2, reviewed by Codex
 - Branch: `task/EVOLOOP-001`
 - PR target: `dev`
 - Published implementation anchor: `2da815d2923901cc160835946e474232b54657b3`
   (`EVOLOOP-001: anchor dispatch worker activation`)
-- Published proof head: `183cba011d6993029b3e828dc85f13dd166f207c`
-- Reviewer-remediation anchor: `8c9308721f1799f820fb1f54a87c50c31a0dd82c`
+- Initial proof head: `183cba011d6993029b3e828dc85f13dd166f207c`
+- Reviewer-remediation anchor: `8c9308721f93ecfe98f9a49dd199a4b1feee5b94`
   (`EVOLOOP-001: anchor research-only dispatch guard`)
+- Successful pre-refresh exact-ref proof: `47a009bffce305cfe1ed4a7f7360ec1b7e413d7e`
+- Current refreshed candidate: `633d6f6fbeede181acfc9c6a0832245d384a858a`
 
 ## Scope
 
@@ -105,8 +109,9 @@ single executed review step.
 
 ## Local Verification
 
-The following checks passed on the reviewer-remediation worktree based on
-anchor `8c9308721f1799f820fb1f54a87c50c31a0dd82c`:
+The following checks passed after merging current `origin/dev` at
+`27735f62f80d0a205a2478798d8266c58892053f` and anchoring the resulting model
+compatibility at `633d6f6fbeede181acfc9c6a0832245d384a858a`:
 
 ```bash
 python3 -m pytest \
@@ -117,25 +122,31 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider \
   services/evolution -q
 docker compose config -q
 docker compose config --services | rg -x 'evolution-dispatch-worker'
-docker compose build evolution-dispatch-worker
+python3 -c "import pathlib,yaml; yaml.safe_load(pathlib.Path('.github/workflows/nonprod-deploy.yml').read_text())"
+python3 -m py_compile \
+  services/evolution/dispatch_worker.py \
+  services/evolution/hosted_compose_probe.py \
+  services/evolution/hosted_dispatch_probe.py
 git diff --check
 ```
 
 Results:
 
 - Focused worker, hosted-probe, and Compose contract:
-  `45 passed in 20.92s` (including exact Compose label/source and orphan
+  `49 passed in 12.50s` (including exact Compose label/source and orphan
   rejection tests).
-- Post-refresh full evolution service suite: `218 passed, 2 warnings in 44.77s`;
-  both
+- Full evolution service suite: `239 passed, 2 warnings in 50.79s`; both
   warnings are existing FastAPI `on_event` deprecations in the incidents
   service.
 - Rendered default services include `evolution-dispatch-worker`; it has no
   profile and waits for a healthy `evolution` service.
-- Image build completed as
+- Workflow YAML parsing, probe byte-compilation, Compose parsing, and whitespace
+  validation passed.
+- Before the dev refresh, the remediated image build completed as
   `evoloop-001-evolution-dispatch-worker:latest`, manifest list
   `sha256:253a647708a329f0063cfae285dddcb8a378357050dbbeaf8b58653b7de96d79`.
-- Compose parsing and whitespace validation passed.
+  The final exact-ref workflow rebuild is still required for the refreshed
+  candidate.
 
 The successful entrypoint test creates, reviews, and approves a unique
 low-risk retrain decision through the real FastAPI routes. It never calls the
@@ -205,14 +216,56 @@ probe. It is no longer acceptance evidence for two independent reasons:
    each reported `pantheon-evolution-dispatch-worker-1` as an orphan because
    their deployed refs did not contain this task's Compose service.
 
-Therefore the currently running old container must not be described as
-Compose-owned or current. The earlier decision
+At that stage, the surviving pre-remediation container could not be described
+as Compose-owned or current. The earlier decision
 `evoloop-001-probe-b2844ae249` is retained only as historical pre-remediation
 evidence.
 
+### Successful exact-ref proof before the final dev refresh
+
+Run
+[29313232772](https://github.com/ajoe734/pantheon/actions/runs/29313232772)
+deployed exact SHA `c49edeb3d9a96b89d21a7c9345b0133860031e8c`, but its hosted-probe step failed
+closed before mutation because the git-porcelain parser stripped the leading
+dot from the first allowed runtime task-brief path. It uploaded no artifact.
+Commit `47a009bffce305cfe1ed4a7f7360ec1b7e413d7e` fixed that parser and added the
+regression test.
+
+The superseding exact-ref
+[run 29314870187](https://github.com/ajoe734/pantheon/actions/runs/29314870187)
+completed successfully at `47a009bffce305cfe1ed4a7f7360ec1b7e413d7e`.
+Artifact `8303995676`, named `evoloop-001-hosted-29314870187-1`, has archive
+digest
+`sha256:63a7b32a47e1f6cff9c18015e68fd756ce40e7222e4553bee4ef4fdf52cba890`;
+the extracted normalized JSON is 24,135 bytes with digest
+`sha256:9c2e8a022f6455aa321a5b093334fc4b9b278067cecc26c3d8a92c382a6a24d4`.
+It records `assertion_failures=[]` and proves:
+
+- requested ref, resolved SHA, checkout SHA, and BFF source SHA before and after
+  the probe all matched `47a009bffce305cfe1ed4a7f7360ec1b7e413d7e`;
+- Compose project/service/config labels and rendered config hash matched, and
+  host/container `dispatch_worker.py` source hashes were identical;
+- the probe made zero direct execute calls, while research decision
+  `evoloop-001-29314870187-1-research` auto-transitioned to
+  `executed/submitted/research` with exact dispatch ref and one worker step;
+- active-live freeze `evoloop-001-29314870187-1-freeze-live` retained its
+  runtime-binding snapshot and remained `approved` with no execution result or
+  executed step for the full observation window; and
+- restarting only the Compose worker produced fresh tick `1`, recovered to
+  healthy, did not redispatch research, and continued to report the freeze skip.
+
+This proves the remediated task runtime at `47a009bff`, but it is not the final
+PR-head acceptance. `dev` subsequently changed root Compose and the Evolution
+API models/main. Those changes were merged into this branch before candidate
+`633d6f6fb`, so the combined runtime must receive one final exact-ref probe.
+A later BFF-only deployment also changed the currently served BFF identity; it
+does not invalidate the captured artifact, but it prevents describing the
+present mixed deployment as the exact-ref proof state.
+
 ### Fresh acceptance gate
 
-Pending after publication of the remediated task ref. The accepted probe must:
+Pending for the refreshed candidate after the PINT-010-R2 stable-deploy hold is
+explicitly released. The accepted probe must:
 
 - dispatch `nonprod-deploy.yml` for `environment=dev`, `component=root`, and
   an exact task commit;
@@ -304,10 +357,10 @@ values below one second.
 
 | Criterion | Evidence | State |
 |---|---|---|
-| Default dev Compose service with own interval and healthcheck | Rendered no-profile Compose contract passes locally; old hosted service is orphaned | Pending fresh hosted proof |
-| Approved research decision auto-transitions to executed with metadata | Entrypoint integration test covers worker actor, submitted/research/exact ref/timestamps | Local passed; hosted pending |
-| Active-live freeze is not silently consumed | Daily-sweep-shaped regression proves structured skip, no POST, still approved, no execution result/step | Local passed; hosted pending |
-| Restart does not double-dispatch and resets health first | Store-reload and boot-health tests pass | Local passed; hosted pending |
+| Default dev Compose service with own interval and healthcheck | Rendered no-profile Compose contract passes locally; run 29314870187 proved exact Compose ownership at 47a | Final refreshed-head proof pending |
+| Approved research decision auto-transitions to executed with metadata | Entrypoint integration test plus run 29314870187 exact dispatch evidence | Passed at 47a; final refreshed-head proof pending |
+| Active-live freeze is not silently consumed | Local daily-sweep-shaped regression plus run 29314870187 no-execute observation | Passed at 47a; final refreshed-head proof pending |
+| Restart does not double-dispatch and resets health first | Store-reload/boot-health tests plus run 29314870187 fresh tick and zero redispatch | Passed at 47a; final refreshed-head proof pending |
 | Evolution API failure logs diagnostics and dispatches nothing | Boundary-failure test, main-loop outage test, built-image one-shot output | Passed |
 | Existing cadences remain unchanged | Compose diff leaves existing scheduler blocks and interval variables unchanged; worker uses its own namespaced interval | Passed |
 
@@ -336,7 +389,8 @@ values below one second.
 ## Review And Delivery
 
 - PR: [#3618](https://github.com/ajoe734/pantheon/pull/3618), open.
-- Reviewer decision: pending Codex review.
+- Reviewer decision: pending Claude review after final hosted evidence.
 - Merge commit: pending.
-- Hosted dev deployment and automatic dispatch proof: pending fresh exact-ref
-  Compose deployment; run `29306967263` is explicitly superseded.
+- Hosted dev deployment and automatic dispatch proof: run `29314870187` passed
+  at pre-refresh SHA `47a009bff`; final refreshed candidate proof is waiting on
+  the acknowledged execute-plans PR #328 stable-deploy hold.
