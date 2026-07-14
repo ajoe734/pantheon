@@ -160,6 +160,10 @@ class TestDeploymentDiffExecutor(unittest.TestCase):
 class TestRollbackExecutor(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+        os.environ["PANTHEON_GOVERNANCE_SERVICE_URL"] = "http://localhost:5002"
+
+    def tearDown(self):
+        os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
 
     @patch("command_executor._post_json")
     def test_rollback_success(self, mock_post):
@@ -173,13 +177,17 @@ class TestRollbackExecutor(unittest.TestCase):
             "target_id": "dp-001",
             "rollback_to_version": "v1.0.0",
         })
-        self.assertEqual(result["rollback_id"], "rb-dp-001-123456")
+        self.assertTrue(result["rollback_id"].startswith("rb-dp-001-"))
         self.assertEqual(result["command_id"], "cmd-003")
 
 
 class TestRollbackReviewCommandExecutors(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+        os.environ["PANTHEON_GOVERNANCE_SERVICE_URL"] = "http://localhost:5002"
+
+    def tearDown(self):
+        os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
 
     @patch("command_executor._post_json")
     def test_approve_rollback_success(self, mock_post):
@@ -219,6 +227,10 @@ class TestRollbackReviewCommandExecutors(unittest.TestCase):
 class TestKillSwitchExecutor(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+        os.environ["PANTHEON_GOVERNANCE_SERVICE_URL"] = "http://localhost:5002"
+
+    def tearDown(self):
+        os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
 
     @patch("command_executor._post_json")
     def test_kill_switch_success(self, mock_post):
@@ -385,6 +397,10 @@ class TestEvolutionDecisionExecutor(unittest.TestCase):
 class TestEvolutionActionExecutor(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_GOVERNANCE_API_URL"] = "http://localhost:5001"
+        os.environ["PANTHEON_GOVERNANCE_SERVICE_URL"] = "http://localhost:5002"
+
+    def tearDown(self):
+        os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
 
     @patch("command_executor._post_json")
     def test_execute_evolution_action_governance_api(self, mock_post):
@@ -470,6 +486,10 @@ class TestEvolutionActionExecutor(unittest.TestCase):
 class TestMutationReviewExecutors(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_GOVERNANCE_API_URL"] = "http://localhost:5001"
+        os.environ["PANTHEON_GOVERNANCE_SERVICE_URL"] = "http://localhost:5002"
+
+    def tearDown(self):
+        os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
 
     @patch("command_executor._post_json")
     def test_approve_mutation_governance_api(self, mock_post):

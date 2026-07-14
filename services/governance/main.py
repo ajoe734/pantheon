@@ -328,15 +328,31 @@ def record_freeze_order(body: Dict[str, Any] = Body(...), response: Response = N
             is_transition = True
             if response:
                 response.status_code = 200
+
+            # Validate incoming transition audit fields
+            inc_actor = body.get("transition_actor") or body.get("actor")
+            inc_identity = body.get("transition_identity") or body.get("identity")
+            inc_source_cmd = body.get("transition_source_command_id") or body.get("source_command_id")
+
+            if not inc_actor or not inc_identity or not inc_source_cmd:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing required transition audit fields (actor, identity, source_command_id)"
+                )
+
             merged = dict(existing)
             for k, v in body.items():
                 if v is not None:
                     merged[k] = v
+
+            # Set transition audit fields explicitly
+            merged["transition_actor"] = inc_actor
+            merged["transition_identity"] = inc_identity
+            merged["transition_source_command_id"] = inc_source_cmd
+
             # Preserve original fields and audit origin on transitions
             for field in ["scope", "target_id", "created_at", "issued_at", "actor", "identity", "source_command_id"]:
                 if field in existing and existing[field] not in (None, ""):
-                    if field in ["actor", "identity", "source_command_id"] and body.get(field) != existing[field]:
-                        merged[f"transition_{field}"] = body.get(field)
                     merged[field] = existing[field]
             body = merged
 
@@ -351,7 +367,7 @@ def record_freeze_order(body: Dict[str, Any] = Body(...), response: Response = N
         if is_transition:
             new_status = body.get("status")
             if new_status in ("approved", "rejected", "active"):
-                transition_actor_role = body.get("transition_actor") or body.get("actor")
+                transition_actor_role = body.get("transition_actor")
                 allowed_roles = {"governance_reviewer", "risk_owner", "governance_committee", "admin", "approver", "approver-role", "rejecter-role"}
                 if transition_actor_role not in allowed_roles:
                     raise HTTPException(
@@ -411,15 +427,31 @@ def record_rollback(body: Dict[str, Any] = Body(...), response: Response = None)
             is_transition = True
             if response:
                 response.status_code = 200
+
+            # Validate incoming transition audit fields
+            inc_actor = body.get("transition_actor") or body.get("actor")
+            inc_identity = body.get("transition_identity") or body.get("identity")
+            inc_source_cmd = body.get("transition_source_command_id") or body.get("source_command_id")
+
+            if not inc_actor or not inc_identity or not inc_source_cmd:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing required transition audit fields (actor, identity, source_command_id)"
+                )
+
             merged = dict(existing)
             for k, v in body.items():
                 if v is not None:
                     merged[k] = v
+
+            # Set transition audit fields explicitly
+            merged["transition_actor"] = inc_actor
+            merged["transition_identity"] = inc_identity
+            merged["transition_source_command_id"] = inc_source_cmd
+
             # Preserve original fields and audit origin on transitions
             for field in ["runtime_id", "runtime_binding_id", "action_type", "target_artifact_id", "created_at", "initiated_at", "requested_at", "actor", "identity", "source_command_id"]:
                 if field in existing and existing[field] not in (None, ""):
-                    if field in ["actor", "identity", "source_command_id"] and body.get(field) != existing[field]:
-                        merged[f"transition_{field}"] = body.get(field)
                     merged[field] = existing[field]
             body = merged
 
@@ -434,7 +466,7 @@ def record_rollback(body: Dict[str, Any] = Body(...), response: Response = None)
         if is_transition:
             new_status = body.get("status")
             if new_status in ("approved", "rejected"):
-                transition_actor_role = body.get("transition_actor") or body.get("actor")
+                transition_actor_role = body.get("transition_actor")
                 allowed_roles = {"governance_reviewer", "risk_owner", "governance_committee", "admin", "approver", "approver-role", "rejecter-role"}
                 if transition_actor_role not in allowed_roles:
                     raise HTTPException(

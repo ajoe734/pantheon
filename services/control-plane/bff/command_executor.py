@@ -132,10 +132,13 @@ def _parse_jwt_payload(token: str) -> Dict[str, Any]:
 def _extract_actor_id(auth_token: Optional[str]) -> str:
     if not auth_token:
         return "operator-command"
-    if auth_token.startswith("ey") and "." in auth_token:
-        jwt_payload = _parse_jwt_payload(auth_token)
+    token = auth_token.strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    if token.startswith("ey") and "." in token:
+        jwt_payload = _parse_jwt_payload(token)
         return jwt_payload.get("sub") or jwt_payload.get("actor_id") or "operator-command"
-    parts = auth_token.split(":")
+    parts = token.split(":")
     if parts and parts[0].strip():
         return parts[0].strip()
     return "operator-command"
@@ -148,9 +151,12 @@ def _actor_context(
     """Resolve actor_id/actor_role for governance-owned evolution commands."""
     token_actor_id: Optional[str] = None
     token_roles: list[str] = []
-    if auth_token:
-        if auth_token.startswith("ey") and "." in auth_token:
-            jwt_payload = _parse_jwt_payload(auth_token)
+    token = auth_token.strip() if auth_token else None
+    if token and token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    if token:
+        if token.startswith("ey") and "." in token:
+            jwt_payload = _parse_jwt_payload(token)
             token_actor_id = jwt_payload.get("sub") or jwt_payload.get("actor_id")
             raw_roles = jwt_payload.get("roles") or jwt_payload.get("role") or []
             if isinstance(raw_roles, str):
@@ -158,7 +164,7 @@ def _actor_context(
             elif isinstance(raw_roles, list):
                 token_roles = [str(r) for r in raw_roles]
         else:
-            token_parts = auth_token.split(":")
+            token_parts = token.split(":")
             if token_parts:
                 raw_actor_id = token_parts[0].strip()
                 token_actor_id = raw_actor_id or None
@@ -566,7 +572,31 @@ def _execute_rollback(
 ) -> Dict[str, Any]:
     """Dispatch ExecuteRollback to internal API /rollbacks/execute."""
     target_id = params.get("target_id", "unknown")
-    rollback_id = f"rb-{target_id}-{uuid.uuid4().hex[:8]}"
+
+    # Generate deterministic rollback ID based on command_id
+    import hashlib
+    h = hashlib.sha256(command_id.encode("utf-8")).hexdigest()[:8]
+    rollback_id = f"rb-{target_id}-{h}"
+
+    # Check if this rollback has already been recorded in governance
+    existing_gov = None
+    try:
+        url = _governance_approval_url(f"/api/governance/rollbacks/{rollback_id}")
+        existing_gov = _get_json(url, auth_token=auth_token, mfa_token=mfa_token)
+    except Exception:
+        pass
+
+    if existing_gov and existing_gov.get("status") == "completed":
+        return {
+            "rollback_id": rollback_id,
+            "command_id": command_id,
+            "runtime_id": existing_gov.get("runtime_id") or params.get("runtime_id"),
+            "runtime_binding_id": existing_gov.get("runtime_binding_id") or params.get("runtime_binding_id") or target_id,
+            "target_artifact_id": existing_gov.get("target_artifact_id") or params.get("target_artifact_id"),
+            "rollback_action_type": existing_gov.get("action_type") or params.get("rollback_action_type"),
+            "status": "completed",
+            "tracking_url": f"/api/internal/v1/commands/{command_id}",
+        }
 
     try:
         actor_id, actor_role = _actor_context(params, auth_token=auth_token)
@@ -592,7 +622,8 @@ def _execute_rollback(
     }
 
     # Write initiated to governance first before executing side effects
-    _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
+    if not existing_gov or existing_gov.get("status") != "completed":
+        _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
 
     payload = {
         "rollback_target_type": params.get("rollback_target_type", "deployment"),
@@ -611,12 +642,18 @@ def _execute_rollback(
     except Exception as exc:
         gov_payload["status"] = "failed"
         try:
+            gov_payload["transition_actor"] = actor_role
+            gov_payload["transition_identity"] = actor_id
+            gov_payload["transition_source_command_id"] = command_id
             _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
         except Exception:
             pass
         raise exc
 
     gov_payload["status"] = body.get("status") or "completed"
+    gov_payload["transition_actor"] = actor_role
+    gov_payload["transition_identity"] = actor_id
+    gov_payload["transition_source_command_id"] = command_id
     _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
 
     return {
@@ -660,6 +697,9 @@ def _execute_approve_rollback(
         "updated_at": timestamp,
         "approved_at": body.get("approved_at") or timestamp,
         "source_command_id": command_id,
+        "transition_actor": actor_role,
+        "transition_identity": actor_id,
+        "transition_source_command_id": command_id,
         "approval_notes": params.get("approval_notes"),
     }
     _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
@@ -703,6 +743,9 @@ def _execute_reject_rollback(
         "updated_at": timestamp,
         "rejected_at": body.get("rejected_at") or timestamp,
         "source_command_id": command_id,
+        "transition_actor": actor_role,
+        "transition_identity": actor_id,
+        "transition_source_command_id": command_id,
         "rejection_reason": params.get("rejection_reason"),
     }
     _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
@@ -1818,7 +1861,7 @@ def execute_command_with_status(
         # Covers connection failures, timeouts, SSL errors
         reason = str(getattr(exc, "reason", exc))
         is_timeout = "timed out" in reason.lower() or "timeout" in reason.lower()
-        code = "COMMAND_TIMEOUT" if is_timeout else "DOWNSTREAM_UNAVAILABLE"
+        code = "COMMAND_TIMEOUT" if is_timeout else "DEPENDENCY_UNAVAILABLE"
         status = CommandStatus.TIMEOUT if is_timeout else CommandStatus.FAILED
         error = {
             "code": code,

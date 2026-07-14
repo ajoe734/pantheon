@@ -998,7 +998,7 @@ def pause_runtime(binding_id):
 
 
 @app.route("/api/internal/v1/rollbacks/execute", methods=["POST"])
-@require_bearer_token(roles=_INCIDENT_ROLES, mfa_required=True)
+@require_bearer_token(roles=_APPROVER_ROLES, mfa_required=True)
 def execute_rollback():
     """Execute rollback through the RuntimeBinding state machine.
 
