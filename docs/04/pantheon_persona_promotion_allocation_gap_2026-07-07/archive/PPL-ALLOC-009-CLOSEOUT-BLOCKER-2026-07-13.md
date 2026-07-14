@@ -3,6 +3,22 @@
 Status: PPL-ALLOC-011 execution S1 blockers resolved; PPL-ALLOC-009 remains
 blocked on the explicitly retained S2 review/security items below
 
+## Final-SHA Recheck Addendum - 2026-07-14
+
+The current deployment and terminal child-task recheck is recorded in
+`PPL-ALLOC-009-FINAL-SHA-RECHECK-2026-07-14.md` and its sanitized companion
+`PPL-ALLOC-009-FINAL-SHA-RECHECK-2026-07-14.json`.
+
+PPL-ALLOC-012 has superseded the historical statement below that ranking rows
+omit the allocation-policy join fields. The final-SHA ranking now carries a
+single immutable snapshot id, stage, policy input, and weight fields for every
+row. The remaining blocker is narrower: the hosted ranking has no eligible
+live/canary row, while the independently proven Capital apply fixture has no
+corresponding Persona authority record. Consequently there is still no one
+governed identity that correlates `real ranking -> target weights -> proposal
+-> approval -> apply receipt` end to end. The execution and containment S1
+repairs remain closed.
+
 ## PPL-ALLOC-011 Resolution Addendum - 2026-07-13
 
 PPL-ALLOC-011 has closed the three execution-plane S1 blockers and the BFF

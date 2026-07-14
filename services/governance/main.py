@@ -37,7 +37,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from datetime import datetime, timezone
+from fastapi import FastAPI, HTTPException, Query, Body
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 
@@ -288,6 +289,104 @@ def list_rollbacks(
 def get_rollback(rollback_id: str) -> Dict[str, Any]:
     return _record_or_404(rollback_store, rollback_id, label="Rollback")
 
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+# ---------------------------------------------------------------------------
+# Routes — freeze-order and rollback write models
+# ---------------------------------------------------------------------------
+
+@app.post(
+    "/api/governance/freeze-orders",
+    response_model=Dict[str, Any],
+    status_code=201,
+    summary="Record or update a canonical freeze order",
+)
+def record_freeze_order(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Create or update a FreezeOrder in the canonical store."""
+    freeze_order_id = body.get("freeze_order_id") or body.get("id")
+    if not freeze_order_id:
+        freeze_order_id = f"freeze-{uuid.uuid4().hex[:12]}"
+        body["freeze_order_id"] = freeze_order_id
+        body["id"] = freeze_order_id
+
+    if not body.get("created_at") and not body.get("issued_at"):
+        body["created_at"] = _utc_now()
+        body["issued_at"] = body["created_at"]
+
+    existing = freeze_order_store.get(freeze_order_id)
+    if existing:
+        merged = dict(existing)
+        for k, v in body.items():
+            if v is not None:
+                merged[k] = v
+        # Preserve original fields and audit origin on transitions
+        for field in ["scope", "target_id", "created_at", "issued_at", "actor", "identity", "source_command_id"]:
+            if field in existing and existing[field] not in (None, ""):
+                if field in ["actor", "identity", "source_command_id"] and body.get(field) != existing[field]:
+                    merged[f"transition_{field}"] = body.get(field)
+                merged[field] = existing[field]
+        body = merged
+
+    body["updated_at"] = _utc_now()
+
+    # Enforce required audit fields on final payload
+    for field in ["status", "actor", "identity", "source_command_id", "scope", "target_id"]:
+        if not body.get(field):
+            raise HTTPException(status_code=400, detail=f"Missing required audit field: {field}")
+
+    freeze_order_store.put(body)
+    log.info("Recorded freeze order %s: %s", freeze_order_id, body)
+    return body
+
+
+@app.post(
+    "/api/governance/rollbacks",
+    response_model=Dict[str, Any],
+    status_code=201,
+    summary="Record or update a canonical rollback record",
+)
+def record_rollback(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Create or update a Rollback record in the canonical store."""
+    rollback_id = body.get("rollback_id") or body.get("id")
+    if not rollback_id:
+        rollback_id = f"rollback-{uuid.uuid4().hex[:12]}"
+        body["rollback_id"] = rollback_id
+        body["id"] = rollback_id
+
+    if not body.get("created_at") and not body.get("initiated_at"):
+        body["created_at"] = _utc_now()
+        body["initiated_at"] = body["created_at"]
+        body["requested_at"] = body["created_at"]
+
+    existing = rollback_store.get(rollback_id)
+    if existing:
+        merged = dict(existing)
+        for k, v in body.items():
+            if v is not None:
+                merged[k] = v
+        # Preserve original fields and audit origin on transitions
+        for field in ["runtime_id", "runtime_binding_id", "action_type", "target_artifact_id", "created_at", "initiated_at", "requested_at", "actor", "identity", "source_command_id"]:
+            if field in existing and existing[field] not in (None, ""):
+                if field in ["actor", "identity", "source_command_id"] and body.get(field) != existing[field]:
+                    merged[f"transition_{field}"] = body.get(field)
+                merged[field] = existing[field]
+        body = merged
+
+    body["updated_at"] = _utc_now()
+
+    # Enforce required audit fields on final payload
+    for field in ["status", "actor", "identity", "source_command_id", "runtime_id", "action_type"]:
+        if not body.get(field):
+            raise HTTPException(status_code=400, detail=f"Missing required audit field: {field}")
+
+    rollback_store.put(body)
+    log.info("Recorded rollback %s: %s", rollback_id, body)
+    return body
+
+
 # ---------------------------------------------------------------------------
 # Routes — proposals
 # ---------------------------------------------------------------------------
@@ -318,6 +417,12 @@ def propose_approval(body: ProposeApprovalRequest) -> ApprovalDecisionResponse:
         risk_level=body.risk_level.value,
         capital_pool_id=body.capital_pool_id,
         persona_id=body.persona_id,
+        tenant_id=body.tenant_id,
+        owner_user_id=body.owner_user_id,
+        proposal_id=body.proposal_id,
+        proposal_revision=body.proposal_revision,
+        proposal_content_digest=body.proposal_content_digest,
+        validation_result_digest=body.validation_result_digest,
     )
 
     errors = decision.validate()

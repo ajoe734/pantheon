@@ -149,3 +149,40 @@ def test_postgres_posture_builds_service_owned_dataset_tables(tmp_path, monkeypa
     assert all(instance.owner_service == "governance-svc" for instance in FakePostgresJsonOwnerStore.instances)
     assert freeze_store.get("freeze-pg") == {"freeze_order_id": "freeze-pg", "status": "active"}
     assert rollback_store.get("rollback-pg") == {"rollback_id": "rollback-pg", "status": "accepted"}
+
+
+def test_post_endpoints_persist_correctly(tmp_path, monkeypatch) -> None:
+    client, freeze_store, rollback_store = _isolated_client(tmp_path, monkeypatch)
+
+    freeze_payload = {
+        "freeze_order_id": "freeze-post-test",
+        "scope": "persona",
+        "target_id": "persona-gamma",
+        "status": "active",
+        "actor": "admin",
+        "identity": "op-test",
+        "source_command_id": "cmd-123",
+        "reason": "Test freeze order post",
+    }
+    response = client.post("/api/governance/freeze-orders", json=freeze_payload)
+    assert response.status_code == 201
+    res_body = response.json()
+    assert res_body["freeze_order_id"] == "freeze-post-test"
+    assert res_body["status"] == "active"
+    assert freeze_store.get("freeze-post-test")["reason"] == "Test freeze order post"
+
+    rollback_payload = {
+        "rollback_id": "rollback-post-test",
+        "runtime_id": "runtime-gamma",
+        "action_type": "replace",
+        "status": "completed",
+        "actor": "reviewer",
+        "identity": "op-test",
+        "source_command_id": "cmd-456",
+    }
+    response2 = client.post("/api/governance/rollbacks", json=rollback_payload)
+    assert response2.status_code == 201
+    res_body2 = response2.json()
+    assert res_body2["rollback_id"] == "rollback-post-test"
+    assert res_body2["status"] == "completed"
+    assert rollback_store.get("rollback-post-test")["runtime_id"] == "runtime-gamma"

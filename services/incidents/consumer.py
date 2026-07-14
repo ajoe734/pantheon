@@ -631,6 +631,12 @@ def _threshold_notes(threshold: Mapping[str, Any]) -> str:
         value = threshold.get(key)
         if value not in (None, ""):
             parts.append(f"{label}={value}")
+    # Preserve the producer's own note verbatim (carries dedupe_key=... and
+    # any baseline used) instead of dropping it: it is the audit trail that
+    # proves why a rerun deduped instead of opening a second incident.
+    note = threshold.get("note")
+    if note not in (None, ""):
+        parts.append(str(note))
     return "; ".join(parts)
 
 
