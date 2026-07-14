@@ -1,0 +1,385 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProductEvidenceManifest",
+  "description": "Schema for machine-readable product level evidence manifests (evidence.json).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "schema_status",
+    "evidence_policy",
+    "task",
+    "authorities",
+    "scope",
+    "implementation_delivery",
+    "validation",
+    "deployment",
+    "hosted_readback",
+    "behavioral_proof",
+    "security_and_safety",
+    "acceptance",
+    "residual_risks",
+    "integrity",
+    "record_log"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "schema_status": {
+      "type": "object",
+      "required": ["formal_schema_owner", "formalization_trigger", "note", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "formal_schema_owner": { "type": "string" },
+        "formalization_trigger": { "type": "string" },
+        "note": { "type": "string" },
+        "status": { "type": "string" }
+      }
+    },
+    "evidence_policy": {
+      "type": "object",
+      "required": [
+        "checksum_file",
+        "missing_or_contradicted_proof_fails_closed",
+        "mutation_rule",
+        "recording_mode",
+        "redacted",
+        "self_hashing"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "checksum_file": { "type": "string" },
+        "missing_or_contradicted_proof_fails_closed": { "type": "boolean" },
+        "mutation_rule": { "type": "string" },
+        "recording_mode": { "type": "string" },
+        "redacted": { "type": "boolean" },
+        "self_hashing": { "type": "boolean" }
+      }
+    },
+    "task": {
+      "type": "object",
+      "required": [
+        "base_branch",
+        "evidence_cut_at",
+        "evidence_cut_semantics",
+        "id",
+        "overall_admission",
+        "owner",
+        "phase",
+        "product_level_required",
+        "repository",
+        "review_file",
+        "reviewer",
+        "target_environment",
+        "target_maturity",
+        "task_branch",
+        "title"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "base_branch": { "type": "string" },
+        "evidence_cut_at": { "type": "string" },
+        "evidence_cut_semantics": { "type": "string" },
+        "id": { "type": "string" },
+        "overall_admission": { "type": "string" },
+        "owner": { "type": "string" },
+        "phase": { "type": "string" },
+        "product_level_required": { "type": "boolean" },
+        "repository": { "type": "string" },
+        "review_file": { "type": "string" },
+        "reviewer": { "type": "string" },
+        "target_environment": { "type": "string" },
+        "target_maturity": { "type": "string" },
+        "task_branch": { "type": "string" },
+        "title": { "type": "string" }
+      }
+    },
+    "authorities": {
+      "type": "object",
+      "required": ["actual_state", "desired_state", "task_packet"],
+      "additionalProperties": false,
+      "properties": {
+        "actual_state": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "desired_state": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "task_packet": { "type": "string" }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "authoritative_write_owner",
+        "composes_with",
+        "evidence_changed_files",
+        "implementation_changed_files",
+        "not_changing",
+        "owned_layer"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "authoritative_write_owner": { "type": "string" },
+        "composes_with": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "evidence_changed_files": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "implementation_changed_files": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "not_changing": { "type": "string" },
+        "owned_layer": { "type": "string" }
+      }
+    },
+    "implementation_delivery": {
+      "type": "object",
+      "required": ["anchor_commits", "required_checks"],
+      "additionalProperties": false,
+      "properties": {
+        "anchor_commits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["sha", "subject"],
+            "properties": {
+              "sha": { "type": "string" },
+              "subject": { "type": "string" },
+              "delivery_state": { "type": "string" },
+              "hosted_cut_inclusion": { "type": "boolean" },
+              "note": { "type": "string" }
+            }
+          }
+        },
+        "pull_request": {
+          "type": "object",
+          "required": ["number", "url", "head_sha", "base"],
+          "properties": {
+            "number": { "type": "integer" },
+            "url": { "type": "string" },
+            "head_sha": { "type": "string" },
+            "base": { "type": "string" },
+            "merged_at": { "type": "string" },
+            "merge_sha": { "type": "string" }
+          }
+        },
+        "pull_requests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["base", "head_sha", "merge_sha", "merged_at", "number", "url"],
+            "additionalProperties": false,
+            "properties": {
+              "base": { "type": "string" },
+              "head_sha": { "type": "string" },
+              "merge_sha": { "type": "string" },
+              "merged_at": { "type": "string" },
+              "number": { "type": "integer" },
+              "url": { "type": "string" }
+            }
+          }
+        },
+        "required_checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["workflow", "event", "conclusion"],
+            "properties": {
+              "workflow": { "type": "string" },
+              "event": { "type": "string" },
+              "run_id": { "type": "integer" },
+              "url": { "type": "string" },
+              "head_sha": { "type": "string" },
+              "jobs": { "type": "object" },
+              "conclusion": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "required": ["commands", "validated_at", "validated_base_sha", "validated_head_sha"],
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["command", "result"],
+            "properties": {
+              "command": { "type": "string" },
+              "result": { "type": "string" },
+              "conclusion": { "type": "string" }
+            }
+          }
+        },
+        "validated_at": { "type": "string" },
+        "validated_base_sha": { "type": "string" },
+        "validated_head_sha": { "type": "string" }
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "required": ["applicable", "environment", "public_bff_base_url", "publish_cut", "canonical_root_deploy", "identity_admission"],
+      "properties": {
+        "applicable": { "type": "boolean" },
+        "environment": { "type": "string" },
+        "public_bff_base_url": { "type": "string" },
+        "publish_cut": { "type": "object" },
+        "canonical_root_deploy": { "type": "object" },
+        "scoped_bff_redeploy_and_restart": { "type": "object" },
+        "capture_time_root_deploy": { "type": "object" },
+        "identity_admission": { "type": "object" },
+        "resolved_observations": { "type": "object" },
+        "post_cut_runtime_observation": { "type": "object" }
+      }
+    },
+    "hosted_readback": {
+      "type": "object",
+      "required": ["pre_deploy"],
+      "properties": {
+        "pre_deploy": { "type": "object" },
+        "cutover_degraded_window": { "type": "object" },
+        "scoped_redeploy_security_observation": { "type": "object" },
+        "scoped_redeploy_contract_observation": { "type": "object" },
+        "superseding_cutover_degraded_window": { "type": "object" },
+        "capture_time_hosted_readback": { "type": "object" }
+      }
+    },
+    "behavioral_proof": {
+      "type": "object",
+      "required": [
+        "duplicate_safety",
+        "failure_and_degraded_behavior",
+        "request_receipt_downstream_correlation",
+        "restart_and_recovery",
+        "rollback_or_compensation"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "duplicate_safety": { "type": "object" },
+        "failure_and_degraded_behavior": { "type": "object" },
+        "request_receipt_downstream_correlation": { "type": "object" },
+        "restart_and_recovery": { "type": "object" },
+        "rollback_or_compensation": { "type": "object" }
+      }
+    },
+    "security_and_safety": {
+      "type": "object",
+      "required": [
+        "environment_boundary",
+        "hosted_frontend",
+        "mfa",
+        "no_live_capital",
+        "rbac",
+        "tenant_isolation",
+        "two_person_approval"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "environment_boundary": { "type": "object" },
+        "hosted_frontend": { "type": "object" },
+        "mfa": { "type": "object" },
+        "no_live_capital": { "type": "object" },
+        "rbac": { "type": "object" },
+        "tenant_isolation": { "type": "object" },
+        "two_person_approval": { "type": "object" }
+      }
+    },
+    "acceptance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["evidence_refs", "id", "statement", "status"],
+        "properties": {
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "id": { "type": "string" },
+          "statement": { "type": "string" },
+          "status": { "type": "string" },
+          "blocking_until": { "type": "string" }
+        }
+      }
+    },
+    "residual_risks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "blocking_for_this_task",
+          "containment",
+          "description",
+          "expiry",
+          "owner",
+          "recheck_trigger",
+          "severity"
+        ],
+        "properties": {
+          "blocking_for_this_task": { "type": "boolean" },
+          "containment": { "type": "string" },
+          "description": { "type": "string" },
+          "expiry": { "type": "string" },
+          "owner": { "type": "string" },
+          "recheck_trigger": { "type": "string" },
+          "severity": { "type": "string" }
+        }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "required": [
+        "algorithm",
+        "checksum_coverage",
+        "companion_checksum_path",
+        "hosted_semantic_sha256",
+        "manifest_path",
+        "normalized_hosted_readback",
+        "self_hash_omitted",
+        "self_hash_reason",
+        "source_artifact_sha256_by_epoch"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": { "type": "string" },
+        "checksum_coverage": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "companion_checksum_path": { "type": "string" },
+        "hosted_semantic_sha256": { "type": "object" },
+        "manifest_path": { "type": "string" },
+        "normalized_hosted_readback": { "type": "object" },
+        "self_hash_omitted": { "type": "boolean" },
+        "self_hash_reason": { "type": "string" },
+        "source_artifact_sha256_by_epoch": { "type": "object" }
+      }
+    },
+    "record_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["sequence", "recorded_at", "kind", "status"],
+        "properties": {
+          "actor": { "type": "string" },
+          "kind": { "type": "string" },
+          "recorded_at": { "type": "string" },
+          "reference": { "type": "string" },
+          "sequence": { "type": "integer" },
+          "sha": { "type": "string" },
+          "status": { "type": "string" }
+        }
+      }
+    }
+  }
+}

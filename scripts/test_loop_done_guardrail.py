@@ -304,5 +304,296 @@ class TestValidateLoopCompletionClaimInAIStatus(unittest.TestCase):
         self.assertIn("review_file", str(cm.exception))
 
 
+# ---------------------------------------------------------------------------
+# Deep Evidence Manifest Checks Tests
+# ---------------------------------------------------------------------------
+
+DEFAULT_VALID_EVIDENCE = {
+    "schema_version": "loop_product_evidence.bootstrap.v1",
+    "schema_status": {
+        "status": "provisional",
+        "formal_schema_owner": "LOOP-PROD-002",
+        "formalization_trigger": "Replace or validate this bootstrap shape when the product-evidence schema from LOOP-PROD-002 merges.",
+        "note": "Valid test note"
+    },
+    "evidence_policy": {
+        "recording_mode": "logical_append_only",
+        "redacted": True,
+        "missing_or_contradicted_proof_fails_closed": True,
+        "mutation_rule": "Immutable after merge",
+        "self_hashing": False,
+        "checksum_file": "docs/deployment/evidence/temp_test_evidence.sha256"
+    },
+    "task": {
+        "id": "LOOP-AUTO-TEST",
+        "title": "Test Title",
+        "phase": "Test Phase",
+        "repository": "pantheon",
+        "owner": "Antigravity",
+        "reviewer": "Claude",
+        "task_branch": "task/LOOP-AUTO-TEST",
+        "base_branch": "dev",
+        "target_environment": "dev",
+        "product_level_required": True,
+        "target_maturity": "reconciled",
+        "evidence_cut_at": "2026-07-13T22:40:16Z",
+        "evidence_cut_semantics": "Test semantics",
+        "review_file": "docs/deployment/evidence/temp_test_evidence.json",
+        "overall_admission": "review_required_evidence_only"
+    },
+    "authorities": {
+        "actual_state": ["GET /test"],
+        "desired_state": ["test spec"],
+        "task_packet": "docs/test.md"
+    },
+    "scope": {
+        "authoritative_write_owner": "Antigravity",
+        "owned_layer": "test layer",
+        "not_changing": "other layers",
+        "composes_with": ["other-task"],
+        "implementation_changed_files": ["test.py"],
+        "evidence_changed_files": ["docs/deployment/evidence/temp_test_evidence.json"]
+    },
+    "implementation_delivery": {
+        "anchor_commits": [{"sha": "abc1234", "subject": "anchor commit"}],
+        "pull_request": {
+            "number": 123,
+            "url": "https://github.com/ajoe734/pantheon/pull/123",
+            "head_sha": "abc1234",
+            "base": "dev",
+            "merged_at": "2026-07-14T00:00:00Z",
+            "merge_sha": "def5678"
+        },
+        "required_checks": [
+            {
+                "workflow": "Branch CI Gate",
+                "event": "pull_request",
+                "run_id": 999,
+                "url": "https://github.com/run/999",
+                "conclusion": "success"
+            }
+        ]
+    },
+    "validation": {
+        "validated_base_sha": "base123",
+        "validated_head_sha": "head123",
+        "validated_at": "2026-07-13T22:40:16Z",
+        "commands": [
+            {"command": "pytest", "result": "pass"}
+        ]
+    },
+    "deployment": {
+        "applicable": True,
+        "environment": "dev",
+        "public_bff_base_url": "https://test-bff.io",
+        "publish_cut": {"conclusion": "success", "publish_ref": "v1", "release_ref": "v1", "run_id": 111},
+        "canonical_root_deploy": {"conclusion": "success"},
+        "identity_admission": {"admission_boundary": "Test boundary"}
+    },
+    "hosted_readback": {
+        "pre_deploy": {
+            "inventory_authenticated_http": 200,
+            "health_authenticated_http": 200
+        },
+        "capture_time_hosted_readback": {
+            "inventory_authenticated_http": 200,
+            "health_authenticated_http": 200
+        }
+    },
+    "behavioral_proof": {
+        "duplicate_safety": {"proof": ["No duplicate safety issue"], "status": "pass"},
+        "failure_and_degraded_behavior": {"proof": ["Degraded mode OK"], "status": "pass"},
+        "request_receipt_downstream_correlation": {"proof": ["Correlation OK"], "status": "pass"},
+        "restart_and_recovery": {"proof": ["Restart survives"], "status": "pass"},
+        "rollback_or_compensation": {"proof": ["Rollback succeeds"], "status": "pass"}
+    },
+    "security_and_safety": {
+        "environment_boundary": {"status": "pass"},
+        "hosted_frontend": {"status": "not_applicable"},
+        "mfa": {"status": "pass"},
+        "no_live_capital": {"status": "pass"},
+        "rbac": {"status": "pass"},
+        "tenant_isolation": {"status": "pass"},
+        "two_person_approval": {"status": "pass"}
+    },
+    "acceptance": [
+        {
+            "id": "AC-01",
+            "statement": "Requirement statement",
+            "status": "pass",
+            "evidence_refs": ["behavioral_proof.restart_and_recovery"]
+        }
+    ],
+    "residual_risks": {
+        "RISK-TEST": {
+            "blocking_for_this_task": False,
+            "containment": "None needed",
+            "description": "Risk details",
+            "expiry": "2026-07-31T00:00:00Z",
+            "owner": "Antigravity",
+            "recheck_trigger": "None",
+            "severity": "low"
+        }
+    },
+    "integrity": {
+        "algorithm": "sha256",
+        "checksum_coverage": ["evidence.json"],
+        "companion_checksum_path": "docs/deployment/evidence/temp_test_evidence.sha256",
+        "hosted_semantic_sha256": {},
+        "manifest_path": "docs/deployment/evidence/temp_test_evidence.json",
+        "normalized_hosted_readback": {},
+        "self_hash_omitted": True,
+        "self_hash_reason": "OMIT",
+        "source_artifact_sha256_by_epoch": {}
+    },
+    "record_log": [
+        {
+            "sequence": 1,
+            "recorded_at": "2026-07-14T00:00:00Z",
+            "kind": "review_approved",
+            "status": "pass",
+            "actor": "Claude"
+        }
+    ]
+}
+
+
+class TestDeepEvidenceChecks(unittest.TestCase):
+    def setUp(self):
+        self.evidence_path = Path("docs/deployment/evidence/temp_test_evidence.json")
+        self.full_path = guardrail.ROOT / self.evidence_path
+        self.full_path.parent.mkdir(parents=True, exist_ok=True)
+        self.default_task = _task(
+            task_id="LOOP-AUTO-TEST",
+            loop_ids=["source_ingestion"],
+            review_file=str(self.evidence_path)
+        )
+        self.default_task["owner"] = "Antigravity"
+        self.default_task["reviewer"] = "Claude"
+        self.write_evidence(DEFAULT_VALID_EVIDENCE)
+
+    def tearDown(self):
+        if self.full_path.exists():
+            self.full_path.unlink()
+
+    def write_evidence(self, data: dict):
+        with open(self.full_path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+
+    def test_valid_evidence_passes(self):
+        gaps = guardrail.check_task(self.default_task)
+        self.assertEqual(gaps, [])
+
+    def test_invalid_schema_fails(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        del data["schema_version"]
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("schema validation failed" in g for g in gaps), gaps)
+
+    def test_task_id_mismatch_fails(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["task"] = data["task"].copy()
+        data["task"]["id"] = "DIFFERENT-ID"
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("task ID mismatch" in g for g in gaps), gaps)
+
+    def test_owner_mismatch_fails(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["task"] = data["task"].copy()
+        data["task"]["owner"] = "DIFFERENT-OWNER"
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("owner mismatch" in g for g in gaps), gaps)
+
+    def test_reviewer_mismatch_fails(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["task"] = data["task"].copy()
+        data["task"]["reviewer"] = "DIFFERENT-REVIEWER"
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("reviewer mismatch" in g for g in gaps), gaps)
+
+    def test_acceptance_status_not_pass_fails(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["acceptance"] = [
+            {
+                "id": "AC-01",
+                "statement": "Requirement statement",
+                "status": "pending_independent_review",
+                "evidence_refs": []
+            }
+        ]
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("blocking acceptance requirement" in g for g in gaps), gaps)
+
+    def test_mock_only_live_claim_fails(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["task"] = data["task"].copy()
+        data["task"]["target_maturity"] = "live"
+        data["behavioral_proof"] = data["behavioral_proof"].copy()
+        data["behavioral_proof"]["restart_and_recovery"] = {
+            "proof": ["Tested via fixture only setup"],
+            "status": "pass"
+        }
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("mock-only live claim detected" in g for g in gaps), gaps)
+
+    def test_terminal_readback_failure_fails(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["hosted_readback"] = {
+            "pre_deploy": {
+                "inventory_authenticated_http": 502
+            }
+        }
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("terminal readback failure observed" in g for g in gaps), gaps)
+
+    def test_missing_restart_proof_fails(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["behavioral_proof"] = data["behavioral_proof"].copy()
+        data["behavioral_proof"]["restart_and_recovery"] = {"proof": [], "status": "pass"}
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("missing restart and recovery proof" in g for g in gaps), gaps)
+
+    def test_missing_security_fails(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["security_and_safety"] = data["security_and_safety"].copy()
+        data["security_and_safety"]["rbac"] = {"status": "fail"}
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("missing security evidence" in g for g in gaps), gaps)
+
+    def test_missing_reviewer_verdict_fails(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["record_log"] = [
+            {
+                "sequence": 1,
+                "recorded_at": "2026-07-14T00:00:00Z",
+                "kind": "review_approved",
+                "status": "pending"
+            }
+        ]
+        self.write_evidence(data)
+        
+        # Test when task status is done
+        task_done = self.default_task.copy()
+        task_done["status"] = "done"
+        gaps = guardrail.check_task(task_done)
+        self.assertTrue(any("missing reviewer verdict" in g for g in gaps), gaps)
+
+    def test_missing_jsonschema_dependency_returns_graceful_gap(self):
+        import sys
+        with mock.patch.dict(sys.modules, {"jsonschema": None}):
+            gaps = guardrail.check_task(self.default_task)
+            self.assertTrue(any("jsonschema library is not installed" in g for g in gaps), gaps)
+
+
+
 if __name__ == "__main__":
     unittest.main()
