@@ -187,9 +187,10 @@ def test_viewer_cannot_bypass_agora_write_authority(monkeypatch):
         )
     )
 
+    capability_viewer = _capability_scoped_viewer(monkeypatch)
     eligibility = client.post(
         "/bff/agora/interactions/participants:eligible",
-        headers=_capability_scoped_viewer(monkeypatch),
+        headers=capability_viewer,
         json={
             "workshop_id": workshop_id,
             "mode": "consult",
@@ -198,8 +199,6 @@ def test_viewer_cannot_bypass_agora_write_authority(monkeypatch):
         },
     )
     assert eligibility.status_code == 200, eligibility.text
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
 
     interaction = {
         "workshop_id": workshop_id,
@@ -212,17 +211,19 @@ def test_viewer_cannot_bypass_agora_write_authority(monkeypatch):
     _assert_write_forbidden(
         client.post(
             "/bff/agora/interactions",
-            headers={**viewer, "Idempotency-Key": f"interaction-viewer-{suffix}"},
+            headers={**capability_viewer, "Idempotency-Key": f"interaction-viewer-{suffix}"},
             json=interaction,
         )
     )
     _assert_write_forbidden(
         client.post(
             "/bff/agora/interactions",
-            headers={**viewer, "Idempotency-Key": f"propose-viewer-{suffix}"},
+            headers={**capability_viewer, "Idempotency-Key": f"propose-viewer-{suffix}"},
             json={**interaction, "mode": "propose_action"},
         )
     )
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     submitted = client.post(
         "/bff/agora/interactions",
         headers={**operator, "Idempotency-Key": f"interaction-operator-{suffix}"},
@@ -237,20 +238,30 @@ def test_viewer_cannot_bypass_agora_write_authority(monkeypatch):
     )
     assert proposal.status_code == 201, proposal.text
     proposal_id = proposal.json()["data"]["proposal_id"]
+    capability_viewer = _capability_scoped_viewer(monkeypatch)
     _assert_write_forbidden(
         client.post(
             "/bff/agora/proposals",
-            headers={**viewer, "Idempotency-Key": f"proposal-viewer-{suffix}"},
+            headers={**capability_viewer, "Idempotency-Key": f"proposal-viewer-{suffix}"},
             json=_proposal_payload(),
         )
     )
     _assert_write_forbidden(
         client.post(
             f"/bff/agora/proposals/{proposal_id}/actions",
-            headers={**viewer, "If-Match": proposal.headers["etag"]},
+            headers={**capability_viewer, "If-Match": proposal.headers["etag"]},
             json={"action": "modify", "reason": "viewer bypass", "proposed_value": {"risk": 0.07}},
         )
     )
+    latest = client.get(
+        f"/bff/agora/proposals/{proposal_id}",
+        headers=capability_viewer,
+    )
+    assert latest.status_code == 200, latest.text
+    assert latest.json()["data"]["revision"] == 1
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     modified = client.post(
         f"/bff/agora/proposals/{proposal_id}/actions",
         headers={**operator, "If-Match": proposal.headers["etag"]},
