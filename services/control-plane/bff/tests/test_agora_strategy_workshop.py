@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -360,6 +361,30 @@ class TestWorkshopStoreFactory:
         )
         assert DEFAULT_SCHEMA == "agora"
         assert BACKEND_ENV == "AGORA_WORKSHOP_STORE_BACKEND"
+
+    def test_postgres_create_event_replays_equivalent_and_rejects_collision(self):
+        dsn = os.getenv("TEST_DATABASE_URL")
+        if not dsn:
+            pytest.skip("TEST_DATABASE_URL is not set")
+        from agora.strategy_workshop import PostgresWorkshopStore
+
+        store = PostgresWorkshopStore(dsn=dsn, schema=f"agora_ws_{uuid.uuid4().hex[:12]}")
+        workshop_id = f"ws-{uuid.uuid4().hex}"
+        store.create_session({
+            "workshop_id": workshop_id, "tenant_id": "tenant-a", "user_id": "user-a",
+        })
+        event = {
+            "event_id": f"evt-{uuid.uuid4().hex}", "workshop_id": workshop_id,
+            "actor_type": "operator", "event_type": "opinion_requested",
+            "private_content_ref": "private://one", "redacted_summary": "safe",
+            "payload_refs_json": {"interaction_id": "int-1"}, "trace_id": "trace-1",
+        }
+        first = store.create_event(event)
+        replay = store.create_event(event)
+        assert replay["sequence_no"] == first["sequence_no"]
+        assert len(store.list_events(workshop_id)) == 1
+        with pytest.raises(ValueError, match="different payload"):
+            store.create_event({**event, "redacted_summary": "different"})
 
 
 # --------------------------------------------------------------------------- #
@@ -929,6 +954,7 @@ class TestWorkshopRouterEndpoints:
         router = create_strategy_workshop_router(
             extract_identity=lambda auth: {"sub": "test"},
             require_read_role=lambda identity: None,
+            require_write_role=lambda identity: None,
             bff_error=lambda *a, **kw: HTTPException(status_code=a[0]),
             utc_now=lambda: "2026-06-21T00:00:00Z",
             workshop_store=store,
@@ -982,6 +1008,7 @@ class TestWorkshopRouterEndpoints:
         app.include_router(create_strategy_workshop_router(
             extract_identity=lambda auth: identity,
             require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
             bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
             utc_now=lambda: "2026-07-05T00:00:00Z",
             workshop_store=store,
@@ -1028,6 +1055,7 @@ class TestWorkshopRouterEndpoints:
         app.include_router(create_strategy_workshop_router(
             extract_identity=lambda auth: identity,
             require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
             bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
             utc_now=lambda: "2026-07-05T00:00:00Z",
             workshop_store=store,
@@ -1166,6 +1194,7 @@ class TestWorkshopConcurrencyContract:
         app.include_router(create_strategy_workshop_router(
             extract_identity=lambda auth: identity,
             require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
             bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
             utc_now=lambda: "2026-07-12T00:00:00Z",
             workshop_store=workshop_store,
@@ -1322,6 +1351,7 @@ class TestWorkshopPrivacyContract:
         app.include_router(create_strategy_workshop_router(
             extract_identity=lambda auth: identity,
             require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
             bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
             utc_now=lambda: "2026-07-12T00:00:00Z",
             workshop_store=workshop_store,
@@ -1366,6 +1396,7 @@ class TestWorkshopPrivacyContract:
         app.include_router(create_strategy_workshop_router(
             extract_identity=lambda auth: identity,
             require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
             bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
             utc_now=lambda: "2026-07-12T00:00:00Z",
             workshop_store=workshop_store,

@@ -146,12 +146,16 @@ services:
       PANTHEON_TRACE_ID: ${PANTHEON_TRACE_ID:-trace-paper-runtime}
       PANTHEON_REQUEST_ID: ${PANTHEON_REQUEST_ID:-request-paper-runtime}
       PANTHEON_TELEMETRY_URL: ${PANTHEON_TELEMETRY_URL:-}
+      PANTHEON_SOURCE_INGEST_URL: ${PANTHEON_SOURCE_INGEST_URL:?PANTHEON_SOURCE_INGEST_URL is required}
+      PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS: ${PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS:-172800}
+      PANTHEON_PERFORMANCE_STATE_PATH: /data/runtime/paper-performance/static-paper-runtime.json
       SIGNAL_STORE_URL: ${SIGNAL_STORE_URL:-redis://signal-store:6379}
       PANTHEON_SIGNAL_QUEUE_KEY: ${PANTHEON_SIGNAL_QUEUE_KEY:-pantheon:signals:pending}
       PANTHEON_BROKER_ADAPTER_URL: http://broker-adapter:8097
       PANTHEON_EXCHANGE_ADAPTER_URL: http://exchange-adapter:8098
       PANTHEON_LEAN_CONFIG_PATH: /workspace/lean/Launcher/config.json
       PANTHEON_PAPER_RUNTIME_ID: ${PANTHEON_PAPER_RUNTIME_ID:-paper-runtime-001}
+      PANTHEON_PAPER_SYNTHETIC_MARKET_DATA: ${PANTHEON_PAPER_SYNTHETIC_MARKET_DATA:-false}
       PANTHEON_BFF_URL: http://operator-bff:8001
       PANTHEON_BFF_TOKEN: ${BFF_TOKEN:-op-paper:operator:mfa}
     depends_on:

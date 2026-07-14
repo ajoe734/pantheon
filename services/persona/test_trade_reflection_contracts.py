@@ -192,4 +192,3 @@ def test_lesson_candidate_schema_negative_cases() -> None:
     with pytest.raises(jsonschema.ValidationError) as exc_info:
         jsonschema.validate(instance=invalid_lesson, schema=schema)
     assert "proposed_change" in str(exc_info.value)
-

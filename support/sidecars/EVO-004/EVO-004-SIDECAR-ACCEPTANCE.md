@@ -1,12 +1,12 @@
 # EVO-004 Acceptance Packet (Sidecar)
 
-**Parent Task**: `EVO-004` — Wire operational evolution boundaries  
-**Parent Owner**: Claude  
-**Parent Reviewer**: Gemini  
-**Parent Status**: `todo`  
-**Sidecar Owner**: Codex  
-**Sidecar Reviewer**: Claude  
-**Helper Kind**: `acceptance_packet`  
+**Parent Task**: `EVO-004` — Wire operational evolution boundaries
+**Parent Owner**: Claude
+**Parent Reviewer**: Gemini
+**Parent Status**: `todo`
+**Sidecar Owner**: Codex
+**Sidecar Reviewer**: Claude
+**Helper Kind**: `acceptance_packet`
 **Generated**: 2026-04-10T22:57:44Z
 
 > This is a support artifact only. It does not modify canonical truth, L1 policy documents, or core runtime / registry / governance implementations. It packages the dependency state, action-boundary map, and parent acceptance checklist for `EVO-004`.

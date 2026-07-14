@@ -1,10 +1,10 @@
 # MGMT-GAP-010-SIDECAR-BFF-HANDOFF
 
-Task: `MGMT-GAP-010-SIDECAR-BFF-HANDOFF`  
-Parent task: `MGMT-GAP-010`  
-Owner: `Codex2`  
-Reviewer handoff target: `Claude`  
-Helper kind: `bff_handoff_packet`  
+Task: `MGMT-GAP-010-SIDECAR-BFF-HANDOFF`
+Parent task: `MGMT-GAP-010`
+Owner: `Codex2`
+Reviewer handoff target: `Claude`
+Helper kind: `bff_handoff_packet`
 Date: 2026-07-01
 
 ## Scope Boundary

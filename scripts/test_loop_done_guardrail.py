@@ -580,7 +580,7 @@ class TestDeepEvidenceChecks(unittest.TestCase):
             }
         ]
         self.write_evidence(data)
-        
+
         # Test when task status is done
         task_done = self.default_task.copy()
         task_done["status"] = "done"

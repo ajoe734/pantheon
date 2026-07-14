@@ -1,9 +1,9 @@
 # TJ-E2E-001 Producer And Correlation Inventory
 
-Status: implementation input for `TJ-E2E-002` and `TJ-E2E-003`  
-Owner: Codex2  
-Reviewer: Claude  
-As inspected: 2026-07-11  
+Status: implementation input for `TJ-E2E-002` and `TJ-E2E-003`
+Owner: Codex2
+Reviewer: Claude
+As inspected: 2026-07-11
 Behavior change: none
 
 ## Scope and method

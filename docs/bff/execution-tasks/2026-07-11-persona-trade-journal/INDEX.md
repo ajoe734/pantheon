@@ -1,6 +1,6 @@
 # Persona Trade Journal Execution Tasks
 
-來源：`docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md`  
+來源：`docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md`
 狀態：可交付 fleets；不包含 live broker side effect
 
 ## 執行波次
@@ -79,4 +79,3 @@ orders；residual gaps 有 owner，不以 local-only 或 mock 宣稱完成。
 - `PTJ-007` 前不得宣稱 end-to-end 完成。
 - 所有 execution tasks 都禁止 live order；任何 live proof 必須另開 human-gated packet。
 - 下游 worker 先讀 gap spec 與本 INDEX，且不得擴張 canonical authority。
-

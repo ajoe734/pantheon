@@ -10512,6 +10512,21 @@ class ReadSurfaceStore:
         decision_id = raw.get("decision_id") or raw.get("id")
         target_type = raw.get("target_type") or raw.get("decision_type")
         target_id = raw.get("target_id")
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        tenant_id = (
+            raw.get("tenant_id")
+            or raw.get("tenantId")
+            or metadata.get("tenant_id")
+            or metadata.get("tenantId")
+        )
+        owner_user_id = (
+            raw.get("owner_user_id")
+            or raw.get("user_id")
+            or raw.get("userId")
+            or metadata.get("owner_user_id")
+            or metadata.get("user_id")
+            or metadata.get("userId")
+        )
         deployment_ref = {}
         if str(target_type or "") == "DeploymentPlan" and target_id:
             deployment_ref = {
@@ -10525,6 +10540,8 @@ class ReadSurfaceStore:
             "target_type": target_type,
             "target_id": target_id,
             "target_version": raw.get("target_version"),
+            "tenant_id": tenant_id,
+            "owner_user_id": owner_user_id,
             "deployment_ref": deployment_ref,
             "outcome": raw.get("decision") or raw.get("outcome"),
             "reviewer": raw.get("actor_id") or raw.get("reviewer"),
@@ -10533,6 +10550,12 @@ class ReadSurfaceStore:
             "created_at": raw.get("created_at") or raw.get("submitted_at"),
             "submitted_at": raw.get("submitted_at") or raw.get("created_at"),
             "decided_at": raw.get("decided_at"),
+            "expires_at": raw.get("expires_at"),
+            "revoked_at": raw.get("revoked_at"),
+            "proposal_id": raw.get("proposal_id"),
+            "proposal_revision": raw.get("proposal_revision"),
+            "proposal_content_digest": raw.get("proposal_content_digest"),
+            "validation_result_digest": raw.get("validation_result_digest"),
             "risk_level": raw.get("risk_level"),
             "state": raw.get("decision_state") or raw.get("state"),
             "rationale": raw.get("rationale"),

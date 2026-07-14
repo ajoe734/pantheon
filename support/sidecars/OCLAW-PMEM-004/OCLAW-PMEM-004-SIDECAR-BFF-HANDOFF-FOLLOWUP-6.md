@@ -1,12 +1,12 @@
 # OCLAW-PMEM-004 BFF Handoff Follow-up 6
 
-**Sidecar Task ID**: `OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6`  
-**Parent Task**: `OCLAW-PMEM-004`  
-**Parent Owner**: `Claude2`  
-**Sidecar Owner**: `Codex`  
-**Sidecar Reviewer**: `Antigravity`  
-**Helper Kind**: `bff_handoff_packet`  
-**Generated**: 2026-07-11  
+**Sidecar Task ID**: `OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6`
+**Parent Task**: `OCLAW-PMEM-004`
+**Parent Owner**: `Claude2`
+**Sidecar Owner**: `Codex`
+**Sidecar Reviewer**: `Antigravity`
+**Helper Kind**: `bff_handoff_packet`
+**Generated**: 2026-07-11
 **Mutates Canonical**: `no`
 
 This support packet gives the parent owner a dependency-acceptance gate and a

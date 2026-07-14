@@ -164,6 +164,15 @@ def build_incident_from_threshold_payload(
     if not _is_breached(threshold):
         raise IncidentConsumerError("threshold snapshot is not breached")
 
+    # Validate metric_name and policy_source are non-empty strings (canonical non-empty contract)
+    metric_name_val = threshold.get("metric_name")
+    if not isinstance(metric_name_val, str) or not metric_name_val.strip():
+        raise IncidentConsumerError("metric_name is required and cannot be empty")
+
+    policy_source_val = threshold.get("policy_source")
+    if not isinstance(policy_source_val, str) or not policy_source_val.strip():
+        raise IncidentConsumerError("policy_source is required and cannot be empty")
+
     event = _telemetry_event(payload)
     runtime_summary = _mapping(payload.get("runtime_summary_projection")) or _mapping(
         payload.get("runtime_summary")

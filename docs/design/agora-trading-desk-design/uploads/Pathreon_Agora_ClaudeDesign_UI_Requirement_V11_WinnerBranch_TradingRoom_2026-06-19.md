@@ -1,10 +1,10 @@
 # Pathreon Agora — Claude Design UI Requirement V11
 ## Winner Branch Trading Room / 贏家分點策略交易操盤室與 AI 版面生成控制
 
-> 版本：V11  
-> 日期：2026-06-19  
-> 適用對象：Claude Design、UI/UX 設計、VS Code 前端團隊、Pathreon BFF / Pantheon Research / Execution 團隊  
-> 使用者可見產品名稱：Pathreon Agora  
+> 版本：V11
+> 日期：2026-06-19
+> 適用對象：Claude Design、UI/UX 設計、VS Code 前端團隊、Pathreon BFF / Pantheon Research / Execution 團隊
+> 使用者可見產品名稱：Pathreon Agora
 > 本版關係：本文件承接 V10「高階策略對話與策略工坊」，補齊策略完成後的「交易操盤室」完整體驗。V10 的策略工坊規格仍有效；交易操盤室部分以本文件為準。
 
 ---

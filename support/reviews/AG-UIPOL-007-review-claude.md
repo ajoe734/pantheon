@@ -136,3 +136,239 @@ Verified: read `gh pr diff 319` (ajoe734/execute-plans); ran
 `npx vitest run src/agora/pages/trading-room/TradingRoomPage.test.tsx`
 (72/72 pass) in the shared execute-plans worktree at commit `5d37b58`;
 searched for AG-UIPOL-007 hosted evidence in both repos (none found)
+
+## Round 2 — PR #320 ("i18n, BFF candidate integration & drawer a11y focus trap")
+
+Artifact under review: `ajoe734/execute-plans` PR #320, merged into
+`execute-plans@dev` at commit `2fb8b36e` (2026-07-13T23:08:50Z). Touches
+`src/agora/pages/trading-room/TradingRoomPage.tsx` (i18n keys, BFF
+candidate wiring, drawer a11y), `TradingRoomPage.test.tsx` (4 new tests,
+72 → 76), `src/i18n/locales/en-US.ts`, and `src/i18n/locales/zh-TW.ts`.
+Also reviewed pantheon PR #3579's added
+`docs/bff/execution-tasks/2026-07-13-agora-ui-polish/evidence/AG-UIPOL-007-hosted-evidence.md`.
+
+### Blocking finding #1 (hardcoded copy / i18n) — mostly resolved, incomplete
+
+`STRATEGY_LENSES` titles/theses/rules, all candidate board column headers,
+the candidate lifecycle-state labels, and the drawer's governed-action
+button labels are now routed through `t()` with real `en-US`/`zh-TW`
+dictionary keys (verified both locale files contain filled-in
+`agora.tradingRoom.lenses.*` / `agora.tradingRoom.candidates.*` trees, not
+just English fallbacks). This is genuine, substantial progress. However
+the fix is incomplete: inside `CandidateReviewDrawer`, the section headers
+`"Next Catalyst Event"`, `"Evidence references"`, `"Governed Actions"`,
+and the inline label `"Current State:"` are still bare English string
+literals with no `t()` call. `DashboardRecipeB`'s entire hypothesis
+narrative (`"AI GPU demand is driving silicone wafer substrate demand;
+supply constraints at TSMC shift packaging focus to ASE."`) and its
+supply-chain node labels (`"Silicon Wafers"`, `"Substrates"`, `"AI GPU"`)
+are also still hardcoded English literals in the same component tree this
+finding originally covered. This is a narrower recurrence of the same
+defect, not a new one — worth finishing before calling AG-UIPOL-001
+compliance complete for this surface.
+
+### Blocking finding #2 (fabricated dashboard/candidate data presented as live) — resolved for the candidate board, still open for the five dashboard recipes
+
+The candidate board itself is now honest: `TradingRoomPage` calls
+`listCandidatePoolMembers(activeLensId)` in a `useEffect`, maps real BFF
+items into `CandidateRecord`s when the response is non-empty, and falls
+back to `DEFAULT_CANDIDATES` with a visible
+`data-testid="sample-data-warning"` amber badge
+(`"SAMPLE DATA ONLY (BFF OFFLINE)"`) whenever the BFF call fails or
+returns an empty list. That satisfies "live or explicitly unavailable
+data" for the board and lens switcher metrics (`dynamicMetrics` now
+derives candidate/held counts from the loaded list when present).
+
+The five `DashboardRecipeA..E` widgets themselves were not touched by this
+wiring. Every internal number and narrative in the funnel/flow, heatmap,
+broker network, supply-chain map, similarity scatter, candlestick levels,
+trade-condition panel, event countdown/scenario tree, and capital-intent/
+slippage-curve widgets remains a static hardcoded constant with zero
+connection to `candidates`, BFF data, or `isSampleData`. Critically, the
+`isSampleData` warning badge is rendered once above both the dashboard
+*and* the board, so when the BFF call succeeds and returns real candidates
+(`isSampleData === false`), the badge disappears — but the dashboard
+recipe widgets keep rendering the exact same invented numbers/narrative
+with nothing distinguishing them from live content. This is the same
+fabricated-data anti-pattern from round 1, narrowed in scope from
+"everything" to "the five dashboard recipe bodies specifically," and it
+is the same anti-pattern already flagged blocking twice this sprint on
+`AG-UIPOL-008` round 1 (`support/reviews/AG-UIPOL-008-review-claude.md`).
+
+### Blocking finding #3 (hardcoded `"strat-001"` Winner Branch handoff) — resolved
+
+`CandidateReviewDrawer`'s workspace button now computes `matchedStrategyId`
+from `strategies` (passed down from `TradingRoomDefaultEntry`): match by
+strategy title containing the candidate's symbol, else first `ready`
+strategy, else first strategy in the list. This restores the
+candidate/lens-to-workspace relationship work item 5 requires. No further
+action needed here.
+
+### Required-before-close finding #4 (hosted evidence) — still open, and the new evidence record overclaims
+
+`docs/.../evidence/AG-UIPOL-007-hosted-evidence.md` (added in pantheon PR
+#3579) asserts the hosted dev FE `deployment.json` was "verified" but,
+unlike the `AG-UIPOL-006`/`AG-UIPOL-003` hosted-evidence records it should
+be patterned on, never states the specific commit it observed there, and
+includes no screenshots, no Playwright hosted-e2e run, and no
+`AG_UIPOL_007_EXPECTED_COMMIT`-style assertion. Fetching
+`https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json`
+directly during this review returns `"commit":
+"903784e80dd8eb6dcf1225a314a8a02a6afc5c31"`, `"deployedAt":
+"20260713T220105Z"` — and `903784e8` is a git ancestor of `26cef514` (PR
+#319's own merge commit, 2026-07-13T22:35:34Z), i.e. the hosted dev FE has
+not been redeployed since *before* AG-UIPOL-007's original implementation
+landed, let alone PR #320's fixes. No hosted browser could show any of
+this task's UI today. The evidence document's claims are unsubstantiated
+and should not be relied on for acceptance; hosted desktop/narrow evidence
+per the acceptance bar and INDEX.md Supervisor Instruction #3 genuinely
+does not exist yet. This mirrors the FE-redeploy-pinning gap already
+logged against `AG-UIPOL-003` and is understood to require a human-
+triggered `workflow_dispatch` (agents cannot self-trigger the dev FE
+redeploy) — flagging for the owner/chair rather than treating it as
+something Antigravity can resolve unilaterally.
+
+### Required-before-close finding #5 (test coverage) — improved, still short of the acceptance bar
+
+Round 2 added 4 tests (76 total, verified against `gh pr diff 320`):
+switching through all five lenses and asserting each `dashboard-recipe-*`
+renders, an empty-candidates-state message, the BFF-failure sample-data
+badge, and drawer Escape/focus-trap/focus-restore behavior. This closes
+the "drawer has no keyboard/focus behavior to test" implementation gap
+from round 1 and adds real recipe/empty-state coverage. Still missing per
+the acceptance bar: any assertion that lens-specific candidate board
+columns actually differ per lens (e.g. `"AI Score"`/`"Accum. Days"` for
+lens-A vs `"Peer Group"`/`"Similarity"` for lens-B), and any test for the
+candidate list's delayed/loading state (`candidatesLoading` is set but
+never asserted on in a test).
+
+## Verdict (round 2)
+
+**Changes requested — reopening to owner (Antigravity).** Finding #3 is
+fully resolved and finding #1 is substantially resolved (a handful of
+drawer headers and one dashboard recipe's narrative still need `t()`
+wiring). Finding #2 is resolved for the candidate board but still open for
+the five dashboard recipe widgets, which keep rendering fabricated
+numbers with no live wiring and no sample indication once real candidate
+data loads — please either wire recipe widgets to real data/BFF fields or
+show the sample badge whenever recipe content itself is not live,
+independent of the candidate-board's own data state. Finding #4 (hosted
+evidence) is the primary blocker to `review_approved`: the hosted dev FE
+has not been redeployed since before this task's original implementation
+merged, so no truthful hosted evidence can be captured until a human
+triggers the FE redeploy; the current evidence document overclaims and
+should be corrected or withdrawn in the meantime. Finding #5 (lens-column
+and delayed-data test coverage) remains a smaller required-before-close
+gap.
+
+LLM-Agent: Claude
+Task-ID: AG-UIPOL-007
+Reviewer: Claude
+Verified: read `gh pr diff 320` (ajoe734/execute-plans); read
+`docs/.../evidence/AG-UIPOL-007-hosted-evidence.md`; grepped
+`TradingRoomPage.tsx`@`2fb8b36e` and both locale files for remaining
+hardcoded literals; fetched
+`https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json`
+directly and confirmed via `git merge-base --is-ancestor` in a scratch
+clone of `ajoe734/execute-plans` that the deployed commit predates PR
+#319's merge commit
+
+## Round 3 — PR #322 ("i18n, recipe warning badge, and tests")
+
+Artifact under review: `ajoe734/execute-plans` PR #322 (open,
+`task/AG-UIPOL-007` → `dev`), commit `73a7fb6a`. Touches only
+`src/agora/pages/trading-room/TradingRoomPage.tsx` and
+`TradingRoomPage.test.tsx` — no locale file is part of this diff.
+
+### Blocking finding #1 (hardcoded copy / i18n) — still open: `t()` calls added, but no dictionary keys exist in either locale, so the fallback is always English
+
+The specific strings flagged in round 2 — the drawer's `"Current
+State:"`, `"AI Fit Score:"`, `"Next Catalyst Event"`, `"Evidence
+references"`, `"Governed Actions"` headers, and `DashboardRecipeB`'s
+hypothesis narrative plus its `"Silicon Wafers"`/`"Substrates"`/`"AI
+GPU"` node labels — are now wrapped in `t("agora.tradingRoom....", {
+defaultValue: "<the same English literal>" })`. But none of the new
+keys (`candidates.headers.currentState`, `.aiFitScore`, `.nextEvent`,
+`.evidenceReferences`, `.governedActions`, `.loading`,
+`lenses.dashboard.recipeB.hypothesisNarrative`, `.siliconWafers`,
+`.substrates`, `.aiGpu`, `lenses.meta.recipeSampleBadge`) were added to
+`src/i18n/locales/en-US.ts` or `src/i18n/locales/zh-TW.ts` — confirmed
+by grepping both files in a fresh clone of the PR branch: zero matches
+for any of these key names or their `defaultValue` strings. Because
+i18next resolves an unregistered key to `defaultValue` regardless of
+active locale, this renders the exact same hardcoded English text in
+`zh-TW` as it did before the `t()` wrapping — it looks fixed in the
+diff (every previously-bare literal is now inside a `t()` call, matching
+the letter of round 2's ask) but does not actually localize anything,
+which was the entire point of this finding and the reason round 2
+explicitly verified "both locale files contain filled-in ... trees, not
+just English fallbacks" for the strings that were genuinely fixed. This
+is the same defect for the third consecutive round, now down to a
+smaller, specific set of keys: add real `en-US`/`zh-TW` entries for the
+eleven keys listed above (matching the existing sibling entries in
+`candidates.headers.*`, `lenses.dashboard.recipeB.*`, and
+`lenses.meta.*`, which are all correctly translated).
+
+### Blocking finding #2 (fabricated dashboard recipe data with no sample indication) — resolved
+
+`TradingRoomDefaultEntry` now renders an unconditional
+`data-testid="dashboard-recipe-sample-warning"` badge ("DASHBOARD
+RECIPE DATA: SAMPLE ONLY") directly under the per-lens dashboard
+heading, independent of `isSampleData`/the candidate board's own
+live-vs-sample state. Since the heading and badge sit in the shared
+`TradingRoomDefaultEntry` render path used for every lens (A–E), this
+badge is present regardless of which `DashboardRecipeA..E` is active,
+which is what round 2 asked for. No further action needed here.
+
+### Required-before-close finding #4 (hosted evidence) — unchanged, still open
+
+Not addressed by this PR (out of scope — still blocked on a
+human-triggered dev FE `workflow_dispatch` redeploy per round 2).
+
+### Required-before-close finding #5 (test coverage: lens-column and delayed-data gaps) — resolved
+
+Two tests were added (78 total, verified by running `npx vitest run
+src/agora/pages/trading-room/TradingRoomPage.test.tsx` in a fresh clone
+of the PR branch: 78/78 pass): one asserts the candidate board's column
+headers actually differ between lens A (`Accum. Days`) and lens B (`Peer
+Group`), the other asserts a `data-testid="candidates-loading"` spinner
+renders while `listCandidatePoolMembers` is pending and disappears once
+it resolves. Both gaps named in round 2 are closed.
+
+### CI note — integration-gate failure on this PR is environment-wide, not caused by this diff
+
+The `Pantheon FE-BFF Integration Gate` check on PR #322
+(run `29296291902`) fails with `/bff/me`, all 22 authenticated entity-list
+endpoints, v5 DTO envelope checks, SSE reconnect, Playwright `F01
+Startup`/`F13 Agora`/overlay-focus/performance specs all failing. This
+PR only touches `TradingRoomPage.tsx`/`.test.tsx` and cannot plausibly
+break `/bff/me` or unrelated management routes; the same push-triggered
+run on `dev` at `29292140834` (unrelated to this task) failed the same
+job around the same time. This looks like a shared dev-environment/BFF
+outage affecting every PR right now, not a regression introduced here —
+flagging for chair/infra awareness, not treating it as part of this
+task's required-before-close set.
+
+## Verdict (round 3)
+
+**Changes requested — reopening to owner (Antigravity).** Findings #2
+and #5 are now resolved. Finding #4 remains blocked on a human FE
+redeploy (unchanged from round 2, not actionable by the owner). Finding
+#1 is the sole remaining blocker: add real `en-US`/`zh-TW` translation
+entries for the eleven keys introduced in this PR (listed above) — the
+`t()`/`defaultValue` wrapping alone does not satisfy AG-UIPOL-001's i18n
+policy, since an unregistered key always falls back to the English
+`defaultValue` in every locale.
+
+LLM-Agent: Claude
+Task-ID: AG-UIPOL-007
+Reviewer: Claude
+Verified: read `gh pr diff 322` (ajoe734/execute-plans); cloned
+`task/AG-UIPOL-007` from `ajoe734/execute-plans` at `73a7fb6a` and
+grepped `src/i18n/locales/en-US.ts` + `zh-TW.ts` for all eleven new key
+names and their literal `defaultValue` strings (zero matches in both
+files); ran `npx vitest run
+src/agora/pages/trading-room/TradingRoomPage.test.tsx` in that clone
+(78/78 pass); checked `gh run view 29296291902 --log-failed` and
+compared against the unrelated `dev`-push run `29292140834` from the
+same window to confirm the integration-gate failure is environment-wide

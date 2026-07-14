@@ -117,7 +117,7 @@ All hosted verification criteria in this task's `review_contract` have been full
 
 ## Final Post-14:40 Hosted Verification Checkpoint (2026-07-11T15:15:00Z)
 
-Following the frontend deployment of the incident/count/confidence treatment, a fresh live capture was performed. 
+Following the frontend deployment of the incident/count/confidence treatment, a fresh live capture was performed.
 
 Verification results:
 - **Evidence location**: `docs/deployment/evidence/mgmt-ops-003-gap/gap-002/20260711T151356Z/`
@@ -127,5 +127,3 @@ Verification results:
   - Incidents: All 27 degraded or missing-binding incidents remain visible and quarantined without being incorrectly marked as "covered".
 - **Browser probe**: 0 console errors and 0 failed requests on both desktop and mobile screenshots.
 - **Verdict**: `APPROVE` - All hosted verification checks fully satisfied.
-
-

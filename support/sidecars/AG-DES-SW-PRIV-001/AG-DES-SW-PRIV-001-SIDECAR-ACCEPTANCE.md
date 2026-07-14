@@ -327,8 +327,8 @@ This acceptance packet does not:
 
 ## 7. Handoff
 
-**To**: Claude  
-**From**: Claude2  
+**To**: Claude
+**From**: Claude2
 **Requested review outcome**: Approve this sidecar if the acceptance packet and
 dependency map are accurate support material for `AG-DES-SW-PRIV-001`.
 

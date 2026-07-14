@@ -1,10 +1,10 @@
 # PPL-ALLOC-006 BFF / Frontend Handoff Follow-Up 7
 
-Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7`  
-Parent: `PPL-ALLOC-006`  
-Owner: Codex2  
-Reviewer: Claude  
-Kind: support-only `bff_handoff_packet`  
+Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-7`
+Parent: `PPL-ALLOC-006`
+Owner: Codex2
+Reviewer: Claude
+Kind: support-only `bff_handoff_packet`
 Generated: 2026-07-11
 
 ## Boundary
@@ -96,10 +96,10 @@ fail-closed state. Request changes if the parent:
 ## Review And Absorption
 
 Owned here: support-only readiness ledger, proof chain, PR checklist, and
-review decision guide.  
+review decision guide.
 Not changing: L1/L2 truth, BFF contracts or implementation,
 runtime/registry/governance behavior, frontend source/navigation, dependency
-task ownership, or parent lifecycle.  
+task ownership, or parent lifecycle.
 Composes with: `PPL-ALLOC-003` binding reads, `PPL-ALLOC-004` allocation and
 approval semantics, `PPL-ALLOC-008` emergency containment, parent
 `PPL-ALLOC-006`, and the preceding PPL-ALLOC-006 handoff packets.
