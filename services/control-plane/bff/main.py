@@ -36620,7 +36620,7 @@ def _evolution_journal_items(
                                 break
                     if is_seed:
                         break
-            
+
             if is_seed:
                 item["origin"] = "seed"
             else:

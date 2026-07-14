@@ -350,7 +350,7 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
             resp = client.get("/bff/management/evolution-journal", headers=OPERATOR_HEADERS)
             assert resp.status_code == 200, resp.text
             items = resp.json()["data"]["items"]
-            assert len(items) == 12
+            assert len(items) == 18
 
             by_id_and_type = {(item["source_id"], item["entry_type"]): item for item in items}
             assert by_id_and_type[("evo-vslice-1", "evolution_decision")]["origin"] == "seed"
@@ -362,7 +362,7 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
             resp = client.get("/bff/management/evolution-journal?page_size=2", headers=OPERATOR_HEADERS)
             assert resp.status_code == 200, resp.text
             body = resp.json()
-            assert body["page_info"]["total"] == 12
+            assert body["page_info"]["total"] == 18
             assert len(body["data"]["items"]) == 2
             next_token = body["page_info"]["next_page_token"]
             assert next_token is not None
@@ -372,7 +372,7 @@ def test_evochain_007_filters_provenance_and_decoys() -> None:
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert len(body["data"]["items"]) == 2
-            assert body["page_info"]["total"] == 12
+            assert body["page_info"]["total"] == 18
 
         finally:
             bff_main.read_store = original_store
