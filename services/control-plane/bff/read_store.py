@@ -30,6 +30,8 @@ from services.consultation.client import ConsultationClientError, ConsultationSe
 from services.consultation.store import ConsultationStore
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
+_NOT_SUPPLIED = object()
+
 
 def _first_existing(paths: List[Path]) -> Optional[Path]:
     for path in paths:
@@ -12842,12 +12844,15 @@ class ReadSurfaceStore:
         plan_id: str,
         *,
         plan: Optional[Dict[str, Any]] = None,
-        decision: Optional[Dict[str, Any]] = None,
+        decision: Any = _NOT_SUPPLIED,
     ) -> Dict[str, Any]:
         if plan is None:
             plan = self.get_deployment_plan(plan_id)
-        if decision is None and plan:
-            decision = self.get_approval_decision(plan.get("approval_decision_id"))
+        if decision is _NOT_SUPPLIED:
+            if plan:
+                decision = self.get_approval_decision(plan.get("approval_decision_id"))
+            else:
+                decision = None
         fallback_actions = dict((self._local_fallback("allowed_actions") or {}).get(plan_id, {}))
         if plan and (plan.get("status") is not None or plan.get("target_stage") is not None):
             can_review = self._derive_can_review_deployment_plan(plan, decision)
@@ -12883,13 +12888,16 @@ class ReadSurfaceStore:
         plan_id: str,
         *,
         plan: Optional[Dict[str, Any]] = None,
-        decision: Optional[Dict[str, Any]] = None,
+        decision: Any = _NOT_SUPPLIED,
     ) -> Dict[str, Any]:
         summary = dict((self._local_fallback("review_summaries") or {}).get(plan_id, {}))
         if plan is None:
             plan = self.get_deployment_plan(plan_id)
-        if decision is None and plan:
-            decision = self.get_approval_decision(plan.get("approval_decision_id"))
+        if decision is _NOT_SUPPLIED:
+            if plan:
+                decision = self.get_approval_decision(plan.get("approval_decision_id"))
+            else:
+                decision = None
         if decision:
             summary.setdefault("governanceOutcome", decision.get("outcome"))
             summary.setdefault("decisionState", decision.get("state"))
