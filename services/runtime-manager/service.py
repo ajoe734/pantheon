@@ -750,6 +750,7 @@ class RuntimeManagerService:
         _allow_safe_mode_bypass: bool = False,
         _allow_non_paper_deploy: bool = False,
         _start_paused: bool = False,
+        _defer_store: bool = False,
     ) -> RuntimeBinding:
         """Atomically apply safe-mode precedence and create a RuntimeBinding."""
         with self._control_lock:
@@ -760,6 +761,7 @@ class RuntimeManagerService:
                 _allow_safe_mode_bypass=_allow_safe_mode_bypass,
                 _allow_non_paper_deploy=_allow_non_paper_deploy,
                 _start_paused=_start_paused,
+                _defer_store=_defer_store,
             )
 
     def _deploy_once(
@@ -770,6 +772,7 @@ class RuntimeManagerService:
         _allow_safe_mode_bypass: bool = False,
         _allow_non_paper_deploy: bool = False,
         _start_paused: bool = False,
+        _defer_store: bool = False,
     ) -> RuntimeBinding:
         """Create a RuntimeBinding from a validated DeploymentPlan descriptor.
 
@@ -806,6 +809,11 @@ class RuntimeManagerService:
         paper-only: canary/live activation requires a separate governed path
         that can verify MFA and distinct-actor approval rather than trusting
         caller-supplied reference strings.
+
+        ``_defer_store`` is internal-only and returns the fully validated
+        immutable binding without persistence.  Replace/rollback immediately
+        pass that object to ``RuntimeBindingStore.cutover`` so child creation
+        and source retirement commit as one snapshot.
         """
         plan_id = request.get("plan_id", "")
         plan_status = request.get("plan_status", "")
@@ -974,6 +982,8 @@ class RuntimeManagerService:
 
         # Store create — enforces single-runtime rule unless this specific call
         # has been granted a per-call cutover bypass by the REPLACE rollback path.
+        if _defer_store:
+            return binding
         effective_enforce = self._single_runtime_enforced and not _allow_cutover_bypass
         return self._store.create(
             binding,
@@ -1126,9 +1136,15 @@ class RuntimeManagerService:
             deploy_request,
             _allow_cutover_bypass=True,
             _allow_non_paper_deploy=False,
+            _defer_store=True,
         )
         cutover_at = utc_now()
-        retired_old = self._store.retire(current_binding_id, retired_at=cutover_at)
+        retired_old, new_binding = self._store.cutover(
+            current_binding_id,
+            new_binding,
+            retired_at=cutover_at,
+            single_runtime_enforced=self._single_runtime_enforced,
+        )
 
         return self._forward_replace_result(
             request=request,
@@ -1381,17 +1397,94 @@ class RuntimeManagerService:
 
         replacement_start_paused = request.get("replacement_start_paused", False)
 
-        # Verify the current binding exists and is not already terminal
+        # Verify the source and the exact governed fallback before considering
+        # either a new cutover or response-loss recovery.
         old_binding = self._store.require(current_binding_id)
-        if old_binding.is_terminal():
-            raise RuntimeManagerError(
-                f"Cannot roll back binding {current_binding_id!r}: "
-                f"already in terminal state {old_binding.status!r}."
-            )
-
         prior_binding, rollback_attestation, rollback_strategy_id = (
             self._prove_paper_rollback_target(request, old_binding)
         )
+
+        if old_binding.is_terminal():
+            if old_binding.status != RuntimeBindingStatus.RETIRED.value:
+                raise RuntimeManagerError(
+                    f"Cannot recover rollback for binding {current_binding_id!r}: "
+                    f"terminal status={old_binding.status!r}."
+                )
+            recovered = [
+                candidate
+                for candidate in self._store.find_by_pool(
+                    old_binding.capital_pool_id
+                )
+                if candidate.rollback_parent == current_binding_id
+                and candidate.rollback_action_type == action_type
+                and candidate.plan_id == prior_binding.plan_id
+                and candidate.artifact_id == prior_binding.artifact_id
+                and candidate.artifact_version == prior_binding.artifact_version
+                and candidate.deployment_mode == prior_binding.deployment_mode
+                and candidate.execution_mode == prior_binding.execution_mode
+                and candidate.persona_capital_binding_id
+                == prior_binding.persona_capital_binding_id
+                and candidate.status
+                in {
+                    RuntimeBindingStatus.ACTIVE.value,
+                    RuntimeBindingStatus.PAUSED.value,
+                }
+                and candidate.metadata.get(
+                    "rollback_authority_source_binding_id"
+                )
+                == prior_binding.binding_id
+                and candidate.metadata.get("strategy_id")
+                == rollback_strategy_id
+            ]
+            if len(recovered) != 1:
+                raise RuntimeManagerError(
+                    "Rollback response-loss recovery requires exactly one "
+                    f"authoritative child; found {len(recovered)}."
+                )
+            child = recovered[0]
+            child_attestation = child.metadata.get(
+                "authoritative_loader_attestation"
+            )
+            digest_fields = (
+                "deployment_plan_sha256",
+                "registry_entry_sha256",
+                "approval_decision_sha256",
+                "capital_pool_sha256",
+                "capital_admissibility_sha256",
+                "persona_capital_binding_sha256",
+            )
+            identity_fields = (
+                "plan_id",
+                "target_stage",
+                "artifact_id",
+                "artifact_version",
+                "strategy_id",
+                "approval_decision_id",
+                "capital_pool_id",
+                "sponsor_persona_id",
+                "persona_capital_binding_id",
+                "persona_capital_binding_status",
+                "allowed_deployment_scope",
+            )
+            if not isinstance(child_attestation, Mapping) or any(
+                child_attestation.get(field) != rollback_attestation.get(field)
+                for field in (*identity_fields, *digest_fields)
+            ):
+                raise RuntimeManagerError(
+                    "Rollback response-loss child authority differs from the "
+                    "current canonical fallback proof."
+                )
+            return self._rollback_result(
+                request=request,
+                action_type=action_type,
+                old_binding=old_binding,
+                new_binding=child,
+                cutover_at=old_binding.retired_at or child.effective_at,
+                replacement_start_paused=(
+                    child.status == RuntimeBindingStatus.PAUSED.value
+                ),
+                replayed=True,
+            )
 
         safe_mode = self._kill_switch.safe_mode_for(
             old_binding.capital_pool_id
@@ -1454,8 +1547,14 @@ class RuntimeManagerService:
                 _allow_safe_mode_bypass=True,
                 _allow_non_paper_deploy=False,
                 _start_paused=replacement_start_paused,
+                _defer_store=True,
             )
-            self._store.retire(current_binding_id, retired_at=cutover_at)
+            _, new_binding = self._store.cutover(
+                current_binding_id,
+                new_binding,
+                retired_at=cutover_at,
+                single_runtime_enforced=self._single_runtime_enforced,
+            )
 
         elif action_type == RollbackActionType.PAUSE_THEN_REPLACE.value:
             # Step 1: Drain — active → pending_pause → paused
@@ -1466,10 +1565,11 @@ class RuntimeManagerService:
                 self._store.transition_status(
                     current_binding_id, RuntimeBindingStatus.PAUSED.value
                 )
-            elif old_binding.status not in (
-                RuntimeBindingStatus.PENDING_PAUSE.value,
-                RuntimeBindingStatus.PAUSED.value,
-            ):
+            elif old_binding.status == RuntimeBindingStatus.PENDING_PAUSE.value:
+                self._store.transition_status(
+                    current_binding_id, RuntimeBindingStatus.PAUSED.value
+                )
+            elif old_binding.status != RuntimeBindingStatus.PAUSED.value:
                 raise RuntimeManagerError(
                     f"pause_then_replace requires the current binding to be active, "
                     f"pending_pause, or paused; current status={old_binding.status!r}."
@@ -1482,9 +1582,15 @@ class RuntimeManagerService:
                 _allow_safe_mode_bypass=True,
                 _allow_non_paper_deploy=False,
                 _start_paused=replacement_start_paused,
+                _defer_store=True,
             )
-            # Step 3: Retire old paused binding post-cutover.
-            self._store.retire(current_binding_id, retired_at=cutover_at)
+            # Step 3: Persist child + retired source as one cutover snapshot.
+            _, new_binding = self._store.cutover(
+                current_binding_id,
+                new_binding,
+                retired_at=cutover_at,
+                single_runtime_enforced=self._single_runtime_enforced,
+            )
 
         elif action_type == RollbackActionType.LIQUIDATE_THEN_REPLACE.value:
             # Establish a guarded replacement before retiring the source.  The
@@ -1499,20 +1605,45 @@ class RuntimeManagerService:
                 _allow_safe_mode_bypass=True,
                 _allow_non_paper_deploy=False,
                 _start_paused=True,
+                _defer_store=True,
             )
-            self._store.retire(current_binding_id, retired_at=cutover_at)
+            _, new_binding = self._store.cutover(
+                current_binding_id,
+                new_binding,
+                retired_at=cutover_at,
+                single_runtime_enforced=self._single_runtime_enforced,
+            )
 
         else:
             # Unreachable after enum validation above, but kept for safety.
             raise RuntimeManagerError(f"Unhandled action_type: {action_type!r}")
 
-        # Re-fetch the retired old binding for its final state.
-        retired_old = self._store.require(current_binding_id)
+        return self._rollback_result(
+            request=request,
+            action_type=action_type,
+            old_binding=self._store.require(current_binding_id),
+            new_binding=new_binding,
+            cutover_at=cutover_at,
+            replacement_start_paused=replacement_start_paused,
+            replayed=False,
+        )
 
-        # Position lineage record per ROLLBACK_AND_POSITION_SEMANTICS.md §7.
-        # opened_by_artifact_id: immutable — reflects original position opener.
-        # current_managed_by_binding_id: updated to new binding after cutover.
-        opened_by_artifact_id = request.get("opened_by_artifact_id", old_binding.artifact_id)
+    @staticmethod
+    def _rollback_result(
+        *,
+        request: Dict[str, Any],
+        action_type: str,
+        old_binding: RuntimeBinding,
+        new_binding: RuntimeBinding,
+        cutover_at: str,
+        replacement_start_paused: bool,
+        replayed: bool,
+    ) -> Dict[str, Any]:
+        """Build the stable rollback receipt for first execution or replay."""
+        current_binding_id = old_binding.binding_id
+        opened_by_artifact_id = request.get(
+            "opened_by_artifact_id", old_binding.artifact_id
+        )
         lineage_note: str
         if action_type == RollbackActionType.LIQUIDATE_THEN_REPLACE.value:
             lineage_note = (
@@ -1554,7 +1685,8 @@ class RuntimeManagerService:
 
         return {
             "action_type": action_type,
-            "old_binding": retired_old.to_dict(),
+            "replayed": replayed,
+            "old_binding": old_binding.to_dict(),
             "new_binding": new_binding.to_dict(),
             "cutover_at": cutover_at,
             "position_lineage": position_lineage,
@@ -1617,6 +1749,13 @@ class RuntimeManagerService:
                 ).to_dict()
             )
             self._persist_ks_state()
+            return
+
+        # Recovery performs RuntimeBinding writes. Keep it outside the corrupt
+        # snapshot handler so a persistence failure prevents service startup
+        # instead of quarantining a valid emergency ledger and serving with an
+        # active runtime under fail-closed safe mode.
+        self._recover_executing_kill_switch_actions()
 
     def _persist_ks_state(self) -> None:
         """Write kill-switch safe-mode and audit state to the durable store."""
@@ -1669,6 +1808,111 @@ class RuntimeManagerService:
         )
         if persist:
             self._persist_ks_state()
+
+    def _recover_executing_kill_switch_actions(self) -> None:
+        """Synchronously finish durable emergency actions before serving traffic.
+
+        Safe mode and an EXECUTING command are committed before the binding
+        mutation.  A process crash in that interval must not leave a restarted
+        service reporting an active runtime under paused safe mode.  Replaying
+        the persisted command (never redispatching it) closes that interval and
+        preserves the original Foundation identities.
+        """
+        executing: list[tuple[str, IdempotencyRecord, Dict[str, Any]]] = []
+        for key, entry in list(self._foundation_idempotency.items()):
+            record = idempotency_record_from_entry(entry)
+            if record.status != IdempotencyStatus.EXECUTING:
+                continue
+            result = entry.get("result")
+            if not isinstance(result, Mapping) or not isinstance(
+                result.get("command"), Mapping
+            ):
+                raise RuntimeManagerError(
+                    "Cannot start with an EXECUTING kill-switch record that "
+                    f"lacks a durable command: idempotency_key={key!r}."
+                )
+            executing.append((key, record, dict(result)))
+
+        for _, record, result in sorted(
+            executing,
+            key=lambda item: (str(item[1].first_seen_at), item[0]),
+        ):
+            self._resume_durable_kill_switch_action(record, result)
+
+    def _resume_durable_kill_switch_action(
+        self,
+        record: IdempotencyRecord,
+        persisted_result: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        """Resume one persisted EXECUTING command without changing its identity."""
+        recovered = json.loads(json.dumps(dict(persisted_result)))
+        command = recovered.get("command")
+        foundation = recovered.get("foundation")
+        if not isinstance(command, Mapping) or not isinstance(foundation, Mapping):
+            raise RuntimeManagerError(
+                "Durable EXECUTING kill-switch result is missing command or "
+                f"Foundation context for idempotency_key={record.idempotency_key!r}."
+            )
+
+        self._record_ks_recovery_audit(
+            action_type=CommandRecoveryAction.REPLAY_RESUMED,
+            reason=(
+                "resumed kill-switch binding follow-through from durable "
+                "executing record"
+            ),
+            idempotency_key=record.idempotency_key,
+            trace_id=record.trace_id,
+            metadata={"command_id": command.get("command_id")},
+        )
+        binding_action = self._execute_kill_switch_binding_action(
+            self._durable_kill_switch_command(dict(command))
+        )
+        if binding_action is None:
+            nonterminal = [
+                binding
+                for binding in self._store.find_by_pool(
+                    str(command.get("capital_pool_id") or "")
+                )
+                if not binding.is_terminal()
+            ]
+            if nonterminal:
+                raise RuntimeManagerError(
+                    "Durable kill-switch recovery could not contain every "
+                    "non-terminal RuntimeBinding; refusing to serve traffic."
+                )
+            recovered["binding_action"] = None
+            recovered["telemetry_ack"] = self._build_kill_switch_telemetry_ack(
+                command=dict(command),
+                audit_entry=dict(recovered.get("audit_entry") or {}),
+                safe_mode_after=str(recovered.get("safe_mode_after") or ""),
+                binding_action=None,
+                foundation_context=dict(foundation),
+            )
+            recovered["idempotent_replay"] = True
+            # No authoritative RuntimeBinding follow-through means containment
+            # is not acknowledged.  Keep the command EXECUTING for a later
+            # retry and durably retain the recovery audit.
+            self._store_ks_idempotency_record(record, result=recovered)
+            return recovered
+
+        succeeded = record.with_status(
+            IdempotencyStatus.SUCCEEDED,
+            result_ref=f"kill_switch:{command.get('command_id')}",
+        )
+        durable_foundation = dict(foundation)
+        durable_foundation["idempotency_record"] = succeeded.to_dict()
+        recovered["foundation"] = durable_foundation
+        recovered["binding_action"] = binding_action
+        recovered["telemetry_ack"] = self._build_kill_switch_telemetry_ack(
+            command=dict(command),
+            audit_entry=dict(recovered.get("audit_entry") or {}),
+            safe_mode_after=str(recovered.get("safe_mode_after") or ""),
+            binding_action=binding_action,
+            foundation_context=durable_foundation,
+        )
+        recovered["idempotent_replay"] = True
+        self._store_ks_idempotency_record(succeeded, result=recovered)
+        return recovered
 
     def execute_kill_switch(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Serialize emergency containment against deploy/replace transitions."""
@@ -1732,56 +1976,9 @@ class RuntimeManagerService:
                 replayed["idempotent_replay"] = True
                 return replayed
             if existing_record.status == IdempotencyStatus.EXECUTING and existing_result.get("command"):
-                self._record_ks_recovery_audit(
-                    action_type=CommandRecoveryAction.REPLAY_RESUMED,
-                    reason="resumed kill-switch binding follow-through from durable executing record",
-                    idempotency_key=existing_record.idempotency_key,
-                    trace_id=existing_record.trace_id,
-                    metadata={"command_id": existing_result["command"].get("command_id")},
+                return self._resume_durable_kill_switch_action(
+                    existing_record, existing_result
                 )
-                binding_action = self._execute_kill_switch_binding_action(
-                    self._durable_kill_switch_command(existing_result["command"])
-                )
-                if binding_action is None:
-                    foundation_context["idempotency_record"] = existing_record
-                    recovered = existing_result
-                    recovered["foundation"] = _serialize_foundation_context(
-                        foundation_context
-                    )
-                    recovered["binding_action"] = None
-                    recovered["telemetry_ack"] = self._build_kill_switch_telemetry_ack(
-                        command=recovered["command"],
-                        audit_entry=recovered["audit_entry"],
-                        safe_mode_after=recovered["safe_mode_after"],
-                        binding_action=None,
-                        foundation_context=foundation_context,
-                    )
-                    recovered["idempotent_replay"] = True
-                    # Keep the admitted command EXECUTING.  A fail-closed
-                    # telemetry result is not successful runtime follow-through
-                    # and a later replay must be allowed to recover it.
-                    self._store_ks_idempotency_record(
-                        existing_record, result=recovered
-                    )
-                    return recovered
-                succeeded = existing_record.with_status(
-                    IdempotencyStatus.SUCCEEDED,
-                    result_ref=f"kill_switch:{existing_result['command'].get('command_id')}",
-                )
-                foundation_context["idempotency_record"] = succeeded
-                recovered = existing_result
-                recovered["foundation"] = _serialize_foundation_context(foundation_context)
-                recovered["binding_action"] = binding_action
-                recovered["telemetry_ack"] = self._build_kill_switch_telemetry_ack(
-                    command=recovered["command"],
-                    audit_entry=recovered["audit_entry"],
-                    safe_mode_after=recovered["safe_mode_after"],
-                    binding_action=binding_action,
-                    foundation_context=foundation_context,
-                )
-                recovered["idempotent_replay"] = True
-                self._store_ks_idempotency_record(succeeded, result=recovered)
-                return recovered
             if existing_record.status != IdempotencyStatus.RESERVED:
                 self._record_ks_recovery_audit(
                     action_type=CommandRecoveryAction.QUARANTINED,
@@ -1941,7 +2138,22 @@ class RuntimeManagerService:
         ack_received = bool(runtime_state_recorded and capital_state_recorded)
         command_id = str(command.get("command_id") or "")
         audit_id = str(audit_entry.get("audit_id") or "")
-        foundation_trace: TraceContext = foundation_context["trace_context"]
+        foundation_trace = foundation_context["trace_context"]
+        if isinstance(foundation_trace, Mapping):
+            trace_id = str(foundation_trace.get("trace_id") or "")
+            correlation_id = str(foundation_trace.get("correlation_id") or "")
+        else:
+            trace_id = foundation_trace.trace_id
+            correlation_id = foundation_trace.correlation_id
+        foundation_audit_action = foundation_context.get("audit_action")
+        if isinstance(foundation_audit_action, Mapping):
+            audit_action_ref = foundation_audit_action.get("action_id")
+        else:
+            audit_action_ref = (
+                foundation_audit_action.action_id
+                if foundation_audit_action is not None
+                else None
+            )
         return {
             "ack_id": f"ks-telemetry-ack:{command_id}",
             "ack_status": "acknowledged" if ack_received else "fail_closed",
@@ -1953,8 +2165,8 @@ class RuntimeManagerService:
             "ack_version": _KILL_SWITCH_TELEMETRY_ACK_VERSION,
             "command_id": command_id,
             "audit_id": audit_id,
-            "trace_id": foundation_trace.trace_id,
-            "correlation_id": foundation_trace.correlation_id,
+            "trace_id": trace_id,
+            "correlation_id": correlation_id,
             "capital_pool_id": command.get("capital_pool_id"),
             "binding_id": (binding or {}).get("binding_id") or command.get("binding_id"),
             "runtime_binding_id": (final_binding or {}).get("binding_id"),
@@ -1964,11 +2176,7 @@ class RuntimeManagerService:
             "runtime_status_after": (final_binding or {}).get("status"),
             "runtime_state_recorded": runtime_state_recorded,
             "capital_state_recorded": capital_state_recorded,
-            "audit_action_ref": (
-                foundation_context["audit_action"].action_id
-                if foundation_context.get("audit_action") is not None
-                else None
-            ),
+            "audit_action_ref": audit_action_ref,
             "reason": (
                 "runtime binding follow-through recorded before ack"
                 if ack_received
@@ -2060,6 +2268,17 @@ class RuntimeManagerService:
                         RuntimeBindingStatus.PAUSED.value,
                     }
                 ]
+                if not nonterminal and b is not None and b.is_terminal():
+                    # A crash may happen after a terminate/liquidate write but
+                    # before the success ledger.  With no non-terminal pool
+                    # owner, the persisted terminal target is already a
+                    # truthful, stronger containment result for every emergency
+                    # action and may be acknowledged idempotently.
+                    return {
+                        "action": action_type,
+                        "binding": b.to_dict(),
+                        "already_contained": True,
+                    }
                 if len(nonterminal) != 1:
                     return None
                 b = nonterminal[0]

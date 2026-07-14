@@ -914,9 +914,17 @@ def _rollback_prior_authority_error(
     ) != strategy_id:
         mismatches.append("rollback authority strategy_id is missing or inconsistent")
     allowed_scope = str(attestation.get("allowed_deployment_scope") or "")
-    if allowed_scope != "paper":
+    deployment_scope = str(source_binding.get("deployment_mode") or "")
+    scope_rank = {"none": 0, "paper": 1, "canary": 2, "live": 3}
+    if (
+        allowed_scope not in scope_rank
+        or deployment_scope not in scope_rank
+        or scope_rank[allowed_scope] < scope_rank[deployment_scope]
+    ):
         mismatches.append(
-            "rollback authority allowed_deployment_scope must be exactly 'paper'"
+            "rollback authority allowed_deployment_scope must permit the "
+            f"source deployment_mode; scope={allowed_scope!r}, "
+            f"deployment_mode={deployment_scope!r}"
         )
     target_expected = {
         "plan_id": prior.get("plan_id"),
@@ -1632,14 +1640,20 @@ def _delivery_will_dead_letter(
     return not retryable or attempts + 1 >= max_attempts
 
 
-def _trigger_runtime_load_compensation(
+def _trigger_delivery_compensation(
     *,
     api_url: str,
     saga_id: str,
+    event_type: str,
     reason: str,
     timeout_seconds: float,
 ) -> None:
-    """Durably request compensation before a runtime-load event enters DLQ."""
+    """Durably hand a terminal side-effect failure to saga compensation.
+
+    The failed event is acknowledged only *after* this decision is durable.
+    That acknowledgement is the causal predecessor of the compensation event;
+    dead-lettering it would leave the successor permanently sequence-blocked.
+    """
     latest = fetch_saga(
         api_url=api_url,
         saga_id=saga_id,
@@ -1652,11 +1666,24 @@ def _trigger_runtime_load_compensation(
                 "runtime-load saga is terminal/compensating without a durable compensation decision"
             )
         return
-    failed_step = (
-        "runtime_active"
-        if latest_status == "completed" or latest.get("current_step") == "runtime_active"
-        else "runtime_load_requested"
-    )
+    if event_type == "runtime.binding.requested":
+        failed_step = (
+            "runtime_load_requested"
+            if latest.get("binding_id")
+            or latest_status in {"awaiting_runtime_load", "completed"}
+            else "binding_requested"
+        )
+    elif event_type == "runtime.load.requested":
+        failed_step = (
+            "runtime_active"
+            if latest_status == "completed"
+            or latest.get("current_step") == "runtime_active"
+            else "runtime_load_requested"
+        )
+    else:
+        raise RuntimeError(
+            f"terminal compensation handoff does not support event_type={event_type!r}"
+        )
     try:
         record_saga_failure(
             api_url=api_url,
@@ -1689,8 +1716,31 @@ def _trigger_runtime_load_compensation(
         or not isinstance(committed.get("compensation"), Mapping)
     ):
         raise RuntimeError(
-            "runtime-load compensation request did not converge before DLQ"
+            "side-effect compensation request did not converge before acknowledgement"
         )
+
+
+def _acknowledge_compensation_handoff(
+    *,
+    api_url: str,
+    event_id: str,
+    consumer_name: str,
+    timeout_seconds: float,
+) -> tuple[int, int]:
+    """Advance the inbox sequence after durable compensation owns the failure."""
+    receipt = consume_event(
+        api_url=api_url,
+        event_id=event_id,
+        consumer_name=consumer_name,
+        timeout_seconds=timeout_seconds,
+    )
+    applied, duplicate, receipt_error = _apply_receipt_counts(
+        receipt=receipt,
+        event_id=event_id,
+    )
+    if receipt_error:
+        raise RuntimeError(receipt_error)
+    return applied, duplicate
 
 
 def _apply_receipt_counts(
@@ -1727,6 +1777,7 @@ def run_poll(
     errors: list[str] = []
 
     for record in events:
+        compensation_committed = False
         if not _retry_due(record):
             skipped_not_due += 1
             continue
@@ -1773,7 +1824,11 @@ def run_poll(
                 # lost its inbox response.  Once compensation/terminal state is
                 # durable, replay only advances the inbox sequence; it must not
                 # dispatch a second RuntimeBinding.
-                if saga_status in {"compensating", "failed", "aborted"}:
+                if saga_status in {"completed", "compensating", "failed", "aborted"}:
+                    # This event no longer owns a mutable side effect.  If its
+                    # receipt write fails, retain it for retry rather than
+                    # converting terminal history into a DLQ record.
+                    compensation_committed = True
                     receipt = consume_event(
                         api_url=api_url,
                         event_id=event_id,
@@ -1808,25 +1863,22 @@ def run_poll(
                     compat_errors = compat.get("errors", [])
                     reason = f"Compatibility check failed: {'; '.join(compat_errors)}"
                     # Record terminal saga failure
-                    record_saga_failure(
+                    _trigger_delivery_compensation(
                         api_url=api_url,
                         saga_id=saga_id,
                         reason=reason,
-                        failed_step="binding_requested",
+                        event_type=event_type,
                         timeout_seconds=timeout_seconds,
                     )
-                    # Dead-letter outbox event
-                    _record_failure_best_effort(
+                    compensation_committed = True
+                    applied, duplicate = _acknowledge_compensation_handoff(
                         api_url=api_url,
                         event_id=event_id,
                         consumer_name=consumer_name,
-                        reason=reason,
-                        retryable=False,
-                        max_attempts=max_attempts,
-                        retry_delay_seconds=retry_delay_seconds,
                         timeout_seconds=timeout_seconds,
                     )
-                    dead_lettered += 1
+                    consumed += applied
+                    duplicates += duplicate
                     errors.append(reason)
                     continue
 
@@ -1857,13 +1909,24 @@ def run_poll(
                         retryable=True,
                         max_attempts=max_attempts,
                     ):
-                        record_saga_failure(
+                        _trigger_delivery_compensation(
                             api_url=api_url,
                             saga_id=saga_id,
                             reason=reason,
-                            failed_step="binding_requested",
+                            event_type=event_type,
                             timeout_seconds=timeout_seconds,
                         )
+                        compensation_committed = True
+                        applied, duplicate = _acknowledge_compensation_handoff(
+                            api_url=api_url,
+                            event_id=event_id,
+                            consumer_name=consumer_name,
+                            timeout_seconds=timeout_seconds,
+                        )
+                        consumed += applied
+                        duplicates += duplicate
+                        errors.append(reason)
+                        continue
                     failure_record, failure_error = _record_failure_best_effort(
                         api_url=api_url,
                         event_id=event_id,
@@ -1886,24 +1949,22 @@ def run_poll(
                     continue
                 except DeployAuthorityError as exc:
                     reason = f"deploy authority rejected: {exc}"
-                    record_saga_failure(
+                    _trigger_delivery_compensation(
                         api_url=api_url,
                         saga_id=saga_id,
                         reason=reason,
-                        failed_step="binding_requested",
+                        event_type=event_type,
                         timeout_seconds=timeout_seconds,
                     )
-                    _record_failure_best_effort(
+                    compensation_committed = True
+                    applied, duplicate = _acknowledge_compensation_handoff(
                         api_url=api_url,
                         event_id=event_id,
                         consumer_name=consumer_name,
-                        reason=reason,
-                        retryable=False,
-                        max_attempts=max_attempts,
-                        retry_delay_seconds=retry_delay_seconds,
                         timeout_seconds=timeout_seconds,
                     )
-                    dead_lettered += 1
+                    consumed += applied
+                    duplicates += duplicate
                     errors.append(reason)
                     continue
 
@@ -2027,6 +2088,28 @@ def run_poll(
                 elif dispatch_result.is_retryable():
                     reason = f"transient dispatch failure: {dispatch_result.error_message}"
                     errors.append(reason)
+                    if _delivery_will_dead_letter(
+                        record=record,
+                        retryable=True,
+                        max_attempts=max_attempts,
+                    ):
+                        _trigger_delivery_compensation(
+                            api_url=api_url,
+                            saga_id=saga_id,
+                            event_type=event_type,
+                            reason=reason,
+                            timeout_seconds=timeout_seconds,
+                        )
+                        compensation_committed = True
+                        applied, duplicate = _acknowledge_compensation_handoff(
+                            api_url=api_url,
+                            event_id=event_id,
+                            consumer_name=consumer_name,
+                            timeout_seconds=timeout_seconds,
+                        )
+                        consumed += applied
+                        duplicates += duplicate
+                        continue
                     failure_record, failure_error = _record_failure_best_effort(
                         api_url=api_url,
                         event_id=event_id,
@@ -2047,29 +2130,22 @@ def run_poll(
                     reason = f"terminal dispatch failure: {dispatch_result.error_message}"
                     errors.append(reason)
                     # Record terminal saga failure
-                    record_saga_failure(
+                    _trigger_delivery_compensation(
                         api_url=api_url,
                         saga_id=saga_id,
                         reason=reason,
-                        failed_step=(
-                            "runtime_load_requested"
-                            if saga.get("binding_id")
-                            else "binding_requested"
-                        ),
+                        event_type=event_type,
                         timeout_seconds=timeout_seconds,
                     )
-                    # Dead-letter outbox event
-                    _record_failure_best_effort(
+                    compensation_committed = True
+                    applied, duplicate = _acknowledge_compensation_handoff(
                         api_url=api_url,
                         event_id=event_id,
                         consumer_name=consumer_name,
-                        reason=reason,
-                        retryable=False,
-                        max_attempts=max_attempts,
-                        retry_delay_seconds=retry_delay_seconds,
                         timeout_seconds=timeout_seconds,
                     )
-                    dead_lettered += 1
+                    consumed += applied
+                    duplicates += duplicate
             elif event_type == "runtime.load.requested":
                 saga_id = event.get("aggregate_id")
                 if not saga_id:
@@ -2082,6 +2158,10 @@ def run_poll(
                 saga_status = str(saga.get("status") or "")
 
                 if saga_status in {"compensating", "failed", "aborted"}:
+                    # Compensation owns terminal convergence.  This predecessor
+                    # may advance the sequence but must never be DLQ'd if the
+                    # receipt response is lost.
+                    compensation_committed = True
                     receipt = consume_event(
                         api_url=api_url,
                         event_id=event_id,
@@ -2117,24 +2197,22 @@ def run_poll(
                 )
                 if mismatch:
                     reason = f"RuntimeBinding activation readback failed: {mismatch}"
-                    record_saga_failure(
+                    _trigger_delivery_compensation(
                         api_url=api_url,
                         saga_id=saga_id,
                         reason=reason,
-                        failed_step="runtime_load_requested",
+                        event_type=event_type,
                         timeout_seconds=timeout_seconds,
                     )
-                    _record_failure_best_effort(
+                    compensation_committed = True
+                    applied, duplicate = _acknowledge_compensation_handoff(
                         api_url=api_url,
                         event_id=event_id,
                         consumer_name=consumer_name,
-                        reason=reason,
-                        retryable=False,
-                        max_attempts=max_attempts,
-                        retry_delay_seconds=retry_delay_seconds,
                         timeout_seconds=timeout_seconds,
                     )
-                    dead_lettered += 1
+                    consumed += applied
+                    duplicates += duplicate
                     errors.append(reason)
                     continue
 
@@ -2305,9 +2383,13 @@ def run_poll(
             reason = f"event_id={event_id} http_error={exc.code} {exc.reason}"
             errors.append(reason)
             if record_failures:
+                if compensation_committed:
+                    retry_scheduled += 1
+                    continue
                 retryable = _http_error_retryable(exc)
                 if (
-                    event_type == "runtime.load.requested"
+                    event_type
+                    in {"runtime.binding.requested", "runtime.load.requested"}
                     and aggregate_id
                     and _delivery_will_dead_letter(
                         record=record,
@@ -2316,12 +2398,23 @@ def run_poll(
                     )
                 ):
                     try:
-                        _trigger_runtime_load_compensation(
+                        _trigger_delivery_compensation(
                             api_url=api_url,
                             saga_id=aggregate_id,
+                            event_type=event_type,
                             reason=reason,
                             timeout_seconds=timeout_seconds,
                         )
+                        compensation_committed = True
+                        applied, duplicate = _acknowledge_compensation_handoff(
+                            api_url=api_url,
+                            event_id=event_id,
+                            consumer_name=consumer_name,
+                            timeout_seconds=timeout_seconds,
+                        )
+                        consumed += applied
+                        duplicates += duplicate
+                        continue
                     except Exception as compensation_exc:  # noqa: BLE001
                         errors.append(
                             f"event_id={event_id} compensation_record_error="
@@ -2348,8 +2441,12 @@ def run_poll(
             reason = f"event_id={event_id} error={exc}"
             errors.append(reason)
             if record_failures:
+                if compensation_committed:
+                    retry_scheduled += 1
+                    continue
                 if (
-                    event_type == "runtime.load.requested"
+                    event_type
+                    in {"runtime.binding.requested", "runtime.load.requested"}
                     and aggregate_id
                     and _delivery_will_dead_letter(
                         record=record,
@@ -2358,12 +2455,23 @@ def run_poll(
                     )
                 ):
                     try:
-                        _trigger_runtime_load_compensation(
+                        _trigger_delivery_compensation(
                             api_url=api_url,
                             saga_id=aggregate_id,
+                            event_type=event_type,
                             reason=reason,
                             timeout_seconds=timeout_seconds,
                         )
+                        compensation_committed = True
+                        applied, duplicate = _acknowledge_compensation_handoff(
+                            api_url=api_url,
+                            event_id=event_id,
+                            consumer_name=consumer_name,
+                            timeout_seconds=timeout_seconds,
+                        )
+                        consumed += applied
+                        duplicates += duplicate
+                        continue
                     except Exception as compensation_exc:  # noqa: BLE001
                         errors.append(
                             f"event_id={event_id} compensation_record_error="

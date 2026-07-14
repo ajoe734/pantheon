@@ -44,7 +44,9 @@ print(r[1])
 
 # Rollback
 r = api.execute_rollback(body={"rollback_target_type": "deployment", "target_id": "plan-123", "rollback_to_version": "v1.1.0"}, headers=make_headers(token=True, mfa="654321"))
-assert_status(r, 202)
+assert_status(r, 409)
+assert r[1]["error"]["code"] == "CANONICAL_ROLLBACK_REQUIRED"
+assert r[1]["error"]["canonical_endpoint"] == "/api/rollback"
 print(r[1])
 
 # Kill-switch

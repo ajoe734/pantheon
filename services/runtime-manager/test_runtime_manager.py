@@ -528,40 +528,84 @@ class RuntimeManagerServiceTests(unittest.TestCase):
 
         self.assertEqual(self.service.require(original.binding_id).status, "active")
 
-    def test_forward_replace_recovers_child_created_before_parent_retirement(self):
+    def test_forward_replace_cutover_failure_leaves_only_source_active(self):
         original = self.service.deploy(_valid_deploy_request())
         request = _valid_replace_request(original.binding_id)
-        real_retire = self.service._store.retire
 
         with mock.patch.object(
             self.service._store,
-            "retire",
+            "_save",
             side_effect=RuntimeError("injected cutover interruption"),
         ):
             with self.assertRaisesRegex(RuntimeError, "injected cutover"):
                 self.service.replace(request)
 
         after_interruption = self.service.list_by_pool("pool-001")
-        self.assertEqual(len(after_interruption), 2)
-        child = next(
-            binding
-            for binding in after_interruption
-            if binding.binding_id != original.binding_id
-        )
-        self.assertEqual(child.status, "active")
-        self.assertEqual(original.status, "active")
+        self.assertEqual(len(after_interruption), 1)
+        self.assertEqual(after_interruption[0].binding_id, original.binding_id)
+        self.assertEqual(after_interruption[0].status, "active")
 
-        with mock.patch.object(self.service._store, "retire", wraps=real_retire):
-            recovered = self.service.replace(request)
+        recovered = self.service.replace(request)
 
-        self.assertTrue(recovered["replayed"])
-        self.assertEqual(recovered["new_binding"]["binding_id"], child.binding_id)
+        self.assertFalse(recovered["replayed"])
         self.assertEqual(recovered["old_binding"]["status"], "retired")
         self.assertEqual(len(self.service.list_by_pool("pool-001")), 2)
         self.assertEqual(
             self.service.get_active_for_pool("pool-001").binding_id,
-            child.binding_id,
+            recovered["new_binding"]["binding_id"],
         )
+
+    def test_forward_replace_cutover_is_restart_atomic(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "runtime-bindings.json"
+            service = RuntimeManagerService(store_path=store_path)
+            original = service.deploy(_valid_deploy_request())
+            request = _valid_replace_request(original.binding_id)
+            real_write = service._store._write_records
+
+            def interrupt_canonical_write(path, records):
+                if path == store_path:
+                    raise RuntimeError("injected canonical snapshot interruption")
+                return real_write(path, records)
+
+            with mock.patch.object(
+                service._store,
+                "_write_records",
+                side_effect=interrupt_canonical_write,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "canonical snapshot interruption"
+                ):
+                    service.replace(request)
+
+            restarted = RuntimeManagerService(store_path=store_path)
+            visible = restarted.list_by_pool("pool-001")
+            self.assertEqual(len(visible), 1)
+            self.assertEqual(visible[0].binding_id, original.binding_id)
+            self.assertEqual(visible[0].status, "active")
+
+    def test_forward_replace_response_loss_restart_replays_exact_child(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "runtime-bindings.json"
+            service = RuntimeManagerService(store_path=store_path)
+            original = service.deploy(_valid_deploy_request())
+            request = _valid_replace_request(original.binding_id)
+
+            first = service.replace(request)
+            restarted = RuntimeManagerService(store_path=store_path)
+            replay = restarted.replace(request)
+
+            self.assertFalse(first["replayed"])
+            self.assertTrue(replay["replayed"])
+            self.assertEqual(
+                replay["new_binding"]["binding_id"],
+                first["new_binding"]["binding_id"],
+            )
+            self.assertEqual(len(restarted.list_by_pool("pool-001")), 2)
+            self.assertEqual(
+                restarted.get_active_for_pool("pool-001").binding_id,
+                first["new_binding"]["binding_id"],
+            )
 
     def test_rollback_replace_creates_replacement_and_retires_old_binding(self):
         original = self.service.deploy(_valid_deploy_request())
@@ -607,6 +651,55 @@ class RuntimeManagerServiceTests(unittest.TestCase):
             result["new_binding"]["binding_id"],
         )
         self.assertEqual(self.service.get_active_for_pool("pool-001").binding_id, result["new_binding"]["binding_id"])
+
+    def test_rollback_response_loss_restart_replays_exact_child(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "runtime-bindings.json"
+            service = RuntimeManagerService(store_path=store_path)
+            original = service.deploy(_valid_deploy_request())
+            prior = _seed_retired_rollback_target(
+                service,
+                old_binding=original,
+                plan_id="plan-restart-fallback",
+                artifact_id="artifact-restart-fallback",
+                artifact_version="0.9.0",
+            )
+            request = {
+                "current_binding_id": original.binding_id,
+                "action_type": "replace",
+                "replacement_plan_id": prior.plan_id,
+                "replacement_artifact_id": prior.artifact_id,
+                "replacement_artifact_version": prior.artifact_version,
+                "replacement_persona_capital_binding_id": (
+                    prior.persona_capital_binding_id
+                ),
+                "replacement_allowed_deployment_scope": "paper",
+                "replacement_authority_attestation": prior.metadata[
+                    "authoritative_loader_attestation"
+                ],
+                "replacement_runtime_id": "rt-restart-fallback",
+                "replacement_strategy_id": "strategy-alpha",
+            }
+
+            first = service.rollback(request)
+            restarted = RuntimeManagerService(store_path=store_path)
+            replay = restarted.rollback(request)
+
+            self.assertFalse(first["replayed"])
+            self.assertTrue(replay["replayed"])
+            self.assertEqual(
+                replay["new_binding"]["binding_id"],
+                first["new_binding"]["binding_id"],
+            )
+            active = [
+                binding
+                for binding in restarted.list_by_pool("pool-001")
+                if binding.status == "active"
+            ]
+            self.assertEqual(
+                [binding.binding_id for binding in active],
+                [first["new_binding"]["binding_id"]],
+            )
 
     def test_rollback_rejects_non_paper_source_before_target_resolution(self):
         original = self.service.deploy(
@@ -1808,6 +1901,97 @@ class KillSwitchDurabilityTests(unittest.TestCase):
             restored["safe_mode"]["pool-corrupt"],
             SafeModeState.PAUSED.value,
         )
+
+    def test_kill_switch_pre_action_crash_is_contained_during_startup(self):
+        svc1 = self._svc()
+        binding = svc1.deploy(_valid_deploy_request(
+            capital_pool_id="pool-pre-action-crash",
+            runtime_id="rt-pre-action-crash",
+        ))
+        request = {
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": "pool-pre-action-crash",
+            "actor_id": "op",
+            "binding_id": binding.binding_id,
+            "idempotency_key": "idmp-pre-action-crash-001",
+        }
+
+        svc1._execute_kill_switch_binding_action = mock.Mock(
+            side_effect=RuntimeError("simulated crash before binding action")
+        )
+        with self.assertRaisesRegex(RuntimeError, "before binding action"):
+            svc1.execute_kill_switch(request)
+
+        crash_snapshot = json.loads(self.ks_store_path.read_text())
+        crash_entry = crash_snapshot["foundation_idempotency"][
+            "idmp-pre-action-crash-001"
+        ]
+        crash_foundation = crash_entry["result"]["foundation"]
+        self.assertEqual(crash_entry["idempotency_record"]["status"], "executing")
+        self.assertEqual(svc1.get(binding.binding_id).status, "active")
+
+        svc2 = self._svc()
+
+        self.assertEqual(svc2.get(binding.binding_id).status, "paused")
+        recovered_snapshot = json.loads(self.ks_store_path.read_text())
+        recovered_entry = recovered_snapshot["foundation_idempotency"][
+            "idmp-pre-action-crash-001"
+        ]
+        recovered_foundation = recovered_entry["result"]["foundation"]
+        self.assertEqual(recovered_entry["idempotency_record"]["status"], "succeeded")
+        self.assertTrue(recovered_entry["result"]["telemetry_ack"]["ack_received"])
+        self.assertEqual(len(recovered_snapshot["audit_log"]), 1)
+        self.assertEqual(
+            recovered_snapshot["foundation_recovery_audit"][-1]["action_type"],
+            "foundation.command_recovery.replay_resumed",
+        )
+        for section, identity_field in (
+            ("trace_context", "trace_id"),
+            ("command_envelope", "command_id"),
+            ("policy_decision", "decision_id"),
+            ("audit_action", "action_id"),
+        ):
+            self.assertEqual(
+                recovered_foundation[section][identity_field],
+                crash_foundation[section][identity_field],
+            )
+
+    def test_kill_switch_post_terminate_crash_recovers_terminal_receipt(self):
+        svc1 = self._svc()
+        binding = svc1.deploy(_valid_deploy_request(
+            capital_pool_id="pool-post-terminate-crash",
+            runtime_id="rt-post-terminate-crash",
+        ))
+        request = {
+            "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+            "capital_pool_id": "pool-post-terminate-crash",
+            "actor_id": "op",
+            "binding_id": binding.binding_id,
+            "action_override": KillSwitchActionType.TERMINATE.value,
+            "idempotency_key": "idmp-post-terminate-crash-001",
+        }
+        original_action = svc1._execute_kill_switch_binding_action
+
+        def crash_after_terminate(command):
+            original_action(command)
+            raise RuntimeError("simulated crash after terminate")
+
+        svc1._execute_kill_switch_binding_action = crash_after_terminate
+        with self.assertRaisesRegex(RuntimeError, "after terminate"):
+            svc1.execute_kill_switch(request)
+
+        svc2 = self._svc()
+
+        self.assertEqual(svc2.get(binding.binding_id).status, "retired")
+        recovered_snapshot = json.loads(self.ks_store_path.read_text())
+        recovered_entry = recovered_snapshot["foundation_idempotency"][
+            "idmp-post-terminate-crash-001"
+        ]
+        self.assertEqual(recovered_entry["idempotency_record"]["status"], "succeeded")
+        self.assertTrue(
+            recovered_entry["result"]["binding_action"]["already_contained"]
+        )
+        self.assertTrue(recovered_entry["result"]["telemetry_ack"]["ack_received"])
 
     def test_kill_switch_replay_after_mid_binding_crash_does_not_duplicate_side_effect(self):
         svc1 = self._svc()

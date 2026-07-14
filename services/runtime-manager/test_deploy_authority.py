@@ -45,6 +45,7 @@ def _facts():
     plan = {
         "plan_id": request["plan_id"],
         "status": request["plan_status"],
+        "current_stage": "none",
         "target_stage": request["target_stage"],
         "artifact_id": request["artifact_id"],
         "artifact_version": request["artifact_version"],
@@ -181,6 +182,82 @@ def test_exact_authoritative_registry_and_approval_are_admitted():
     assert report["approval_decision_id"] == request["approval_decision_id"]
     assert report["registry_entry_sha256"].startswith("sha256:")
     assert report["approval_decision_sha256"].startswith("sha256:")
+
+
+def test_plan_authority_digest_ignores_only_runtime_projection_fields():
+    _, _, _, plan, _, _ = _facts()
+    plan.update(
+        {
+            "current_stage": "none",
+            "binding_id": None,
+            "metadata": {"source_task_id": "LOOP-PROD-DEP-001"},
+            "rollback": {
+                "target_artifact_id": "artifact-fallback",
+                "target_version": "0.9.0",
+                "action_type": "replace",
+            },
+        }
+    )
+    advanced = copy.deepcopy(plan)
+    advanced.update(
+        {
+            "status": "executing",
+            "binding_id": "rb-response-loss",
+        }
+    )
+    advanced["metadata"]["runtime_lifecycle"] = {
+        "binding_id": "rb-response-loss",
+        "runtime_id": "rt-response-loss",
+    }
+
+    assert authority._canonical_digest(plan) != authority._canonical_digest(advanced)
+    assert authority._canonical_digest(
+        authority._deployment_plan_authority_view(plan)
+    ) == authority._canonical_digest(
+        authority._deployment_plan_authority_view(advanced)
+    )
+
+    advanced["current_stage"] = "paper"
+    assert authority._canonical_digest(
+        authority._deployment_plan_authority_view(plan)
+    ) != authority._canonical_digest(
+        authority._deployment_plan_authority_view(advanced)
+    )
+    advanced["current_stage"] = "none"
+
+    advanced["rollback"]["target_version"] = "0.8.0"
+    assert authority._canonical_digest(
+        authority._deployment_plan_authority_view(plan)
+    ) != authority._canonical_digest(
+        authority._deployment_plan_authority_view(advanced)
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("current_stage", None, "current_stage"),
+        ("metadata", [], "metadata must be an object"),
+        (
+            "metadata",
+            {"runtime_lifecycle": []},
+            "runtime_lifecycle must be an object",
+        ),
+    ],
+)
+def test_plan_runtime_projection_shape_is_fail_closed(field, value, message):
+    request, registry, approval, plan, capital_pool, persona_binding = _facts()
+    plan[field] = value
+
+    with pytest.raises(authority.DeployAuthorityError, match=message):
+        _verify(
+            request,
+            registry,
+            approval,
+            plan,
+            capital_pool,
+            persona_binding,
+        )
 
 
 @pytest.mark.parametrize("target_stage", ["canary", "live"])

@@ -298,6 +298,85 @@ class TestSingleRuntimeRule:
         assert store.get("rtb-001") is not None
         assert store.get("rtb-002") is not None
 
+
+class TestAtomicCutover:
+
+    def test_cutover_persists_child_and_retired_source_together(
+        self, store: RuntimeBindingStore
+    ) -> None:
+        source = _base(binding_id="rtb-source")
+        replacement = _base(
+            binding_id="rtb-child",
+            runtime_id="rt-child",
+            plan_id="plan-child",
+            artifact_id="art-child",
+            artifact_version="2.0.0",
+        )
+        store.create(source)
+
+        retired, child = store.cutover("rtb-source", replacement)
+
+        assert retired.status == RuntimeBindingStatus.RETIRED.value
+        assert child.status == RuntimeBindingStatus.ACTIVE.value
+        assert store.get_active_for_pool("pool-alpha") == child
+
+    def test_cutover_canonical_write_failure_is_restart_atomic(
+        self,
+        persisted_store: RuntimeBindingStore,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        source = _base(binding_id="rtb-source")
+        replacement = _base(
+            binding_id="rtb-child",
+            runtime_id="rt-child",
+            plan_id="plan-child",
+            artifact_id="art-child",
+            artifact_version="2.0.0",
+        )
+        persisted_store.create(source)
+        store_path = tmp_path / "bindings.json"
+        real_write = persisted_store._write_records
+
+        def interrupt_primary(path, records):
+            if path == store_path:
+                raise RuntimeError("injected primary snapshot failure")
+            return real_write(path, records)
+
+        monkeypatch.setattr(persisted_store, "_write_records", interrupt_primary)
+        with pytest.raises(RuntimeError, match="primary snapshot failure"):
+            persisted_store.cutover("rtb-source", replacement)
+
+        assert persisted_store.require("rtb-source").status == "active"
+        assert persisted_store.get("rtb-child") is None
+        restarted = RuntimeBindingStore(path=store_path)
+        assert restarted.require("rtb-source").status == "active"
+        assert restarted.get("rtb-child") is None
+
+    def test_cutover_rejects_an_unrelated_active_owner(
+        self, store: RuntimeBindingStore
+    ) -> None:
+        source = _base(binding_id="rtb-source")
+        unrelated = _base(binding_id="rtb-unrelated", runtime_id="rt-unrelated")
+        replacement = _base(binding_id="rtb-child", runtime_id="rt-child")
+        store.create(source, single_runtime_enforced=False)
+        store.create(unrelated, single_runtime_enforced=False)
+
+        with pytest.raises(RuntimeBindingError, match="another active"):
+            store.cutover("rtb-source", replacement)
+
+    def test_cutover_cannot_skip_pending_pause_state(self, store: RuntimeBindingStore) -> None:
+        source = _base(binding_id="rtb-source")
+        replacement = _base(binding_id="rtb-child", runtime_id="rt-child")
+        store.create(source)
+        store.transition_status("rtb-source", RuntimeBindingStatus.PENDING_PAUSE.value)
+
+        with pytest.raises(RuntimeBindingError, match="status machine"):
+            store.cutover("rtb-source", replacement)
+
+
+class TestSingleRuntimeQueries:
+
     def test_get_active_for_pool_returns_single(self, store: RuntimeBindingStore) -> None:
         b = _base(binding_id="rtb-001")
         store.create(b, single_runtime_enforced=True)

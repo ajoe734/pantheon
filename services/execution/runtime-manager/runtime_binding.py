@@ -409,6 +409,80 @@ class RuntimeBindingStore:
             retired_at=retired_at,
         )
 
+    def cutover(
+        self,
+        source_binding_id: str,
+        replacement: RuntimeBinding,
+        *,
+        retired_at: Optional[str] = None,
+        single_runtime_enforced: bool = True,
+    ) -> tuple[RuntimeBinding, RuntimeBinding]:
+        """Atomically create a replacement and retire its source.
+
+        Both records are persisted in one filesystem snapshot.  A process
+        crash therefore exposes either the complete pre-cutover state or the
+        complete post-cutover state, never a child-active/source-active gap.
+        """
+        source = self.require(source_binding_id)
+        if source.is_terminal():
+            raise RuntimeBindingError(
+                f"Cannot cut over terminal RuntimeBinding {source_binding_id!r}."
+            )
+        if RuntimeBindingStatus.RETIRED.value not in _ALLOWED_STATUS_TRANSITIONS.get(
+            source.status, []
+        ):
+            raise RuntimeBindingError(
+                "Atomic cutover cannot bypass the source status machine: "
+                f"{source.status!r} -> {RuntimeBindingStatus.RETIRED.value!r}."
+            )
+        errors = validate_binding(replacement)
+        if errors:
+            raise RuntimeBindingError(
+                f"Invalid replacement RuntimeBinding: {errors}"
+            )
+        if replacement.binding_id in self._bindings:
+            raise RuntimeBindingError(
+                f"RuntimeBinding already exists: {replacement.binding_id}"
+            )
+        if replacement.capital_pool_id != source.capital_pool_id:
+            raise RuntimeBindingError(
+                "Atomic cutover replacement must remain in the source capital pool."
+            )
+        if single_runtime_enforced and replacement.status == RuntimeBindingStatus.ACTIVE.value:
+            conflicting = [
+                binding
+                for binding in self._bindings.values()
+                if binding.capital_pool_id == source.capital_pool_id
+                and binding.status == RuntimeBindingStatus.ACTIVE.value
+                and binding.binding_id != source_binding_id
+            ]
+            if conflicting:
+                raise RuntimeBindingError(
+                    "Atomic cutover found another active RuntimeBinding for pool "
+                    f"{source.capital_pool_id!r}: "
+                    f"{[binding.binding_id for binding in conflicting]!r}."
+                )
+
+        cutover_at = retired_at or utc_now()
+        retired_source = RuntimeBinding(
+            **{
+                **source.to_dict(),
+                "status": RuntimeBindingStatus.RETIRED.value,
+                "retired_at": cutover_at,
+            }
+        )
+        previous = self._bindings
+        committed = dict(previous)
+        committed[source_binding_id] = retired_source
+        committed[replacement.binding_id] = replacement
+        self._bindings = committed
+        try:
+            self._save()
+        except Exception:
+            self._bindings = previous
+            raise
+        return retired_source, replacement
+
     # ---- Single-runtime guard ----
 
     def _check_single_active_binding(self, capital_pool_id: str) -> None:
@@ -426,9 +500,13 @@ class RuntimeBindingStore:
         if self._path:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             records = [b.to_dict() for b in self._bindings.values()]
-            self._write_records(self._path, records)
+            # Write the recovery copy first and the canonical snapshot last.
+            # If the final atomic replace fails, callers can safely restore
+            # their in-memory draft; no exception can occur after the canonical
+            # file has committed.
             if records and self._backup_path:
                 self._write_records(self._backup_path, records)
+            self._write_records(self._path, records)
 
     def _load(self, path: Path) -> None:
         records = self._read_records(path)

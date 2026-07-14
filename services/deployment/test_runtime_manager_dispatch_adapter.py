@@ -40,6 +40,7 @@ def _authority_report() -> Dict[str, Any]:
         "status": "passed",
         "authority": "canonical_deployment_registry_governance_capital",
         "plan_id": "plan-001",
+        "plan_status": "approved",
         "target_stage": "paper",
         "artifact_id": "artifact-001",
         "artifact_version": "v1.0.0",
@@ -48,7 +49,11 @@ def _authority_report() -> Dict[str, Any]:
         "capital_pool_id": "pool-paper-001",
         "sponsor_persona_id": "persona-001",
         "persona_capital_binding_id": "pcb-001",
+        "deployment_plan_current_stage": "none",
+        "deployment_plan_binding_id": None,
+        "deployment_plan_runtime_lifecycle": {},
         "deployment_plan_sha256": "sha256:" + "0" * 64,
+        "deployment_plan_authority_sha256": "sha256:" + "a" * 64,
         "registry_entry_sha256": "sha256:" + "1" * 64,
         "approval_decision_sha256": "sha256:" + "2" * 64,
         "capital_pool_sha256": "sha256:" + "3" * 64,
@@ -286,6 +291,110 @@ class TestIdempotentReplay:
         assert result.idempotent_replay is True
         client.deploy.assert_not_called()
         client.get.assert_called_once_with("rb-existing")
+
+    def test_binding_created_response_loss_allows_only_plan_lifecycle_drift(self):
+        admitted = _authority_report()
+        current = {
+            **admitted,
+            "plan_status": "executing",
+            "deployment_plan_binding_id": "rb-existing",
+            "deployment_plan_runtime_lifecycle": {
+                "binding_id": "rb-existing",
+                "runtime_id": "rt-001",
+            },
+            "deployment_plan_sha256": "sha256:" + "b" * 64,
+        }
+        binding = _make_binding("rb-existing")
+        binding["metadata"]["authoritative_loader_attestation"] = admitted
+        client = _make_client(get_return=binding)
+        saga = _make_saga(binding_id="rb-existing")
+
+        result = dispatch_to_runtime_manager(
+            saga=saga,
+            deploy_context=_make_deploy_context(
+                plan_status="executing",
+                metadata={"authoritative_loader_attestation": current},
+            ),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.SUCCESS
+        assert result.idempotent_replay is True
+        client.deploy.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("deployment_plan_binding_id", "rb-other"),
+            (
+                "deployment_plan_runtime_lifecycle",
+                {"binding_id": "rb-other", "runtime_id": "rt-001"},
+            ),
+            (
+                "deployment_plan_runtime_lifecycle",
+                {"binding_id": "rb-existing", "runtime_id": "rt-other"},
+            ),
+        ],
+    )
+    def test_binding_created_response_loss_rejects_lifecycle_readback_drift(
+        self, field, value
+    ):
+        admitted = _authority_report()
+        current = {
+            **admitted,
+            "plan_status": "executing",
+            "deployment_plan_binding_id": "rb-existing",
+            "deployment_plan_runtime_lifecycle": {
+                "binding_id": "rb-existing",
+                "runtime_id": "rt-001",
+            },
+            "deployment_plan_sha256": "sha256:" + "b" * 64,
+            field: value,
+        }
+        binding = _make_binding("rb-existing")
+        binding["metadata"]["authoritative_loader_attestation"] = admitted
+        client = _make_client(get_return=binding)
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(binding_id="rb-existing"),
+            deploy_context=_make_deploy_context(
+                plan_status="executing",
+                metadata={"authoritative_loader_attestation": current},
+            ),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.TERMINAL_ERROR
+        assert "current canonical DeploymentPlan" in (result.error_message or "")
+
+    def test_binding_created_response_loss_rejects_authority_projection_drift(self):
+        admitted = _authority_report()
+        current = {
+            **admitted,
+            "plan_status": "executing",
+            "deployment_plan_binding_id": "rb-existing",
+            "deployment_plan_runtime_lifecycle": {
+                "binding_id": "rb-existing",
+                "runtime_id": "rt-001",
+            },
+            "deployment_plan_sha256": "sha256:" + "b" * 64,
+            "deployment_plan_authority_sha256": "sha256:" + "c" * 64,
+        }
+        binding = _make_binding("rb-existing")
+        binding["metadata"]["authoritative_loader_attestation"] = admitted
+        client = _make_client(get_return=binding)
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(binding_id="rb-existing"),
+            deploy_context=_make_deploy_context(
+                plan_status="executing",
+                metadata={"authoritative_loader_attestation": current},
+            ),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.TERMINAL_ERROR
+        assert "authority projection" in (result.error_message or "")
 
     def test_binding_not_found_is_terminal_inconsistency(self):
         client = _make_client(get_return=None)

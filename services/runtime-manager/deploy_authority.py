@@ -52,6 +52,31 @@ def _canonical_digest(payload: Mapping[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
+def _deployment_plan_authority_view(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return the immutable admission portion of a DeploymentPlan.
+
+    Deployment owns a small runtime projection on the plan (status, binding
+    id, and metadata.runtime_lifecycle).  Those fields change after Runtime
+    Manager commits a binding, so they cannot be used to decide whether a
+    response-loss replay still describes the same authorization.  The adapter
+    validates their exact expected post-state separately.  Every other plan
+    field, including current_stage, remains covered by this digest.
+    """
+    view = json.loads(json.dumps(dict(payload), allow_nan=False))
+    for field in ("status", "binding_id"):
+        view.pop(field, None)
+    metadata = view.get("metadata")
+    if isinstance(metadata, dict):
+        metadata.pop("runtime_lifecycle", None)
+        if not metadata:
+            view["metadata"] = {}
+    elif metadata is None:
+        view["metadata"] = {}
+    return view
+
+
 def _required_text(source: Mapping[str, Any], key: str, label: str) -> str:
     value = str(source.get(key) or "").strip()
     if not value:
@@ -218,6 +243,24 @@ def verify_deploy_authorities(
     if plan_mismatches:
         raise DeployAuthorityError(
             "deployment authority mismatch: " + "; ".join(plan_mismatches)
+        )
+    plan_current_stage = str(plan.get("current_stage") or "").strip()
+    if plan_current_stage not in {"none", "paper", "canary", "live"}:
+        raise DeployAuthorityError(
+            "DeploymentPlan.current_stage must be one of "
+            "'none', 'paper', 'canary', or 'live'"
+        )
+    plan_metadata = plan.get("metadata")
+    if plan_metadata is None:
+        plan_metadata = {}
+    if not isinstance(plan_metadata, Mapping):
+        raise DeployAuthorityError("DeploymentPlan.metadata must be an object")
+    plan_runtime_lifecycle = plan_metadata.get("runtime_lifecycle")
+    if plan_runtime_lifecycle is None:
+        plan_runtime_lifecycle = {}
+    if not isinstance(plan_runtime_lifecycle, Mapping):
+        raise DeployAuthorityError(
+            "DeploymentPlan.metadata.runtime_lifecycle must be an object"
         )
 
     raw_entry = registry_payload.get("entry")
@@ -405,7 +448,13 @@ def verify_deploy_authorities(
         "persona_capital_binding_status": "active",
         "allowed_deployment_scope": allowed_deployment_scope,
         "single_runtime_enforced": True,
+        "deployment_plan_current_stage": plan_current_stage,
+        "deployment_plan_binding_id": plan.get("binding_id"),
+        "deployment_plan_runtime_lifecycle": dict(plan_runtime_lifecycle),
         "deployment_plan_sha256": _canonical_digest(plan),
+        "deployment_plan_authority_sha256": _canonical_digest(
+            _deployment_plan_authority_view(plan)
+        ),
         "registry_entry_sha256": _canonical_digest(entry),
         "approval_decision_sha256": _canonical_digest(approval),
         "capital_pool_sha256": _canonical_digest(capital_pool),

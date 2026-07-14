@@ -172,6 +172,7 @@ def validate_authoritative_readback(
     expected_persona_capital_binding_id: str | None = None,
     expected_sponsor_persona_id: str | None = None,
     expected_authority_report: Mapping[str, Any] | None = None,
+    allow_plan_lifecycle_recovery: bool = False,
 ) -> Optional[str]:
     """Return a fail-closed mismatch description for a RuntimeBinding readback.
 
@@ -192,6 +193,8 @@ def validate_authoritative_readback(
     }
     if expected_persona_capital_binding_id:
         expected["persona_capital_binding_id"] = expected_persona_capital_binding_id
+    if saga.get("runtime_id"):
+        expected["runtime_id"] = saga.get("runtime_id")
     mismatches = [
         f"{field} expected {expected_value!r}, got {binding.get(field)!r}"
         for field, expected_value in expected.items()
@@ -233,6 +236,61 @@ def validate_authoritative_readback(
         for field, expected_value in expected_attestation.items()
         if attestation.get(field) != expected_value
     )
+    attested_plan_status = str(attestation.get("plan_status") or "")
+    if attested_plan_status not in {"approved", "executing", "executed"}:
+        mismatches.append(
+            "authority attestation plan_status must be approved/executing/executed"
+        )
+    expected_plan_status = (
+        str(expected_authority_report.get("plan_status") or "")
+        if expected_authority_report is not None
+        else ""
+    )
+    lifecycle_recovery = bool(
+        allow_plan_lifecycle_recovery
+        and attested_plan_status == "approved"
+        and expected_plan_status == "executing"
+    )
+    if lifecycle_recovery:
+        canonical_binding_id = expected_authority_report.get(
+            "deployment_plan_binding_id"
+        )
+        expected_runtime_lifecycle = {
+            "binding_id": expected_binding_id,
+            "runtime_id": binding.get("runtime_id"),
+        }
+        canonical_runtime_lifecycle = expected_authority_report.get(
+            "deployment_plan_runtime_lifecycle"
+        )
+        canonical_current_stage = expected_authority_report.get(
+            "deployment_plan_current_stage"
+        )
+        if canonical_current_stage != saga.get("current_stage"):
+            mismatches.append(
+                "current canonical DeploymentPlan.current_stage expected "
+                f"{saga.get('current_stage')!r}, got {canonical_current_stage!r}"
+            )
+        if canonical_binding_id != expected_binding_id:
+            mismatches.append(
+                "current canonical DeploymentPlan.binding_id expected "
+                f"{expected_binding_id!r}, got {canonical_binding_id!r}"
+            )
+        if canonical_runtime_lifecycle != expected_runtime_lifecycle:
+            mismatches.append(
+                "current canonical DeploymentPlan.metadata.runtime_lifecycle "
+                f"expected {expected_runtime_lifecycle!r}, got "
+                f"{canonical_runtime_lifecycle!r}"
+            )
+    if (
+        expected_authority_report is not None
+        and expected_plan_status
+        and attested_plan_status != expected_plan_status
+        and not lifecycle_recovery
+    ):
+        mismatches.append(
+            "authority attestation plan_status differs from current canonical "
+            f"plan: admitted={attested_plan_status!r}, current={expected_plan_status!r}"
+        )
     digest_fields = (
         "deployment_plan_sha256",
         "registry_entry_sha256",
@@ -249,9 +307,44 @@ def validate_authoritative_readback(
             expected_authority_report is not None
             and expected_authority_report.get(field) != attestation.get(field)
         ):
+            if field == "deployment_plan_sha256" and lifecycle_recovery:
+                admitted_authority_digest = str(
+                    attestation.get("deployment_plan_authority_sha256") or ""
+                )
+                current_authority_digest = str(
+                    expected_authority_report.get(
+                        "deployment_plan_authority_sha256"
+                    )
+                    or ""
+                )
+                if (
+                    admitted_authority_digest.startswith("sha256:")
+                    and len(admitted_authority_digest) == 71
+                    and admitted_authority_digest == current_authority_digest
+                ):
+                    continue
             mismatches.append(
                 f"authority attestation {field} differs from pre-dispatch proof"
             )
+    authority_digest = str(
+        attestation.get("deployment_plan_authority_sha256") or ""
+    )
+    if authority_digest and (
+        not authority_digest.startswith("sha256:") or len(authority_digest) != 71
+    ):
+        mismatches.append(
+            "authority attestation deployment_plan_authority_sha256 is invalid"
+        )
+    if (
+        expected_authority_report is not None
+        and expected_authority_report.get("deployment_plan_authority_sha256")
+        and authority_digest
+        != expected_authority_report.get("deployment_plan_authority_sha256")
+    ):
+        mismatches.append(
+            "authority attestation deployment_plan_authority_sha256 differs "
+            "from current canonical authority projection"
+        )
     return "; ".join(mismatches) or None
 
 
@@ -290,7 +383,20 @@ def dispatch_to_runtime_manager(
         On idempotent replay (binding already existed), idempotent_replay=True.
     """
     if client is None:
-        client = RuntimeManagerClient(require_remote=True)
+        try:
+            client = RuntimeManagerClient(require_remote=True)
+        except RuntimeManagerClientError as exc:
+            return DispatchResult(
+                outcome=_classify_client_error(exc),
+                error_message=str(exc),
+                error_code=exc.error_code or "RUNTIME_MANAGER_CLIENT_INIT_ERROR",
+            )
+        except Exception as exc:  # noqa: BLE001
+            return DispatchResult(
+                outcome=_classify_runtime_manager_error(exc),
+                error_message=str(exc),
+                error_code="RUNTIME_MANAGER_CLIENT_INIT_ERROR",
+            )
 
     deploy_metadata = deploy_context.get("metadata")
     expected_authority_report = (
@@ -350,6 +456,7 @@ def dispatch_to_runtime_manager(
             ),
             expected_sponsor_persona_id=deploy_context.get("sponsor_persona_id"),
             expected_authority_report=expected_authority_report,
+            allow_plan_lifecycle_recovery=True,
         )
         if mismatch:
             return DispatchResult(
