@@ -129,6 +129,37 @@ class AtomicJsonRecordStore:
             records[str(record_id)] = dict(payload)
             self._write_unlocked(records)
 
+    def insert_if_absent(
+        self,
+        record_id: str,
+        payload: dict[str, Any],
+        *,
+        unique_fields: tuple[str, ...] = (),
+    ) -> tuple[bool, dict[str, Any]]:
+        """Atomically insert or return the canonical colliding payload."""
+
+        if not str(record_id).strip():
+            raise ValueError("record_id is required")
+        fields = tuple(str(field).strip() for field in unique_fields)
+        if any(not field for field in fields):
+            raise ValueError("unique_fields must contain non-empty field names")
+        missing = [field for field in fields if field not in payload]
+        if missing:
+            raise ValueError(f"payload missing unique fields: {missing}")
+
+        with self._locked(exclusive=True):
+            records = self._read_unlocked()
+            existing = records.get(str(record_id))
+            if existing is not None:
+                return False, dict(existing)
+            if fields:
+                for candidate in records.values():
+                    if all(candidate.get(field) == payload.get(field) for field in fields):
+                        return False, dict(candidate)
+            records[str(record_id)] = dict(payload)
+            self._write_unlocked(records)
+        return True, dict(payload)
+
     def get(self, record_id: str) -> dict[str, Any] | None:
         with self._locked(exclusive=False):
             record = self._read_unlocked().get(str(record_id))
@@ -352,21 +383,23 @@ class ReliableOutboxStore:
         record: OutboxRecord,
         transition: Mapping[str, Any],
     ) -> ReliableOutboxRecord:
-        existing = self.get(record.outbox_id)
-        if existing is not None:
-            _assert_same_prepared_semantics(
-                existing=existing,
-                incoming_record=record,
-                incoming_transition=transition,
-            )
-            return existing
         prepared = ReliableOutboxRecord(
             record=record,
             delivery_ready=False,
             transition=dict(transition),
         )
-        self.put(prepared)
-        return prepared
+        inserted, canonical_payload = self.impl.insert_if_absent(
+            prepared.outbox_id,
+            prepared.to_dict(),
+        )
+        canonical = ReliableOutboxRecord.from_dict(canonical_payload)
+        if not inserted:
+            _assert_same_prepared_semantics(
+                existing=canonical,
+                incoming_record=record,
+                incoming_transition=transition,
+            )
+        return canonical
 
     def activate(self, record: ReliableOutboxRecord) -> ReliableOutboxRecord:
         activated = record.activate()
@@ -494,11 +527,6 @@ class ReliableInboxStore:
         result_ref: str,
         notes: str | None = None,
     ) -> dict[str, Any]:
-        state, existing = self.classify(event)
-        if state == "conflict":
-            raise ValueError(f"divergent replay for event_id={event.event_id!r}")
-        if state == "duplicate" and existing is not None:
-            return existing
         receipt = InboxReceipt.record(
             consumer_name=self.consumer_name,
             event=event,
@@ -514,8 +542,14 @@ class ReliableInboxStore:
             "receipt": receipt.to_dict(),
             "result_ref": result_ref,
         }
-        self.impl.put(event.event_id, payload)
-        return payload
+        inserted, canonical = self.impl.insert_if_absent(
+            event.event_id,
+            payload,
+            unique_fields=("idempotency_key",),
+        )
+        if inserted or canonical.get("event_checksum") == payload["event_checksum"]:
+            return canonical
+        raise ValueError(f"divergent replay for event_id={event.event_id!r}")
 
 
 def reconcile_prepared(
