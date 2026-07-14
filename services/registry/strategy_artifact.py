@@ -644,7 +644,7 @@ def evaluate_strategy_action(
     if anchor_decimal == 0:
         raise StrategyArtifactValidationError("momentum anchor close must not be zero")
 
-    momentum = latest_decimal / anchor_decimal - Decimal("1")
+    momentum = (latest_decimal - anchor_decimal) / anchor_decimal
     if momentum > _decimal(threshold, "momentum threshold"):
         return logic["positive_action"]
     return logic["non_positive_action"]

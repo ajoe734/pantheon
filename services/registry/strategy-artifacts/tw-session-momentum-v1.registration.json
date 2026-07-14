@@ -90,13 +90,14 @@
       "observed_binding_status": "active",
       "observed_deployment_mode": "paper",
       "observed_effective_at": "2026-07-11T10:50:25Z",
-      "observed_at": "2026-07-14T04:33:51Z",
-      "evidence_ref": "docs/deployment/evidence/mgmt-ops-003-gap/gap-002/20260711T151356Z/reconciliation-snapshot.json",
+      "observed_at": "2026-07-14T05:06:07Z",
+      "evidence_ref": "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-binding-intent-readback.json",
       "replacement_task_id": "EVOLOOP-006"
     },
     "provenance_refs": [
       "host-file:/home/lupin/paper-loop/tw_signal_producer.py#sha256=b9f43954395b1b98f3b253ad9e27f7955b37dbee0553bb79a88abe3b99ff2396",
       "docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/EVOLUTION_GENERATIVE_LOOP_GAP.md",
+      "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-binding-intent-readback.json",
       "docs/deployment/evidence/mgmt-ops-003-gap/gap-002/20260711T151356Z/reconciliation-snapshot.json"
     ]
   }

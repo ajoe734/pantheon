@@ -55,6 +55,14 @@ changes `strategy_id`, `algorithm_ref`, immutable parameters, or an existing
 artifact in place. The new artifact must carry a new `artifact_id`, a greater
 semantic version, and `lineage.parent_registry_ids` containing its parent.
 
+The programmatic path is
+`POST /api/registry/strategy-artifacts/{registry_id}/mutate` with a new
+artifact id, greater semantic version, `parameter_updates`, and non-empty
+`source_run_ids`. It is also available as the pure
+`mutate_strategy_artifact(...)` function for EVOLOOP-004 workers. Registration
+uses atomic create-if-absent: two different children cannot win the same id,
+and only a byte-equivalent normalized registration envelope is idempotent.
+
 ## v1: TW close-to-close momentum
 
 The v1 parameterizes the real host logic already used by
@@ -107,12 +115,16 @@ The selected persona is the dedicated existing Taiwan Equity persona:
 | current placeholder artifact | `artifact-tw-equity-session-v1@1.0.0` |
 | desired artifact | `artifact-tw-session-momentum-v1` |
 
-The observation is pinned to
-`docs/deployment/evidence/mgmt-ops-003-gap/gap-002/20260711T151356Z/reconciliation-snapshot.json`.
-It was re-read from the dev Runtime Manager at `2026-07-14T04:33:51Z`:
+The fresh normalized readback is pinned to
+`docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-binding-intent-readback.json`.
+It was re-read from the dev Runtime Manager and BFF at
+`2026-07-14T05:06:07Z`:
 the binding was `active`, `paper`, and carried
 `metadata.strategy_id=tw_session_momentum`. The BFF persona read model joined
-the runtime identity to `persona-tw-equity` at `2026-07-14T04:34:11Z`.
+the runtime identity to `persona-tw-equity`. Its legacy
+`runtimeBindingId=binding-tw-equity-paper` is the PersonaCapitalBinding
+compatibility projection; Runtime Manager's `binding_id=rb-abb...` remains the
+authoritative RuntimeBinding identity.
 `binding_intent` is evidence and future intent only. It is not a
 `RuntimeBinding` write and cannot be interpreted as deployment truth.
 
@@ -148,16 +160,24 @@ EVOLOOP-006 owns that governed replacement and rollback proof. This preserves
 
 ## Acceptance evidence
 
-Focused validation commands are recorded after implementation. The required
-checks are:
-
-1. JSON Schema plus semantic validation passes for v1.
-2. Registry startup exposes v1 as a candidate with deterministic checksum and
-   normalized lineage.
-3. A permitted parameter mutation produces a schema-valid child with a real
-   parameter delta and parent lineage.
-4. Invalid, immutable, unbounded, or off-step mutation attempts fail closed.
-5. Existing generic and StrategySpec registry tests remain green.
+- `pytest -q services/registry/test_strategy_artifact.py` — 36 passed. This
+  covers schema/semantic validation, deterministic startup registration,
+  checksum/envelope consistency, real v2 deltas, direct-parent lineage,
+  immutable/type/bounds/step failures, concurrent same-id collision, and the
+  exact momentum threshold.
+- `pytest -q services/registry` — 139 passed, including the pre-existing
+  generic, StrategySpec, and AllocationPolicyArtifact consumers.
+- `python3 services/registry/smoke_test.py` — 40/40 passed.
+- Registry Docker test lane — image built with `jsonschema`; service plus
+  StrategyArtifact suites passed 81/81 under Python 3.12/Pydantic 2.9.
+- `pytest -q services/execution/lean_runtime/test_paper_signal_producer.py` —
+  4 passed.
+- `git -C lean rev-parse HEAD` returned
+  `5ad0249432459c119f26718007e083808ef7995d`, and the declared LEAN bridge
+  path exists at that pin.
+- Read-only binding evidence is captured in
+  `EVOLOOP-003-binding-intent-readback.json`; no runtime or binding write was
+  made.
 
 ## Residual risk
 

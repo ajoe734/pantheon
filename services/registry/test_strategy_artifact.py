@@ -116,6 +116,7 @@ def test_v1_logic_interpreter_uses_declared_parameters():
         source_run_ids=["training-session-threshold"],
     )
     assert evaluate_strategy_action(child, [100, 101]) == "SELL"
+    assert evaluate_strategy_action(artifact, [10**1000, 10**1000 + 1]) == "BUY"
 
 
 def test_mutation_api_creates_real_child_delta_and_preserves_parent():

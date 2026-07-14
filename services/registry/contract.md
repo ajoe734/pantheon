@@ -265,15 +265,17 @@ type.
 
 | HTTP operation | Description |
 |---|---|
-| `POST /api/registry/strategy-artifacts` | validate and register a `draft` or `candidate` StrategyArtifact; an identical id/content retry is idempotent, while an id collision fails closed |
+| `POST /api/registry/strategy-artifacts` | validate and atomically register a `draft` or `candidate` StrategyArtifact; only the same normalized registration envelope (initial state, artifact, producer, evaluation, rollback, and supplemental metadata) is an idempotent retry, while any same-id difference fails closed |
 | `GET /api/registry/strategy-artifacts/{registry_id}` | read only an `execution_bundle` carrying the StrategyArtifact overlay |
 | `GET /api/registry/strategies/{strategy_id}/strategy-artifacts` | list StrategyArtifact revisions for a family, optionally filtered by `artifact_state` |
 | `POST /api/registry/strategy-artifacts/{registry_id}/mutate` | create a new `candidate` id/version by changing only declared controls and recording direct-parent plus producing-run lineage |
 | `POST /api/registry/strategy-artifacts/{registry_id}/advance` | use the same governed `draft -> candidate -> approved -> retired` lifecycle |
 
 Checked-in built-in registration requests are registered idempotently through
-`RegistryService` whenever the in-memory service store is initialized. This is
-startup seeding, not direct store mutation. A StrategyArtifact's optional
+`RegistryService` during the FastAPI lifespan startup and guarded again at
+request-time after a test/store reset. Atomic `create_if_absent` prevents
+concurrent same-id mutations from overwriting one another. This is startup
+seeding, not direct store mutation. A StrategyArtifact's optional
 `binding_intent` records a non-authoritative target only; approval,
 `DeploymentPlan`, and `RuntimeBinding` replacement remain outside the registry
 facade.
