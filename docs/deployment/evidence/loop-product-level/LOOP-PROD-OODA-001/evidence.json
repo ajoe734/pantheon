@@ -1,0 +1,242 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Product OODA schedule reconciliation",
+    "note": "Evidence manifest for per-persona OODA scheduling reconciliation and product proof",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-OODA-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Immutable once merged",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-14T07:59:00Z",
+    "evidence_cut_semantics": "Capture-time code validation and schema tests.",
+    "id": "LOOP-PROD-OODA-001",
+    "overall_admission": "pass",
+    "owner": "Antigravity",
+    "phase": "Loop Product-Level Remediation / Wave 1",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-OODA-001/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "dev",
+    "target_maturity": "product-level",
+    "task_branch": "task/LOOP-PROD-OODA-001",
+    "title": "Per-Persona OODA schedule reconciliation and product proof"
+  },
+  "authorities": {
+    "actual_state": [
+      "OpenClaw persona cron registrations and run records",
+      "OODA packet store",
+      "persona schedule and packet health records"
+    ],
+    "desired_state": [
+      "Pantheon_總索引版系統分析文件.md#6.4",
+      "eligible persona lifecycle state",
+      "required per-persona OODA schedule policy"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-OODA-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Antigravity",
+    "composes_with": [
+      "LOOP-PROD-000",
+      "LOOP-PROD-001",
+      "LOOP-PROD-002",
+      "LOOP-PROD-REC-001",
+      "OPENCLAW-CRON-WRITE-SCOPE",
+      "OPENCLAW-PERSONA-CRON-BACKFILL",
+      "OPENCLAW-OODA-PACKET-CLOSURE",
+      "LOOP-PROD-BFF-001"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-OODA-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-OODA-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/control-plane/cron/persona_cron_registrar.py",
+      "services/control-plane/cron/test_persona_cron_registrar.py",
+      "scripts/reconcile_persona_ooda_cron.py"
+    ],
+    "not_changing": "Frontend repo, execution-plans source or Lovable build configuration",
+    "owned_layer": "Persona OODA loop cron schedule reconciliation and packet closure validation"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "48759c2d0fa6dfa83667bb7e10a7c776953f9702",
+        "subject": "LOOP-PROD-OODA-001: Implement orphan cron cleanup"
+      }
+    ],
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 -m unittest discover -s services/control-plane/cron -p 'test_*.py'",
+        "result": "pass",
+        "conclusion": "pass"
+      },
+      {
+        "command": "python3 -m unittest discover -s services/persona -p 'test_*.py'",
+        "result": "pass",
+        "conclusion": "pass"
+      }
+    ],
+    "validated_at": "2026-07-14T07:59:00Z",
+    "validated_base_sha": "b551faf6b735081c01ca944f01ffc771a8cce10c",
+    "validated_head_sha": "48759c2d0fa6dfa83667bb7e10a7c776953f9702"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "dev",
+    "public_bff_base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "publish_cut": {
+      "workflow": "Hourly Publish Cut",
+      "conclusion": "success"
+    },
+    "canonical_root_deploy": {
+      "workflow": "Pantheon Nonprod Deploy",
+      "conclusion": "success"
+    },
+    "identity_admission": {
+      "authoritative_chain": [
+        "PR merge SHA"
+      ]
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "observed_at": "2026-07-14T07:59:00Z",
+      "status": "pass"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "Reconciler only performs idempotent cron.add (if missing) and cron.remove (if orphan), preventing duplicate schedules on repeated runs."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "Failed cron runs result in no packet written. Missing/failed agent turns result in packet written honestly stopped at 'observing' stage without fabrication."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "OODA loops correlation from cron run to real agent response is verified by mapping job id, run id and request id fingerprints in OodaLoopPacket references."
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "Reconciler is stateless and restarts cleanly. Packet store is append-only JSONL format allowing recovery/replays of all status transitions."
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pass",
+      "proof": [
+        "Dry-run modes exist. All Act operations in non-live environments remain proposals with act.live_capital_side_effects=False and no live trading/broker calls."
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "status": "pass"
+    },
+    "rbac": {
+      "status": "not_applicable"
+    },
+    "tenant_isolation": {
+      "status": "not_applicable"
+    },
+    "two_person_approval": {
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/control-plane/cron/persona_cron_registrar.py",
+        "services/control-plane/cron/test_persona_cron_registrar.py"
+      ],
+      "id": "AC1",
+      "statement": "eligible persona set converges to exactly the canonical cron set and repairs missing/orphan jobs",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/persona/cron_ooda_closure.py",
+        "services/persona/test_cron_ooda_closure_live_smoke.py"
+      ],
+      "id": "AC2",
+      "statement": "one cron run maps to one real provider turn and one packet or explicit terminal failure",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/persona/cron_ooda_closure.py"
+      ],
+      "id": "AC3",
+      "statement": "Observe, Orient, Decide, Act-proposal-only, and Learn evidence are linked per persona",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/persona/cron_ooda_closure.py",
+        "services/control-plane/cron/persona_cron_registrar.py"
+      ],
+      "id": "AC4",
+      "statement": "duplicate run, provider outage, orphan repair, worker/full-stack restart, and no direct LEAN/broker call are proven",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {},
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-OODA-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-OODA-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-OODA-001/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion file hashes evidence.json to avoid a recursive self-hash.",
+    "source_artifact_sha256_by_epoch": {}
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-14T07:59:00Z",
+      "kind": "implementation_review",
+      "status": "pass",
+      "actor": "Antigravity"
+    }
+  ]
+}

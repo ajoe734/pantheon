@@ -1161,3 +1161,38 @@ def test_promotion_review_idempotency_replay_has_no_direct_live_mutation() -> No
         assert records[1]["target"]["type"] != ObjectType.RUNTIME.value
         assert records[1]["params"]["live_capital_mutation"] is False
         assert records[1]["params"]["runtime_mutation"] is False
+
+
+def test_command_store_caching(tmp_path) -> None:
+    db_file = tmp_path / "commands_test.jsonl"
+    store = CommandStore(str(db_file))
+    assert store._cache is None
+
+    # First read initializes cache
+    cmds1 = store._get_all_commands()
+    assert cmds1 == []
+    assert store._cache == []
+
+    # submit_command updates cache
+    target = TargetObject(type=ObjectType.RANKING, id="rec-1")
+    store.submit_command(
+        command_id="cmd-1",
+        command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
+        target=target,
+        submitted_at="2026-07-13T12:00:00Z",
+        params={},
+        audit_context={},
+    )
+    assert len(store._cache) == 1
+    assert store._cache[0]["command_id"] == "cmd-1"
+
+    # Second read should use cache without opening the file again
+    # We rename the file to make sure it doesn't try to read it
+    db_file.rename(tmp_path / "commands_test_renamed.jsonl")
+    cmds2 = store._get_all_commands()
+    assert len(cmds2) == 1
+    assert cmds2[0]["command_id"] == "cmd-1"
+
+    # update_status updates cache
+    store.update_status("cmd-1", CommandStatus.EXECUTED)
+    assert store._cache[0]["status"] == CommandStatus.EXECUTED.value

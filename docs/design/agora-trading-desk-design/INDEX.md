@@ -31,3 +31,20 @@ This supersedes the "design source lost" baseline in the AG-GAP-010
 declaration: visual parity work must compare against these files, not against
 the previously grandfathered live screenshots. The TABS-GATE-011 screenshot
 baseline remains valid only as a regression floor, not as the design target.
+
+## Responsive source authority
+
+The recovered pack contains no pixel-authoritative phone artboard or mobile
+CSS. Narrow parity therefore follows behavioral authority, in this order:
+
+1. V6 §16F for task-first prioritization, deliberate stacking, collapsed
+   controls, and narrow full-width drawers.
+2. V4 Screen 10 for layout-control containment and proposal behavior.
+3. BASE §4.2 where later versions are silent.
+
+V10 and V11 continue to own their Workshop and Winner Branch information
+architecture, but do not create a competing mobile pixel target. The shared
+`900px` breakpoint delivered by
+[AG-UIPOL-011](../../bff/execution-tasks/2026-07-13-agora-ui-polish/AG-UIPOL-011-narrow-responsive-parity.md)
+is an implementation contract and must not be cited as recovered design pixel
+truth.

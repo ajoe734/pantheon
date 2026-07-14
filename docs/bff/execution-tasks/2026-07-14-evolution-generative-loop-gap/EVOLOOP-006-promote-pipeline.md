@@ -121,7 +121,7 @@ Implementation validation on the task branch after merging current `dev`:
 
 | Validation | Result |
 |---|---|
-| `python3 -m pytest services/deployment -q` | 103 passed |
+| `python3 -m pytest services/deployment -q` | 108 passed |
 | `python3 -m pytest services/registry -q` | 139 passed |
 | `python3 -m pytest services/runtime-manager/test_runtime_manager.py services/execution/runtime-manager/test_paper_fleet_reconciler.py -q` | 102 passed |
 | `python3 -m pytest services/control-plane/governance/test_deployment_plan.py -q` | 33 passed, 3 subtests passed |
@@ -138,9 +138,56 @@ The focused pipeline proof contains six cases:
 5. a lost rollback projection response replays from authoritative state; and
 6. a receipt-tampered rollback target is rejected.
 
-The live dev identifiers, `/readyz`, process environment, rollback, and final
-re-promote readbacks will be appended after the implementation merge SHA is
-deployed. Until then, this section claims local service-API acceptance only.
+### Live dev proof
+
+Implementation PR `#3629` merged as
+`1e9882f2a7ff08be51a0f93a2c647b818137fd2b`. A clean detached worktree at
+that exact SHA built and recreated only `registry`, `deployment`, and
+`runtime-manager` in the `pantheon` dev Compose project. The shared deploy
+checkout and its unrelated orchestrator changes were not modified. The
+runtime-manager image reports the exact merge SHA; all three selected services
+were healthy before the transition. Deployment retained `PANTHEON_ENV=dev`,
+`PANTHEON_LIVE_BROKER_ENABLED=false`, and `BROKER_PAPER_ENABLED=true`.
+
+Governance decision
+`apv-evoloop-006-promote-20260714-0756` was proposed, reviewed, and decided
+through the Governance API for
+`artifact-tw-session-momentum-v1@1.0.0`, `pool-tw-equity-paper`, and
+`persona-tw-equity`. The pipeline then advanced the candidate through the
+Registry API and ran this sequence:
+
+| Operation | Previous binding/artifact | Result binding/artifact | Deployment readback | Fleet readback |
+|---|---|---|---|---|
+| promote | `rb-abb82fd3538b4014bb7e7d3186a58c58` / `artifact-tw-equity-session-v1@1.0.0` | `rb-9d952eb0b7cc4cc9b33d2ea3220ac006` / `artifact-tw-session-momentum-v1@1.0.0` | `plan-evoloop-006-promote-20260714a` executed; saga completed at sequence 3 | converged after 6 polls; old binding absent |
+| rollback | `rb-9d952eb0b7cc4cc9b33d2ea3220ac006` / promoted artifact | `rb-1e1182eb4ec74d179b8eab194f55af63` / exact rescue artifact | restored `plan-tw-equity-paper`; `rollback_parent` and action `replace` verified | converged after 5 polls; promoted binding absent |
+| re-promote | `rb-1e1182eb4ec74d179b8eab194f55af63` / restored rescue artifact | `rb-f13ece22967b4f7baf1329c17d0f4cef` / promoted artifact | `plan-evoloop-006-promote-20260714b` executed; saga completed at sequence 3 | converged after 8 polls; rollback binding absent |
+
+At each pause, runtime-manager's active-pool readback, the fleet worker record,
+the worker `/readyz` response, and `/proc/<worker-pid>/environ` agreed on
+`runtime-tw-equity-paper`. They also agreed on the stage-specific binding,
+plan, artifact id/version, and `pool-tw-equity-paper`. During rollback,
+`/readyz` and the process environment both showed the exact historical
+`artifact-tw-equity-session-v1@1.0.0` and `plan-tw-equity-paper`, not a
+synthetic substitute.
+
+The final authoritative state is:
+
+- RuntimeBinding `rb-f13ece22967b4f7baf1329c17d0f4cef` is active for
+  `runtime-tw-equity-paper` and its predecessor is retired;
+- DeploymentPlan `plan-evoloop-006-promote-20260714b` is `executed`, with
+  `transition_type=replace`, `runtime_action=replace_binding`, and exact
+  rollback target `artifact-tw-equity-session-v1@1.0.0`;
+- deployment saga `deployment-saga-plan-evoloop-006-promote-20260714b` is
+  `completed` at `runtime_active` with no failure;
+- Registry entry `artifact-tw-session-momentum-v1` is `approved`, linked to
+  the exact approval decision, and projects the final plan and binding; and
+- the final worker is `ready`, `live`, and `paper_execution_ready`, with its
+  binding lookup resolved from runtime-manager.
+
+The redacted structured readbacks are archived in
+[`EVOLOOP-006-live-evidence.json`](./EVOLOOP-006-live-evidence.json). All
+mutations in this proof used Governance, Registry, Deployment, Runtime Manager,
+and fleet service APIs; no service store was edited directly.
 
 ## Residual risks
 

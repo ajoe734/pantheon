@@ -1,0 +1,17 @@
+{
+  "task_id": "PINT-010-R2",
+  "captured_at_utc_minute": "2026-07-14T08:36Z",
+  "frontend_host": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/",
+  "frontend_commit": "b6a5bc9311941cf7333c5f738526868715533101",
+  "manifest_bff_commit": "9d393816acfe322a12ba1b295218f829db36ac28",
+  "method": "Recursively fetch same-origin .js-looking references from the hosted index and verified JavaScript responses; classify every response by Content-Type before scanning literals.",
+  "candidate_js_urls": 1436,
+  "javascript_responses": 762,
+  "html_fallbacks_excluded": 674,
+  "other_non_javascript_responses": 0,
+  "http_failures": 0,
+  "literal_matches": {
+    "pantheon-dev-browser:viewer": 0,
+    "pantheon-dev-browser:operator": 0
+  }
+}
