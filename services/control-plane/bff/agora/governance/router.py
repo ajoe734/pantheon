@@ -403,9 +403,11 @@ def create_governance_router(
     router = APIRouter(tags=["agora-governance"])
     proposals = store or ProposalStore()
 
-    def scope(auth: Optional[str]):
+    def scope(auth: Optional[str], *, write: bool = False):
         identity = extract_identity(auth)
         require_read_role(identity)
+        if write:
+            require_write_role(identity)
         return identity, resolve_agora_user_scope(identity, utc_now=utc_now)
 
     def envelope(row: Dict[str, Any], response: Response) -> Dict[str, Any]:
@@ -439,8 +441,7 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: str = Header(alias="Idempotency-Key"),
     ):
-        identity, resolved = scope(authorization)
-        require_write_role(identity)
+        _, resolved = scope(authorization, write=True)
         now = utc_now()
         row = build_proposal_record(
             body,
@@ -507,8 +508,7 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
         if_match: str = Header(alias="If-Match"),
     ):
-        identity, resolved = scope(authorization)
-        require_write_role(identity)
+        identity, resolved = scope(authorization, write=True)
         current = proposals.get(proposal_id, resolved.tenant_id, resolved.user_id)
         if not current:
             raise bff_error(

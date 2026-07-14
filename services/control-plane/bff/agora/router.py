@@ -177,7 +177,11 @@ def create_agora_router(
         get_read_store=get_read_store,
         sync_servant_agent=sync_servant_agent,
     ))
-    router.include_router(create_strategy_workshop_router(**_kw, workshop_store=workshop_store))
+    router.include_router(create_strategy_workshop_router(
+        **_kw,
+        require_write_role=require_write_role,
+        workshop_store=workshop_store,
+    ))
     router.include_router(create_research_router(**_kw))
     router.include_router(create_trading_room_router(**_kw, workshop_store=workshop_store))
     router.include_router(create_dashboard_router(**_kw))
@@ -187,6 +191,7 @@ def create_agora_router(
     router.include_router(create_dataset_extraction_router(**_kw))
     router.include_router(create_interaction_router(
         **_kw,
+        require_write_role=require_write_role,
         get_read_store=get_read_store,
         workshop_store=workshop_store,
         proposal_store=proposal_store,
