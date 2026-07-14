@@ -16,7 +16,7 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-14T01:22:24.166021Z",
+    "evidence_cut_at": "2026-07-14T01:31:54.986177Z",
     "evidence_cut_semantics": "Capture-time code validation and recovery matrix checks.",
     "id": "LOOP-PROD-REC-001",
     "overall_admission": "pass",
@@ -70,7 +70,7 @@
         "conclusion": "All scenarios passed"
       }
     ],
-    "validated_at": "2026-07-14T01:22:24.166086Z",
+    "validated_at": "2026-07-14T01:31:54.986212Z",
     "validated_base_sha": "add901ad82d2e6dfeee1b813f5f66e1db5141e67",
     "validated_head_sha": "add901ad82d2e6dfeee1b813f5f66e1db5141e67"
   },
@@ -94,7 +94,7 @@
   },
   "hosted_readback": {
     "pre_deploy": {
-      "observed_at": "2026-07-14T01:22:24.166110Z",
+      "observed_at": "2026-07-14T01:31:54.986221Z",
       "status": "pass"
     }
   },
@@ -254,7 +254,7 @@
   "record_log": [
     {
       "sequence": 1,
-      "recorded_at": "2026-07-14T01:22:24.166130Z",
+      "recorded_at": "2026-07-14T01:31:54.986451Z",
       "kind": "implementation_review",
       "status": "pass",
       "actor": "Claude"
