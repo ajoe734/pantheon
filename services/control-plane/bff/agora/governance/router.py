@@ -391,6 +391,7 @@ def create_governance_router(
     *,
     extract_identity: Callable[..., Any],
     require_read_role: Callable[..., None],
+    require_write_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
     get_approval_decision: Callable[[str], Optional[Mapping[str, Any]]],
@@ -400,9 +401,11 @@ def create_governance_router(
     router = APIRouter(tags=["agora-governance"])
     proposals = store or ProposalStore()
 
-    def scope(auth: Optional[str]):
+    def scope(auth: Optional[str], *, write: bool = False):
         identity = extract_identity(auth)
         require_read_role(identity)
+        if write:
+            require_write_role(identity)
         return identity, resolve_agora_user_scope(identity, utc_now=utc_now)
 
     def envelope(row: Dict[str, Any], response: Response) -> Dict[str, Any]:
@@ -431,7 +434,7 @@ def create_governance_router(
 
     @router.post("/bff/agora/proposals", status_code=201)
     def create(body: ProposalCreate, response: Response, authorization: Optional[str] = Header(default=None), idempotency_key: str = Header(alias="Idempotency-Key")):
-        _, resolved = scope(authorization)
+        _, resolved = scope(authorization, write=True)
         now = utc_now()
         row = build_proposal_record(
             body,
@@ -461,7 +464,7 @@ def create_governance_router(
 
     @router.post("/bff/agora/proposals/{proposal_id}/actions")
     def act(proposal_id: str, body: ProposalAction, response: Response, authorization: Optional[str] = Header(default=None), if_match: str = Header(alias="If-Match")):
-        identity, resolved = scope(authorization)
+        identity, resolved = scope(authorization, write=True)
         current = proposals.get(proposal_id, resolved.tenant_id, resolved.user_id)
         if not current: raise HTTPException(404, detail="proposal not found")
         if current["state"] in {"approved", "rejected", "cancelled"}: raise HTTPException(409, detail="proposal is terminal")
