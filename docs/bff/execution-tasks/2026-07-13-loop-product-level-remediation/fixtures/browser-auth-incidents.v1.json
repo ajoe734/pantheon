@@ -9,7 +9,7 @@
     "pr",
     "expected_replay"
   ],
-  "immutable_projection_sha256": "6d0273539fb9b21ab1bf93eaeaedfb94aa5ee3512f584efff63952da52512d6c",
+  "immutable_projection_sha256": "358c9052afd1bc671a05bcedd39bd896df4599ace1b499d2809449d0344a7628",
   "diagnosis": {
     "observed_failure": "The fixed public-browser viewer subject was rejected by the hosted BFF before route RBAC because that BFF ran permissive auth while PR 3557 allowed the subject only in strict dev/local mode.",
     "reason_id": "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN",
@@ -73,7 +73,7 @@
         "head_sha": "55d21e5043d8286f8f8db0d0c36c7e0d66587f83",
         "head_tree_sha": "09e3e8483864956337060d6f8192b745e668ece3",
         "head_parent_shas": [
-          "c881c7f481f4810827893eab2485592c3bad909e"
+          "6bf4a9b5ec44116eabe3e7d1f40cd6fc653d5b40"
         ],
         "merge_sha": "79dc96fd55b5eb4f5091979f24ea2bb04bf7de74",
         "merge_tree_sha": "0dfa863597d3ea03f20b3c95814659ecaad2692e",

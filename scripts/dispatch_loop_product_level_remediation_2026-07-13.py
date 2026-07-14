@@ -116,7 +116,7 @@ LIVE_ADMISSION_MARKER_FIELDS = {
     "worker_run_id",
 }
 TASK_CONTRACT_FIELDS = REQUIRED_TASK_FIELDS - {"owner", "reviewer", "status", "next"}
-ACTIVITY_OUTBOX_SCHEMA_VERSION = 3
+ACTIVITY_OUTBOX_SCHEMA_VERSION = 4
 ACTIVITY_EVENT_TYPES = {
     "assign",
     "catalog_migration",
@@ -131,6 +131,7 @@ ACTIVITY_TRANSACTION_FIELDS = {
     "actor_policy",
     "actor_policy_sha256",
     "created_at",
+    "affected_state_projection",
     "affected_state_projection_sha256",
     "events",
 }
@@ -147,6 +148,7 @@ ACTIVITY_COMMON_EVENT_FIELDS = {
     "catalog_sha256",
     "transaction_id",
     "actor_policy_sha256",
+    "affected_state_projection_sha256",
 }
 ACTIVITY_EVENT_EXTRA_FIELDS = {
     "assign": {
@@ -652,7 +654,7 @@ EXPECTED_INCIDENT_PROJECTION_FIELDS = [
     "expected_replay",
 ]
 EXPECTED_INCIDENT_PROJECTION_SHA256 = (
-    "6d0273539fb9b21ab1bf93eaeaedfb94aa5ee3512f584efff63952da52512d6c"
+    "358c9052afd1bc671a05bcedd39bd896df4599ace1b499d2809449d0344a7628"
 )
 EXPECTED_ROUTE_ROW_KEY_FIELDS = [
     "method",
@@ -794,6 +796,70 @@ def _content_addressed_json(path: Path, expected_sha256: str) -> dict[str, Any]:
     return payload
 
 
+def _incident_git_text(*args: str) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise DispatchError("browser incident Git object verification is unavailable") from exc
+    if result.returncode != 0:
+        raise DispatchError(
+            "browser incident Git object verification failed: "
+            + " ".join(args[:2])
+        )
+    return result.stdout.strip()
+
+
+def validate_pantheon_incident_git_objects(rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        if row.get("repository") != "ajoe734/pantheon":
+            continue
+        fixture_id = str(row.get("fixture_id") or "")
+        pr = row.get("pr") or {}
+        head_sha = str(pr.get("head_sha") or "")
+        merge_sha = str(pr.get("merge_sha") or "")
+        if not _is_lower_hex(head_sha, 40) or not _is_lower_hex(merge_sha, 40):
+            raise DispatchError(f"{fixture_id} incident commit identity is invalid")
+        head_tree = _incident_git_text("show", "-s", "--format=%T", head_sha)
+        head_parents = _incident_git_text(
+            "show", "-s", "--format=%P", head_sha
+        ).split()
+        merge_tree = _incident_git_text("show", "-s", "--format=%T", merge_sha)
+        merge_parents = _incident_git_text(
+            "show", "-s", "--format=%P", merge_sha
+        ).split()
+        if (
+            head_tree != pr.get("head_tree_sha")
+            or head_parents != pr.get("head_parent_shas")
+            or merge_tree != pr.get("merge_tree_sha")
+            or merge_parents != pr.get("merge_parent_shas")
+        ):
+            raise DispatchError(
+                f"{fixture_id} incident Git commit tree/parent projection is false"
+            )
+        blobs = pr.get("postimage_blobs")
+        if not isinstance(blobs, list) or not blobs:
+            raise DispatchError(f"{fixture_id} incident postimage blob set is missing")
+        for blob in blobs:
+            if not isinstance(blob, dict) or set(blob) != {"path", "sha"}:
+                raise DispatchError(f"{fixture_id} incident postimage blob is invalid")
+            path = Path(str(blob["path"]))
+            if path.is_absolute() or ".." in path.parts:
+                raise DispatchError(f"{fixture_id} incident postimage path is invalid")
+            actual_blob = _incident_git_text(
+                "rev-parse",
+                f"{head_sha}:{blob['path']}",
+            )
+            if actual_blob != blob["sha"]:
+                raise DispatchError(
+                    f"{fixture_id} incident postimage blob projection is false"
+                )
+
+
 def validate_browser_incident_fixture(
     payload: dict[str, Any],
     reference: dict[str, Any],
@@ -814,6 +880,7 @@ def validate_browser_incident_fixture(
         or canonical_json_sha256(projection) != EXPECTED_INCIDENT_PROJECTION_SHA256
     ):
         raise DispatchError("browser incident immutable PR/tree/replay projection changed")
+    validate_pantheon_incident_git_objects(rows)
     by_id = {str(row["fixture_id"]): row for row in rows}
     duplicate = by_id["pantheon-pr-3588-zero-tree-duplicate-3557-revert"]
     effective = by_id["pantheon-pr-3587-effective-3557-revert"]
@@ -1983,17 +2050,7 @@ def load_runtime_lock_protocol(catalog: dict[str, Any]) -> ModuleType:
                 f"runtime lock capability merged blob mismatch: {relative_path}"
             )
 
-    override = str(os.environ.get("LOOP_PRODUCT_RUNTIME_PROTOCOL_MODULE") or "").strip()
-    if override:
-        if STATUS_ROOT == REPO_ROOT:
-            raise DispatchError("runtime protocol module override is forbidden on live state")
-        module_path = Path(override).expanduser().resolve()
-        try:
-            module_path.relative_to(STATUS_ROOT)
-        except ValueError as exc:
-            raise DispatchError("test runtime protocol override must stay under status root") from exc
-    else:
-        module_path = STATUS_ROOT / str(manifest["module_path"])
+    module_path = STATUS_ROOT / str(manifest["module_path"])
     module = _load_runtime_protocol_module(module_path)
     if (
         getattr(module, "RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_VERSION", None) != 1
@@ -2307,6 +2364,217 @@ def append_logs(entries: list[dict[str, Any]]) -> None:
         os.fsync(handle.fileno())
 
 
+def build_affected_state_projection(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    raw_events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    active_tasks = state.get("tasks")
+    if not isinstance(active_tasks, list):
+        raise DispatchError("affected-state projection requires an exact task list")
+    task_ids = [
+        str(task.get("id") or "")
+        for task in active_tasks
+        if isinstance(task, dict)
+    ]
+    if not all(task_ids) or len(task_ids) != len(set(task_ids)):
+        raise DispatchError("affected-state projection task identities are not exact")
+    active_by_id = {
+        str(task["id"]): task for task in active_tasks if isinstance(task, dict)
+    }
+    records = state.get("program_catalog_migrations") or []
+    if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
+        raise DispatchError("affected-state projection migration records are invalid")
+    records_by_id = {
+        str(record.get("id") or ""): record for record in records
+    }
+    if "" in records_by_id or len(records_by_id) != len(records):
+        raise DispatchError("affected-state projection migration IDs are not exact")
+    overlay_key = str(catalog["completion_authority"]["live_overlay_state_key"])
+    overlays = state.get(overlay_key) or {}
+    if not isinstance(overlays, dict):
+        raise DispatchError("affected-state projection completion overlay is invalid")
+    program_id = str(catalog["program_id"])
+    items: list[dict[str, Any]] = []
+    for event in raw_events:
+        event_type = str(event["type"])
+        task_id = str(event["task_id"])
+        if event_type == "assign":
+            task = active_by_id.get(task_id)
+            if not isinstance(task, dict):
+                raise DispatchError(f"affected assignment task is missing: {task_id}")
+            items.append(
+                {
+                    "event_type": event_type,
+                    "task_id": task_id,
+                    "task": deepcopy(task),
+                }
+            )
+        elif event_type == "catalog_migration":
+            task = active_by_id.get(task_id)
+            record = records_by_id.get(str(event["migration_id"]))
+            if not isinstance(task, dict) or not isinstance(record, dict):
+                raise DispatchError(
+                    f"affected migration task or record is missing: {task_id}"
+                )
+            items.append(
+                {
+                    "event_type": event_type,
+                    "task_id": task_id,
+                    "task": deepcopy(task),
+                    "migration_record": deepcopy(record),
+                }
+            )
+        elif event_type == "completion_authority_install":
+            overlay = overlays.get(program_id)
+            if not isinstance(overlay, dict):
+                raise DispatchError("affected completion overlay is missing")
+            items.append(
+                {
+                    "event_type": event_type,
+                    "task_id": task_id,
+                    "completion_overlay": deepcopy(overlay),
+                }
+            )
+        else:
+            raise DispatchError(f"unsupported affected-state event: {event_type}")
+    return {
+        "schema_version": 1,
+        "program_id": program_id,
+        "items": items,
+    }
+
+
+def validate_affected_state_projection(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    raw_events: list[dict[str, Any]],
+    projection: Any,
+    *,
+    require_exact_current: bool,
+) -> None:
+    program_id = str(catalog["program_id"])
+    if (
+        not isinstance(projection, dict)
+        or set(projection) != {"schema_version", "program_id", "items"}
+        or projection.get("schema_version") != 1
+        or projection.get("program_id") != program_id
+        or not isinstance(projection.get("items"), list)
+        or len(projection["items"]) != len(raw_events)
+    ):
+        raise DispatchError("program_activity_outbox affected-state schema is not exact")
+    active_tasks = state.get("tasks")
+    if not isinstance(active_tasks, list) or any(
+        not isinstance(task, dict) for task in active_tasks
+    ):
+        raise DispatchError("program_activity_outbox current task state is invalid")
+    active_ids = [str(task.get("id") or "") for task in active_tasks]
+    if not all(active_ids) or len(active_ids) != len(set(active_ids)):
+        raise DispatchError("program_activity_outbox current task IDs are not exact")
+    active_by_id = {str(task["id"]): task for task in active_tasks}
+    records = state.get("program_catalog_migrations") or []
+    if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
+        raise DispatchError("program_activity_outbox current migration state is invalid")
+    record_by_id = {str(record.get("id") or ""): record for record in records}
+    overlay_key = str(catalog["completion_authority"]["live_overlay_state_key"])
+    overlays = state.get(overlay_key) or {}
+    if not isinstance(overlays, dict):
+        raise DispatchError("program_activity_outbox current overlay state is invalid")
+    for event, item in zip(raw_events, projection["items"], strict=True):
+        event_type = str(event["type"])
+        task_id = str(event["task_id"])
+        common = {"event_type", "task_id"}
+        expected_fields = (
+            common | {"task"}
+            if event_type == "assign"
+            else common | {"task", "migration_record"}
+            if event_type == "catalog_migration"
+            else common | {"completion_overlay"}
+        )
+        if (
+            not isinstance(item, dict)
+            or set(item) != expected_fields
+            or item.get("event_type") != event_type
+            or item.get("task_id") != task_id
+        ):
+            raise DispatchError("program_activity_outbox affected-state item is not exact")
+        if event_type in {"assign", "catalog_migration"}:
+            snapshot_task = item.get("task")
+            current_task = active_by_id.get(task_id)
+            if (
+                not isinstance(snapshot_task, dict)
+                or snapshot_task.get("id") != task_id
+                or not isinstance(current_task, dict)
+            ):
+                raise DispatchError(
+                    f"program_activity_outbox affected task is missing: {task_id}"
+                )
+            if event_type == "assign":
+                if (
+                    snapshot_task.get("owner") != event.get("assigned_owner")
+                    or snapshot_task.get("reviewer") != event.get("assigned_reviewer")
+                    or snapshot_task.get("created_at") != event.get("created_at")
+                    or task_contract_sha256(snapshot_task)
+                    != event.get("task_contract_sha256")
+                    or canonical_json_sha256(snapshot_task.get("source_ref"))
+                    != event.get("source_ref_sha256")
+                    or task_contract_sha256(current_task)
+                    != event.get("task_contract_sha256")
+                    or canonical_json_sha256(current_task.get("source_ref"))
+                    != event.get("source_ref_sha256")
+                ):
+                    raise DispatchError(
+                        f"program_activity_outbox assignment state drift: {task_id}"
+                    )
+            else:
+                record = item.get("migration_record")
+                current_record = record_by_id.get(str(event.get("migration_id")))
+                patches = record.get("patches") if isinstance(record, dict) else None
+                matching_patch = next(
+                    (
+                        patch
+                        for patch in patches or []
+                        if isinstance(patch, dict) and patch.get("task_id") == task_id
+                    ),
+                    None,
+                )
+                if (
+                    not isinstance(record, dict)
+                    or record.get("id") != event.get("migration_id")
+                    or canonical_json_sha256(record)
+                    != event.get("migration_record_sha256")
+                    or current_record != record
+                    or not isinstance(matching_patch, dict)
+                    or matching_patch.get("before_task_contract_sha256")
+                    != event.get("before_task_contract_sha256")
+                    or matching_patch.get("after_task_contract_sha256")
+                    != event.get("after_task_contract_sha256")
+                    or task_contract_sha256(snapshot_task)
+                    != event.get("after_task_contract_sha256")
+                    or task_contract_sha256(current_task)
+                    != event.get("after_task_contract_sha256")
+                ):
+                    raise DispatchError(
+                        f"program_activity_outbox migration state drift: {task_id}"
+                    )
+            if require_exact_current and current_task != snapshot_task:
+                raise DispatchError(
+                    f"program_activity_outbox proposed task snapshot changed: {task_id}"
+                )
+        else:
+            overlay = item.get("completion_overlay")
+            current_overlay = overlays.get(program_id)
+            if (
+                not isinstance(overlay, dict)
+                or canonical_json_sha256(overlay)
+                != event.get("completion_overlay_sha256")
+                or overlay.get("completion_authority_sha256")
+                != event.get("completion_authority_sha256")
+                or current_overlay != overlay
+            ):
+                raise DispatchError("program_activity_outbox completion overlay drift")
+
+
 def enqueue_activity_outbox(
     state: dict[str, Any],
     entries: list[dict[str, Any]],
@@ -2365,7 +2633,14 @@ def enqueue_activity_outbox(
 
     created_at = min(str(entry["ts"]) for entry in raw_events)
     actor_policy_sha256 = canonical_json_sha256(actor_policy)
-    affected_state_projection_sha256 = canonical_json_sha256(raw_events)
+    affected_state_projection = build_affected_state_projection(
+        state,
+        catalog,
+        raw_events,
+    )
+    affected_state_projection_sha256 = canonical_json_sha256(
+        affected_state_projection
+    )
     transaction_seed = {
         "schema_version": ACTIVITY_OUTBOX_SCHEMA_VERSION,
         "program_id": program_id,
@@ -2374,6 +2649,7 @@ def enqueue_activity_outbox(
         "actor_policy": actor_policy,
         "actor_policy_sha256": actor_policy_sha256,
         "created_at": created_at,
+        "affected_state_projection": affected_state_projection,
         "affected_state_projection_sha256": affected_state_projection_sha256,
         "raw_events": raw_events,
     }
@@ -2388,6 +2664,9 @@ def enqueue_activity_outbox(
             "catalog_sha256": catalog_digest,
             "transaction_id": transaction_id,
             "actor_policy_sha256": actor_policy_sha256,
+            "affected_state_projection_sha256": (
+                affected_state_projection_sha256
+            ),
         }
         event["event_id"] = "loop-product-event-" + canonical_json_sha256(event)
         prepared.append(event)
@@ -2400,6 +2679,7 @@ def enqueue_activity_outbox(
         "actor_policy": actor_policy,
         "actor_policy_sha256": actor_policy_sha256,
         "created_at": created_at,
+        "affected_state_projection": affected_state_projection,
         "affected_state_projection_sha256": affected_state_projection_sha256,
         "events": prepared,
     }
@@ -2470,6 +2750,12 @@ def validate_activity_outbox(
             raise DispatchError("program_activity_outbox transaction binding mismatch")
         if entry.get("actor_policy_sha256") != pending.get("actor_policy_sha256"):
             raise DispatchError("program_activity_outbox actor policy event mismatch")
+        if entry.get("affected_state_projection_sha256") != pending.get(
+            "affected_state_projection_sha256"
+        ):
+            raise DispatchError(
+                "program_activity_outbox affected-state event binding mismatch"
+            )
         if not isinstance(event_id, str) or not event_id.strip() or event_id in event_ids:
             raise DispatchError("program_activity_outbox event_id is missing or duplicated")
         if any(not isinstance(entry.get(field), str) or not str(entry.get(field)).strip()
@@ -2531,10 +2817,18 @@ def validate_activity_outbox(
         expected_event_id = "loop-product-event-" + canonical_json_sha256(expected_event)
         if event_id != expected_event_id:
             raise DispatchError("program_activity_outbox event_id binding mismatch")
+    affected_state_projection = pending.get("affected_state_projection")
     if pending.get("affected_state_projection_sha256") != canonical_json_sha256(
-        raw_events
+        affected_state_projection
     ):
         raise DispatchError("program_activity_outbox affected-state binding mismatch")
+    validate_affected_state_projection(
+        state,
+        catalog,
+        raw_events,
+        affected_state_projection,
+        require_exact_current=require_current_catalog,
+    )
     transaction_seed = {
         "schema_version": ACTIVITY_OUTBOX_SCHEMA_VERSION,
         "program_id": expected_program,
@@ -2543,6 +2837,7 @@ def validate_activity_outbox(
         "actor_policy": actor_policy,
         "actor_policy_sha256": pending["actor_policy_sha256"],
         "created_at": pending["created_at"],
+        "affected_state_projection": affected_state_projection,
         "affected_state_projection_sha256": pending[
             "affected_state_projection_sha256"
         ],
@@ -3130,7 +3425,10 @@ def validate_checkpoint_consumptions(
     policy = catalog["completion_authority"].get("dispatcher_pre_completion_policy")
     if policy != "reject_preexisting_consumption_or_program_completed":
         raise DispatchError("dispatcher pre-completion policy is not exact")
-    if records not in (None, {}) or state.get("program_completed") is True:
+    program_completed = state.get("program_completed")
+    if records not in (None, {}) or (
+        program_completed is not None and program_completed is not False
+    ):
         raise DispatchError(
             "preexisting program completion or checkpoint consumption requires the "
             "protected LOOP-PROD-CLOSE-002 verifier; initial dispatcher refuses it"
