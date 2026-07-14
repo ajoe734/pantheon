@@ -1,7 +1,7 @@
 # AG-UIPOL-007: Multi-lens monitoring and candidate parity
 
-Status: delivered and reviewer-approved; owner closeout evidence in progress
-on 2026-07-14.
+Status: delivered and reviewer-approved; owner closeout evidence captured on
+2026-07-14.
 
 Priority: 4 — continuous monitoring around the generated strategy workspace.
 

@@ -7,7 +7,7 @@ merged into `dev`.
 ## Task
 
 - Title: Trading Room multi-lens monitoring and candidate parity
-- Status: review_approved (owner closeout in progress)
+- Status: done (closeout)
 - Owner: Codex
 - Reviewer: Claude
 - Review artifact: `support/reviews/AG-UIPOL-007-review-claude.md`
@@ -37,8 +37,8 @@ materialized in Pantheon.
 - Claude's round-4 verdict is **Approved**.
 - Focused component, i18n, typecheck, targeted lint, and safe live/strict
   production-build results are recorded in the hosted evidence artifact.
-- The final hosted deployment identity and desktop/narrow browser captures will
-  be recorded in
+- The final hosted deployment identity and desktop/narrow browser captures are
+  recorded in
   `docs/bff/execution-tasks/2026-07-13-agora-ui-polish/evidence/AG-UIPOL-007-hosted-evidence.md`.
 
 ## Truth and authority boundary
