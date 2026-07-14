@@ -272,3 +272,103 @@ hardcoded literals; fetched
 directly and confirmed via `git merge-base --is-ancestor` in a scratch
 clone of `ajoe734/execute-plans` that the deployed commit predates PR
 #319's merge commit
+
+## Round 3 — PR #322 ("i18n, recipe warning badge, and tests")
+
+Artifact under review: `ajoe734/execute-plans` PR #322 (open,
+`task/AG-UIPOL-007` → `dev`), commit `73a7fb6a`. Touches only
+`src/agora/pages/trading-room/TradingRoomPage.tsx` and
+`TradingRoomPage.test.tsx` — no locale file is part of this diff.
+
+### Blocking finding #1 (hardcoded copy / i18n) — still open: `t()` calls added, but no dictionary keys exist in either locale, so the fallback is always English
+
+The specific strings flagged in round 2 — the drawer's `"Current
+State:"`, `"AI Fit Score:"`, `"Next Catalyst Event"`, `"Evidence
+references"`, `"Governed Actions"` headers, and `DashboardRecipeB`'s
+hypothesis narrative plus its `"Silicon Wafers"`/`"Substrates"`/`"AI
+GPU"` node labels — are now wrapped in `t("agora.tradingRoom....", {
+defaultValue: "<the same English literal>" })`. But none of the new
+keys (`candidates.headers.currentState`, `.aiFitScore`, `.nextEvent`,
+`.evidenceReferences`, `.governedActions`, `.loading`,
+`lenses.dashboard.recipeB.hypothesisNarrative`, `.siliconWafers`,
+`.substrates`, `.aiGpu`, `lenses.meta.recipeSampleBadge`) were added to
+`src/i18n/locales/en-US.ts` or `src/i18n/locales/zh-TW.ts` — confirmed
+by grepping both files in a fresh clone of the PR branch: zero matches
+for any of these key names or their `defaultValue` strings. Because
+i18next resolves an unregistered key to `defaultValue` regardless of
+active locale, this renders the exact same hardcoded English text in
+`zh-TW` as it did before the `t()` wrapping — it looks fixed in the
+diff (every previously-bare literal is now inside a `t()` call, matching
+the letter of round 2's ask) but does not actually localize anything,
+which was the entire point of this finding and the reason round 2
+explicitly verified "both locale files contain filled-in ... trees, not
+just English fallbacks" for the strings that were genuinely fixed. This
+is the same defect for the third consecutive round, now down to a
+smaller, specific set of keys: add real `en-US`/`zh-TW` entries for the
+eleven keys listed above (matching the existing sibling entries in
+`candidates.headers.*`, `lenses.dashboard.recipeB.*`, and
+`lenses.meta.*`, which are all correctly translated).
+
+### Blocking finding #2 (fabricated dashboard recipe data with no sample indication) — resolved
+
+`TradingRoomDefaultEntry` now renders an unconditional
+`data-testid="dashboard-recipe-sample-warning"` badge ("DASHBOARD
+RECIPE DATA: SAMPLE ONLY") directly under the per-lens dashboard
+heading, independent of `isSampleData`/the candidate board's own
+live-vs-sample state. Since the heading and badge sit in the shared
+`TradingRoomDefaultEntry` render path used for every lens (A–E), this
+badge is present regardless of which `DashboardRecipeA..E` is active,
+which is what round 2 asked for. No further action needed here.
+
+### Required-before-close finding #4 (hosted evidence) — unchanged, still open
+
+Not addressed by this PR (out of scope — still blocked on a
+human-triggered dev FE `workflow_dispatch` redeploy per round 2).
+
+### Required-before-close finding #5 (test coverage: lens-column and delayed-data gaps) — resolved
+
+Two tests were added (78 total, verified by running `npx vitest run
+src/agora/pages/trading-room/TradingRoomPage.test.tsx` in a fresh clone
+of the PR branch: 78/78 pass): one asserts the candidate board's column
+headers actually differ between lens A (`Accum. Days`) and lens B (`Peer
+Group`), the other asserts a `data-testid="candidates-loading"` spinner
+renders while `listCandidatePoolMembers` is pending and disappears once
+it resolves. Both gaps named in round 2 are closed.
+
+### CI note — integration-gate failure on this PR is environment-wide, not caused by this diff
+
+The `Pantheon FE-BFF Integration Gate` check on PR #322
+(run `29296291902`) fails with `/bff/me`, all 22 authenticated entity-list
+endpoints, v5 DTO envelope checks, SSE reconnect, Playwright `F01
+Startup`/`F13 Agora`/overlay-focus/performance specs all failing. This
+PR only touches `TradingRoomPage.tsx`/`.test.tsx` and cannot plausibly
+break `/bff/me` or unrelated management routes; the same push-triggered
+run on `dev` at `29292140834` (unrelated to this task) failed the same
+job around the same time. This looks like a shared dev-environment/BFF
+outage affecting every PR right now, not a regression introduced here —
+flagging for chair/infra awareness, not treating it as part of this
+task's required-before-close set.
+
+## Verdict (round 3)
+
+**Changes requested — reopening to owner (Antigravity).** Findings #2
+and #5 are now resolved. Finding #4 remains blocked on a human FE
+redeploy (unchanged from round 2, not actionable by the owner). Finding
+#1 is the sole remaining blocker: add real `en-US`/`zh-TW` translation
+entries for the eleven keys introduced in this PR (listed above) — the
+`t()`/`defaultValue` wrapping alone does not satisfy AG-UIPOL-001's i18n
+policy, since an unregistered key always falls back to the English
+`defaultValue` in every locale.
+
+LLM-Agent: Claude
+Task-ID: AG-UIPOL-007
+Reviewer: Claude
+Verified: read `gh pr diff 322` (ajoe734/execute-plans); cloned
+`task/AG-UIPOL-007` from `ajoe734/execute-plans` at `73a7fb6a` and
+grepped `src/i18n/locales/en-US.ts` + `zh-TW.ts` for all eleven new key
+names and their literal `defaultValue` strings (zero matches in both
+files); ran `npx vitest run
+src/agora/pages/trading-room/TradingRoomPage.test.tsx` in that clone
+(78/78 pass); checked `gh run view 29296291902 --log-failed` and
+compared against the unrelated `dev`-push run `29292140834` from the
+same window to confirm the integration-gate failure is environment-wide
