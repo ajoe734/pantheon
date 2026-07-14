@@ -39,6 +39,7 @@ def clean_store(monkeypatch):
             return None
 
     monkeypatch.setattr("services.incidents.main.reference_validator", _AcceptAllValidator())
+    monkeypatch.setattr("services.incidents.main._publish_to_postmortems_if_resolved", lambda incident_id: None)
     _reset_store()
     yield
     _reset_store()
@@ -209,6 +210,20 @@ def test_threshold_consumer_fixture_creates_incident_case():
     assert incident.telemetry_event_ids == [telemetry["event_id"]]
     assert "threshold_metric=rolling_drawdown_multiple" in (incident.evidence_summary or "")
     assert store.get_incident(payload["incident_id"]) is not None
+
+
+def test_threshold_consumer_preserves_dedupe_key_note_in_evidence_summary():
+    """The producer's dedupe_key audit note must survive into canonical
+    incident evidence, not be dropped (round-2 review point 4)."""
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-dedupe-key-evidence"
+    payload["threshold_snapshot"]["note"] = "dedupe_key=rb-evochain-001:rolling_drawdown_multiple:paper-daily-sweep:2026-07-13"
+    result = ThresholdTelemetryIncidentConsumer(incident_store=store).consume(payload)
+
+    assert result.created is True
+    assert "dedupe_key=rb-evochain-001:rolling_drawdown_multiple:paper-daily-sweep:2026-07-13" in (
+        result.incident.evidence_summary or ""
+    )
 
 
 def test_consume_threshold_route_creates_incident_case():

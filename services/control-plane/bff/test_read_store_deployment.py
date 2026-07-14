@@ -242,6 +242,10 @@ def test_canonical_overlay():
             assert runtime is not None
             assert runtime["deployment_stage"] == "paper"
             assert runtime["plan_id"] == "plan-live-001"
+            assert runtime["persona_id"] == "persona-live-001"
+
+            runtime_list = store.list_runtime_bindings()
+            assert runtime_list[0]["persona_id"] == "persona-live-001"
 
             review = store.get_review_summary("plan-live-001")
             assert review["governanceOutcome"] == "approved"

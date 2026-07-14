@@ -1362,57 +1362,15 @@ def validate_loop_completion_claim(task: dict[str, Any]) -> None:
     """Gate the done transition for loop-autopilot tasks.
 
     Raises SystemExit with a descriptive message when the task's evidence
-    fields are insufficient to support the done claim.  Specifically:
-
-    - If non_goals includes 'No panel-only closure', a review_file must have
-      been set by the reviewer during the approve step.
-    - If non_goals includes 'No seed fixture as live proof', the review notes
-      must not claim that a seed/fixture or panel copy is the live proof.
-    - If proof_required is non-empty, a review_file must be present so that
-      the reviewer's evidence is machine-readable.
-
-    This check does not run for tasks that are not loop-autopilot tasks
-    (i.e. tasks without loop_ids or the canonical non_goals).
+    fields are insufficient to support the done claim.
     """
-    if not is_loop_autopilot_task(task):
-        return
-
-    task_id = task.get("id", "?")
-    non_goals: set[str] = set(task.get("non_goals") or [])
-    proof_required: list[str] = task.get("proof_required") or []
-    review_file = str(task.get("review_file") or "").strip()
-
-    # Rule 1: panel-only closure prohibition requires a review evidence file.
-    if "No panel-only closure" in non_goals and not review_file:
+    import loop_done_guardrail
+    gaps = loop_done_guardrail.check_task(task)
+    if gaps:
+        task_id = task.get("id", "?")
         raise SystemExit(
-            f"Loop task {task_id} done claim rejected: non_goal 'No panel-only closure' requires "
-            "a review_file referencing controller liveness evidence.  "
-            "The reviewer must set REVIEW_FILE=<evidence-path> when running the approve command."
-        )
-
-    # Rule 2: seed/fixture as live proof is explicitly disallowed.
-    if "No seed fixture as live proof" in non_goals:
-        review_notes: list[str] = task.get("review_notes_zh") or []
-        if isinstance(review_notes, str):
-            review_notes = [review_notes]
-        combined = " ".join(str(n) for n in review_notes).lower()
-        flagged = next((sig for sig in _FIXTURE_ONLY_SIGNALS if sig in combined), None)
-        if flagged:
-            raise SystemExit(
-                f"Loop task {task_id} done claim rejected: review notes contain '{flagged}', "
-                "which violates non_goal 'No seed fixture as live proof'.  "
-                "Provide controller liveness evidence before closing."
-            )
-
-    # Rule 3: tasks with explicit proof_required must have a review_file so the
-    # evidence chain is traceable.
-    if proof_required and not review_file:
-        sample = ", ".join(f'"{p}"' for p in proof_required[:2])
-        suffix = " ..." if len(proof_required) > 2 else ""
-        raise SystemExit(
-            f"Loop task {task_id} done claim rejected: task requires proof ({sample}{suffix}) "
-            "but no review_file was recorded during approval.  "
-            "The reviewer must set REVIEW_FILE=<evidence-path> when running the approve command."
+            f"Loop task {task_id} done claim rejected:\n" +
+            "\n".join(f"  ✗ {gap}" for gap in gaps)
         )
 
 

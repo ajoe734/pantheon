@@ -24,6 +24,8 @@ from command_executor import (
     _execute_approve_mutation,
     _execute_evolution_action,
     _execute_reject_mutation,
+    _execute_review_mutation,
+    _execute_execute_mutation,
     _execute_remediate_sentinel_intervention,
     _execute_restart_paper_runtime,
     _execute_restart_telemetry_bridge,
@@ -528,6 +530,89 @@ class TestMutationReviewExecutors(unittest.TestCase):
                 "actor_id": "op-operator",
                 "actor_role": "operator",
                 "note": "Risk evidence still incomplete",
+            },
+            auth_token=auth_token,
+            mfa_token=None,
+        )
+
+    @patch("command_executor._post_json")
+    def test_review_mutation_governance_api(self, mock_post):
+        mock_post.return_value = {
+            "decision_id": "evo-dec-88f3a2c1",
+            "decision_state": "reviewed",
+            "approval_decision_id": "appr-dec-c5a9f11e",
+            "risk_level": "medium",
+            "decided_at": "2026-04-18T11:05:00Z",
+        }
+        auth_token = "op-reviewer:reviewer"
+        result = _execute_review_mutation(
+            "cmd-mutation-review",
+            {
+                "decision_id": "evo-dec-88f3a2c1",
+                "approval_decision_id": "appr-dec-c5a9f11e",
+                "note": "Slippage drift confirmed",
+            },
+            auth_token=auth_token,
+        )
+        self.assertEqual(result["decision_id"], "evo-dec-88f3a2c1")
+        self.assertEqual(result["new_state"], "reviewed")
+        self.assertEqual(result["approval_decision_id"], "appr-dec-c5a9f11e")
+        self.assertTrue(result["command_accepted"])
+        mock_post.assert_called_once_with(
+            "http://localhost:5001/api/evolution/proposals/evo-dec-88f3a2c1/review",
+            {
+                "actor_id": "op-reviewer",
+                "actor_role": "reviewer",
+                "approval_decision_id": "appr-dec-c5a9f11e",
+                "note": "Slippage drift confirmed",
+            },
+            auth_token=auth_token,
+            mfa_token=None,
+        )
+
+    def test_review_mutation_requires_approval_decision_id(self):
+        with self.assertRaises(ValueError):
+            _execute_review_mutation(
+                "cmd-mutation-review-missing",
+                {"decision_id": "evo-dec-88f3a2c1"},
+                auth_token="op-reviewer:reviewer",
+            )
+
+    @patch("command_executor._post_json")
+    def test_execute_mutation_governance_api(self, mock_post):
+        mock_post.return_value = {
+            "decision_id": "evo-dec-88f3a2c1",
+            "decision_state": "executed",
+            "execution_result": {
+                "status": "succeeded",
+                "plane": "governance",
+                "executed_at": "2026-04-19T07:00:00Z",
+                "execution_ref_id": "dispatch-evo-dec-88f3a2c1",
+            },
+            "cooldown_ends_at": "2026-04-22T07:00:00Z",
+            "observation_window_ends_at": "2026-04-26T07:00:00Z",
+        }
+        auth_token = "op-operator:operator"
+        result = _execute_execute_mutation(
+            "cmd-mutation-execute",
+            {
+                "decision_id": "evo-dec-88f3a2c1",
+                "freeze_mode": "governance_only",
+                "note": "Executing approved freeze",
+            },
+            auth_token=auth_token,
+        )
+        self.assertEqual(result["decision_id"], "evo-dec-88f3a2c1")
+        self.assertEqual(result["new_state"], "executed")
+        self.assertEqual(result["execution_ref_id"], "dispatch-evo-dec-88f3a2c1")
+        self.assertTrue(result["command_accepted"])
+        mock_post.assert_called_once_with(
+            "http://localhost:5001/api/evolution/proposals/evo-dec-88f3a2c1/execute",
+            {
+                "actor_id": "op-operator",
+                "actor_role": "operator",
+                "freeze_mode": "governance_only",
+                "note": "Executing approved freeze",
             },
             auth_token=auth_token,
             mfa_token=None,

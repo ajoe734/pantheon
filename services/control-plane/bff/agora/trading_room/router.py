@@ -381,15 +381,20 @@ _WINNER_BRANCH_VIEW_IDS = _GENERATOR_WINNER_BRANCH_VIEW_IDS
 
 _VIEW_ALLOWED_FIELDS = frozenset({
     "id",
+    "viewKind",
     "title",
+    "titleKey",
     "purpose",
+    "purposeKey",
     "order",
     "layoutTemplate",
     "thumbnailRef",
     "widgetCount",
     "rationale",
+    "rationaleKey",
     "dataAvailability",
     "warnings",
+    "warningCodes",
     "widgets",
 })
 
@@ -397,9 +402,13 @@ _WIDGET_ALLOWED_FIELDS = frozenset({
     "id",
     "widgetType",
     "title",
+    "titleKey",
     "purpose",
+    "purposeKey",
     "whyIncluded",
+    "whyIncludedKey",
     "dataSource",
+    "dataAvailability",
     "query",
     "chartSpec",
     "interactions",
@@ -429,6 +438,49 @@ _LAYOUT_OPS = frozenset({
     "replace_chart_spec",
     "update_widget_query",
 })
+
+_DATA_AVAILABILITY_VALUES = frozenset({"full", "partial", "missing"})
+
+# Widget-revision preview vocabulary used before the full/partial/missing
+# rename; persisted proposals or an out-of-date caller may still send these.
+_LEGACY_DATA_AVAILABILITY_ALIASES = {
+    "complete": "full",
+    "unavailable": "missing",
+}
+
+
+def _normalize_data_availability_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _LEGACY_DATA_AVAILABILITY_ALIASES.get(value.strip().lower(), value)
+    return value
+
+
+def _normalize_widget_data_availability(widget: Dict[str, Any]) -> None:
+    if "dataAvailability" in widget:
+        widget["dataAvailability"] = _normalize_data_availability_value(widget["dataAvailability"])
+
+
+def _normalize_views_legacy_data_availability(views: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Migrate persisted pre-rename complete/unavailable dataAvailability values
+    to full/missing wherever a raw store record surfaces them (workspace load,
+    version rollback), so legacy records don't 422 on unrelated mutations that
+    revalidate the whole view."""
+    for view in views:
+        if "dataAvailability" in view:
+            view["dataAvailability"] = _normalize_data_availability_value(view["dataAvailability"])
+        for widget in view.get("widgets") or []:
+            _normalize_widget_data_availability(widget)
+    return views
+
+
+def _normalize_revision_proposal_legacy_data_availability(proposal: Dict[str, Any]) -> Dict[str, Any]:
+    if "dataAvailability" in proposal:
+        proposal["dataAvailability"] = _normalize_data_availability_value(proposal["dataAvailability"])
+    for spec_key in ("beforeSpec", "proposedSpec"):
+        spec = proposal.get(spec_key)
+        if isinstance(spec, dict):
+            _normalize_widget_data_availability(spec)
+    return proposal
 
 
 def _stable_hash(payload: Any) -> str:
@@ -782,7 +834,13 @@ def _validate_placement(value: Any) -> List[str]:
     return errors
 
 
-def _validate_widget(widget: Any, *, now: str, path: str = "widget") -> List[str]:
+def _validate_widget(
+    widget: Any,
+    *,
+    now: str,
+    path: str = "widget",
+    require_data_availability: bool = False,
+) -> List[str]:
     if not isinstance(widget, dict):
         return [f"{path} must be an object"]
     errors: List[str] = []
@@ -804,6 +862,8 @@ def _validate_widget(widget: Any, *, now: str, path: str = "widget") -> List[str
         )
         if key not in widget
     ]
+    if require_data_availability and "dataAvailability" not in widget:
+        missing.append("dataAvailability")
     if missing:
         errors.append(f"{path} missing required fields: {missing}")
     extra = set(widget) - _WIDGET_ALLOWED_FIELDS
@@ -811,6 +871,8 @@ def _validate_widget(widget: Any, *, now: str, path: str = "widget") -> List[str
         errors.append(f"{path} has unsupported fields: {sorted(extra)}")
     if any(isinstance(widget.get(key), str) and not widget.get(key).strip() for key in ("id", "widgetType", "title")):
         errors.append(f"{path}.id/widgetType/title must be non-empty")
+    if "dataAvailability" in widget and widget.get("dataAvailability") not in _DATA_AVAILABILITY_VALUES:
+        errors.append(f"{path}.dataAvailability must be one of {sorted(_DATA_AVAILABILITY_VALUES)}")
     errors.extend(_validate_placement(widget.get("placement")))
     errors.extend(_validate_size_object(widget.get("minSize"), path=f"{path}.minSize"))
     errors.extend(_validate_size_object(widget.get("maxSize"), path=f"{path}.maxSize"))
@@ -826,7 +888,13 @@ def _validate_widget(widget: Any, *, now: str, path: str = "widget") -> List[str
     return errors
 
 
-def _validate_view(view: Any, *, now: str, path: str = "view") -> List[str]:
+def _validate_view(
+    view: Any,
+    *,
+    now: str,
+    path: str = "view",
+    require_data_availability: bool = False,
+) -> List[str]:
     if not isinstance(view, dict):
         return [f"{path} must be an object"]
     errors: List[str] = []
@@ -834,6 +902,8 @@ def _validate_view(view: Any, *, now: str, path: str = "view") -> List[str]:
         key for key in ("id", "title", "purpose", "order", "layoutTemplate", "widgets")
         if key not in view
     ]
+    if require_data_availability and "dataAvailability" not in view:
+        missing.append("dataAvailability")
     if missing:
         errors.append(f"{path} missing required fields: {missing}")
     extra = set(view) - _VIEW_ALLOWED_FIELDS
@@ -841,24 +911,210 @@ def _validate_view(view: Any, *, now: str, path: str = "view") -> List[str]:
         errors.append(f"{path} has unsupported fields: {sorted(extra)}")
     if "order" in view and (not isinstance(view.get("order"), int) or view["order"] < 1):
         errors.append(f"{path}.order must be a positive integer")
+    if "dataAvailability" in view and view.get("dataAvailability") not in _DATA_AVAILABILITY_VALUES:
+        errors.append(f"{path}.dataAvailability must be one of {sorted(_DATA_AVAILABILITY_VALUES)}")
     widgets = view.get("widgets") or []
     if not isinstance(widgets, list):
         errors.append(f"{path}.widgets must be an array")
     else:
         for index, widget in enumerate(widgets):
-            errors.extend(_validate_widget(widget, now=now, path=f"{path}.widgets[{index}]"))
+            errors.extend(
+                _validate_widget(
+                    widget,
+                    now=now,
+                    path=f"{path}.widgets[{index}]",
+                    require_data_availability=require_data_availability,
+                )
+            )
         if "widgetCount" in view and view.get("widgetCount") != len(widgets):
             errors.append(f"{path}.widgetCount must equal widgets length")
     return errors
 
 
+_WARNING_TEXT_TO_CODE = {
+    "Some branch relationships and migration data use inferred confidence.": "inferred_confidence",
+    "Restricted relationship graph data is shown as evidence-strength context only.": "restricted_relationship_context",
+    "Event lead views state statistical association only.": "statistical_association_only",
+    "Position data is scoped to the current trader and remains decision-support only.": "trader_scoped_decision_support",
+}
+
+
 def _normalize_view(view: Dict[str, Any]) -> Dict[str, Any]:
     normalized = copy.deepcopy(view)
     widgets = normalized.get("widgets") or []
+    view_key = f"agora.tradingRoom.views.{normalized['id']}"
+    normalized.setdefault("viewKind", normalized["id"])
+    normalized.setdefault("titleKey", f"{view_key}.title")
+    normalized.setdefault("purposeKey", f"{view_key}.purpose")
+    normalized.setdefault("rationaleKey", f"{view_key}.rationale")
+
+    warning_codes = []
+    for index, warning in enumerate(normalized.get("warnings") or []):
+        code = _WARNING_TEXT_TO_CODE.get(warning)
+        if not code:
+            code = f"{normalized['id']}.warning.{index + 1}"
+        warning_codes.append(code)
+    normalized.setdefault("warningCodes", warning_codes)
+    if "dataAvailability" in normalized:
+        normalized["dataAvailability"] = _normalize_data_availability_value(normalized["dataAvailability"])
+    for widget in widgets:
+        widget_key = f"agora.tradingRoom.widgets.{widget['id']}"
+        widget.setdefault("titleKey", f"{widget_key}.title")
+        widget.setdefault("purposeKey", f"{widget_key}.purpose")
+        widget.setdefault("whyIncludedKey", f"{widget_key}.whyIncluded")
+        _normalize_widget_data_availability(widget)
     normalized["widgetCount"] = len(widgets)
     normalized.setdefault("warnings", [])
-    normalized.setdefault("dataAvailability", "partial")
     return normalized
+
+
+def _workspace_data_freshness(
+    *,
+    store: TradingRoomStore,
+    strategy_id: str,
+    evidence_refs: List[str],
+    reported: Dict[str, Any],
+    tenant_id: str,
+    user_id: str,
+    workshop_store: Optional[Any] = None,
+    assessed_at: str = "",
+) -> Dict[str, Any]:
+    """Combine caller source-health evidence with locally queryable surfaces.
+
+    Every key in the result is assigned from local BFF truth, never from
+    ``reported`` -- a caller cannot forge ``full``/``partial`` for any
+    source. Sources this deployment has no local verification path for
+    (workshop store unwired, or one of the nine source families the BFF
+    does not query at all) are conservatively reported as ``missing``
+    rather than trusting caller-supplied health.
+    """
+    resolved = copy.deepcopy(reported)
+    events = store.list_decision_events(page_size=10_000).get("items") or []
+    strategy_events = [
+        event
+        for event in events
+        if str((event.get("subject") or {}).get("strategy_id") or event.get("strategy_id") or "")
+        == strategy_id
+    ]
+    resolved["agora.trading.events"] = {
+        "wired": True,
+        "rowCount": len(strategy_events),
+        "reason": "scoped TradingRoomStore decision-event query",
+    }
+    has_ready_strategy = False
+    verified_evidence_ref_ids: Optional[set] = None
+    if workshop_store is not None and hasattr(workshop_store, "list_sessions"):
+        verified_evidence_ref_ids = set()
+        matched_sessions: List[Dict[str, Any]] = []
+        cursor: Optional[str] = None
+        # Page through every session in scope and collect every session that
+        # matches this strategy_id -- a matching session may not be on the
+        # first page, and the caller's own strategy may have more than one
+        # session (e.g. an older non-ready session alongside a newer ready
+        # one), so stopping at the first match found can hide a later ready
+        # session behind an earlier non-ready one.
+        for _ in range(1000):  # hard bound against a runaway/looping cursor
+            try:
+                page, cursor = workshop_store.list_sessions(
+                    user_id=user_id,
+                    tenant_id=tenant_id,
+                    status=None,
+                    cursor=cursor,
+                    limit=100,
+                )
+            except Exception:
+                page, cursor = [], None
+            matched_sessions.extend(
+                session
+                for session in page
+                if str(session.get("strategy_id") or "").strip() == strategy_id
+            )
+            if not cursor:
+                break
+        for matched_session in matched_sessions:
+            workshop_id = str(matched_session.get("workshop_id") or "")
+            if not workshop_id:
+                continue
+            readiness: Optional[Dict[str, Any]] = (
+                workshop_store.get_latest_readiness_assessment(workshop_id)
+                if hasattr(workshop_store, "get_latest_readiness_assessment")
+                else None
+            )
+            if not isinstance(readiness, dict) and (
+                hasattr(workshop_store, "list_events")
+                and hasattr(workshop_store, "get_latest_completeness_snapshot")
+            ):
+                from ..strategy_workshop.router import _build_readiness_assessment
+
+                try:
+                    readiness = _build_readiness_assessment(
+                        session=matched_session,
+                        events=workshop_store.list_events(workshop_id),
+                        snapshot=workshop_store.get_latest_completeness_snapshot(workshop_id),
+                        assessed_at=assessed_at,
+                        assessment_version=1,
+                    )
+                except Exception:
+                    readiness = None
+            if isinstance(readiness, dict) and _gate_state(readiness, "trading_room") == "ready":
+                has_ready_strategy = True
+                for ref in readiness.get("evidence_refs") or []:
+                    if isinstance(ref, dict):
+                        ref_id = str(ref.get("ref_id") or "").strip()
+                        if ref_id:
+                            verified_evidence_ref_ids.add(ref_id)
+                break
+    resolved["agora.strategy.summary"] = {
+        "wired": workshop_store is not None,
+        "rowCount": 1 if has_ready_strategy else 0,
+        "reason": (
+            "ready StrategySpec version (trading_room gate ready) used for workspace generation"
+            if workshop_store is not None
+            else "workshop store not wired in current BFF deployment; readiness cannot be verified"
+        ),
+    }
+    if verified_evidence_ref_ids is None:
+        # workshop_store isn't wired in this deployment at all -- there is no
+        # local signal to cross-check evidence refs against, so this source
+        # is conservatively unverified rather than trusting the
+        # caller-supplied evidence_refs count (same posture as the nine
+        # unwired sources below).
+        resolved["agora.research.evidence_refs"] = {
+            "wired": False,
+            "rowCount": 0,
+            "reason": "workshop store not wired in current BFF deployment; evidence refs cannot be verified",
+        }
+    else:
+        verified_count = sum(
+            1 for ref in evidence_refs if str(ref).strip() in verified_evidence_ref_ids
+        )
+        resolved["agora.research.evidence_refs"] = {
+            "wired": True,
+            "rowCount": verified_count,
+            "reason": "workspace generation evidence refs verified against the scoped ready readiness assessment",
+        }
+    all_known_sources = {
+        "agora.candidate.members",
+        "winner_branch.score_breakdown",
+        "winner_branch.branch_flow_daily",
+        "winner_branch.branch_profitability",
+        "winner_branch.identity_probability",
+        "winner_branch.related_branch_flow",
+        "winner_branch.event_lead",
+        "agora.positions.summary",
+        "agora.shadow.outcomes",
+    }
+    for source in all_known_sources:
+        # The BFF has no local query path for any of these sources today --
+        # always report them as unverified/missing regardless of what the
+        # caller claims, rather than trusting a caller-forged `wired`/
+        # `rowCount` via setdefault.
+        resolved[source] = {
+            "wired": False,
+            "rowCount": 0,
+            "reason": f"source {source} is not wired in current BFF deployment",
+        }
+    return resolved
 
 
 def _find_widget(workspace: Dict[str, Any], widget_id: str) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
@@ -890,20 +1146,19 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
     views = [
         {
             "id": "strategy_overview",
-            "title": "策略總覽",
-            "purpose": "讓交易員在 10 秒內理解今天策略狀況",
+            "title": "Strategy overview",
+            "purpose": "Understand today's strategy state within ten seconds.",
             "order": 1,
             "layoutTemplate": "winner_branch_overview_grid",
             "thumbnailRef": "winner_branch/overview",
-            "rationale": "彙整候選、策略健康、裁示隊列、事件與資金遷移警示。",
-            "dataAvailability": "partial",
-            "warnings": ["部分分點關係與遷移資料以推定信賴值呈現。"],
+            "rationale": "Summarize candidates, strategy health, decision queues, events, and capital-migration alerts.",
+            "warnings": ["Some branch relationships and migration data use inferred confidence."],
             "widgets": [
                 _widget(
                     wid="overview_candidate_funnel",
                     widget_type="candidate_funnel",
                     title="Candidate Funnel",
-                    purpose="追蹤新候選、待討論、監控中、Shadow、已形成部位與剔除狀態。",
+                    purpose="Track new, pending, monitored, Shadow, positioned, and removed candidates.",
                     why_included="V11 View A requires a candidate funnel for day-level status.",
                     data_source="agora.candidate.members",
                     chart_kind="sankey",
@@ -915,7 +1170,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="overview_strategy_health",
                     widget_type="confidence_decomposition",
                     title="Strategy Health",
-                    purpose="顯示 OOS 穩定度、regime、資料狀態與今日風險。",
+                    purpose="Show OOS stability, regime, data status, and today's risk.",
                     why_included="V11 requires a strategy health widget in the overview.",
                     data_source="winner_branch.score_breakdown",
                     chart_kind="gauge",
@@ -927,7 +1182,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="overview_candidate_ranking",
                     widget_type="candidate_ranking_table",
                     title="Top Candidate Ranking",
-                    purpose="依 Winner Branch Score、信賴值、EV 與流動性排序候選。",
+                    purpose="Rank candidates by Winner Branch Score, confidence, EV, and liquidity.",
                     why_included="V11 View A requires top candidate and EV context.",
                     data_source="agora.candidate.members",
                     chart_kind="table",
@@ -939,7 +1194,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="overview_decision_queue",
                     widget_type="signal_decision_queue",
                     title="Decision Queue",
-                    purpose="列出接近進場、加碼、減碼、出場與資料不足待裁示項目。",
+                    purpose="List entry, add, reduce, exit, and insufficient-data decisions.",
                     why_included="V11 View A requires the pending decision queue.",
                     data_source="agora.trading.events",
                     chart_kind="table",
@@ -951,20 +1206,19 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
         },
         {
             "id": "candidates_entry",
-            "title": "候選與進場",
-            "purpose": "處理尚未形成部位、接近訊號或需要裁示的標的",
+            "title": "Candidates and entry",
+            "purpose": "Handle unpositioned candidates, approaching signals, and pending decisions.",
             "order": 2,
             "layoutTemplate": "winner_branch_candidate_entry_grid",
             "thumbnailRef": "winner_branch/candidates-entry",
-            "rationale": "把候選排序、進場 readiness、機率/EV 與訊號時間軸放在同一頁。",
-            "dataAvailability": "partial",
+            "rationale": "Place candidate ranking, entry readiness, probability/EV, and signal timelines on one page.",
             "warnings": [],
             "widgets": [
                 _widget(
                     wid="entry_candidate_table",
                     widget_type="candidate_ranking_table",
                     title="Candidate Ranking Table",
-                    purpose="顯示候選排名、Score、信賴值、成本後 EV 與進場完成度。",
+                    purpose="Show candidate rank, score, confidence, after-cost EV, and entry readiness.",
                     why_included="V11 View B requires the primary candidate table.",
                     data_source="agora.candidate.members",
                     chart_kind="table",
@@ -976,7 +1230,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="entry_probability_ev",
                     widget_type="expected_value_distribution",
                     title="Probability / EV Scatter",
-                    purpose="比較 20d 上漲機率、成本後 EV、流動性與信賴值。",
+                    purpose="Compare 20-day upside probability, after-cost EV, liquidity, and confidence.",
                     why_included="V11 View B requires a probability x EV view.",
                     data_source="winner_branch.score_breakdown",
                     chart_kind="scatter",
@@ -988,7 +1242,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="entry_signal_timeline",
                     widget_type="branch_flow_price_overlay",
                     title="Candidate Signal Timeline",
-                    purpose="呈現候選標的訊號、分點變化、價格與事件變化。",
+                    purpose="Present candidate signals, branch changes, price, and event changes.",
                     why_included="V11 View B requires a candidate signal timeline.",
                     data_source="winner_branch.branch_flow_daily",
                     chart_kind="line",
@@ -1000,20 +1254,19 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
         },
         {
             "id": "winner_branch_intelligence",
-            "title": "贏家分點情報",
-            "purpose": "理解哪些分點值得信任、為什麼、何時失效",
+            "title": "Winner branch intelligence",
+            "purpose": "Understand which branches are trustworthy, why, and when they fail.",
             "order": 3,
             "layoutTemplate": "winner_branch_intelligence_grid",
             "thumbnailRef": "winner_branch/intelligence",
-            "rationale": "放大分點排名、分數拆解、歷史 horizon 與校準可靠度。",
-            "dataAvailability": "partial",
+            "rationale": "Expand branch rankings, score decomposition, historical horizons, and calibration reliability.",
             "warnings": [],
             "widgets": [
                 _widget(
                     wid="branch_leaderboard",
                     widget_type="winner_branch_scoreboard",
                     title="Winner Branch Leaderboard",
-                    purpose="排名贏家分點並顯示近期可用性。",
+                    purpose="Rank winner branches and show recent availability.",
                     why_included="V11 View C requires a winner branch leaderboard.",
                     data_source="winner_branch.branch_profitability",
                     chart_kind="table",
@@ -1025,7 +1278,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="branch_score_breakdown",
                     widget_type="winner_branch_score_breakdown",
                     title="Score Component Breakdown",
-                    purpose="拆解 profitability、consistency、timing、event lead、relationship alignment 與 penalties。",
+                    purpose="Break down profitability, consistency, timing, event lead, relationship alignment, and penalties.",
                     why_included="V11 View C requires the Score Breakdown widget.",
                     data_source="winner_branch.score_breakdown",
                     chart_kind="bar",
@@ -1037,7 +1290,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="branch_profitability_horizon",
                     widget_type="branch_profitability_table",
                     title="Historical Outcome by Horizon",
-                    purpose="比較 5d / 20d / 60d / 120d 歷史結果。",
+                    purpose="Compare historical outcomes over 5, 20, 60, and 120 days.",
                     why_included="V11 View C requires horizon comparison.",
                     data_source="winner_branch.branch_profitability",
                     chart_kind="table",
@@ -1049,7 +1302,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="branch_stability",
                     widget_type="confidence_decomposition",
                     title="Branch Stability / Regime View",
-                    purpose="觀察分點穩定度與 regime 切換。",
+                    purpose="Observe branch stability and regime transitions.",
                     why_included="V11 View C requires reliability and regime context.",
                     data_source="winner_branch.score_breakdown",
                     chart_kind="bar",
@@ -1061,20 +1314,19 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
         },
         {
             "id": "related_party_flow_migration",
-            "title": "分點關係與資金遷移",
-            "purpose": "處理單點觀察不足、分點轉移、關聯分點出貨與身份概率",
+            "title": "Branch relationships and capital migration",
+            "purpose": "Handle sparse single-branch observations, migration, related-branch selling, and identity probability.",
             "order": 4,
             "layoutTemplate": "winner_branch_flow_migration_grid",
             "thumbnailRef": "winner_branch/flow-migration",
-            "rationale": "把關係人概率、分點 cluster、資金遷移與反向證據合併檢視。",
-            "dataAvailability": "partial",
+            "rationale": "Review related-party probability, branch clusters, capital migration, and counter-evidence together.",
             "warnings": ["Restricted relationship graph data is shown as evidence-strength context only."],
             "widgets": [
                 _widget(
                     wid="migration_relationship_graph",
                     widget_type="insider_branch_probability_graph",
                     title="Relationship Probability Graph",
-                    purpose="顯示關係人與分點的 match probability 及支持/反向證據。",
+                    purpose="Show related-party and branch match probability with supporting and counter-evidence.",
                     why_included="V11 View D requires relationship probability graph.",
                     data_source="winner_branch.identity_probability",
                     chart_kind="network",
@@ -1086,7 +1338,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="migration_branch_network",
                     widget_type="related_branch_network",
                     title="Branch Cluster Network",
-                    purpose="顯示同券商、共現、同股資金遷移與反向流。",
+                    purpose="Show same-broker, co-occurrence, same-symbol migration, and reverse flow.",
                     why_included="V11 View D requires branch cluster network.",
                     data_source="winner_branch.related_branch_flow",
                     chart_kind="network",
@@ -1098,7 +1350,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="migration_sankey",
                     widget_type="branch_migration_sankey",
                     title="Migration Alert Table",
-                    purpose="追蹤分點 cluster 資金遷移與出貨警示。",
+                    purpose="Track branch-cluster capital migration and distribution alerts.",
                     why_included="V11 View D requires migration alerts.",
                     data_source="winner_branch.related_branch_flow",
                     chart_kind="sankey",
@@ -1110,7 +1362,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="migration_unified_flow",
                     widget_type="branch_flow_price_overlay",
                     title="Unified Flow Timeline",
-                    purpose="比較單點淨流、cluster-adjusted 淨流、價格與成交量。",
+                    purpose="Compare single-branch net flow, cluster-adjusted net flow, price, and volume.",
                     why_included="V11 View D requires unified flow timeline.",
                     data_source="winner_branch.branch_flow_daily",
                     chart_kind="line",
@@ -1122,20 +1374,19 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
         },
         {
             "id": "event_lead",
-            "title": "事件領先",
-            "purpose": "判斷分點異常是否具有事件前資訊領先特徵，以及證據可信度",
+            "title": "Event lead",
+            "purpose": "Assess whether branch anomalies show pre-event information lead and credible evidence.",
             "order": 5,
             "layoutTemplate": "winner_branch_event_lead_grid",
             "thumbnailRef": "winner_branch/event-lead",
-            "rationale": "使用資訊領先代理、統計關聯與證據強度，不斷言違法或內線。",
-            "dataAvailability": "partial",
+            "rationale": "Use information-lead proxies, statistical association, and evidence strength without alleging misconduct.",
             "warnings": ["Event lead views state statistical association only."],
             "widgets": [
                 _widget(
                     wid="event_lead_distribution",
                     widget_type="event_lead_distribution",
                     title="Lead-Time Distribution",
-                    purpose="顯示異常交易到事件的 lead-time 分布。",
+                    purpose="Show the lead-time distribution from anomalous trading to events.",
                     why_included="V11 View E requires lead-time distribution.",
                     data_source="winner_branch.event_lead",
                     chart_kind="bar",
@@ -1147,7 +1398,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="event_lead_timeline",
                     widget_type="event_lead_timeline",
                     title="Upcoming / Historical Event Timeline",
-                    purpose="連接異常分點交易與未來 3 至 6 月事件。",
+                    purpose="Connect anomalous branch trading to events over the next three to six months.",
                     why_included="V11 View E requires event timeline.",
                     data_source="winner_branch.event_lead",
                     chart_kind="timeline",
@@ -1159,7 +1410,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="event_lead_confidence",
                     widget_type="confidence_decomposition",
                     title="Information Lead Confidence Summary",
-                    purpose="標示資訊領先代理與證據強度。",
+                    purpose="Indicate information-lead proxies and evidence strength.",
                     why_included="V11 View E requires confidence summary.",
                     data_source="winner_branch.score_breakdown",
                     chart_kind="gauge",
@@ -1171,20 +1422,19 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
         },
         {
             "id": "positions_exit",
-            "title": "持倉、加碼、減碼與出場",
-            "purpose": "同時呈現已持有部位與即將產生的退出／調整交易",
+            "title": "Positions, adds, reductions, and exits",
+            "purpose": "Present current positions alongside upcoming exit and adjustment trades.",
             "order": 6,
             "layoutTemplate": "winner_branch_positions_exit_grid",
             "thumbnailRef": "winner_branch/positions-exit",
-            "rationale": "把持倉、行動隊列、thesis health、曝險與失效條件一起呈現。",
-            "dataAvailability": "partial",
+            "rationale": "Present positions, action queues, thesis health, exposure, and invalidation conditions together.",
             "warnings": ["Position data is scoped to the current trader and remains decision-support only."],
             "widgets": [
                 _widget(
                     wid="positions_current_table",
                     widget_type="position_action_queue",
                     title="Current Positions Table",
-                    purpose="顯示持倉、成本、PnL、進場/現值 Score、Thesis Health 與下一步。",
+                    purpose="Show positions, cost, PnL, entry/current score, thesis health, and next action.",
                     why_included="V11 View F requires current positions and next action context.",
                     data_source="agora.positions.summary",
                     chart_kind="table",
@@ -1196,7 +1446,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="positions_action_queue",
                     widget_type="signal_decision_queue",
                     title="Add / Reduce / Exit Queue",
-                    purpose="列出建議行動、觸發條件、調整幅度、截止時間與信賴值。",
+                    purpose="List recommended actions, triggers, adjustment size, deadlines, and confidence.",
                     why_included="V11 View F requires add/reduce/exit queue.",
                     data_source="agora.trading.events",
                     chart_kind="table",
@@ -1208,7 +1458,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="positions_pyramid_plan",
                     widget_type="position_pyramid_plan",
                     title="Portfolio Exposure & Correlation",
-                    purpose="呈現部位曝險、cluster 集中度與 correlation risk。",
+                    purpose="Present position exposure, cluster concentration, and correlation risk.",
                     why_included="V11 View F requires portfolio exposure and risk context.",
                     data_source="agora.strategy.summary",
                     chart_kind="table",
@@ -1220,7 +1470,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="positions_shadow_comparison",
                     widget_type="shadow_scoreboard",
                     title="Shadow Alternative Comparison",
-                    purpose="比較主要版本與 Shadow 對照版本。",
+                    purpose="Compare the primary version with its Shadow alternative.",
                     why_included="V11 View F requires Shadow alternative comparison.",
                     data_source="agora.shadow.outcomes",
                     chart_kind="bar",
@@ -1232,20 +1482,19 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
         },
         {
             "id": "evidence_monitoring",
-            "title": "證據與監控規則",
-            "purpose": "讓交易員知道操盤室不是黑箱，以及目前畫面與警示依據什麼策略規則",
+            "title": "Evidence and monitoring rules",
+            "purpose": "Explain the strategy rules behind the workspace and its alerts.",
             "order": 7,
             "layoutTemplate": "winner_branch_evidence_monitoring_grid",
             "thumbnailRef": "winner_branch/evidence-monitoring",
-            "rationale": "保留策略版本摘要、監控規則、資料新鮮度、證據與最近規則變更。",
-            "dataAvailability": "partial",
+            "rationale": "Retain the strategy-version summary, monitoring rules, data freshness, evidence, and recent rule changes.",
             "warnings": [],
             "widgets": [
                 _widget(
                     wid="evidence_trace",
                     widget_type="evidence_trace",
                     title="Evidence References",
-                    purpose="顯示策略規則、研究證據與資料 cutoff。",
+                    purpose="Show strategy rules, research evidence, and data cutoff.",
                     why_included="V11 View G requires evidence references.",
                     data_source="agora.research.evidence_refs",
                     chart_kind="table",
@@ -1257,7 +1506,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="evidence_monitoring_rules",
                     widget_type="confidence_decomposition",
                     title="Active Monitoring Rules",
-                    purpose="呈現目前啟用的監控門檻與資料新鮮度。",
+                    purpose="Present active monitoring thresholds and data freshness.",
                     why_included="V11 View G requires active monitoring rules and data freshness.",
                     data_source="winner_branch.score_breakdown",
                     chart_kind="bar",
@@ -1269,7 +1518,7 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
                     wid="evidence_recent_rule_changes",
                     widget_type="evidence_trace",
                     title="Recent Rule Changes",
-                    purpose="顯示近期規則調整與原因。",
+                    purpose="Show recent rule changes and their reasons.",
                     why_included="V11 View G requires dashboard change evidence context.",
                     data_source="agora.research.evidence_refs",
                     chart_kind="table",
@@ -1281,50 +1530,6 @@ def _build_winner_branch_views(strategy_id: str, strategy_version: str) -> List[
         },
     ]
     return [_normalize_view(view) for view in views]
-
-
-def _build_workspace_proposal(
-    *,
-    strategy_id: str,
-    strategy_version: str,
-    proposal_id: str,
-    now: str,
-    personalization_hints: Dict[str, Any],
-) -> Dict[str, Any]:
-    views = _build_winner_branch_views(strategy_id, strategy_version)
-    return {
-        "strategyId": strategy_id,
-        "strategyVersion": strategy_version,
-        "proposalId": proposal_id,
-        "generatedAt": now,
-        "status": "preview",
-        "views": views,
-        "rationale": (
-            "Generated from the V11 Winner Branch Trading Room contract: seven strategy-specific "
-            "views covering overview, entry, branch intelligence, migration, event lead, positions, and evidence."
-        ),
-        "dataAvailability": {
-            "status": "partial",
-            "sources": [
-                {"dataSource": "agora.candidate.members", "status": "partial", "reason": "candidate projection may lag live research"},
-                {"dataSource": "winner_branch.score_breakdown", "status": "partial", "reason": "score calibration is strategy-version scoped"},
-                {"dataSource": "winner_branch.related_branch_flow", "status": "partial", "reason": "relationship and migration links are probabilistic"},
-                {"dataSource": "agora.trading.events", "status": "partial", "reason": "decision queue is request-only and may be empty"},
-            ],
-        },
-        "warnings": [
-            "Workspace is decision-support only; it cannot route orders, bind capital, or mutate runtime bindings.",
-            "Relationship, migration, and event-lead widgets represent evidence strength and statistical association only.",
-        ],
-        "personalizationApplied": {
-            "status": "applied" if personalization_hints else "not_applied",
-            "items": [
-                {"key": str(key), "value": value}
-                for key, value in sorted(personalization_hints.items())
-                if key not in {"rawHtml", "javascript", "react"}
-            ],
-        },
-    }
 
 
 def _generate_workspace_proposal(
@@ -1464,6 +1669,16 @@ def _apply_workspace_layout_ops(
                 continue
             if not isinstance(widget_spec, dict):
                 errors.append(f"operations[{index}].payload.widgetSpec must be an object")
+                continue
+            _normalize_widget_data_availability(widget_spec)
+            widget_errors = _validate_widget(
+                widget_spec,
+                now=now,
+                path=f"operations[{index}].payload.widgetSpec",
+                require_data_availability=True,
+            )
+            if widget_errors:
+                errors.extend(widget_errors)
                 continue
             target_view.setdefault("widgets", []).append(widget_spec)
 
@@ -1644,7 +1859,9 @@ def create_trading_room_router(
         scope = _workspace_scope(identity)
         if not _record_visible_to_scope(record, scope):
             _raise_workspace_forbidden("workspace", workspace_id)
-        return record["workspace"], scope
+        workspace = record["workspace"]
+        _normalize_views_legacy_data_availability(workspace.get("views") or [])
+        return workspace, scope
 
     def _load_revision_proposal_for_identity(
         *,
@@ -1663,7 +1880,8 @@ def create_trading_room_router(
         scope = _workspace_scope(identity)
         if not _record_visible_to_scope(record, scope):
             _raise_workspace_forbidden("widget_revision_proposal", proposal_id)
-        return record["proposal"], scope
+        proposal = _normalize_revision_proposal_legacy_data_availability(record["proposal"])
+        return proposal, scope
 
     def _require_workspace_etag(if_match: Optional[str], workspace: Dict[str, Any]) -> str:
         ErrorCode = _error_code_enum()
@@ -2028,6 +2246,17 @@ def create_trading_room_router(
             _validation_failed(["tradingRoomReady must be a boolean"], status_code=400)
 
         now = utc_now()
+        scope = _workspace_scope(identity)
+        resolved_data_freshness = _workspace_data_freshness(
+            store=store,
+            strategy_id=strategy_id,
+            evidence_refs=evidence_refs,
+            reported=data_freshness,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+            workshop_store=workshop_store,
+            assessed_at=now,
+        )
         generation = _generate_workspace_proposal(
             strategy_id=strategy_id,
             strategy_version=strategy_version,
@@ -2035,7 +2264,7 @@ def create_trading_room_router(
             now=now,
             personalization_hints=personalization_hints,
             evidence_refs=evidence_refs,
-            data_freshness=data_freshness,
+            data_freshness=resolved_data_freshness,
             trading_room_ready=trading_room_ready,
         )
         if generation.status != "completed" or generation.proposal is None:
@@ -2054,7 +2283,6 @@ def create_trading_room_router(
         if errors:
             _validation_failed(errors)
 
-        scope = _workspace_scope(identity)
         store.upsert_workspace_proposal(
             proposal,
             tenant_id=scope["tenant_id"],
@@ -2287,7 +2515,7 @@ def create_trading_room_router(
             )
 
         now = utc_now()
-        errors = _validate_view(view, now=now)
+        errors = _validate_view(view, now=now, require_data_availability=True)
         if errors:
             _validation_failed(errors)
         updated = copy.deepcopy(workspace)
@@ -2350,7 +2578,7 @@ def create_trading_room_router(
         view["id"] = view_id
         view = _normalize_view(view)
         now = utc_now()
-        errors = _validate_view(view, now=now)
+        errors = _validate_view(view, now=now, require_data_availability=True)
         if errors:
             _validation_failed(errors)
         for index, current in enumerate(updated["views"]):
@@ -2414,8 +2642,9 @@ def create_trading_room_router(
             ErrorCode = _error_code_enum()
             raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, f"Widget {widget.get('id')!r} already exists", "workspace_widget_already_exists")
 
+        _normalize_widget_data_availability(widget)
         now = utc_now()
-        errors = _validate_widget(widget, now=now)
+        errors = _validate_widget(widget, now=now, require_data_availability=True)
         if errors:
             _validation_failed(errors)
         view.setdefault("widgets", []).append(copy.deepcopy(widget))
@@ -2489,10 +2718,11 @@ def create_trading_room_router(
             for key, value in patch.items()
             if key not in {"initiatedBy", "initiated_by", "actorType"}
         }
+        _normalize_widget_data_availability(clean_patch)
         widget.update(copy.deepcopy(clean_patch))
         widget["id"] = widget_id
         now = utc_now()
-        errors = _validate_widget(widget, now=now)
+        errors = _validate_widget(widget, now=now, require_data_availability=True)
         if errors:
             _validation_failed(errors)
         updated = _touch_workspace(updated, now=now)
@@ -2552,7 +2782,9 @@ def create_trading_room_router(
         payload = body or {}
         instruction = str(payload.get("instruction") or "").strip()
         rationale = str(payload.get("rationale") or "").strip()
-        data_availability = str(payload.get("dataAvailability") or payload.get("data_availability") or "").strip()
+        data_availability = _normalize_data_availability_value(
+            str(payload.get("dataAvailability") or payload.get("data_availability") or "").strip()
+        )
         proposed_spec = payload.get("proposedSpec") or payload.get("proposed_spec")
         warnings = payload.get("warnings", [])
         errors: List[str] = []
@@ -2560,16 +2792,24 @@ def create_trading_room_router(
             errors.append("instruction is required")
         if not rationale:
             errors.append("rationale is required")
-        if data_availability not in {"complete", "partial", "unavailable"}:
-            errors.append("dataAvailability must be complete, partial, or unavailable")
+        if data_availability not in _DATA_AVAILABILITY_VALUES:
+            errors.append("dataAvailability must be full, partial, or missing")
         if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
             errors.append("warnings must be an array of strings")
         if not isinstance(proposed_spec, dict):
             errors.append("proposedSpec must be a TradingRoomWidgetSpec object")
         else:
+            _normalize_widget_data_availability(proposed_spec)
             if proposed_spec.get("id") != widget_id:
                 errors.append("proposedSpec.id must match widgetId; keep-copy acceptance creates a new copy id")
-            errors.extend(_validate_widget(proposed_spec, now=utc_now(), path="proposedSpec"))
+            errors.extend(
+                _validate_widget(
+                    proposed_spec,
+                    now=utc_now(),
+                    path="proposedSpec",
+                    require_data_availability=True,
+                )
+            )
         supplied_view_id = str(payload.get("viewId") or payload.get("view_id") or "").strip()
         if supplied_view_id and supplied_view_id != view.get("id"):
             errors.append("viewId must match the widget's current view")
@@ -2794,6 +3034,8 @@ def create_trading_room_router(
             tenant_id=scope["tenant_id"],
             user_id=scope["user_id"],
         )
+        for version in versions:
+            _normalize_views_legacy_data_availability(version.get("views") or [])
         return {
             "data": versions,
             "meta": _meta(
@@ -2843,7 +3085,9 @@ def create_trading_room_router(
                 "workspace_version_not_found",
             )
 
-        restored_views = copy.deepcopy(target.get("views") or [])
+        restored_views = _normalize_views_legacy_data_availability(
+            copy.deepcopy(target.get("views") or [])
+        )
         validation_errors: List[str] = []
         for view_index, view in enumerate(restored_views):
             validation_errors.extend(_validate_view(view, now=utc_now(), path=f"views[{view_index}]"))

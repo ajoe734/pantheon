@@ -1,0 +1,97 @@
+{
+  "taskId": "AG-UIPOL-004",
+  "capturedAt": "2026-07-13T13:18:18.855Z",
+  "deployment": {
+    "app": "execute-plans",
+    "environment": "pantheon-dev-fe",
+    "deployedAt": "20260713T131103Z",
+    "commit": "12b78ef210e535cd4a3d80358f78b44c9396e588",
+    "sourceRef": "12b78ef210e535cd4a3d80358f78b44c9396e588",
+    "sourceBranch": "dev",
+    "feHost": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+    "bffHost": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "buildMode": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_FALLBACK": "strict",
+      "VITE_BFF_REAL_WRITES": "true",
+      "VITE_BFF_ALLOW_DEV_STUB_WRITES": "true"
+    }
+  },
+  "workshop": {
+    "workshopId": "b888fb96-12b4-46e1-8def-ffe4f29b5ad7",
+    "snapshotId": "8f7dc9e4-108f-4067-8d05-9cad30c7e17a",
+    "strategyVersionId": "full003-postdeploy-1783268578-f4b6f0-v1",
+    "cardId": "card_completeness_8f7dc9e4-108f-4067-8d05-9cad30c7e17a",
+    "cardOverallGrade": "complete",
+    "cardResearchReady": "Yes",
+    "railGrade": "Complete",
+    "railPercent": "100%",
+    "railResearchReady": "Yes"
+  },
+  "performance": {
+    "rowTexts": [
+      "Ready strategy full003-live-1783268175-13279b\n[Attribution →]\nfull003-live-1783268175-13279b\n\t\nmonitoring\nready\n\tnot reported\tnot reported\tnot reported\tnot reported\t\nnot reported/not reported\nnot reported\n\tmissing attribution",
+      "Ready strategy full003-postdeploy-1783268578-f4b6f0\n[Attribution →]\nfull003-postdeploy-1783268578-f4b6f0\n\t\nmonitoring\nready\n\tnot reported\tnot reported\tnot reported\tnot reported\t\nnot reported/not reported\nnot reported\n\tmissing attribution",
+      "Unassigned\n[Attribution →]\nunassigned\nAggregates telemetry that the BFF could not link to a named Trading Room strategy.\n\t\nnot linked\nstrategy\n\t$0\tnot reported\tnot reported\t6,868\t\n14/20\nJul 13, 2026, 01:18 PM UTC\n\tattribution only"
+    ],
+    "unassignedIndex": 2,
+    "measuredZeroCount": 1,
+    "notReportedCount": 4
+  },
+  "browserErrorCount": 1,
+  "browserErrors": [
+    "EventSource's response has a MIME type (\"text/html\") that is not \"text/event-stream\". Aborting the connection."
+  ],
+  "networkEvents": [
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/stream",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/events",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/completeness",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/readiness",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/cards",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/decision-events",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/performance-attribution",
+      "status": 200
+    }
+  ]
+}
