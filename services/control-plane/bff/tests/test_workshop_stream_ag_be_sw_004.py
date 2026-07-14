@@ -239,6 +239,7 @@ class TestWorkshopStreamRoute:
         router = create_strategy_workshop_router(
             extract_identity=fake_extract_identity,
             require_read_role=fake_require_read_role,
+            require_write_role=fake_require_read_role,
             bff_error=fake_bff_error,
             utc_now=lambda: "2026-06-21T00:00:00Z",
             workshop_store=store,
@@ -407,6 +408,7 @@ class TestWorkshopMessageSseIntegration:
         router = create_strategy_workshop_router(
             extract_identity=fake_extract_identity,
             require_read_role=lambda identity: None,
+            require_write_role=lambda identity: None,
             bff_error=lambda status_code, code, message, reason, **kw: HTTPException(
                 status_code=status_code
             ),
@@ -517,6 +519,7 @@ class TestWorkshopStreamEndpointRegistration:
         router = create_strategy_workshop_router(
             extract_identity=lambda auth: {"sub": "u1"},
             require_read_role=lambda identity: None,
+            require_write_role=lambda identity: None,
             bff_error=lambda *a, **kw: HTTPException(status_code=a[0]),
             utc_now=lambda: "2026-06-21T00:00:00Z",
         )
@@ -531,6 +534,7 @@ class TestWorkshopStreamEndpointRegistration:
         router = create_strategy_workshop_router(
             extract_identity=lambda auth: {"sub": "u1"},
             require_read_role=lambda identity: None,
+            require_write_role=lambda identity: None,
             bff_error=lambda *a, **kw: HTTPException(status_code=a[0]),
             utc_now=lambda: "2026-06-21T00:00:00Z",
         )

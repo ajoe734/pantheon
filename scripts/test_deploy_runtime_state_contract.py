@@ -21,4 +21,6 @@ def test_nonprod_deploy_excludes_unreadable_untracked_runtime_state() -> None:
 
     assert '"trade_journey_events.json"' in deploy
     assert 'git ls-files --error-unmatch -- "$path"' in deploy
-    assert 'printf \'/%s\\n\' "$path" >>.git/info/exclude' in deploy
+    assert 'git rev-parse --git-path info/exclude' in deploy
+    assert 'printf \'/%s\\n\' "$path" >>"$exclude_file"' in deploy
+    assert 'mkdir -p .git/info' not in deploy
