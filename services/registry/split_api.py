@@ -45,15 +45,35 @@ class RegistryService:
 
     def register(self, payload: RegistryEntryCreate, registry_id: str) -> RegistryEntryView:
         """Create a new draft or candidate entry."""
+        self._validate_registration_state(payload)
+        entry = self.store.create(payload, registry_id)
+        logger.info("Registered %s (state=%s)", entry.registry_id, entry.artifact_state.value)
+        return self._to_view(entry)
+
+    def register_if_absent(
+        self,
+        payload: RegistryEntryCreate,
+        registry_id: str,
+    ) -> tuple[RegistryEntryView, bool]:
+        """Atomically register an id, returning the existing view on collision."""
+        self._validate_registration_state(payload)
+        entry, created = self.store.create_if_absent(payload, registry_id)
+        if created:
+            logger.info(
+                "Registered %s (state=%s)",
+                entry.registry_id,
+                entry.artifact_state.value,
+            )
+        return self._to_view(entry), created
+
+    @staticmethod
+    def _validate_registration_state(payload: RegistryEntryCreate) -> None:
         if payload.artifact_state in (ArtifactState.APPROVED, ArtifactState.RETIRED):
             raise RegistryError(
                 f"register() cannot create an entry in state '{payload.artifact_state.value}'. "
                 "Only 'draft' or 'candidate' are allowed at creation time. "
                 "Use advance_artifact_state() to transition through the governed state machine."
             )
-        entry = self.store.create(payload, registry_id)
-        logger.info("Registered %s (state=%s)", entry.registry_id, entry.artifact_state.value)
-        return self._to_view(entry)
 
     def get(self, registry_id: str) -> RegistryEntryView:
         """Read one entry with derived deployment_stage."""
