@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fastapi.testclient import TestClient
 
+from services.incident.incident import IncidentStore
 from services.incident.reference_validation import CanonicalReferenceError
 from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
 from services.incidents.main import app, store
@@ -33,26 +34,28 @@ from services.incidents.main import app, store
 
 @pytest.fixture(autouse=True)
 def clean_store(monkeypatch):
-    """Reset the in-memory store before each test."""
+    """Give each test an isolated in-memory IncidentStore.
+
+    The module-level `store` defaults to a persistent store backed by the
+    developer/runtime-shared `/tmp/pantheon/incidents/incidents.json` file.
+    Clearing and unlinking that real file before/after every test (the
+    previous approach) mutated shared state outside the test's own sandbox.
+    Instead, inject a fresh in-memory `IncidentStore(path=None)` for the
+    route module *and* this test module's own `store` name (both must point
+    at the same object: route handlers read the module global directly, and
+    tests assert against the locally-imported name), so tests never touch
+    disk at all (round-7 review point 5).
+    """
     class _AcceptAllValidator:
         def validate_incident(self, incident):
             return None
 
     monkeypatch.setattr("services.incidents.main.reference_validator", _AcceptAllValidator())
     monkeypatch.setattr("services.incidents.main._publish_to_postmortems_if_resolved", lambda incident_id: None)
-    _reset_store()
+    fresh_store = IncidentStore(path=None)
+    monkeypatch.setattr("services.incidents.main.store", fresh_store)
+    monkeypatch.setattr(sys.modules[__name__], "store", fresh_store)
     yield
-    _reset_store()
-
-
-def _reset_store():
-    store._incidents.clear()
-    store._postmortems.clear()
-    path = getattr(store, "_path", None)
-    if path is not None and path.exists():
-        path.unlink()
-    if hasattr(store, "_loaded_mtime_ns"):
-        store._loaded_mtime_ns = None
 
 
 client = TestClient(app)
@@ -284,6 +287,69 @@ def test_consume_threshold_route_rejects_empty_policy_source():
     assert r.status_code == 422
     assert "policy_source is required" in r.text
     assert store.get_incident("inc-empty-policy-source") is None
+
+
+def test_consume_threshold_route_rejects_missing_signal_type():
+    """The canonical ThresholdSnapshot requires signal_type
+    (evolution_decision.schema.json); dropping it must not still create an
+    IncidentCase (round-7 review point 4)."""
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-missing-signal-type"
+    del payload["threshold_snapshot"]["signal_type"]
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "signal_type is required" in r.text
+    assert store.get_incident("inc-missing-signal-type") is None
+
+
+def test_consume_threshold_route_rejects_unknown_signal_type():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-bad-signal-type"
+    payload["threshold_snapshot"]["signal_type"] = "not_a_canonical_signal_type"
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "signal_type is required" in r.text
+    assert store.get_incident("inc-bad-signal-type") is None
+
+
+def test_consume_threshold_route_rejects_missing_comparator():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-missing-comparator"
+    del payload["threshold_snapshot"]["comparator"]
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "comparator is required" in r.text
+    assert store.get_incident("inc-missing-comparator") is None
+
+
+def test_consume_threshold_route_rejects_missing_observed_value():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-missing-observed-value"
+    del payload["threshold_snapshot"]["observed_value"]
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "observed_value is required" in r.text
+    assert store.get_incident("inc-missing-observed-value") is None
+
+
+def test_consume_threshold_route_rejects_missing_threshold_value():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-missing-threshold-value"
+    del payload["threshold_snapshot"]["threshold_value"]
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "threshold_value is required" in r.text
+    assert store.get_incident("inc-missing-threshold-value") is None
 
 
 def test_consume_drift_report_route_creates_incident_case():

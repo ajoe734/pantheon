@@ -446,6 +446,130 @@ Review comments on 3 main points:
    - `evaluate_breaches()` checks metric provenance against the current binding ID of the summary and skips evaluation if they do not match.
    - Verified by `test_runtime_summary_projection_store_reset_on_binding_rollover` and `test_evaluate_breaches_validates_metric_provenance`.
 
+## Round-7 review fixes (Codex, PR #3612 merge-time review, 2026-07-14)
+
+Codex requested changes on 7 points at `4a5c9102` (comment 4965409421,
+re-confirmed unaddressed at `d8df8b940`, comment 4965680921), plus one
+additional finding surfaced during round-7 re-verification. PR #3612 had
+already merged, so these land as a new task-branch commit rather than a
+merge-only handoff.
+
+### 1. Blocker — corrupt undelivered WAL entries could lose frozen evidence
+
+`_load_pending_evidence()` silently dropped a structurally invalid record
+(missing inner `event_id`, wrong types, etc.) instead of reserving its key.
+Because the dedupe key hashes deterministically to that same `event_id`, a
+later tick with a matching live candidate treated the corrupt record as if
+it had never existed: it recomputed a fresh payload from whatever the live
+summary said *now* and admitted/posted it under the corrupt record's old id,
+silently discarding the original frozen evidence.
+
+Fixed: `_load_pending_evidence()` now returns `(valid, quarantined_event_ids)`.
+A structurally invalid record's `event_id` is reserved in the quarantine set
+instead of being forgotten. `run_tick()` refuses to admit/post any new
+candidate whose `event_id` matches a quarantined key — it fails that
+candidate closed (`errors += 1`, explicit diagnostic) rather than
+recomputing. Covered by
+`test_run_tick_quarantines_corrupt_wal_record_instead_of_recomputing_under_same_event_id`,
+which drives a real candidate to the exact deterministic `event_id` of a
+corrupt WAL record and asserts `admit_telemetry_event`/`post_incident` are
+never called and the on-disk WAL is untouched.
+
+### 2. High — missing metric provenance was still fail-open
+
+The rollover guard only rejected a *present-but-mismatched*
+`<field>_binding_id`; a summary with the provenance marker missing entirely
+(not just wrong) fell through to a real candidate. Fixed: a missing
+`<field>_binding_id` is now diagnostic-only, the same as a mismatched one.
+Covered by
+`test_evaluate_breaches_missing_metric_provenance_is_diagnostic_only_fail_closed`.
+
+### 3. High — `run_tick()` still violated its "never raises" contract
+
+`http.client.IncompleteRead` (raised by `urllib` on a truncated HTTP
+response body) is not a subclass of `OSError`/`ValueError`/`URLError`, so it
+escaped the fetch/admit/post exception whitelists. Fixed: all three HTTP
+call sites (`fetch_summaries`, `admit_telemetry_event`, `post_incident`) now
+also catch `http.client.HTTPException`. Covered by
+`test_run_tick_fails_closed_when_telemetry_fetch_raises_incomplete_read`.
+The pre-existing `test_run_tick_never_raises_on_corrupt_wal_records` was
+also non-hermetic (it relied on the default `fetch_summaries`, making a real
+network request to `http://telemetry.test`); it now injects an explicit
+in-test stub.
+
+### 4. High — the canonical ThresholdSnapshot boundary remained incomplete
+
+`build_incident_from_threshold_payload()` only validated non-empty
+`metric_name`/`policy_source`. `evolution_decision.schema.json`'s
+`threshold_snapshots[]` also requires `signal_type` (from the governance
+enum), `comparator` (from the governance enum), `observed_value`, and
+`threshold_value` — a payload that dropped any of those still created an
+`IncidentCase`. Fixed: `build_incident_from_threshold_payload()` now
+validates the full required-field boundary at the authoritative consumer
+entry point (both the direct-consumer path and the HTTP route go through
+this same function). Covered by
+`test_consume_threshold_route_rejects_missing_signal_type`,
+`test_consume_threshold_route_rejects_unknown_signal_type`,
+`test_consume_threshold_route_rejects_missing_comparator`,
+`test_consume_threshold_route_rejects_missing_observed_value`, and
+`test_consume_threshold_route_rejects_missing_threshold_value`.
+
+### 5. High — incidents route tests deleted the default persistent store
+
+The `clean_store` autouse fixture in `services/incidents/test_main_routes.py`
+cleared and unlinked the module-level `store`'s default path
+(`/tmp/pantheon/incidents/incidents.json`) before/after every test, mutating
+developer/runtime-shared state on every test run instead of using an
+isolated store. Fixed: the fixture now injects a fresh in-memory
+`IncidentStore(path=None)` via `monkeypatch.setattr` for both
+`services.incidents.main.store` (what the route handlers read) and this test
+module's own imported `store` name (what test assertions read), so no test
+in this file touches disk. Verified manually that
+`/tmp/pantheon/incidents/incidents.json` does not exist after running the
+full suite.
+
+### 6. Medium — the dedupe tuple encoding was collision-prone
+
+`f"{binding_id}:{metric_name}:{window_label}"` colon-joins fields without
+escaping: distinct tuples that only differ in *where* a colon falls (e.g.
+`metric_name="a:b", window="c"` vs `metric_name="a", window="b:c"`) produced
+the identical joined string and therefore the identical `event_id`, silently
+suppressing one candidate as a false duplicate of the other. Fixed: the
+dedupe key is now a canonical JSON array encoding of
+`[binding_id, metric_name, window_label]` (each element independently
+quoted/escaped, so the encoding is injective for this fixed-arity tuple).
+Covered by
+`test_evaluate_breaches_dedupe_key_is_not_collision_prone_across_colon_boundaries`.
+
+### 7. Delivery hygiene
+
+- Compose declared `EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS` nowhere,
+  even though `main()` reads it — an operator override in the host
+  environment never reached the container. Fixed: added to
+  `evolution-threshold-sweep-producer`'s `environment:` block in
+  `docker-compose.yml`, default `172800` (matches the worker's own
+  `_DEFAULT_METRIC_MAX_AGE_SECONDS`). Covered by a new compose contract test,
+  `test_threshold_sweep_producer_forwards_metric_max_age_env_in_root_compose`
+  (`services/evolution/test_compose_activation.py`).
+- `git diff --check` flagged trailing whitespace and extra blank lines at
+  EOF in the worker and its test file; cleaned up.
+- This document's test-count evidence was stale (claimed 58, actual 62 at
+  round-7 review time); the "Local validation" section below is refreshed
+  with the current counts.
+
+### Additional round-7 finding — heartbeat freshness was fail-open for ambiguous timestamps
+
+`_is_stale_or_degraded()` only checked `last_heartbeat_at` for truthiness,
+not whether it actually parsed as a valid timestamp or lay in the past.
+A malformed value (e.g. `"not-a-date"`) or a value in the future both read
+as "fresh" and let a summary through to real breach evaluation. Fixed:
+`_is_stale_or_degraded()` now takes the tick's `now` and requires
+`last_heartbeat_at` to parse and to not be later than `now`; either failure
+is treated as ambiguous/fail-closed the same as an explicit staleness
+marker. Covered by
+`test_evaluate_breaches_skips_summary_with_unparseable_heartbeat_timestamp`
+and `test_evaluate_breaches_skips_summary_with_future_heartbeat_timestamp`.
+
 ## Idempotency
 
 Dedupe key: `(binding_id, metric_name, threshold window, UTC day bucket)`.
@@ -501,20 +625,20 @@ Verified in `test_load_thresholds_missing_file_fails_closed`,
 
 ```sh
 python3 -m pytest services/evolution/test_threshold_sweep_worker.py -q
-# 58 passed (round-6: +15 new tests for fixes and regressions)
+# 68 passed (round-7: +6 new tests for fixes and regressions)
 
 python3 -m pytest services/evolution -q
-# 167 passed (no regression in the rest of the evolution service)
+# 195 passed (no regression in the rest of the evolution service)
 
 python3 -m pytest services/incidents -q
-# 50 passed (no regression)
+# 57 passed (round-7: +5 new tests for the ThresholdSnapshot required-field
+# boundary; clean_store fixture no longer touches the real persistent store)
 
 python3 -m pytest services/incident -q
 # 118 passed (no regression in the INC-001 domain layer)
 
 python3 -m pytest services/telemetry -q
-# 223 passed (round-3: derived-echo metadata-marker check in
-# runtime_summary.py is additive; no existing assertion touches it)
+# 231 passed (no regression)
 
 docker compose config --quiet
 # passed
@@ -522,13 +646,14 @@ docker compose config --quiet
 docker compose config --services | grep evolution-threshold-sweep-producer
 # evolution-threshold-sweep-producer
 
-ls /tmp/pantheon/incidents/incidents.json
-# No such file or directory — confirms the round-2 test-isolation fix (§3)
-# leaves the shared persistent incident store untouched.
+git diff --check origin/dev...HEAD -- services/evolution/threshold_sweep_worker.py services/evolution/test_threshold_sweep_worker.py services/incidents/consumer.py services/incidents/test_main_routes.py
+# no output — trailing-whitespace/EOF issues cleaned up
 
-ls /tmp/pantheon/evolution/threshold_sweep_state.json
-# No such file or directory — the round-3 retry-evidence state file (§3) is
-# only ever written by tests through an isolated tmp_path, never the default.
+ls /tmp/pantheon/incidents/incidents.json
+# No such file or directory after running the full services/incidents suite
+# — confirms the round-7 fix (§5) leaves the shared persistent incident
+# store untouched (the round-2 fix only isolated 2 of the file's tests; the
+# autouse fixture itself still mutated the real store until round-7).
 ```
 
 ## Acceptance mapping

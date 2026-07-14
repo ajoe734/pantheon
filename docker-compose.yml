@@ -1357,6 +1357,7 @@ services:
       EVOCHAIN_THRESHOLD_SWEEP_STATE_PATH: /data/evolution/threshold_sweep_state.json
       EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS: ${EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS:-86400}
       EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS: ${EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS:-0}
+      EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS: ${EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS:-172800}
     volumes:
       # Bind-mounted so operators can retune threshold values without an
       # image rebuild: edit the host file, then restart this one service.

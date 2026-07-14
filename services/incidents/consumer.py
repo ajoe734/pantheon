@@ -29,6 +29,22 @@ class IncidentConsumerError(ValueError):
     """Raised when a telemetry payload cannot be consumed into an IncidentCase."""
 
 
+# Mirrors the `threshold_snapshots[].signal_type`/`.comparator` enums in
+# services/control-plane/governance/evolution_decision.schema.json (the
+# canonical ThresholdSnapshot shape). A payload whose snapshot uses a value
+# outside these enums is not canonical and must be rejected at this boundary,
+# the same as a missing required field.
+_CANONICAL_SIGNAL_TYPES = {
+    "performance_degradation",
+    "execution_drift",
+    "feature_drift",
+    "human_correction",
+    "governance_incident",
+    "manual_review",
+}
+_CANONICAL_COMPARATORS = {"gt", "gte", "lt", "lte", "eq", "neq"}
+
+
 @dataclass(frozen=True)
 class ThresholdIncidentResult:
     incident: IncidentCase
@@ -164,7 +180,13 @@ def build_incident_from_threshold_payload(
     if not _is_breached(threshold):
         raise IncidentConsumerError("threshold snapshot is not breached")
 
-    # Validate metric_name and policy_source are non-empty strings (canonical non-empty contract)
+    # Validate the full canonical ThresholdSnapshot required-field boundary
+    # (evolution_decision.schema.json `threshold_snapshots[]`: policy_source,
+    # signal_type, metric_name, comparator, observed_value, threshold_value),
+    # not just metric_name/policy_source. This is the authoritative consumer
+    # boundary every producer's payload passes through, so a payload that
+    # dropped a required field (e.g. signal_type/comparator/observed_value/
+    # threshold_value) must never reach IncidentCase creation.
     metric_name_val = threshold.get("metric_name")
     if not isinstance(metric_name_val, str) or not metric_name_val.strip():
         raise IncidentConsumerError("metric_name is required and cannot be empty")
@@ -172,6 +194,20 @@ def build_incident_from_threshold_payload(
     policy_source_val = threshold.get("policy_source")
     if not isinstance(policy_source_val, str) or not policy_source_val.strip():
         raise IncidentConsumerError("policy_source is required and cannot be empty")
+
+    signal_type_val = threshold.get("signal_type")
+    if not isinstance(signal_type_val, str) or signal_type_val not in _CANONICAL_SIGNAL_TYPES:
+        raise IncidentConsumerError("signal_type is required and must be a canonical ThresholdSignalType")
+
+    comparator_val = threshold.get("comparator")
+    if not isinstance(comparator_val, str) or comparator_val not in _CANONICAL_COMPARATORS:
+        raise IncidentConsumerError("comparator is required and must be a canonical ThresholdComparator")
+
+    if threshold.get("observed_value") is None:
+        raise IncidentConsumerError("observed_value is required")
+
+    if threshold.get("threshold_value") is None:
+        raise IncidentConsumerError("threshold_value is required")
 
     event = _telemetry_event(payload)
     runtime_summary = _mapping(payload.get("runtime_summary_projection")) or _mapping(

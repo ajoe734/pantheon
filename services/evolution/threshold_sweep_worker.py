@@ -33,6 +33,7 @@ rule.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import math
 import os
@@ -258,24 +259,6 @@ def _extract_identity(summary: Mapping[str, Any]) -> tuple[dict[str, str], list[
     return identity, missing
 
 
-def _is_stale_or_degraded(summary: Mapping[str, Any]) -> bool:
-    # Require an affirmative freshness signal rather than only rejecting
-    # explicit bad markers: a summary that has never received a heartbeat
-    # carries no `staleness`/`state`/`connectivity_status` markers at all
-    # (RuntimeSummaryProjectionStore only sets them once a heartbeat event
-    # has been projected), so treat "no heartbeat on record" itself as
-    # ambiguous/fail-closed instead of implicitly healthy.
-    if not summary.get("last_heartbeat_at"):
-        return True
-    if summary.get("staleness"):
-        return True
-    if str(summary.get("state") or "").strip().lower() == "degraded":
-        return True
-    if str(summary.get("connectivity_status") or "").strip().lower() in {"degraded", "disconnected"}:
-        return True
-    return False
-
-
 def _parse_utc(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -284,6 +267,31 @@ def _parse_utc(value: Any) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def _is_stale_or_degraded(summary: Mapping[str, Any], *, now: datetime) -> bool:
+    # Require an affirmative freshness signal rather than only rejecting
+    # explicit bad markers: a summary that has never received a heartbeat
+    # carries no `staleness`/`state`/`connectivity_status` markers at all
+    # (RuntimeSummaryProjectionStore only sets them once a heartbeat event
+    # has been projected), so treat "no heartbeat on record" itself as
+    # ambiguous/fail-closed instead of implicitly healthy. A heartbeat
+    # timestamp that cannot be parsed, or that lies in the future, is
+    # likewise ambiguous telemetry and must not read as fresh just because
+    # the field is present/truthy.
+    heartbeat_raw = summary.get("last_heartbeat_at")
+    if not heartbeat_raw:
+        return True
+    heartbeat_at = _parse_utc(heartbeat_raw)
+    if heartbeat_at is None or heartbeat_at > now:
+        return True
+    if summary.get("staleness"):
+        return True
+    if str(summary.get("state") or "").strip().lower() == "degraded":
+        return True
+    if str(summary.get("connectivity_status") or "").strip().lower() in {"degraded", "disconnected"}:
+        return True
+    return False
 
 
 def _metric_is_stale(
@@ -342,7 +350,7 @@ def evaluate_breaches(
             )
             continue
 
-        if _is_stale_or_degraded(summary):
+        if _is_stale_or_degraded(summary, now=moment):
             diagnostics.append(
                 f"skip runtime_id={summary.get('runtime_id')!r}: "
                 "summary is stale/degraded; refusing to evaluate ambiguous telemetry (fail-closed)"
@@ -367,10 +375,21 @@ def evaluate_breaches(
                 )
                 continue
 
-            # Validate metric provenance to avoid rollover mismatch
+            # Validate metric provenance to avoid rollover mismatch. Missing
+            # provenance is ambiguous telemetry, not implicitly trustworthy:
+            # a metric with no `<field>_binding_id` on record must be
+            # diagnostic-only, the same as an explicit mismatch, or a
+            # rollover could silently evaluate a stale/foreign metric.
             metric_binding_id = summary.get(f"{field}_binding_id")
             current_binding_id = summary.get("binding_id") or summary.get("runtime_binding_id")
-            if metric_binding_id and current_binding_id and metric_binding_id != current_binding_id:
+            if not metric_binding_id:
+                diagnostics.append(
+                    f"skip {identity['binding_id']}/{metric_name}: "
+                    f"metric provenance missing for telemetry field {field!r}; "
+                    "ambiguous telemetry (fail-closed)"
+                )
+                continue
+            if current_binding_id and metric_binding_id != current_binding_id:
                 diagnostics.append(
                     f"skip {identity['binding_id']}/{metric_name}: "
                     f"metric provenance mismatch: metric binding {metric_binding_id!r} "
@@ -433,7 +452,17 @@ def evaluate_breaches(
                 continue
 
             window_label = f"{threshold.get('window') or 'sweep'}:{window_bucket}"
-            dedupe_key = f"{identity['binding_id']}:{metric_name}:{window_label}"
+            # A colon-joined string is not an injective encoding of the
+            # (binding_id, metric_name, window_label) tuple: distinct tuples
+            # that only differ in where a colon falls can collide (e.g.
+            # metric_name="a:b", window_label="c" vs metric_name="a",
+            # window_label="b:c" both joined to "...:a:b:c..."), silently
+            # suppressing one candidate under the other's event_id. A JSON
+            # array of the same fixed arity is unambiguous because each
+            # element is quoted/escaped independently.
+            dedupe_key = json.dumps(
+                [identity["binding_id"], metric_name, window_label], separators=(",", ":")
+            )
             event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, dedupe_key))
             trace_id = str(uuid.uuid5(uuid.NAMESPACE_URL, dedupe_key + ":trace"))
             metrics_key = _METRICS_KEY_ALIASES.get(field, field)
@@ -537,15 +566,21 @@ def default_post_incident(incidents_api_url: str, payload: Mapping[str, Any], *,
     return {"status": status, "body": json.loads(response_body) if response_body else {}}
 
 
-def _load_pending_evidence(path: str) -> dict[str, dict[str, Any]]:
+def _load_pending_evidence(path: str) -> tuple[dict[str, dict[str, Any]], set[str]]:
     """Load previously-admitted evidence payloads, keyed by event_id.
 
-    Fail-closed: unreadable, malformed, or non-UTF8 state needs an explicit
-    fail-closed diagnostic and must raise ValueError. Structurally invalid
-    records must never raise.
+    Returns ``(valid, quarantined_event_ids)``. Fail-closed: unreadable,
+    malformed, or non-UTF8 state needs an explicit fail-closed diagnostic and
+    must raise ValueError. A structurally invalid *record* inside an
+    otherwise-readable WAL must never raise, but its event_id is reserved in
+    ``quarantined_event_ids`` rather than being silently forgotten: since the
+    dedupe key hashes deterministically to this same event_id, forgetting it
+    would let a later tick recompute a brand-new payload (from whatever the
+    live summary says right now) and cite it as if it were the original
+    frozen evidence, silently losing the corrupt record's real history.
     """
     if not os.path.exists(path):
-        return {}
+        return {}, set()
     try:
         with open(path, "r", encoding="utf-8") as handle:
             content = handle.read()
@@ -557,14 +592,16 @@ def _load_pending_evidence(path: str) -> dict[str, dict[str, Any]]:
         raise ValueError("WAL load failed: state JSON root is not a mapping")
 
     valid: dict[str, dict[str, Any]] = {}
+    quarantined: set[str] = set()
     for event_id, record in data.items():
         try:
             if not isinstance(record, Mapping):
+                quarantined.add(str(event_id))
                 continue
             tel_event = record.get("telemetry_event")
             snap = record.get("threshold_snapshot")
-            
-            if (
+
+            structurally_valid = (
                 isinstance(tel_event, Mapping)
                 and isinstance(snap, Mapping)
                 and isinstance(record.get("window_bucket"), str)
@@ -572,18 +609,23 @@ def _load_pending_evidence(path: str) -> dict[str, dict[str, Any]]:
                 and isinstance(record["delivered"], bool)
                 and "event_id" in tel_event
                 and str(tel_event["event_id"]) == str(event_id)
-            ):
-                # Only enforce type and payload validation if the record is undelivered (requires retry)
-                if not record["delivered"]:
-                    event_type = tel_event.get("event_type")
-                    metrics = tel_event.get("metrics")
-                    if not isinstance(event_type, str) or not isinstance(metrics, Mapping):
-                        continue
-                valid[str(event_id)] = dict(record)
+            )
+            if not structurally_valid:
+                quarantined.add(str(event_id))
+                continue
+
+            # Only enforce type and payload validation if the record is undelivered (requires retry)
+            if not record["delivered"]:
+                event_type = tel_event.get("event_type")
+                metrics = tel_event.get("metrics")
+                if not isinstance(event_type, str) or not isinstance(metrics, Mapping):
+                    quarantined.add(str(event_id))
+                    continue
+            valid[str(event_id)] = dict(record)
         except Exception:
-            # Structurally invalid records must never raise
-            continue
-    return valid
+            # Structurally invalid records must never raise; reserve the key.
+            quarantined.add(str(event_id))
+    return valid, quarantined
 
 
 def _save_pending_evidence(path: str, state: Mapping[str, dict[str, Any]]) -> None:
@@ -629,11 +671,17 @@ def run_tick(
     # 1. Load pending evidence (WAL state) first, as required by fail-closed rules.
     active_state_path = state_path if state_path is not None else DEFAULT_STATE_PATH
     try:
-        pending = _load_pending_evidence(active_state_path)
+        pending, quarantined_ids = _load_pending_evidence(active_state_path)
     except ValueError as exc:
         result["errors"] += 1
         result["diagnostics"].append(f"fail-closed: {exc}")
         return result
+
+    if quarantined_ids:
+        result["diagnostics"].append(
+            f"warning: {len(quarantined_ids)} WAL record(s) are structurally invalid and "
+            f"quarantined (reserved, never recomputed): {sorted(quarantined_ids)}"
+        )
 
     # 2. Prune old records that were successfully delivered.
     # Keep undelivered ones across days.
@@ -681,7 +729,7 @@ def run_tick(
     if should_evaluate:
         try:
             summaries = fetch_summaries(telemetry_api_url, timeout=timeout)
-        except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+        except (urllib.error.URLError, TimeoutError, ValueError, OSError, http.client.HTTPException) as exc:
             result["diagnostics"].append(f"telemetry fetch failed, skipping new breach evaluation (fail-closed): {exc}")
             should_evaluate = False
 
@@ -718,6 +766,13 @@ def run_tick(
     for payload in candidates:
         event = payload["telemetry_event"]
         event_id = event["event_id"]
+        if event_id in quarantined_ids:
+            result["errors"] += 1
+            result["diagnostics"].append(
+                f"fail-closed: event_id {event_id} has a corrupt/unreadable prior WAL record; "
+                "refusing to recompute a new payload under the same deterministic id"
+            )
+            continue
         if event_id in pending:
             record = pending[event_id]
             if record.get("delivered", False):
@@ -766,7 +821,7 @@ def run_tick(
                 result["errors"] += 1
                 result["diagnostics"].append(f"telemetry ingest rejected derived event status={exc.code}")
                 continue
-            except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError, http.client.HTTPException) as exc:
                 result["errors"] += 1
                 result["diagnostics"].append(f"telemetry ingest network error: {exc}")
                 continue
@@ -785,7 +840,7 @@ def run_tick(
                 result["errors"] += 1
                 result["diagnostics"].append(f"post_incident rejected status={exc.code}")
                 continue
-            except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError, http.client.HTTPException) as exc:
                 result["errors"] += 1
                 result["diagnostics"].append(f"post_incident network error: {exc}")
                 continue
