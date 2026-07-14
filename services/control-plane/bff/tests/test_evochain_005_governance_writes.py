@@ -50,7 +50,7 @@ def test_execute_rollback_writes_to_governance(configure_urls, monkeypatch) -> N
         "target_artifact_id": "art-123",
         "rollback_to_version": "art-123",
     }
-    
+
     result = bff_executor._execute_rollback(
         command_id="cmd-rollback-123",
         params=params,
@@ -65,13 +65,13 @@ def test_execute_rollback_writes_to_governance(configure_urls, monkeypatch) -> N
     gov_init_call = post_calls[0]
     assert gov_init_call[0] == f"{GOVERNANCE_URL}/api/governance/rollbacks"
     assert gov_init_call[1]["status"] == "initiated"
-    
+
     internal_call = post_calls[1]
     assert internal_call[0] == f"{INTERNAL_URL}/api/internal/v1/rollbacks/execute"
-    
+
     gov_call = post_calls[2]
     assert gov_call[0] == f"{GOVERNANCE_URL}/api/governance/rollbacks"
-    
+
     gov_payload = gov_call[1]
     assert gov_payload["rollback_id"] == result["rollback_id"]
     assert gov_payload["runtime_id"] == "runtime-abc"
@@ -144,7 +144,7 @@ def test_activate_kill_switch_writes_to_governance(configure_urls, monkeypatch) 
         "severity": "critical",
         "reason": "Drawdown limit reached",
     }
-    
+
     result = bff_executor._execute_activate_kill_switch(
         command_id="cmd-ks-123",
         params=params,
@@ -155,7 +155,7 @@ def test_activate_kill_switch_writes_to_governance(configure_urls, monkeypatch) 
     assert len(post_calls) == 2
     assert post_calls[0][0] == f"{INTERNAL_URL}/api/internal/v1/kill-switch"
     assert post_calls[1][0] == f"{GOVERNANCE_URL}/api/governance/freeze-orders"
-    
+
     freeze_payload = post_calls[1][1]
     assert freeze_payload["freeze_order_id"] == "freeze-ks-test-123"
     assert freeze_payload["scope"] == "persona"
@@ -189,7 +189,7 @@ def test_execute_mutation_writes_to_governance_when_frozen(configure_urls, monke
         "persona_id": "persona-delta",
         "note": "Sweep freeze mutation",
     }
-    
+
     result = bff_executor._execute_execute_mutation(
         command_id="cmd-mutation-123",
         params=params,
@@ -200,7 +200,7 @@ def test_execute_mutation_writes_to_governance_when_frozen(configure_urls, monke
     assert len(post_calls) == 2
     assert post_calls[0][0] == "http://evolution:8093/api/evolution/proposals/evo-sweep-1/execute"
     assert post_calls[1][0] == f"{GOVERNANCE_URL}/api/governance/freeze-orders"
-    
+
     freeze_payload = post_calls[1][1]
     assert freeze_payload["freeze_order_id"] == "freeze-evo-sweep-1"
     assert freeze_payload["status"] == "active"
@@ -231,7 +231,7 @@ def test_execute_mutation_non_freeze_does_not_emit_freeze_order(configure_urls, 
         "persona_id": "persona-delta",
         "note": "Non-freeze mutation",
     }
-    
+
     result = bff_executor._execute_execute_mutation(
         command_id="cmd-mutation-124",
         params=params,
@@ -329,7 +329,7 @@ def test_rollback_transition_lifecycle_preserves_origin(configure_urls, monkeypa
     }
     resp2 = client.post("/api/governance/rollbacks", json=approve_payload)
     assert resp2.status_code == 200
-    
+
     # Readback and verify
     record = rollback_store.get("rb-lifecycle-test")
     assert record["status"] == "approved"
@@ -357,7 +357,7 @@ def test_rollback_transition_lifecycle_preserves_origin(configure_urls, monkeypa
     }
     resp3 = client.post("/api/governance/rollbacks", json=reject_payload)
     assert resp3.status_code == 200
-    
+
     # Readback and verify
     record_rejected = rollback_store.get("rb-lifecycle-test")
     assert record_rejected["status"] == "rejected"

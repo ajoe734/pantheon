@@ -1132,7 +1132,7 @@ def _issue_dev_login_jwt(
     now = int(time.time())
     ttl = _dev_login_ttl_seconds()
     expires_at = now + ttl
-    
+
     if requested_roles is not None:
         roles = sorted(set(role for role in requested_roles if role in _READ_ROLES or role in _WRITE_ROLES))
     else:
@@ -1327,7 +1327,7 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
     mfa_verified = False
     tenant_ids = None
     token_capabilities = []
-    
+
     if len(parts) > 2:
         if parts[2] == "mfa":
             mfa_verified = True
@@ -1339,7 +1339,7 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
             tenant_ids = parts[2].split(",")
             if len(parts) > 3 and parts[3]:
                 token_capabilities = parts[3].split(",")
-                
+
     capabilities = _stub_identity_capabilities(token_capabilities, roles)
     claims = {"sub": operator_id, "roles": roles, "capabilities": capabilities}
     if tenant_ids:
@@ -5925,7 +5925,7 @@ def _enforce_ops_console_preconditions(
                 "Persona not found",
                 f"Persona {persona_id} does not exist",
             )
-        
+
         read_model = _ops_read_model_entry_for_persona(persona_id)
         if read_model:
             confidence = read_model.data_confidence
@@ -5935,7 +5935,7 @@ def _enforce_ops_console_preconditions(
                 confidence_str = confidence.value
             else:
                 confidence_str = str(confidence)
-            
+
             if confidence_str.lower() in ("unavailable", "unverifiable"):
                 raise _bff_error(
                     422,
@@ -5944,7 +5944,7 @@ def _enforce_ops_console_preconditions(
                     "Source confidence must be formal, partial, fallback, or degraded",
                     precondition_failed="source_confidence",
                 )
-            
+
             if required_bindings:
                 if "runtime" in required_bindings:
                     if not read_model.identity.runtime_ids:
@@ -7373,7 +7373,7 @@ def _filter_by_common_identifiers(
         item_sleeve_ids = _extract_ids_from_item(item, ["sleeve_id", "sleeveId", "sleeve_ids", "sleeve"])
         item_artifact_ids = _extract_ids_from_item(item, ["artifact_id", "artifactId", "artifact_ids", "artifact"])
         item_broker_ids = _extract_ids_from_item(item, ["broker_id", "brokerId", "broker_ids", "broker"])
-        
+
         # 額外支援在 source_refs, target 或 links 中查找
         source_refs = item.get("source_refs") or {}
         if isinstance(source_refs, dict):
@@ -7385,7 +7385,7 @@ def _filter_by_common_identifiers(
                 item_strategy_ids.extend(source_refs["strategy_ids"])
             if "capital_pool_ids" in source_refs:
                 item_pool_ids.extend(source_refs["capital_pool_ids"])
-        
+
         target = item.get("target") or {}
         if isinstance(target, dict):
             t_type = target.get("type")
@@ -7408,16 +7408,16 @@ def _filter_by_common_identifiers(
             continue
         if bk_id and not any(str(bk_id).strip() == str(val).strip() for val in item_broker_ids):
             continue
-        
+
         # stage, period, as_of 匹配
         item_stage = item.get("stage") or item.get("lifecycle_state") or item.get("status")
         if stage and str(item_stage).strip().lower() != str(stage).strip().lower():
             continue
-            
+
         item_period = item.get("period")
         if period and str(item_period).strip().lower() != str(period).strip().lower():
             continue
-            
+
         # as_of 可以檢查 meta 或是 item_as_of
         item_as_of = item.get("as_of") or item.get("observed_at") or item.get("collected_at")
         if as_of and str(item_as_of).strip() != str(as_of).strip():
@@ -32556,7 +32556,7 @@ async def bff_management_portfolio_book_exposure(
         risk_policy_ref=risk_policy_ref,
     )
     entries = sources["entries"]
-    
+
     # Resolve capital pool filter
     resolved_pool_id = capital_pool_id or pool
     if resolved_pool_id:
@@ -59245,7 +59245,7 @@ async def sem_bff_version():
     image_digest = os.getenv("BFF_IMAGE_DIGEST") or os.getenv("IMAGE_DIGEST") or "unknown"
     build_time = os.getenv("BFF_BUILD_TIME") or os.getenv("BUILD_TIME") or "unknown"
     environment = os.getenv("PANTHEON_ENV") or os.getenv("ENVIRONMENT") or "unknown"
-    
+
     config_posture = {
         "auth_stub": _bff_auth_stub_enabled(),
         "auth_mode": _bff_auth_mode(),
@@ -59253,7 +59253,7 @@ async def sem_bff_version():
         "mfa_required": _bool_from_env("PANTHEON_BFF_MFA_REQUIRED", default=False),
         "assistant_kernel_enabled": _bool_from_env("PANTHEON_ASSISTANT_KERNEL_ENABLED", default=False),
     }
-    
+
     return {
         "service": "operator-bff",
         "version": "0.2.0",

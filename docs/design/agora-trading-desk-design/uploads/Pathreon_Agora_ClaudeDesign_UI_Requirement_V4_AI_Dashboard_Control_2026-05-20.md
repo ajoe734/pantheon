@@ -1,9 +1,9 @@
 # Pathreon Agora — Claude Design UI Requirement V4
 ## 主題：讓交易員能「叫研究助理改畫面」的 AI Dashboard Control UI
 
-版本：2026-05-20 V4  
-用途：交給 Claude Design 製作 Agora 前端視覺稿與互動稿  
-範圍：Agora 個人 AI 交易桌，不包含 Pathreon Management UI  
+版本：2026-05-20 V4
+用途：交給 Claude Design 製作 Agora 前端視覺稿與互動稿
+範圍：Agora 個人 AI 交易桌，不包含 Pathreon Management UI
 核心修正：V3 雖然定義了三主頁籤與 Strategy Lens，但畫面上看不出交易員可以命令 AI 助手動態調整 dashboard。V4 專門補足這個缺口。
 
 ---

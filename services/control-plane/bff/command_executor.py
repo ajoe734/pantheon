@@ -644,7 +644,7 @@ def _execute_approve_rollback(
     }
     url = _internal_url(f"/api/internal/v1/rollbacks/{rollback_id}/approve")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    
+
     try:
         actor_id, actor_role = _actor_context(params, auth_token=auth_token)
     except Exception:
@@ -687,7 +687,7 @@ def _execute_reject_rollback(
     }
     url = _internal_url(f"/api/internal/v1/rollbacks/{rollback_id}/reject")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    
+
     try:
         actor_id, actor_role = _actor_context(params, auth_token=auth_token)
     except Exception:
@@ -733,7 +733,7 @@ def _execute_activate_kill_switch(
         payload["action_override"] = params.get("action_override")
     url = _internal_url("/api/internal/v1/kill-switch")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    
+
     kill_switch_order_id = body.get("kill_switch_order_id") or f"ks-{uuid.uuid4().hex[:12]}"
     try:
         actor_id, actor_role = _actor_context(params, auth_token=auth_token)

@@ -556,12 +556,12 @@ async def process_postmortems_outbox():
             postmortem_id = record.event.payload.get("postmortem_id")
             det_decision_id = record.event.payload.get("decision_id")
             log.info("AUDIT: Outbox worker attempting delivery of postmortem %s proposal to %s", postmortem_id, url)
-            
+
             proposal_payload = {
                 "postmortem_id": postmortem_id,
                 "decision_id": det_decision_id,
             }
-            
+
             try:
                 resp = await client.post(url, json=proposal_payload)
                 if resp.status_code in {200, 201}:

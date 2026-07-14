@@ -20,18 +20,18 @@ trade_journey_schema = load_schema("trade_journey.schema.json")
 def calculate_rollup_status(stages: dict, correction_events: list | None = None) -> str:
     # Deterministic roll-up status implementation
     statuses = {name: info["status"] for name, info in stages.items()}
-    
+
     # Check for conflicting mutually-exclusive terminal states
     # e.g., failed or cancelled stage status alongside succeeded execution/reconciliation stages
     has_failure = any(s in ("rejected", "failed") for s in [statuses.get("risk_evaluation"), statuses.get("order_submission"), statuses.get("broker_acknowledgement")])
     has_cancelled = any(s == "cancelled" for s in statuses.values())
     has_success_execution = any(s in ("succeeded", "partially_succeeded") for s in [statuses.get("fill_management"), statuses.get("ledger_booking"), statuses.get("reconciliation")])
-    
+
     if (has_failure or has_cancelled) and has_success_execution:
         import logging
         logging.error("Data Quality Incident: Conflicting mutually-exclusive terminal states detected")
         return "incomplete"
-        
+
     if any(s == "waiting_human" for s in statuses.values()):
         return "waiting_human"
     if any(s == "blocked" for s in statuses.values()):
@@ -40,7 +40,7 @@ def calculate_rollup_status(stages: dict, correction_events: list | None = None)
         return "failed"
     if any(s == "cancelled" for s in statuses.values()):
         return "cancelled"
-    
+
     # Check completeness
     required_stages = [
         "research_rationale", "strategy_candidate", "candidate_evaluation",
@@ -49,10 +49,10 @@ def calculate_rollup_status(stages: dict, correction_events: list | None = None)
         "order_submission", "broker_acknowledgement", "fill_management",
         "ledger_booking", "reconciliation"
     ]
-    
+
     if any(statuses.get(stage) == "unknown" for stage in required_stages):
         return "incomplete"
-        
+
     if statuses.get("fill_management") == "partially_succeeded":
         return "partially_filled"
     if statuses.get("reconciliation") == "succeeded":
@@ -63,7 +63,7 @@ def calculate_rollup_status(stages: dict, correction_events: list | None = None)
         return "completed_with_variance"
     if statuses.get("order_submission") == "succeeded" and statuses.get("fill_management") == "active":
         return "executing"
-        
+
     return "open"
 
 def get_base_stages() -> dict:
@@ -208,7 +208,7 @@ def test_conflicting_terminal_states_conflict():
 
 def test_reconciliation_variance_corrected():
     payload = get_base_trade_journey()
-    
+
     # 1. Mismatch detected (completed_with_variance)
     payload["stages"]["reconciliation"] = {
         "status": "failed",
@@ -219,7 +219,7 @@ def test_reconciliation_variance_corrected():
     payload["status"] = "completed_with_variance"
     jsonschema.validate(instance=payload, schema=trade_journey_schema)
     assert calculate_rollup_status(payload["stages"]) == "completed_with_variance"
-    
+
     # 2. Correction event received - read model increments revision and closes the variance
     payload["revision"] = 2
     payload["stages"]["reconciliation"] = {
@@ -228,7 +228,7 @@ def test_reconciliation_variance_corrected():
         "block_reason": "Quantity mismatch: ledger=1.5, broker=1.4 (corrected by evt_corr_001)",
         "revision": 2
     }
-    
+
     correction_event = {
         "event_id": "evt_corr_001",
         "corrected_at": "2026-07-11T23:10:00Z",
@@ -241,10 +241,10 @@ def test_reconciliation_variance_corrected():
     }
     payload["correction_events"] = [correction_event]
     payload["status"] = "completed"
-    
+
     # Validate against updated schema
     jsonschema.validate(instance=payload, schema=trade_journey_schema)
-    
+
     # Calculate rollup with correction events should resolve to completed
     assert calculate_rollup_status(payload["stages"], payload["correction_events"]) == "completed"
 

@@ -1,7 +1,7 @@
 # Persona Interaction And Governed Action Plan
 
-Date: 2026-07-12  
-Status: execution-ready planning baseline  
+Date: 2026-07-12
+Status: execution-ready planning baseline
 Repos: `ajoe734/pantheon`, `ajoe734/execute-plans`
 
 ## 1. Outcome

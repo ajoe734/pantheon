@@ -1,6 +1,6 @@
 # Persona Trade Journal Execution Tasks
 
-來源：`docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md`  
+來源：`docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md`
 狀態：可交付 fleets；不包含 live broker side effect
 
 ## 執行波次

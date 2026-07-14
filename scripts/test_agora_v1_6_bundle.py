@@ -266,7 +266,7 @@ def test_winner_branch_completeness_rejects_missing_required() -> None:
 def test_winner_branch_completeness_rejects_duplicate_dimensions() -> None:
     schema = _load_schema("winner_branch_completeness.schema.json")
     validator = Draft7Validator(schema, format_checker=FormatChecker())
-    
+
     # 7 items, but "governance" is replaced with a duplicate "hypothesis"
     bad = _winner_branch_completeness()
     bad["dimensions"] = [
