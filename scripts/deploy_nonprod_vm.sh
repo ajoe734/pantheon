@@ -415,6 +415,7 @@ preserve_known_deploy_runtime_state() {
     ".orchestrator/metrics"
     ".orchestrator/task-briefs"
     ".orchestrator/watchdog-state.json"
+    "trade_journey_events.json"
   )
   local present_paths=()
   local path
@@ -423,6 +424,19 @@ preserve_known_deploy_runtime_state() {
 
   for path in "${known_paths[@]}"; do
     if [[ ! -e "$path" ]]; then
+      continue
+    fi
+    # Runtime-owned untracked files may not be readable by the deploy user.
+    # Register them in this checkout's private exclude file before asking git
+    # for worktree status; otherwise `git stash --include-untracked` attempts
+    # to open the file and aborts the deployment with EACCES. The file remains
+    # in place across the detached checkout and the repository-level ignore in
+    # the target commit makes this local exclusion unnecessary thereafter.
+    if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+      mkdir -p .git/info
+      if ! grep -Fqx "/${path}" .git/info/exclude 2>/dev/null; then
+        printf '/%s\n' "$path" >>.git/info/exclude
+      fi
       continue
     fi
     # Skip gitignored runtime paths (e.g. .orchestrator/metrics,
