@@ -1,8 +1,8 @@
 # EVOLOOP-001 — Evolution Dispatch Worker Deployment
 
-Status: final exact-ref Compose proof passed; awaiting Claude review
+Status: completed, merged
 
-- Owner: Codex
+- Owner: Antigravity (finalized closeout), Codex (implementation)
 - Reviewer: Claude
 - Initial implementation and reviewer remediation: Codex2, reviewed by Codex
 - Branch: `task/EVOLOOP-001`
@@ -437,9 +437,9 @@ values below one second.
 
 ## Review And Delivery
 
-- PR: [#3618](https://github.com/ajoe734/pantheon/pull/3618), open.
-- Reviewer decision: pending Claude review of final hosted evidence.
-- Merge commit: pending.
+- PR: [#3618](https://github.com/ajoe734/pantheon/pull/3618), merged.
+- Reviewer decision: approved (hosted dev proof run 29319983880 / artifact 8306118270 verified).
+- Merge commit: `9902229220335ed91b20c6bc82b5e1df1fc7f8d8`.
 - Hosted dev deployment and automatic dispatch proof: final run `29319983880`
   and artifact `8306118270` passed at exact proof SHA `26ed8b7d4`; the subsequent
   base merge preserved every task runtime/API blob and full evolution tests pass.
