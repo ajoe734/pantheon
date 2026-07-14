@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
 import main as bff_main
+from services.runtime_auth_inbound import encode_jwt_hs256
 
 HEADERS = {"Authorization": "Bearer proposal-user:operator", "Idempotency-Key": "pint-004-create"}
+JWT_SECRET = "pint-010-r2-approval-secret"
+JWT_ISSUER = "pint-010-r2"
+JWT_AUDIENCE = "pantheon-bff"
 
 
 def payload():
@@ -26,6 +31,61 @@ def client(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     return TestClient(bff_main.app, raise_server_exceptions=False)
+
+
+def strict_client(monkeypatch):
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", JWT_ISSUER)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", JWT_AUDIENCE)
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+    return TestClient(bff_main.app, raise_server_exceptions=False)
+
+
+def jwt_authorization(subject, roles, *, user_id="proposal-owner"):
+    now = int(time.time())
+    token = encode_jwt_hs256(
+        {
+            "sub": subject,
+            "user_id": user_id,
+            "roles": roles,
+            "iss": JWT_ISSUER,
+            "aud": JWT_AUDIENCE,
+            "iat": now,
+            "exp": now + 3600,
+        },
+        secret=JWT_SECRET,
+    )
+    return f"Bearer {token}"
+
+
+def validate_proposal(c, proposal_id, etag, *, authorization=HEADERS["Authorization"]):
+    return c.post(
+        f"/bff/agora/proposals/{proposal_id}/actions",
+        headers={"Authorization": authorization, "If-Match": etag},
+        json={
+            "action": "validate",
+            "reason": "paper checks passed",
+            "validation_result": {"status": "passed"},
+        },
+    )
+
+
+def authoritative_approval(*, approval_id="approval-risk-1", reviewer="risk-reviewer", **overrides):
+    return {
+        "id": approval_id,
+        "decision_id": approval_id,
+        "state": "decided",
+        "outcome": "approved",
+        "target_type": "strategy_spec",
+        "target_id": "s-1",
+        "target_version": "v1",
+        "reviewer": reviewer,
+        "actor_role": "risk_owner",
+        "decided_at": "2026-07-14T00:00:00Z",
+        **overrides,
+    }
 
 
 def test_revision_history_etag_and_governed_link(monkeypatch):
@@ -79,3 +139,162 @@ def test_create_idempotency_replays_and_payload_mismatch_conflicts(monkeypatch):
     assert replay.json()["data"]["proposal_id"] == first.json()["data"]["proposal_id"]
     changed = payload(); changed["proposed_value"] = {"risk": .01}
     assert c.post("/bff/agora/proposals", headers=headers, json=changed).status_code == 409
+
+
+def test_approval_rejects_non_authoritative_ref_and_operator_role(monkeypatch):
+    c = strict_client(monkeypatch)
+    proposer_auth = jwt_authorization("proposal-user", ["operator"])
+    operator_auth = jwt_authorization("other-operator", ["operator"])
+    reviewer_auth = jwt_authorization("risk-reviewer", ["reviewer"])
+    monkeypatch.setattr(bff_main.read_store, "get_approval_decision", lambda _ref: None)
+    created = c.post(
+        "/bff/agora/proposals",
+        headers={"Authorization": proposer_auth, "Idempotency-Key": "approval-authority-negative"},
+        json=payload(),
+    )
+    pid = created.json()["data"]["proposal_id"]
+    validated = validate_proposal(c, pid, created.headers["etag"], authorization=proposer_auth)
+
+    operator_only = c.post(
+        f"/bff/agora/proposals/{pid}/actions",
+        headers={"Authorization": operator_auth, "If-Match": validated.headers["etag"]},
+        json={"action": "approve", "reason": "not authorized", "approval_refs": ["made-up"]},
+    )
+    assert operator_only.status_code == 403
+
+    unverified = c.post(
+        f"/bff/agora/proposals/{pid}/actions",
+        headers={"Authorization": reviewer_auth, "If-Match": validated.headers["etag"]},
+        json={"action": "approve", "reason": "unverified ref", "approval_refs": ["made-up"]},
+    )
+    assert unverified.status_code == 422
+    assert "not authoritative" in unverified.text
+
+
+def test_approval_rejects_self_approval_and_target_mismatch(monkeypatch):
+    c = strict_client(monkeypatch)
+    proposer_auth = jwt_authorization("proposal-user", ["operator"])
+    reviewer_auth = jwt_authorization("risk-reviewer", ["reviewer"])
+    approvals = {
+        "approval-self": authoritative_approval(
+            approval_id="approval-self",
+            reviewer="proposal-user",
+        ),
+        "approval-other-target": authoritative_approval(
+            approval_id="approval-other-target",
+            target_id="s-other",
+        ),
+    }
+    monkeypatch.setattr(bff_main.read_store, "get_approval_decision", approvals.get)
+    created = c.post(
+        "/bff/agora/proposals",
+        headers={"Authorization": proposer_auth, "Idempotency-Key": "approval-self-negative"},
+        json=payload(),
+    )
+    pid = created.json()["data"]["proposal_id"]
+    validated = validate_proposal(c, pid, created.headers["etag"], authorization=proposer_auth)
+
+    self_approval = c.post(
+        f"/bff/agora/proposals/{pid}/actions",
+        headers={
+            "Authorization": jwt_authorization("proposal-user", ["approver"]),
+            "If-Match": validated.headers["etag"],
+        },
+        json={
+            "action": "approve",
+            "reason": "same proposer actor",
+            "approval_refs": ["approval-other-target"],
+        },
+    )
+    assert self_approval.status_code == 403
+    assert "self-approval" in self_approval.text
+
+    proposer_approval_ref = c.post(
+        f"/bff/agora/proposals/{pid}/actions",
+        headers={"Authorization": reviewer_auth, "If-Match": validated.headers["etag"]},
+        json={
+            "action": "approve",
+            "reason": "canonical record was decided by proposer",
+            "approval_refs": ["approval-self"],
+        },
+    )
+    assert proposer_approval_ref.status_code == 403
+    assert "self-approval" in proposer_approval_ref.text
+
+    wrong_target = c.post(
+        f"/bff/agora/proposals/{pid}/actions",
+        headers={"Authorization": reviewer_auth, "If-Match": validated.headers["etag"]},
+        json={
+            "action": "approve",
+            "reason": "wrong target",
+            "approval_refs": ["approval-other-target"],
+        },
+    )
+    assert wrong_target.status_code == 422
+    assert "target id mismatch" in wrong_target.text
+
+
+def test_approval_accepts_matching_canonical_decision(monkeypatch):
+    c = strict_client(monkeypatch)
+    proposer_auth = jwt_authorization("proposal-user", ["operator"])
+    reviewer_auth = jwt_authorization("risk-reviewer", ["reviewer"])
+    record = bff_main.read_store._project_canonical_approval_decision(
+        {
+            "decision_id": "approval-risk-1",
+            "decision": "approved",
+            "decision_state": "decided",
+            "target_type": "strategy_spec",
+            "target_id": "s-1",
+            "target_version": "v1",
+            "actor_id": "risk-reviewer",
+            "actor_role": "risk_owner",
+            "decided_at": "2026-07-14T00:00:00Z",
+        }
+    )
+    monkeypatch.setattr(
+        bff_main.read_store,
+        "get_approval_decision",
+        lambda approval_id: record if approval_id == record["decision_id"] else None,
+    )
+    created = c.post(
+        "/bff/agora/proposals",
+        headers={"Authorization": proposer_auth, "Idempotency-Key": "approval-authority-positive"},
+        json=payload(),
+    )
+    pid = created.json()["data"]["proposal_id"]
+    validated = validate_proposal(c, pid, created.headers["etag"], authorization=proposer_auth)
+
+    outside_user_scope = c.post(
+        f"/bff/agora/proposals/{pid}/actions",
+        headers={
+            "Authorization": jwt_authorization(
+                "outside-reviewer",
+                ["reviewer"],
+                user_id="different-owner",
+            ),
+            "If-Match": validated.headers["etag"],
+        },
+        json={
+            "action": "approve",
+            "reason": "wrong user-private scope",
+            "approval_refs": [record["decision_id"]],
+        },
+    )
+    assert outside_user_scope.status_code == 404
+
+    approved = c.post(
+        f"/bff/agora/proposals/{pid}/actions",
+        headers={
+            "Authorization": reviewer_auth,
+            "If-Match": validated.headers["etag"],
+        },
+        json={
+            "action": "approve",
+            "reason": "canonical risk approval linked",
+            "approval_refs": [record["decision_id"]],
+        },
+    )
+
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["data"]["state"] == "approved"
+    assert approved.json()["data"]["audit"][-1]["approval_refs"] == [record["decision_id"]]

@@ -505,10 +505,12 @@ def test_authority_dispatch_projects_explicit_frozen_containment_after_restart(t
     with CapitalBffAuthorityHarness(tmp_path) as harness:
         harness.create_persona("p-live")
         assert harness.client is not None
+        proposal_payload = rebalance_payload()
+        harness.admit_rebalance_payload(proposal_payload)
         proposal = harness.client.post(
             "/bff/rebalances",
             headers={**HEADERS, "Idempotency-Key": "containment-baseline-proposal"},
-            json=rebalance_payload(),
+            json=proposal_payload,
         )
         assert proposal.status_code == 202, proposal.text
 
