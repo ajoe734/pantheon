@@ -36,7 +36,7 @@ def test_dev_compose_enables_codex_assistant_provider_for_bff() -> None:
     )
     assert (
         env["PANTHEON_BFF_STUB_CAPABILITIES"]
-        == "${PANTHEON_BFF_STUB_CAPABILITIES:-assistant.kernel.debug,assistant.kernel.repair}"
+        == "${PANTHEON_BFF_STUB_CAPABILITIES:-}"
     )
     assert (
         env["PANTHEON_MANAGEMENT_AI_STORE_PATH"]
