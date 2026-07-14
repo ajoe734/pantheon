@@ -862,7 +862,7 @@ def test_activity_outbox_recovers_crash_between_status_and_log() -> None:
         )
         assert len(program_tasks(interrupted_state)) == 48
         outbox = interrupted_state["program_activity_outbox"]
-        assert outbox["schema_version"] == 3
+        assert outbox["schema_version"] == 4
         assert outbox["actor_policy"] == load_catalog()["allowed_owners"]
         assert outbox["actor_policy_sha256"] == canonical_sha256(
             outbox["actor_policy"]
