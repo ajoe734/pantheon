@@ -70,18 +70,23 @@ def test_rows_without_signal_or_timestamp_stay_safe():
     assert journey_events_from_telemetry([("paper_order_simulated", "", broken)]) == []
 
 
-def test_merge_preserves_seed_and_replaces_prior_backfill():
+def test_merge_accumulates_across_telemetry_rotation():
+    """telemetry_events is routinely truncated; previously derived events must
+    survive a re-run whose query window no longer covers them."""
     seed = {"event_id": "s1-e1", "journey_id": "tj-scenario-1", "source": "seed",
             "occurred_at": "2026-07-12T12:01:00Z"}
-    stale = {"event_id": "gone", "journey_id": "tj-old", "source": BACKFILL_SOURCE,
-             "occurred_at": "2026-07-01T00:00:00Z"}
+    rotated_out = {"event_id": "old-1-fill", "journey_id": "tj-old", "source": BACKFILL_SOURCE,
+                   "occurred_at": "2026-07-01T00:00:00Z"}
     fresh = journey_events_from_telemetry([
         ("paper_order_simulated", "2026-07-13T10:00:01Z", _order_payload()),
     ])
-    merged = merge_with_store([seed, stale], fresh)
+    merged = merge_with_store([seed, rotated_out], fresh)
     ids = [event["event_id"] for event in merged]
-    assert "s1-e1" in ids and "gone" not in ids
+    assert "s1-e1" in ids and "old-1-fill" in ids
     assert "ord-1-decision" in ids and "ord-1-order" in ids
+    # re-derived rows overlay by id instead of duplicating
+    remerged = merge_with_store(merged, fresh)
+    assert len(remerged) == len(merged)
 
 
 def test_materializer_accepts_bridge_output():
