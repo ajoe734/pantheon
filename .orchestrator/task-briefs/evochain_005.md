@@ -5,7 +5,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Governance write endpoints persist to canonical store
 - Status: in_progress
-- Owner: Antigravity
+- Owner: Claude
 - Reviewer: Codex
 - Next: Supervisor re-dispatched EVOCHAIN-005; task remains in progress.
 

@@ -4,7 +4,7 @@
 - **ID:** EVOCHAIN-005
 - **Lane:** control-plane, governance-review
 - **Status:** ready_for_review
-- **Owner:** Antigravity
+- **Owner:** Claude (implementation authored by Antigravity across #3560/#3591/#3611; Claude re-verified after 2026-07-14 owner reassignment)
 - **Reviewer:** Codex
 
 ---
