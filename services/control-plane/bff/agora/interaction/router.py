@@ -71,6 +71,7 @@ def _environment_allowed(persona: Dict[str, Any], environment: str) -> bool:
 
 
 def create_interaction_router(*, extract_identity: Callable[..., Any], require_read_role: Callable[..., None],
+                              require_write_role: Callable[..., None],
                               bff_error: Callable[..., HTTPException], utc_now: Callable[[], str],
                               get_read_store: Callable[[], Any], workshop_store: Any,
                               proposal_store: ProposalStore,
@@ -81,10 +82,12 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
     store = interaction_store or proposal_store
     proposals = proposal_store
 
-    def scope(auth: Optional[str], tenant: Optional[str]) -> Any:
+    def scope(auth: Optional[str], tenant: Optional[str], *, write: bool = False) -> Any:
         from ..identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
         identity = extract_identity(auth)
         require_read_role(identity)
+        if write:
+            require_write_role(identity)
         try:
             resolved = resolve_agora_user_scope(identity, utc_now=utc_now, requested_tenant_id=tenant)
         except AgoraScopeResolutionError as exc:
@@ -135,7 +138,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
     def resolve_context(body: ResolveContextRequest, authorization: Optional[str] = Header(default=None),
                         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
                         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")) -> Dict[str, Any]:
-        resolved = scope(authorization, x_tenant_id)
+        resolved = scope(authorization, x_tenant_id, write=True)
         if not idempotency_key:
             from models import ErrorCode
             raise bff_error(400, ErrorCode.VALIDATION_FAILED, "Idempotency-Key header is required", "missing_idempotency_key")
@@ -448,7 +451,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                authorization: Optional[str] = Header(default=None),
                x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
                idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")) -> Dict[str, Any]:
-        resolved = scope(authorization, x_tenant_id)
+        resolved = scope(authorization, x_tenant_id, write=True)
         if not idempotency_key:
             from models import ErrorCode
             raise bff_error(400, ErrorCode.VALIDATION_FAILED, "Idempotency-Key header is required", "missing_idempotency_key")

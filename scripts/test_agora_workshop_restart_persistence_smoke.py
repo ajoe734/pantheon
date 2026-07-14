@@ -89,3 +89,17 @@ def test_workflow_uses_internal_fresh_process_persistence_proof() -> None:
     assert step.index(seed) < step.index(restart) < step.index(verify)
     assert step.count("docker compose -p pantheon -f docker-compose.yml exec -T operator-bff") == 2
     assert 'test "${ready}" = true' in step
+
+
+def test_workflow_log_and_inspect_probes_consume_complete_input_under_pipefail() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    step = workflow.split("- name: Dev Agora workshop restart persistence smoke", 1)[1]
+    step = step.split("- name: Summarize auto-deploy", 1)[0]
+
+    assert "grep -q" not in step
+    assert step.count("docker inspect pantheon-operator-bff-1") == 2
+    assert step.count("docker logs pantheon-operator-bff-1") == 2
+    assert "grep -F -x 'AGORA_WORKSHOP_STORE_BACKEND=postgres' >/dev/null" in step
+    assert "grep -F -x 'AGORA_GOVERNANCE_STORE_BACKEND=postgres' >/dev/null" in step
+    assert "grep -F 'Agora workshop store initialized backend=postgres' >/dev/null" in step
+    assert "grep -F 'Agora governance store initialized backend=postgres' >/dev/null" in step

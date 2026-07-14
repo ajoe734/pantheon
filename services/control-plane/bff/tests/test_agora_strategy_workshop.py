@@ -954,6 +954,7 @@ class TestWorkshopRouterEndpoints:
         router = create_strategy_workshop_router(
             extract_identity=lambda auth: {"sub": "test"},
             require_read_role=lambda identity: None,
+            require_write_role=lambda identity: None,
             bff_error=lambda *a, **kw: HTTPException(status_code=a[0]),
             utc_now=lambda: "2026-06-21T00:00:00Z",
             workshop_store=store,
@@ -1007,6 +1008,7 @@ class TestWorkshopRouterEndpoints:
         app.include_router(create_strategy_workshop_router(
             extract_identity=lambda auth: identity,
             require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
             bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
             utc_now=lambda: "2026-07-05T00:00:00Z",
             workshop_store=store,
@@ -1053,6 +1055,7 @@ class TestWorkshopRouterEndpoints:
         app.include_router(create_strategy_workshop_router(
             extract_identity=lambda auth: identity,
             require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
             bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
             utc_now=lambda: "2026-07-05T00:00:00Z",
             workshop_store=store,
@@ -1191,6 +1194,7 @@ class TestWorkshopConcurrencyContract:
         app.include_router(create_strategy_workshop_router(
             extract_identity=lambda auth: identity,
             require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
             bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
             utc_now=lambda: "2026-07-12T00:00:00Z",
             workshop_store=workshop_store,
@@ -1347,6 +1351,7 @@ class TestWorkshopPrivacyContract:
         app.include_router(create_strategy_workshop_router(
             extract_identity=lambda auth: identity,
             require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
             bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
             utc_now=lambda: "2026-07-12T00:00:00Z",
             workshop_store=workshop_store,
@@ -1391,6 +1396,7 @@ class TestWorkshopPrivacyContract:
         app.include_router(create_strategy_workshop_router(
             extract_identity=lambda auth: identity,
             require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
             bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
             utc_now=lambda: "2026-07-12T00:00:00Z",
             workshop_store=workshop_store,
