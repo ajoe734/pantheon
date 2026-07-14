@@ -311,6 +311,37 @@ def read_actual_state(*, api_url: str, timeout_seconds: float = 30.0) -> dict[st
     )
 
 
+def _trusted_unresolved_dlq_count(actual: Mapping[str, Any]) -> int | None:
+    expected_statuses = {
+        "pending",
+        "replayed",
+        "duplicate_skipped",
+        "replay_failed",
+        "schema_rejected",
+    }
+    status_counts = actual.get("dlq_status_counts")
+    pending_count = actual.get("pending_dlq_count")
+    unresolved_count = actual.get("unresolved_dlq_count")
+    total_count = actual.get("dlq_count")
+    if (
+        not isinstance(status_counts, Mapping)
+        or set(status_counts) != expected_statuses
+        or any(type(value) is not int or value < 0 for value in status_counts.values())
+        or type(pending_count) is not int
+        or type(unresolved_count) is not int
+        or type(total_count) is not int
+        or pending_count < 0
+        or unresolved_count < 0
+        or total_count < 0
+        or status_counts["pending"] != pending_count
+        or sum(status_counts.values()) != total_count
+        or unresolved_count
+        != sum(status_counts[status] for status in ("pending", "replay_failed", "schema_rejected"))
+    ):
+        return None
+    return unresolved_count
+
+
 def _validate_terminal_readback(
     *,
     reconcile: Mapping[str, Any],
@@ -760,6 +791,7 @@ def run_controller_tick(
             max_concurrency=config.max_concurrency,
             timeout_seconds=config.timeout_seconds,
             force_connector_ids=_mutated_connector_ids(reconcile),
+            controller_token=config.controller_token,
         )
         actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
         _validate_terminal_readback(
@@ -851,11 +883,7 @@ def run_controller_tick(
                     LOOP_ID,
                     f"{error.stage}: {error}",
                     NON_TERMINAL_TRUTH_LEVEL,
-                    dlq_count=(
-                        int(actual["unresolved_dlq_count"])
-                        if type(actual.get("unresolved_dlq_count")) is int
-                        else None
-                    ),
+                    dlq_count=_trusted_unresolved_dlq_count(actual),
                     payload={
                         "failure_stage": error.stage,
                         "state_sequence_no": state.sequence_no,

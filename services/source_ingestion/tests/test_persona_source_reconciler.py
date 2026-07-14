@@ -461,11 +461,13 @@ def test_controller_owned_connector_legacy_mutations_require_controller_token(pe
             "trigger_type": "manual",
         },
     )
+    unauthorized_scheduled_run = client.post("/api/source-ingest/run-scheduled")
 
     assert unauthorized_schedule.status_code == 401
     assert forbidden_schedule.status_code == 403
     assert unauthorized_lifecycle.status_code == 401
     assert unauthorized_job.status_code == 401
+    assert unauthorized_scheduled_run.status_code == 401
     authorized_schedule = client.put(
         schedule_path,
         headers=headers,

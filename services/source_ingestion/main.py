@@ -1829,6 +1829,17 @@ def _run_frontier_item(
     return result, evidence_refs, updated, source_search_refresh
 
 
+def _unresolved_dead_letter_entries(*, tag_filter: str | None = None) -> list[Any]:
+    entries: list[Any] = []
+    for status in (
+        DeadLetterStatus.PENDING,
+        DeadLetterStatus.REPLAY_FAILED,
+        DeadLetterStatus.SCHEMA_REJECTED,
+    ):
+        entries.extend(dead_letter_queue.entries(status=status, tag_filter=tag_filter))
+    return entries
+
+
 def _resolve_pending_dlq_for_recovery(
     *,
     frontier_id: str,
@@ -1850,7 +1861,7 @@ def _resolve_pending_dlq_for_recovery(
     ):
         return []
     resolved: list[dict[str, Any]] = []
-    for entry in dead_letter_queue.pending_entries(tag_filter="retry_exhausted"):
+    for entry in _unresolved_dead_letter_entries(tag_filter="retry_exhausted"):
         if entry.event.event_type != "source_ingestion.scheduled_run_failed":
             continue
         event_frontier_id = str(entry.event.payload.get("frontier_id") or "").strip()
@@ -1882,7 +1893,7 @@ def _resolve_pending_dlq_for_recovery(
                 "failed_ingest_run_id": failed_ingest_run_id,
                 "recovery_ingest_run_id": recovery_ingest_run_id,
             },
-            before_state_ref=f"dead_letter:{entry.entry_id}:pending",
+            before_state_ref=f"dead_letter:{entry.entry_id}:{entry.status.value}",
             after_state_ref=f"source_ingest_run:{recovery_ingest_run_id}:completed",
             metadata={
                 "dead_letter_entry_id": entry.entry_id,
@@ -1932,7 +1943,7 @@ def _resolve_pending_dlq_for_completed_frontiers() -> list[dict[str, Any]]:
     resolved: list[dict[str, Any]] = []
     pending_frontier_ids = {
         str(entry.event.payload.get("frontier_id") or "").strip()
-        for entry in dead_letter_queue.pending_entries(tag_filter="retry_exhausted")
+        for entry in _unresolved_dead_letter_entries(tag_filter="retry_exhausted")
         if entry.event.event_type == "source_ingestion.scheduled_run_failed"
     }
     for event_frontier_id in sorted(pending_frontier_ids):
@@ -2101,14 +2112,15 @@ def configure_connector(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     try:
-        proposed = request.connector.to_domain()
-        _fence_managed_connector_mutation(
-            proposed.connector_id,
-            authorization,
-            operation="controller-owned connector configuration",
-            proposed_connector=proposed,
-        )
-        return _configure_connector(request)
+        with authoritative_reconcile_lock:
+            proposed = request.connector.to_domain()
+            _fence_managed_connector_mutation(
+                proposed.connector_id,
+                authorization,
+                operation="controller-owned connector configuration",
+                proposed_connector=proposed,
+            )
+            return _configure_connector(request)
     except SourceEvidenceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -2198,7 +2210,10 @@ def active_universe_plan(request: ActiveUniversePlanRequest) -> dict[str, Any]:
 
 
 @app.post("/api/source-ingest/active-universe/schedule")
-def active_universe_schedule(request: ActiveUniverseScheduleRequest) -> dict[str, Any]:
+def active_universe_schedule(
+    request: ActiveUniverseScheduleRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     try:
         rules = [rule.to_domain() for rule in request.rules] if request.rules else DEFAULT_SOURCE_UPDATE_RULES
         fanout = build_active_universe_job_fanout(
@@ -2213,25 +2228,39 @@ def active_universe_schedule(request: ActiveUniverseScheduleRequest) -> dict[str
     enqueued: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = list(fanout["skipped"])
     if request.enqueue:
-        now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        for job in fanout["jobs"]:
-            connector_id = str(job["connector_id"])
-            config = connector_store.get_config(connector_id)
-            if config is None:
-                skipped.append({**job, "reason": "connector-config-missing"})
-                continue
-            if config.connector.status == ConnectorStatus.DISABLED:
-                skipped.append({**job, "reason": "connector-disabled"})
-                continue
-            frontier = store.enqueue_frontier(
-                connector_id=connector_id,
-                trace_id=request.trace_id or f"active-universe-{connector_id}-{request.run_date}",
-                trigger_type="active_universe_scheduled",
-                max_attempts=FRONTIER_MAX_ATTEMPTS,
-                available_at=now_iso,
-                job_parameters=job,
-            )
-            enqueued.append(frontier.to_dict())
+        with authoritative_reconcile_lock, source_execution_lock:
+            managed_job_ids = {
+                str(job["connector_id"])
+                for job in fanout["jobs"]
+                if (
+                    (config := connector_store.get_config(str(job["connector_id"]))) is not None
+                    and _is_controller_owned(config.connector)
+                )
+            }
+            if managed_job_ids:
+                _require_controller_authorization(
+                    authorization,
+                    operation="controller-owned active-universe scheduling",
+                )
+            now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            for job in fanout["jobs"]:
+                connector_id = str(job["connector_id"])
+                config = connector_store.get_config(connector_id)
+                if config is None:
+                    skipped.append({**job, "reason": "connector-config-missing"})
+                    continue
+                if config.connector.status == ConnectorStatus.DISABLED:
+                    skipped.append({**job, "reason": "connector-disabled"})
+                    continue
+                frontier = store.enqueue_frontier(
+                    connector_id=connector_id,
+                    trace_id=request.trace_id or f"active-universe-{connector_id}-{request.run_date}",
+                    trigger_type="active_universe_scheduled",
+                    max_attempts=FRONTIER_MAX_ATTEMPTS,
+                    available_at=now_iso,
+                    job_parameters=job,
+                )
+                enqueued.append(frontier.to_dict())
 
     return {
         **fanout,
@@ -2270,12 +2299,13 @@ def set_connector_lifecycle(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     try:
-        _fence_managed_connector_mutation(
-            connector_id,
-            authorization,
-            operation="controller-owned connector lifecycle mutation",
-        )
-        return _set_connector_lifecycle(connector_id, request)
+        with authoritative_reconcile_lock:
+            _fence_managed_connector_mutation(
+                connector_id,
+                authorization,
+                operation="controller-owned connector lifecycle mutation",
+            )
+            return _set_connector_lifecycle(connector_id, request)
     except SourceEvidenceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -2285,15 +2315,16 @@ def trigger_job(
     request: TriggerIngestJobRequest,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    connector_id = request.connector.connector_id if request.connector is not None else str(request.connector_id or "")
-    proposed = request.connector.to_domain() if request.connector is not None else None
-    _fence_managed_connector_mutation(
-        connector_id,
-        authorization,
-        operation="controller-owned connector ingest mutation",
-        proposed_connector=proposed,
-    )
-    return _run_ingest_request(request)
+    with authoritative_reconcile_lock:
+        connector_id = request.connector.connector_id if request.connector is not None else str(request.connector_id or "")
+        proposed = request.connector.to_domain() if request.connector is not None else None
+        _fence_managed_connector_mutation(
+            connector_id,
+            authorization,
+            operation="controller-owned connector ingest mutation",
+            proposed_connector=proposed,
+        )
+        return _run_ingest_request(request)
 
 
 @app.post("/api/source-ingest/source-records", status_code=201)
@@ -2303,24 +2334,25 @@ def ingest_source_records(
 ) -> dict[str, Any]:
     if not request.records:
         raise HTTPException(status_code=400, detail="records is required for SourceRecord ingest")
-    connector_id = request.connector.connector_id if request.connector is not None else str(request.connector_id or "")
-    proposed = request.connector.to_domain() if request.connector is not None else None
-    _fence_managed_connector_mutation(
-        connector_id,
-        authorization,
-        operation="controller-owned connector source-record mutation",
-        proposed_connector=proposed,
-    )
-    return _run_ingest_request(
-        TriggerIngestJobRequest(
-            connector=request.connector,
-            connector_id=request.connector_id,
-            trace_id=request.trace_id,
-            trigger_type=request.trigger_type,
-            records=request.records,
-            next_watermark=request.next_watermark,
+    with authoritative_reconcile_lock:
+        connector_id = request.connector.connector_id if request.connector is not None else str(request.connector_id or "")
+        proposed = request.connector.to_domain() if request.connector is not None else None
+        _fence_managed_connector_mutation(
+            connector_id,
+            authorization,
+            operation="controller-owned connector source-record mutation",
+            proposed_connector=proposed,
         )
-    )
+        return _run_ingest_request(
+            TriggerIngestJobRequest(
+                connector=request.connector,
+                connector_id=request.connector_id,
+                trace_id=request.trace_id,
+                trigger_type=request.trigger_type,
+                records=request.records,
+                next_watermark=request.next_watermark,
+            )
+        )
 
 
 @app.get("/api/source-ingest/jobs")
@@ -2446,7 +2478,12 @@ def list_dlq(
 @app.post("/api/source-ingest/dlq/replay")
 def replay_dlq(request: ReplayDlqRequest) -> dict[str, Any]:
     with source_execution_lock:
-        entries = dead_letter_queue.pending_entries(tag_filter=request.tag or None)
+        before_entries = {
+            entry.entry_id: entry
+            for entry in _unresolved_dead_letter_entries(tag_filter=request.tag or None)
+        }
+        entries = list(before_entries.values())
+        requested: set[str] = set()
         if request.entry_ids:
             requested = set(request.entry_ids)
             entries = [entry for entry in entries if entry.entry_id in requested]
@@ -2471,7 +2508,32 @@ def replay_dlq(request: ReplayDlqRequest) -> dict[str, Any]:
             apply_fn=_replay_source_event,
             before_replace_fn=lambda result: _append_audit_actions((result.audit_action,)),
         )
-        return replay_result.to_dict()
+        selected_entry_ids = {entry.entry_id for entry in unique_entries}
+        after_entries = {entry.entry_id: entry for entry in dead_letter_queue.entries()}
+        correlated_resolutions = []
+        for entry_id, before in sorted(before_entries.items()):
+            after = after_entries.get(entry_id)
+            if after is None or (
+                after.status == before.status
+                and after.replay_attempts == before.replay_attempts
+            ):
+                continue
+            correlated_resolutions.append(
+                {
+                    "entry_id": entry_id,
+                    "previous_status": before.status.value,
+                    "status": after.status.value,
+                    "previous_replay_attempts": before.replay_attempts,
+                    "replay_attempts": after.replay_attempts,
+                    "explicitly_requested": entry_id in requested if request.entry_ids else False,
+                    "selected_for_execution": entry_id in selected_entry_ids,
+                }
+            )
+        payload = replay_result.to_dict()
+        payload["selected_entry_ids"] = sorted(selected_entry_ids)
+        payload["correlated_resolutions"] = correlated_resolutions
+        payload["summary"]["correlated_resolution_count"] = len(correlated_resolutions)
+        return payload
 
 
 @app.put("/api/source-ingest/connectors/{connector_id}/schedule")
@@ -2484,17 +2546,18 @@ def set_connector_schedule(
     if config is None:
         raise HTTPException(status_code=404, detail="connector config not found")
     try:
-        _fence_managed_connector_mutation(
-            connector_id,
-            authorization,
-            operation="controller-owned connector schedule mutation",
-        )
-        schedule = schedule_config_store.upsert_schedule(
-            connector_id,
-            interval_seconds=request.interval_seconds,
-            enabled=request.enabled,
-        )
-        return {"schedule": schedule.to_dict()}
+        with authoritative_reconcile_lock:
+            _fence_managed_connector_mutation(
+                connector_id,
+                authorization,
+                operation="controller-owned connector schedule mutation",
+            )
+            schedule = schedule_config_store.upsert_schedule(
+                connector_id,
+                interval_seconds=request.interval_seconds,
+                enabled=request.enabled,
+            )
+            return {"schedule": schedule.to_dict()}
     except SourceEvidenceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -2508,8 +2571,16 @@ def get_connector_schedule(connector_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/source-ingest/run-scheduled")
-def run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict[str, Any]:
+def run_scheduled_connectors(
+    request: RunScheduledRequest | None = None,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     with source_execution_lock:
+        if any(_is_controller_owned(config.connector) for config in connector_store.list_configs()):
+            _require_controller_authorization(
+                authorization,
+                operation="controller-owned scheduled source execution",
+            )
         return _run_scheduled_connectors(request)
 
 

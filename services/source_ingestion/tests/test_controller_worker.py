@@ -354,6 +354,7 @@ def _patch_successful_tick(monkeypatch: pytest.MonkeyPatch, events: list[str]) -
     def run_schedule_tick(**kwargs: Any) -> dict[str, Any]:
         assert kwargs["max_concurrency"] == 2
         assert kwargs["force_connector_ids"] == []
+        assert kwargs["controller_token"] == "controller-test-token-that-is-at-least-32-characters"
         events.append("run_schedule_tick")
         return _schedule()
 
@@ -599,6 +600,33 @@ def test_terminal_readback_rejects_unresolved_frontier_backlog() -> None:
         _validate_terminal_readback(reconcile=_reconcile(), schedule=_schedule(), actual=actual)
 
     assert raised.value.stage == "actual_readback"
+
+
+def test_failure_truth_uses_only_internally_consistent_unresolved_dlq_count() -> None:
+    actual = _actual_readback()
+    assert controller_worker._trusted_unresolved_dlq_count(actual) == 0
+
+    actual["dlq_count"] = 1
+    actual["pending_dlq_count"] = 1
+    actual["unresolved_dlq_count"] = 1
+    actual["dlq_status_counts"]["pending"] = 1
+    assert controller_worker._trusted_unresolved_dlq_count(actual) == 1
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda actual: actual.update({"unresolved_dlq_count": -1}),
+        lambda actual: actual.update({"pending_dlq_count": 1}),
+        lambda actual: actual.update({"dlq_count": 1}),
+        lambda actual: actual["dlq_status_counts"].pop("schema_rejected"),
+    ],
+)
+def test_failure_truth_preserves_prior_dlq_count_on_contradictory_readback(mutate: Any) -> None:
+    actual = _actual_readback()
+    mutate(actual)
+
+    assert controller_worker._trusted_unresolved_dlq_count(actual) is None
 
 
 def test_terminal_readback_rejects_missing_authoritative_connector() -> None:

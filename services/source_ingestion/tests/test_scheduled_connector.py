@@ -296,12 +296,31 @@ def test_run_scheduled_frontier_retry_backoff_and_dlq_replay_are_durable(client)
     assert immediate_retry.status_code == 200, immediate_retry.text
     assert immediate_retry.json()["summary"]["total_ran"] == 0
 
+    original_dlq_entry = module.dead_letter_queue.pending_entries(tag_filter="retry_exhausted")[0]
+    correlated_dlq_entry = module.dead_letter_queue.reject(
+        original_dlq_entry.event,
+        reason="correlated duplicate failure receipt",
+        tags=original_dlq_entry.tags,
+        source_ref=original_dlq_entry.source_ref,
+    )
     replay = test_client.post(
         "/api/source-ingest/dlq/replay",
-        json={"tag": "retry_exhausted", "reason": "test scheduled frontier replay"},
+        json={
+            "tag": "retry_exhausted",
+            "entry_ids": [original_dlq_entry.entry_id, correlated_dlq_entry.entry_id],
+            "reason": "test scheduled frontier replay",
+        },
     )
     assert replay.status_code == 200, replay.text
     assert replay.json()["summary"]["applied"] == 1
+    assert replay.json()["summary"]["correlated_resolution_count"] == 2
+    assert len(replay.json()["selected_entry_ids"]) == 1
+    assert {
+        item["entry_id"]
+        for item in replay.json()["correlated_resolutions"]
+    } == {original_dlq_entry.entry_id, correlated_dlq_entry.entry_id}
+    assert all(item["status"] == "replayed" for item in replay.json()["correlated_resolutions"])
+    assert all(item["explicitly_requested"] is True for item in replay.json()["correlated_resolutions"])
 
     done_frontier = test_client.get("/api/source-ingest/frontier?status=done")
     assert done_frontier.status_code == 200
@@ -374,6 +393,60 @@ def test_frontier_recovery_resolves_correlated_dlq_and_survives_reload(client) -
     assert durable["pending_count"] == 0
     assert durable["unresolved_count"] == 0
     assert durable["status_counts"]["replayed"] == 1
+
+
+def test_replay_failed_entry_can_be_retried_to_terminal_recovery(client) -> None:
+    test_client, _, _ = client
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(connector_id="conn-replay-retry", source_type="internal_note"),
+            "fetch": {
+                "mode": "static_records",
+                "next_watermark": "2026-07-14T10:15:00Z",
+                "fail_until_attempt": 4,
+                "failure_reason": "replay retry fixture unavailable",
+                "records": [
+                    {
+                        "source_id": "src-replay-retry-note-1",
+                        "title": "Replay retry recovered note",
+                        "content_ref": "memory://scheduled/replay-retry/note-1",
+                    }
+                ],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+    test_client.put(
+        "/api/source-ingest/connectors/conn-replay-retry/schedule",
+        json={"interval_seconds": 60, "enabled": True},
+    )
+    failed = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+    entry_id = failed.json()["failed"][0]["run"]["ingest_run_id"]
+    dlq_entry_id = test_client.get("/api/source-ingest/dlq").json()["entries"][0]["entry_id"]
+    assert entry_id
+
+    first_replay = test_client.post(
+        "/api/source-ingest/dlq/replay",
+        json={"entry_ids": [dlq_entry_id], "reason": "first replay remains unavailable"},
+    )
+    assert first_replay.status_code == 200, first_replay.text
+    assert first_replay.json()["summary"]["failed"] == 1
+    after_failure = test_client.get("/api/source-ingest/dlq").json()
+    assert after_failure["unresolved_count"] == 2
+    assert after_failure["status_counts"]["replay_failed"] == 1
+    assert after_failure["status_counts"]["pending"] == 1
+
+    second_replay = test_client.post(
+        "/api/source-ingest/dlq/replay",
+        json={"entry_ids": [dlq_entry_id], "reason": "upstream recovered for second replay"},
+    )
+    assert second_replay.status_code == 200, second_replay.text
+    assert second_replay.json()["summary"]["applied"] == 1
+    assert second_replay.json()["summary"]["correlated_resolution_count"] == 2
+    terminal = test_client.get("/api/source-ingest/dlq").json()
+    assert terminal["unresolved_count"] == 0
+    assert terminal["status_counts"]["replayed"] == 2
 
 
 def test_completed_frontier_sweep_repairs_crash_before_dlq_resolution(
