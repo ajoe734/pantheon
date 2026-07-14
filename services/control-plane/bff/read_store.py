@@ -10724,6 +10724,8 @@ class ReadSurfaceStore:
             "id": decision_id,
             "decision_id": decision_id,
             "program_id": raw.get("program_id"),
+            "persona_id": raw.get("persona_id"),
+            "capital_pool_id": raw.get("capital_pool_id"),
             "action_type": raw.get("action_type"),
             "risk_level": raw.get("risk_level"),
             "status": decision_state,

@@ -113,19 +113,24 @@ def test_evolution_journal_server_side_filtering_and_origin() -> None:
         try:
             client = _fresh_client(td)
 
-            # 1. Test filtering by persona (which should match targets or substrings)
-            # In read_surfaces.json:
-            # - evo-dec-88f3a2c1 target_id is "artifact-44d7e9b0"
+            # 1. Test filtering by persona: resolved through explicit lineage
+            # (persona-alpha declares runtime_id=runtime-042, which owns
+            # incident inc-20260410-001, whose incident_ref is carried by
+            # evo-dec-001), never a free-text substring match against an
+            # unrelated artifact id.
             resp = client.get(
-                "/bff/management/evolution-journal?persona=artifact-44d7e9b0",
+                "/bff/management/evolution-journal?persona=persona-alpha",
                 headers=OPERATOR_HEADERS,
             )
             assert resp.status_code == 200, resp.text
             body = resp.json()
             items = body["data"]["items"]
             assert len(items) > 0
-            for item in items:
-                assert "artifact-44d7e9b0" in str(item).lower()
+            source_ids = {item["source_id"] for item in items}
+            assert "evo-dec-001" in source_ids
+            # evo-dec-88f3a2c1 targets artifact-44d7e9b0, which is not in
+            # persona-alpha's lineage at all — it must not appear.
+            assert "evo-dec-88f3a2c1" not in source_ids
 
             # 2. Test filtering by decision
             resp = client.get(
@@ -878,5 +883,317 @@ def test_evochain_007_persona_lineage_deep_chain_requires_fixed_point() -> None:
             source_ids = {item["source_id"] for item in resp.json()["data"]["items"]}
             assert "dec-deep-6" in source_ids
             assert "dec-unrelated" not in source_ids
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_evochain_007_persona_lineage_canonical_binding_without_runtime_row() -> None:
+    """A canonical persona-capital binding (read_store.list_bindings) can
+    exist with no matching runtime row at all. list_runtime_bindings() only
+    uses list_bindings() to enrich runtime rows that already exist, so
+    relying on it alone would make a runtime-less persona -> binding -> pool
+    -> incident chain invisible; the endpoint must also read list_bindings()
+    directly."""
+    import json
+    with tempfile.TemporaryDirectory() as td:
+        mock_data = _evochain_007_lineage_mock_data(
+            personas={
+                "persona-nr": {
+                    "id": "persona-nr",
+                    "persona_id": "persona-nr",
+                    "persona_capital_binding_id": "pcb-nr",
+                },
+            },
+            bindings={
+                "pcb-nr": {
+                    "id": "pcb-nr",
+                    "binding_id": "pcb-nr",
+                    "persona_id": "persona-nr",
+                    "capital_pool_id": "pool-nr",
+                },
+            },
+            incidents={
+                "inc-nr": {
+                    "id": "inc-nr",
+                    "incident_id": "inc-nr",
+                    "capital_pool_id": "pool-nr",
+                },
+            },
+            evolution_decisions={
+                "dec-nr": {
+                    "id": "dec-nr",
+                    "decision_id": "dec-nr",
+                    "target_type": "incident",
+                    "incident_ref": "inc-nr",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "resolved only via a runtime-less canonical binding"},
+                    "created_at": "2026-07-14T00:00:00Z",
+                },
+            },
+        )
+        with open(os.path.join(td, "read_surfaces.json"), "w") as f:
+            json.dump(mock_data, f)
+
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.get("/bff/management/evolution-journal?persona=persona-nr", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            source_ids = {item["source_id"] for item in resp.json()["data"]["items"]}
+            assert "dec-nr" in source_ids
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_evochain_007_persona_lineage_shared_pool_does_not_cross_persona_ownership() -> None:
+    """Two distinct personas independently bind to the same shared capital
+    pool. Filtering by persona-pool-a must not adopt persona-pool-b's own
+    identity (and therefore not its private decision) just because their
+    bindings happen to reference the same capital_pool_id."""
+    import json
+    with tempfile.TemporaryDirectory() as td:
+        mock_data = _evochain_007_lineage_mock_data(
+            personas={
+                "persona-pool-a": {
+                    "id": "persona-pool-a",
+                    "persona_id": "persona-pool-a",
+                    "runtime_binding_id": "binding-pool-a",
+                },
+                # Declared so read_store's binding-ownership reconciliation
+                # (typed exact identity) confirms binding-pool-b really
+                # belongs to persona-pool-b, rather than nulling out its
+                # persona_id as an unclaimed binding.
+                "persona-pool-b": {
+                    "id": "persona-pool-b",
+                    "persona_id": "persona-pool-b",
+                    "runtime_binding_id": "binding-pool-b",
+                },
+            },
+            runtime_bindings={
+                "binding-pool-a": {
+                    "id": "binding-pool-a",
+                    "persona_id": "persona-pool-a",
+                    "capital_pool_id": "pool-shared",
+                },
+                "binding-pool-b": {
+                    "id": "binding-pool-b",
+                    "persona_id": "persona-pool-b",
+                    "runtime_id": "runtime-pool-b",
+                    "capital_pool_id": "pool-shared",
+                },
+            },
+            evolution_decisions={
+                "dec-pool-a": {
+                    "id": "dec-pool-a",
+                    "decision_id": "dec-pool-a",
+                    "target_type": "artifact",
+                    "capital_pool_id": "pool-shared",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "persona-pool-a's own decision, via the shared pool"},
+                    "created_at": "2026-07-14T00:00:00Z",
+                },
+                "dec-pool-b-private": {
+                    "id": "dec-pool-b-private",
+                    "decision_id": "dec-pool-b-private",
+                    "target_type": "runtime",
+                    "target_id": "runtime-pool-b",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "persona-pool-b's own private decision"},
+                    "created_at": "2026-07-14T00:01:00Z",
+                },
+            },
+        )
+        with open(os.path.join(td, "read_surfaces.json"), "w") as f:
+            json.dump(mock_data, f)
+
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.get("/bff/management/evolution-journal?persona=persona-pool-a", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            source_ids = {item["source_id"] for item in resp.json()["data"]["items"]}
+            assert "dec-pool-a" in source_ids
+            assert "dec-pool-b-private" not in source_ids
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_evochain_007_persona_lineage_typed_namespaces_reject_cross_type_string_collision() -> None:
+    """A persona's own runtime_id and an unrelated decision's artifact
+    target_id happen to be the identical raw string. Matching must stay
+    scoped to the typed namespace the id belongs to (runtime vs artifact),
+    never a flattened id blob, so the two must not collide."""
+    import json
+    with tempfile.TemporaryDirectory() as td:
+        mock_data = _evochain_007_lineage_mock_data(
+            personas={
+                "persona-typed": {
+                    "id": "persona-typed",
+                    "persona_id": "persona-typed",
+                    "runtime_id": "same-token",
+                },
+            },
+            evolution_decisions={
+                "dec-unrelated-artifact": {
+                    "id": "dec-unrelated-artifact",
+                    "decision_id": "dec-unrelated-artifact",
+                    "target_type": "artifact",
+                    "target_id": "same-token",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "unrelated artifact that happens to share the raw string"},
+                    "created_at": "2026-07-14T00:00:00Z",
+                },
+                "dec-own-runtime": {
+                    "id": "dec-own-runtime",
+                    "decision_id": "dec-own-runtime",
+                    "target_type": "runtime",
+                    "target_id": "same-token",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "genuinely persona-typed's own runtime"},
+                    "created_at": "2026-07-14T00:01:00Z",
+                },
+            },
+        )
+        with open(os.path.join(td, "read_surfaces.json"), "w") as f:
+            json.dump(mock_data, f)
+
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.get("/bff/management/evolution-journal?persona=persona-typed", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            source_ids = {item["source_id"] for item in resp.json()["data"]["items"]}
+            assert "dec-own-runtime" in source_ids
+            assert "dec-unrelated-artifact" not in source_ids
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_evochain_007_seed_registry_recognizes_registered_families() -> None:
+    """Registered seed identifier families beyond evo-vslice- (ev-seed-001..005
+    decision ids from services/evolution/seed_data.py, the documented seed
+    incident inc-87c655c3e3c9, and decisions that reference a registered seed
+    artifact/runtime/binding/plan target) must be honestly labeled
+    origin:seed; a similarly-spelled but unregistered id must stay unknown."""
+    import json
+    with tempfile.TemporaryDirectory() as td:
+        mock_data = {
+            "personas": {},
+            "runtime_bindings": {},
+            "incidents": {},
+            "evolution_decisions": {
+                "ev-seed-003": {
+                    "id": "ev-seed-003",
+                    "decision_id": "ev-seed-003",
+                    "target_type": "candidate_artifact",
+                    "target_id": "artifact-ev-seed-003",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "Registered ev-seed family member"},
+                    "created_at": "2026-07-14T00:00:00Z",
+                },
+                "ev-seeding-decoy": {
+                    "id": "ev-seeding-decoy",
+                    "decision_id": "ev-seeding-decoy",
+                    "target_type": "candidate_artifact",
+                    "target_id": "artifact-decoy",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "Looks like the ev-seed- family but is not registered"},
+                    "created_at": "2026-07-14T00:01:00Z",
+                },
+                "dec-swept-from-seed-incident": {
+                    "id": "dec-swept-from-seed-incident",
+                    "decision_id": "dec-swept-from-seed-incident",
+                    "target_type": "incident",
+                    "incident_ref": "inc-87c655c3e3c9",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "Swept from the documented seed incident"},
+                    "created_at": "2026-07-14T00:02:00Z",
+                },
+                "dec-targets-seed-artifact": {
+                    "id": "dec-targets-seed-artifact",
+                    "decision_id": "dec-targets-seed-artifact",
+                    "target_type": "artifact",
+                    "target_id": "artifact-042",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "proposed_changes": {"summary": "Targets the registered seed artifact"},
+                    "created_at": "2026-07-14T00:03:00Z",
+                },
+            },
+            "postmortems": {},
+            "freeze_orders": {},
+            "rollbacks": {},
+        }
+        with open(os.path.join(td, "read_surfaces.json"), "w") as f:
+            json.dump(mock_data, f)
+
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.get("/bff/management/evolution-journal", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            items = resp.json()["data"]["items"]
+            by_id = {
+                item["source_id"]: item
+                for item in items
+                if item["entry_type"] == "evolution_decision"
+            }
+            assert by_id["ev-seed-003"]["origin"] == "seed"
+            assert by_id["ev-seeding-decoy"]["origin"] == "unknown"
+            assert by_id["dec-swept-from-seed-incident"]["origin"] == "seed"
+            assert by_id["dec-targets-seed-artifact"]["origin"] == "seed"
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_evochain_007_filter_dependency_surfaces_reported_and_fail_closed() -> None:
+    """The personas/persona_bindings/runtime_bindings/incidents datasets that
+    back the ?persona= lineage filter must be visible in meta.surfaces, and a
+    *silently* unavailable dependency (dataset_source reports "missing" with
+    no exception raised) must fail the filtered request closed (503) instead
+    of returning an authoritative-looking empty total=0."""
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        try:
+            bff_main.read_store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=True,
+            )
+            client = TestClient(bff_main.app, raise_server_exceptions=False)
+
+            resp = client.get("/bff/management/evolution-journal", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            surfaces = resp.json()["meta"]["surfaces"]
+            for key in ("personas", "persona_bindings", "runtime_bindings", "incidents"):
+                assert key in surfaces
+
+            original_dataset_source = bff_main.read_store.dataset_source
+            bff_main.read_store.dataset_source = (
+                lambda dataset, **kwargs: "missing"
+                if dataset == "personas"
+                else original_dataset_source(dataset, **kwargs)
+            )
+            resp = client.get(
+                "/bff/management/evolution-journal?persona=persona-alpha",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 503, resp.text
         finally:
             bff_main.read_store = original_store

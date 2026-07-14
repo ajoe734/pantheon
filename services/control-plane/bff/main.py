@@ -36095,11 +36095,14 @@ def _management_intervention_stream_response(
 
 
 _EVOLUTION_JOURNAL_REGISTERED_SEED_EXACT_IDS = {
-    "87c655c3e3c9", "rb-001", "fo-001", "btc-drift",
+    "87c655c3e3c9", "inc-87c655c3e3c9", "rb-001", "fo-001", "btc-drift",
     "inc-20260410-001", "inc-20260409-002", "pm-20260409-002",
     "plan-f-042", "artifact-042", "runtime-042", "binding-042",
 }
-_EVOLUTION_JOURNAL_REGISTERED_SEED_PREFIXES = ("evo-vslice-",)
+# "evo-vslice-" and "ev-seed-" are registered seed *families* (see
+# services/evolution/seed_data.py ev-seed-001..005) — any id in a family is
+# seed-derived, unlike the one-off exact ids above.
+_EVOLUTION_JOURNAL_REGISTERED_SEED_PREFIXES = ("evo-vslice-", "ev-seed-")
 
 
 def _evolution_journal_is_registered_seed_id(value: Any) -> bool:
@@ -36129,6 +36132,41 @@ _EVOLUTION_JOURNAL_TYPE_ALIASES = {
     "freeze": "freeze_order",
     "freeze_order": "freeze_order",
     "freeze_orders": "freeze_order",
+}
+
+
+# Typed lineage namespaces for the ?persona= filter. Two entities can share
+# the same raw string id in different namespaces (e.g. a runtime_id and an
+# unrelated artifact target_id both equal to "same-token") — matching must
+# stay scoped to the field/target-type that produced the id, never a single
+# flattened id blob.
+_EVOLUTION_JOURNAL_REFERENCE_FIELD_CATEGORY = {
+    "artifact_id": "artifact",
+    "persona_id": "persona",
+    "runtime_id": "runtime",
+    "runtime_binding_id": "binding",
+    "persona_capital_binding_id": "binding",
+    "incident_id": "incident",
+    "incident_ref": "incident",
+    "linked_incident_id": "incident",
+    "capital_pool_id": "pool",
+    "pool_id": "pool",
+    "plan_id": "plan",
+    "deployment_plan_id": "plan",
+}
+_EVOLUTION_JOURNAL_TARGET_TYPE_CATEGORY = {
+    "persona": "persona",
+    "runtime": "runtime",
+    "binding": "binding",
+    "runtime_binding": "binding",
+    "persona_capital_binding": "binding",
+    "plan": "plan",
+    "deployment_plan": "plan",
+    "pool": "pool",
+    "capital_pool": "pool",
+    "candidate_artifact": "artifact",
+    "artifact": "artifact",
+    "incident": "incident",
 }
 
 
@@ -36627,11 +36665,20 @@ def _evolution_journal_items(
                 _evolution_journal_is_registered_seed_id(item.get("source_id"))
                 or _evolution_journal_is_registered_seed_id(item.get("id"))
             )
+            target_obj = item.get("target") if isinstance(item.get("target"), dict) else {}
+            if not is_seed and _evolution_journal_is_registered_seed_id(target_obj.get("id")):
+                is_seed = True
             if not is_seed:
                 for key in ("decision", "mutation_review", "mutationReview", "postmortem", "freeze_order", "freezeOrder", "rollback"):
                     inner = item.get(key)
                     if isinstance(inner, dict):
-                        for field in ("id", "decision_id", "source_id", "incident_id", "incident_ref", "linked_incident_id", "report_id"):
+                        for field in (
+                            "id", "decision_id", "source_id", "report_id",
+                            "incident_id", "incident_ref", "linked_incident_id",
+                            "target_id", "artifact_id", "runtime_id",
+                            "runtime_binding_id", "persona_capital_binding_id",
+                            "plan_id", "deployment_plan_id",
+                        ):
                             if _evolution_journal_is_registered_seed_id(inner.get(field)):
                                 is_seed = True
                                 break
@@ -36660,6 +36707,14 @@ def _evolution_journal_surfaces(
         "freeze_orders": _dataset_surface_status("freeze_orders", snapshot_at=snapshot_at),
         "rollbacks": _dataset_surface_status("all_rollbacks", snapshot_at=snapshot_at),
         "approval_decisions": _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at),
+        # Not part of the base journal aggregate below — these back the
+        # ?persona= lineage filter and must stay visible on their own so a
+        # degraded/unavailable dependency there isn't reported as an
+        # authoritative empty result.
+        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "incidents": _dataset_surface_status("incidents", snapshot_at=snapshot_at),
     }
     mutation_surface = _aggregate_group_surface(
         "mutation_review",
@@ -37296,6 +37351,7 @@ async def bff_management_evolution_journal(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
+    surfaces = _evolution_journal_surfaces(snapshot_at=snapshot_at)
     items, _decisions, _postmortems, _freeze_orders, _rollbacks = _evolution_journal_items(
         identity=identity,
         snapshot_at=snapshot_at,
@@ -37310,6 +37366,14 @@ async def bff_management_evolution_journal(
     if persona:
         p_clean = persona.strip().lower()
         if p_clean:
+            for dep_key, label in (
+                ("personas", "Persona"),
+                ("persona_bindings", "Persona-capital binding"),
+                ("runtime_bindings", "Runtime binding"),
+                ("incidents", "Incident"),
+            ):
+                _raise_if_read_surface_unavailable(surfaces[dep_key], label=label)
+
             persona_ids = {p_clean}
             runtime_ids = set()
             binding_ids = set()
@@ -37317,7 +37381,6 @@ async def bff_management_evolution_journal(
             pool_ids = set()
             artifact_ids = set()
             incident_ids = set()
-            other_ids = set()
 
             personas = read_store.list_personas(include_market_persona_defaults=True) or []
             for p in personas:
@@ -37340,41 +37403,57 @@ async def bff_management_evolution_journal(
                         val = str(p.get(field) or "").strip().lower()
                         if val:
                             target_set.add(val)
-                    for field in ("strategy_id", "session_id"):
-                        val = str(p.get(field) or "").strip().lower()
-                        if val:
-                            other_ids.add(val)
 
-            # Read bindings/incidents once and expand persona/runtime/binding/
-            # plan/pool ids to a fixed point (no artifact_id edge, so a shared
-            # artifact can never be used to cross into another persona's
-            # lineage). A fixed-point loop (rather than a hardcoded pass count)
-            # is required because a chain can be arbitrarily deep.
-            bindings = read_store.list_runtime_bindings(include_market_persona_defaults=True) or []
+            # Read canonical persona-capital bindings (read_store.list_bindings)
+            # *and* runtime bindings once each and expand runtime/binding/plan/
+            # pool ids to a fixed point. Both binding sources are traversed
+            # because a canonical persona-capital binding can exist with no
+            # matching runtime row at all; list_runtime_bindings only uses
+            # list_bindings to enrich runtime rows that already exist, so a
+            # runtime-less persona -> binding -> pool -> incident chain would
+            # otherwise be invisible. A fixed-point loop (rather than a
+            # hardcoded pass count) is required because a chain can be
+            # arbitrarily deep.
+            #
+            # persona_ids is intentionally never grown past the requested
+            # root persona. A binding reached only via a shared capital pool
+            # AND declaring a *different* persona's ownership is a neighbor
+            # belonging to that other persona, not part of the root's own
+            # chain — adopting its identity would leak that other persona's
+            # private rows into this closure (two personas can independently
+            # reference the same shared pool). A pool-only match with no
+            # foreign persona attached (e.g. an intermediate system binding
+            # that declares no persona_id at all) is still a genuine hop on
+            # the root's own resource graph and its runtime/binding/plan ids
+            # are adopted normally.
+            bindings = list(read_store.list_runtime_bindings(include_market_persona_defaults=True) or [])
+            bindings += list(read_store.list_bindings(include_market_persona_defaults=True) or [])
             incidents = read_store.list_incidents() or []
             changed = True
             while changed:
                 changed = False
                 for b in bindings:
                     b_pid = str(b.get("persona_id") or b.get("personaId") or "").strip().lower()
-                    b_rid = str(b.get("runtime_id") or b.get("id") or "").strip().lower()
+                    b_rid = str(b.get("runtime_id") or "").strip().lower()
                     b_bid = str(b.get("binding_id") or b.get("runtime_binding_id") or "").strip().lower()
                     b_pcbid = str(b.get("persona_capital_binding_id") or "").strip().lower()
                     b_plid = str(b.get("plan_id") or b.get("deployment_plan_id") or "").strip().lower()
                     b_pool = str(b.get("pool_id") or b.get("capital_pool_id") or "").strip().lower()
 
-                    is_match = (
-                        (b_pid and b_pid in persona_ids) or
+                    owned_match = (
+                        (b_pid and b_pid == p_clean) or
                         (b_rid and b_rid in runtime_ids) or
                         (b_bid and b_bid in binding_ids) or
                         (b_pcbid and b_pcbid in binding_ids) or
-                        (b_plid and b_plid in plan_ids) or
-                        (b_pool and b_pool in pool_ids)
+                        (b_plid and b_plid in plan_ids)
                     )
-                    if not is_match:
+                    pool_only_match = (not owned_match) and (b_pool and b_pool in pool_ids)
+                    if not (owned_match or pool_only_match):
+                        continue
+                    if pool_only_match and b_pid and b_pid != p_clean:
                         continue
                     for val, target_set in (
-                        (b_pid, persona_ids), (b_rid, runtime_ids),
+                        (b_rid, runtime_ids),
                         (b_bid, binding_ids), (b_pcbid, binding_ids),
                         (b_plid, plan_ids), (b_pool, pool_ids),
                     ):
@@ -37407,48 +37486,42 @@ async def bff_management_evolution_journal(
                             target_set.add(val)
                             changed = True
 
-            lineage_ids = (
-                persona_ids | runtime_ids | binding_ids | plan_ids |
-                pool_ids | artifact_ids | incident_ids | other_ids
-            )
+            category_sets = {
+                "persona": persona_ids,
+                "runtime": runtime_ids,
+                "binding": binding_ids,
+                "plan": plan_ids,
+                "pool": pool_ids,
+                "artifact": artifact_ids,
+                "incident": incident_ids,
+            }
 
-            matched_filtered = []
-            for item in filtered:
-                item_ids = set()
-                # Only collect fields that are references *to* something the
-                # entry targets/belongs to (artifact/persona/runtime/binding/
-                # incident/plan/pool). Never include the entry's own identity
-                # (source_id/id/decision_id/report_id/...) — matching those
-                # against an arbitrary "persona" query string is a false
-                # collision, not a lineage relationship.
+            def _journal_item_matches_persona_lineage(item: Dict[str, Any]) -> bool:
+                # Match only through typed reference fields/target-type
+                # namespaces — never a flattened id blob — so a shared raw
+                # string value in two different namespaces (e.g. a
+                # runtime_id equal to an unrelated artifact target_id) cannot
+                # cross-match. The entry's own identity (source_id/id/
+                # decision_id/report_id/...) is intentionally excluded:
+                # matching those against an arbitrary "persona" query string
+                # is a false collision, not a lineage relationship.
                 target_obj = item.get("target") or {}
                 if isinstance(target_obj, dict):
-                    for f in ("id", "runtime_id", "artifact_id", "incident_id"):
-                        val = str(target_obj.get(f) or "").strip().lower()
-                        if val:
-                            item_ids.add(val)
-                reference_fields = (
-                    "artifact_id", "persona_id", "target_id", "runtime_id",
-                    "runtime_binding_id", "persona_capital_binding_id",
-                    "incident_id", "incident_ref", "linked_incident_id",
-                    "capital_pool_id", "pool_id", "plan_id", "deployment_plan_id",
-                )
+                    category = _EVOLUTION_JOURNAL_TARGET_TYPE_CATEGORY.get(
+                        str(target_obj.get("type") or "").strip().lower()
+                    )
+                    target_val = str(target_obj.get("id") or "").strip().lower()
+                    if category and target_val and target_val in category_sets[category]:
+                        return True
                 record_obj = item.get("record") or {}
                 if isinstance(record_obj, dict):
-                    for f in reference_fields:
-                        val = str(record_obj.get(f) or "").strip().lower()
-                        if val:
-                            item_ids.add(val)
-                for key in ("decision", "mutation_review", "mutationReview", "postmortem", "freeze_order", "freezeOrder", "rollback"):
-                    inner = item.get(key)
-                    if isinstance(inner, dict):
-                        for f in reference_fields:
-                            val = str(inner.get(f) or "").strip().lower()
-                            if val:
-                                item_ids.add(val)
-                if not item_ids.isdisjoint(lineage_ids):
-                    matched_filtered.append(item)
-            filtered = matched_filtered
+                    for field, category in _EVOLUTION_JOURNAL_REFERENCE_FIELD_CATEGORY.items():
+                        val = str(record_obj.get(field) or "").strip().lower()
+                        if val and val in category_sets[category]:
+                            return True
+                return False
+
+            filtered = [item for item in filtered if _journal_item_matches_persona_lineage(item)]
     if mutation_review:
         mr_clean = mutation_review.strip().lower()
         if mr_clean:
@@ -37469,7 +37542,7 @@ async def bff_management_evolution_journal(
     total = len(filtered)
     page_items, next_page_token = _page_slice(filtered, page_token, page_size)
     meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = _evolution_journal_surfaces(snapshot_at=snapshot_at)
+    meta["surfaces"] = surfaces
     meta["composition_sources"] = [
         "evolution_decisions",
         "postmortems",
