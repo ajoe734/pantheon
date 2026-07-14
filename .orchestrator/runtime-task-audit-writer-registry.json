@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "protocol_id": "pantheon-runtime-task-audit-lock-v1",
+  "transaction_scope": "complete_read_validate_mutate_replace",
+  "direct_canonical_writes_forbidden": true,
+  "writers": {
+    ".orchestrator/runtime_state.py": "4f8c60bc3072236ef06579bfed2a82cb5a9e8d0b0fffd35ccc3953050c70224d",
+    ".orchestrator/supervisor.py": "66847a7ed03806370462cbac3754a285dc0ccd6c91e6d386ec2bc04205cbbe7f",
+    ".orchestrator/common.py": "1d526d135c408074bae76821e365aa370fb51904bd217be024d80015ad152fc2",
+    ".orchestrator/approval_queue.py": "62cd04c2e05bd735d7d8bc84db4247c6f99c91f1870079ac16d4f2b76607b73f",
+    ".orchestrator/adapters/file_inbox.py": "b001cbc28cccc25ba1342fc4ef91324be9fc16b0a01d7a4d32b57ccc09b27a12",
+    ".orchestrator/watch_events.py": "61a2df50320ace8bac6b3f9253611b91c31f95bf324bc9a194413d1572a6a7d6",
+    ".orchestrator/supervisor_watchdog.py": "77084ebae804257967b43ecd9cedcdd996b40f634d23f718565c8dcf4e8db1d5",
+    "scripts/ai_status.py": "8a604330b0930679d0856a07ad2ee5be148c124b2ece9c80fe56a20911277899",
+    "scripts/dispatch_loop_product_level_remediation_2026-07-13.py": "834d2059b9cd2ea128eb79c27e2cc5b4745226a4eb7fb57420d5e428c0250d1b"
+  }
+}

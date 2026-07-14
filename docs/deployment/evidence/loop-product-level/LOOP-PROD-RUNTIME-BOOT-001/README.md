@@ -106,9 +106,10 @@ status root. Maintenance bundle/rebuild/queue paths have equivalent canonical
 target guards, and the tracked source inventory currently reports zero
 unregistered direct writers.
 
-That technical boundary is necessary but not completion authority. This
-packet remains blocked until the final exact-head checks and nine writer
-digests are frozen, the distinct `Codex` reviewer creates the signed
-`completion.json`, the primary PR merges, and a root-controlled operator
-installs the external verifier policy/ledger. The post-closeout strict live
-dry-run and evidence-only follow-up remain separate post-merge requirements.
+That technical boundary is necessary but not completion authority. The owner
+exact-head checks and nine writer digests are now frozen in `checks.json` and
+the writer registry. This packet remains blocked until the distinct `Codex`
+reviewer creates the signed `completion.json`, the primary PR merges, and a
+root-controlled operator installs the external verifier policy/ledger. The
+post-closeout strict live dry-run and evidence-only follow-up remain separate
+post-merge requirements.
