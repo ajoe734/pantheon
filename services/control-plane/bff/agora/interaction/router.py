@@ -201,7 +201,8 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         event_time = occurred_at or utc_now()
         # 1. opinion_requested event
         def deterministic_event_id(stage: str) -> str:
-            return "evt-" + hashlib.sha256(f"{interaction_id}:{stage}".encode()).hexdigest()[:20]
+            seed = f"{tenant_id}:{user_id}:{interaction_id}:{stage}"
+            return "evt-" + hashlib.sha256(seed.encode()).hexdigest()[:20]
 
         req_event_id = deterministic_event_id("requested")
         requested_event = {
@@ -534,7 +535,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             try:
                 proposal = proposals.create(
                     proposal,
-                    f"interaction:{idempotency_key}",
+                    f"interaction:{interaction_id}",
                     fingerprint=command_fingerprint,
                 )
             except ProposalConflict as exc:

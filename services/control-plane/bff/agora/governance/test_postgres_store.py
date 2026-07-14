@@ -40,3 +40,23 @@ def test_postgres_two_instances_survive_restart_and_share_idempotency() -> None:
     assert replay.data == command
     assert replay.replayed is True
     assert replay.run_side_effects is False
+
+    recoverable = first.once("command:tenant-a:user-a", "cmd-release", fp, lambda: command)
+    assert recoverable.run_side_effects is True
+    first.release_side_effects("command:tenant-a:user-a", "cmd-release")
+    reclaimed = restarted.once("command:tenant-a:user-a", "cmd-release", fp, lambda: command)
+    assert reclaimed.replayed is True
+    assert reclaimed.run_side_effects is True
+
+    expired = first.once("command:tenant-a:user-a", "cmd-expired", fp, lambda: command)
+    assert expired.run_side_effects is True
+    with first._connect() as conn:
+        conn.execute(
+            f"UPDATE {first._command_table} SET lease_until=now()-interval '1 second' WHERE scope_key=%s",
+            ("command:tenant-a:user-a:cmd-expired",),
+        )
+    reclaimed_expired = restarted.once(
+        "command:tenant-a:user-a", "cmd-expired", fp, lambda: command
+    )
+    assert reclaimed_expired.replayed is True
+    assert reclaimed_expired.run_side_effects is True

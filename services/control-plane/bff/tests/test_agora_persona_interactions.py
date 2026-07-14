@@ -157,6 +157,40 @@ def test_explicit_interaction_id_cannot_be_reused_for_different_content(monkeypa
     assert len(events) == 3
 
 
+def test_propose_action_collision_does_not_create_a_dangling_second_proposal(monkeypatch):
+    c = client(monkeypatch)
+    suffix = uuid.uuid4().hex
+    resolved = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": f"context-proposal-collision-{suffix}"},
+        json=context_payload(),
+    ).json()["data"]
+    body = {"interaction_id": f"proposal-explicit-{suffix}", "workshop_id": resolved["workshop_id"],
+        "mode": "propose_action", "environment": "paper", "topic": "Original measure",
+        "participant_persona_ids": ["ready"], "context_refs": context_payload()["context_refs"]}
+    first = c.post(
+        "/bff/agora/interactions",
+        headers={**AUTH, "Idempotency-Key": f"proposal-first-{suffix}"},
+        json=body,
+    )
+    assert first.status_code == 202, first.text
+    proposal_id = first.json()["data"]["proposal_id"]
+    collision = c.post(
+        "/bff/agora/interactions",
+        headers={**AUTH, "Idempotency-Key": f"proposal-second-{suffix}"},
+        json={**body, "topic": "Conflicting measure"},
+    )
+    assert collision.status_code == 409
+    revisions = c.get(
+        f"/bff/agora/proposals/{proposal_id}/revisions",
+        headers={"Authorization": AUTH["Authorization"]},
+    )
+    assert revisions.status_code == 200
+    assert len(revisions.json()["data"]) == 1
+    cards = c.get(f"/bff/agora/workshops/{resolved['workshop_id']}/cards", headers=AUTH).json()["data"]
+    assert len([card for card in cards if card["card_type"] == "governed_proposal"]) == 1
+
+
 def test_propose_action_creates_canonical_governed_proposal_and_card(monkeypatch):
     c = client(monkeypatch)
     bff_main.read_store.list_approval_decisions = lambda: [
