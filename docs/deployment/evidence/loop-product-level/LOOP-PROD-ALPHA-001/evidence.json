@@ -68,14 +68,14 @@
   "implementation_delivery": {
     "anchor_commits": [
       {
-        "sha": "ef7786f31fc3a4ed3b57073a44a3ec50f63c7970",
+        "sha": "65a5de905e1ae71ce1b2e6635d702f35150eaa39",
         "subject": "LOOP-PROD-ALPHA-001: implement durable alpha replication"
       }
     ],
     "pull_request": {
-      "number": 3657,
-      "url": "https://github.com/ajoe734/pantheon/pull/3657",
-      "head_sha": "ef7786f31fc3a4ed3b57073a44a3ec50f63c7970",
+      "number": 3658,
+      "url": "https://github.com/ajoe734/pantheon/pull/3658",
+      "head_sha": "65a5de905e1ae71ce1b2e6635d702f35150eaa39",
       "base": "dev"
     },
     "required_checks": []
@@ -94,8 +94,8 @@
       }
     ],
     "validated_at": "2026-07-14T14:39:00Z",
-    "validated_base_sha": "ef7786f31fc3a4ed3b57073a44a3ec50f63c7970",
-    "validated_head_sha": "ef7786f31fc3a4ed3b57073a44a3ec50f63c7970"
+    "validated_base_sha": "65a5de905e1ae71ce1b2e6635d702f35150eaa39",
+    "validated_head_sha": "65a5de905e1ae71ce1b2e6635d702f35150eaa39"
   },
   "deployment": {
     "applicable": true,
@@ -116,7 +116,7 @@
     },
     "identity_admission": {
       "status": "pass",
-      "git_sha": "ef7786f31fc3a4ed3b57073a44a3ec50f63c7970",
+      "git_sha": "65a5de905e1ae71ce1b2e6635d702f35150eaa39",
       "application_digest": "application-sha256:7bc59c8695ed24b5d22578ef6c8b9bc6db138e0be854faf6c8b9bc6db138e0789f",
       "docker_image_id": "sha256:99812acbad75f0302609e02622699826ac248e0fe4aca0013bde0265d4638100fe",
       "source_api_image_id": "sha256:99812acbad75f0302609e02622699826ac248e0fe4aca0013bde0265d4638100fe",

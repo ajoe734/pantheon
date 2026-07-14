@@ -286,7 +286,7 @@ services:
       - research-orchestrator-data:/data/research-orchestrator
       - source-ingest-data:/data/source-ingest
     depends_on:
-      research:
+      research-orchestrator-svc:
         condition: service_healthy
       registry:
         condition: service_healthy
