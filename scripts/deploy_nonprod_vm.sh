@@ -421,6 +421,7 @@ preserve_known_deploy_runtime_state() {
   local path
   local runtime_status
   local stash_label
+  local exclude_file
 
   for path in "${known_paths[@]}"; do
     if [[ ! -e "$path" ]]; then
@@ -433,9 +434,10 @@ preserve_known_deploy_runtime_state() {
     # in place across the detached checkout and the repository-level ignore in
     # the target commit makes this local exclusion unnecessary thereafter.
     if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
-      mkdir -p .git/info
-      if ! grep -Fqx "/${path}" .git/info/exclude 2>/dev/null; then
-        printf '/%s\n' "$path" >>.git/info/exclude
+      exclude_file="$(git rev-parse --git-path info/exclude)"
+      mkdir -p "$(dirname "$exclude_file")"
+      if ! grep -Fqx "/${path}" "$exclude_file" 2>/dev/null; then
+        printf '/%s\n' "$path" >>"$exclude_file"
       fi
       continue
     fi
