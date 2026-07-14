@@ -4,7 +4,7 @@ Status: ready for fleet dispatch after dependencies are done
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `0c8778be17460dacfccbef287de23d47eb3d275161107ae1c215b96248cda930`
+Canonical contract SHA-256: `0cff0119a926b75706219ae1628cee65e5efdcf75ea204f77586ce7ee65890bc`
 The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 
@@ -59,9 +59,11 @@ target 與部署 identity 的 Human/Ops 判決；fleet 只能組裝請求，不�
 - catalog validation requires whole-object equality with the versioned completion
   authority, exact guard/final direct-dependency arrays, and the immutable
   signoff-ID list; extras, duplicates, substitutions, and omissions fail
-- a catalog-bound live overlay marks CLOSE-001 `checkpoint_only`, SIGNOFF-001
-  `guard_installer`, and CLOSE-002 `final_authority`; foreign overlay or
-  conflicting task-local role fails closed
+- a catalog-bound live overlay only declares the required content-addressed
+  checkpoint-consumption record contract, marks CLOSE-001 `checkpoint_only`,
+  SIGNOFF-001 `guard_installer`, and CLOSE-002 `final_authority`; a foreign
+  overlay, conflicting task-local role, or overlay-carried consumption record
+  fails closed
 - a protected server-side verdict can be created only by an authenticated authorized Human or Ops actor and never by a candidate artifact, fleet worker, repository secret, or self-authored JSON file
 - each verdict binds program, exact catalog digest, task, protected closeout-manifest digest, target, FE and BFF identities, attestation policy, immutable verdict ID, verifier capability, signature algorithm, key and policy versions, signature, current revocation check, append-only ledger entry, actor, role, decision, issued time, expiry, and nonce
 - review-approved to done and final program completion fail closed when any required verdict is missing, rejected, revoked, replayed, stale, unauthorized, or bound to another task, catalog, manifest, target, or deployment
@@ -77,8 +79,9 @@ target 與部署 identity 的 Human/Ops 判決；fleet 只能組裝請求，不�
 
 - schema, authorization, signature, key and policy version, ledger lookup, binding, expiry, revocation, and concurrency tests
 - negative direct state-transition and candidate self-signing evidence
-- exact authority/overlay/checkpoint-consumption/guard-installer/signoff-set and
-  unique final-authority readback
+- exact authority digest, immutable required signoff-ID set, overlay,
+  content-addressed checkpoint-consumption contract, guard-installer, and unique
+  final-authority readback
 - merged PR, merge SHA, checks, independent review, and checksummed evidence
 
 Reviewer approval must set `review_file` under:

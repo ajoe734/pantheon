@@ -1,7 +1,15 @@
 {
-  "schema_version": 1,
-  "fixture_set_id": "loop-product-runtime-lock-bootstrap-task-v1",
+  "schema_version": 2,
+  "fixture_set_id": "loop-product-runtime-lock-bootstrap-task-v2",
   "task_contract_algorithm": "sha256(json-sort-keys-compact projection excluding owner reviewer status next)",
+  "governed_materialization": {
+    "schema_version": 1,
+    "canonical_task_source": "fixture.task",
+    "task_contract_digest_required": true,
+    "admission_authority": "supervisor_admitted_fleet_worker",
+    "direct_status_file_rewrite_forbidden": true,
+    "recovery_authority": "supervisor_owned_signed_catalog_recovery"
+  },
   "task": {
     "id": "LOOP-PROD-RUNTIME-BOOT-001",
     "title": "Shared runtime/task/audit lock protocol bootstrap",
@@ -38,6 +46,7 @@
       "binds the capability manifest, exhaustive writer registry, executing dispatcher bytes, writer blobs, signed bootstrap completion verdict with verifier/key/policy/revocation/ledger identity, protected capability-verifier decision, and dev ancestry to one exact merged commit; a self-authored or format-only manifest cannot satisfy the gate",
       "wraps every canonical writer's complete read-validate-mutate-replace transaction and rejects direct canonical writes outside the registered protocol helpers",
       "process-level inode-replace, contention, crash, kill, restart, concurrent writer, rotation, and outbox recovery tests preserve newest truth with no lost or duplicated events",
+      "detects any live catalog graph or dependency projection that differs from the exact catalog digest and fails closed; only an auditable supervisor-owned signed catalog recovery may repair it, never a direct ai-status.json rewrite",
       "exact merged bootstrap SHA passes a canonical strict live dry-run with zero writes before primary materialization is authorized"
     ],
     "next": "Admit a fleet worker to install and prove the shared runtime/task/audit lock protocol.",
@@ -83,6 +92,7 @@
       "implementation may be performed only by a supervisor-admitted fleet worker in a clean task worktree",
       "owner and reviewer must be distinct admitted fleet runtime identities",
       "the planner may author and validate this contract but may not edit any declared product artifact",
+      "canonical bootstrap materialization and any graph recovery are supervisor-owned governed transactions; direct ai-status.json rewrites are forbidden",
       "missing or contradicted runtime evidence leaves the 48-task primary catalog blocked"
     ],
     "product_level_required": true,
@@ -90,5 +100,5 @@
     "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-RUNTIME-BOOT-001.md",
     "requires_human_ops_signoff": true
   },
-  "task_contract_sha256": "04f382e320292e11df3b4668ec4383819b9c9abadcc48f3b9150a7abcb65141e"
+  "task_contract_sha256": "c9cbf18069af232127ad2e097eff28607c42e4cf5c190209dff8f13fbc0ca021"
 }

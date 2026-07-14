@@ -111,7 +111,7 @@
     {
       "task_id": "LOOP-PROD-CLOSE-001",
       "before_task_contract_sha256": "78e927013a680120787c077b0df928bd5df3d7804f971df388f818f12b1c89f4",
-      "after_task_contract_sha256": "1e7ee295ddc306f605845270e31857ba68a14c3d0e82dd6ece0f3b394f186ebb",
+      "after_task_contract_sha256": "d52af19d4cd54698f4c86987bfc7bdea5dc4f3a8a4b7a074da2e61d6f562da8a",
       "allowed_contract_field_changes": [
         "acceptance",
         "dispatch_rules",

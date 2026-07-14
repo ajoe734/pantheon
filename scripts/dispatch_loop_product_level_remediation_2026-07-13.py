@@ -120,6 +120,7 @@ ACTIVITY_OUTBOX_SCHEMA_VERSION = 4
 ACTIVITY_EVENT_TYPES = {
     "assign",
     "catalog_migration",
+    "catalog_graph_binding",
     "completion_authority_install",
 }
 ACTIVITY_TRANSACTION_FIELDS = {
@@ -163,6 +164,10 @@ ACTIVITY_EVENT_EXTRA_FIELDS = {
         "migration_record_sha256",
         "before_task_contract_sha256",
         "after_task_contract_sha256",
+    },
+    "catalog_graph_binding": {
+        "catalog_graph_binding_sha256",
+        "task_graph_sha256",
     },
     "completion_authority_install": {
         "completion_authority_sha256",
@@ -263,42 +268,17 @@ EXPECTED_COMPLETION_AUTHORITY = {
     ),
     "consumption_writer_task_id": "LOOP-PROD-CLOSE-002",
     "checkpoint_consumption_state_key": "program_completion_checkpoint_consumptions",
-    "checkpoint_consumption_record_contract": {
-        "schema_version": 1,
-        "checkpoint_task_id": "LOOP-PROD-CLOSE-001",
-        "guard_task_id": "LOOP-PROD-SIGNOFF-001",
-        "consumer_task_id": "LOOP-PROD-CLOSE-002",
-        "append_only": True,
-        "single_consumption_per_program_catalog_checkpoint": True,
-        "protected_human_ops_required": True,
-        "required_binding_fields": [
-            "program_id",
-            "catalog_sha256",
-            "completion_authority_sha256",
-            "completion_overlay_sha256",
-            "checkpoint_task_id",
-            "checkpoint_task_contract_sha256",
-            "checkpoint_evidence_manifest_sha256",
-            "checkpoint_verdict_sha256",
-            "guard_task_id",
-            "guard_activation_sha256",
-            "consumer_task_id",
-            "consumer_task_contract_sha256",
-            "final_verdict_sha256",
-            "verdict_id",
-            "guard_verifier_capability_sha256",
-            "signature_algorithm",
-            "key_id",
-            "policy_version",
-            "signature",
-            "revocation_checked_at",
-            "ledger_entry_id",
-            "actor_id",
-            "actor_role",
-            "consumed_at",
-            "nonce",
-        ],
-    },
+    "checkpoint_consumption_contract_fixture": (
+        "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/"
+        "fixtures/completion-checkpoint-consumption-record.v1.json"
+    ),
+    "checkpoint_consumption_contract_fixture_sha256": (
+        "b92bf2fe1404a84ce260f277f28b140e75bba576b44eb373e6a334297c170a3a"
+    ),
+    "checkpoint_consumption_record_contract_sha256": (
+        "0851c28df62e288cb204a4747053dd9b77b5b46be2cfc9765e421b3099cf76cb"
+    ),
+    "checkpoint_consumption_overlay_may_record": False,
     "requires_protected_human_ops_verdict": True,
     "verdict_binding_fields": [
         "program_id",
@@ -394,13 +374,21 @@ EXPECTED_DISPATCH_PREREQUISITE = {
         "fixtures/runtime-lock-bootstrap-task.v1.json"
     ),
     "task_contract_fixture_sha256": (
-        "eee36ad3bf27375805bcaf8379117cf409a00d039d8dde8c0387754961ee17a2"
+        "d36de7ef1d640c5ace0163dfed5709f7d3cf76298879ac0ec797250053bd5ffd"
     ),
     "task_contract_sha256": (
-        "04f382e320292e11df3b4668ec4383819b9c9abadcc48f3b9150a7abcb65141e"
+        "c9cbf18069af232127ad2e097eff28607c42e4cf5c190209dff8f13fbc0ca021"
     ),
     "required_status": "done",
     "must_preexist_primary_materialization": True,
+    "governed_materialization": {
+        "schema_version": 1,
+        "canonical_task_source": "fixture.task",
+        "task_contract_digest_required": True,
+        "admission_authority": "supervisor_admitted_fleet_worker",
+        "direct_status_file_rewrite_forbidden": True,
+        "recovery_authority": "supervisor_owned_signed_catalog_recovery",
+    },
     "protocol": {
         "schema_version": 1,
         "protocol_id": "pantheon-runtime-task-audit-lock-v1",
@@ -473,6 +461,7 @@ EXPECTED_DISPATCH_PREREQUISITE = {
             "bootstrap_task_contract_sha256",
             "bootstrap_completion_evidence_path",
             "bootstrap_completion_evidence_sha256",
+            "catalog_graph_binding",
             "merged_commit_sha",
         ],
         "writer_registry_path": (
@@ -489,6 +478,27 @@ EXPECTED_DISPATCH_PREREQUISITE = {
             "scripts/ai_status.py",
             "scripts/dispatch_loop_product_level_remediation_2026-07-13.py",
         ],
+        "catalog_graph_binding": {
+            "schema_version": 1,
+            "state_key": "program_catalog_graph_bindings",
+            "recovery_state_key": "program_catalog_graph_recoveries",
+            "projection_algorithm": (
+                "sha256(canonical-json(program_id,task_id,depends_on,"
+                "task_contract_sha256))"
+            ),
+            "mismatch_policy": "fail_closed",
+            "recovery_authority": "supervisor_owned_signed_catalog_recovery",
+            "direct_status_file_rewrite_forbidden": True,
+            "required_binding_fields": [
+                "schema_version",
+                "program_id",
+                "catalog_sha256",
+                "task_graph_sha256",
+                "graph_contract_sha256",
+                "recovery_authority",
+                "direct_status_file_rewrite_forbidden",
+            ],
+        },
     },
 }
 EXPECTED_CONTRACT_FIXTURES = {
@@ -671,7 +681,7 @@ EXPECTED_PREIMAGE_FIXTURE_PATH = (
     "fixtures/catalog-v1-migration-preimages.json"
 )
 EXPECTED_PREIMAGE_FIXTURE_SHA256 = (
-    "91c622e5f586cf9b94cf810031603fba32d6f25186b58e7ebe3bd2c3f6a04956"
+    "3368f32bef3664531e7eb1640f750aaeb12487befe4901cce9d890f4b4d94247"
 )
 EXPECTED_PREIMAGE_MUTABLE_LIVE_FIELDS = [
     "owner",
@@ -781,6 +791,75 @@ def auth_lifecycle_sha256(catalog: dict[str, Any]) -> str:
 
 def contract_fixtures_sha256(catalog: dict[str, Any]) -> str:
     return canonical_json_sha256(catalog.get("contract_fixtures"))
+
+
+def checkpoint_consumption_contract(catalog: dict[str, Any]) -> dict[str, Any]:
+    """Load the immutable record shape; the live overlay never carries records."""
+
+    authority = catalog["completion_authority"]
+    fixture = _content_addressed_json(
+        REPO_ROOT / authority["checkpoint_consumption_contract_fixture"],
+        authority["checkpoint_consumption_contract_fixture_sha256"],
+    )
+    if (
+        set(fixture) != {"schema_version", "fixture_set_id", "canonicalization", "contract"}
+        or fixture.get("schema_version") != 1
+        or fixture.get("fixture_set_id")
+        != "loop-product-checkpoint-consumption-record-contract-v1"
+        or fixture.get("canonicalization") != "sha256(json-sort-keys-compact)"
+        or not isinstance(fixture.get("contract"), dict)
+    ):
+        raise DispatchError("checkpoint consumption contract fixture is not exact")
+    contract = fixture["contract"]
+    if (
+        canonical_json_sha256(contract)
+        != authority["checkpoint_consumption_record_contract_sha256"]
+        or contract.get("checkpoint_task_id") != "LOOP-PROD-CLOSE-001"
+        or contract.get("guard_task_id") != "LOOP-PROD-SIGNOFF-001"
+        or contract.get("consumer_task_id") != "LOOP-PROD-CLOSE-002"
+        or contract.get("append_only") is not True
+        or contract.get("single_consumption_per_program_catalog_checkpoint") is not True
+        or contract.get("protected_human_ops_required") is not True
+        or contract.get("overlay_may_record_consumption") is not False
+        or contract.get("recording_authority")
+        != "protected_server_side_final_authority_verifier"
+        or not isinstance(contract.get("required_binding_fields"), list)
+        or not contract["required_binding_fields"]
+        or len(contract["required_binding_fields"])
+        != len(set(map(str, contract["required_binding_fields"])))
+    ):
+        raise DispatchError("checkpoint consumption record contract is not exact")
+    return contract
+
+
+def catalog_task_graph_projection(
+    catalog: dict[str, Any],
+    tasks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "program_id": str(catalog["program_id"]),
+        "tasks": [
+            {
+                "task_id": str(task["id"]),
+                "depends_on": list(task["depends_on"]),
+                "task_contract_sha256": task_contract_sha256(task),
+            }
+            for task in sorted(tasks, key=lambda item: str(item["id"]))
+        ],
+    }
+
+
+def catalog_task_graph_sha256(
+    catalog: dict[str, Any],
+    tasks: list[dict[str, Any]],
+) -> str:
+    return canonical_json_sha256(catalog_task_graph_projection(catalog, tasks))
+
+
+def graph_binding_contract_sha256(catalog: dict[str, Any]) -> str:
+    return canonical_json_sha256(
+        catalog["dispatch_prerequisite"]["protocol"]["catalog_graph_binding"]
+    )
 
 
 def _content_addressed_json(path: Path, expected_sha256: str) -> dict[str, Any]:
@@ -1182,6 +1261,32 @@ def internal_ancestors(
     return ancestors
 
 
+def validate_task_contract_marker_coverage(
+    by_id: dict[str, dict[str, Any]],
+    marker_ids: set[str],
+) -> None:
+    """Every additive or migration-target task has one, and only one, marker."""
+
+    missing = sorted(marker_ids - set(by_id))
+    occurrences: Counter[str] = Counter()
+    for task in by_id.values():
+        document = (REPO_ROOT / Path(str(task["task_doc"]))).read_text(
+            encoding="utf-8"
+        )
+        for task_id in marker_ids - set(missing):
+            marker = (
+                "Canonical contract SHA-256: "
+                f"`{task_contract_sha256(by_id[task_id])}`"
+            )
+            occurrences[task_id] += document.count(marker)
+    invalid = sorted(task_id for task_id in marker_ids if occurrences[task_id] != 1)
+    if missing or invalid:
+        raise DispatchError(
+            "additive/migration task-contract marker coverage must be exactly once: "
+            + ", ".join([*missing, *invalid])
+        )
+
+
 def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]]:
     schema_version = payload.get("schema_version")
     if schema_version != 3:
@@ -1244,9 +1349,11 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
     )
     prerequisite_task = prerequisite_fixture.get("task")
     if (
-        prerequisite_fixture.get("schema_version") != 1
+        prerequisite_fixture.get("schema_version") != 2
         or prerequisite_fixture.get("fixture_set_id")
-        != "loop-product-runtime-lock-bootstrap-task-v1"
+        != "loop-product-runtime-lock-bootstrap-task-v2"
+        or prerequisite_fixture.get("governed_materialization")
+        != EXPECTED_DISPATCH_PREREQUISITE["governed_materialization"]
         or not isinstance(prerequisite_task, dict)
         or prerequisite_task.get("id") != EXPECTED_DISPATCH_PREREQUISITE["task_id"]
         or prerequisite_fixture.get("task_contract_sha256")
@@ -1278,6 +1385,7 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
         )
     if payload.get("completion_authority") != EXPECTED_COMPLETION_AUTHORITY:
         raise DispatchError("catalog completion_authority must match the exact reviewed contract")
+    checkpoint_consumption_contract(payload)
     if payload.get("auth_lifecycle") != EXPECTED_AUTH_LIFECYCLE:
         raise DispatchError("catalog auth_lifecycle must match the exact reviewed contract")
     universal_dispatch_rules = payload.get("universal_dispatch_rules")
@@ -1537,6 +1645,8 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
         if set(fixture_targets) != patched_task_ids:
             raise DispatchError("catalog migration target set differs from preimage fixture")
 
+    validate_task_contract_marker_coverage(by_id, contract_marker_ids)
+
     visiting: set[str] = set()
     visited: set[str] = set()
 
@@ -1716,10 +1826,133 @@ def dependency_state(
     return "missing", "missing"
 
 
+def expected_catalog_graph_binding(
+    catalog: dict[str, Any],
+    catalog_digest: str,
+    tasks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    graph_contract = catalog["dispatch_prerequisite"]["protocol"][
+        "catalog_graph_binding"
+    ]
+    return {
+        "schema_version": graph_contract["schema_version"],
+        "program_id": str(catalog["program_id"]),
+        "catalog_sha256": catalog_digest,
+        "task_graph_sha256": catalog_task_graph_sha256(catalog, tasks),
+        "graph_contract_sha256": graph_binding_contract_sha256(catalog),
+        "recovery_authority": graph_contract["recovery_authority"],
+        "direct_status_file_rewrite_forbidden": graph_contract[
+            "direct_status_file_rewrite_forbidden"
+        ],
+    }
+
+
+def validate_catalog_graph_binding(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    catalog_digest: str,
+    active_by_id: dict[str, dict[str, Any]],
+) -> None:
+    """Reject an unrecorded direct dependency rewrite; recovery belongs to supervisor."""
+
+    graph_contract = catalog["dispatch_prerequisite"]["protocol"][
+        "catalog_graph_binding"
+    ]
+    catalog_by_id = {str(task["id"]): task for task in catalog["tasks"]}
+    active_catalog_ids = [
+        task_id
+        for task_id, task in active_by_id.items()
+        if task_id in catalog_by_id
+    ]
+    resolved_by_id = {
+        task_id: active_by_id[task_id] for task_id in active_catalog_ids
+    }
+    for task_id in set(catalog_by_id) - set(active_catalog_ids):
+        archive_path = ARCHIVE_ROOT / f"{task_id}.json"
+        if not archive_path.is_file():
+            continue
+        archive_payload = read_json(archive_path)
+        archived_task = archive_payload.get("task")
+        if (
+            isinstance(archived_task, dict)
+            and archived_task.get("id") == task_id
+            and "depends_on" in archived_task
+        ):
+            resolved_by_id[task_id] = archived_task
+    unresolved_ids = set(catalog_by_id) - set(resolved_by_id)
+    if unresolved_ids:
+        # A historical terminal archive may intentionally retain only a legacy
+        # terminal task stub. It is never resurrected or rewritten by this
+        # dispatcher, so it cannot participate in a current-graph assertion.
+        if all(
+            (ARCHIVE_ROOT / f"{task_id}.json").is_file()
+            and archive_status(ARCHIVE_ROOT / f"{task_id}.json")
+            in TERMINAL_STATUSES
+            for task_id in unresolved_ids
+        ):
+            return
+    # A non-pristine admitted/working record is deliberately preserved in full
+    # by materialization. It has no current catalog contract and must not be
+    # rewritten merely to manufacture a graph projection.
+    if any(
+        not isinstance(active_by_id[task_id].get("source_ref"), dict)
+        or active_by_id[task_id]["source_ref"].get("program_id")
+        != catalog["program_id"]
+        or active_by_id[task_id]["source_ref"].get("catalog_sha256")
+        != catalog_digest
+        for task_id in active_catalog_ids
+    ):
+        return
+    has_current_catalog_source = any(
+        isinstance(resolved_by_id[task_id].get("source_ref"), dict)
+        and resolved_by_id[task_id]["source_ref"].get("program_id")
+        == catalog["program_id"]
+        and resolved_by_id[task_id]["source_ref"].get("catalog_sha256")
+        == catalog_digest
+        for task_id in resolved_by_id
+    )
+    if not has_current_catalog_source:
+        return
+    if set(resolved_by_id) != set(catalog_by_id):
+        raise DispatchError(
+            "current catalog graph is partial; only supervisor-owned signed catalog "
+            "recovery may repair it"
+        )
+    recovery = state.get(graph_contract["recovery_state_key"])
+    if recovery not in (None, [], {}):
+        raise DispatchError(
+            "catalog graph recovery is pending; dispatcher refuses direct status-file "
+            "repair and requires supervisor-owned signed catalog recovery"
+        )
+    bindings = state.get(graph_contract["state_key"])
+    if not isinstance(bindings, dict):
+        raise DispatchError(
+            "catalog graph binding is missing; dispatcher refuses direct status-file "
+            "rewrite and requires supervisor-owned signed catalog recovery"
+        )
+    expected = expected_catalog_graph_binding(
+        catalog, catalog_digest, list(catalog_by_id.values())
+    )
+    if bindings.get(catalog["program_id"]) != expected:
+        raise DispatchError(
+            "catalog graph binding mismatch; dispatcher fails closed and requires "
+            "supervisor-owned signed catalog recovery"
+        )
+    active_graph = catalog_task_graph_sha256(
+        catalog, [resolved_by_id[task_id] for task_id in sorted(catalog_by_id)]
+    )
+    if active_graph != expected["task_graph_sha256"]:
+        raise DispatchError(
+            "live task graph differs from catalog; direct status-file rewrite is "
+            "forbidden and supervisor-owned signed catalog recovery is required"
+        )
+
+
 def validate_live_state(
     state: dict[str, Any],
     catalog: dict[str, Any],
     tasks: list[dict[str, Any]],
+    catalog_digest: str,
 ) -> None:
     active_tasks = state.get("tasks")
     if not isinstance(active_tasks, list):
@@ -1755,6 +1988,8 @@ def validate_live_state(
         raise DispatchError(
             "enabled fleet agents are missing from status: " + ", ".join(missing_agents)
         )
+
+    validate_catalog_graph_binding(state, catalog, catalog_digest, active_by_id)
 
     for dep_id in catalog["external_dependencies"]:
         status, source = dependency_state(str(dep_id), active_by_id)
@@ -1892,6 +2127,8 @@ def load_runtime_lock_protocol(catalog: dict[str, Any]) -> ModuleType:
         or manifest.get("stable_lock_paths") != protocol["stable_lock_paths"]
         or manifest.get("shared_read_supported") is not True
         or manifest.get("api") != protocol["required_api"]
+        or manifest.get("catalog_graph_binding")
+        != protocol["catalog_graph_binding"]
     ):
         raise DispatchError("runtime lock capability manifest contract mismatch")
     merge_sha = manifest.get("merged_commit_sha")
@@ -2394,6 +2631,12 @@ def build_affected_state_projection(
     overlays = state.get(overlay_key) or {}
     if not isinstance(overlays, dict):
         raise DispatchError("affected-state projection completion overlay is invalid")
+    graph_key = catalog["dispatch_prerequisite"]["protocol"][
+        "catalog_graph_binding"
+    ]["state_key"]
+    graph_bindings = state.get(graph_key) or {}
+    if not isinstance(graph_bindings, dict):
+        raise DispatchError("affected-state projection catalog graph binding is invalid")
     program_id = str(catalog["program_id"])
     items: list[dict[str, Any]] = []
     for event in raw_events:
@@ -2434,6 +2677,17 @@ def build_affected_state_projection(
                     "event_type": event_type,
                     "task_id": task_id,
                     "completion_overlay": deepcopy(overlay),
+                }
+            )
+        elif event_type == "catalog_graph_binding":
+            graph_binding = graph_bindings.get(program_id)
+            if not isinstance(graph_binding, dict):
+                raise DispatchError("affected catalog graph binding is missing")
+            items.append(
+                {
+                    "event_type": event_type,
+                    "task_id": task_id,
+                    "catalog_graph_binding": deepcopy(graph_binding),
                 }
             )
         else:
@@ -2480,6 +2734,12 @@ def validate_affected_state_projection(
     overlays = state.get(overlay_key) or {}
     if not isinstance(overlays, dict):
         raise DispatchError("program_activity_outbox current overlay state is invalid")
+    graph_key = catalog["dispatch_prerequisite"]["protocol"][
+        "catalog_graph_binding"
+    ]["state_key"]
+    graph_bindings = state.get(graph_key) or {}
+    if not isinstance(graph_bindings, dict):
+        raise DispatchError("program_activity_outbox current graph binding is invalid")
     for event, item in zip(raw_events, projection["items"], strict=True):
         event_type = str(event["type"])
         task_id = str(event["task_id"])
@@ -2490,6 +2750,8 @@ def validate_affected_state_projection(
             else common | {"task", "migration_record"}
             if event_type == "catalog_migration"
             else common | {"completion_overlay"}
+            if event_type == "completion_authority_install"
+            else common | {"catalog_graph_binding"}
         )
         if (
             not isinstance(item, dict)
@@ -2561,7 +2823,7 @@ def validate_affected_state_projection(
                 raise DispatchError(
                     f"program_activity_outbox proposed task snapshot changed: {task_id}"
                 )
-        else:
+        elif event_type == "completion_authority_install":
             overlay = item.get("completion_overlay")
             current_overlay = overlays.get(program_id)
             if (
@@ -2573,6 +2835,18 @@ def validate_affected_state_projection(
                 or current_overlay != overlay
             ):
                 raise DispatchError("program_activity_outbox completion overlay drift")
+        else:
+            graph_binding = item.get("catalog_graph_binding")
+            current_binding = graph_bindings.get(program_id)
+            if (
+                not isinstance(graph_binding, dict)
+                or canonical_json_sha256(graph_binding)
+                != event.get("catalog_graph_binding_sha256")
+                or graph_binding.get("task_graph_sha256")
+                != event.get("task_graph_sha256")
+                or current_binding != graph_binding
+            ):
+                raise DispatchError("program_activity_outbox catalog graph binding drift")
 
 
 def enqueue_activity_outbox(
@@ -2793,7 +3067,7 @@ def validate_activity_outbox(
                 )
             ):
                 raise DispatchError("migration immutable event binding is invalid")
-        else:
+        elif event_type == "completion_authority_install":
             if entry.get("message") != (
                 "Installed exact catalog-bound completion authority overlay"
             ) or any(
@@ -2804,6 +3078,18 @@ def validate_activity_outbox(
                 )
             ):
                 raise DispatchError("completion overlay event binding is invalid")
+        else:
+            if entry.get("message") != (
+                "Bound exact catalog task graph; direct status-file rewrites require "
+                "supervisor-owned signed recovery"
+            ) or any(
+                len(str(entry.get(field) or "")) != 64
+                for field in (
+                    "catalog_graph_binding_sha256",
+                    "task_graph_sha256",
+                )
+            ):
+                raise DispatchError("catalog graph binding event is invalid")
 
         raw_event = {
             key: deepcopy(value)
@@ -3359,9 +3645,10 @@ def expected_completion_overlay(
         },
         "contract_fixtures_sha256": contract_fixtures_sha256(catalog),
         "checkpoint_consumption_required": True,
-        "checkpoint_consumption_record_contract_sha256": canonical_json_sha256(
-            catalog["completion_authority"]["checkpoint_consumption_record_contract"]
-        ),
+        "checkpoint_consumption_record_contract_sha256": catalog[
+            "completion_authority"
+        ]["checkpoint_consumption_record_contract_sha256"],
+        "checkpoint_consumption_overlay_may_record": False,
     }
 
 
@@ -3422,6 +3709,19 @@ def validate_checkpoint_consumptions(
 
     state_key = str(catalog["completion_authority"]["checkpoint_consumption_state_key"])
     records = state.get(state_key)
+    overlay_key = str(catalog["completion_authority"]["live_overlay_state_key"])
+    overlays = state.get(overlay_key)
+    if overlays not in (None, {}):
+        if not isinstance(overlays, dict):
+            raise DispatchError("program completion authority overlays must be an object")
+        overlay = overlays.get(catalog["program_id"])
+        if overlay is not None and overlay != expected_completion_overlay(
+            catalog, catalog_digest
+        ):
+            raise DispatchError(
+                "completion overlay may only declare the content-addressed contract; "
+                "it cannot record checkpoint consumption"
+            )
     policy = catalog["completion_authority"].get("dispatcher_pre_completion_policy")
     if policy != "reject_preexisting_consumption_or_program_completed":
         raise DispatchError("dispatcher pre-completion policy is not exact")
@@ -3433,6 +3733,52 @@ def validate_checkpoint_consumptions(
             "preexisting program completion or checkpoint consumption requires the "
             "protected LOOP-PROD-CLOSE-002 verifier; initial dispatcher refuses it"
         )
+
+
+def ensure_catalog_graph_binding(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    catalog_digest: str,
+    timestamp: str,
+) -> tuple[list[dict[str, Any]], bool]:
+    graph_contract = catalog["dispatch_prerequisite"]["protocol"][
+        "catalog_graph_binding"
+    ]
+    key = graph_contract["state_key"]
+    bindings = state.get(key)
+    if bindings is None:
+        bindings = {}
+    if not isinstance(bindings, dict):
+        raise DispatchError("catalog graph bindings must be an object")
+    expected = expected_catalog_graph_binding(
+        catalog, catalog_digest, list(catalog["tasks"])
+    )
+    program_id = str(catalog["program_id"])
+    existing = bindings.get(program_id)
+    if existing is not None:
+        if existing != expected:
+            raise DispatchError(
+                "catalog graph binding mismatch; dispatcher refuses direct status-file "
+                "repair and requires supervisor-owned signed catalog recovery"
+            )
+        return [], False
+    bindings[program_id] = expected
+    state[key] = bindings
+    state["updated_at"] = timestamp
+    return [
+        {
+            "ts": timestamp,
+            "agent": str(os.environ.get("AI_NAME") or ""),
+            "type": "catalog_graph_binding",
+            "task_id": "LOOP-PROD-RUNTIME-BOOT-001",
+            "catalog_graph_binding_sha256": canonical_json_sha256(expected),
+            "task_graph_sha256": expected["task_graph_sha256"],
+            "message": (
+                "Bound exact catalog task graph; direct status-file rewrites require "
+                "supervisor-owned signed recovery"
+            ),
+        }
+    ], True
 
 
 def materialize(
@@ -3617,7 +3963,7 @@ def main() -> int:
                 print("Recovered pending activity audit outbox.")
                 original_signature = file_signature(STATUS_PATH)
 
-        validate_live_state(state, catalog, tasks)
+        validate_live_state(state, catalog, tasks, catalog_digest)
         validate_checkpoint_consumptions(state, catalog, catalog_digest)
         validate_new_mutation_allowed(state)
         proposed = deepcopy(state)
@@ -3642,8 +3988,14 @@ def main() -> int:
             catalog_digest,
             timestamp,
         )
-        logs = [*migration_logs, *overlay_logs, *logs]
-        changed = migration_changed or overlay_changed or changed
+        graph_logs, graph_changed = ensure_catalog_graph_binding(
+            proposed,
+            catalog,
+            catalog_digest,
+            timestamp,
+        )
+        logs = [*migration_logs, *overlay_logs, *graph_logs, *logs]
+        changed = migration_changed or overlay_changed or graph_changed or changed
         report(created, preserved, archived, migrated, dry_run=args.dry_run)
 
         if not changed:

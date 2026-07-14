@@ -499,6 +499,9 @@ def install_runtime_protocol(root: Path) -> None:
         "bootstrap_completion_evidence_sha256": hashlib.sha256(
             evidence_path.read_bytes()
         ).hexdigest(),
+        "catalog_graph_binding": load_catalog()["dispatch_prerequisite"][
+            "protocol"
+        ]["catalog_graph_binding"],
         "merged_commit_sha": merged_commit_sha,
     }
     (orchestrator / "runtime-task-audit-lock-capability.json").write_text(
@@ -836,7 +839,7 @@ def test_dispatch_is_idempotent_and_preserves_supervisor_agent_queues() -> None:
         assert all(task["formal_review_required"] is True for task in tasks)
         assert all(task["source_ref"]["execution_authority_sha256"] for task in tasks)
         assert state["agents"] == agents_before
-        assert len(log_after_first.decode("utf-8").splitlines()) == 49
+        assert len(log_after_first.decode("utf-8").splitlines()) == 50
 
         second = run_dispatch(root)
         assert second.returncode == 0, second.stderr
@@ -871,7 +874,7 @@ def test_activity_outbox_recovers_crash_between_status_and_log() -> None:
             event["actor_policy_sha256"] == outbox["actor_policy_sha256"]
             for event in outbox["events"]
         )
-        assert len(outbox["events"]) == 49
+        assert len(outbox["events"]) == 50
         assert (root / "ai-activity-log.jsonl").read_text(encoding="utf-8") == ""
 
         recovered = run_dispatch(root)
@@ -889,8 +892,8 @@ def test_activity_outbox_recovers_crash_between_status_and_log() -> None:
             .read_text(encoding="utf-8")
             .splitlines()
         ]
-        assert len(records) == 49
-        assert len({record["event_id"] for record in records}) == 49
+        assert len(records) == 50
+        assert len({record["event_id"] for record in records}) == 50
 
 
 def test_activity_outbox_deduplicates_crash_after_log_append() -> None:
@@ -908,12 +911,12 @@ def test_activity_outbox_deduplicates_crash_after_log_append() -> None:
         interrupted_state = json.loads(
             (root / "ai-status.json").read_text(encoding="utf-8")
         )
-        assert len(interrupted_state["program_activity_outbox"]["events"]) == 49
+        assert len(interrupted_state["program_activity_outbox"]["events"]) == 50
         assert len(
             (root / "ai-activity-log.jsonl")
             .read_text(encoding="utf-8")
             .splitlines()
-        ) == 49
+        ) == 50
         exact_log = (root / "ai-activity-log.jsonl").read_bytes()
 
         recovered = run_dispatch(root)
@@ -931,8 +934,8 @@ def test_activity_outbox_deduplicates_crash_after_log_append() -> None:
             .read_text(encoding="utf-8")
             .splitlines()
         ]
-        assert len(records) == 49
-        assert len({record["event_id"] for record in records}) == 49
+        assert len(records) == 50
+        assert len({record["event_id"] for record in records}) == 50
 
 
 def test_activity_outbox_same_id_different_payload_retains_outbox() -> None:
@@ -1080,7 +1083,7 @@ def test_frozen_wave_recovers_committed_audit_then_blocks_new_dispatch() -> None
         after = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
         assert after["program_activity_outbox"] is None
         records = (root / "ai-activity-log.jsonl").read_text(encoding="utf-8").splitlines()
-        assert len(records) == 49
+        assert len(records) == 50
 
 
 @pytest.mark.parametrize("corruption", ["malformed", "duplicate"])
@@ -1241,7 +1244,10 @@ def test_additive_collision_rejects_each_foreign_or_stale_axis(axis: str) -> Non
         result = run_dispatch(root)
 
         assert result.returncode == 2
-        assert "foreign or stale active collision" in result.stderr
+        assert (
+            "foreign or stale active collision" in result.stderr
+            or "live task graph differs from catalog" in result.stderr
+        )
         assert (root / "ai-status.json").read_bytes() == status_before
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
@@ -1336,7 +1342,7 @@ def test_archived_terminal_primary_id_is_never_resurrected() -> None:
         state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
         assert "LOOP-PROD-000" not in {task["id"] for task in program_tasks(state)}
         assert len(program_tasks(state)) == 47
-        assert len((root / "ai-activity-log.jsonl").read_text(encoding="utf-8").splitlines()) == 48
+        assert len((root / "ai-activity-log.jsonl").read_text(encoding="utf-8").splitlines()) == 49
 
         second = run_dispatch(root)
         assert second.returncode == 0, second.stderr
@@ -1518,7 +1524,7 @@ def test_live_addendum_migration_is_atomic_audited_and_idempotent() -> None:
         records = state["program_catalog_migrations"]
         assert [record["id"] for record in records] == ["loop-product-gap-addendum-v5"]
         assert len(records[0]["patches"]) == 3
-        assert len(log_after_first.decode("utf-8").splitlines()) == 16
+        assert len(log_after_first.decode("utf-8").splitlines()) == 17
 
         second = run_dispatch(root)
         assert second.returncode == 0, second.stderr
@@ -2256,11 +2262,11 @@ def test_codex2_recovers_codex_outbox_after_assignment_reassignment() -> None:
             .read_text(encoding="utf-8")
             .splitlines()
         ]
-        assert len(records) == 49
+        assert len(records) == 50
         assert {record["agent"] for record in records} == {"Codex"}
 
 
-@pytest.mark.parametrize("crash_after", [1, 24, 49])
+@pytest.mark.parametrize("crash_after", [1, 24, 50])
 def test_outbox_recovery_is_exactly_once_after_each_event_crash(crash_after: int) -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
@@ -2277,8 +2283,8 @@ def test_outbox_recovery_is_exactly_once_after_each_event_crash(crash_after: int
             json.loads(line)
             for line in (root / "ai-activity-log.jsonl").read_text(encoding="utf-8").splitlines()
         ]
-        assert len(records) == 49
-        assert len({record["event_id"] for record in records}) == 49
+        assert len(records) == 50
+        assert len({record["event_id"] for record in records}) == 50
 
 
 def test_completion_overlay_tamper_and_consumption_schema_fail_closed() -> None:
@@ -2314,7 +2320,7 @@ def test_initial_dispatcher_rejects_signed_looking_checkpoint_consumption() -> N
         state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
         catalog = load_catalog()
         program_id = catalog["program_id"]
-        contract = catalog["completion_authority"]["checkpoint_consumption_record_contract"]
+        contract = DISPATCH["checkpoint_consumption_contract"](catalog)
         record = {field: "a" * 64 for field in contract["required_binding_fields"]}
         record.update(
             {
@@ -2352,6 +2358,106 @@ def test_initial_dispatcher_rejects_signed_looking_checkpoint_consumption() -> N
         assert rejected.returncode == 2
         assert "protected LOOP-PROD-CLOSE-002 verifier" in rejected.stderr
         assert (root / "ai-status.json").read_bytes() == before
+
+
+def test_completion_overlay_cannot_carry_checkpoint_consumption_record() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        first = run_dispatch(root, "--apply")
+        assert first.returncode == 0, first.stderr
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        overlay = state["program_completion_authorities"][
+            "loop-product-level-remediation-2026-07-13"
+        ]
+        overlay["checkpoint_consumption_record"] = {"candidate": "forbidden"}
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2) + "\n", encoding="utf-8"
+        )
+        before = (root / "ai-status.json").read_bytes()
+
+        rejected = run_dispatch(root, "--apply")
+
+        assert rejected.returncode == 2
+        assert "completion overlay may only declare" in rejected.stderr
+        assert (root / "ai-status.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("mutation", ["missing_binding", "dependency_rewrite"])
+def test_catalog_graph_binding_fails_closed_without_direct_status_repair(
+    mutation: str,
+) -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        first = run_dispatch(root, "--apply")
+        assert first.returncode == 0, first.stderr
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        if mutation == "missing_binding":
+            state.pop("program_catalog_graph_bindings")
+        else:
+            task = next(
+                item
+                for item in state["tasks"]
+                if item.get("id") == "LOOP-PROD-CLOSE-002"
+            )
+            task["depends_on"] = task["depends_on"][:-1]
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2) + "\n", encoding="utf-8"
+        )
+        before = (root / "ai-status.json").read_bytes()
+
+        rejected = run_dispatch(root, "--apply")
+
+        assert rejected.returncode == 2
+        assert "supervisor-owned signed catalog recovery" in rejected.stderr
+        assert (root / "ai-status.json").read_bytes() == before
+
+
+def test_bootstrap_fixture_is_governed_materialization_contract_and_covers_writers() -> None:
+    catalog = load_catalog()
+    prerequisite = catalog["dispatch_prerequisite"]
+    fixture_path = ROOT / prerequisite["task_contract_fixture"]
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    task = fixture["task"]
+
+    assert fixture["governed_materialization"] == prerequisite[
+        "governed_materialization"
+    ]
+    assert fixture["task_contract_sha256"] == prerequisite["task_contract_sha256"]
+    assert set(prerequisite["protocol"]["required_writer_paths"]).issubset(
+        set(task["artifacts"])
+    )
+    assert ".orchestrator/common.py" in task["artifacts"]
+    assert prerequisite["protocol"]["catalog_graph_binding"][
+        "direct_status_file_rewrite_forbidden"
+    ] is True
+
+
+def test_additive_and_migration_contract_markers_cover_exact_union_once() -> None:
+    catalog = load_catalog()
+    by_id = {task["id"]: task for task in catalog["tasks"]}
+    marker_ids = set(catalog["additive_task_ids"])
+    marker_ids.update(
+        patch["task_id"]
+        for migration in catalog["catalog_migrations"]
+        for patch in migration["required_live_task_patches"]
+    )
+    occurrences = {task_id: 0 for task_id in marker_ids}
+    for task in by_id.values():
+        document = (ROOT / task["task_doc"]).read_text(encoding="utf-8")
+        for task_id in marker_ids:
+            marker = "Canonical contract SHA-256: `" + DISPATCH[
+                "task_contract_sha256"
+            ](by_id[task_id]) + "`"
+            occurrences[task_id] += document.count(marker)
+
+    assert marker_ids == set(catalog["additive_task_ids"]) | {
+        "LOOP-PROD-AGORA-002",
+        "LOOP-PROD-MAI-001",
+        "LOOP-PROD-CLOSE-001",
+    }
+    assert occurrences == {task_id: 1 for task_id in marker_ids}
 
 
 def test_completion_authority_and_auth_lifecycle_are_exact_contracts() -> None:

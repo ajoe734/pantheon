@@ -59,7 +59,9 @@ FE/BFF SHA、run/job、target、lease、artifact digest 與 verification policy�
 - the manifest binds the exact lease and provisional bootstrap-record digest,
   but cannot recursively prove or authorize AUTH-BOOT
 - unkeyed checksums are content-integrity digests inside the authenticated envelope and are never accepted as provenance or authorization
-- manifest binds repository, exact candidate/base/deployed SHAs, run/job/attempt, target, lease, policy version, artifact digests, timestamps, and expiry
+- manifest binds repository, exact candidate/base/deployed SHAs, run/job/attempt,
+  target, lease, exact `attestation_policy`, policy version, artifact digests,
+  timestamps, and expiry
 - candidate-controlled fields cannot override verdict, expected counts, policy, signer, or protected provenance
 - verifier fails closed on tamper, replay, omission, wrong SHA/run/job/lease/target, stale expiry, unknown key/policy, duplicate assertion, and contradicted evidence
 - signing material never enters candidate processes, browser bundles, logs, or committed evidence

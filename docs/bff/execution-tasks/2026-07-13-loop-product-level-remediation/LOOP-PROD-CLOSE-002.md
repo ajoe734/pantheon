@@ -4,7 +4,7 @@ Status: final program gate; starts only after every dependency is done
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `96d4d4b321070569e0f4d5f140225e5d1870de42256061898d07395eaffcac2b`
+Canonical contract SHA-256: `260d823bb9898a1b7cd0dae122f014af39c47b8b89041e55d82a97f35bf0b7d2`
 The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 
@@ -89,7 +89,7 @@ finalization 才可完成第 48 個任務並宣告 program 完成。
 - final execute-plans build and hosted desktop/mobile qualification are warning-free and within explicit bundle/performance/accessibility budgets
 - twelve canonical loops plus OODA overlay have fresh controller truth, real terminal readback, restart/duplicate/failure evidence, and no registry-only maturity
 - exact PRs, checks, merge/deploy identities, manifests, attestations, reviewer verdicts, residual risks, owners, and expiries are archived
-- the protected completion guard consumes the exact catalog-bound program overlay; only CLOSE-002 appends exactly one checkpoint-consumption record bound to checkpoint evidence/verdict, guard activation, immutable verdict ID, verifier capability, signature algorithm, key and policy versions, signature, current revocation check, append-only ledger entry, immutable signoff-ID set, exact catalog, authority, closeout manifest, target, deployed identities, and authenticated Human or Ops actor
+- the protected completion guard consumes the exact catalog-bound program overlay, which only declares the required content-addressed record contract and cannot itself record consumption; only CLOSE-002 appends exactly one checkpoint-consumption record bound to checkpoint evidence/verdict, guard activation, immutable verdict ID, verifier capability, signature algorithm, key and policy versions, signature, current revocation check, append-only ledger entry, immutable signoff-ID set, exact catalog, authority, closeout manifest, target, deployed identities, and authenticated Human or Ops actor
   to catalog, authority, manifest, target, and deployments
 - independent Human/Ops accepts zero unresolved blocking product risk
 
@@ -123,6 +123,6 @@ Reviewer approval must set `review_file` under:
 - any stale, indirect, candidate-authored, fixture-unbound, prose-only, or
   contradicted evidence fails closed
 - CLOSE-001 is consumed only as a checkpoint; task-local metadata cannot replace
-  the exact immutable completion overlay; only this final authority may append
-  the protected consumption record
+  the exact immutable completion overlay, which cannot carry consumption; only
+  this final authority may append the protected consumption record
 - only independent Human/Ops acceptance can complete the program

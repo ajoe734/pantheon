@@ -55,7 +55,8 @@ controller-issued environment lease；候選 payload 不得繼承 runner cloud c
 ## Acceptance
 
 - lease admission consumes the exact provisional bootstrap-record digest,
-  protected secret-version IDs, identity-profile IDs, and deployed AUTH-001
+  protected secret-version IDs, immutable `identity_profile_ids` lineage field,
+  and deployed AUTH-001
   trust identity without observing credential values
 - all four mutation lanes bind exact lease id, candidate SHA, VM, zone, project, job, and payload identity
 - every smoke/mutation lane obtains a short-lived scoped identity only after auth bootstrap and strict auth qualification; fixed, hardcoded, bundle-derived, and historical development bearers are rejected
@@ -70,8 +71,8 @@ controller-issued environment lease；候選 payload 不得繼承 runner cloud c
 
 ## Required proof
 
-- exact bootstrap lineage digest, protected secret-version IDs, and deployed
-  strict-auth identity binding
+- exact bootstrap lineage digest, protected secret-version IDs, immutable
+  `identity_profile_ids`, and deployed strict-auth identity binding
 - workflow/YAML, shell, hash, and containment tests
 - target-dev candidate mutation and cleanup drill
 - local and remote cgroup membership evidence

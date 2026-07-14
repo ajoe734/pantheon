@@ -5,7 +5,7 @@ Status: pre-dispatch external prerequisite
 Program:
 `loop-product-level-remediation-2026-07-13`
 
-Canonical contract SHA-256: `04f382e320292e11df3b4668ec4383819b9c9abadcc48f3b9150a7abcb65141e`
+Canonical contract SHA-256: `c9cbf18069af232127ad2e097eff28607c42e4cf5c190209dff8f13fbc0ca021`
 
 Plan:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_GAP_ADDENDUM_2026-07-13.md`
@@ -37,6 +37,7 @@ transaction so the unsafe transaction is never used to bootstrap its own lock.
 
 - `.orchestrator/runtime_state.py`
 - `.orchestrator/supervisor.py`
+- `.orchestrator/common.py`
 - `.orchestrator/approval_queue.py`
 - `.orchestrator/adapters/file_inbox.py`
 - `.orchestrator/watch_events.py`
@@ -65,6 +66,7 @@ transaction so the unsafe transaction is never used to bootstrap its own lock.
 - each registered helper holds its stable sidecar across the complete load, validation, mutation, fsync, replace/append/rotation, and readback transaction; repository tests reject unregistered direct canonical writes
 - post-`os.replace` contenders remain serialized by stable sidecars; deterministic process-level tests reproduce the old inode race and prove the second transaction cannot cross it
 - crash, kill, restart, concurrent enqueue, concurrent status write, log rotation, and outbox recovery tests preserve the newest task/runtime/audit truth without lost or duplicated events
+- every current-catalog task graph is bound to the exact catalog digest; a graph or dependency mismatch fails closed and can be repaired only by an auditable supervisor-owned signed catalog-recovery transaction, never a direct `ai-status.json` rewrite
 - the exact merged bootstrap SHA passes the planning dispatcher's live strict dry-run against canonical state with zero writes before the 48-task materialization is authorized
 
 ## Required proof
@@ -75,6 +77,7 @@ transaction so the unsafe transaction is never used to bootstrap its own lock.
 - exact decision-schema/source-digest/conflict/reason-ID mutation matrix
 - merged-commit ancestry, writer-blob, executing-dispatcher, capability-manifest, exhaustive writer-registry, signed verdict/key/policy/revocation/ledger, and protected verifier-decision evidence
 - concurrent enqueue/status/outbox/rotation crash matrix
+- catalog-graph mismatch/direct-status-rewrite negative matrix and supervisor-owned recovery evidence
 - canonical live dry-run before/after hashes bound to the merged bootstrap SHA
 - redacted checksummed evidence manifest and residual-risk verdict
 
@@ -82,8 +85,10 @@ transaction so the unsafe transaction is never used to bootstrap its own lock.
 
 1. Merge this planning packet first; do not run its dispatcher.
 2. Under a documented supervisor maintenance window, prove no live status writer
-   or runtime event producer is active, create this one canonical task, and
-   restart the supervisor so a fleet worker is admitted normally.
+   or runtime event producer is active, materialize this one task through the
+   documented supervisor-owned governed transaction (never a direct
+   `ai-status.json` rewrite), and restart the supervisor so a fleet worker is
+   admitted normally.
 3. The fleet implements and merges this task through a reviewed PR.
 4. Restart and read back the exact merged supervisor/runtime identity.
 5. Only then may the dispatcher import protocol version `1`, acquire the three

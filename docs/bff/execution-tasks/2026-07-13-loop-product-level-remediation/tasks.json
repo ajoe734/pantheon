@@ -30,10 +30,18 @@
     "task_id": "LOOP-PROD-RUNTIME-BOOT-001",
     "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-RUNTIME-BOOT-001.md",
     "task_contract_fixture": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/fixtures/runtime-lock-bootstrap-task.v1.json",
-    "task_contract_fixture_sha256": "eee36ad3bf27375805bcaf8379117cf409a00d039d8dde8c0387754961ee17a2",
-    "task_contract_sha256": "04f382e320292e11df3b4668ec4383819b9c9abadcc48f3b9150a7abcb65141e",
+    "task_contract_fixture_sha256": "d36de7ef1d640c5ace0163dfed5709f7d3cf76298879ac0ec797250053bd5ffd",
+    "task_contract_sha256": "c9cbf18069af232127ad2e097eff28607c42e4cf5c190209dff8f13fbc0ca021",
     "required_status": "done",
     "must_preexist_primary_materialization": true,
+    "governed_materialization": {
+      "schema_version": 1,
+      "canonical_task_source": "fixture.task",
+      "task_contract_digest_required": true,
+      "admission_authority": "supervisor_admitted_fleet_worker",
+      "direct_status_file_rewrite_forbidden": true,
+      "recovery_authority": "supervisor_owned_signed_catalog_recovery"
+    },
     "protocol": {
       "schema_version": 1,
       "protocol_id": "pantheon-runtime-task-audit-lock-v1",
@@ -102,10 +110,11 @@
         "writer_registry_path",
         "writer_registry_sha256",
         "dispatcher_sha256",
-          "bootstrap_task_id",
-          "bootstrap_task_contract_sha256",
-          "bootstrap_completion_evidence_path",
-          "bootstrap_completion_evidence_sha256",
+        "bootstrap_task_id",
+        "bootstrap_task_contract_sha256",
+        "bootstrap_completion_evidence_path",
+        "bootstrap_completion_evidence_sha256",
+        "catalog_graph_binding",
         "merged_commit_sha"
       ],
       "writer_registry_path": ".orchestrator/runtime-task-audit-writer-registry.json",
@@ -119,7 +128,25 @@
         ".orchestrator/supervisor_watchdog.py",
         "scripts/ai_status.py",
         "scripts/dispatch_loop_product_level_remediation_2026-07-13.py"
-      ]
+      ],
+      "catalog_graph_binding": {
+        "schema_version": 1,
+        "state_key": "program_catalog_graph_bindings",
+        "recovery_state_key": "program_catalog_graph_recoveries",
+        "projection_algorithm": "sha256(canonical-json(program_id,task_id,depends_on,task_contract_sha256))",
+        "mismatch_policy": "fail_closed",
+        "recovery_authority": "supervisor_owned_signed_catalog_recovery",
+        "direct_status_file_rewrite_forbidden": true,
+        "required_binding_fields": [
+          "schema_version",
+          "program_id",
+          "catalog_sha256",
+          "task_graph_sha256",
+          "graph_contract_sha256",
+          "recovery_authority",
+          "direct_status_file_rewrite_forbidden"
+        ]
+      }
     }
   },
   "contract_fixtures": {
@@ -278,7 +305,7 @@
       "from_catalog_path": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/tasks.json",
       "from_catalog_sha256": "2b5183712e7e0d4dbdf21214aaa215b4d16fe186b8c83a7cea5420dea0022b91",
       "preimage_fixture": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/fixtures/catalog-v1-migration-preimages.json",
-      "preimage_fixture_sha256": "91c622e5f586cf9b94cf810031603fba32d6f25186b58e7ebe3bd2c3f6a04956",
+      "preimage_fixture_sha256": "3368f32bef3664531e7eb1640f750aaeb12487befe4901cce9d890f4b4d94247",
       "required_live_task_patches": [
         {
           "task_id": "LOOP-PROD-AGORA-002",
@@ -322,7 +349,7 @@
         {
           "task_id": "LOOP-PROD-CLOSE-001",
           "before_task_contract_sha256": "78e927013a680120787c077b0df928bd5df3d7804f971df388f818f12b1c89f4",
-          "after_task_contract_sha256": "1e7ee295ddc306f605845270e31857ba68a14c3d0e82dd6ece0f3b394f186ebb",
+          "after_task_contract_sha256": "d52af19d4cd54698f4c86987bfc7bdea5dc4f3a8a4b7a074da2e61d6f562da8a",
           "allowed_contract_field_changes": [
             "acceptance",
             "dispatch_rules",
@@ -445,42 +472,10 @@
     "dispatcher_pre_completion_policy": "reject_preexisting_consumption_or_program_completed",
     "consumption_writer_task_id": "LOOP-PROD-CLOSE-002",
     "checkpoint_consumption_state_key": "program_completion_checkpoint_consumptions",
-    "checkpoint_consumption_record_contract": {
-      "schema_version": 1,
-      "checkpoint_task_id": "LOOP-PROD-CLOSE-001",
-      "guard_task_id": "LOOP-PROD-SIGNOFF-001",
-      "consumer_task_id": "LOOP-PROD-CLOSE-002",
-      "append_only": true,
-      "single_consumption_per_program_catalog_checkpoint": true,
-      "protected_human_ops_required": true,
-      "required_binding_fields": [
-        "program_id",
-        "catalog_sha256",
-        "completion_authority_sha256",
-        "completion_overlay_sha256",
-        "checkpoint_task_id",
-        "checkpoint_task_contract_sha256",
-        "checkpoint_evidence_manifest_sha256",
-        "checkpoint_verdict_sha256",
-        "guard_task_id",
-        "guard_activation_sha256",
-        "consumer_task_id",
-        "consumer_task_contract_sha256",
-        "final_verdict_sha256",
-        "verdict_id",
-        "guard_verifier_capability_sha256",
-        "signature_algorithm",
-        "key_id",
-        "policy_version",
-        "signature",
-        "revocation_checked_at",
-        "ledger_entry_id",
-        "actor_id",
-        "actor_role",
-        "consumed_at",
-        "nonce"
-      ]
-    },
+    "checkpoint_consumption_contract_fixture": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/fixtures/completion-checkpoint-consumption-record.v1.json",
+    "checkpoint_consumption_contract_fixture_sha256": "b92bf2fe1404a84ce260f277f28b140e75bba576b44eb373e6a334297c170a3a",
+    "checkpoint_consumption_record_contract_sha256": "0851c28df62e288cb204a4747053dd9b77b5b46be2cfc9765e421b3099cf76cb",
+    "checkpoint_consumption_overlay_may_record": false,
     "requires_protected_human_ops_verdict": true,
     "verdict_binding_fields": [
       "program_id",
@@ -3544,7 +3539,7 @@
         "clean target-dev rerun passes Knowledge, Execution, Human Interaction, and Management Repair scenarios",
         "twelve canonical loop rows plus OODA overlay have fresh controller records and no accepted registry-only/snapshot/seed truth",
         "exact PR, checks, merge SHAs, FE/BFF/image identities, evidence checksums, reviewer verdicts, and residual risks are archived",
-        "checkpoint evidence manifest and protected Human/Ops checkpoint verdict are recorded for later exact re-verification by the final authority; this task does not append consumption or complete the program",
+        "checkpoint evidence manifest and protected Human/Ops checkpoint verdict are recorded for later exact re-verification against the content-addressed checkpoint-consumption record contract; this task cannot append consumption or complete the program",
         "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
         "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
         "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
@@ -4480,7 +4475,7 @@
       ],
       "acceptance": [
         "catalog validation requires exact equality with the schema-versioned completion_authority contract, exact guard and final direct-dependency arrays, and the immutable required Human/Ops signoff task-ID list; no extra, duplicate, substituted, or omitted field is accepted",
-        "the catalog-bound program completion overlay binds exact catalog and authority digests, marks CLOSE-001 checkpoint_only, SIGNOFF-001 guard_installer, and CLOSE-002 final_authority, and rejects any conflicting task-local role or foreign overlay",
+        "the catalog-bound program completion overlay binds exact catalog and authority digests, declares only the required content-addressed checkpoint-consumption contract, marks CLOSE-001 checkpoint_only, SIGNOFF-001 guard_installer, and CLOSE-002 final_authority, and rejects any conflicting task-local role, foreign overlay, or overlay-carried consumption record",
         "a protected server-side verdict can be created only by an authenticated authorized Human or Ops actor and never by a candidate artifact, fleet worker, repository secret, or self-authored JSON file",
         "each verdict binds program, exact catalog digest, task, protected closeout-manifest digest, target, FE and BFF identities, attestation policy, immutable verdict ID, verifier capability, signature algorithm, key and policy versions, signature, current revocation check, append-only ledger entry, actor, role, decision, issued time, expiry, and nonce",
         "review-approved to done and final program completion fail closed when any required verdict is missing, rejected, revoked, replayed, stale, unauthorized, or bound to another task, catalog, manifest, target, or deployment",
@@ -4574,7 +4569,7 @@
         "final execute-plans build and hosted desktop and mobile qualification are warning-free and within explicit budgets",
         "twelve canonical loops plus OODA have fresh controller truth, terminal readback, recovery evidence, and no registry-only maturity",
         "exact deliveries, deployments, attestations, reviews, and residual risks are archived",
-        "the protected completion guard consumes the exact catalog-bound program overlay; only CLOSE-002 appends exactly one checkpoint-consumption record bound to checkpoint evidence/verdict, guard activation, immutable verdict ID, verifier capability, signature algorithm, key and policy versions, signature, current revocation check, append-only ledger entry, immutable signoff-ID set, exact catalog, authority, closeout manifest, target, deployed identities, and authenticated Human or Ops actor",
+        "the protected completion guard consumes the exact catalog-bound program overlay, which only declares the required content-addressed record contract and cannot itself record consumption; only CLOSE-002 appends exactly one checkpoint-consumption record bound to checkpoint evidence/verdict, guard activation, immutable verdict ID, verifier capability, signature algorithm, key and policy versions, signature, current revocation check, append-only ledger entry, immutable signoff-ID set, exact catalog, authority, closeout manifest, target, deployed identities, and authenticated Human or Ops actor",
         "independent Human or Ops accepts zero unresolved blocking product risk"
       ],
       "next": "Run the clean additive global product drill and close only after protected evidence and independent Human or Ops acceptance prove zero blocking risk.",
@@ -4631,7 +4626,7 @@
         "use one clean task worktree in the declared repository and merge to dev through a reviewed PR",
         "LOOP-PROD-CLOSE-001 alone is not program completion",
         "stale, indirect, candidate-authored, fixture-unbound, prose-only, or contradicted evidence fails closed",
-        "CLOSE-001 done remains checkpoint-only; only CLOSE-002 may append the exact protected consumption record, and the immutable completion-authority overlay cannot be replaced by task-local metadata",
+        "CLOSE-001 done remains checkpoint-only; only CLOSE-002 may append the exact protected consumption record, while the immutable completion-authority overlay only declares its content-addressed contract and cannot be replaced by task-local metadata",
         "only independent Human or Ops acceptance can complete the program"
       ],
       "product_level_required": true,

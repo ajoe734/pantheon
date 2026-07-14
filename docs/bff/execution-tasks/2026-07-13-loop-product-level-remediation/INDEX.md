@@ -351,7 +351,9 @@ also requires the protected controller attestation: an asymmetric signature or
 platform-protected keyed identity over the bound manifest and its digests.
 
 The baseline `LOOP-PROD-CLOSE-001` checkpoint cannot declare program
-completion. The final `LOOP-PROD-CLOSE-002` task requires an independent
-Human/Ops verdict and zero unresolved blocking product risk across all 48
-primary tasks, with the external runtime-lock bootstrap evidence accepted
-tasks.
+completion. The completion overlay only declares the content-addressed
+checkpoint-consumption contract and cannot store a consumption record. The
+final `LOOP-PROD-CLOSE-002` task requires an independent Human/Ops verdict,
+the protected verifier's one append-only consumption record, and zero
+unresolved blocking product risk across all 48 primary tasks, with the external
+runtime-lock bootstrap evidence accepted tasks.

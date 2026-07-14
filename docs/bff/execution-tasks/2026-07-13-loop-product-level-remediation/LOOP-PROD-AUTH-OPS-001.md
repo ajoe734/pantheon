@@ -55,8 +55,9 @@ Source addendum:
 - authorized Human/Ops consumes the exact existing provisional bootstrap record
   and may authorize rotate/overlap/revoke/expire/rollback while recording only
   redacted identifiers and timestamps
-- AUTH-OPS cannot perform initial provisioning; missing or invalid bootstrap
-  lineage blocks and reopens AUTH-BOOT rather than creating substitute secrets
+- AUTH-OPS is a post-bootstrap credential-lifecycle authority, not an initial
+  provisioning authority; missing or invalid bootstrap lineage blocks and
+  reopens AUTH-BOOT rather than creating substitute secrets
 - one credential-lineage digest survives bootstrap, lease, attestation,
   lifecycle, and browser activation; successful lifecycle cutover rotates or
   revokes the provisional envelope

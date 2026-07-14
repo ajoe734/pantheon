@@ -118,7 +118,11 @@ atomic status update that materializes the additive tasks.
   exist in live state. It is not sufficient to declare the program complete.
 - `LOOP-PROD-CLOSE-002` depends on the baseline checkpoint and every additive
   control, including `LOOP-PROD-SIGNOFF-001`. Only its protected guarded
-  `done` transition is final program closure.
+  `done` transition is final program closure. The completion overlay only
+  declares that a consumption record is required and binds the content-addressed
+  `completion-checkpoint-consumption-record.v1.json` contract; it cannot carry
+  or create a consumption record. Only the protected CLOSE-002 verifier may
+  append that record.
 - The protected attestation task consumes the worker and environment lease
   controls; an attestation from an unprotected candidate lane is invalid.
 - Frontend evidence and build finalization run after the feature-bearing
