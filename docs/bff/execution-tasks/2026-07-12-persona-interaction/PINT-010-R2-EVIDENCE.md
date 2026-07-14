@@ -4,10 +4,9 @@ Date: 2026-07-14 UTC
 Owner: Codex2
 Reviewer: Claude
 Status: implementation, authority, durability, a current merged exact BFF/FE
-pair, and both task-specific hosted gates are complete. The final integration
-workflow is finishing its repository-wide tail and artifact upload; the
-evidence PR and distinct Claude review remain. This task is not `done`; only
-`review_approved` permits owner closeout.
+pair, both task-specific hosted gates, and their immutable artifact are
+complete. The evidence PR and distinct Claude review remain. This task is not
+`done`; only `review_approved` permits owner closeout.
 
 ## Delivery lineage
 
@@ -67,7 +66,7 @@ pytest -q \
   services/control-plane/bff/tests/test_agora_strategy_workshop.py \
   scripts/test_agora_workshop_restart_persistence_smoke.py
 
-108 passed, 1 skipped, 136 warnings in 159.48s
+109 passed, 1 skipped, 136 warnings in 170.22s
 ```
 
 The skipped case requires the separately configured external
@@ -75,9 +74,10 @@ The skipped case requires the separately configured external
 workshop and governance stores use Postgres. The focused restart helper also
 passed independently: `5 passed`.
 
-A task-scoped live BFF probe against earlier exact SHA
-`4a27eb31fcb35c10cfb1519475a596b81e908e20` created paper-only proposal
-`prop_144a08ea3a0c429caa1b545d022796bc` and recorded no bearer values:
+The task-scoped live BFF step in final cross-repository run `29316624607`
+checked exact merged BFF SHA
+`9d393816acfe322a12ba1b295218f829db36ac28`, created paper-only proposal
+`prop_70da230441f1490eb737f553bebd6c90`, and recorded no bearer values:
 
 | Check | Result |
 | --- | --- |
@@ -208,8 +208,9 @@ emitted.
 The browser journey loads the real hosted asset bundle, but its deterministic
 Persona mutations use a credentialed cross-origin fixture. It proves hosted UI
 wiring and authority-negative requests, not durable hosted mutation by itself.
-The real BFF operator/viewer and durable-readback proof is composed from the
-separate live probe; this boundary is intentional.
+The real BFF operator/viewer and durable-readback proof is the governed-proposal
+step from the same final run and exact-pair checkpoint; it is composed with,
+but not conflated with, the fixture-backed browser proof.
 
 ## Final cross-repository integration gate
 
@@ -223,14 +224,39 @@ Pantheon contract ref fixed to
 | Task gate | Result |
 | --- | --- |
 | PINT hosted governed-proposal smoke | success, `08:13:33Z`-`08:14:24Z` |
-| PINT hosted desktop/mobile E2E | success, `08:21:31Z`-`08:22:21Z`; 5 desktop + 5 mobile |
+| PINT hosted desktop/mobile E2E | success, `08:21:31Z`-`08:22:21Z`; 5 desktop + 5 mobile; zero retry/flaky |
 
 At both task-step completion checkpoints, hosted `deployment.json` remained FE
 `b6a5bc93...` plus BFF `9d393816...`, with live/strict and all three
 write/stub/token flags false; live `/bff/version` independently returned exact
-`9d393816...`. The proposal artifact fields, exact browser first-pass/retry
-summary, artifact ID, and terminal repository-wide aggregate are added below
-when the workflow tail uploads them.
+`9d393816...`. The proposal result was HTTP 401 `AUTH_REQUIRED` without auth,
+HTTP 403 for viewer create and modify, and HTTP 201/200/200 for operator
+create/modify/paper-validation. Its readback contained revisions `1,2,3`,
+audit actions `create,modify,validate`, idempotent replay at revision 3,
+`executionAuthority=none`, `downstreamExecutionAttempted=false`, and
+`tokensRecorded=false`. The focused browser log is a clean `10 passed (48.2s)`
+with no retry or flaky case.
+
+Artifact `pantheon-integration-evidence` ID `8305250932`, digest
+`sha256:401d7713c3be8b619fa1744fa1d0d6459854b4506c12ff349e79f5aed327b335`,
+contains the structured proposal result, focused browser log, and terminal
+aggregate. The workflow concluded `failure` only because `Aggregate release
+gate` preserved four non-PINT failures: two lint errors in
+`e2e/evochain009.spec.ts`, F01 startup/session coverage (6 of 8 runnable
+passed), F13 Agora aggregate coverage (22 runnable passed and 8 expected
+skipped among 32 matching cases), and overlay-focus handling. The broad
+Playwright tail reported 169 expected, 42 skipped, 14 unexpected, and 1 flaky;
+those results do not weaken either earlier opt-in hard-step success. Management
+hosted acceptance passed.
+
+After both PINT steps completed, automatic FE runs `29318299639` and
+`29318474120` advanced the shared host to merged descendants `cb139ca8...` and
+`16a8e330...` during the unrelated full-Playwright tail. The diff from
+`b6a5bc93...` is limited to a narrow-responsive E2E spec and Human Inbox/BFF
+management client files; it does not touch the PINT journey or Trading Room
+production paths. The current descendant manifest still pairs exact merged
+BFF `9d393816...`. This record uses the two timestamped PINT checkpoints, not
+the later repository-wide tail, as immutable-pair task proof.
 
 ## Integration runs and known failures
 
@@ -283,7 +309,9 @@ when the workflow tail uploads them.
 - Follow-up task-branch deploy `29314870187` repaired that probe, but current
   merged-lineage acceptance was restored by `component=bff` run `29315706536`.
   FE run `29316287074` and final integration run `29316624607` then established
-  the current merged pair and both task-specific hosted gates.
+  the current merged pair and both task-specific hosted gates. The latter run
+  ended with only the unrelated aggregate failure detailed above; its two PINT
+  steps and immutable artifact remained successful.
 
 ## Explicit non-claims
 
@@ -301,11 +329,7 @@ when the workflow tail uploads them.
 
 ## Remaining gates before review handoff
 
-1. Let integration run `29316624607` finish its unrelated repository-wide
-   tail and upload the immutable task artifact; reconcile its proposal fields,
-   browser first-pass/retry summary, and aggregate without weakening either
-   PINT hard gate.
-2. Commit and merge this final task-scoped evidence through a Pantheon PR, then
+1. Commit and merge this final task-scoped evidence through a Pantheon PR, then
    hand off to Claude.
-3. Only distinct reviewer approval and `review_approved` permit the owner to
+2. Only distinct reviewer approval and `review_approved` permit the owner to
    run the closeout skill and mark the task `done`.
