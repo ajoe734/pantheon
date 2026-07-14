@@ -375,6 +375,42 @@ class TestAtomicCutover:
             store.cutover("rtb-source", replacement)
 
 
+class TestPersistenceFailureAtomicity:
+
+    def test_create_save_failure_restores_in_memory_state(
+        self, store: RuntimeBindingStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            store,
+            "_save",
+            lambda: (_ for _ in ()).throw(RuntimeError("injected save failure")),
+        )
+
+        with pytest.raises(RuntimeError, match="injected save failure"):
+            store.create(_base(binding_id="rtb-create-failure"))
+
+        assert store.get("rtb-create-failure") is None
+
+    def test_transition_save_failure_restores_in_memory_state(
+        self, store: RuntimeBindingStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binding = _base(binding_id="rtb-transition-failure")
+        store.create(binding)
+        monkeypatch.setattr(
+            store,
+            "_save",
+            lambda: (_ for _ in ()).throw(RuntimeError("injected save failure")),
+        )
+
+        with pytest.raises(RuntimeError, match="injected save failure"):
+            store.transition_status(
+                binding.binding_id,
+                RuntimeBindingStatus.PENDING_PAUSE.value,
+            )
+
+        assert store.require(binding.binding_id).status == "active"
+
+
 class TestSingleRuntimeQueries:
 
     def test_get_active_for_pool_returns_single(self, store: RuntimeBindingStore) -> None:

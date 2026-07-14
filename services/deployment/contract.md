@@ -514,8 +514,11 @@ Compose startup waits only for the unconditional Deployment and Runtime
 Manager authorities.  Paper fleet reconciliation is required only for a paper
 activation event, and Incident service reachability is required only for the
 safe-mode compensation path.  An unavailable conditional target fails the
-affected event closed and follows its retry/DLQ policy; it does not prevent the
-consumer process from starting or handling unrelated events.
+affected event closed and follows its retry policy; it does not prevent the
+consumer process from starting or handling unrelated events.  At retry
+exhaustion, the worker first persists saga compensation and then acknowledges
+the failed predecessor so the compensation successor can run.  It never DLQs a
+side-effect predecessor while leaving its successor sequence-blocked.
 
 Forward dispatch invariants:
 
@@ -538,6 +541,11 @@ Forward dispatch invariants:
   response, and PersonaCapitalBinding; Runtime Manager independently repeats
   the four-owner reads before accepting the write and persists the report as
   `metadata.authoritative_loader_attestation`
+- binding-created response-loss recovery permits only the canonical
+  `approved -> executing` plan lifecycle change.  `current_stage` and every
+  immutable authority field remain digest-covered; the current plan's
+  `binding_id` and `metadata.runtime_lifecycle` must exactly match the recovered
+  RuntimeBinding before the predecessor receipt can be written
 - every newly created RuntimeBinding is paper-only; canary/live requires a
   separate target-bound governed promotion/cutover verifier with the required
   MFA/two-person proof
@@ -558,6 +566,10 @@ Compensation invariants:
 
 - the applied inbox sequence is read before any side effect; an earlier DLQ
   must be replayed first and the blocked event does not consume retry budget
+- a terminal binding/load failure is handed off durably to saga compensation
+  before its predecessor receipt is written.  If receipt persistence or its
+  response fails after handoff, replay retries the receipt and never converts
+  the predecessor to a DLQ record
 - `abort_plan` proves no RuntimeBinding exists, then writes only
   `DeploymentPlan.status = aborted`
 - `mark_binding_failed_inactive` writes only the exact RuntimeBinding status and
@@ -572,8 +584,9 @@ Compensation invariants:
 - `enter_safe_mode_and_raise_incident` requires acknowledged kill-switch
   follow-through, paused safe-mode/binding GET readback, and an exact stable
   IncidentCase
-- finalize happens before consume; replay of a terminal saga validates the
-  projection and does not repeat runtime mutation
+- finalize happens before consume; replay of a completed runtime-load event
+  revalidates the active binding, paper fleet when applicable, and terminal
+  DEP-003 projection before writing its receipt, without repeating mutation
 
 ---
 

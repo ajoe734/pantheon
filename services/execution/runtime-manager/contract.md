@@ -55,6 +55,9 @@ Before the Runtime Manager may create a `RuntimeBinding`, all of the following m
 
 3. **Single-runtime rule satisfied**
    If the backing `CapitalPool` has `single_runtime_enforced = True` (the default), the pool must have no existing `active` `RuntimeBinding`.  The Runtime Manager must retire the previous binding before activating the new one.
+   Runtime-manager-owned replace/rollback is the bounded exception: it validates
+   the replacement, then commits replacement creation and source retirement in
+   one atomic store snapshot.  It never exposes two durable active owners.
 
 4. **Artifact loader checks passed**
    The execution loader must have validated the artifact's execution projection before the binding is created.
@@ -125,7 +128,11 @@ When `CapitalPool.single_runtime_enforced = True`:
 
 1. `RuntimeBindingStore.create()` checks for any `active` binding for the pool.
 2. If one exists, the create is rejected with a `RuntimeBindingError`.
-3. The caller (Runtime Manager orchestration layer) is responsible for retiring the previous binding before creating the replacement.
+3. Ordinary callers must not retire/create in separate writes.  The Runtime
+   Manager orchestration layer uses `RuntimeBindingStore.cutover()` for a
+   replacement, which commits the retired source and validated child together.
+4. A persistence failure restores the in-memory pre-state; restart observes
+   either the complete pre-cutover snapshot or complete post-cutover snapshot.
 
 This rule prevents split-brain scenarios where two artifacts simultaneously manage the same pool's positions.
 
@@ -146,6 +153,10 @@ Rollback action execution follows the matrix in `rollback_action_matrix.md`:
 - `liquidate_then_replace` — flatten all positions, then swap to fallback
 
 In all cases, position lineage `current_managed_by_binding_id` is updated to the new binding atomically with the status transition.
+
+The legacy `/api/internal/v1/rollbacks/execute` request shape cannot carry the
+four-owner fallback proof and is rejected with `409` and
+`CANONICAL_ROLLBACK_REQUIRED`. Canonical rollback uses `/api/rollback`.
 
 ---
 
@@ -195,6 +206,11 @@ The kill-switch / safe-mode fast path supplements the normal deployment and roll
    - safe operational state
    - position lineage cutover
 4. The controller never mutates `RuntimeBinding` directly. Its responsibility is classification, safe-mode progression, and immutable audit-entry creation.
+5. Safe mode and an `EXECUTING` idempotency record are durable before the
+   binding action.  Startup synchronously resumes those persisted commands in
+   original admission order and preserves their Foundation trace, command,
+   policy, and audit identities.  The service does not become ready with a
+   non-terminal binding that the durable emergency command could not contain.
 
 ### 11.1 Replace-path requirements
 

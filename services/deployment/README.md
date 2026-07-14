@@ -91,8 +91,11 @@ write a local binding store.
 Its startup waits only for the unconditional Deployment and Runtime Manager
 authorities.  Paper fleet and Incident service reachability is conditional on
 the event being applied, so an unavailable conditional target fails closed and
-follows that event's retry/DLQ policy instead of blocking the consumer process
-from starting.
+follows that event's retry policy instead of blocking the consumer process
+from starting.  A terminal or exhausted binding/load failure is first handed
+durably to saga compensation, then its predecessor receipt is written so the
+compensation event is not sequence-blocked.  The predecessor is never DLQ'd
+after that handoff; a lost receipt response is retried.
 
 Forward dispatch does not accept caller- or plan-authored loader booleans as
 proof.  Before dispatch it reads and binds four canonical authorities: the
@@ -105,6 +108,10 @@ pool, persona, binding, target, and scope identity must agree.  The resulting
 target-bound report and canonical SHA-256 digests are persisted as
 `metadata.authoritative_loader_attestation`, and Runtime Manager repeats the
 same four-authority verification at its write boundary.
+Binding-created response-loss recovery accepts only `approved -> executing`
+plan lifecycle drift: immutable plan fields (including `current_stage`) remain
+digest-covered, while canonical `binding_id` and `metadata.runtime_lifecycle`
+must exactly match the recovered RuntimeBinding.
 
 Every newly created `RuntimeBinding` is paper-only.  Canary/live movement needs
 a separate governed promotion/cutover verifier and cannot be represented by a
@@ -124,6 +131,11 @@ identities and canonical digests.  A plan-authored fallback attestation is not
 proof.  Missing or ambiguous lineage, invalid canonical proof, or a kill-wins
 state fails closed and routes to paused safe mode plus an exact IncidentCase
 instead of a blind replacement.
+
+Completed runtime-load history is not receipt-only.  Replay re-reads the exact
+active RuntimeBinding, paper fleet state where applicable, and terminal DEP-003
+projection before acknowledging the event, so a post-completion kill or stale
+projection cannot be mistaken for successful convergence.
 
 ## Tests
 

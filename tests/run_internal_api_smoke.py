@@ -23,7 +23,7 @@ import json
 
 def assert_status(resp, expected):
     status, payload = resp
-    if status >= 400:
+    if status != expected:
         print("FAIL", status, payload)
         raise SystemExit(1)
     print("OK", expected, status)

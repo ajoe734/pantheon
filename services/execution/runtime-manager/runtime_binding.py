@@ -279,7 +279,8 @@ class RuntimeBindingStore:
     -------------------
     When `single_runtime_enforced=True` (passed at create time from the
     backing CapitalPool), `create()` will raise if the pool already has an
-    active binding.  The caller must retire the existing binding first.
+    active binding. Runtime-manager-owned replacements use `cutover()` to
+    persist source retirement and replacement creation in one snapshot.
     """
 
     def __init__(self, path: Optional[Path] = None) -> None:
@@ -357,7 +358,11 @@ class RuntimeBindingStore:
             self._check_single_active_binding(binding.capital_pool_id)
 
         self._bindings[binding.binding_id] = binding
-        self._save()
+        try:
+            self._save()
+        except Exception:
+            self._bindings.pop(binding.binding_id, None)
+            raise
         return binding
 
     def transition_status(
@@ -398,7 +403,11 @@ class RuntimeBindingStore:
             **{**binding.to_dict(), **updates}
         )
         self._bindings[binding_id] = updated
-        self._save()
+        try:
+            self._save()
+        except Exception:
+            self._bindings[binding_id] = binding
+            raise
         return updated
 
     def retire(self, binding_id: str, retired_at: Optional[str] = None) -> RuntimeBinding:

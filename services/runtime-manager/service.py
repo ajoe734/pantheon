@@ -1009,9 +1009,9 @@ class RuntimeManagerService:
         rollback lineage.  The replacement keeps the existing runtime, capital
         pool, deployment stage, and PersonaCapitalBinding identities exactly.
 
-        The new binding is persisted before the old binding is retired.  Only
-        this deploy call receives the single-runtime cutover bypass; ordinary
-        concurrent deploys continue to see the normal guard.
+        The replacement and retired source are persisted in one atomic store
+        snapshot. Ordinary concurrent deploys continue to see the normal
+        single-runtime guard.
         """
         current_binding_id = str(request.get("current_binding_id") or "").strip()
         if not current_binding_id:
@@ -1350,21 +1350,19 @@ class RuntimeManagerService:
         Implements the three strategies from ROLLBACK_AND_POSITION_SEMANTICS.md §3:
 
         replace
-            Hot-swap: retire the old binding then create the replacement.
+            Hot-swap: atomically retire the old binding and create the replacement.
             The existing book is inherited by the new artifact.  Old binding core
             fields are never rewritten — only the status transitions to 'retired'.
 
         pause_then_replace
             Drain-then-swap: transition old binding active → pending_pause → paused,
-            create replacement binding (single-runtime rule does not fire because the
-            old binding is no longer active), then retire the paused old binding.
-            Cutover occurs after open orders are stabilised.
+            then atomically create the replacement and retire the paused source.
+            Cutover occurs only after open orders are stabilised.
 
         liquidate_then_replace
-            Flatten-then-swap: retire old binding with liquidation metadata, then
-            create replacement binding.  When replacement_start_paused=True the new
-            binding starts in guarded / paused mode, letting the operator confirm
-            zero-position state before re-enabling entries.
+            Flatten-then-swap: atomically retire the source and create a guarded,
+            paused replacement.  The operator confirms zero-position state before
+            re-enabling entries.
 
         Position lineage (ROLLBACK_AND_POSITION_SEMANTICS.md §7):
             opened_by_artifact_id is immutable (carried from the original opener).
@@ -1534,12 +1532,9 @@ class RuntimeManagerService:
         }
 
         if action_type == RollbackActionType.REPLACE.value:
-            # Hot-swap per L1 §3.1 and §9: replacement binding must exist before the
-            # old binding is retired (cutover boundary = create new + retire old, in
-            # that order).  The single-runtime guard is bypassed only for this specific
-            # deploy() call via the per-call _allow_cutover_bypass flag so that concurrent
-            # deploy() calls on other threads still see the full guard.
-            # Per §8: old binding core fields are not rewritten; only status -> retired.
+            # Hot-swap per L1 §3.1 and §9: validate the replacement first, then
+            # persist child creation and source retirement as one snapshot.
+            # Per §8, old core fields are not rewritten; only status -> retired.
             new_binding = self.deploy(
                 deploy_req,
                 _allow_cutover_bypass=True,
@@ -1593,10 +1588,9 @@ class RuntimeManagerService:
             )
 
         elif action_type == RollbackActionType.LIQUIDATE_THEN_REPLACE.value:
-            # Establish a guarded replacement before retiring the source.  The
-            # control lock prevents another owner from observing a cutover
-            # window, and create-before-retire leaves an authoritative paused
-            # child for recovery if persistence fails between the two writes.
+            # Build a guarded replacement, then persist it with source
+            # retirement as one snapshot. No observer or restart can see a
+            # partial create/retire window.
             replacement_start_paused = True
             new_binding = self.deploy(
                 deploy_req,
