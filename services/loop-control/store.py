@@ -99,101 +99,104 @@ class LoopControllerStore:
 
         conn = await asyncpg.connect(self.dsn)
         try:
-            # We enforce lease safety: if the existing lease is active, we cannot overwrite it 
-            # unless the request comes from the same controller_id or the lease has expired.
-            # Stale lease and duplicate writes cannot manufacture accepted liveness.
-            # We also ensure heartbeats cannot be written out-of-order or late.
-            now = datetime.now(timezone.utc)
-            
-            # Fetch existing lease to compare
-            existing = await conn.fetchrow(
-                """
-                SELECT controller_id, lease_expires_at, last_heartbeat_at FROM loop_controller_records
-                WHERE loop_id = $1 AND tenant_id = $2 AND environment = $3
-                """,
-                loop_id,
-                tenant_id,
-                environment
-            )
+            async with conn.transaction():
+                # We enforce lease safety: if the existing lease is active, we cannot overwrite it
+                # unless the request comes from the same controller_id or the lease has expired.
+                # Stale lease and duplicate writes cannot manufacture accepted liveness.
+                # We also ensure heartbeats cannot be written out-of-order or late.
+                # Use FOR UPDATE to prevent TOCTOU race.
+                now = datetime.now(timezone.utc)
 
-            if existing:
-                existing_lease_expires = existing["lease_expires_at"]
-                existing_controller_id = existing["controller_id"]
-                existing_last_heartbeat = existing["last_heartbeat_at"]
-
-                # If existing lease is still valid and owned by someone else, reject or block the write
-                if (
-                    existing_lease_expires
-                    and existing_lease_expires > now
-                    and existing_controller_id != controller_id
-                ):
-                    raise ValueError(
-                        f"Active lease exists for loop '{loop_id}' owned by controller '{existing_controller_id}' until {existing_lease_expires}. Cannot overwrite."
-                    )
-
-                # Ensure heartbeat cannot be set back in time
-                if (
-                    last_heartbeat_at
-                    and existing_last_heartbeat
-                    and last_heartbeat_at < existing_last_heartbeat
-                ):
-                    # Stale heartbeat update; ignore or raise
-                    return
-
-            await conn.execute(
-                """
-                INSERT INTO loop_controller_records (
-                    loop_id, tenant_id, environment, controller_id, controller_name, deployment_sha,
-                    desired_state_query, actual_state_query, last_heartbeat_at, last_tick_at,
-                    last_success_at, last_failure_at, last_failure_reason, last_repair_at, last_repair_reason,
-                    backlog, lag, dlq_count, evidence_refs, truth_level, lease_expires_at, payload, updated_at
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, clock_timestamp()
+                # Fetch existing lease to compare
+                existing = await conn.fetchrow(
+                    """
+                    SELECT controller_id, lease_expires_at, last_heartbeat_at FROM loop_controller_records
+                    WHERE loop_id = $1 AND tenant_id = $2 AND environment = $3
+                    FOR UPDATE
+                    """,
+                    loop_id,
+                    tenant_id,
+                    environment
                 )
-                ON CONFLICT (loop_id, tenant_id, environment) DO UPDATE SET
-                    controller_id = EXCLUDED.controller_id,
-                    controller_name = EXCLUDED.controller_name,
-                    deployment_sha = EXCLUDED.deployment_sha,
-                    desired_state_query = COALESCE(EXCLUDED.desired_state_query, loop_controller_records.desired_state_query),
-                    actual_state_query = COALESCE(EXCLUDED.actual_state_query, loop_controller_records.actual_state_query),
-                    last_heartbeat_at = EXCLUDED.last_heartbeat_at,
-                    last_tick_at = COALESCE(EXCLUDED.last_tick_at, loop_controller_records.last_tick_at),
-                    last_success_at = COALESCE(EXCLUDED.last_success_at, loop_controller_records.last_success_at),
-                    last_failure_at = COALESCE(EXCLUDED.last_failure_at, loop_controller_records.last_failure_at),
-                    last_failure_reason = COALESCE(EXCLUDED.last_failure_reason, loop_controller_records.last_failure_reason),
-                    last_repair_at = COALESCE(EXCLUDED.last_repair_at, loop_controller_records.last_repair_at),
-                    last_repair_reason = COALESCE(EXCLUDED.last_repair_reason, loop_controller_records.last_repair_reason),
-                    backlog = COALESCE(EXCLUDED.backlog, loop_controller_records.backlog),
-                    lag = COALESCE(EXCLUDED.lag, loop_controller_records.lag),
-                    dlq_count = COALESCE(EXCLUDED.dlq_count, loop_controller_records.dlq_count),
-                    evidence_refs = EXCLUDED.evidence_refs,
-                    truth_level = EXCLUDED.truth_level,
-                    lease_expires_at = EXCLUDED.lease_expires_at,
-                    payload = EXCLUDED.payload,
-                    updated_at = clock_timestamp()
-                """,
-                loop_id,
-                tenant_id,
-                environment,
-                controller_id,
-                controller_name,
-                deployment_sha,
-                desired_state_query,
-                actual_state_query,
-                last_heartbeat_at,
-                last_tick_at,
-                last_success_at,
-                last_failure_at,
-                last_failure_reason,
-                last_repair_at,
-                last_repair_reason,
-                backlog,
-                lag,
-                dlq_count,
-                evidence_refs_json,
-                truth_level,
-                lease_expires_at,
-                payload_json,
-            )
+
+                if existing:
+                    existing_lease_expires = existing["lease_expires_at"]
+                    existing_controller_id = existing["controller_id"]
+                    existing_last_heartbeat = existing["last_heartbeat_at"]
+
+                    # If existing lease is still valid and owned by someone else, reject or block the write
+                    if (
+                        existing_lease_expires
+                        and existing_lease_expires > now
+                        and existing_controller_id != controller_id
+                    ):
+                        raise ValueError(
+                            f"Active lease exists for loop '{loop_id}' owned by controller '{existing_controller_id}' until {existing_lease_expires}. Cannot overwrite."
+                        )
+
+                    # Ensure heartbeat cannot be set back in time
+                    if (
+                        last_heartbeat_at
+                        and existing_last_heartbeat
+                        and last_heartbeat_at < existing_last_heartbeat
+                    ):
+                        # Stale heartbeat update; ignore or raise
+                        return
+
+                await conn.execute(
+                    """
+                    INSERT INTO loop_controller_records (
+                        loop_id, tenant_id, environment, controller_id, controller_name, deployment_sha,
+                        desired_state_query, actual_state_query, last_heartbeat_at, last_tick_at,
+                        last_success_at, last_failure_at, last_failure_reason, last_repair_at, last_repair_reason,
+                        backlog, lag, dlq_count, evidence_refs, truth_level, lease_expires_at, payload, updated_at
+                    ) VALUES (
+                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, clock_timestamp()
+                    )
+                    ON CONFLICT (loop_id, tenant_id, environment) DO UPDATE SET
+                        controller_id = EXCLUDED.controller_id,
+                        controller_name = EXCLUDED.controller_name,
+                        deployment_sha = EXCLUDED.deployment_sha,
+                        desired_state_query = COALESCE(EXCLUDED.desired_state_query, loop_controller_records.desired_state_query),
+                        actual_state_query = COALESCE(EXCLUDED.actual_state_query, loop_controller_records.actual_state_query),
+                        last_heartbeat_at = EXCLUDED.last_heartbeat_at,
+                        last_tick_at = COALESCE(EXCLUDED.last_tick_at, loop_controller_records.last_tick_at),
+                        last_success_at = COALESCE(EXCLUDED.last_success_at, loop_controller_records.last_success_at),
+                        last_failure_at = COALESCE(EXCLUDED.last_failure_at, loop_controller_records.last_failure_at),
+                        last_failure_reason = COALESCE(EXCLUDED.last_failure_reason, loop_controller_records.last_failure_reason),
+                        last_repair_at = COALESCE(EXCLUDED.last_repair_at, loop_controller_records.last_repair_at),
+                        last_repair_reason = COALESCE(EXCLUDED.last_repair_reason, loop_controller_records.last_repair_reason),
+                        backlog = COALESCE(EXCLUDED.backlog, loop_controller_records.backlog),
+                        lag = COALESCE(EXCLUDED.lag, loop_controller_records.lag),
+                        dlq_count = COALESCE(EXCLUDED.dlq_count, loop_controller_records.dlq_count),
+                        evidence_refs = EXCLUDED.evidence_refs,
+                        truth_level = EXCLUDED.truth_level,
+                        lease_expires_at = EXCLUDED.lease_expires_at,
+                        payload = EXCLUDED.payload,
+                        updated_at = clock_timestamp()
+                    """,
+                    loop_id,
+                    tenant_id,
+                    environment,
+                    controller_id,
+                    controller_name,
+                    deployment_sha,
+                    desired_state_query,
+                    actual_state_query,
+                    last_heartbeat_at,
+                    last_tick_at,
+                    last_success_at,
+                    last_failure_at,
+                    last_failure_reason,
+                    last_repair_at,
+                    last_repair_reason,
+                    backlog,
+                    lag,
+                    dlq_count,
+                    evidence_refs_json,
+                    truth_level,
+                    lease_expires_at,
+                    payload_json,
+                )
         finally:
             await conn.close()

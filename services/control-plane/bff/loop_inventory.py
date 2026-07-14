@@ -932,14 +932,17 @@ def list_loop_health_entries(
     registry = _load_registry()
     loops = _registry_entries(registry)
     records_by_loop = _normalize_health_records(health_records)
-    return [
-        _project_loop_health(
-            loop,
-            records_by_loop.get(str(loop.get("loop_id") or ""), {}),
-            health_source if str(loop.get("loop_id") or "") in records_by_loop else "missing",
-        )
-        for loop in loops
-    ]
+    projected_list = []
+    for loop in loops:
+        loop_id = str(loop.get("loop_id") or "")
+        if loop_id in records_by_loop:
+            rec = records_by_loop[loop_id]
+            src = rec.get("_health_source") or health_source
+        else:
+            rec = {}
+            src = "missing"
+        projected_list.append(_project_loop_health(loop, rec, src))
+    return projected_list
 
 
 def get_loop_health_entry(

@@ -581,3 +581,122 @@ def test_loop_health_detail_unknown_id_is_404(monkeypatch) -> None:
         response = client.get("/bff/v5/loop-health/not-a-loop", headers=HEADERS)
 
     assert response.status_code == 404, response.text
+
+
+def test_loop_health_db_store_exercise(monkeypatch) -> None:
+    from datetime import timedelta
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://dummy_user:dummy_pass@localhost:5432/dummy_db")
+
+    # Mock asyncpg to prevent ModuleNotFoundError when importing services.loop-control
+    import sys
+    from unittest.mock import MagicMock
+    mock_asyncpg = MagicMock()
+    monkeypatch.setitem(sys.modules, "asyncpg", mock_asyncpg)
+
+    # Now import LoopControllerStore and mock its list_records
+    import importlib
+    loop_control = importlib.import_module("services.loop-control")
+    LoopControllerStore = loop_control.LoopControllerStore
+
+    async def mock_list_records(self, tenant_id, env):
+        now = datetime.now(timezone.utc)
+        return [
+            {
+                "loop_id": "source_ingestion",
+                "tenant_id": tenant_id,
+                "environment": env,
+                "controller_id": "ctrl-1",
+                "controller_name": "SourceIngester",
+                "deployment_sha": "sha-123",
+                "desired_state_query": "SELECT *",
+                "actual_state_query": "SELECT *",
+                "last_heartbeat_at": now,
+                "last_tick_at": now,
+                "last_success_at": now,
+                "truth_level": "reconciled_live_proof",
+                "lease_expires_at": now + timedelta(seconds=60),
+                "evidence_refs": ["ref-1"],
+                "payload": {}
+            }
+        ]
+
+    monkeypatch.setattr(LoopControllerStore, "list_records", mock_list_records)
+    with _loop_health_client() as client:
+        response = client.get("/bff/v5/loop-health", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    # Assert that it successfully loaded from database and did not fall back
+    assert payload["meta"]["surfaces"]["loop_health_snapshots"]["source"] == "controller_store"
+
+
+def test_loop_health_db_store_merge_with_file_store(monkeypatch) -> None:
+    from datetime import timedelta
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://dummy_user:dummy_pass@localhost:5432/dummy_db")
+
+    # Mock asyncpg to prevent ModuleNotFoundError
+    import sys
+    from unittest.mock import MagicMock
+    mock_asyncpg = MagicMock()
+    monkeypatch.setitem(sys.modules, "asyncpg", mock_asyncpg)
+
+    import importlib
+    loop_control = importlib.import_module("services.loop-control")
+    LoopControllerStore = loop_control.LoopControllerStore
+
+    async def mock_list_records(self, tenant_id, env):
+        now = datetime.now(timezone.utc)
+        return [
+            {
+                "loop_id": "source_ingestion",
+                "tenant_id": tenant_id,
+                "environment": env,
+                "controller_id": "ctrl-1",
+                "controller_name": "SourceIngester",
+                "deployment_sha": "sha-123",
+                "desired_state_query": "SELECT *",
+                "actual_state_query": "SELECT *",
+                "last_heartbeat_at": now,
+                "last_tick_at": now,
+                "last_success_at": now,
+                "truth_level": "reconciled_live_proof",
+                "lease_expires_at": now + timedelta(seconds=60),
+                "evidence_refs": ["ref-1"],
+                "payload": {}
+            }
+        ]
+
+    monkeypatch.setattr(LoopControllerStore, "list_records", mock_list_records)
+
+    loop_health_store = {
+        "bff_health_monitoring": {
+            "loop_id": "bff_health_monitoring",
+            "truth_level": "scheduled_tick",
+            "controller_health": {
+                "status": "healthy",
+                "controller_name": "bff-health-reconciler",
+                "last_heartbeat_at": "2026-06-27T06:00:00Z",
+            },
+            "evidence_packet": {
+                "packet_id": "packet-bff-health-001",
+                "refs": ["ref-file-store"],
+            },
+        }
+    }
+
+    with _loop_health_client(loop_health_store=loop_health_store) as client:
+        response = client.get("/bff/v5/loop-health", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    items = payload["items"]
+
+    source_ingestion = next(item for item in items if item["loop_id"] == "source_ingestion")
+    bff_health = next(item for item in items if item["loop_id"] == "bff_health_monitoring")
+
+    assert source_ingestion["truth_source"]["source"] == "controller_store"
+    assert bff_health["truth_source"]["source"] == "service_store"
+    assert bff_health["evidence_packet"]["packet_id"] == "packet-bff-health-001"

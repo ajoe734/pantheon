@@ -101,7 +101,7 @@ Two `committee` route families co-exist and are not interchangeable:
 
 Frontend handoff implication:
 
-- A page that renders governance committee state (sponsor decision, quorum, 
+- A page that renders governance committee state (sponsor decision, quorum,
   consensus) should call `api/v1/committees`, not `/bff/agora/committee/sessions`.
 - A page that creates, opens, closes, or posts memos to an Agora workshop
   committee session should call the `/bff/agora/committee/*` family.

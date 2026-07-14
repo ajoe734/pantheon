@@ -1,0 +1,36 @@
+{
+  "app": "execute-plans",
+  "environment": "pantheon-dev-fe",
+  "deployedAt": "20260713T203511Z",
+  "commit": "8ad0a152b1869c2038f077c24d6cc7beafaa7f8f",
+  "sourceRef": "8ad0a152b1869c2038f077c24d6cc7beafaa7f8f",
+  "sourceBranch": "dev",
+  "feHost": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+  "bffHost": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "bffSourceCommitSha": "2851dcee6fef84fcd1501d15c86775a81dfcf917",
+  "releaseIdentity": {
+    "schemaVersion": 1,
+    "frontend": {
+      "repository": "ajoe734/execute-plans",
+      "commitSha": "8ad0a152b1869c2038f077c24d6cc7beafaa7f8f"
+    },
+    "bff": {
+      "baseUrl": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+      "versionUrl": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/version",
+      "sourceCommitSha": "2851dcee6fef84fcd1501d15c86775a81dfcf917",
+      "sourceCommitKnown": true
+    },
+    "gate": {
+      "workflow": "pantheon-integration-gate.yml",
+      "runId": "29280017449",
+      "runUrl": "https://github.com/ajoe734/execute-plans/actions/runs/29280017449",
+      "observedAt": "2026-07-13T20:12:50.333Z"
+    }
+  },
+  "buildMode": {
+    "VITE_BFF_MODE": "live",
+    "VITE_BFF_FALLBACK": "strict",
+    "VITE_BFF_REAL_WRITES": "false",
+    "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false"
+  }
+}

@@ -1,10 +1,9 @@
+import json
 import os
 import socket
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from .store import LoopControllerStore
-
-
 class LoopControllerWriter:
     def __init__(
         self,
@@ -54,7 +53,7 @@ class LoopControllerWriter:
     ) -> None:
         """Internal helper to build and upsert the controller record."""
         now = datetime.now(timezone.utc)
-        
+
         # Calculate lease expiry if duration provided
         lease_expires_at = None
         if lease_duration_seconds is not None:
@@ -62,7 +61,7 @@ class LoopControllerWriter:
 
         # Get existing record to merge state if it exists
         existing = await self.store.get_record(loop_id, self.tenant_id, self.environment)
-        
+
         # Merge logic: preserve existing fields if new fields are not provided
         merged_desired = desired_state_query or (existing.get("desired_state_query") if existing else None)
         merged_actual = actual_state_query or (existing.get("actual_state_query") if existing else None)
@@ -76,7 +75,7 @@ class LoopControllerWriter:
         merged_backlog = backlog if backlog is not None else (existing.get("backlog") if existing else None)
         merged_lag = lag if lag is not None else (existing.get("lag") if existing else None)
         merged_dlq = dlq_count if dlq_count is not None else (existing.get("dlq_count") if existing else None)
-        
+
         # Merge evidence refs
         merged_refs = list(evidence_refs or [])
         if existing and existing.get("evidence_refs"):

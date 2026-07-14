@@ -6,7 +6,7 @@ Artifact reviewed: `support/sidecars/MGMT-PERF-IA-006/MGMT-PERF-IA-006-SIDECAR-B
 
 ## Verdict
 
-Approved. The sidecar follow-up packet correctly records the dependency and contextual integration guidelines for the parent task `MGMT-PERF-IA-006` without pre-empting the parent records or inventing unverified route/field contracts. 
+Approved. The sidecar follow-up packet correctly records the dependency and contextual integration guidelines for the parent task `MGMT-PERF-IA-006` without pre-empting the parent records or inventing unverified route/field contracts.
 
 ## Checked Evidence
 
