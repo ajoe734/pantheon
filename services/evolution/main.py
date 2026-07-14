@@ -31,14 +31,24 @@ Policy references
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Response
+from pydantic import ValidationError
+from services.foundation import (
+    EventEnvelope,
+    FoundationValidationError,
+    InboxReceipt,
+    InboxReceiptStatus,
+    sha256_checksum,
+)
 from services.foundation.health import register_fastapi_health_routes
 
 # ---------------------------------------------------------------------------
@@ -120,6 +130,107 @@ app = FastAPI(title="Pantheon Evolution Service", version="1.0.0")
 
 EVOLUTION_DATA_DIR = os.getenv("EVOLUTION_DATA_DIR", "/tmp/pantheon/evolution")
 os.makedirs(EVOLUTION_DATA_DIR, exist_ok=True)
+
+
+class _EvolutionProposalInbox:
+    """Small durable inbox ledger for generic proposal delivery events.
+
+    Evolution decisions and inbox receipts intentionally remain separate owner
+    records.  The route-level lock serializes the check/create/receipt sequence
+    within one service process, while immutable-decision comparison closes the
+    recoverable window where the decision write succeeded but the receipt write
+    did not.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock = threading.RLock()
+
+    def _read_unlocked(self) -> Dict[str, Dict[str, Any]]:
+        if not self.path.exists():
+            return {}
+        raw = self.path.read_text(encoding="utf-8")
+        if not raw.strip():
+            return {}
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise RuntimeError("evolution proposal inbox must contain a JSON object")
+        return {
+            str(key): dict(value)
+            for key, value in payload.items()
+            if isinstance(value, Mapping)
+        }
+
+    def _write_unlocked(self, records: Mapping[str, Mapping[str, Any]]) -> None:
+        temporary_path = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        temporary_path.write_text(
+            json.dumps(records, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        os.replace(temporary_path, self.path)
+
+    def matching_event_unlocked(self, event: EventEnvelope) -> List[Dict[str, Any]]:
+        matches: List[Dict[str, Any]] = []
+        for record in self._read_unlocked().values():
+            receipt = record.get("receipt")
+            if not isinstance(receipt, Mapping):
+                continue
+            if (
+                str(receipt.get("event_id") or "") == event.event_id
+                or str(receipt.get("idempotency_key") or "") == event.idempotency_key
+            ):
+                matches.append(record)
+        return matches
+
+    def for_decision_unlocked(self, decision_id: str) -> List[Dict[str, Any]]:
+        return [
+            record
+            for record in self._read_unlocked().values()
+            if str(record.get("decision_id") or "") == decision_id
+        ]
+
+    def record_applied_unlocked(
+        self,
+        *,
+        event: EventEnvelope,
+        decision_id: str,
+        event_fingerprint: str,
+        semantic_event_fingerprint: str,
+        proposal_fingerprint: str,
+        decision_fingerprint: str,
+        notes: str,
+    ) -> Dict[str, Any]:
+        receipt = InboxReceipt.record(
+            consumer_name="evolution-proposal-admission",
+            event=event,
+            status=InboxReceiptStatus.APPLIED,
+            audit_action_ref=decision_id,
+            notes=notes,
+        )
+        record = {
+            "receipt": receipt.to_dict(),
+            "decision_id": decision_id,
+            "event_fingerprint": event_fingerprint,
+            "semantic_event_fingerprint": semantic_event_fingerprint,
+            "proposal_fingerprint": proposal_fingerprint,
+            "decision_fingerprint": decision_fingerprint,
+        }
+        records = self._read_unlocked()
+        records[event.event_id] = record
+        self._write_unlocked(records)
+        return record
+
+    def clear(self) -> None:
+        """Test/support hook that removes only this service-owned inbox file."""
+        with self.lock:
+            if self.path.exists():
+                self.path.unlink()
+
+
+proposal_inbox = _EvolutionProposalInbox(
+    Path(EVOLUTION_DATA_DIR) / "proposal_delivery_inbox.json"
+)
 
 INCIDENT_DATA_DIR = os.getenv("INCIDENT_DATA_DIR", "/tmp/pantheon/incident")
 os.makedirs(INCIDENT_DATA_DIR, exist_ok=True)
@@ -210,6 +321,274 @@ def _not_found(decision_id: str) -> HTTPException:
 
 def _domain_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=422, detail=str(exc))
+
+
+def _delivery_conflict(detail: str) -> HTTPException:
+    return HTTPException(status_code=409, detail=detail)
+
+
+def _proposal_request_payload(body: ProposeRequest) -> Dict[str, Any]:
+    """Return a stable request payload without its recursive delivery wrapper."""
+    if hasattr(body, "model_dump"):
+        return body.model_dump(mode="json", exclude={"delivery_event"})
+    return body.dict(exclude={"delivery_event"})  # pragma: no cover - pydantic v1
+
+
+def _validated_delivery_event(body: ProposeRequest) -> Dict[str, Any] | None:
+    raw_event = body.delivery_event
+    if raw_event is None:
+        return None
+    try:
+        event = EventEnvelope.from_dict(raw_event)
+    except (FoundationValidationError, KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid delivery_event envelope: {exc}",
+        ) from exc
+
+    if event.event_type != "postmortem.published":
+        raise HTTPException(
+            status_code=422,
+            detail="delivery_event.event_type must be 'postmortem.published'",
+        )
+    if event.aggregate_type != "postmortem":
+        raise HTTPException(
+            status_code=422,
+            detail="delivery_event.aggregate_type must be 'postmortem'",
+        )
+
+    payload = dict(event.payload)
+    embedded_proposal = payload.get("proposal")
+    if not isinstance(embedded_proposal, Mapping):
+        raise HTTPException(
+            status_code=422,
+            detail="delivery_event.payload.proposal must be an object",
+        )
+    if embedded_proposal.get("delivery_event") is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="delivery_event.payload.proposal cannot contain delivery_event",
+        )
+    try:
+        embedded_request = ProposeRequest(**dict(embedded_proposal))
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid delivery_event proposal snapshot: {exc}",
+        ) from exc
+
+    expected_proposal = _proposal_request_payload(body)
+    embedded_payload = _proposal_request_payload(embedded_request)
+    if sha256_checksum(embedded_payload) != sha256_checksum(expected_proposal):
+        raise _delivery_conflict(
+            "delivery_event proposal snapshot diverges from the submitted proposal"
+        )
+
+    linked_postmortem_id = str(body.linked_postmortem_id or "").strip()
+    linked_incident_id = str(body.linked_incident_id or "").strip()
+    if not linked_postmortem_id or not linked_incident_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "postmortem.published delivery requires linked_postmortem_id "
+                "and linked_incident_id"
+            ),
+        )
+    if event.aggregate_id != linked_postmortem_id:
+        raise _delivery_conflict(
+            "delivery_event.aggregate_id does not match linked_postmortem_id"
+        )
+    if str(payload.get("postmortem_id") or "") != linked_postmortem_id:
+        raise _delivery_conflict(
+            "delivery_event.payload.postmortem_id does not match linked_postmortem_id"
+        )
+    if str(payload.get("decision_id") or "") != body.decision_id:
+        raise _delivery_conflict(
+            "delivery_event.payload.decision_id does not match decision_id"
+        )
+    if payload.get("incident_id") is not None and str(payload["incident_id"]) != linked_incident_id:
+        raise _delivery_conflict(
+            "delivery_event.payload.incident_id does not match linked_incident_id"
+        )
+
+    postmortem_snapshot = payload.get("postmortem")
+    if postmortem_snapshot is not None:
+        if not isinstance(postmortem_snapshot, Mapping):
+            raise HTTPException(
+                status_code=422,
+                detail="delivery_event.payload.postmortem must be an object",
+            )
+        if str(postmortem_snapshot.get("postmortem_id") or "") != linked_postmortem_id:
+            raise _delivery_conflict(
+                "delivery_event postmortem snapshot does not match linked_postmortem_id"
+            )
+        if str(postmortem_snapshot.get("incident_id") or "") != linked_incident_id:
+            raise _delivery_conflict(
+                "delivery_event postmortem snapshot does not match linked_incident_id"
+            )
+        if postmortem_snapshot.get("status") != "published":
+            raise HTTPException(
+                status_code=422,
+                detail="delivery_event postmortem snapshot must be published",
+            )
+        if not postmortem_snapshot.get("published_at"):
+            raise HTTPException(
+                status_code=422,
+                detail="delivery_event published postmortem snapshot requires published_at",
+            )
+
+    incident_snapshot = payload.get("incident")
+    if incident_snapshot is not None:
+        if not isinstance(incident_snapshot, Mapping):
+            raise HTTPException(
+                status_code=422,
+                detail="delivery_event.payload.incident must be an object",
+            )
+        if str(incident_snapshot.get("incident_id") or "") != linked_incident_id:
+            raise _delivery_conflict(
+                "delivery_event incident snapshot does not match linked_incident_id"
+            )
+
+    semantic_event = {
+        "schema_version": event.schema_version,
+        "event_type": event.event_type,
+        "aggregate_type": event.aggregate_type,
+        "aggregate_id": event.aggregate_id,
+        "sequence_no": event.sequence_no,
+        "idempotency_key": event.idempotency_key,
+        "producer_service": event.producer_service,
+        "schema_ref": event.schema_ref,
+        "payload": payload,
+    }
+    return {
+        "event": event,
+        "event_fingerprint": sha256_checksum(event.to_dict()),
+        "semantic_event_fingerprint": sha256_checksum(semantic_event),
+        "proposal_fingerprint": sha256_checksum(expected_proposal),
+    }
+
+
+_IMMUTABLE_PROPOSAL_FIELDS = (
+    "decision_id",
+    "target_type",
+    "target_id",
+    "target_version",
+    "action_type",
+    "risk_level",
+    "created_by_role",
+    "created_by_id",
+    "rationale",
+    "evidence_refs",
+    "threshold_snapshots",
+    "linked_postmortem_id",
+    "linked_incident_id",
+    "capital_pool_id",
+    "persona_id",
+    "target_stage",
+    "metadata",
+)
+
+
+def _immutable_decision_fingerprint(decision: EvolutionDecision) -> str:
+    payload = decision.to_dict()
+    return sha256_checksum(
+        {field: payload.get(field) for field in _IMMUTABLE_PROPOSAL_FIELDS}
+    )
+
+
+def _build_proposed_decision(
+    body: ProposeRequest,
+    *,
+    require_local_postmortem: bool,
+) -> EvolutionDecision:
+    try:
+        evidence_refs = [
+            EvidenceRef(
+                ref_type=EvidenceRefType(ref.ref_type),
+                ref_id=ref.ref_id,
+                storage_ref=ref.storage_ref or {},
+                note=ref.note,
+            )
+            for ref in body.evidence_refs
+        ]
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid evidence ref_type: {exc}") from exc
+    threshold_snapshots = [
+        ThresholdSnapshot(
+            policy_source=snap.policy_source,
+            signal_type=snap.signal_type,
+            metric_name=snap.metric_name,
+            comparator=snap.comparator,
+            observed_value=snap.observed_value,
+            threshold_value=snap.threshold_value,
+            window=snap.window,
+            breached=snap.breached,
+            note=snap.note,
+        )
+        for snap in body.threshold_snapshots
+    ]
+
+    if require_local_postmortem and body.linked_postmortem_id:
+        if incident_store.get_postmortem(body.linked_postmortem_id) is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"linked_postmortem_id references unknown Postmortem: {body.linked_postmortem_id}",
+            )
+    try:
+        decision = EvolutionDecision.create_proposed(
+            decision_id=body.decision_id,
+            target_type=body.target_type,
+            target_id=body.target_id,
+            target_version=body.target_version,
+            action_type=body.action_type,
+            rationale=body.rationale,
+            created_by_id=body.created_by_id,
+            created_by_role=body.created_by_role,
+            risk_level=body.risk_level,
+            evidence_refs=evidence_refs,
+            threshold_snapshots=threshold_snapshots,
+            linked_postmortem_id=body.linked_postmortem_id,
+            linked_incident_id=body.linked_incident_id,
+            capital_pool_id=body.capital_pool_id,
+            persona_id=body.persona_id,
+            target_stage=body.target_stage,
+            metadata=body.metadata,
+        )
+    except EvolutionDecisionError as exc:
+        raise _domain_error(exc) from exc
+    errors = validate_evolution_decision(decision)
+    if errors:
+        raise _domain_error(EvolutionDecisionError(f"Invalid EvolutionDecision: {errors}"))
+    return decision
+
+
+def _store_proposed_decision(
+    decision: EvolutionDecision,
+    *,
+    link_local_postmortem: bool = True,
+) -> None:
+    try:
+        store.put(decision)
+    except EvolutionDecisionError as exc:
+        raise _domain_error(exc) from exc
+    if link_local_postmortem and decision.linked_postmortem_id:
+        try:
+            incident_store.link_evolution_decision(
+                decision.linked_postmortem_id,
+                decision.decision_id,
+            )
+        except IncidentError as exc:
+            log.warning(
+                "evolution.propose: could not back-link postmortem %s → decision %s: %s",
+                decision.linked_postmortem_id,
+                decision.decision_id,
+                exc,
+            )
+    log.info(
+        "evolution.proposed decision_id=%s action=%s",
+        decision.decision_id,
+        decision.action_type,
+    )
 
 
 def _enum_value(value: Any) -> Any:
@@ -531,7 +910,7 @@ def health():
 # --- Propose -----------------------------------------------------------------
 
 @app.post("/api/evolution/proposals", status_code=201, response_model=DecisionResponse)
-def propose(body: ProposeRequest):
+def propose(body: ProposeRequest, response: Response):
     """
     Create a new EvolutionDecision in the ``proposed`` state.
 
@@ -545,77 +924,113 @@ def propose(body: ProposeRequest):
       caller-supplied value must match the inferred value.
     - Single-active-rule: the target must not already have an active decision.
     """
-    try:
-        evidence_refs = [
-            EvidenceRef(
-                ref_type=EvidenceRefType(ref.ref_type),
-                ref_id=ref.ref_id,
-                storage_ref=ref.storage_ref or {},
-                note=ref.note,
+    delivery = _validated_delivery_event(body)
+    candidate = _build_proposed_decision(
+        body,
+        require_local_postmortem=delivery is None,
+    )
+
+    # Ordinary operator/controller proposals preserve their existing behavior.
+    # Only durable delivery calls participate in the evolution inbox protocol.
+    if delivery is None:
+        _store_proposed_decision(candidate)
+        return _decision_to_response(candidate)
+
+    event = delivery["event"]
+    event_fingerprint = str(delivery["event_fingerprint"])
+    semantic_event_fingerprint = str(delivery["semantic_event_fingerprint"])
+    proposal_fingerprint = str(delivery["proposal_fingerprint"])
+    decision_fingerprint = _immutable_decision_fingerprint(candidate)
+
+    # Serialize inbox classification, decision admission, and receipt writes so
+    # concurrent retries cannot both overwrite the canonical decision.
+    with proposal_inbox.lock:
+        matching_records = proposal_inbox.matching_event_unlocked(event)
+        if matching_records:
+            for record in matching_records:
+                receipt = record.get("receipt")
+                if not isinstance(receipt, Mapping):
+                    raise _delivery_conflict(
+                        "delivery inbox record is malformed for this event identity"
+                    )
+                same_event_id = str(receipt.get("event_id") or "") == event.event_id
+                same_idempotency_key = (
+                    str(receipt.get("idempotency_key") or "") == event.idempotency_key
+                )
+                if same_event_id and record.get("event_fingerprint") != event_fingerprint:
+                    raise _delivery_conflict(
+                        "delivery_event event_id was replayed with a divergent envelope"
+                    )
+                if (
+                    same_idempotency_key
+                    and record.get("semantic_event_fingerprint")
+                    != semantic_event_fingerprint
+                ):
+                    raise _delivery_conflict(
+                        "delivery_event idempotency_key was replayed with divergent semantics"
+                    )
+                if str(record.get("decision_id") or "") != body.decision_id:
+                    raise _delivery_conflict(
+                        "delivery event identity is already bound to another decision"
+                    )
+                if record.get("proposal_fingerprint") != proposal_fingerprint:
+                    raise _delivery_conflict(
+                        "delivery event identity is already bound to another proposal"
+                    )
+                if record.get("decision_fingerprint") != decision_fingerprint:
+                    raise _delivery_conflict(
+                        "delivery event identity is already bound to divergent decision fields"
+                    )
+
+            existing = store.get(body.decision_id)
+            if existing is None:
+                raise _delivery_conflict(
+                    "delivery receipt exists but its evolution decision is unavailable"
+                )
+            if _immutable_decision_fingerprint(existing) != decision_fingerprint:
+                raise _delivery_conflict(
+                    "existing evolution decision diverges from the delivered proposal"
+                )
+            response.status_code = 200
+            return _decision_to_response(existing)
+
+        # Once a decision has an inbox identity, a newly generated unrelated
+        # event cannot silently take ownership of that same decision ID.
+        if proposal_inbox.for_decision_unlocked(body.decision_id):
+            raise _delivery_conflict(
+                "evolution decision is already bound to another delivery event"
             )
-            for ref in body.evidence_refs
-        ]
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid evidence ref_type: {exc}") from exc
-    threshold_snapshots = [
-        ThresholdSnapshot(
-            policy_source=snap.policy_source,
-            signal_type=snap.signal_type,
-            metric_name=snap.metric_name,
-            comparator=snap.comparator,
-            observed_value=snap.observed_value,
-            threshold_value=snap.threshold_value,
-            window=snap.window,
-            breached=snap.breached,
-            note=snap.note,
-        )
-        for snap in body.threshold_snapshots
-    ]
-    # Validate postmortem reference before creating the decision so we don't
-    # land in a partial-write state where the decision exists but the back-link
-    # could not be written.
-    if body.linked_postmortem_id:
-        if incident_store.get_postmortem(body.linked_postmortem_id) is None:
-            raise HTTPException(
-                status_code=422,
-                detail=f"linked_postmortem_id references unknown Postmortem: {body.linked_postmortem_id}",
+
+        existing = store.get(body.decision_id)
+        if existing is not None:
+            # Crash recovery: the decision write can precede the receipt write.
+            # Accept only an immutable exact match and never replace its current
+            # review/approval/execution state.
+            if _immutable_decision_fingerprint(existing) != decision_fingerprint:
+                raise _delivery_conflict(
+                    "decision_id is already occupied by a divergent evolution decision"
+                )
+            admitted = existing
+            response.status_code = 200
+            receipt_note = "Recovered delivery receipt for an existing matching decision"
+        else:
+            _store_proposed_decision(
+                candidate,
+                link_local_postmortem=False,
             )
-    try:
-        decision = EvolutionDecision.create_proposed(
+            admitted = candidate
+            receipt_note = "Applied postmortem.published proposal delivery"
+
+        proposal_inbox.record_applied_unlocked(
+            event=event,
             decision_id=body.decision_id,
-            target_type=body.target_type,
-            target_id=body.target_id,
-            target_version=body.target_version,
-            action_type=body.action_type,
-            rationale=body.rationale,
-            created_by_id=body.created_by_id,
-            created_by_role=body.created_by_role,
-            risk_level=body.risk_level,
-            evidence_refs=evidence_refs,
-            threshold_snapshots=threshold_snapshots,
-            linked_postmortem_id=body.linked_postmortem_id,
-            linked_incident_id=body.linked_incident_id,
-            capital_pool_id=body.capital_pool_id,
-            persona_id=body.persona_id,
-            target_stage=body.target_stage,
-            metadata=body.metadata,
+            event_fingerprint=event_fingerprint,
+            semantic_event_fingerprint=semantic_event_fingerprint,
+            proposal_fingerprint=proposal_fingerprint,
+            decision_fingerprint=decision_fingerprint,
+            notes=receipt_note,
         )
-        store.put(decision)
-    except EvolutionDecisionError as exc:
-        raise _domain_error(exc) from exc
-    # Wire the evolution → postmortem back-link (EVO-003 lineage edge).
-    if decision.linked_postmortem_id:
-        try:
-            incident_store.link_evolution_decision(decision.linked_postmortem_id, decision.decision_id)
-        except IncidentError as exc:
-            log.warning(
-                "evolution.propose: could not back-link postmortem %s → decision %s: %s",
-                decision.linked_postmortem_id,
-                decision.decision_id,
-                exc,
-            )
-    log.info("evolution.proposed decision_id=%s action=%s", decision.decision_id, decision.action_type)
-    return _decision_to_response(decision)
+        return _decision_to_response(admitted)
 
 
 @app.post(
@@ -623,7 +1038,7 @@ def propose(body: ProposeRequest):
     status_code=201,
     response_model=DecisionResponse,
 )
-def propose_from_incident(body: ProposeFromIncidentRequest):
+def propose_from_incident(body: ProposeFromIncidentRequest, response: Response):
     """
     Create a proposed EvolutionDecision from canonical IncidentCase/Postmortem evidence.
 
@@ -633,7 +1048,7 @@ def propose_from_incident(body: ProposeFromIncidentRequest):
     approval, runtime mitigation, broker orders, and capital-binding writes
     remain separate gated steps.
     """
-    return propose(_proposal_request_from_incident(body))
+    return propose(_proposal_request_from_incident(body), response)
 
 
 @app.post(
@@ -701,7 +1116,7 @@ def propose_from_postmortem_published(
             detail=f"Decision ID {decision_id} is already occupied by an unrelated decision",
         )
 
-    return propose(ProposeRequest(**proposal_payload))
+    return propose(ProposeRequest(**proposal_payload), response)
 
 
 # --- Daily sweep -------------------------------------------------------------
