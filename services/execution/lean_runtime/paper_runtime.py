@@ -1365,6 +1365,16 @@ class PaperExecutionAlgorithm:
                     raise ValueError(
                         "paper performance ledger first_fill_at is after last_fill_at"
                     )
+                missing_execution_prices = sorted(set(restored) - set(restored_prices))
+                if missing_execution_prices:
+                    raise ValueError(
+                        "paper performance ledger holdings lack execution prices: "
+                        f"{missing_execution_prices}"
+                    )
+                if len(restored) > fill_count:
+                    raise ValueError(
+                        "paper performance ledger has more open symbols than recorded fills"
+                    )
 
             performance_window = payload.get("performance_window", {})
             if not isinstance(performance_window, dict):
@@ -1444,12 +1454,20 @@ class PaperExecutionAlgorithm:
             },
         }
         temporary: Path | None = None
+        directory_fd: int | None = None
         try:
             serialized = json.dumps(payload, sort_keys=True, allow_nan=False)
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
+            directory_fd = os.open(
+                self._state_path.parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
             temporary = self._state_path.with_name(f"{self._state_path.name}.{uuid.uuid4().hex}.tmp")
             temporary.write_text(serialized, encoding="utf-8")
+            with temporary.open("rb") as state_file:
+                os.fsync(state_file.fileno())
             os.replace(temporary, self._state_path)
+            os.fsync(directory_fd)
             self._state_error = None
             return True
         except (OSError, TypeError, ValueError) as exc:
@@ -1460,6 +1478,12 @@ class PaperExecutionAlgorithm:
                 except OSError:
                     pass
             return False
+        finally:
+            if directory_fd is not None:
+                try:
+                    os.close(directory_fd)
+                except OSError:
+                    pass
 
     def open_bracket_orders(self) -> list[dict[str, Any]]:
         return [dict(order) for order in self._open_bracket_orders]
@@ -2332,7 +2356,7 @@ class PaperRuntimeService:
                     os.makedirs(outbox_dir, exist_ok=True)
                 with open(self._outbox_path, "a", encoding="utf-8") as f:
                     for event in events:
-                        f.write(json.dumps(event) + "\n")
+                        f.write(json.dumps(event, allow_nan=False) + "\n")
             except Exception as exc:
                 log.error("Failed to append events to outbox: %s", exc)
         self._outbox_event.set()
@@ -2372,7 +2396,7 @@ class PaperRuntimeService:
                                 tmp_path = self._outbox_path + ".tmp"
                                 with open(tmp_path, "w", encoding="utf-8") as f:
                                     for e in remaining:
-                                        f.write(json.dumps(e) + "\n")
+                                        f.write(json.dumps(e, allow_nan=False) + "\n")
                                 os.replace(tmp_path, self._outbox_path)
                             else:
                                 if os.path.exists(self._outbox_path):
@@ -2385,7 +2409,7 @@ class PaperRuntimeService:
     def _send_to_bff(self, events: list[dict[str, Any]]) -> bool:
         bff_url = os.getenv("PANTHEON_BFF_URL", "http://operator-bff:8080").strip().rstrip("/")
         url = f"{bff_url}/bff/management/trade-journeys/events"
-        body = json.dumps(events).encode("utf-8")
+        body = json.dumps(events, allow_nan=False).encode("utf-8")
 
         token = os.getenv("PANTHEON_BFF_TOKEN") or os.getenv("BFF_TOKEN") or "op-dev:admin:mfa"
         headers = {
@@ -2528,6 +2552,7 @@ class PaperRuntimeService:
         mark_refs = [mark.to_dict() for mark in sample.marks]
         metadata = {
             "runtime_package": "paper_execution_runtime",
+            "runtime_binding_id": ledger.get("binding_id"),
             "queue_depth": self._safe_queue_depth(),
             "is_real_order": False,
             "is_real_capital": False,
@@ -2566,7 +2591,6 @@ class PaperRuntimeService:
             pnl_metadata,
             event_id=str(uuid.uuid4()),
             created_at=staged_at,
-            binding_id=str(ledger.get("binding_id") or ""),
         )
         drawdown_payload = self._build_performance_event_payload(
             "drawdown_snapshot",
@@ -2582,7 +2606,6 @@ class PaperRuntimeService:
             drawdown_metadata,
             event_id=str(uuid.uuid4()),
             created_at=staged_at,
-            binding_id=str(ledger.get("binding_id") or ""),
         )
         if pnl_payload is None or drawdown_payload is None:
             self._drawdown_tracker.restore(tracker_checkpoint)
@@ -2631,7 +2654,6 @@ class PaperRuntimeService:
         *,
         event_id: str,
         created_at: str,
-        binding_id: str,
     ) -> dict[str, Any] | None:
         builder = getattr(self._telemetry, "build_event", None)
         if callable(builder):
@@ -2642,31 +2664,13 @@ class PaperRuntimeService:
                 event_id=event_id,
                 created_at=created_at,
             )
-        # Narrow compatibility path for in-memory test emitters. Production
-        # RuntimeTelemetryEmitter always persists the complete canonical event.
-        payload = {
-            "event_id": event_id,
-            "event_type": event_type,
-            "created_at": created_at,
-            "binding_id": binding_id,
-            "metrics": dict(metrics),
-            "metadata": dict(metadata),
-        }
-        metric_stamp = "pnl_as_of" if event_type == "pnl_snapshot" else "drawdown_as_of"
-        payload[metric_stamp] = metrics.get(metric_stamp)
-        return payload
+        return None
 
     def _emit_staged_performance_payload(self, payload: Mapping[str, Any]) -> bool:
         sender = getattr(self._telemetry, "emit_payload", None)
         if callable(sender):
             return bool(sender(payload))
-        return bool(
-            self._telemetry.emit(
-                str(payload.get("event_type") or ""),
-                dict(payload.get("metrics") or {}),
-                metadata=dict(payload.get("metadata") or {}),
-            )
-        )
+        return False
 
     def _flush_pending_performance_pair(self) -> bool:
         pending = self._algo.pending_performance_pair()

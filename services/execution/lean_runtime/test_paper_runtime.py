@@ -38,6 +38,32 @@ class _FakeTelemetryEmitter:
         self.enabled = True
         self.events = []
 
+    def build_event(
+        self,
+        event_type,
+        metrics,
+        metadata=None,
+        *,
+        event_id=None,
+        created_at=None,
+    ):
+        event_metrics = dict(metrics)
+        stamp_key = "pnl_as_of" if event_type == "pnl_snapshot" else "drawdown_as_of"
+        stamp = event_metrics.pop(stamp_key, None)
+        return {
+            "event_id": event_id,
+            "event_type": event_type,
+            "created_at": created_at,
+            "binding_id": (metadata or {}).get("runtime_binding_id"),
+            stamp_key: stamp,
+            "metrics": event_metrics,
+            "metadata": dict(metadata or {}),
+        }
+
+    def emit_payload(self, payload):
+        self.events.append(json.loads(json.dumps(dict(payload))))
+        return True
+
     def emit(self, event_type, metrics, metadata=None):
         self.events.append(
             {
@@ -403,10 +429,12 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(len(pnl_events), 1)
         self.assertEqual(len(drawdown_events), 1)
         self.assertAlmostEqual(pnl_events[0]["metrics"]["pnl"], 50.0)
-        self.assertEqual(pnl_events[0]["metrics"]["pnl_as_of"], mark_provider.as_of)
+        self.assertEqual(pnl_events[0]["pnl_as_of"], mark_provider.as_of)
+        self.assertNotIn("pnl_as_of", pnl_events[0]["metrics"])
         self.assertNotIn("drawdown_pct", pnl_events[0]["metrics"])
         self.assertEqual(drawdown_events[0]["metrics"]["drawdown_pct"], 0.0)
-        self.assertEqual(drawdown_events[0]["metrics"]["drawdown_as_of"], mark_provider.as_of)
+        self.assertEqual(drawdown_events[0]["drawdown_as_of"], mark_provider.as_of)
+        self.assertNotIn("drawdown_as_of", drawdown_events[0]["metrics"])
         self.assertNotIn("pnl", drawdown_events[0]["metrics"])
         self.assertEqual(
             snapshot["paper_state"]["performance_telemetry"]["code"],
@@ -1308,6 +1336,26 @@ class PaperExecutionInputHardeningTest(unittest.TestCase):
             self.assertIn("disk full", ledger["state_error"])
             self.assertEqual(state_path.read_text(encoding="utf-8"), persisted_before)
 
+    def test_state_persistence_fsyncs_file_and_parent_directory(self):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            state_path = Path(temporary_dir) / "paper-ledger.json"
+            algo = PaperExecutionAlgorithm(
+                initial_cash=1_000.0,
+                state_path=str(state_path),
+            )
+
+            with patch(
+                "services.execution.lean_runtime.paper_runtime.os.fsync",
+                wraps=os.fsync,
+            ) as fsync:
+                self.assertTrue(algo.BindPerformanceBinding("binding-a"))
+
+            self.assertGreaterEqual(fsync.call_count, 2)
+            self.assertEqual(
+                json.loads(state_path.read_text(encoding="utf-8"))["binding_id"],
+                "binding-a",
+            )
+
 
 class PaperLedgerLoadHardeningTest(unittest.TestCase):
     @staticmethod
@@ -1384,6 +1432,20 @@ class PaperLedgerLoadHardeningTest(unittest.TestCase):
                 {**with_fill(self._valid_payload()), "holdings": {"": 1.0}},
                 "empty symbol",
             ),
+            (
+                "holding_without_execution_price",
+                {**with_fill(self._valid_payload()), "execution_prices": {}},
+                "holdings lack execution prices",
+            ),
+            (
+                "more_open_symbols_than_fills",
+                {
+                    **with_fill(self._valid_payload()),
+                    "holdings": {"AAPL": 1.0, "MSFT": 1.0},
+                    "execution_prices": {"AAPL": 100.0, "MSFT": 200.0},
+                },
+                "more open symbols than recorded fills",
+            ),
         )
         for name, payload, diagnostic in cases:
             with self.subTest(case=name), tempfile.TemporaryDirectory() as temporary_dir:
@@ -1408,6 +1470,40 @@ class PaperLedgerLoadHardeningTest(unittest.TestCase):
 
             self.assertEqual(state_path.read_text(encoding="utf-8"), original)
             self.assertIn("Out of range float values", algo.performance_ledger()["state_error"])
+
+
+class TestExecutionComposePerformanceWiring(unittest.TestCase):
+    def test_vm2_runtime_has_authoritative_marks_and_durable_state(self):
+        import yaml
+
+        repo_root = Path(__file__).resolve().parents[3]
+        services = yaml.safe_load(
+            (repo_root / "docker-compose.exec.yml").read_text(encoding="utf-8")
+        )["services"]
+        runtime = services["pantheon-paper-runtime"]
+        environment = runtime["environment"]
+
+        self.assertEqual(
+            environment["PANTHEON_SOURCE_INGEST_URL"],
+            "${PANTHEON_SOURCE_INGEST_URL:?PANTHEON_SOURCE_INGEST_URL is required}",
+        )
+        self.assertEqual(
+            environment["PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS"],
+            "${PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS:-172800}",
+        )
+        self.assertEqual(
+            environment["PANTHEON_PERFORMANCE_STATE_PATH"],
+            "/data/runtime/paper-performance/static-paper-runtime.json",
+        )
+        self.assertEqual(
+            environment["PANTHEON_PAPER_SYNTHETIC_MARKET_DATA"],
+            "${PANTHEON_PAPER_SYNTHETIC_MARKET_DATA:-false}",
+        )
+        self.assertIn("runtime-data:/data/runtime", runtime["volumes"])
+
+        example = (repo_root / "env/prod-exec.env.example").read_text(encoding="utf-8")
+        self.assertIn("PANTHEON_SOURCE_INGEST_URL=http://10.140.0.4:38097", example)
+        self.assertIn("PANTHEON_PAPER_SYNTHETIC_MARKET_DATA=false", example)
 
 
 class TestSubmitTaiwanBrokerOrder(unittest.TestCase):

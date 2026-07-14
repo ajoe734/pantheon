@@ -682,8 +682,10 @@ class RollingDrawdownTracker:
         latest = _parse_rfc3339(payload.get("latest_as_of"))
         if latest is None and restored:
             latest = restored[-1][0]
-        if latest is not None and restored and latest < restored[-1][0]:
-            raise ValueError("rolling drawdown latest timestamp precedes its window")
+        if latest is not None and not restored:
+            raise ValueError("rolling drawdown latest timestamp has no window sample")
+        if latest is not None and restored and latest != restored[-1][0]:
+            raise ValueError("rolling drawdown latest timestamp must match its last sample")
         fingerprint = payload.get("last_fingerprint")
         self._values = restored
         self._last_fingerprint = (

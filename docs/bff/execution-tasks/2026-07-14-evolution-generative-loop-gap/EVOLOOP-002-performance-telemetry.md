@@ -101,7 +101,10 @@ An accepted mark must:
 - be at or after the latest fill-ledger mutation. A mark observed before the
   current holdings/cash state existed cannot timestamp that state;
 - resolve to exactly one instrument. A base-symbol collision across venues
-  fails closed rather than selecting one arbitrarily.
+  fails closed rather than selecting one arbitrarily;
+- be unambiguous at its observation boundary. Two different prices for the
+  same canonical instrument and exact `as_of` fail closed; a later
+  unambiguous observation may supersede that conflict.
 
 Source-record availability time or ingest `created_at` is not a substitute for
 market-observation time. Signal/fill prices and opt-in synthetic prices may
@@ -133,6 +136,9 @@ otherwise invalid equity series must fail closed rather than create an
 unbounded ratio. Duplicate samples and observations older than the latest
 accepted per-binding `as_of` do not advance the rolling window. The runtime
 window is 20 calendar days, not merely the last 20 polling iterations.
+When a corrected sample arrives at the same `as_of`, it replaces the prior
+sample at that boundary; the superseded value cannot remain as an artificial
+high-water mark.
 
 ## Event and summary contract
 
@@ -157,6 +163,23 @@ metric's value, binding id, and independent `*_at` timestamp. A late event may
 advance one metric only when its own explicit as-of is newer or equal; it must
 not regress the other metric. Existing events without explicit per-field
 timestamps retain `created_at` only as a backward-compatibility fallback.
+
+The two events are one durable producer pair. Before either POST, the runtime
+atomically stages and fsyncs the complete immutable event payloads, distinct
+stable event IDs, shared `performance_pair_id`, per-leg acknowledgement state,
+and proposed next drawdown window in the binding ledger. Retry sends the
+stored payload, not a rebuilt event. A successful PnL leg followed by a failed
+drawdown leg therefore resumes with the exact original drawdown payload after
+restart; telemetry can idempotently collapse an accepted response that was
+lost in transit. The committed drawdown window advances and the pending pair
+clears only after both legs are acknowledged.
+
+This is a producer-side durability guarantee through an accepted telemetry
+HTTP response, not a new end-to-end storage receipt contract. Telemetry's
+current `202` response may precede its asynchronous durable-store write when
+the configured ingest buffer is in memory. Closing that downstream crash
+window requires a durable telemetry buffer or receipt contract and remains an
+explicit residual rather than an EVOLOOP-002 runtime claim.
 
 The projected numeric fields are the inputs consumed by threshold sweep.
 EVOLOOP-002 must prove the sweep evaluates supplied values instead of skipping
@@ -188,12 +211,19 @@ breach as a replacement snapshot.
 
 Each binding owns a durable `paper_performance_ledger.v1` state file containing
 initial cash, current cash, open holdings, fill count, first/last-fill times,
-execution prices, and the accepted 20-day drawdown window. Fill accounting and
-the ordered high-water series are persisted atomically and restored before
-valuation. The first accepted window is seeded with initial funded equity at
-the first-fill time, so an immediate loss is measured instead of becoming a
-false zero drawdown. Restored execution prices are hints only and are
-explicitly non-authoritative until refreshed from source-ingest.
+execution prices, the accepted 20-day drawdown window, and any in-flight
+performance pair. Fill accounting is persisted before a fill event can be
+published; a write failure rolls back cash, holdings, price hints, fill count,
+and timestamps and does not mark the signal processed. State replacement
+fsyncs both the temporary file and parent directory. Non-finite signal,
+order, or fill inputs are rejected before processed/journey records, while
+semantically inconsistent state (negative/fractional fill counts, invalid
+chronology, holdings without execution prices, more open symbols than fills,
+no-fill cash/holding mutations, empty symbols, or non-object state) fails
+closed. The first accepted window is seeded with initial funded equity at the
+first-fill time, so an immediate loss is measured instead of becoming a false
+zero drawdown. Restored execution prices are hints only and are explicitly
+non-authoritative until refreshed from source-ingest.
 
 The state also embeds its RuntimeBinding id. Fleet workers receive a
 binding-specific filename; the static runtime additionally checks the embedded
@@ -237,6 +267,9 @@ Hosted rows remain open and are not implied by local validation.
 - [x] Mark-provider tests accept normalized fresh market observations and
   reject non-market datasets, stale/future data, missing symbols, malformed
   values, and venue alias collisions.
+- [x] FinMind market-price normalization survives source-ingest compaction and
+  durable repository serialization, so the mark provider can consume the
+  persisted observation rather than an adapter-only object.
 - [x] Missing or partial marks produce heartbeat diagnostics and zero
   performance events.
 - [x] The drawdown window spans 20 calendar days, uses fractional units, and
@@ -245,10 +278,20 @@ Hosted rows remain open and are not implied by local validation.
   does not treat restored execution
   prices as marks, and continues the same performance series after fresh
   marks arrive.
+- [x] Non-finite execution inputs, invalid broker fills, semantic ledger
+  corruption, and fill-state persistence failure cannot publish or project a
+  fabricated fill-derived metric.
 - [x] Both event types independently validate against the canonical telemetry
   schema and pass through telemetry ingest.
+- [x] A partial paired delivery survives restart with byte-equivalent payload
+  and stable event ID, skips an acknowledged leg, and commits the drawdown
+  window only after both legs succeed.
+- [x] The dedicated VM-2 compose requires an external source-ingest endpoint,
+  mounts a durable performance-state path, enforces the mark-age ceiling, and
+  keeps synthetic valuation disabled by default.
 - [x] Runtime-summary projection preserves independent `pnl_at` and
-  `drawdown_at` values and rejects per-field timestamp regression.
+  `drawdown_at` values, rejects per-field timestamp regression, and prevents a
+  delayed retired binding from reclaiming a newer binding generation.
 - [x] Bracket-order logs do not increment executed-fill counters; Taiwan buy
   and sell fills update signed holdings and cash consistently.
 - [x] Threshold sweep evaluates real numeric/fresh projected PnL and drawdown
@@ -268,10 +311,10 @@ Hosted rows remain open and are not implied by local validation.
 | Direct source-ingest/telemetry inspection | Pending | Internal endpoints were not reachable from the worker during the current evidence attempt. |
 | Dev VM inspection/deployment identity | Blocked for current attempt | Local `gcloud` credentials require interactive re-authentication; no deployment or hosted commit identity is claimed here. |
 | Post-change hosted performance proof | Pending | Requires a merged/deployed candidate plus fresh authoritative source-ingest marks. |
-| Task-branch automated validation | Passed | Execution lean runtime: 197 passed, 3 skipped; runtime manager: 100 passed; telemetry: 239 passed; targeted projection/evolution bundle: 120 passed; telemetry schema JSON and compose rendering passed. |
+| Task-branch automated validation | Passed | Execution lean runtime: 226 passed, 3 skipped, 28 subtests; runtime manager: 100 passed; source ingestion: 583 passed, 1 skipped; telemetry: 244 passed; threshold sweep: 63 passed. Stage-0 smoke acceptance, telemetry-schema JSON validation, compose rendering, changed-module compilation, and diff checks also passed. Stage-0 ran from an isolated virtual environment because the host Python correctly enforces PEP 668. |
 
-Until the last row passes, the hosted acceptance condition remains open even
-if local tests pass.
+Until both hosted proof paths pass, the hosted acceptance condition remains
+open even if local tests pass.
 
 ## Residual ownership
 
@@ -281,6 +324,7 @@ if local tests pass.
 | Deploy candidate and archive exact hosted FE/BFF/service commit evidence | `EVOLOOP-009` / Human/Ops | Deploy the merged task commit, verify the hosted manifest/service identity, then archive positive and fail-closed curl evidence. |
 | Approve `expected_drawdown`, calibrate `rolling_pnl_floor`, and enable governed thresholds | `EVOLOOP-005` | Use observed real telemetry, record `policy_source`, and keep empty/missing baselines fail closed until approval. |
 | Decide treatment of pre-ledger historical bindings such as the 7,325-fill runtime | Human/Ops with Execution/Telemetry owners | Choose an auditable replay/backfill or an explicit series reset; never infer historical cash from the retained trade count alone. |
+| Telemetry may return `202` while its default in-memory ingest buffer has not yet reached durable storage | Telemetry owner / follow-up delivery-contract task | Use a durable buffer or durable receipt before claiming end-to-end crash-safe pair delivery; EVOLOOP-002 claims exact producer retry only through the accepted HTTP boundary. |
 
 EVOLOOP-002 is complete only after implementation, post-change validation,
 review, merge, and hosted evidence establish both the moving-metric path and

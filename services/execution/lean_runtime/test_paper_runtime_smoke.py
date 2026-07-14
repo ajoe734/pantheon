@@ -19,6 +19,7 @@ Acceptance criteria verified by this module:
 
 from __future__ import annotations
 
+import json
 import unittest
 from datetime import datetime, timezone
 
@@ -146,6 +147,29 @@ class _CapturingTelemetry:
                 **(metadata or {}),
             },
         }
+
+    def build_event(
+        self,
+        event_type: str,
+        metrics: dict,
+        metadata: dict | None = None,
+        *,
+        event_id: str | None = None,
+        created_at: str | None = None,
+    ) -> dict:
+        event_metrics = dict(metrics)
+        stamp_key = "pnl_as_of" if event_type == "pnl_snapshot" else "drawdown_as_of"
+        stamp = event_metrics.pop(stamp_key, None)
+        payload = self._build(event_type, event_metrics, metadata)
+        payload["event_id"] = event_id
+        payload["created_at"] = created_at
+        payload[stamp_key] = stamp
+        return payload
+
+    def emit_payload(self, payload: dict) -> bool:
+        self.events.append(json.loads(json.dumps(payload)))
+        self._sent += 1
+        return True
 
     def emit(self, event_type: str, metrics: dict, metadata: dict | None = None) -> bool:
         self.events.append(self._build(event_type, metrics, metadata))
@@ -404,13 +428,15 @@ class PaperRuntimeSmokeTest(unittest.TestCase):
         self.assertEqual(pnl_event["execution_mode"], "paper")
         self.assertIn("pnl", pnl_event["metrics"])
         self.assertNotEqual(pnl_event["metrics"]["pnl"], 0.0)
-        self.assertIn("pnl_as_of", pnl_event["metrics"])
+        self.assertIn("pnl_as_of", pnl_event)
+        self.assertNotIn("pnl_as_of", pnl_event["metrics"])
         self.assertNotIn("drawdown_pct", pnl_event["metrics"])
 
         drawdown_events = telemetry.events_of_type("drawdown_snapshot")
         self.assertEqual(len(drawdown_events), 1)
         self.assertIn("drawdown_pct", drawdown_events[0]["metrics"])
-        self.assertIn("drawdown_as_of", drawdown_events[0]["metrics"])
+        self.assertIn("drawdown_as_of", drawdown_events[0])
+        self.assertNotIn("drawdown_as_of", drawdown_events[0]["metrics"])
         self.assertNotIn("pnl", drawdown_events[0]["metrics"])
 
     def test_paper_smoke_full_pipeline_canonical_evidence_shape(self):

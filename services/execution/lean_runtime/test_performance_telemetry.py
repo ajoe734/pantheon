@@ -398,6 +398,20 @@ class RollingDrawdownTrackerTest(unittest.TestCase):
         self.assertAlmostEqual(metrics["drawdown_pct"], 0.25)
         self.assertEqual(metrics["peak_portfolio_value"], 120.0)
 
+    def test_restore_rejects_latest_timestamp_without_matching_window_sample(self):
+        tracker = RollingDrawdownTracker(window_days=20)
+
+        with self.assertRaisesRegex(ValueError, "has no window sample"):
+            tracker.restore(
+                {
+                    "schema_version": "rolling_drawdown.v1",
+                    "window_days": 20,
+                    "values": [],
+                    "last_fingerprint": None,
+                    "latest_as_of": "2099-01-01T00:00:00Z",
+                }
+            )
+
 
 class PaperPerformanceLedgerTest(unittest.TestCase):
     def test_partial_close_combines_realized_cash_with_remaining_mark_to_market(self):
