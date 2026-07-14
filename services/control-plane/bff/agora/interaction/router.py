@@ -156,12 +156,18 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                 if session is None:
                     session = workshop_store.create_session({"workshop_id": wid, "tenant_id": resolved.tenant_id,
                         "user_id": resolved.user_id, "strategy_id": strategy.id if strategy else None,
-                        "active_strategy_spec_registry_id": strategy.id if strategy else None,
-                        "selected_version_id": strategy.version_id if strategy else None, "status": "open"})
+                        "active_strategy_spec_registry_id": strategy.version_id if strategy else None,
+                        # selected_version_id is the active Workshop-version alias.  An
+                        # interaction context carries a Strategy Registry version, not
+                        # a Workshop version, so resolving context must not populate it.
+                        "selected_version_id": None, "status": "open"})
             strategy = next((r for r in body.context_refs if r.type == "strategy"), None)
-            if strategy and session.get("selected_version_id") not in (None, strategy.version_id):
+            if strategy and (
+                session.get("strategy_id") != strategy.id
+                or session.get("active_strategy_spec_registry_id") != strategy.version_id
+            ):
                 from models import ErrorCode
-                raise bff_error(409, ErrorCode.CONFLICT, "Immutable strategy version mismatch", "strategy_version_mismatch")
+                raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Immutable strategy version mismatch", "strategy_version_mismatch")
             return {"workshop_id": session["workshop_id"], "context_refs": [r.model_dump() for r in body.context_refs],
                     "context_digest": hashlib.sha256(canonical.encode()).hexdigest(), "environment": body.environment,
                     "verified": True, "resolved_at": utc_now()}
@@ -465,9 +471,12 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                 "Propose action requires immutable strategy context",
                 "proposal_strategy_context_required",
             )
-        if strategy and (session.get("active_strategy_spec_registry_id") != strategy.id or session.get("selected_version_id") != strategy.version_id):
+        if strategy and (
+            session.get("strategy_id") != strategy.id
+            or session.get("active_strategy_spec_registry_id") != strategy.version_id
+        ):
             from models import ErrorCode
-            raise bff_error(409, ErrorCode.CONFLICT, "Interaction context does not match immutable workshop strategy", "strategy_context_mismatch")
+            raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Interaction context does not match immutable workshop strategy", "strategy_context_mismatch")
         eligible = {x["persona_id"] for x in eligibility(body, resolved)["included"]}
         if not set(body.participant_persona_ids).issubset(eligible):
             from models import ErrorCode
