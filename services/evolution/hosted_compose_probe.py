@@ -80,7 +80,15 @@ def _container_source_hash(container_id: str) -> str:
 
 
 def _status_path(line: str) -> str:
-    path = line[3:] if len(line) > 3 else ""
+    # _run() strips the command's leading whitespace, so the first porcelain
+    # line may arrive as either `` M path`` or ``M path``. Preserve the path's
+    # leading dot in both forms.
+    if len(line) >= 3 and line[2] == " ":
+        path = line[3:]
+    elif len(line) >= 2 and line[1] == " ":
+        path = line[2:]
+    else:
+        path = line
     if " -> " in path:
         path = path.rsplit(" -> ", 1)[-1]
     return path.strip().strip('"')

@@ -258,7 +258,9 @@ def test_runtime_scope_allows_only_known_live_task_brief_drift(monkeypatch):
         if args[:2] == ["git", "status"] and "--" in args:
             return ""
         if args[:2] == ["git", "status"]:
-            return " M .orchestrator/task-briefs/other_task.md\n"
+            # Simulate _run().strip() removing the first porcelain line's
+            # leading space without removing the path's leading dot.
+            return "M .orchestrator/task-briefs/other_task.md"
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(compose_probe, "_run", fake_run)
