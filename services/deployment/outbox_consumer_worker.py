@@ -16,11 +16,27 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+
+# Ensure services/deployment is in python path
+_DEPLOYMENT_DIR = str(Path(__file__).resolve().parent)
+if _DEPLOYMENT_DIR not in sys.path:
+    sys.path.insert(0, _DEPLOYMENT_DIR)
+
+from runtime_manager_dispatch_adapter import (
+    dispatch_to_runtime_manager,
+    DispatchOutcome,
+    DispatchResult,
+)
+from runtime_manager_client import RuntimeManagerClient
+
+
 
 
 _CONSUMER_NAME = "deployment-outbox-consumer"
@@ -157,6 +173,101 @@ def _record_failure_best_effort(
         return None, str(exc)
 
 
+def fetch_saga(*, api_url: str, saga_id: str, timeout_seconds: float = 10.0) -> dict[str, Any]:
+    url = api_url.rstrip("/") + f"/api/deployment/sagas/{saga_id}"
+    request = urllib.request.Request(
+        url, headers={"Accept": "application/json"}, method="GET"
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body) if body else {}
+
+
+def fetch_plan(*, api_url: str, plan_id: str, timeout_seconds: float = 10.0) -> dict[str, Any]:
+    url = api_url.rstrip("/") + f"/api/deployment/plans/{plan_id}"
+    request = urllib.request.Request(
+        url, headers={"Accept": "application/json"}, method="GET"
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body) if body else {}
+
+
+def run_compatibility_check(
+    *,
+    api_url: str,
+    capital_pool_id: str,
+    sponsor_persona_id: str,
+    target_stage: str,
+    timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    url = api_url.rstrip("/") + "/api/deployment/plans/compatibility-check"
+    payload = json.dumps({
+        "capital_pool_id": capital_pool_id,
+        "sponsor_persona_id": sponsor_persona_id,
+        "target_stage": target_stage,
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body) if body else {}
+
+
+def record_binding_created(
+    *,
+    api_url: str,
+    saga_id: str,
+    binding_id: str,
+    runtime_id: str | None,
+    note: str | None,
+    timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    url = api_url.rstrip("/") + f"/api/deployment/sagas/{saga_id}/binding-created"
+    payload = json.dumps({
+        "binding_id": binding_id,
+        "runtime_id": runtime_id,
+        "note": note,
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body) if body else {}
+
+
+def record_saga_failure(
+    *,
+    api_url: str,
+    saga_id: str,
+    reason: str,
+    failed_step: str | None,
+    timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    url = api_url.rstrip("/") + f"/api/deployment/sagas/{saga_id}/failure"
+    payload = json.dumps({
+        "reason": reason,
+        "failed_step": failed_step,
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body) if body else {}
+
+
 def run_poll(
     *,
     api_url: str,
@@ -189,21 +300,182 @@ def run_poll(
             errors.append(f"missing event_id in record: {record}")
             continue
         try:
-            receipt = consume_event(
-                api_url=api_url,
-                event_id=event_id,
-                consumer_name=consumer_name,
-                timeout_seconds=timeout_seconds,
-            )
-            receipt_status = receipt.get("status")
-            if receipt_status == "duplicate":
-                duplicates += 1
-            elif receipt_status == "applied":
-                consumed += 1
-            else:
-                errors.append(
-                    f"event_id={event_id} unexpected_receipt_status={receipt_status!r}"
+            event_type = event.get("event_type", "")
+            if event_type == "runtime.binding.requested":
+                # --- CANONICAL DISPATCH TO RUNTIME-MANAGER ---
+                saga_id = event.get("aggregate_id")
+                if not saga_id:
+                    raise ValueError("missing aggregate_id (saga_id) in event")
+
+                # 1. Fetch saga
+                saga = fetch_saga(api_url=api_url, saga_id=saga_id, timeout_seconds=timeout_seconds)
+                plan_id = saga.get("plan_id")
+                if not plan_id:
+                    raise ValueError(f"Saga '{saga_id}' is missing plan_id")
+
+                # 2. Fetch plan
+                plan = fetch_plan(api_url=api_url, plan_id=plan_id, timeout_seconds=timeout_seconds)
+                sponsor_persona_id = plan.get("sponsor_persona_id")
+                capital_pool_id = plan.get("capital_pool_id")
+                target_stage = plan.get("target_stage")
+
+                # 3. Call compatibility-check
+                compat = run_compatibility_check(
+                    api_url=api_url,
+                    capital_pool_id=capital_pool_id,
+                    sponsor_persona_id=sponsor_persona_id,
+                    target_stage=target_stage,
+                    timeout_seconds=timeout_seconds,
                 )
+
+                if not compat.get("ok"):
+                    compat_errors = compat.get("errors", [])
+                    reason = f"Compatibility check failed: {'; '.join(compat_errors)}"
+                    # Record terminal saga failure
+                    record_saga_failure(
+                        api_url=api_url,
+                        saga_id=saga_id,
+                        reason=reason,
+                        failed_step="binding_requested",
+                        timeout_seconds=timeout_seconds,
+                    )
+                    # Dead-letter outbox event
+                    _record_failure_best_effort(
+                        api_url=api_url,
+                        event_id=event_id,
+                        consumer_name=consumer_name,
+                        reason=reason,
+                        retryable=False,
+                        max_attempts=max_attempts,
+                        retry_delay_seconds=retry_delay_seconds,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    dead_lettered += 1
+                    errors.append(reason)
+                    continue
+
+                # 4. Construct deploy_context
+                deploy_context = {
+                    "persona_capital_binding_id": compat.get("persona_binding_id"),
+                    "persona_capital_binding_status": "active" if compat.get("persona_scope_ok") else "inactive",
+                    "allowed_deployment_scope": compat.get("allowed_deployment_scope"),
+                    "loader_checks_passed": True,
+                    "plan_status": plan.get("status") or "approved",
+                }
+
+                # Check for downstream-success-before-receipt idempotency:
+                # If the saga doesn't have a binding_id recorded, but the binding already exists downstream
+                # in the runtime-manager with our plan_id, reuse it.
+                existing_binding_id = saga.get("binding_id")
+
+                # Construct client
+                client = RuntimeManagerClient()
+
+                if not existing_binding_id:
+                    try:
+                        existing_bindings = client.list_by_pool(capital_pool_id)
+                        for b in existing_bindings:
+                            if b.get("plan_id") == plan_id:
+                                existing_binding_id = b.get("binding_id")
+                                break
+                    except Exception as exc:
+                        # Non-blocking query error, logging only
+                        print(f"[{consumer_name}] Querying existing bindings failed: {exc}", flush=True)
+
+                if existing_binding_id:
+                    # Saga or downstream has binding_id already
+                    saga["binding_id"] = existing_binding_id
+
+                # 5. Dispatch
+                dispatch_result = dispatch_to_runtime_manager(
+                    saga=saga,
+                    deploy_context=deploy_context,
+                    client=client,
+                )
+
+                if dispatch_result.succeeded():
+                    # Record binding created
+                    record_binding_created(
+                        api_url=api_url,
+                        saga_id=saga_id,
+                        binding_id=dispatch_result.binding_id,
+                        runtime_id=dispatch_result.binding.get("runtime_id") if dispatch_result.binding else None,
+                        note="binding created/verified via deployment outbox consumer dispatch",
+                        timeout_seconds=timeout_seconds,
+                    )
+                    # Consume event
+                    receipt = consume_event(
+                        api_url=api_url,
+                        event_id=event_id,
+                        consumer_name=consumer_name,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    receipt_status = receipt.get("status")
+                    if receipt_status == "duplicate":
+                        duplicates += 1
+                    elif receipt_status == "applied":
+                        consumed += 1
+                    else:
+                        errors.append(f"event_id={event_id} unexpected_receipt_status={receipt_status!r}")
+                elif dispatch_result.is_retryable():
+                    reason = f"transient dispatch failure: {dispatch_result.error_message}"
+                    errors.append(reason)
+                    failure_record, failure_error = _record_failure_best_effort(
+                        api_url=api_url,
+                        event_id=event_id,
+                        consumer_name=consumer_name,
+                        reason=reason,
+                        retryable=True,
+                        max_attempts=max_attempts,
+                        retry_delay_seconds=retry_delay_seconds,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    if failure_error:
+                        errors.append(f"event_id={event_id} failure_record_error={failure_error}")
+                    elif failure_record and failure_record.get("status") == "dead_lettered":
+                        dead_lettered += 1
+                    else:
+                        retry_scheduled += 1
+                else: # Terminal error
+                    reason = f"terminal dispatch failure: {dispatch_result.error_message}"
+                    errors.append(reason)
+                    # Record terminal saga failure
+                    record_saga_failure(
+                        api_url=api_url,
+                        saga_id=saga_id,
+                        reason=reason,
+                        failed_step="binding_requested",
+                        timeout_seconds=timeout_seconds,
+                    )
+                    # Dead-letter outbox event
+                    _record_failure_best_effort(
+                        api_url=api_url,
+                        event_id=event_id,
+                        consumer_name=consumer_name,
+                        reason=reason,
+                        retryable=False,
+                        max_attempts=max_attempts,
+                        retry_delay_seconds=retry_delay_seconds,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    dead_lettered += 1
+            else:
+                # --- RECEIPT-ONLY CONSUMER FOR ALL OTHER EVENTS ---
+                receipt = consume_event(
+                    api_url=api_url,
+                    event_id=event_id,
+                    consumer_name=consumer_name,
+                    timeout_seconds=timeout_seconds,
+                )
+                receipt_status = receipt.get("status")
+                if receipt_status == "duplicate":
+                    duplicates += 1
+                elif receipt_status == "applied":
+                    consumed += 1
+                else:
+                    errors.append(
+                        f"event_id={event_id} unexpected_receipt_status={receipt_status!r}"
+                    )
         except urllib.error.HTTPError as exc:
             reason = f"event_id={event_id} http_error={exc.code} {exc.reason}"
             errors.append(reason)

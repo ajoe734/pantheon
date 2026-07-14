@@ -23,6 +23,7 @@ class DeploymentStageBody(str, Enum):
 class TransitionTypeBody(str, Enum):
     ACTIVATE = "activate"
     PROMOTE = "promote"
+    REPLACE = "replace"
     ROLLBACK = "rollback"
     FREEZE = "freeze"
     RESUME = "resume"

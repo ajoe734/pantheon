@@ -72,7 +72,7 @@ Minimum fields:
 | `capital_pool_id` | yes | pool receiving the deployment |
 | `current_stage` | yes | current derived deployment stage |
 | `target_stage` | yes | requested deployment stage |
-| `transition_type` | yes | `activate`, `promote`, `rollback`, `freeze`, or `resume` |
+| `transition_type` | yes | `activate`, `promote`, `replace`, `rollback`, `freeze`, or `resume` |
 | `runtime_action` | yes | runtime-manager action to execute |
 | `rollback` | required for active targets | explicit fallback linkage |
 | `scale` | yes in practice | capital / gross scaling envelope |
@@ -90,8 +90,11 @@ Allowed transitions:
 | Current | Target | Transition Type | Default Runtime Action |
 |---|---|---|---|
 | `none` | `paper` | `activate` | `deploy_new_binding` |
+| `paper` | `paper` | `replace` | `replace_binding` |
 | `paper` | `canary` | `promote` | `replace_binding` |
+| `canary` | `canary` | `replace` | `replace_binding` |
 | `canary` | `live` | `promote` | `replace_binding` |
+| `live` | `live` | `replace` | `replace_binding` |
 | `paper` | `frozen` | `freeze` | `freeze_binding` |
 | `canary` | `frozen` | `freeze` | `freeze_binding` |
 | `live` | `frozen` | `freeze` | `freeze_binding` |
@@ -107,7 +110,8 @@ Forbidden examples:
 - `none -> canary`
 - `none -> live`
 - `paper -> live`
-- any no-op transition where `current_stage == target_stage`
+- any same-stage transition without the current `binding_id`; same-stage
+  artifact cutover is an explicit `replace`, never a no-op
 
 ---
 
@@ -128,7 +132,8 @@ Rollback is not implied. It must be explicit in the plan.
 Rules:
 
 - every plan targeting `paper`, `canary`, or `live` must carry rollback linkage
-- rollback targets cannot point at the same artifact/version as the forward plan
+- rollback targets cannot point at the same artifact/version pair as the
+  forward plan; a different artifact id may legitimately share its semver
 - rollback transitions must use one of the three rollback-aware runtime actions from `ROLLBACK_AND_POSITION_SEMANTICS.md`
 - `rollback.action_type` is the position-treatment semantic (`replace`, `pause_then_replace`, `liquidate_then_replace`), while `runtime_action` remains the runtime-manager execution verb (`replace_binding`, `pause_then_replace`, `liquidate_then_replace`)
 
