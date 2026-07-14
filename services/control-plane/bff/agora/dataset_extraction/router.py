@@ -193,6 +193,113 @@ def create_dataset_extraction_router(
             "meta": _meta(audience=f"tenant:{tenant_id}:user:{user_id}"),
         }
 
+    # ------------------------------------------------------------------
+    # POST /bff/agora/dataset-worker/process
+    # ------------------------------------------------------------------
+    @router.post("/bff/agora/dataset-worker/process")
+    def process_dataset_inbox(
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """Manually trigger the default worker to process the pending inbox entries."""
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        
+        result = store.process_inbox()
+        return {
+            "status": "success",
+            "data": result,
+            "meta": _meta(audience=f"tenant:{identity.get('tenant_id', 'unknown')}:user:{identity.get('user_id', 'unknown')}"),
+        }
+
+    # ------------------------------------------------------------------
+    # GET /bff/agora/dataset-worker/backlog
+    # ------------------------------------------------------------------
+    @router.get("/bff/agora/dataset-worker/backlog")
+    def get_dataset_backlog(
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """Return the list of pending items in the durable inbox."""
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        
+        tenant_id = str(identity.get("tenant_id", "unknown"))
+        user_id = str(identity.get("user_id", "unknown"))
+        items = store.get_backlog(tenant_id=tenant_id, user_id=user_id)
+        return {
+            "status": "success",
+            "items": items,
+            "total": len(items),
+            "meta": _meta(audience=f"tenant:{tenant_id}:user:{user_id}"),
+        }
+
+    # ------------------------------------------------------------------
+    # GET /bff/agora/dataset-worker/dlq
+    # ------------------------------------------------------------------
+    @router.get("/bff/agora/dataset-worker/dlq")
+    def get_dataset_dlq(
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """Return the list of failed items in the durable inbox (DLQ)."""
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        
+        tenant_id = str(identity.get("tenant_id", "unknown"))
+        user_id = str(identity.get("user_id", "unknown"))
+        items = store.get_dlq(tenant_id=tenant_id, user_id=user_id)
+        return {
+            "status": "success",
+            "items": items,
+            "total": len(items),
+            "meta": _meta(audience=f"tenant:{tenant_id}:user:{user_id}"),
+        }
+
+    # ------------------------------------------------------------------
+    # POST /bff/agora/dataset-worker/dlq/{evidence_id}/replay
+    # ------------------------------------------------------------------
+    @router.post("/bff/agora/dataset-worker/dlq/{evidence_id}/replay")
+    def replay_dataset_dlq_item(
+        evidence_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """Reset a failed inbox item back to pending."""
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        
+        success = store.replay_dlq_item(evidence_id)
+        if not success:
+            ErrorCode = _error_code()
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Failed or matching interaction evidence not found in DLQ",
+                evidence_id,
+            )
+        return {
+            "status": "success",
+            "meta": _meta(audience=f"tenant:{identity.get('tenant_id', 'unknown')}:user:{identity.get('user_id', 'unknown')}"),
+        }
+
+    # ------------------------------------------------------------------
+    # GET /bff/agora/dataset-worker/handoffs
+    # ------------------------------------------------------------------
+    @router.get("/bff/agora/dataset-worker/handoffs")
+    def get_dataset_handoffs(
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """Return the list of generated evidence handoffs."""
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        
+        tenant_id = str(identity.get("tenant_id", "unknown"))
+        user_id = str(identity.get("user_id", "unknown"))
+        items = store.list_handoffs(tenant_id=tenant_id, user_id=user_id)
+        return {
+            "status": "success",
+            "items": items,
+            "total": len(items),
+            "meta": _meta(audience=f"tenant:{tenant_id}:user:{user_id}"),
+        }
+
     return router
 
 
