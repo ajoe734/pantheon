@@ -17,6 +17,21 @@ Dispatcher:
 Dispatcher tests:
 `scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py`
 
+Planning authority delivery:
+
+- PR `#3576` merged to `dev` as
+  `a27e60c04f7f250e37876ee40338cb193f6de910`.
+- Claude independently reviewed exact head
+  `95f5a34f8efb2768af1b7b5b8ea894ad23b65c52`, re-ran catalog validation,
+  zero-write dry-run, loop coverage, and the full dispatcher suite, and issued
+  an `APPROVE` verdict.
+- Verified catalog digest:
+  `5e18e95f619c171c2717208784558552356d24584bcfdaba128e6e1018518e9c`;
+  verified dispatcher result: `172 passed`.
+- This approval closes planning authority only. Product delivery remains
+  blocked on the external runtime bootstrap and every downstream fleet task's
+  own evidence, review, deployment, and product-level acceptance gates.
+
 ## Product contract
 
 This packet contains 48 primary execution tasks plus one external pre-dispatch
