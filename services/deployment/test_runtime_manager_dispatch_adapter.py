@@ -71,6 +71,7 @@ def _make_deploy_context(**overrides: Any) -> Dict[str, Any]:
 def _make_binding(binding_id: str = "rb-abc123") -> Dict[str, Any]:
     return {
         "binding_id": binding_id,
+        "plan_id": "plan-001",
         "runtime_id": "rt-001",
         "capital_pool_id": "pool-paper-001",
         "artifact_id": "artifact-001",
@@ -84,7 +85,7 @@ def _make_client(
     *,
     deploy_return: Optional[Dict[str, Any]] = None,
     deploy_raise: Optional[Exception] = None,
-    get_return: Optional[Dict[str, Any]] = None,
+    get_return: Any = ...,
     get_raise: Optional[Exception] = None,
 ) -> MagicMock:
     client = MagicMock()
@@ -95,7 +96,9 @@ def _make_client(
     if get_raise is not None:
         client.get.side_effect = get_raise
     else:
-        client.get.return_value = get_return
+        client.get.return_value = (
+            client.deploy.return_value if get_return is ... else get_return
+        )
     return client
 
 
@@ -143,14 +146,57 @@ class TestNewDispatch:
         assert call_args["runtime_id"] == "rt-custom-001"
         assert call_args["idempotency_key"] == "idem-key"
 
-    def test_get_is_not_called_for_new_dispatch(self):
+    def test_new_dispatch_requires_authoritative_get_readback(self):
         client = _make_client(deploy_return=_make_binding())
         dispatch_to_runtime_manager(
             saga=_make_saga(),
             deploy_context=_make_deploy_context(),
             client=client,
         )
-        client.get.assert_not_called()
+        client.get.assert_called_once_with("rb-abc123")
+
+    def test_post_receipt_is_replaced_by_authoritative_readback(self):
+        receipt = _make_binding("rb-newbinding")
+        receipt["status"] = "submitted"
+        readback = _make_binding("rb-newbinding")
+        client = _make_client(deploy_return=receipt, get_return=readback)
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(),
+            deploy_context=_make_deploy_context(),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.SUCCESS
+        assert result.binding == readback
+        assert result.binding["status"] == "active"
+
+    def test_missing_authoritative_readback_is_retryable(self):
+        client = _make_client(deploy_return=_make_binding(), get_return=None)
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(),
+            deploy_context=_make_deploy_context(),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.RETRYABLE_ERROR
+        assert result.error_code == "BINDING_READBACK_PENDING"
+
+    def test_mismatched_authoritative_readback_is_terminal(self):
+        readback = _make_binding()
+        readback["artifact_version"] = "tampered"
+        client = _make_client(deploy_return=_make_binding(), get_return=readback)
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(),
+            deploy_context=_make_deploy_context(),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.TERMINAL_ERROR
+        assert result.error_code == "BINDING_READBACK_MISMATCH"
+        assert "artifact_version" in (result.error_message or "")
 
 
 # ---------------------------------------------------------------------------

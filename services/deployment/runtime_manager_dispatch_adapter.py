@@ -62,6 +62,8 @@ _TERMINAL_KEYWORDS = (
     "retire the existing binding",
 )
 
+_ACTIVE_BINDING_STATUS = "active"
+
 
 class DispatchOutcome:
     SUCCESS = "success"
@@ -158,6 +160,36 @@ def _build_deploy_request(
     }
 
 
+def validate_authoritative_readback(
+    *,
+    saga: Dict[str, Any],
+    binding: Dict[str, Any],
+    expected_binding_id: str,
+) -> Optional[str]:
+    """Return a fail-closed mismatch description for a RuntimeBinding readback.
+
+    A successful POST response is only a dispatch receipt.  The deployment saga
+    may advance after a separate GET proves that runtime-manager persisted the
+    expected active binding and that its immutable deployment identity matches
+    the approved saga.
+    """
+    expected = {
+        "binding_id": expected_binding_id,
+        "plan_id": saga.get("plan_id"),
+        "capital_pool_id": saga.get("capital_pool_id"),
+        "artifact_id": saga.get("artifact_id"),
+        "artifact_version": saga.get("artifact_version"),
+        "deployment_mode": saga.get("target_stage"),
+        "status": _ACTIVE_BINDING_STATUS,
+    }
+    mismatches = [
+        f"{field} expected {expected_value!r}, got {binding.get(field)!r}"
+        for field, expected_value in expected.items()
+        if binding.get(field) != expected_value
+    ]
+    return "; ".join(mismatches) or None
+
+
 def dispatch_to_runtime_manager(
     *,
     saga: Dict[str, Any],
@@ -226,6 +258,20 @@ def dispatch_to_runtime_manager(
                 error_code="BINDING_NOT_FOUND_AFTER_SAGA_RECORDED",
             )
 
+        mismatch = validate_authoritative_readback(
+            saga=saga,
+            binding=binding,
+            expected_binding_id=existing_binding_id,
+        )
+        if mismatch:
+            return DispatchResult(
+                outcome=DispatchOutcome.TERMINAL_ERROR,
+                binding_id=existing_binding_id,
+                binding=binding,
+                error_message=f"RuntimeBinding authoritative readback mismatch: {mismatch}",
+                error_code="BINDING_READBACK_MISMATCH",
+            )
+
         return DispatchResult(
             outcome=DispatchOutcome.SUCCESS,
             binding_id=existing_binding_id,
@@ -254,8 +300,60 @@ def dispatch_to_runtime_manager(
         )
 
     binding_id = binding.get("binding_id") if isinstance(binding, dict) else None
+    if not binding_id:
+        return DispatchResult(
+            outcome=DispatchOutcome.TERMINAL_ERROR,
+            error_message="runtime-manager deploy response did not include binding_id",
+            error_code="DEPLOY_RESPONSE_MISSING_BINDING_ID",
+        )
+
+    # A POST body is a receipt, not authoritative post-state.  Read the
+    # RuntimeBinding back from its sole write owner before reporting success.
+    try:
+        authoritative = client.get(binding_id)
+    except RuntimeManagerClientError as exc:
+        return DispatchResult(
+            outcome=_classify_client_error(exc),
+            binding_id=binding_id,
+            error_message=str(exc),
+            error_code=exc.error_code
+            or (f"HTTP_{exc.status_code}" if exc.status_code else "READBACK_CLIENT_ERROR"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return DispatchResult(
+            outcome=_classify_runtime_manager_error(exc),
+            binding_id=binding_id,
+            error_message=str(exc),
+            error_code="BINDING_READBACK_ERROR",
+        )
+
+    if authoritative is None:
+        return DispatchResult(
+            outcome=DispatchOutcome.RETRYABLE_ERROR,
+            binding_id=binding_id,
+            error_message=(
+                f"runtime-manager accepted binding_id={binding_id!r} but authoritative "
+                "GET readback did not find it"
+            ),
+            error_code="BINDING_READBACK_PENDING",
+        )
+
+    mismatch = validate_authoritative_readback(
+        saga=saga,
+        binding=authoritative,
+        expected_binding_id=binding_id,
+    )
+    if mismatch:
+        return DispatchResult(
+            outcome=DispatchOutcome.TERMINAL_ERROR,
+            binding_id=binding_id,
+            binding=authoritative,
+            error_message=f"RuntimeBinding authoritative readback mismatch: {mismatch}",
+            error_code="BINDING_READBACK_MISMATCH",
+        )
+
     return DispatchResult(
         outcome=DispatchOutcome.SUCCESS,
         binding_id=binding_id,
-        binding=binding if isinstance(binding, dict) else None,
+        binding=authoritative,
     )

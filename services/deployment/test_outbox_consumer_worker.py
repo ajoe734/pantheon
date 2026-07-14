@@ -391,7 +391,11 @@ class TestRunPoll:
         record["event"]["event_type"] = "runtime.binding.requested"
         record["event"]["aggregate_id"] = "saga-001"
 
-        mock_saga = {"plan_id": "plan-001", "saga_id": "saga-001"}
+        mock_saga = {
+            "plan_id": "plan-001",
+            "saga_id": "saga-001",
+            "status": "awaiting_binding",
+        }
         mock_plan = {
             "plan_id": "plan-001",
             "sponsor_persona_id": "persona-001",
@@ -421,7 +425,7 @@ class TestRunPoll:
             patch("services.deployment.outbox_consumer_worker.RuntimeManagerClient") as mock_client_cls,
         ):
             mock_client = mock_client_cls.return_value
-            mock_client.list_by_pool.return_value = []
+            mock_client.list_by_plan.return_value = []
 
             result = worker.run_poll(api_url="http://localhost:8095", consumer_name="test-consumer")
 
@@ -527,7 +531,7 @@ class TestRunPoll:
             patch("services.deployment.outbox_consumer_worker.RuntimeManagerClient") as mock_client_cls,
         ):
             mock_client = mock_client_cls.return_value
-            mock_client.list_by_pool.return_value = []
+            mock_client.list_by_plan.return_value = []
 
             result = worker.run_poll(api_url="http://localhost:8095", consumer_name="test-consumer")
 
@@ -578,7 +582,7 @@ class TestRunPoll:
             patch("services.deployment.outbox_consumer_worker.RuntimeManagerClient") as mock_client_cls,
         ):
             mock_client = mock_client_cls.return_value
-            mock_client.list_by_pool.return_value = []
+            mock_client.list_by_plan.return_value = []
 
             result = worker.run_poll(api_url="http://localhost:8095", consumer_name="test-consumer")
 
@@ -607,7 +611,11 @@ class TestRunPoll:
         record["event"]["event_type"] = "runtime.binding.requested"
         record["event"]["aggregate_id"] = "saga-001"
 
-        mock_saga = {"plan_id": "plan-001", "saga_id": "saga-001"}
+        mock_saga = {
+            "plan_id": "plan-001",
+            "saga_id": "saga-001",
+            "status": "awaiting_binding",
+        }
         mock_plan = {
             "plan_id": "plan-001",
             "sponsor_persona_id": "persona-001",
@@ -641,7 +649,7 @@ class TestRunPoll:
             patch("services.deployment.outbox_consumer_worker.RuntimeManagerClient") as mock_client_cls,
         ):
             mock_client = mock_client_cls.return_value
-            mock_client.list_by_pool.return_value = [mock_existing_binding]
+            mock_client.list_by_plan.return_value = [mock_existing_binding]
 
             result = worker.run_poll(api_url="http://localhost:8095", consumer_name="test-consumer")
 
@@ -658,6 +666,287 @@ class TestRunPoll:
                 note="binding created/verified via deployment outbox consumer dispatch",
                 timeout_seconds=10.0,
             )
+
+    def test_binding_requested_replay_after_saga_advance_does_not_repeat_state_write(self, worker):
+        record = _outbox_record("evt-replay")
+        record["event"].update(
+            {"event_type": "runtime.binding.requested", "aggregate_id": "saga-001"}
+        )
+        saga = {
+            "saga_id": "saga-001",
+            "plan_id": "plan-001",
+            "binding_id": "rb-existing",
+            "status": "awaiting_runtime_load",
+        }
+        plan = {
+            "plan_id": "plan-001",
+            "sponsor_persona_id": "persona-001",
+            "capital_pool_id": "pool-001",
+            "target_stage": "paper",
+            "status": "executing",
+        }
+        compat = {
+            "ok": True,
+            "persona_binding_id": "pcb-001",
+            "persona_scope_ok": True,
+            "allowed_deployment_scope": "paper",
+        }
+        dispatch_result = MagicMock()
+        dispatch_result.succeeded.return_value = True
+        dispatch_result.binding_id = "rb-existing"
+        dispatch_result.binding = {"runtime_id": "rt-001"}
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch.object(worker, "fetch_saga", return_value=saga),
+            patch.object(worker, "fetch_plan", return_value=plan),
+            patch.object(worker, "run_compatibility_check", return_value=compat),
+            patch.object(worker, "dispatch_to_runtime_manager", return_value=dispatch_result),
+            patch.object(worker, "record_binding_created") as mock_record_binding,
+            patch.object(worker, "consume_event", return_value=_inbox_receipt("evt-replay")),
+            patch.object(worker, "RuntimeManagerClient"),
+        ):
+            result = worker.run_poll(
+                api_url="http://localhost:8095", consumer_name="test-consumer"
+            )
+
+        assert result["consumed"] == 1
+        mock_record_binding.assert_not_called()
+
+    def test_binding_recovery_read_failure_never_blindly_redeploys(self, worker):
+        record = _outbox_record("evt-recovery-fail")
+        record["event"].update(
+            {"event_type": "runtime.binding.requested", "aggregate_id": "saga-001"}
+        )
+        saga = {
+            "saga_id": "saga-001",
+            "plan_id": "plan-001",
+            "status": "awaiting_binding",
+        }
+        plan = {
+            "plan_id": "plan-001",
+            "sponsor_persona_id": "persona-001",
+            "capital_pool_id": "pool-001",
+            "target_stage": "paper",
+            "status": "approved",
+        }
+        compat = {
+            "ok": True,
+            "persona_binding_id": "pcb-001",
+            "persona_scope_ok": True,
+            "allowed_deployment_scope": "paper",
+        }
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch.object(worker, "fetch_saga", return_value=saga),
+            patch.object(worker, "fetch_plan", return_value=plan),
+            patch.object(worker, "run_compatibility_check", return_value=compat),
+            patch.object(worker, "dispatch_to_runtime_manager") as mock_dispatch,
+            patch.object(
+                worker,
+                "_record_failure_best_effort",
+                return_value=({"status": "pending"}, None),
+            ),
+            patch.object(worker, "RuntimeManagerClient") as client_cls,
+        ):
+            client_cls.return_value.list_by_plan.side_effect = RuntimeError("read timeout")
+            result = worker.run_poll(
+                api_url="http://localhost:8095", consumer_name="test-consumer"
+            )
+
+        assert result["retry_scheduled"] == 1
+        assert "BINDING_RECOVERY_READ_FAILED" not in " ".join(result["errors"])
+        assert "authoritative pre-dispatch" in " ".join(result["errors"])
+        mock_dispatch.assert_not_called()
+
+    def test_runtime_load_requires_active_authoritative_readback(self, worker):
+        record = _outbox_record("evt-load", sequence_no=2)
+        record["event"].update(
+            {
+                "event_type": "runtime.load.requested",
+                "aggregate_id": "saga-001",
+                "payload": {"binding_id": "rb-001", "runtime_id": "rt-001"},
+            }
+        )
+        saga = {
+            "saga_id": "saga-001",
+            "plan_id": "plan-001",
+            "artifact_id": "artifact-001",
+            "artifact_version": "v1.0.0",
+            "capital_pool_id": "pool-001",
+            "target_stage": "paper",
+            "binding_id": "rb-001",
+            "status": "awaiting_runtime_load",
+        }
+        binding = {
+            "binding_id": "rb-001",
+            "plan_id": "plan-001",
+            "runtime_id": "rt-001",
+            "artifact_id": "artifact-001",
+            "artifact_version": "v1.0.0",
+            "capital_pool_id": "pool-001",
+            "deployment_mode": "paper",
+            "status": "active",
+        }
+        fleet = {
+            "cycle_count": 2,
+            "last_reconcile_at": "2026-07-14T08:00:00Z",
+            "last_error": None,
+            "workers": [
+                {
+                    "binding_id": "rb-001",
+                    "runtime_id": "rt-001",
+                    "capital_pool_id": "pool-001",
+                    "status": "running",
+                    "pid": 4242,
+                }
+            ],
+        }
+
+        with (
+            patch.dict(
+                worker.os.environ,
+                {"PANTHEON_PAPER_FLEET_RECONCILER_URL": "http://fleet:8011"},
+            ),
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch.object(worker, "fetch_saga", return_value=saga),
+            patch.object(worker, "fetch_paper_fleet_state", return_value=fleet),
+            patch.object(worker, "record_runtime_active") as mock_active,
+            patch.object(worker, "consume_event", return_value=_inbox_receipt("evt-load")),
+            patch.object(worker, "RuntimeManagerClient") as client_cls,
+        ):
+            client_cls.return_value.get.return_value = binding
+            result = worker.run_poll(
+                api_url="http://localhost:8095", consumer_name="test-consumer"
+            )
+
+        assert result["consumed"] == 1
+        mock_active.assert_called_once_with(
+            api_url="http://localhost:8095",
+            saga_id="saga-001",
+            binding_id="rb-001",
+            runtime_id="rt-001",
+            note="runtime active confirmed by authoritative RuntimeBinding readback",
+            timeout_seconds=10.0,
+        )
+
+    def test_runtime_load_waits_for_matching_running_paper_worker(self, worker):
+        record = _outbox_record("evt-load-wait", sequence_no=2)
+        record["event"].update(
+            {
+                "event_type": "runtime.load.requested",
+                "aggregate_id": "saga-001",
+                "payload": {"binding_id": "rb-001"},
+            }
+        )
+        saga = {
+            "saga_id": "saga-001",
+            "plan_id": "plan-001",
+            "artifact_id": "artifact-001",
+            "artifact_version": "v1.0.0",
+            "capital_pool_id": "pool-001",
+            "target_stage": "paper",
+            "binding_id": "rb-001",
+            "status": "awaiting_runtime_load",
+        }
+        binding = {
+            "binding_id": "rb-001",
+            "plan_id": "plan-001",
+            "runtime_id": "rt-001",
+            "artifact_id": "artifact-001",
+            "artifact_version": "v1.0.0",
+            "capital_pool_id": "pool-001",
+            "deployment_mode": "paper",
+            "status": "active",
+        }
+        fleet = {
+            "cycle_count": 3,
+            "last_reconcile_at": "2026-07-14T08:00:00Z",
+            "last_error": None,
+            "workers": [],
+        }
+
+        with (
+            patch.dict(
+                worker.os.environ,
+                {"PANTHEON_PAPER_FLEET_RECONCILER_URL": "http://fleet:8011"},
+            ),
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch.object(worker, "fetch_saga", return_value=saga),
+            patch.object(worker, "fetch_paper_fleet_state", return_value=fleet),
+            patch.object(
+                worker,
+                "_record_failure_best_effort",
+                return_value=({"status": "pending"}, None),
+            ),
+            patch.object(worker, "record_runtime_active") as mock_active,
+            patch.object(worker, "RuntimeManagerClient") as client_cls,
+        ):
+            client_cls.return_value.get.return_value = binding
+            result = worker.run_poll(
+                api_url="http://localhost:8095",
+                consumer_name="test-consumer",
+                record_failures=True,
+            )
+
+        assert result["retry_scheduled"] == 1
+        assert "paper fleet post-state is not running yet" in " ".join(result["errors"])
+        mock_active.assert_not_called()
+
+    def test_runtime_load_paused_by_kill_switch_fails_closed(self, worker):
+        record = _outbox_record("evt-load-killed", sequence_no=2)
+        record["event"].update(
+            {
+                "event_type": "runtime.load.requested",
+                "aggregate_id": "saga-001",
+                "payload": {"binding_id": "rb-001"},
+            }
+        )
+        saga = {
+            "saga_id": "saga-001",
+            "plan_id": "plan-001",
+            "artifact_id": "artifact-001",
+            "artifact_version": "v1.0.0",
+            "capital_pool_id": "pool-001",
+            "target_stage": "paper",
+            "binding_id": "rb-001",
+            "status": "awaiting_runtime_load",
+        }
+        binding = {
+            "binding_id": "rb-001",
+            "plan_id": "plan-001",
+            "runtime_id": "rt-001",
+            "artifact_id": "artifact-001",
+            "artifact_version": "v1.0.0",
+            "capital_pool_id": "pool-001",
+            "deployment_mode": "paper",
+            "status": "paused",
+        }
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch.object(worker, "fetch_saga", return_value=saga),
+            patch.object(worker, "record_saga_failure") as mock_saga_failure,
+            patch.object(
+                worker,
+                "_record_failure_best_effort",
+                return_value=({"status": "dead_lettered"}, None),
+            ),
+            patch.object(worker, "record_runtime_active") as mock_active,
+            patch.object(worker, "consume_event") as mock_consume,
+            patch.object(worker, "RuntimeManagerClient") as client_cls,
+        ):
+            client_cls.return_value.get.return_value = binding
+            result = worker.run_poll(
+                api_url="http://localhost:8095", consumer_name="test-consumer"
+            )
+
+        assert result["dead_lettered"] == 1
+        assert "status expected 'active'" in " ".join(result["errors"])
+        mock_saga_failure.assert_called_once()
+        mock_active.assert_not_called()
+        mock_consume.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

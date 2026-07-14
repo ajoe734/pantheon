@@ -33,6 +33,7 @@ from runtime_manager_dispatch_adapter import (
     dispatch_to_runtime_manager,
     DispatchOutcome,
     DispatchResult,
+    validate_authoritative_readback,
 )
 from runtime_manager_client import RuntimeManagerClient
 
@@ -193,6 +194,55 @@ def fetch_plan(*, api_url: str, plan_id: str, timeout_seconds: float = 10.0) -> 
     return json.loads(body) if body else {}
 
 
+def fetch_paper_fleet_state(
+    *, base_url: str, timeout_seconds: float = 10.0
+) -> dict[str, Any]:
+    """Read actual paper worker/controller state from the fleet reconciler."""
+    url = base_url.rstrip("/") + "/api/fleet/state"
+    request = urllib.request.Request(
+        url, headers={"Accept": "application/json"}, method="GET"
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body) if body else {}
+
+
+def validate_paper_fleet_readback(
+    *, saga: dict[str, Any], binding: dict[str, Any], fleet: dict[str, Any]
+) -> str | None:
+    """Return why paper controller truth is not yet the requested running state."""
+    binding_id = binding.get("binding_id")
+    matches = [
+        worker
+        for worker in fleet.get("workers", [])
+        if worker.get("binding_id") == binding_id
+    ]
+    mismatches: list[str] = []
+    if fleet.get("last_error"):
+        mismatches.append(f"fleet last_error={fleet.get('last_error')!r}")
+    if not fleet.get("last_reconcile_at") or int(fleet.get("cycle_count") or 0) < 1:
+        mismatches.append("fleet has not completed an authoritative reconcile cycle")
+    if len(matches) != 1:
+        mismatches.append(
+            f"expected one fleet worker for binding_id={binding_id!r}, found {len(matches)}"
+        )
+    else:
+        worker = matches[0]
+        expected = {
+            "runtime_id": binding.get("runtime_id"),
+            "capital_pool_id": saga.get("capital_pool_id"),
+            "status": "running",
+        }
+        mismatches.extend(
+            f"fleet worker {field} expected {value!r}, got {worker.get(field)!r}"
+            for field, value in expected.items()
+            if worker.get(field) != value
+        )
+        if not worker.get("pid"):
+            mismatches.append("fleet worker is missing a live process id")
+    return "; ".join(mismatches) or None
+
+
 def run_compatibility_check(
     *,
     api_url: str,
@@ -244,6 +294,33 @@ def record_binding_created(
     return json.loads(body) if body else {}
 
 
+def record_runtime_active(
+    *,
+    api_url: str,
+    saga_id: str,
+    binding_id: str,
+    runtime_id: str | None,
+    note: str | None,
+    timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    """Advance a saga only after authoritative active RuntimeBinding readback."""
+    url = api_url.rstrip("/") + f"/api/deployment/sagas/{saga_id}/runtime-active"
+    payload = json.dumps({
+        "binding_id": binding_id,
+        "runtime_id": runtime_id,
+        "note": note,
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body) if body else {}
+
+
 def record_saga_failure(
     *,
     api_url: str,
@@ -266,6 +343,17 @@ def record_saga_failure(
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         body = response.read().decode("utf-8")
     return json.loads(body) if body else {}
+
+
+def _apply_receipt_counts(
+    *, receipt: dict[str, Any], event_id: str
+) -> tuple[int, int, str | None]:
+    status = receipt.get("status")
+    if status == "applied":
+        return 1, 0, None
+    if status == "duplicate":
+        return 0, 1, None
+    return 0, 0, f"event_id={event_id} unexpected_receipt_status={status!r}"
 
 
 def run_poll(
@@ -309,9 +397,30 @@ def run_poll(
 
                 # 1. Fetch saga
                 saga = fetch_saga(api_url=api_url, saga_id=saga_id, timeout_seconds=timeout_seconds)
+                saga_status = str(saga.get("status") or "")
                 plan_id = saga.get("plan_id")
                 if not plan_id:
                     raise ValueError(f"Saga '{saga_id}' is missing plan_id")
+
+                # A prior attempt may have completed the side effect and then
+                # lost its inbox response.  Once compensation/terminal state is
+                # durable, replay only advances the inbox sequence; it must not
+                # dispatch a second RuntimeBinding.
+                if saga_status in {"compensating", "failed", "aborted"}:
+                    receipt = consume_event(
+                        api_url=api_url,
+                        event_id=event_id,
+                        consumer_name=consumer_name,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    applied, duplicate, receipt_error = _apply_receipt_counts(
+                        receipt=receipt, event_id=event_id
+                    )
+                    consumed += applied
+                    duplicates += duplicate
+                    if receipt_error:
+                        errors.append(receipt_error)
+                    continue
 
                 # 2. Fetch plan
                 plan = fetch_plan(api_url=api_url, plan_id=plan_id, timeout_seconds=timeout_seconds)
@@ -371,38 +480,72 @@ def run_poll(
                 # Construct client
                 client = RuntimeManagerClient()
 
+                preflight_error: str | None = None
+                preflight_terminal_error: str | None = None
                 if not existing_binding_id:
                     try:
-                        existing_bindings = client.list_by_pool(capital_pool_id)
-                        for b in existing_bindings:
-                            if b.get("plan_id") == plan_id:
-                                existing_binding_id = b.get("binding_id")
-                                break
+                        existing_bindings = client.list_by_plan(plan_id)
+                        if len(existing_bindings) > 1:
+                            preflight_terminal_error = (
+                                f"authoritative recovery found {len(existing_bindings)} "
+                                f"RuntimeBindings for plan_id={plan_id!r}; manual reconciliation required"
+                            )
+                        elif existing_bindings:
+                            existing_binding_id = existing_bindings[0].get("binding_id")
                     except Exception as exc:
-                        # Non-blocking query error, logging only
-                        print(f"[{consumer_name}] Querying existing bindings failed: {exc}", flush=True)
+                        # Fail closed: dispatching while recovery readback is
+                        # unavailable can duplicate a binding whose POST response
+                        # was lost before the saga receipt was recorded.
+                        preflight_error = str(exc)
 
                 if existing_binding_id:
                     # Saga or downstream has binding_id already
                     saga["binding_id"] = existing_binding_id
 
-                # 5. Dispatch
-                dispatch_result = dispatch_to_runtime_manager(
-                    saga=saga,
-                    deploy_context=deploy_context,
-                    client=client,
+                # 5. Dispatch, or schedule retry when the authoritative recovery
+                # query could not prove that no downstream binding already exists.
+                dispatch_result = (
+                    DispatchResult(
+                        outcome=DispatchOutcome.TERMINAL_ERROR,
+                        error_message=preflight_terminal_error,
+                        error_code="MULTIPLE_BINDINGS_FOR_PLAN",
+                    )
+                    if preflight_terminal_error
+                    else DispatchResult(
+                        outcome=DispatchOutcome.RETRYABLE_ERROR,
+                        error_message=(
+                            "authoritative pre-dispatch binding recovery failed: "
+                            f"{preflight_error}"
+                        ),
+                        error_code="BINDING_RECOVERY_READ_FAILED",
+                    )
+                    if preflight_error
+                    else dispatch_to_runtime_manager(
+                        saga=saga,
+                        deploy_context=deploy_context,
+                        client=client,
+                    )
                 )
 
                 if dispatch_result.succeeded():
-                    # Record binding created
-                    record_binding_created(
-                        api_url=api_url,
-                        saga_id=saga_id,
-                        binding_id=dispatch_result.binding_id,
-                        runtime_id=dispatch_result.binding.get("runtime_id") if dispatch_result.binding else None,
-                        note="binding created/verified via deployment outbox consumer dispatch",
-                        timeout_seconds=timeout_seconds,
-                    )
+                    # Record binding creation only on the first attempt.  If the
+                    # state transition succeeded before a crash/response loss,
+                    # the saga already points at the same authoritative binding.
+                    if saga_status == "awaiting_binding":
+                        record_binding_created(
+                            api_url=api_url,
+                            saga_id=saga_id,
+                            binding_id=dispatch_result.binding_id,
+                            runtime_id=dispatch_result.binding.get("runtime_id") if dispatch_result.binding else None,
+                            note="binding created/verified via deployment outbox consumer dispatch",
+                            timeout_seconds=timeout_seconds,
+                        )
+                    elif saga.get("binding_id") != dispatch_result.binding_id:
+                        raise RuntimeError(
+                            f"Saga {saga_id!r} status={saga_status!r} points at "
+                            f"binding_id={saga.get('binding_id')!r}, but authoritative "
+                            f"readback returned {dispatch_result.binding_id!r}"
+                        )
                     # Consume event
                     receipt = consume_event(
                         api_url=api_url,
@@ -410,13 +553,13 @@ def run_poll(
                         consumer_name=consumer_name,
                         timeout_seconds=timeout_seconds,
                     )
-                    receipt_status = receipt.get("status")
-                    if receipt_status == "duplicate":
-                        duplicates += 1
-                    elif receipt_status == "applied":
-                        consumed += 1
-                    else:
-                        errors.append(f"event_id={event_id} unexpected_receipt_status={receipt_status!r}")
+                    applied, duplicate, receipt_error = _apply_receipt_counts(
+                        receipt=receipt, event_id=event_id
+                    )
+                    consumed += applied
+                    duplicates += duplicate
+                    if receipt_error:
+                        errors.append(receipt_error)
                 elif dispatch_result.is_retryable():
                     reason = f"transient dispatch failure: {dispatch_result.error_message}"
                     errors.append(reason)
@@ -444,7 +587,11 @@ def run_poll(
                         api_url=api_url,
                         saga_id=saga_id,
                         reason=reason,
-                        failed_step="binding_requested",
+                        failed_step=(
+                            "runtime_load_requested"
+                            if saga.get("binding_id")
+                            else "binding_requested"
+                        ),
                         timeout_seconds=timeout_seconds,
                     )
                     # Dead-letter outbox event
@@ -459,6 +606,122 @@ def run_poll(
                         timeout_seconds=timeout_seconds,
                     )
                     dead_lettered += 1
+            elif event_type == "runtime.load.requested":
+                saga_id = event.get("aggregate_id")
+                if not saga_id:
+                    raise ValueError("missing aggregate_id (saga_id) in event")
+                saga = fetch_saga(
+                    api_url=api_url,
+                    saga_id=saga_id,
+                    timeout_seconds=timeout_seconds,
+                )
+                saga_status = str(saga.get("status") or "")
+
+                if saga_status in {"compensating", "failed", "aborted"}:
+                    receipt = consume_event(
+                        api_url=api_url,
+                        event_id=event_id,
+                        consumer_name=consumer_name,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    applied, duplicate, receipt_error = _apply_receipt_counts(
+                        receipt=receipt, event_id=event_id
+                    )
+                    consumed += applied
+                    duplicates += duplicate
+                    if receipt_error:
+                        errors.append(receipt_error)
+                    continue
+
+                binding_id = (
+                    event.get("payload", {}).get("binding_id")
+                    or saga.get("binding_id")
+                )
+                if not binding_id:
+                    raise ValueError(f"Saga {saga_id!r} is missing binding_id for runtime readback")
+
+                client = RuntimeManagerClient()
+                binding = client.get(binding_id)
+                if binding is None:
+                    raise RuntimeError(
+                        f"authoritative RuntimeBinding {binding_id!r} is not readable yet"
+                    )
+                mismatch = validate_authoritative_readback(
+                    saga=saga,
+                    binding=binding,
+                    expected_binding_id=binding_id,
+                )
+                if mismatch:
+                    reason = f"RuntimeBinding activation readback failed: {mismatch}"
+                    record_saga_failure(
+                        api_url=api_url,
+                        saga_id=saga_id,
+                        reason=reason,
+                        failed_step="runtime_load_requested",
+                        timeout_seconds=timeout_seconds,
+                    )
+                    _record_failure_best_effort(
+                        api_url=api_url,
+                        event_id=event_id,
+                        consumer_name=consumer_name,
+                        reason=reason,
+                        retryable=False,
+                        max_attempts=max_attempts,
+                        retry_delay_seconds=retry_delay_seconds,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    dead_lettered += 1
+                    errors.append(reason)
+                    continue
+
+                if saga.get("target_stage") == "paper":
+                    fleet_url = os.getenv("PANTHEON_PAPER_FLEET_RECONCILER_URL", "").strip()
+                    if not fleet_url:
+                        raise RuntimeError(
+                            "PANTHEON_PAPER_FLEET_RECONCILER_URL is required for "
+                            "authoritative paper controller readback"
+                        )
+                    fleet = fetch_paper_fleet_state(
+                        base_url=fleet_url,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    fleet_mismatch = validate_paper_fleet_readback(
+                        saga=saga,
+                        binding=binding,
+                        fleet=fleet,
+                    )
+                    if fleet_mismatch:
+                        raise RuntimeError(
+                            f"paper fleet post-state is not running yet: {fleet_mismatch}"
+                        )
+
+                if saga_status in {"awaiting_binding", "awaiting_runtime_load"}:
+                    record_runtime_active(
+                        api_url=api_url,
+                        saga_id=saga_id,
+                        binding_id=binding_id,
+                        runtime_id=binding.get("runtime_id"),
+                        note="runtime active confirmed by authoritative RuntimeBinding readback",
+                        timeout_seconds=timeout_seconds,
+                    )
+                elif saga_status != "completed":
+                    raise RuntimeError(
+                        f"Saga {saga_id!r} cannot apply runtime readback from status={saga_status!r}"
+                    )
+
+                receipt = consume_event(
+                    api_url=api_url,
+                    event_id=event_id,
+                    consumer_name=consumer_name,
+                    timeout_seconds=timeout_seconds,
+                )
+                applied, duplicate, receipt_error = _apply_receipt_counts(
+                    receipt=receipt, event_id=event_id
+                )
+                consumed += applied
+                duplicates += duplicate
+                if receipt_error:
+                    errors.append(receipt_error)
             else:
                 # --- RECEIPT-ONLY CONSUMER FOR ALL OTHER EVENTS ---
                 receipt = consume_event(
@@ -467,15 +730,13 @@ def run_poll(
                     consumer_name=consumer_name,
                     timeout_seconds=timeout_seconds,
                 )
-                receipt_status = receipt.get("status")
-                if receipt_status == "duplicate":
-                    duplicates += 1
-                elif receipt_status == "applied":
-                    consumed += 1
-                else:
-                    errors.append(
-                        f"event_id={event_id} unexpected_receipt_status={receipt_status!r}"
-                    )
+                applied, duplicate, receipt_error = _apply_receipt_counts(
+                    receipt=receipt, event_id=event_id
+                )
+                consumed += applied
+                duplicates += duplicate
+                if receipt_error:
+                    errors.append(receipt_error)
         except urllib.error.HTTPError as exc:
             reason = f"event_id={event_id} http_error={exc.code} {exc.reason}"
             errors.append(reason)

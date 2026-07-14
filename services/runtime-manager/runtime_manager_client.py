@@ -121,6 +121,13 @@ class RuntimeManagerClient:
             return list(payload.get("bindings", []))
         return [binding.to_dict() for binding in self._local().list_by_pool(capital_pool_id)]
 
+    def list_by_plan(self, plan_id: str) -> list[Dict[str, Any]]:
+        """Return authoritative bindings created for one DeploymentPlan."""
+        if self._use_http():
+            payload = self._request_json("GET", f"/api/runtime-bindings?plan_id={plan_id}")
+            return list(payload.get("bindings", []))
+        return [binding.to_dict() for binding in self._local().list_by_plan(plan_id)]
+
     def get_active_for_pool(self, capital_pool_id: str) -> Optional[Dict[str, Any]]:
         if self._use_http():
             try:

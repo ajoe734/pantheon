@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -225,6 +226,122 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                     runtime_id="rt-invalid",
                 )
             )
+
+    def test_kill_switch_safe_mode_wins_over_queued_forward_deploy(self):
+        pool_id = "pool-kill-wins"
+        outcome = self.service.execute_kill_switch(
+            {
+                "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+                "capital_pool_id": pool_id,
+                "actor_id": "operator-kill-wins",
+                "action_override": KillSwitchActionType.PAUSE.value,
+            }
+        )
+        self.assertEqual(outcome["safe_mode_after"], SafeModeState.PAUSED.value)
+
+        with self.assertRaisesRegex(RuntimeManagerError, "containment wins"):
+            self.service.deploy(
+                _valid_deploy_request(
+                    plan_id="plan-after-kill",
+                    capital_pool_id=pool_id,
+                    runtime_id="rt-after-kill",
+                )
+            )
+
+        self.assertEqual(self.service.list_by_pool(pool_id), [])
+
+    def test_paused_kill_state_still_allows_paused_rollback_replacement(self):
+        original = self.service.deploy(
+            _valid_deploy_request(capital_pool_id="pool-kill-rollback")
+        )
+        self.service.execute_kill_switch(
+            {
+                "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+                "capital_pool_id": original.capital_pool_id,
+                "binding_id": original.binding_id,
+                "actor_id": "operator-kill-rollback",
+                "action_override": KillSwitchActionType.PAUSE.value,
+            }
+        )
+
+        result = self.service.rollback(
+            {
+                "current_binding_id": original.binding_id,
+                "action_type": "liquidate_then_replace",
+                "replacement_plan_id": "plan-safe-fallback",
+                "replacement_artifact_id": "artifact-safe-fallback",
+                "replacement_artifact_version": "1.0.0",
+                "replacement_persona_capital_binding_id": "pcb-001",
+                "replacement_allowed_deployment_scope": "paper",
+                "replacement_start_paused": True,
+            }
+        )
+
+        self.assertEqual(result["old_binding"]["status"], "retired")
+        self.assertEqual(result["new_binding"]["status"], "paused")
+
+    def test_deploy_first_race_is_contained_before_kill_returns(self):
+        pool_id = "pool-deploy-first-kill-race"
+        create_entered = threading.Event()
+        release_create = threading.Event()
+        kill_started = threading.Event()
+        deploy_result = {}
+        kill_result = {}
+        failures = []
+        real_create = self.service._store.create
+
+        def delayed_create(*args, **kwargs):
+            create_entered.set()
+            if not release_create.wait(timeout=2):
+                raise RuntimeError("test timed out waiting to release binding create")
+            return real_create(*args, **kwargs)
+
+        def run_deploy():
+            try:
+                deploy_result["binding"] = self.service.deploy(
+                    _valid_deploy_request(
+                        plan_id="plan-deploy-first-race",
+                        capital_pool_id=pool_id,
+                        runtime_id="rt-deploy-first-race",
+                    )
+                )
+            except Exception as exc:  # pragma: no cover - asserted below
+                failures.append(exc)
+
+        def run_kill():
+            kill_started.set()
+            try:
+                kill_result["outcome"] = self.service.execute_kill_switch(
+                    {
+                        "reason": HardTriggerReason.OPERATOR_EMERGENCY_STOP.value,
+                        "capital_pool_id": pool_id,
+                        "actor_id": "operator-race",
+                        "action_override": KillSwitchActionType.PAUSE.value,
+                    }
+                )
+            except Exception as exc:  # pragma: no cover - asserted below
+                failures.append(exc)
+
+        with mock.patch.object(self.service._store, "create", side_effect=delayed_create):
+            deploy_thread = threading.Thread(target=run_deploy)
+            deploy_thread.start()
+            self.assertTrue(create_entered.wait(timeout=2))
+
+            kill_thread = threading.Thread(target=run_kill)
+            kill_thread.start()
+            self.assertTrue(kill_started.wait(timeout=2))
+            release_create.set()
+            deploy_thread.join(timeout=2)
+            kill_thread.join(timeout=2)
+
+        self.assertFalse(deploy_thread.is_alive())
+        self.assertFalse(kill_thread.is_alive())
+        self.assertEqual(failures, [])
+        binding_id = deploy_result["binding"].binding_id
+        self.assertEqual(self.service.require(binding_id).status, "paused")
+        self.assertEqual(
+            kill_result["outcome"]["safe_mode_after"], SafeModeState.PAUSED.value
+        )
 
     def test_forward_replace_preserves_runtime_and_records_non_rollback_lineage(self):
         original = self.service.deploy(
@@ -461,6 +578,7 @@ class RuntimeManagerClientTests(unittest.TestCase):
         self.assertEqual(transitioned["status"], "pending_pause")
         self.assertIsNone(client.get_active_for_pool("pool-001"))
         self.assertEqual(client.list_by_pool("pool-001")[0]["binding_id"], binding["binding_id"])
+        self.assertEqual(client.list_by_plan("plan-001")[0]["binding_id"], binding["binding_id"])
 
     def test_local_client_dispatches_forward_replace_by_runtime_id(self):
         client = RuntimeManagerClient(base_url=None)

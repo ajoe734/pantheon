@@ -134,6 +134,10 @@ _LIVE_EXTRA_ACTIVATION_GATE_FIELDS = ("canary_observation_ref",)
 _FOUNDATION_POLICY_VERSION = "2026-04-27"
 _KILL_SWITCH_FOUNDATION_OPERATION = "runtime_manager.kill_switch.dispatch"
 _KILL_SWITCH_TELEMETRY_ACK_VERSION = "2026-05-01"
+_FORWARD_DEPLOY_ALLOWED_SAFE_MODES = {
+    SafeModeState.NORMAL.value,
+    SafeModeState.NORMAL_RESTORED.value,
+}
 
 
 def _scope_allows_stage(allowed_deployment_scope: str, target_stage: str) -> bool:
@@ -720,6 +724,10 @@ class RuntimeManagerService:
         self._store = RuntimeBindingStore(path=store_path)
         self._single_runtime_enforced = single_runtime_enforced
         self._kill_switch = KillSwitchController()
+        # Serialize forward mutations and emergency containment through one
+        # control boundary.  The lock is re-entrant because kill-switch and
+        # rollback paths legitimately call deploy() as an internal sub-step.
+        self._control_lock = threading.RLock()
         self._replace_lock = threading.RLock()
         self._foundation_idempotency: Dict[str, Dict[str, Any]] = {}
         self._foundation_recovery_audit: List[Dict[str, Any]] = []
@@ -738,6 +746,23 @@ class RuntimeManagerService:
         request: Dict[str, Any],
         _allow_cutover_bypass: bool = False,
         _allow_activation_gate_bypass: bool = False,
+        _allow_safe_mode_bypass: bool = False,
+    ) -> RuntimeBinding:
+        """Atomically apply safe-mode precedence and create a RuntimeBinding."""
+        with self._control_lock:
+            return self._deploy_once(
+                request,
+                _allow_cutover_bypass=_allow_cutover_bypass,
+                _allow_activation_gate_bypass=_allow_activation_gate_bypass,
+                _allow_safe_mode_bypass=_allow_safe_mode_bypass,
+            )
+
+    def _deploy_once(
+        self,
+        request: Dict[str, Any],
+        _allow_cutover_bypass: bool = False,
+        _allow_activation_gate_bypass: bool = False,
+        _allow_safe_mode_bypass: bool = False,
     ) -> RuntimeBinding:
         """Create a RuntimeBinding from a validated DeploymentPlan descriptor.
 
@@ -763,6 +788,11 @@ class RuntimeManagerService:
         ``_allow_activation_gate_bypass`` is also internal-only.  It is used by
         rollback replacement creation so safety actions are not blocked by the
         promotion gate intended for forward canary/live activation.
+
+        ``_allow_safe_mode_bypass`` is reserved for runtime-manager-owned
+        rollback/containment.  Forward deployment must lose to any non-normal
+        kill-switch state, including a kill that raced an already queued outbox
+        command.
         """
         plan_id = request.get("plan_id", "")
         plan_status = request.get("plan_status", "")
@@ -781,6 +811,16 @@ class RuntimeManagerService:
         execution_mode = str(request.get("execution_mode") or target_stage).strip().lower()
         if request.get("strategy_id"):
             binding_metadata.setdefault("strategy_id", str(request.get("strategy_id")))
+
+        safe_mode = self._kill_switch.safe_mode_for(capital_pool_id).value
+        if (
+            not _allow_safe_mode_bypass
+            and safe_mode not in _FORWARD_DEPLOY_ALLOWED_SAFE_MODES
+        ):
+            raise RuntimeManagerError(
+                f"Deploy is blocked by kill-switch safe_mode={safe_mode!r} for "
+                f"capital_pool_id={capital_pool_id!r}; containment wins over queued deploy."
+            )
 
         # Pre-condition 1: plan status
         if plan_status not in ("approved", "executing"):
@@ -904,8 +944,9 @@ class RuntimeManagerService:
 
     def replace(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Serialize and idempotently execute a forward binding cutover."""
-        with self._replace_lock:
-            return self._replace_once(request)
+        with self._control_lock:
+            with self._replace_lock:
+                return self._replace_once(request)
 
     def _replace_once(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Replace one runtime binding with a new artifact in the same stage.
@@ -1085,6 +1126,11 @@ class RuntimeManagerService:
         }
 
     def rollback(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Serialize a runtime-manager-owned containment rollback."""
+        with self._control_lock:
+            return self._rollback_once(request)
+
+    def _rollback_once(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a canonical rollback through the runtime-manager.
 
         Implements the three strategies from ROLLBACK_AND_POSITION_SEMANTICS.md §3:
@@ -1185,6 +1231,7 @@ class RuntimeManagerService:
                 deploy_req,
                 _allow_cutover_bypass=True,
                 _allow_activation_gate_bypass=True,
+                _allow_safe_mode_bypass=True,
             )
             self._store.retire(current_binding_id, retired_at=cutover_at)
 
@@ -1207,7 +1254,11 @@ class RuntimeManagerService:
                 )
             # Step 2: Create replacement while old is paused.
             # single-runtime rule does not fire because the old binding is no longer active.
-            new_binding = self.deploy(deploy_req, _allow_activation_gate_bypass=True)
+            new_binding = self.deploy(
+                deploy_req,
+                _allow_activation_gate_bypass=True,
+                _allow_safe_mode_bypass=True,
+            )
             # Step 3: Retire old paused binding post-cutover.
             self._store.retire(current_binding_id, retired_at=cutover_at)
 
@@ -1218,7 +1269,11 @@ class RuntimeManagerService:
             # binding/artifact until the runtime is confirmed flat.
             self._store.retire(current_binding_id, retired_at=cutover_at)
             # Step 2: Create replacement, optionally starting in guarded / paused mode.
-            new_binding = self.deploy(deploy_req, _allow_activation_gate_bypass=True)
+            new_binding = self.deploy(
+                deploy_req,
+                _allow_activation_gate_bypass=True,
+                _allow_safe_mode_bypass=True,
+            )
             if replacement_start_paused:
                 self._store.transition_status(
                     new_binding.binding_id, RuntimeBindingStatus.PENDING_PAUSE.value
@@ -1384,6 +1439,11 @@ class RuntimeManagerService:
             self._persist_ks_state()
 
     def execute_kill_switch(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Serialize emergency containment against deploy/replace transitions."""
+        with self._control_lock:
+            return self._execute_kill_switch_once(request)
+
+    def _execute_kill_switch_once(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Dispatch an emergency kill-switch command via the runtime-manager fast path.
 
         This is the authorised fast-path entry point defined in
@@ -1716,7 +1776,11 @@ class RuntimeManagerService:
                         "rollback_parent": binding_id,
                         "rollback_action_type": "replace",
                     }
-                    replacement = self.deploy(deploy_req, _allow_cutover_bypass=True)
+                    replacement = self.deploy(
+                        deploy_req,
+                        _allow_cutover_bypass=True,
+                        _allow_safe_mode_bypass=True,
+                    )
 
                 if b.is_terminal():
                     retired = b
