@@ -387,6 +387,8 @@ def test_bff_dev_login_issues_short_lived_jwt_for_me(monkeypatch) -> None:
             "grant_type": "client_credentials",
             "client_id": "ci-client",
             "client_secret": "ci-secret",
+            "roles": ["operator", "reviewer", "approver"],
+            "tenant_id": "tenant-alpha",
         },
     )
 
@@ -420,6 +422,7 @@ def test_bff_dev_login_defaults_match_frontend_dev_gate_session(monkeypatch) -> 
             "grant_type": "client_credentials",
             "client_id": "ci-client",
             "client_secret": "ci-secret",
+            "roles": ["operator", "reviewer", "approver"],
         },
     )
 
@@ -436,6 +439,36 @@ def test_bff_dev_login_defaults_match_frontend_dev_gate_session(monkeypatch) -> 
     assert data["tenant"]["id"] == "tenant-dev"
     assert data["tenant"]["allowed_ids"] == ["tenant-dev"]
     assert set(data["roles"]) == {"operator", "reviewer", "approver"}
+
+
+def test_bff_dev_login_single_role_fallback_when_unspecified(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_ID", "ci-client")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_SECRET", "ci-secret")
+
+    client = TestClient(bff_main.app)
+    login = client.post(
+        "/bff/auth/dev-login",
+        json={
+            "grant_type": "client_credentials",
+            "client_id": "ci-client",
+            "client_secret": "ci-secret",
+        },
+    )
+
+    assert login.status_code == 200, login.text
+    me = client.get(
+        "/bff/me",
+        headers={
+            "Authorization": f"Bearer {login.json()['access_token']}",
+        },
+    )
+    assert me.status_code == 200, me.text
+    data = me.json()["data"]
+    assert data["tenant"]["id"] == "tenant-dev"
+    assert set(data["roles"]) == {"operator"}
 
 
 def test_dev_gate_session_allows_me_and_management_reads(monkeypatch) -> None:

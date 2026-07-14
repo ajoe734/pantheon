@@ -860,7 +860,7 @@ services:
       # Staging/prod compose files must explicitly export
       # PANTHEON_BFF_AUTH_STUB=false and PANTHEON_BFF_AUTH_MODE=strict.
       PANTHEON_BFF_AUTH_STUB: ${PANTHEON_BFF_AUTH_STUB:-false}
-      PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-permissive}
+      PANTHEON_BFF_AUTH_MODE: ${PANTHEON_BFF_AUTH_MODE:-strict}
       PANTHEON_BFF_STUB_CAPABILITIES: ${PANTHEON_BFF_STUB_CAPABILITIES:-assistant.kernel.debug,assistant.kernel.repair}
       PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
       PANTHEON_BFF_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}

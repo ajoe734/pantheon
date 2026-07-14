@@ -1106,7 +1106,12 @@ def _dev_login_bool_env(name: str, *, default: bool) -> bool:
     return _bool_from_env(name, default=default)
 
 
-def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
+def _issue_dev_login_jwt(
+    client_id: str,
+    requested_roles: Optional[List[str]] = None,
+    requested_tenant_id: Optional[str] = None,
+    requested_allowed_tenants: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     try:
         from services.runtime_auth_inbound import encode_jwt_hs256
     except ImportError:
@@ -1126,7 +1131,16 @@ def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
     now = int(time.time())
     ttl = _dev_login_ttl_seconds()
     expires_at = now + ttl
-    roles = _dev_login_roles() or ["operator", "reviewer"]
+    
+    if requested_roles is not None:
+        roles = sorted(set(role for role in requested_roles if role in _READ_ROLES or role in _WRITE_ROLES))
+    else:
+        env_roles = _env_csv("PANTHEON_BFF_DEV_LOGIN_ROLES")
+        if env_roles:
+            roles = sorted(set(role for role in env_roles if role in _READ_ROLES or role in _WRITE_ROLES))
+        else:
+            roles = ["operator"]
+
     subject = _first_nonblank(
         os.getenv("PANTHEON_BFF_DEV_LOGIN_SUBJECT"),
         f"pantheon-dev-{client_id}",
@@ -1140,12 +1154,20 @@ def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
         "bff-operators",
     )
     tenant_id = _first_nonblank(
+        requested_tenant_id,
         os.getenv("PANTHEON_BFF_TENANT_ID"),
         os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
         os.getenv("PANTHEON_TENANT_ID"),
         "tenant-dev",
     )
-    allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [tenant_id]
+    if requested_allowed_tenants is not None:
+        allowed_tenants = requested_allowed_tenants
+    else:
+        allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [tenant_id]
+
+    if tenant_id not in allowed_tenants:
+        allowed_tenants = [tenant_id] + list(allowed_tenants)
+
     mfa_verified = _dev_login_bool_env("PANTHEON_BFF_DEV_LOGIN_MFA_VERIFIED", default=False)
     claims: Dict[str, Any] = {
         "sub": subject,
@@ -1212,7 +1234,12 @@ async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict
             suggestion="Use the configured PANTHEON_BFF_OIDC_CLIENT_ID and CLIENT_SECRET",
         )
 
-    token_payload = _issue_dev_login_jwt(client_id)
+    token_payload = _issue_dev_login_jwt(
+        client_id,
+        requested_roles=payload.get("roles"),
+        requested_tenant_id=payload.get("tenant_id") or payload.get("tenantId"),
+        requested_allowed_tenants=payload.get("allowed_tenants") or payload.get("allowedTenants"),
+    )
     return {
         **token_payload,
         "meta": {
@@ -59206,12 +59233,28 @@ def _bff_source_commit() -> str:
 @app.get("/bff/version")
 async def sem_bff_version():
     commit = _bff_source_commit()
+    image_digest = os.getenv("BFF_IMAGE_DIGEST") or os.getenv("IMAGE_DIGEST") or "unknown"
+    build_time = os.getenv("BFF_BUILD_TIME") or os.getenv("BUILD_TIME") or "unknown"
+    environment = os.getenv("PANTHEON_ENV") or os.getenv("ENVIRONMENT") or "unknown"
+    
+    config_posture = {
+        "auth_stub": _bff_auth_stub_enabled(),
+        "auth_mode": _bff_auth_mode(),
+        "dev_login_enabled": _dev_login_enabled(),
+        "mfa_required": _bool_from_env("PANTHEON_BFF_MFA_REQUIRED", default=False),
+        "assistant_kernel_enabled": _bool_from_env("PANTHEON_ASSISTANT_KERNEL_ENABLED", default=False),
+    }
+    
     return {
         "service": "operator-bff",
         "version": "0.2.0",
         "source_commit_sha": commit,
         "commit": commit,
         "source_commit_known": bool(re.fullmatch(r"[0-9a-fA-F]{40}", commit)),
+        "image_digest": image_digest,
+        "build_time": build_time,
+        "environment": environment,
+        "config_posture": config_posture,
     }
 
 

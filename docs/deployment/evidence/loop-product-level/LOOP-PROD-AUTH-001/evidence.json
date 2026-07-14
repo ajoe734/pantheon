@@ -1,0 +1,62 @@
+{
+  "task": {
+    "id": "LOOP-PROD-AUTH-001",
+    "title": "Strict dev auth cutover and exact BFF build identity",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "base_branch": "dev",
+    "task_branch": "task/LOOP-PROD-AUTH-001",
+    "target_environment": "dev"
+  },
+  "acceptance": [
+    {
+      "id": "AC-01",
+      "statement": "BFF dev-login endpoint supports short-lived role/tenant identity requests via request payload, and defaults to single operator role instead of all roles.",
+      "status": "pass"
+    },
+    {
+      "id": "AC-02",
+      "statement": "docker-compose.yml defaults are updated so PANTHEON_BFF_AUTH_STUB defaults to false and PANTHEON_BFF_AUTH_MODE defaults to strict.",
+      "status": "pass"
+    },
+    {
+      "id": "AC-03",
+      "statement": "BFF /bff/version endpoint exposes non-sensitive git SHA, image digest, build time, environment, and config posture details.",
+      "status": "pass"
+    }
+  ],
+  "validation": {
+    "commands": [
+      {
+        "command": "PYTHONPATH=services/control-plane/bff python3 -m pytest services/control-plane/bff/test_bff_auth_facade.py",
+        "conclusion": "80 passed",
+        "result": "pass"
+      },
+      {
+        "command": "PYTHONPATH=services/control-plane/bff python3 -m pytest services/control-plane/bff/test_bff_oidc_staging_env_contract.py",
+        "conclusion": "3 passed",
+        "result": "pass"
+      },
+      {
+        "command": "PYTHONPATH=services/control-plane/bff python3 -m pytest services/control-plane/bff/test_bff_session_auth_me_contract.py",
+        "conclusion": "192 passed",
+        "result": "pass"
+      },
+      {
+        "command": "PYTHONPATH=services/control-plane/bff python3 -m pytest services/control-plane/bff/tests/test_bff_rebalance_proposals.py",
+        "conclusion": "40 passed",
+        "result": "pass"
+      }
+    ]
+  },
+  "scope": {
+    "owned_layer": "BFF dev login endpoint, BFF version endpoint, dev docker-compose config",
+    "implementation_changed_files": [
+      "docker-compose.yml",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_bff_oidc_staging_env_contract.py",
+      "services/control-plane/bff/test_bff_session_auth_me_contract.py",
+      "services/control-plane/bff/tests/test_bff_rebalance_proposals.py"
+    ]
+  }
+}
