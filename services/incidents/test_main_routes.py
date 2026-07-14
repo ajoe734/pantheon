@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 
 from services.incident.reference_validation import CanonicalReferenceError
 from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
-from services.incidents.main import app, store
+from services.incidents.main import app, outbox_store, store
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +39,6 @@ def clean_store(monkeypatch):
             return None
 
     monkeypatch.setattr("services.incidents.main.reference_validator", _AcceptAllValidator())
-    monkeypatch.setattr("services.incidents.main._publish_to_postmortems_if_resolved", lambda incident_id: None)
     _reset_store()
     yield
     _reset_store()
@@ -53,6 +52,9 @@ def _reset_store():
         path.unlink()
     if hasattr(store, "_loaded_mtime_ns"):
         store._loaded_mtime_ns = None
+    outbox_path = getattr(outbox_store.impl, "path", None)
+    if outbox_path is not None and outbox_path.exists():
+        outbox_path.unlink()
 
 
 client = TestClient(app)

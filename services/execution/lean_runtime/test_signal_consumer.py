@@ -79,6 +79,49 @@ class TestSignalProcessingOrder(unittest.TestCase):
         # Dry-run signal should still be marked processed
         self.assertIn("test-dry-1", self.consumer._processed_signal_ids)
 
+    def test_nonfinite_signal_is_rejected_before_recording_or_execution(self):
+        signal = {
+            "signal_id": "test-nonfinite-1",
+            "version": "1.0",
+            "strategy_id": "test",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "symbol": "AAPL.US",
+            "action": "BUY",
+            "direction": "LONG",
+            "quantity": float("nan"),
+            "quantity_type": "SHARES",
+        }
+        self.store.get_pending.return_value = [signal]
+
+        with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_execute:
+            self.consumer.drain(algo=self.mock_algo)
+
+        mock_execute.assert_not_called()
+        self.mock_algo.RecordSignalProcessed.assert_not_called()
+        self.store.mark_processed.assert_not_called()
+        self.assertNotIn("test-nonfinite-1", self.consumer._processed_signal_ids)
+
+    def test_nested_nonfinite_metadata_is_rejected_as_non_json(self):
+        signal = {
+            "signal_id": "test-nonfinite-metadata",
+            "version": "1.0",
+            "strategy_id": "test",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "symbol": "AAPL.US",
+            "action": "BUY",
+            "direction": "LONG",
+            "quantity": 1.0,
+            "quantity_type": "SHARES",
+            "metadata": {"market_data": {"close": float("inf")}},
+        }
+        self.store.get_pending.return_value = [signal]
+
+        with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_execute:
+            self.consumer.drain(algo=self.mock_algo)
+
+        mock_execute.assert_not_called()
+        self.mock_algo.RecordSignalProcessed.assert_not_called()
+
 
 class TestStalenessCheck(unittest.TestCase):
     """Test that staleness check handles timezone correctly"""

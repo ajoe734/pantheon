@@ -170,6 +170,36 @@ class TelemetryEventRebaselineSchemaTest(unittest.TestCase):
         missing = REBASELINE_REQUIRED_EVENT_TYPES - declared
         self.assertEqual(missing, set())
 
+    @unittest.skipIf(jsonschema is None, "jsonschema is required for format validation")
+    def test_performance_as_of_fields_are_optional_rfc3339_timestamps(self) -> None:
+        schema = _schema()
+        required = set(schema["required"])
+
+        for field_name in ("pnl_as_of", "drawdown_as_of"):
+            self.assertNotIn(field_name, required)
+            self.assertEqual(schema["properties"][field_name]["type"], "string")
+            self.assertEqual(schema["properties"][field_name]["format"], "date-time")
+
+        validator = jsonschema.Draft7Validator(
+            schema,
+            format_checker=jsonschema.FormatChecker(),
+        )
+
+        # Legacy producers remain valid without explicit per-metric timestamps.
+        validator.validate(_event("pnl_snapshot"))
+
+        performance_event = _event("drawdown_snapshot")
+        performance_event["metrics"] = {"pnl": -15.0, "drawdown_pct": 0.08}
+        performance_event["pnl_as_of"] = "2026-05-16T00:08:00Z"
+        performance_event["drawdown_as_of"] = "2026-05-16T00:09:00+00:00"
+        validator.validate(performance_event)
+
+        invalid = dict(performance_event)
+        invalid["pnl_as_of"] = 123
+        self.assertTrue(
+            any(list(error.path) == ["pnl_as_of"] for error in validator.iter_errors(invalid))
+        )
+
     def test_every_declared_event_type_ingests_with_runtime_binding_evidence(self) -> None:
         async def scenario() -> tuple[dict[str, int], list[dict[str, Any]]]:
             svc = TelemetryIngestService(
