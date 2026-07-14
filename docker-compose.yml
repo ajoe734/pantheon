@@ -1325,6 +1325,8 @@ services:
     build:
       context: .
       dockerfile: services/deployment/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
     environment:
       PORT: "8095"
@@ -1353,6 +1355,8 @@ services:
     build:
       context: .
       dockerfile: services/deployment/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     command: ["python", "-m", "services.deployment.outbox_consumer_worker"]
     restart: unless-stopped
     environment:
