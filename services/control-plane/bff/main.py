@@ -36574,28 +36574,57 @@ def _evolution_journal_items(
             items.append(item)
 
     for item in items:
-        is_seed = False
-        source_id = str(item.get("source_id") or "").lower()
-        journal_id = str(item.get("id") or "").lower()
-        for marker in ("seed", "vslice", "87c655c3e3c9", "rb-001", "fo-001", "btc-drift"):
-            if marker in source_id or marker in journal_id:
-                is_seed = True
+        origin_val = None
+        for d in (
+            item,
+            item.get("record"),
+            (item.get("record") or {}).get("metadata"),
+            (item.get("record") or {}).get("provenance"),
+            item.get("decision"),
+            (item.get("decision") or {}).get("metadata"),
+            item.get("mutation_review"),
+            (item.get("mutation_review") or {}).get("metadata"),
+            item.get("postmortem"),
+            (item.get("postmortem") or {}).get("metadata"),
+            item.get("freeze_order"),
+            (item.get("freeze_order") or {}).get("metadata"),
+            item.get("rollback"),
+            (item.get("rollback") or {}).get("metadata"),
+        ):
+            if isinstance(d, dict) and d.get("origin"):
+                origin_val = str(d.get("origin")).strip().lower()
                 break
-        if not is_seed:
-            for key in ("decision", "mutation_review", "mutationReview", "postmortem", "freeze_order", "freezeOrder", "rollback"):
-                inner = item.get(key)
-                if isinstance(inner, dict):
-                    for field in ("id", "decision_id", "source_id", "incident_id", "incident_ref", "linked_incident_id", "report_id"):
-                        val = str(inner.get(field) or "").lower()
-                        for marker in ("seed", "vslice", "87c655c3e3c9", "rb-001", "fo-001", "btc-drift"):
-                            if marker in val:
-                                is_seed = True
-                                break
-                        if is_seed:
-                            break
-                if is_seed:
+
+        if origin_val in ("seed", "live", "unknown"):
+            item["origin"] = origin_val
+        else:
+            is_seed = False
+            registered_markers = ("seed", "vslice", "87c655c3e3c9", "rb-001", "fo-001", "btc-drift", "inc-20260410-001", "inc-20260409-002", "pm-20260409-002", "plan-f-042", "artifact-042", "runtime-042", "binding-042")
+            source_id = str(item.get("source_id") or "").lower()
+            journal_id = str(item.get("id") or "").lower()
+            for marker in registered_markers:
+                if marker in source_id or marker in journal_id:
+                    is_seed = True
                     break
-        item["origin"] = "seed" if is_seed else "live"
+            if not is_seed:
+                for key in ("decision", "mutation_review", "mutationReview", "postmortem", "freeze_order", "freezeOrder", "rollback"):
+                    inner = item.get(key)
+                    if isinstance(inner, dict):
+                        for field in ("id", "decision_id", "source_id", "incident_id", "incident_ref", "linked_incident_id", "report_id"):
+                            val = str(inner.get(field) or "").lower()
+                            for marker in registered_markers:
+                                if marker in val:
+                                    is_seed = True
+                                    break
+                            if is_seed:
+                                break
+                    if is_seed:
+                        break
+            
+            if is_seed:
+                item["origin"] = "seed"
+            else:
+                item["origin"] = "unknown"
 
     items.sort(
         key=lambda item: (
@@ -37267,21 +37296,99 @@ async def bff_management_evolution_journal(
     if persona:
         p_clean = persona.strip().lower()
         if p_clean:
-            filtered = [
-                item for item in filtered
-                if p_clean in _evolution_entry_text(item) or
-                any(
-                    str((item.get("record") or {}).get(field) or "").lower() == p_clean
-                    for field in ("artifact_id", "persona_id", "target_id", "runtime_id", "runtime_binding_id", "persona_capital_binding_id")
-                )
-            ]
+            lineage_ids = {p_clean}
+            try:
+                personas = read_store.list_personas(include_market_persona_defaults=True) or []
+            except Exception:
+                personas = []
+            for p in personas:
+                pid = str(p.get("persona_id") or p.get("id") or "").strip().lower()
+                if pid == p_clean:
+                    for field in (
+                        "artifact_id", "runtime_id", "binding_id", "pool_id", "strategy_id",
+                        "session_id", "plan_id", "persona_capital_binding_id", "capital_pool_id"
+                    ):
+                        val = str(p.get(field) or "").strip().lower()
+                        if val:
+                            lineage_ids.add(val)
+            for _ in range(3):
+                try:
+                    bindings = read_store.list_runtime_bindings(include_market_persona_defaults=True) or []
+                except Exception:
+                    bindings = []
+                for b in bindings:
+                    b_pid = str(b.get("persona_id") or b.get("personaId") or "").strip().lower()
+                    b_rid = str(b.get("runtime_id") or b.get("id") or "").strip().lower()
+                    b_bid = str(b.get("binding_id") or b.get("runtime_binding_id") or "").strip().lower()
+                    b_aid = str(b.get("artifact_id") or "").strip().lower()
+                    b_plid = str(b.get("plan_id") or b.get("deployment_plan_id") or "").strip().lower()
+                    if b_pid == p_clean or b_pid in lineage_ids or b_rid in lineage_ids or b_bid in lineage_ids or b_aid in lineage_ids:
+                        for val in (b_pid, b_rid, b_bid, b_aid, b_plid):
+                            if val:
+                                lineage_ids.add(val)
+                try:
+                    incidents = read_store.list_incidents() or []
+                except Exception:
+                    incidents = []
+                for i in incidents:
+                    i_id = str(i.get("incident_id") or i.get("id") or "").strip().lower()
+                    i_rid = str(i.get("runtime_id") or "").strip().lower()
+                    i_bid = str(i.get("binding_id") or i.get("persona_capital_binding_id") or "").strip().lower()
+                    i_aid = str(i.get("artifact_id") or "").strip().lower()
+                    i_plid = str(i.get("deployment_plan_id") or "").strip().lower()
+                    i_pool = str(i.get("capital_pool_id") or "").strip().lower()
+                    if i_id in lineage_ids or i_rid in lineage_ids or i_bid in lineage_ids or i_aid in lineage_ids or i_plid in lineage_ids:
+                        for val in (i_id, i_rid, i_bid, i_aid, i_plid, i_pool):
+                            if val:
+                                lineage_ids.add(val)
+            matched_filtered = []
+            for item in filtered:
+                item_ids = set()
+                for f in ("source_id", "id", "entry_type", "entryType"):
+                    val = str(item.get(f) or "").strip().lower()
+                    if val:
+                        item_ids.add(val)
+                target_obj = item.get("target") or {}
+                if isinstance(target_obj, dict):
+                    for f in ("id", "runtime_id", "artifact_id", "incident_id"):
+                        val = str(target_obj.get(f) or "").strip().lower()
+                        if val:
+                            item_ids.add(val)
+                record_obj = item.get("record") or {}
+                if isinstance(record_obj, dict):
+                    for f in (
+                        "artifact_id", "persona_id", "target_id", "runtime_id",
+                        "runtime_binding_id", "persona_capital_binding_id",
+                        "incident_id", "incident_ref", "linked_incident_id",
+                        "report_id", "postmortem_id", "freeze_order_id", "rollback_id",
+                        "decision_id"
+                    ):
+                        val = str(record_obj.get(f) or "").strip().lower()
+                        if val:
+                            item_ids.add(val)
+                for key in ("decision", "mutation_review", "mutationReview", "postmortem", "freeze_order", "freezeOrder", "rollback"):
+                    inner = item.get(key)
+                    if isinstance(inner, dict):
+                        for f in (
+                            "artifact_id", "persona_id", "target_id", "runtime_id",
+                            "runtime_binding_id", "persona_capital_binding_id",
+                            "incident_id", "incident_ref", "linked_incident_id",
+                            "report_id", "postmortem_id", "freeze_order_id", "rollback_id",
+                            "decision_id", "id"
+                        ):
+                            val = str(inner.get(f) or "").strip().lower()
+                            if val:
+                                item_ids.add(val)
+                if not item_ids.isdisjoint(lineage_ids):
+                    matched_filtered.append(item)
+            filtered = matched_filtered
     if mutation_review:
         mr_clean = mutation_review.strip().lower()
         if mr_clean:
             filtered = [
                 item for item in filtered
                 if str(item.get("source_id") or "").lower() == mr_clean
-                and item.get("entry_type") in ("evolution_decision", "mutation_review")
+                and item.get("entry_type") == "mutation_review"
             ]
     if decision:
         dec_clean = decision.strip().lower()
@@ -37289,7 +37396,7 @@ async def bff_management_evolution_journal(
             filtered = [
                 item for item in filtered
                 if str(item.get("source_id") or "").lower() == dec_clean
-                and item.get("entry_type") in ("evolution_decision", "mutation_review")
+                and item.get("entry_type") == "evolution_decision"
             ]
 
     total = len(filtered)

@@ -202,3 +202,177 @@ def test_evolution_journal_requires_read_authentication() -> None:
             assert resp.json()["error"]["code"] == "AUTH_REQUIRED"
         finally:
             bff_main.read_store = original_store
+
+
+def test_evochain_007_filters_provenance_and_decoys() -> None:
+    import json
+    with tempfile.TemporaryDirectory() as td:
+        mock_data = {
+            "personas": {
+                "persona-1": {
+                    "id": "persona-1",
+                    "persona_id": "persona-1",
+                    "artifact_id": "artifact-1"
+                },
+                "persona-10": {
+                    "id": "persona-10",
+                    "persona_id": "persona-10",
+                    "artifact_id": "artifact-10"
+                }
+            },
+            "runtime_bindings": {
+                "runtime-1": {
+                    "id": "runtime-1",
+                    "runtime_id": "runtime-1",
+                    "persona_id": "persona-1",
+                    "artifact_id": "artifact-1"
+                }
+            },
+            "incidents": {
+                "inc-1": {
+                    "id": "inc-1",
+                    "incident_id": "inc-1",
+                    "artifact_id": "artifact-1",
+                    "runtime_id": "runtime-1"
+                }
+            },
+            "evolution_decisions": {
+                "dec-1": {
+                    "id": "dec-1",
+                    "decision_id": "dec-1",
+                    "target_type": "candidate_artifact",
+                    "target_id": "artifact-1",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "created_at": "2026-07-14T00:00:00Z"
+                },
+                "dec-10": {
+                    "id": "dec-10",
+                    "decision_id": "dec-10",
+                    "target_type": "candidate_artifact",
+                    "target_id": "artifact-10",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "created_at": "2026-07-14T00:01:00Z"
+                },
+                "dec-decoy": {
+                    "id": "dec-decoy",
+                    "decision_id": "dec-decoy",
+                    "target_type": "candidate_artifact",
+                    "target_id": "artifact-other",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "title": "Decoy for persona-1",
+                    "summary": "This is a decoy mentioning persona-1 but not associated with it",
+                    "created_at": "2026-07-14T00:02:00Z"
+                },
+                "evo-vslice-1": {
+                    "id": "evo-vslice-1",
+                    "decision_id": "evo-vslice-1",
+                    "target_type": "candidate_artifact",
+                    "target_id": "artifact-vslice",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "created_at": "2026-07-14T00:03:00Z"
+                },
+                "dec-live": {
+                    "id": "dec-live",
+                    "decision_id": "dec-live",
+                    "target_type": "candidate_artifact",
+                    "target_id": "artifact-live",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "metadata": {
+                        "origin": "live"
+                    },
+                    "created_at": "2026-07-14T00:04:00Z"
+                },
+                "dec-explicit-unknown": {
+                    "id": "dec-explicit-unknown",
+                    "decision_id": "dec-explicit-unknown",
+                    "target_type": "candidate_artifact",
+                    "target_id": "artifact-unknown",
+                    "status": "proposed",
+                    "action_type": "retrain",
+                    "risk_level": "low",
+                    "metadata": {
+                        "origin": "unknown"
+                    },
+                    "created_at": "2026-07-14T00:05:00Z"
+                }
+            },
+            "postmortems": {},
+            "freeze_orders": {},
+            "rollbacks": {}
+        }
+        with open(os.path.join(td, "read_surfaces.json"), "w") as f:
+            json.dump(mock_data, f)
+
+        original_store = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+
+            # 1. Test persona decoy / collision filtering (explicit lineage matching)
+            # Querying for persona-1 should ONLY match dec-1 (artifact-1 is in persona-1's lineage)
+            # It should not match dec-10 (persona-10 collision) and should not match dec-decoy (free text decoy)
+            resp = client.get("/bff/management/evolution-journal?persona=persona-1", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            items = resp.json()["data"]["items"]
+            assert len(items) == 2
+            assert all(item["source_id"] == "dec-1" for item in items)
+
+            # 2. Test typed hits / empty results
+            # Querying for decision dec-1 should return decision item
+            resp = client.get("/bff/management/evolution-journal?decision=dec-1", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            items_dec = resp.json()["data"]["items"]
+            assert len(items_dec) == 1
+            assert items_dec[0]["entry_type"] == "evolution_decision"
+
+            # Querying for mutation_review dec-1 should return mutation_review item
+            resp = client.get("/bff/management/evolution-journal?mutation_review=dec-1", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            items_mr = resp.json()["data"]["items"]
+            assert len(items_mr) == 1
+            assert items_mr[0]["entry_type"] == "mutation_review"
+
+            # Querying for nonexistent decision should return 0 items
+            resp = client.get("/bff/management/evolution-journal?decision=nonexistent", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            assert len(resp.json()["data"]["items"]) == 0
+
+            # 3. Test authoritative seed/live/unknown provenance
+            resp = client.get("/bff/management/evolution-journal", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            items = resp.json()["data"]["items"]
+            assert len(items) == 12
+
+            by_id_and_type = {(item["source_id"], item["entry_type"]): item for item in items}
+            assert by_id_and_type[("evo-vslice-1", "evolution_decision")]["origin"] == "seed"
+            assert by_id_and_type[("dec-live", "evolution_decision")]["origin"] == "live"
+            assert by_id_and_type[("dec-explicit-unknown", "evolution_decision")]["origin"] == "unknown"
+            assert by_id_and_type[("dec-1", "evolution_decision")]["origin"] == "unknown"
+
+            # 4. Test filtered total plus next token (paging)
+            resp = client.get("/bff/management/evolution-journal?page_size=2", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["page_info"]["total"] == 12
+            assert len(body["data"]["items"]) == 2
+            next_token = body["page_info"]["next_page_token"]
+            assert next_token is not None
+
+            # Get next page
+            resp = client.get(f"/bff/management/evolution-journal?page_size=2&page_token={next_token}", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert len(body["data"]["items"]) == 2
+            assert body["page_info"]["total"] == 12
+
+        finally:
+            bff_main.read_store = original_store
