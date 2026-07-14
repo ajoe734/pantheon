@@ -71,6 +71,7 @@ def create_agora_router(
     *,
     extract_identity: Callable[..., Any],
     require_read_role: Callable[..., None],
+    require_write_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
     get_read_store: Callable[[], Any],
@@ -187,6 +188,9 @@ def create_agora_router(
         get_read_store=get_read_store,
         workshop_store=workshop_store,
     ))
-    router.include_router(create_governance_router(**_kw))
+    router.include_router(create_governance_router(
+        **_kw,
+        require_write_role=require_write_role,
+    ))
 
     return router
