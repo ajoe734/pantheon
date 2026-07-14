@@ -90,6 +90,7 @@ class PostmortemResponse(BaseModel):
 
     # Optional
     published_at: Optional[str] = None
+    published_event_id: Optional[str] = None
     linked_evolution_decision_id: Optional[str] = None
 
     model_config = {"from_attributes": True}
@@ -103,6 +104,7 @@ class OperatorPostmortemPayload(BaseModel):
     status: str
     created_at: str
     published_at: Optional[str] = None
+    published_event_id: Optional[str] = None
     incident_id: str
     incident_status: str
     incident_severity: str

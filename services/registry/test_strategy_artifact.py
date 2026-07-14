@@ -491,10 +491,17 @@ def test_strategy_artifact_advance_preserves_deployment_split():
 
     approved = client.post(
         f"/api/registry/strategy-artifacts/{registry_id}/advance",
-        json={"target_state": "approved", "approver": "test-reviewer"},
+        json={
+            "target_state": "approved",
+            "approver": "test-reviewer",
+            "approval_decision_id": "decision-evoloop-006",
+        },
     )
 
     assert approved.status_code == 200, approved.text
     assert approved.json()["entry"]["artifact_state"] == "approved"
     assert approved.json()["entry"]["approver"] == "test-reviewer"
+    assert approved.json()["entry"]["approval_decision_id"] == (
+        "decision-evoloop-006"
+    )
     assert approved.json()["deployment_stage"] == DeploymentStage.NONE.value

@@ -46,6 +46,11 @@
       "format": "date-time",
       "description": "Timestamp when the postmortem was published. Required when status is published."
     },
+    "published_event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Durable postmortem.published event identity committed with the publication transition."
+    },
     "incident_id": {
       "type": "string",
       "minLength": 1,
