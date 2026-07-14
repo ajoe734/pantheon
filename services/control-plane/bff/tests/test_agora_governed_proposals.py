@@ -610,6 +610,8 @@ def test_approval_rejects_stale_content_validation_time_and_expiry_bindings(monk
         "pre-validation": {**base, "decision_id": "pre-validation", "id": "pre-validation", "decided_at": "2020-01-01T00:00:00Z"},
         "expired": {**base, "decision_id": "expired", "id": "expired", "expires_at": "2020-01-01T00:00:00Z"},
         "superseded": {**base, "decision_id": "superseded", "id": "superseded", "superseded_by": "newer"},
+        "revoked-at": {**base, "decision_id": "revoked-at", "id": "revoked-at", "revoked_at": "2026-07-14T00:00:00Z"},
+        "revoked-state": {**base, "decision_id": "revoked-state", "id": "revoked-state", "decision_state": "revoked"},
     }
     monkeypatch.setattr(bff_main.read_store, "get_approval_decision", records.get)
     expected = {
@@ -619,6 +621,8 @@ def test_approval_rejects_stale_content_validation_time_and_expiry_bindings(monk
         "pre-validation": "after validation",
         "expired": "expired",
         "superseded": "superseded",
+        "revoked-at": "revoked",
+        "revoked-state": "revoked",
     }
     for approval_id, message in expected.items():
         response = c.post(
