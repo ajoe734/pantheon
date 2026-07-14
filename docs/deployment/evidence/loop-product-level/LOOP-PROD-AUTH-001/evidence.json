@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "This manifest was authored against the formal schema from LOOP-PROD-002 (PR #3584), replacing the earlier bootstrap-shape manifest that was merged in PR #3593 before the formal schema existed.",
-    "note": "The evidence.json merged by PR #3593 predated the formal product-evidence schema and does not validate against schemas/product-evidence.schema.json (missing schema_version, deployment, hosted_readback, behavioral_proof, security_and_safety, residual_risks, integrity, record_log). This manifest supersedes it.",
+    "note": "The evidence.json merged by PR #3593 predated the formal product-evidence schema and does not validate against schemas/product-evidence.schema.json (missing schema_version, deployment, hosted_readback, behavioral_proof, security_and_safety, residual_risks, integrity, record_log). This manifest supersedes it. Round 2 (this cut) responds to independent review change-requests on PR #3617: fail-closed auth-mode validation, governed per-identity dev-login credentials replacing the single shared credential, a deploy-time credential/readiness gate with post-deploy authenticated + fixed-bearer-negative checks, and corrected acceptance/target_maturity classification.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -16,10 +16,10 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-14T05:29:00Z",
-    "evidence_cut_semantics": "Capture-time hosted readback only. The public dev BFF endpoint is shared and redeployed continuously by many concurrent, unrelated tasks in this fleet; the exact source_commit_sha observed drifts between checks (183cba0... and 7c2e3673b... were both observed minutes apart during this evidence cut, neither an ancestor of the other). This manifest does not assert a stable current runtime after evidence_cut_at. It does assert that every observed hosted config_posture during this cut was auth_stub:true / auth_mode:permissive, which is the systemic symptom this task's fix targets, not a one-off stale artifact.",
+    "evidence_cut_at": "2026-07-14T08:21:05Z",
+    "evidence_cut_semantics": "Capture-time hosted readback only. The public dev BFF endpoint is shared and redeployed continuously by many concurrent, unrelated tasks in this fleet; the exact source_commit_sha observed drifts between checks (183cba0... and 7c2e3673b... were both observed minutes apart during this evidence cut, neither an ancestor of the other). This manifest does not assert a stable current runtime after evidence_cut_at. It does assert that every observed hosted config_posture during this cut was auth_stub:true / auth_mode:permissive, which is the systemic symptom this task's fix targets, not a one-off stale artifact. No new hosted readback was captured in this round-2 cut (this worker has no network path to the hosted dev BFF); hosted_readback.pre_deploy below is unchanged from the round-1 cut and is retained as historical evidence of the pre-fix symptom, not re-verified against round-2 code.",
     "id": "LOOP-PROD-AUTH-001",
-    "overall_admission": "blocked_pending_hosted_redeploy_and_dev_login_credentials",
+    "overall_admission": "blocked_pending_human_provisioned_deploy_secrets_and_hosted_redeploy",
     "owner": "Claude",
     "phase": "Loop Product-Level Remediation / Wave 0",
     "product_level_required": true,
@@ -27,7 +27,7 @@
     "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AUTH-001/evidence.json",
     "reviewer": "Codex",
     "target_environment": "dev",
-    "target_maturity": "code_fix_delivered_hosted_strict_not_yet_confirmed",
+    "target_maturity": "proven-live",
     "task_branch": "task/LOOP-PROD-AUTH-001",
     "title": "Strict dev auth cutover and exact BFF build identity"
   },
@@ -47,9 +47,10 @@
     "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-AUTH-001.md"
   },
   "scope": {
-    "authoritative_write_owner": "Claude for the dev deploy script's auth-posture defaults and build-time wiring",
+    "authoritative_write_owner": "Claude for BFF dev-login/auth-mode application logic, shared runtime auth-mode validation, and the dev deploy script's credential gate/build-time wiring",
     "composes_with": [
       "PR #3593 (merged; delivered the BFF application-layer strict-auth code and per-request role/tenant scoping)",
+      "PR #3617 (this branch; round 1 delivered the deploy-script strict default fix, round 2 in this cut delivers the reviewed fail-closed/identity/credential-gate changes)",
       "LOOP-PROD-002 (formal evidence schema this manifest conforms to)"
     ],
     "evidence_changed_files": [
@@ -61,21 +62,35 @@
       "docs/deployment/bff-strict-auth-build-identity.md",
       "scripts/deploy_nonprod_vm.sh",
       "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py",
-      "services/control-plane/bff/Dockerfile"
+      "services/control-plane/bff/Dockerfile",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_bff_auth_facade.py",
+      "services/control-plane/bff/test_bff_session_auth_me_contract.py",
+      "services/runtime_auth_inbound.py",
+      "services/test_runtime_auth_inbound_attack_matrix.py",
+      ".github/workflows/nonprod-deploy.yml"
     ],
-    "not_changing": "BFF application-layer auth/RBAC/MFA/two-person-approval logic (delivered by PR #3593 and unmodified here), dev-login credential provisioning (requires a secret store outside this repo), image_digest capture (requires a build+inspect+redeploy sequence not implemented in this change)",
-    "owned_layer": "Dev deploy script auth-posture defaults (scripts/deploy_nonprod_vm.sh), BFF Docker build-time identity wiring (Dockerfile + docker-compose.yml build args), regression coverage for the strict default"
+    "not_changing": "RBAC/tenant/MFA/two-person-approval application logic beyond the dev-login role/tenant binding change in this cut (unmodified, still covered by existing tests); image_digest capture (requires a build+inspect+redeploy sequence not implemented in this change, now recorded as blocking per AC-04 -- see residual_risks.RISK-LOOP-PROD-AUTH-001-IMAGE-DIGEST)",
+    "owned_layer": "BFF dev-login identity binding and auth-mode validation (services/control-plane/bff/main.py), shared runtime auth-mode validation (services/runtime_auth_inbound.py), dev deploy script credential gate and auth-posture defaults (scripts/deploy_nonprod_vm.sh), deploy workflow secret sourcing (.github/workflows/nonprod-deploy.yml), BFF Docker build-time identity wiring (Dockerfile + docker-compose.yml build args), regression coverage for all of the above"
   },
   "implementation_delivery": {
     "anchor_commits": [
       {
         "sha": "2e0e8f3b49bd081a2280cd50edd728ba76625bb7",
         "subject": "LOOP-PROD-AUTH-001: anchor deploy-script strict auth default fix"
+      },
+      {
+        "sha": "53173806adbef4923a286c2f77fdbedc28d71310",
+        "subject": "LOOP-PROD-AUTH-001: fail-closed auth mode, governed dev-login identities"
+      },
+      {
+        "sha": "cdaa05b97bc948e2d7606e4e2f04d0495474e1b6",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/LOOP-PROD-AUTH-001"
       }
     ],
     "pull_request": {
       "base": "dev",
-      "head_sha": "2e0e8f3b49bd081a2280cd50edd728ba76625bb7",
+      "head_sha": "cdaa05b97bc948e2d7606e4e2f04d0495474e1b6",
       "number": 3617,
       "url": "https://github.com/ajoe734/pantheon/pull/3617"
     },
@@ -91,7 +106,8 @@
         },
         "run_id": 29308427346,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/29308427346",
-        "workflow": "Branch CI Gate"
+        "workflow": "Branch CI Gate",
+        "note": "This run covers the round-1 head (2e0e8f3b4), not the round-2 head recorded in pull_request.head_sha above. CI has not yet run against the round-2 commits; do not treat this as current."
       },
       {
         "conclusion": "success",
@@ -102,7 +118,8 @@
         },
         "run_id": 29308427378,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/29308427378",
-        "workflow": "Orchestrator Sync"
+        "workflow": "Orchestrator Sync",
+        "note": "This run covers the round-1 head (2e0e8f3b4), not the round-2 head recorded in pull_request.head_sha above. CI has not yet run against the round-2 commits; do not treat this as current."
       }
     ]
   },
@@ -110,12 +127,12 @@
     "commands": [
       {
         "command": "PYTHONPATH=services/control-plane/bff python3 -m pytest services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/test_bff_oidc_staging_env_contract.py services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/tests/test_bff_rebalance_proposals.py services/control-plane/bff/test_bff_dry_run_rbac_contract.py -q",
-        "conclusion": "149 passed",
+        "conclusion": "158 passed",
         "result": "pass"
       },
       {
-        "command": "python3 -m pytest scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_deploy_runtime_state_contract.py scripts/test_deploy_nonprod_bff_source_sha_contract.py -q",
-        "conclusion": "5 passed",
+        "command": "python3 -m pytest scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_deploy_runtime_state_contract.py scripts/test_deploy_nonprod_bff_source_sha_contract.py services/test_runtime_auth_inbound_attack_matrix.py -q",
+        "conclusion": "20 passed",
         "result": "pass"
       },
       {
@@ -124,9 +141,9 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-14T05:25:52Z",
-    "validated_base_sha": "5a95c4d8674357ab733a1259c82d756e0cd79fc6",
-    "validated_head_sha": "2e0e8f3b49bd081a2280cd50edd728ba76625bb7"
+    "validated_at": "2026-07-14T08:21:05Z",
+    "validated_base_sha": "6e7d83c9208d201a9a90c1e87550a105014d1f53",
+    "validated_head_sha": "cdaa05b97bc948e2d7606e4e2f04d0495474e1b6"
   },
   "deployment": {
     "applicable": true,
@@ -138,7 +155,7 @@
     },
     "canonical_root_deploy": {
       "conclusion": "not_yet_run_for_this_change",
-      "reason": "Redeploy requires a human-triggered/approved 'Pantheon Nonprod Deploy' workflow_dispatch run (or the next automatic publish cut) after this PR merges; this worker cannot trigger it. See residual_risks.RISK-LOOP-PROD-AUTH-001-REDEPLOY-PENDING."
+      "reason": "Redeploy requires a human-triggered/approved 'Pantheon Nonprod Deploy' workflow_dispatch run (or the next automatic publish cut) after this PR merges; this worker cannot trigger it. As of this round-2 cut, the deploy will additionally refuse to run (scripts/deploy_nonprod_vm.sh's new preflight gate) unless a human has first provisioned the DEV_BFF_JWT_SECRET/DEV_BFF_OIDC_CLIENT_ID/DEV_BFF_OIDC_CLIENT_SECRET GitHub secrets referenced by .github/workflows/nonprod-deploy.yml. See residual_risks.RISK-LOOP-PROD-AUTH-001-REDEPLOY-PENDING and residual_risks.RISK-LOOP-PROD-AUTH-001-DEV-LOGIN-CREDENTIALS."
     },
     "identity_admission": {
       "admission_boundary": "Admitted only as proof that the pre-fix deploy script default was live and reproducible across at least two concurrent hosted deploys at evidence_cut_at; not admitted as proof of strict auth on the hosted dev BFF, since the fix in this PR has not been deployed yet.",
@@ -250,20 +267,21 @@
       "id": "AC-01",
       "statement": "hosted BFF runs strict auth with AUTH_STUB=false and rejects fixed or cross-environment identities",
       "status": "blocked",
-      "blocking_until": "The next Pantheon Nonprod Deploy run picks up this PR's corrected scripts/deploy_nonprod_vm.sh default, and hosted_readback re-verification shows config_posture.auth_stub=false, auth_mode=strict, and a fixed bearer identity rejected on GET /bff/me.",
+      "blocking_until": "A human provisions DEV_BFF_JWT_SECRET/DEV_BFF_OIDC_CLIENT_ID/DEV_BFF_OIDC_CLIENT_SECRET as GitHub secrets (required by the new deploy-time preflight gate), then the next Pantheon Nonprod Deploy run picks up this PR's fail-closed auth-mode code, and the new assert_bff_auth_gate post-deploy check (and/or manual hosted_readback re-verification) shows config_posture.auth_stub=false, auth_mode=strict, and a fixed bearer identity rejected on GET /bff/me.",
       "evidence_refs": [
         "deployment.identity_admission",
         "hosted_readback.pre_deploy",
-        "residual_risks.RISK-LOOP-PROD-AUTH-001-REDEPLOY-PENDING"
+        "residual_risks.RISK-LOOP-PROD-AUTH-001-REDEPLOY-PENDING",
+        "residual_risks.RISK-LOOP-PROD-AUTH-001-DEV-LOGIN-CREDENTIALS"
       ]
     },
     {
       "id": "AC-02",
       "statement": "viewer, operator, approver, risk owner, operator A, and operator B use distinct short-lived scoped identities",
       "status": "blocked",
-      "blocking_until": "PANTHEON_BFF_DEV_LOGIN_CLIENT_ID/_SECRET (or OIDC equivalents) and PANTHEON_BFF_JWT_SECRET are provisioned on the hosted dev host from a secret store, then a scripted six-persona dev-login matrix is run and captured against the hosted BFF.",
+      "blocking_until": "Contract-level proof now exists: services/control-plane/bff/main.py binds each of the six identities to its own client_id/secret, fixed subject, and role, and test_bff_dev_login_distinct_identities_have_distinct_subjects_and_roles proves all six mint distinct subjects/roles locally. End-to-end hosted proof still requires a human to provision each identity's PANTHEON_BFF_DEV_LOGIN_<IDENTITY>_CLIENT_ID/_SECRET on the host from a secret store, then a scripted six-persona dev-login matrix run and captured against the hosted BFF.",
       "evidence_refs": [
-        "scope.not_changing",
+        "scope.implementation_changed_files",
         "hosted_readback.pre_deploy.bff_auth_dev_login_note",
         "residual_risks.RISK-LOOP-PROD-AUTH-001-DEV-LOGIN-CREDENTIALS"
       ]
@@ -272,7 +290,7 @@
       "id": "AC-03",
       "statement": "anonymous, wrong tenant, missing MFA/approval, same-actor, expired and replayed two-person proofs fail closed",
       "status": "blocked",
-      "blocking_until": "Same precondition as AC-02 (hosted distinct identities), plus AC-01 (strict mode live); until then this is proven only at contract/unit-test level, not end-to-end against the hosted BFF.",
+      "blocking_until": "Same-actor and cross-tenant/role escalation are now proven at contract level (test_bff_dev_login_rejects_role_escalation_beyond_bound_identity, test_bff_dev_login_rejects_cross_tenant_escalation, operator_a/operator_b distinct-subject assertion in test_bff_dev_login_distinct_identities_have_distinct_subjects_and_roles). Same precondition as AC-02 (hosted distinct identities), plus AC-01 (strict mode live) for end-to-end hosted proof; until then this remains proven only at contract/unit-test level, not against the hosted BFF.",
       "evidence_refs": [
         "behavioral_proof",
         "security_and_safety"
@@ -282,7 +300,7 @@
       "id": "AC-04",
       "statement": "version endpoint and health evidence identify exact git SHA, image digest, build time, environment, and safe config fingerprint",
       "status": "blocked",
-      "blocking_until": "git SHA, environment, and config_posture are confirmed live today. build_time is wired in this PR but not yet observed live (pending redeploy). image_digest has no source anywhere in the build pipeline and needs a follow-up build+inspect+redeploy sequence (see residual_risks.RISK-LOOP-PROD-AUTH-001-IMAGE-DIGEST).",
+      "blocking_until": "git SHA, environment, and config_posture are confirmed live as of the round-1 cut (pre-fix values; not yet re-observed against round-2 code). build_time is wired in this PR but not yet observed live (pending redeploy). image_digest has no source anywhere in the build pipeline and needs a follow-up build+inspect+redeploy sequence; this field is explicitly required by this AC's statement, so its residual risk is now recorded as blocking, not a secondary/non-blocking gap (see residual_risks.RISK-LOOP-PROD-AUTH-001-IMAGE-DIGEST).",
       "evidence_refs": [
         "hosted_readback.pre_deploy",
         "residual_risks.RISK-LOOP-PROD-AUTH-001-IMAGE-DIGEST"
@@ -292,7 +310,7 @@
       "id": "AC-05",
       "statement": "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
       "status": "pending_independent_review",
-      "blocking_until": "Codex records a verdict against this manifest's companion checksum and PR #3617's merge SHA once merged.",
+      "blocking_until": "Codex records a verdict against this manifest's companion checksum and PR #3617's round-2 head (cdaa05b97bc948e2d7606e4e2f04d0495474e1b6, or its merge SHA once merged). Required checks in implementation_delivery are stale (last ran against the round-1 head 2e0e8f3b4) and must re-run against the round-2 head before this AC can pass.",
       "evidence_refs": [
         "implementation_delivery",
         "residual_risks",
@@ -302,10 +320,11 @@
     {
       "id": "AC-06",
       "statement": "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
-      "status": "pass",
+      "status": "blocked",
+      "blocking_until": "hosted_readback.pre_deploy is authoritative pre-fix readback, but there is no authoritative *post*-fix hosted readback yet (no redeploy has run against either round-1 or round-2 code as of this cut). This AC requires both a pre and a post readback; only pre exists, so it cannot pass yet -- corrected from an earlier 'pass' classification per independent review.",
       "evidence_refs": [
         "hosted_readback.pre_deploy",
-        "deployment.identity_admission"
+        "residual_risks.RISK-LOOP-PROD-AUTH-001-REDEPLOY-PENDING"
       ]
     },
     {
@@ -320,10 +339,12 @@
     {
       "id": "AC-08",
       "statement": "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
-      "status": "pass",
+      "status": "blocked",
+      "blocking_until": "This code has not been deployed (registry/branch-only state); deployment.identity_admission explicitly records that the fix-merge commit is not an ancestor of the capture-time runtime and that no redeploy has occurred. Recording deployment identity truthfully (rather than promoting maturity on registry-only state) is itself satisfied, but the underlying deployed-identity fact this AC requires does not yet exist -- corrected from an earlier 'pass' classification per independent review, which is the exact registry-only-promotion pattern this AC exists to prevent.",
       "evidence_refs": [
         "deployment.identity_admission",
-        "hosted_readback.pre_deploy"
+        "hosted_readback.pre_deploy",
+        "residual_risks.RISK-LOOP-PROD-AUTH-001-REDEPLOY-PENDING"
       ]
     },
     {
@@ -348,30 +369,30 @@
   "residual_risks": {
     "RISK-LOOP-PROD-AUTH-001-REDEPLOY-PENDING": {
       "blocking_for_this_task": true,
-      "containment": "The corrected default only ships to the hosted dev BFF on the next 'Pantheon Nonprod Deploy' run (human-triggered workflow_dispatch or the next automatic publish cut); until then the hosted BFF continues to run permissive/stub auth, which is the pre-existing (not newly introduced) posture.",
-      "description": "scripts/deploy_nonprod_vm.sh's corrected DEV_BFF_AUTH_STUB/DEV_BFF_AUTH_MODE defaults have not yet been observed live on the hosted dev BFF as of evidence_cut_at.",
+      "containment": "The corrected default and round-2 fail-closed/governed-identity/gated-deploy code only ship to the hosted dev BFF on the next 'Pantheon Nonprod Deploy' run that both includes this branch's merge SHA and has DEV_BFF_JWT_SECRET/DEV_BFF_OIDC_CLIENT_ID/DEV_BFF_OIDC_CLIENT_SECRET configured (or the deploy will refuse to run at all per the new preflight gate); until then the hosted BFF continues to run permissive/stub auth, which is the pre-existing (not newly introduced) posture.",
+      "description": "Neither round-1 (scripts/deploy_nonprod_vm.sh's corrected DEV_BFF_AUTH_STUB/DEV_BFF_AUTH_MODE defaults) nor round-2 (fail-closed auth-mode validation, governed dev-login identities, deploy credential gate) has been observed live on the hosted dev BFF as of evidence_cut_at; no Pantheon Nonprod Deploy run has occurred against this branch.",
       "expiry": "2026-07-21T00:00:00Z",
-      "owner": "human ops (deploy approver)",
-      "recheck_trigger": "After the next Pantheon Nonprod Deploy run that includes this PR's merge SHA, re-curl GET /bff/version (expect auth_stub:false, auth_mode:strict) and GET /bff/me with an arbitrary fixed bearer (expect 401).",
+      "owner": "human ops (deploy approver, plus GitHub secret provisioning)",
+      "recheck_trigger": "After a Pantheon Nonprod Deploy run that includes this branch's merge SHA succeeds (i.e. passes the new credential preflight gate and assert_bff_auth_gate), re-curl GET /bff/version (expect auth_stub:false, auth_mode:strict) and GET /bff/me with an arbitrary fixed bearer (expect 401).",
       "severity": "high"
     },
     "RISK-LOOP-PROD-AUTH-001-DEV-LOGIN-CREDENTIALS": {
       "blocking_for_this_task": true,
-      "containment": "dev-login fails closed (403 PRECONDITION_FAILED) when credentials are absent, so this gap does not create an authentication bypass; it only blocks proving the distinct-identity acceptance criteria end-to-end against the hosted BFF.",
-      "description": "Neither docker-compose.yml nor scripts/deploy_nonprod_vm.sh provisions PANTHEON_BFF_DEV_LOGIN_CLIENT_ID/_SECRET (or the PANTHEON_BFF_OIDC_CLIENT_ID/_SECRET fallback) or PANTHEON_BFF_JWT_SECRET; these must come from a secret store outside this repo and were not fabricated here.",
+      "containment": "dev-login fails closed (403 PRECONDITION_FAILED) when credentials are absent, so this gap does not create an authentication bypass. As of round 2, scripts/deploy_nonprod_vm.sh's new preflight gate additionally refuses to run any dev deploy while DEV_BFF_AUTH_MODE=strict (the default) and these credentials are unset, so this now blocks all dev deploys, not only the distinct-identity acceptance proof.",
+      "description": "Neither docker-compose.yml nor scripts/deploy_nonprod_vm.sh provisions dev-login/JWT credentials on the hosted deploy target. .github/workflows/nonprod-deploy.yml now sources DEV_BFF_JWT_SECRET, DEV_BFF_OIDC_CLIENT_ID, and DEV_BFF_OIDC_CLIENT_SECRET from repository secrets of the same name, but those three secrets have not been created in GitHub as of this evidence cut -- they must come from a secret store outside this repo and were not fabricated here. Exercising the other five identities (viewer/approver/risk_owner/operator_a/operator_b) additionally requires their own PANTHEON_BFF_DEV_LOGIN_<IDENTITY>_CLIENT_ID/_SECRET secrets, not yet provisioned either.",
       "expiry": "2026-07-21T00:00:00Z",
-      "owner": "human ops (secret-store access required)",
-      "recheck_trigger": "Once credentials are provisioned on the hosted dev host, run a scripted six-persona (viewer/operator/approver/risk-owner/operator-A/operator-B) dev-login and negative-security-proof matrix against the hosted BFF and capture the readback.",
+      "owner": "human ops (GitHub repo/environment secret access required)",
+      "recheck_trigger": "A human creates the DEV_BFF_JWT_SECRET/DEV_BFF_OIDC_CLIENT_ID/DEV_BFF_OIDC_CLIENT_SECRET GitHub secrets (and, to prove AC-02/AC-03 end-to-end, the five additional per-identity secret pairs), then a Pantheon Nonprod Deploy run succeeds past the new preflight gate and assert_bff_auth_gate passes; a scripted six-persona dev-login and negative-security-proof matrix is then run and captured against the hosted BFF.",
       "severity": "high"
     },
     "RISK-LOOP-PROD-AUTH-001-IMAGE-DIGEST": {
-      "blocking_for_this_task": false,
-      "containment": "git SHA, environment, and (after redeploy) build_time still identify the deployed build precisely; image_digest is a secondary identity field.",
+      "blocking_for_this_task": true,
+      "containment": "git SHA, environment, and (after redeploy) build_time still identify the deployed build precisely; image_digest is a secondary identity field, but AC-04's statement explicitly names image digest as a required identity field, so its absence is recorded as blocking per independent review rather than a secondary/non-blocking gap.",
       "description": "image_digest has no source anywhere in this repo's build pipeline: images are built locally on the VM via 'docker compose up -d --build' and never pushed to a registry, so there is no OCI registry digest. Populating this field requires a follow-up change that captures the local image ID via 'docker inspect' after build and re-injects it as BFF_IMAGE_DIGEST, which was out of scope for this fix.",
       "expiry": "2026-08-14T00:00:00Z",
       "owner": "Claude / next LOOP-PROD-AUTH follow-up task",
       "recheck_trigger": "Implement the build+inspect+redeploy sequence and observe /bff/version report a non-'unknown' image_digest live.",
-      "severity": "low"
+      "severity": "medium"
     }
   },
   "integrity": {
@@ -402,6 +423,17 @@
           "services/control-plane/bff/Dockerfile": "a52128a44ea6bdb0df1f30ad73904eadbdbe70a7100e2fcf234a89df2bbd5f7e"
         },
         "git_sha": "2e0e8f3b49bd081a2280cd50edd728ba76625bb7"
+      },
+      "round2_implementation_head": {
+        "artifacts": {
+          "services/control-plane/bff/main.py": "cf692b19e1d69ae33eb5e4b08bf363c9e5f35a274cc86e7f85b61b0c78eeedb1",
+          "services/runtime_auth_inbound.py": "2c67ac713ca3bfb3f1e5c48a9802282de2e1b16a725bfc451cd7da0388f67144",
+          "scripts/deploy_nonprod_vm.sh": "c8c0205e4247a4b9969263e78b9dc4e5f9eea5a88d90cc436cf8e8daf86ae4eb",
+          ".github/workflows/nonprod-deploy.yml": "3d76bec499a4b115dfdf3e6bc7eb0fffc2367bd3e1690104e74439ac8f0fd619",
+          "docs/deployment/bff-strict-auth-build-identity.md": "a39aaf384e33647ea175d8c15c500df6566c0195a21bdb25e79db076215949d5"
+        },
+        "git_sha": "cdaa05b97bc948e2d7606e4e2f04d0495474e1b6",
+        "anchor_sha_before_dev_merge": "53173806adbef4923a286c2f77fdbedc28d71310"
       }
     }
   },
@@ -432,6 +464,44 @@
       "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AUTH-001/evidence.json",
       "reviewer": "Codex",
       "sequence": 3,
+      "status": "pending_independent_review"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_change_requested",
+      "recorded_at": "2026-07-14T06:03:26Z",
+      "reference": "PR #3617 review comment (round 2 change-request)",
+      "sequence": 4,
+      "status": "fail",
+      "note": "CHANGES REQUESTED. Four blocking findings: (1) no credential/readiness gate before strict cutover; (2) single shared dev-login credential could self-elevate to admin/unconfigured-tenant, operator A/B shared a subject, risk_owner unissuable; (3) invalid PANTHEON_BFF_AUTH_MODE/PANTHEON_RUNTIME_AUTH_MODE values fell through to permissive instead of failing closed; (4) evidence/acceptance overclaimed (target_maturity overwritten, AC-06/AC-08 marked pass without post-deploy readback, image_digest residual risk marked non-blocking despite AC-04 requiring it, deploy test count misstated as 5 instead of 4, PR/check metadata not bound to current head)."
+    },
+    {
+      "actor": "Claude",
+      "kind": "implementation_pr_updated",
+      "recorded_at": "2026-07-14T08:18:28Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/3617",
+      "sequence": 5,
+      "sha": "53173806adbef4923a286c2f77fdbedc28d71310",
+      "status": "pass",
+      "note": "Round-2 fix for all four review findings: fail-closed auth-mode allowlist in main.py and runtime_auth_inbound.py; governed per-identity dev-login credentials (viewer/operator/approver/risk_owner/operator_a/operator_b) with escalation-denial on out-of-bound roles/tenants; deploy-time credential preflight gate plus post-deploy assert_bff_auth_gate (hosted posture + authenticated round trip + fixed-bearer-negative check) in scripts/deploy_nonprod_vm.sh; secret sourcing added to .github/workflows/nonprod-deploy.yml; docs updated. 20 new/updated regression tests, 178 total passing across the affected suites."
+    },
+    {
+      "actor": "Claude",
+      "kind": "merged_dev_into_task_branch",
+      "recorded_at": "2026-07-14T08:21:05Z",
+      "reference": "task/LOOP-PROD-AUTH-001 was behind origin/dev (5a95c4d86 -> 6e7d83c92); merged forward to keep the PR mergeable",
+      "sequence": 6,
+      "sha": "cdaa05b97bc948e2d7606e4e2f04d0495474e1b6",
+      "status": "pass"
+    },
+    {
+      "kind": "evidence_ready_for_independent_review",
+      "recorded_at": "2026-07-14T08:21:05Z",
+      "required_next_event": "independent_review_verdict",
+      "review_binding_rule": "Reviewer must cite PR #3617's round-2 head (cdaa05b97bc948e2d7606e4e2f04d0495474e1b6, or its merge SHA once merged) and this manifest's companion evidence.sha256, then explicitly decide whether the round-2 fail-closed/governed-identity/deploy-gate changes resolve the four change-requested findings, given that AC-01/02/03/04/06/08 remain blocked pending human-provisioned GitHub secrets and a hosted redeploy that has not yet occurred.",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AUTH-001/evidence.json",
+      "reviewer": "Codex",
+      "sequence": 7,
       "status": "pending_independent_review"
     }
   ]
