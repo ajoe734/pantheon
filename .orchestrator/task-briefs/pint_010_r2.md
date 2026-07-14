@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Persona interaction hosted integration closeout
 - Status: todo
-- Owner: Claude
-- Reviewer: Antigravity
-- Next: Helper-claimed by idle Claude; previous owner Antigravity becomes reviewer.
+- Owner: Codex2
+- Reviewer: Claude
+- Next: Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.
 
 ## Summary
 Run integration security deployment hosted E2E and program closeout; include merged PINT-006 PR #275 and evidence PR #3480.
