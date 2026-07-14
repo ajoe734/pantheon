@@ -87,6 +87,11 @@
       "method": "GET",
       "path": "/bff/agora/trading-room",
       "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/performance-attribution",
+      "status": 200
     }
   ]
 }

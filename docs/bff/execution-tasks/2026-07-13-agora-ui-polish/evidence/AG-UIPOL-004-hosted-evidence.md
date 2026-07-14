@@ -30,9 +30,9 @@ did publish that exact SHA, but its first two attempts ended red in the
 unrelated generic `/management/persona-fleet` post-deploy probe. Attempt 1
 timed out while a linked runtime page remained loading; attempt 2 encountered
 `ERR_NETWORK_CHANGED` and could not fetch an existing `PlatformShell` chunk,
-so it emitted no BFF requests. A non-skipped failed-job rerun was queued at
-13:54 UTC. This anchor records the successful hosted task proof without
-misstating the still-pending deploy workflow gate.
+so it emitted no BFF requests. The third rerun attempt was cancelled. Thus,
+the exact-SHA deploy attempts ended in failure, failure, and cancelled status.
+This anchor records the successful hosted task proof and notes the terminal failures of these deploy attempts.
 
 ## Workshop state-consistency proof
 
