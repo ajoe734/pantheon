@@ -1286,15 +1286,22 @@ def test_emergency_proposal_rejects_increase_and_accepts_containment(
 def test_bff_version_reports_configured_source_sha(monkeypatch) -> None:
     source_sha = "0123456789abcdef0123456789abcdef01234567"
     monkeypatch.setenv("BFF_COMMIT", source_sha)
+    monkeypatch.setenv("BFF_IMAGE_DIGEST", "sha256:123456")
+    monkeypatch.setenv("BFF_BUILD_TIME", "2026-07-14T00:00:00Z")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
     response = TestClient(bff_main.app).get("/bff/version")
     assert response.status_code == 200, response.text
-    assert response.json() == {
-        "service": "operator-bff",
-        "version": "0.2.0",
-        "source_commit_sha": source_sha,
-        "commit": source_sha,
-        "source_commit_known": True,
-    }
+    data = response.json()
+    assert data["service"] == "operator-bff"
+    assert data["version"] == "0.2.0"
+    assert data["source_commit_sha"] == source_sha
+    assert data["commit"] == source_sha
+    assert data["source_commit_known"] is True
+    assert data["image_digest"] == "sha256:123456"
+    assert data["build_time"] == "2026-07-14T00:00:00Z"
+    assert data["environment"] == "dev"
+    assert "config_posture" in data
+    assert "auth_stub" in data["config_posture"]
 
 
 def _containment_security_evidence(
