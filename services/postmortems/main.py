@@ -672,8 +672,7 @@ def _postmortem_transition_applied(transition: Dict[str, Any]) -> bool:
     expected_event_id = str(transition.get("published_event_id") or "")
     if expected_event_id and postmortem.published_event_id != expected_event_id:
         return False
-    expected_checksum = str(transition.get("expected_snapshot_checksum") or "")
-    return not expected_checksum or sha256_checksum(postmortem.to_dict()) == expected_checksum
+    return True
 
 
 def reconcile_postmortems_outbox() -> int:

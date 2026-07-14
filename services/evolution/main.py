@@ -487,6 +487,10 @@ def _validated_delivery_event(body: ProposeRequest) -> Dict[str, Any] | None:
             status_code=422,
             detail="delivery_event published postmortem snapshot requires published_at",
         )
+    if str(postmortem_snapshot.get("published_event_id") or "") != event.event_id:
+        raise _delivery_conflict(
+            "delivery_event postmortem published_event_id does not match event_id"
+        )
 
     incident_snapshot = payload.get("incident")
     if not isinstance(incident_snapshot, Mapping):

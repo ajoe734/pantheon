@@ -230,7 +230,9 @@ def postmortem_delivery_request(
         producer_service="postmortem-svc",
         idempotency_key=idempotency_key,
     )
-    return {**proposal_payload, "delivery_event": event.to_dict()}
+    event_dict = event.to_dict()
+    event_dict["payload"]["postmortem"]["published_event_id"] = event.event_id
+    return {**proposal_payload, "delivery_event": event_dict}
 
 
 def propose(extra: dict | None = None) -> dict:
@@ -1072,7 +1074,7 @@ def test_ordinary_proposal_cannot_bypass_delivery_binding_or_reset_review_state(
     assert len(evo_main.store.list_all()) == 1
 
 
-def test_same_idempotency_delivery_with_new_event_id_returns_200():
+def test_same_idempotency_delivery_with_new_commit_event_is_conflict():
     first = postmortem_delivery_request()
     proposal = dict(first["delivery_event"]["payload"]["proposal"])
     idempotency_key = first["delivery_event"]["idempotency_key"]
@@ -1086,8 +1088,8 @@ def test_same_idempotency_delivery_with_new_event_id_returns_200():
     replay = client.post("/api/evolution/proposals", json=regenerated)
 
     assert created.status_code == 201, created.text
-    assert replay.status_code == 200, replay.text
-    assert replay.json()["decision_id"] == first["decision_id"]
+    assert replay.status_code == 409, replay.text
+    assert "divergent semantics" in replay.json()["detail"]
     assert len(evo_main.store.list_all()) == 1
 
 
@@ -1171,6 +1173,17 @@ def test_delivery_rejects_non_postmortem_producer():
 
     assert response.status_code == 422
     assert "producer_service" in response.json()["detail"]
+    assert evo_main.store.get(body["decision_id"]) is None
+
+
+def test_delivery_rejects_mismatched_publication_commit_marker():
+    body = postmortem_delivery_request()
+    body["delivery_event"]["payload"]["postmortem"]["published_event_id"] = "evt-other"
+
+    response = client.post("/api/evolution/proposals", json=body)
+
+    assert response.status_code == 409
+    assert "published_event_id" in response.json()["detail"]
     assert evo_main.store.get(body["decision_id"]) is None
 
 
