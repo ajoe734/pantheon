@@ -26,6 +26,14 @@ DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview-
 # DEV_BFF_AUTH_STUB=true DEV_BFF_AUTH_MODE=permissive.
 DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"
 DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"
+# Governed verifier/dev-login credentials for the strict auth cutover. These
+# must come from a secret source (GitHub Actions secrets in CI), never from
+# compose file defaults. When strict mode is requested without them, the
+# preflight gate below refuses to deploy rather than shipping a strict-looking
+# BFF where every protected route is actually unusable.
+DEV_BFF_JWT_SECRET="${DEV_BFF_JWT_SECRET:-}"
+DEV_BFF_OIDC_CLIENT_ID="${DEV_BFF_OIDC_CLIENT_ID:-}"
+DEV_BFF_OIDC_CLIENT_SECRET="${DEV_BFF_OIDC_CLIENT_SECRET:-}"
 DEV_BFF_TENANT_ID="${DEV_BFF_TENANT_ID:-tenant-dev}"
 DEV_BFF_ALLOWED_TENANTS="${DEV_BFF_ALLOWED_TENANTS:-${DEV_BFF_TENANT_ID},pantheon-dev}"
 DEV_ASSISTANT_KERNEL_ENABLED="${DEV_ASSISTANT_KERNEL_ENABLED:-true}"
@@ -94,7 +102,8 @@ Environment overrides:
   GITHUB_TOKEN
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
   DEV_BFF_CANONICAL_CORS_ORIGIN DEV_BFF_CORS_ORIGINS
-  DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB
+  DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB DEV_BFF_AUTH_MODE
+  DEV_BFF_JWT_SECRET DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET
   DEV_BFF_TENANT_ID DEV_BFF_ALLOWED_TENANTS
   DEV_ASSISTANT_KERNEL_ENABLED DEV_ASSISTANT_CONTROL_MODE_STORE_PATH
   DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS
@@ -266,6 +275,9 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "allow_example_env=${ALLOW_EXAMPLE_ENV}"
   info "dev_bff_cors_origins=${DEV_BFF_CORS_ORIGINS}"
   info "dev_bff_auth_stub=${DEV_BFF_AUTH_STUB}"
+  info "dev_bff_auth_mode=${DEV_BFF_AUTH_MODE}"
+  info "dev_bff_jwt_secret_configured=$([[ -n "$DEV_BFF_JWT_SECRET" ]] && echo true || echo false)"
+  info "dev_bff_oidc_client_configured=$([[ -n "$DEV_BFF_OIDC_CLIENT_ID" && -n "$DEV_BFF_OIDC_CLIENT_SECRET" ]] && echo true || echo false)"
   info "dev_assistant_kernel_enabled=${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}"
   info "dev_assistant_control_mode_store_path=${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}"
   info "dev_assistant_control_idle_ttl_seconds=${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-}"
@@ -286,6 +298,12 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "staging_exec_health_url=${STAGING_EXEC_HEALTH_URL}"
   info "staging_bff_cors_origins=${STAGING_BFF_CORS_ORIGINS}"
   exit 0
+fi
+
+if [[ "$DEPLOY_ENV" == "dev" && "$DEV_BFF_AUTH_MODE" == "strict" && "$DEV_BFF_AUTH_STUB" != "true" ]]; then
+  if [[ -z "$DEV_BFF_JWT_SECRET" || -z "$DEV_BFF_OIDC_CLIENT_ID" || -z "$DEV_BFF_OIDC_CLIENT_SECRET" ]]; then
+    error "strict auth cutover requested (DEV_BFF_AUTH_MODE=strict, DEV_BFF_AUTH_STUB=${DEV_BFF_AUTH_STUB}) but no governed verifier/dev-login credentials are configured (DEV_BFF_JWT_SECRET, DEV_BFF_OIDC_CLIENT_ID, DEV_BFF_OIDC_CLIENT_SECRET); refusing to deploy a BFF where every protected route would be unusable"
+  fi
 fi
 
 require_cmd gcloud
@@ -330,6 +348,9 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "$DEV_BFF_CORS_ORIGINS")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
+  command_prefix+=" PANTHEON_DEV_BFF_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_ID=$(shell_quote "$DEV_BFF_OIDC_CLIENT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET=$(shell_quote "$DEV_BFF_OIDC_CLIENT_SECRET")"
   command_prefix+=" PANTHEON_DEV_BFF_TENANT_ID=$(shell_quote "$DEV_BFF_TENANT_ID")"
   command_prefix+=" PANTHEON_DEV_BFF_ALLOWED_TENANTS=$(shell_quote "$DEV_BFF_ALLOWED_TENANTS")"
   command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=$(shell_quote "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}")"
@@ -402,6 +423,53 @@ assert_bff_source_sha() {
     error "BFF source SHA mismatch: expected ${PANTHEON_DEPLOY_SHA}, got ${actual:-missing}"
   fi
   info "BFF source SHA verified: ${actual}"
+}
+
+assert_bff_auth_gate() {
+  local base_url="$1"
+
+  if [[ "${PANTHEON_DEV_BFF_AUTH_MODE}" != "strict" || "${PANTHEON_DEV_BFF_AUTH_STUB}" == "true" ]]; then
+    info "strict auth gate skipped (auth_mode=${PANTHEON_DEV_BFF_AUTH_MODE}, auth_stub=${PANTHEON_DEV_BFF_AUTH_STUB})"
+    return 0
+  fi
+
+  info "asserting hosted BFF auth posture is strict (auth_stub=false, auth_mode=strict)"
+  local version_payload
+  version_payload="$(curl -fsS "${base_url}/bff/version")"
+  python3 -c '
+import json, sys
+
+payload = json.loads(sys.argv[1])
+assert payload.get("auth_stub") is False, f"auth_stub={payload.get(\"auth_stub\")!r}, expected False"
+assert payload.get("auth_mode") == "strict", f"auth_mode={payload.get(\"auth_mode\")!r}, expected strict"
+' "$version_payload" || error "hosted BFF auth posture is not strict: ${version_payload}"
+
+  if [[ -z "${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" || -z "${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" ]]; then
+    error "strict auth cutover requires dev-login verifier credentials on the deploy runner; none were provided"
+  fi
+
+  info "asserting authenticated dev-login round trip succeeds"
+  local login_payload
+  local login_body
+  login_body="$(python3 -c 'import json,sys; print(json.dumps({"grant_type":"client_credentials","client_id":sys.argv[1],"client_secret":sys.argv[2]}))' \
+    "${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" "${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}")"
+  login_payload="$(curl -fsS -X POST "${base_url}/bff/auth/dev-login" \
+    -H 'Content-Type: application/json' \
+    -d "${login_body}")" \
+    || error "authenticated dev-login round trip failed against ${base_url}/bff/auth/dev-login"
+  local access_token
+  access_token="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])' <<<"$login_payload")"
+  curl -fsS "${base_url}/bff/me" -H "Authorization: Bearer ${access_token}" >/dev/null \
+    || error "authenticated /bff/me check failed with a freshly issued dev-login token"
+  info "authenticated dev-login round trip succeeded"
+
+  info "asserting a fixed/arbitrary bearer is rejected (fail-closed negative gate)"
+  local fixed_bearer_status
+  fixed_bearer_status="$(curl -s -o /dev/null -w '%{http_code}' "${base_url}/bff/me" -H 'Authorization: Bearer op-fixed:operator:mfa')"
+  if [[ "$fixed_bearer_status" == "200" ]]; then
+    error "hosted BFF accepted a fixed/arbitrary bearer token at ${base_url}/bff/me (strict auth cutover is not effective)"
+  fi
+  info "fixed bearer correctly rejected with HTTP ${fixed_bearer_status}"
 }
 
 snapshot_remote_state() {
@@ -1018,6 +1086,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
     PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+    PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
+    PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
     PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
     PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
     PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
@@ -1037,6 +1108,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     curl_with_retry http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    assert_bff_auth_gate http://127.0.0.1:18001 \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     verify_dev_evolution_daily_sweep \
       || { dump_dev_root_failure_diagnostics; exit 1; }
@@ -1077,6 +1150,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
     PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+    PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
+    PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
     PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
     PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
     PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
@@ -1101,6 +1177,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     curl_with_retry http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    assert_bff_auth_gate http://127.0.0.1:18001 \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     ;;
 
