@@ -10,6 +10,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SERVICE_DIR = Path(__file__).resolve().parent
@@ -298,6 +299,41 @@ class RuntimeManagerServiceTests(unittest.TestCase):
             )
 
         self.assertEqual(self.service.require(original.binding_id).status, "active")
+
+    def test_forward_replace_recovers_child_created_before_parent_retirement(self):
+        original = self.service.deploy(_valid_deploy_request())
+        request = _valid_replace_request(original.binding_id)
+        real_retire = self.service._store.retire
+
+        with mock.patch.object(
+            self.service._store,
+            "retire",
+            side_effect=RuntimeError("injected cutover interruption"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "injected cutover"):
+                self.service.replace(request)
+
+        after_interruption = self.service.list_by_pool("pool-001")
+        self.assertEqual(len(after_interruption), 2)
+        child = next(
+            binding
+            for binding in after_interruption
+            if binding.binding_id != original.binding_id
+        )
+        self.assertEqual(child.status, "active")
+        self.assertEqual(original.status, "active")
+
+        with mock.patch.object(self.service._store, "retire", wraps=real_retire):
+            recovered = self.service.replace(request)
+
+        self.assertTrue(recovered["replayed"])
+        self.assertEqual(recovered["new_binding"]["binding_id"], child.binding_id)
+        self.assertEqual(recovered["old_binding"]["status"], "retired")
+        self.assertEqual(len(self.service.list_by_pool("pool-001")), 2)
+        self.assertEqual(
+            self.service.get_active_for_pool("pool-001").binding_id,
+            child.binding_id,
+        )
 
     def test_rollback_replace_creates_replacement_and_retires_old_binding(self):
         original = self.service.deploy(_valid_deploy_request())

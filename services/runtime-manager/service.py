@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -719,6 +720,7 @@ class RuntimeManagerService:
         self._store = RuntimeBindingStore(path=store_path)
         self._single_runtime_enforced = single_runtime_enforced
         self._kill_switch = KillSwitchController()
+        self._replace_lock = threading.RLock()
         self._foundation_idempotency: Dict[str, Dict[str, Any]] = {}
         self._foundation_recovery_audit: List[Dict[str, Any]] = []
         # Derive kill-switch store path alongside the binding store when not supplied.
@@ -901,6 +903,11 @@ class RuntimeManagerService:
         return self._store.retire(binding_id, retired_at=retired_at)
 
     def replace(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Serialize and idempotently execute a forward binding cutover."""
+        with self._replace_lock:
+            return self._replace_once(request)
+
+    def _replace_once(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Replace one runtime binding with a new artifact in the same stage.
 
         This is the canonical *forward* promotion cutover.  It is separate from
@@ -917,14 +924,6 @@ class RuntimeManagerService:
             raise RuntimeManagerError("current_binding_id is required for forward replace.")
 
         old_binding = self._store.require(current_binding_id)
-        if old_binding.status not in {
-            RuntimeBindingStatus.ACTIVE.value,
-            RuntimeBindingStatus.PAUSED.value,
-        }:
-            raise RuntimeManagerError(
-                f"Forward replace requires current binding {current_binding_id!r} to be "
-                f"active or paused; current status={old_binding.status!r}."
-            )
 
         runtime_id = str(request.get("runtime_id") or "").strip()
         if not runtime_id:
@@ -969,6 +968,63 @@ class RuntimeManagerService:
                 "the current binding."
             )
 
+        replay_candidates = [
+            binding
+            for binding in self._store.find_by_pool(old_binding.capital_pool_id)
+            if binding.binding_id != current_binding_id
+            and binding.plan_id == str(request.get("plan_id") or "")
+            and (binding.artifact_id, binding.artifact_version) == artifact_pair
+            and binding.runtime_id == runtime_id
+            and binding.persona_capital_binding_id == persona_capital_binding_id
+            and binding.status
+            in {
+                RuntimeBindingStatus.ACTIVE.value,
+                RuntimeBindingStatus.PAUSED.value,
+            }
+            and binding.metadata.get("replacement_kind") == "forward"
+            and binding.metadata.get("replacement_parent_binding_id")
+            == current_binding_id
+        ]
+        if len(replay_candidates) > 1:
+            raise RuntimeManagerError(
+                "Forward replace recovery found multiple matching child bindings; "
+                "manual reconciliation is required."
+            )
+        if replay_candidates:
+            new_binding = replay_candidates[0]
+            if old_binding.status in {
+                RuntimeBindingStatus.ACTIVE.value,
+                RuntimeBindingStatus.PAUSED.value,
+            }:
+                cutover_at = utc_now()
+                retired_old = self._store.retire(
+                    current_binding_id, retired_at=cutover_at
+                )
+            elif old_binding.status == RuntimeBindingStatus.RETIRED.value:
+                retired_old = old_binding
+                cutover_at = old_binding.retired_at or new_binding.effective_at
+            else:
+                raise RuntimeManagerError(
+                    f"Forward replace recovery cannot retire current binding in "
+                    f"status={old_binding.status!r}."
+                )
+            return self._forward_replace_result(
+                request=request,
+                old_binding=retired_old,
+                new_binding=new_binding,
+                cutover_at=cutover_at,
+                replayed=True,
+            )
+
+        if old_binding.status not in {
+            RuntimeBindingStatus.ACTIVE.value,
+            RuntimeBindingStatus.PAUSED.value,
+        }:
+            raise RuntimeManagerError(
+                f"Forward replace requires current binding {current_binding_id!r} to be "
+                f"active or paused; current status={old_binding.status!r}."
+            )
+
         deploy_request = dict(request)
         metadata = (
             dict(request.get("metadata") or {})
@@ -986,6 +1042,24 @@ class RuntimeManagerService:
         cutover_at = utc_now()
         retired_old = self._store.retire(current_binding_id, retired_at=cutover_at)
 
+        return self._forward_replace_result(
+            request=request,
+            old_binding=retired_old,
+            new_binding=new_binding,
+            cutover_at=cutover_at,
+            replayed=False,
+        )
+
+    @staticmethod
+    def _forward_replace_result(
+        *,
+        request: Dict[str, Any],
+        old_binding: RuntimeBinding,
+        new_binding: RuntimeBinding,
+        cutover_at: str,
+        replayed: bool,
+    ) -> Dict[str, Any]:
+        current_binding_id = old_binding.binding_id
         position_lineage = {
             "opened_by_artifact_id": request.get(
                 "opened_by_artifact_id", old_binding.artifact_id
@@ -1003,7 +1077,8 @@ class RuntimeManagerService:
         }
         return {
             "operation": "forward_replace",
-            "old_binding": retired_old.to_dict(),
+            "replayed": replayed,
+            "old_binding": old_binding.to_dict(),
             "new_binding": new_binding.to_dict(),
             "cutover_at": cutover_at,
             "position_lineage": position_lineage,
