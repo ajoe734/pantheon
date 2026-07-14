@@ -1015,6 +1015,26 @@ def execute_rollback():
 
     Persists the command with full audit trail including rollback metadata.
     """
+    # This legacy request shape cannot carry the exact fallback DeploymentPlan,
+    # Registry, Governance, and Capital identities required by the canonical
+    # Runtime Manager rollback boundary.  It previously retired the source
+    # binding without creating a replacement, bypassing both four-owner
+    # revalidation and the single-runtime cutover invariant.  Keep the route as
+    # an explicit migration response, but never translate it into mutations.
+    return (
+        jsonify({
+            "error": {
+                "code": "CANONICAL_ROLLBACK_REQUIRED",
+                "message": (
+                    "legacy rollback execution is disabled; submit the exact "
+                    "governed rollback request to /api/rollback"
+                ),
+                "canonical_endpoint": "/api/rollback",
+            }
+        }),
+        409,
+    )
+
     body = request.get_json() or {}
     target_type = body.get("rollback_target_type", "deployment")
     target_id = body.get("target_id", "unknown")
@@ -1025,6 +1045,28 @@ def execute_rollback():
 
     command_id = f"cmd-rb-{target_id}-{int(datetime.now(timezone.utc).timestamp())}"
     rollback_id = body.get("rollback_id") or f"rb-{target_id}-{uuid.uuid4().hex[:8]}"
+
+    # Check for existing rollback command to ensure idempotency (EVOCHAIN-005)
+    existing_commands = _load_commands()
+    for existing_cmd_id, existing_cmd in existing_commands.items():
+        if existing_cmd.get("type") == "ExecuteRollback":
+            existing_result = existing_cmd.get("result", {})
+            if existing_result.get("rollback_id") == rollback_id:
+                return (
+                    jsonify({
+                        "rollback_id": rollback_id,
+                        "command_id": existing_cmd_id,
+                        "status": existing_cmd.get("status"),
+                        "target_type": existing_result.get("target_type"),
+                        "target_id": existing_result.get("target_id"),
+                        "rollback_to_version": existing_result.get("rollback_to_version"),
+                        "rollback_action_type": existing_result.get("rollback_action_type"),
+                        "status_before": existing_result.get("status_before"),
+                        "status_after": existing_result.get("status_after"),
+                        "tracking_url": f"/api/internal/v1/commands/{existing_cmd_id}",
+                    }),
+                    202,
+                )
 
     try:
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

@@ -1496,6 +1496,12 @@ class PromotePipeline:
             "plan_id": req.plan_id,
             "plan_status": _text(plan.get("status")),
             "approval_decision_id": req.approval_decision_id,
+            "sponsor_persona_id": _required_text(
+                plan,
+                "sponsor_persona_id",
+                "DeploymentPlan",
+                self._fail,
+            ),
             "runtime_action": "replace_binding",
             "current_binding_id": req.current_binding_id,
             "old_binding_id": req.current_binding_id,

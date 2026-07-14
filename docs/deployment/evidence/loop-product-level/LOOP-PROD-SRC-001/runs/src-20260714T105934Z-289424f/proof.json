@@ -1,0 +1,136 @@
+{
+  "schema_version": "loop_prod_src_001_post_rebase_proof.v1",
+  "task_id": "LOOP-PROD-SRC-001",
+  "captured_at": "2026-07-14T11:00:55Z",
+  "capture_scope": "isolated-target-dev post-rebase identity and terminal source smoke",
+  "redacted": true,
+  "integration": {
+    "base_branch": "dev",
+    "base_sha": "5c7ac28ddcded581740364315d4092e9ef9f7e35",
+    "task_head_sha": "289424f17bcc30c7ebc1001d0a7e5db82ea9aeda",
+    "rebase_conflicts": 0,
+    "behavioral_proof_epoch": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T103735Z-ea352c7/proof.json#sha256=ae02ed0e16dc9769adcdb35111c4077cd2ec49c6c99cdb6631b6d60e92ed58b2",
+    "behavioral_proof_reused_for": [
+      "failure_injection",
+      "fail_closed_restart",
+      "durable_dlq_recovery_audit",
+      "duplicate_safety",
+      "rollback_and_compensation"
+    ]
+  },
+  "isolation": {
+    "compose_project": "loop-prod-src-001-rebase-proof",
+    "environment": "proof-dev",
+    "tenant_id": "loop-prod-src-001-rebase-proof",
+    "source_api": "http://127.0.0.1:28098",
+    "postgres_port": 25433,
+    "dedicated_volumes_removed_after_capture": true,
+    "project_containers_removed_after_capture": true,
+    "shared_pantheon_project_mutated": false,
+    "live_broker_or_capital_side_effect": false
+  },
+  "deployment_identity": {
+    "git_sha": "289424f17bcc30c7ebc1001d0a7e5db82ea9aeda",
+    "build_time": "2026-07-14T10:59:34Z",
+    "application_digest": "application-sha256:10bdb5362e4d6f033f24945d549d8108ef51176df55456cb0d15336d2cc3c618",
+    "controller_image_id": "sha256:f3e07acbad75f0302609e02622699826ac248e0fe4aca0013bde0265d4638012",
+    "controller_container_id": "f3fb3929bed4c168fd961fef6d5d4f7f4c9365abb898621f485d434027acb0a4",
+    "source_api_image_id": "sha256:56a366ffc303644463caf7ef5898c1976d530df340a4522148c49db3c31c5699",
+    "source_api_container_id": "fd33fdb984fa418ff003786e5695bb4248f0bcd4b8dbae79c8c8266b9826f18f",
+    "runtime_instance_id": "f3fb3929bed4",
+    "deployment_id": "container:f3fb3929bed4",
+    "controller_id": "source-ingestion-f3fb3929bed4:afa11c207c81",
+    "identity_complete": true
+  },
+  "migration_and_health": {
+    "postgres_health": "healthy",
+    "migration_exit_code": 0,
+    "migration_count": 9,
+    "source_ingest_health": "healthy",
+    "controller_health": "healthy"
+  },
+  "terminal_readback": {
+    "captured_at": "2026-07-14T11:00:35Z",
+    "controller_sequence": 3,
+    "heartbeat_at": "2026-07-14T11:00:34Z",
+    "last_tick_at": "2026-07-14T11:00:34Z",
+    "last_success_at": "2026-07-14T11:00:34Z",
+    "total_ticks": 3,
+    "total_successes": 3,
+    "total_failures": 0,
+    "startup_missed_ticks": 0,
+    "desired_state_sha256": "b9bb0be16f919d19d765781096c2c80e629cd7342afe3fc44218529d87176306",
+    "requirement_snapshot_sequence": 1,
+    "requirement_binding_count": 1,
+    "connector_id": "tw-twse-tpex-official-market",
+    "connector_status": "enabled",
+    "schedule_interval_seconds": 86400,
+    "schedule_enabled": true,
+    "latest_ingest_run_id": "ingest-634ea666e063",
+    "latest_ingest_status": "completed",
+    "latest_normalized_count": 100,
+    "source_record_count": 100,
+    "source_health": "ok",
+    "freshness_status": "fresh",
+    "freshness_staleness_seconds": 12,
+    "frontier_backlog": 0,
+    "dlq_count": 0,
+    "pending_dlq_count": 0,
+    "unresolved_dlq_count": 0,
+    "dlq_status_counts": {
+      "pending": 0,
+      "replayed": 0,
+      "duplicate_skipped": 0,
+      "replay_failed": 0,
+      "schema_rejected": 0
+    },
+    "source_record": {
+      "source_id": "tw-official:tw_price_daily:TWSE:00400A:2bdb596cbd170c1e",
+      "status": "normalized",
+      "content_ref": "tw-official://tw_price_daily/TWSE/00400A/2026-07-13/2bdb596cbd170c1e",
+      "provider": "TWSE/TPEx",
+      "dataset": "tw_price_daily",
+      "source_dataset": "STOCK_DAY_ALL",
+      "venue": "TWSE",
+      "event_time": "2026-07-13",
+      "available_time": "2026-07-13",
+      "api_endpoint": "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+      "access_scope": [
+        "public",
+        "research"
+      ],
+      "license_scope": "official_reference",
+      "schema_hash": "tw_price_daily.v1"
+    }
+  },
+  "loop_controller_record": {
+    "observed_at": "2026-07-14T11:00:55Z",
+    "loop_id": "source_ingestion",
+    "tenant_id": "loop-prod-src-001-rebase-proof",
+    "environment": "proof-dev",
+    "controller_id": "source-ingestion-f3fb3929bed4:afa11c207c81",
+    "deployment_sha": "289424f17bcc30c7ebc1001d0a7e5db82ea9aeda",
+    "last_success_at": "2026-07-14T11:00:55.812712+00:00",
+    "last_failure_at": null,
+    "backlog": 0,
+    "lag": 32,
+    "dlq_count": 0,
+    "truth_level": "reconciled_live_proof",
+    "evidence_refs": [
+      "tw-official:tw_price_daily:TWSE:00400A:2bdb596cbd170c1e"
+    ]
+  },
+  "validation": {
+    "foundation_replay_primitives": "6 passed in 0.86s",
+    "loop_control_with_postgres": "7 passed in 2.89s",
+    "docker_compose_config": "pass",
+    "scoped_py_compile": "pass",
+    "git_diff_check": "pass",
+    "full_source_ingestion": "700 passed, 1 skipped in 139.15s"
+  },
+  "explicit_non_admissions": [
+    "This post-rebase capture is an isolated terminal identity smoke and does not claim shared hosted-dev deployment.",
+    "Failure, recovery, duplicate, authorization, and compensation behavior remains bound to the immutable ea352c7 behavioral proof epoch.",
+    "Independent reviewer verdict, post-push required checks, merge, and done are not asserted by this raw capture."
+  ]
+}

@@ -1,6 +1,6 @@
 # EVOCHAIN-003: Postmortem Publisher on Incident Resolution
 
-Status: implementation complete; task PR review pending
+Status: reviewer approved; implementation merged; owner closeout verified
 
 Owner: Codex
 
@@ -165,6 +165,49 @@ Task anchors retained for review:
 - `200165804` — evolution delivery admission
 - `9abbd6937` — concurrent store and full-chain proof
 - `99a493bf2` — crash-safe admission, commit markers, and real HTTP proof
+
+## Review and Owner Closeout
+
+Claude approved all four task acceptance criteria after reviewing the incident,
+incidents, postmortems, evolution, and reliable-delivery changes. The reviewer
+reran the service-focused suite in the default interpreter and recorded `429
+passed, 1 skipped`; the single skip was the three-process HTTP test because
+Uvicorn was not installed in that interpreter. The task brief preserves the
+full reviewer handoff.
+
+Implementation PR
+[#3627](https://github.com/ajoe734/pantheon/pull/3627) merged into `dev` on
+2026-07-14 at merge commit
+`572aa0d34d3db878560af972414448d0e117054f`. Its reviewed head was
+`eebf1333987990e14d43f7a509bd5be62b7bccca`. The required Commit trailers,
+Runtime mirror guard, and Smoke acceptance checks all passed; the orchestrator
+forwarding checks also passed.
+
+After synchronizing the task branch with the then-current `origin/dev`, the
+owner reran the expanded suite with Uvicorn available:
+
+```sh
+/tmp/evochain-003-venv/bin/python -m pytest -q \
+  services/incidents services/postmortems services/incident services/evolution \
+  services/control-plane/governance/test_evolution_decision.py \
+  services/control-plane/governance/test_evolution_dispatcher_invariants.py
+# 465 passed, 4 warnings in 163.95s
+```
+
+This run included and passed the independent-process HTTP chain. The four
+warnings remain the existing FastAPI `on_event` deprecation warnings. A final
+diff check also confirmed that
+`services/evolution/postmortem_bridge.py` is unchanged by the implementation.
+
+Closeout acceptance is therefore:
+
+1. the canonical incident terminal transition produces one durable postmortem
+   input and one visible postmortem record;
+2. publication passes through the unchanged bridge and admits the resulting
+   proposal through the generic evolution endpoint;
+3. the bridge remains a pure transformation with its prior contract; and
+4. exact retries reuse the canonical postmortem/proposal while divergent
+   replays fail closed.
 
 ## Operational Notes and Residual Risks
 

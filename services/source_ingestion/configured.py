@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -112,8 +113,8 @@ class JsonlConnectorScheduleStore:
             enabled=enabled,
             updated_at=_utc_now(),
         )
-        self._schedules[connector_id] = config
         self._append("connector_schedule", connector_id, config.to_dict())
+        self._schedules[connector_id] = config
         return config
 
     def get_schedule(self, connector_id: str) -> ConnectorScheduleConfig | None:
@@ -124,6 +125,7 @@ class JsonlConnectorScheduleStore:
 
     def _append(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        file_preexisted = self.path.exists()
         entry = {
             "schema_version": "connector_schedule_store.v1",
             "record_type": record_type,
@@ -132,6 +134,14 @@ class JsonlConnectorScheduleStore:
         }
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if not file_preexisted:
+            directory_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
 
 
 def _utc_now() -> str:
@@ -200,8 +210,8 @@ class JsonlConfiguredConnectorStore:
         connector = validate_external_source_connector(connector)
         normalized_fetch = self.normalize_fetch_config(fetch)
         config = ConfiguredConnector(connector=connector, fetch=normalized_fetch, updated_at=_utc_now())
-        self._configs[connector.connector_id] = config
         self._append("connector_config", connector.connector_id, config.to_dict())
+        self._configs[connector.connector_id] = config
         return config
 
     def normalize_fetch_config(self, fetch: Mapping[str, Any]) -> dict[str, Any]:
@@ -240,8 +250,8 @@ class JsonlConfiguredConnectorStore:
             state["failed_attempts"] = int(state.get("failed_attempts") or 0) + 1
             state["last_error"] = str(error or "configured connector fetch failed")
         state["updated_at"] = _utc_now()
-        self._states[connector_id] = state
         self._append("connector_fetch_state", connector_id, state)
+        self._states[connector_id] = state
         return dict(state)
 
     def _validate_fetch_config(self, fetch: Mapping[str, Any]) -> dict[str, Any]:
@@ -337,6 +347,7 @@ class JsonlConfiguredConnectorStore:
 
     def _append(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        file_preexisted = self.path.exists()
         entry = {
             "schema_version": "source_connector_config_store.v1",
             "record_type": record_type,
@@ -345,6 +356,14 @@ class JsonlConfiguredConnectorStore:
         }
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if not file_preexisted:
+            directory_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
 
 
 class ConfiguredConnectorFetcher:
