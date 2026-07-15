@@ -613,6 +613,11 @@ services:
       PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS: ${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}
       PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS: ${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}
       PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE: ${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
+      # BFF-to-adapter assistant routes are an authenticated service boundary.
+      # The token has no compose default and must be provisioned by the deploy
+      # environment; strict auth is the dev-stack default.
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
     volumes:
       - ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
       - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
@@ -624,7 +629,7 @@ services:
       # See docs/runbooks/openclaw-adapter-device-pairing.md.
       - openclaw-adapter-data:/root/.openclaw
     ports:
-      - "${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"
+      - "127.0.0.1:${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"
     healthcheck:
       test:
         [
@@ -945,6 +950,12 @@ services:
       PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH: ${PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH:-/data/bff/management-ai-attachments}
       PANTHEON_MGMT_AI_ATTACH_BUCKET: ${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}
       PANTHEON_MANAGEMENT_AI_AUDIT_PATH: ${PANTHEON_MANAGEMENT_AI_AUDIT_PATH:-/data/bff/management-ai-audit.jsonl}
+      # Management NL provider turns reserve their actor/tenant/route/key before
+      # any conversation or provider side effect. Hosted retries must use this
+      # durable, cross-process admission store rather than an in-memory mutex.
+      PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED: ${PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED:-true}
+      PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH: ${PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH:-/data/bff/management-nl-command-idempotency.json}
+      PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS: ${PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS:-300}
       PANTHEON_ASSISTANT_PROVIDER: ${PANTHEON_ASSISTANT_PROVIDER:-openclaw}
       # BFF→adapter HTTP budget. Raised 75→180: a real openclaw agent turn runs
       # ~60-90s+ (gpt-5.5 + thinking + full context pack); at 75 the BFF gave up
@@ -1009,6 +1020,15 @@ services:
       PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_REGISTRY_API_URL: ${PANTHEON_REGISTRY_API_URL:-http://registry:8087}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
+      # Every hosted assistant mutation requires a stable client key and stores
+      # its replay envelope on the durable BFF volume.  This keeps exact retries
+      # deterministic across operator-bff restarts and fails closed on uncertain
+      # outcomes instead of silently executing a second mutation.
+      PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_REQUIRED: ${PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_REQUIRED:-true}
+      PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH: ${PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH:-/data/bff/assistant-command-idempotency.json}
+      PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS: ${PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS:-300}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - bff-data:/data/bff
@@ -1617,6 +1637,7 @@ services:
       PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093
+      PANTHEON_INCIDENTS_API_URL: http://incidents:8090
     volumes:
       - reconciliation-drift-data:/data/reconciliation-drift
     depends_on:
@@ -1627,6 +1648,8 @@ services:
       runtime-manager:
         condition: service_healthy
       postgres:
+        condition: service_healthy
+      incidents:
         condition: service_healthy
     ports:
       - "${RECONCILIATION_DRIFT_PORT:-18102}:8102"
@@ -1646,15 +1669,22 @@ services:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
     command: ["python", "services/reconciliation-drift/consumer.py"]
+    restart: unless-stopped
     environment:
       RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
-      RECONCILIATION_DRIFT_CONSUMER_INPUT: /fixtures/reconciliation-drift
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      RECONCILIATION_DRIFT_CONSUMER_WORKER_STATE_PATH: /data/reconciliation-drift/consumer-worker-state.json
       RECONCILIATION_DRIFT_CONSUMER_INTERVAL_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_INTERVAL_SECONDS:-60}
       RECONCILIATION_DRIFT_CONSUMER_MAX_TICKS: ${RECONCILIATION_DRIFT_CONSUMER_MAX_TICKS:-0}
+      RECONCILIATION_DRIFT_CONSUMER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_CONSUMER_MAX_ATTEMPTS:-3}
+      RECONCILIATION_DRIFT_CONSUMER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_RETRY_BACKOFF_SECONDS:-1}
+      RECONCILIATION_DRIFT_CONSUMER_REPLAY_DLQ: ${RECONCILIATION_DRIFT_CONSUMER_REPLAY_DLQ:-false}
     volumes:
-      - ./services/reconciliation-drift/fixtures:/fixtures/reconciliation-drift:ro
+      - reconciliation-drift-data:/data/reconciliation-drift
     depends_on:
       reconciliation-drift-svc:
+        condition: service_healthy
+      telemetry:
         condition: service_healthy
 
   reconciliation-drift-scheduler:
@@ -1662,10 +1692,13 @@ services:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
     command: ["python", "services/reconciliation-drift/scheduler_worker.py"]
+    restart: unless-stopped
     environment:
       RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
       RECONCILIATION_DRIFT_SCHEDULER_INTERVAL_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_INTERVAL_SECONDS:-300}
       RECONCILIATION_DRIFT_SCHEDULER_MAX_TICKS: ${RECONCILIATION_DRIFT_SCHEDULER_MAX_TICKS:-0}
+      RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS:-3}
+      RECONCILIATION_DRIFT_SCHEDULER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_RETRY_BACKOFF_SECONDS:-1}
     depends_on:
       reconciliation-drift-svc:
         condition: service_healthy
@@ -1675,11 +1708,17 @@ services:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
     command: ["python", "services/reconciliation-drift/incident_listener.py"]
+    restart: unless-stopped
     environment:
       RECONCILIATION_DRIFT_URL: http://reconciliation-drift-svc:8102
       PANTHEON_INCIDENTS_API_URL: http://incidents:8090
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_INTERVAL_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_INTERVAL_SECONDS:-15}
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_TICKS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_TICKS:-0}
+      RECONCILIATION_DRIFT_INCIDENT_LISTENER_STATE_PATH: /data/reconciliation-drift/incident-listener-state.json
+      RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_ATTEMPTS:-3}
+      RECONCILIATION_DRIFT_INCIDENT_LISTENER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_RETRY_BACKOFF_SECONDS:-1}
+    volumes:
+      - reconciliation-drift-data:/data/reconciliation-drift
     depends_on:
       reconciliation-drift-svc:
         condition: service_healthy
