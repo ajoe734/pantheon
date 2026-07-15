@@ -54,6 +54,57 @@ def _runtime_heartbeat_event(stage: str = "paper"):
     return event
 
 
+def _lifecycle_event(
+    event_id: str,
+    *,
+    created_at: str,
+    sequence_no: int,
+    aggregate_id: str = "tj-paper-001",
+):
+    event = _event("position_snapshot", created_at=created_at)
+    event.update(
+        {
+            "event_id": event_id,
+            "tenant_id": "tenant-001",
+            "environment": "paper",
+            "execution_mode": "paper",
+            "trace_id": "trace-paper-001",
+            "signal_id": "signal-paper-001",
+            "run_id": "run-paper-001",
+            "loop_run_id": "lr-run-paper-001",
+            "aggregate_type": "trade_journey",
+            "aggregate_id": aggregate_id,
+            "sequence_no": sequence_no,
+            "causal_parent_id": f"parent-{event_id}",
+            "source_mode": "live",
+            "authority_refs": {"persona_id": "persona-paper-001"},
+            "correlation_envelope": {
+                "schema_version": "trade-journey-envelope/1",
+                "tenant_id": "tenant-001",
+                "environment": "paper",
+                "journey_id": aggregate_id,
+                "correlation_id": "corr-paper-001",
+                "trace_id": "trace-paper-001",
+                "event_id": event_id,
+                "causation_event_id": f"parent-{event_id}",
+                "producer": "execution.paper_runtime",
+                "event_time": created_at,
+                "received_at": created_at,
+                "producer_revision": 1,
+            },
+        }
+    )
+    event["metadata"].update(
+        {
+            "persona_id": "persona-paper-001",
+            "signal_id": "signal-paper-001",
+            "run_id": "run-paper-001",
+            "sequence_no": sequence_no,
+        }
+    )
+    return event
+
+
 class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
     def test_heartbeat_updates_runtime_summary_identity_and_bridge(self):
         store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
@@ -114,6 +165,115 @@ class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
                 reloaded.get("rt-paper-001")["correlation_envelope"]["trace_id"],
                 "trace-paper-001",
             )
+
+    def test_last_lifecycle_identity_survives_later_heartbeat(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        lifecycle = _event(
+            "position_snapshot", created_at="2026-05-01T00:00:04Z"
+        )
+        lifecycle.update(
+            {
+                "tenant_id": "tenant-001",
+                "environment": "paper",
+                "execution_mode": "paper",
+                "trace_id": "trace-paper-001",
+                "signal_id": "signal-paper-001",
+                "run_id": "run-paper-001",
+                "loop_run_id": "lr-run-paper-001",
+                "aggregate_type": "trade_journey",
+                "aggregate_id": "tj-paper-001",
+                "sequence_no": 5,
+                "causal_parent_id": "fill-paper-001",
+                "source_mode": "live",
+                "authority_refs": {"persona_id": "persona-paper-001"},
+                "correlation_envelope": {
+                    "schema_version": "trade-journey-envelope/1",
+                    "tenant_id": "tenant-001",
+                    "environment": "paper",
+                    "journey_id": "tj-paper-001",
+                    "correlation_id": "corr-paper-001",
+                    "trace_id": "trace-paper-001",
+                    "event_id": "position-paper-001",
+                    "causation_event_id": "fill-paper-001",
+                    "producer": "execution.paper_runtime",
+                    "event_time": "2026-05-01T00:00:04Z",
+                    "received_at": "2026-05-01T00:00:04Z",
+                    "producer_revision": 1,
+                },
+            }
+        )
+        lifecycle["metadata"].update(
+            {
+                "signal_id": "signal-paper-001",
+                "run_id": "run-paper-001",
+                "sequence_no": 5,
+            }
+        )
+
+        store.project_event(lifecycle)
+        summary = store.project_event(_runtime_heartbeat_event())
+
+        identity = summary["last_lifecycle_identity"]
+        self.assertEqual(identity["event_id"], lifecycle["event_id"])
+        self.assertEqual(identity["sequence_no"], 5)
+        self.assertEqual(identity["correlation_envelope"]["journey_id"], "tj-paper-001")
+        self.assertEqual(summary["recent_lifecycle_event_ids"], [lifecycle["event_id"]])
+        self.assertNotIn("correlation_envelope", summary)
+
+    def test_recent_lifecycle_event_ids_are_ordered_deduplicated_and_bounded(self):
+        store = RuntimeSummaryProjectionStore(
+            heartbeat_stale_after_seconds=60,
+            recent_lifecycle_event_limit=3,
+        )
+        for index in range(5):
+            store.project_event(
+                _lifecycle_event(
+                    f"evt-lifecycle-{index}",
+                    created_at=f"2026-05-01T00:00:0{index}Z",
+                    sequence_no=index + 1,
+                )
+            )
+
+        summary = store.project_event(
+            _lifecycle_event(
+                "evt-lifecycle-3",
+                created_at="2026-05-01T00:00:06Z",
+                sequence_no=4,
+            )
+        )
+
+        self.assertEqual(
+            summary["recent_lifecycle_event_ids"],
+            ["evt-lifecycle-2", "evt-lifecycle-4", "evt-lifecycle-3"],
+        )
+        self.assertEqual(store.stats()["recent_lifecycle_event_limit"], 3)
+
+    def test_binding_rollover_clears_recent_lifecycle_event_ids(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        old = _lifecycle_event(
+            "evt-old-binding-lifecycle",
+            created_at="2026-05-01T00:00:01Z",
+            sequence_no=1,
+        )
+        old["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:00:00Z"
+        store.project_event(old)
+
+        new = _event("heartbeat", created_at="2026-05-01T00:10:01Z")
+        new.update(
+            {
+                "event_id": "evt-new-binding-heartbeat",
+                "binding_id": "rtb-paper-002",
+                "artifact_id": "artifact-paper-002",
+                "artifact_version": "2.0.0",
+                "plan_id": "plan-paper-002",
+            }
+        )
+        new["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:10:00Z"
+        summary = store.project_event(new)
+
+        self.assertEqual(summary["binding_id"], "rtb-paper-002")
+        self.assertNotIn("recent_lifecycle_event_ids", summary)
+        self.assertNotIn("last_lifecycle_identity", summary)
 
     def test_deploy_completed_sets_runtime_active_without_fabricating_heartbeat(self):
         store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)

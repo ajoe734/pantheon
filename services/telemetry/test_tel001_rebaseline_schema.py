@@ -41,6 +41,19 @@ REBASELINE_REQUIRED_EVENT_TYPES = {
     "telemetry_mirror_mismatch",
 }
 
+LOOP_LIFECYCLE_EVENT_TYPES = {
+    "signal_generation",
+    "trade_decision",
+    "risk_evaluation",
+    "order_submitted",
+    "order_accepted",
+    "order_partially_filled",
+    "order_filled",
+    "position_snapshot",
+    "reconciliation_completed",
+    "reconciliation_failed",
+}
+
 
 class _BindingStore:
     def get_binding(self, binding_id: str):
@@ -169,6 +182,59 @@ class TelemetryEventRebaselineSchemaTest(unittest.TestCase):
         declared = set(_event_types(schema))
         missing = REBASELINE_REQUIRED_EVENT_TYPES - declared
         self.assertEqual(missing, set())
+
+        missing_lifecycle = LOOP_LIFECYCLE_EVENT_TYPES - declared
+        self.assertEqual(missing_lifecycle, set())
+
+    @unittest.skipIf(jsonschema is None, "jsonschema is required for lifecycle validation")
+    def test_trade_lifecycle_correlation_envelope_and_ordering_fields_validate(self) -> None:
+        from services.trade_journey.correlation_envelope import mint_trade_envelope
+
+        schema = _schema()
+        validator = jsonschema.Draft7Validator(
+            schema,
+            format_checker=jsonschema.FormatChecker(),
+        )
+        event = _event("signal_generation")
+        event.update(
+            tenant_id="tenant-paper-001",
+            journey_id="tj-paper-001",
+            loop_run_id="lr-paper-001",
+            run_id="lr-paper-001",
+            signal_id="signal-paper-001",
+            aggregate_type="trade_journey",
+            aggregate_id="tj-paper-001",
+            sequence_no=1,
+            causal_parent_id="upstream-signal-input-001",
+            source_mode="live",
+        )
+        event["correlation_envelope"] = mint_trade_envelope(
+            {
+                "tenant_id": "tenant-paper-001",
+                "environment": "paper",
+                "event_id": "upstream-signal-input-001",
+            },
+            producer="execution.signal-decision",
+            journey_id="tj-paper-001",
+            now="2026-05-16T00:10:00Z",
+        )
+
+        validator.validate(event)
+
+        invalid_sequence = dict(event, sequence_no=0)
+        self.assertTrue(
+            any(list(error.path) == ["sequence_no"] for error in validator.iter_errors(invalid_sequence))
+        )
+
+        invalid_envelope = dict(event)
+        invalid_envelope["correlation_envelope"] = dict(event["correlation_envelope"])
+        invalid_envelope["correlation_envelope"].pop("causation_event_id")
+        self.assertTrue(
+            any(
+                list(error.path) == ["correlation_envelope"]
+                for error in validator.iter_errors(invalid_envelope)
+            )
+        )
 
     @unittest.skipIf(jsonschema is None, "jsonschema is required for format validation")
     def test_performance_as_of_fields_are_optional_rfc3339_timestamps(self) -> None:
