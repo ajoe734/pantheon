@@ -19,6 +19,12 @@ the `LOOP-PROD-RUNTIME-BOOT-001` handoff, or mutate status/task/dependency/actor
 records under this packet. The original #3652 failure needs a fresh,
 reproducible source pin if it remains real.
 
+The active `ai-activity-log.jsonl` is not an immutable artifact. This contract
+therefore does not pin its SHA or line count. Any observation must open a
+read-only bounded snapshot and parse it strictly. A valid snapshot produces a
+timestamped receipt only; an invalid snapshot fails closed and requires a new,
+separately pinned incident. Neither result authorizes repair here.
+
 ## Observation-only admission
 
 If another read-only reproduction is needed, it requires two distinct approvals

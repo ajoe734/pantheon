@@ -20,6 +20,7 @@ def main() -> int:
     fixture = json.loads(FIXTURE.read_text())
     contract = fixture["contract"]
     assert fixture["contract_sha256"] == digest(contract)
+    assert fixture["contract_sha256"] == "6059a2cd651fedeb9d6582e7d165e81dbaf8cc04e2069e8d16614d65c9a66f50"
     assert contract["task"]["id"] == "LOOP-PROD-AUDIT-ARCHIVE-INCIDENT-001"
     source = contract["source_observation"]
     assert source["gzip_sha256"] == "229007353bfe5f521c8a114a6b3dd9582442398697bbf30022fb49839bb5b6dc"
@@ -37,19 +38,62 @@ def main() -> int:
         "error_line": None,
         "error_column": None,
     }
-    boundary = contract["admission_boundary"]
-    assert boundary["scratch_status_root_only"] is True
-    assert boundary["production_status_root_forbidden"] is True
-    assert boundary["normal_ai_status_prohibited"] is True
-    assert boundary["normal_outbox_recovery_prohibited"] is True
-    assert boundary["two_distinct_approvals"] == {
-        "required": True,
-        "roles": ["Human/Ops", "independent_runtime_reviewer"],
-        "self_approval_forbidden": True,
+    assert source["active_log"] == {
+        "path": "ai-activity-log.jsonl",
+        "observation_mode": "volatile_read_only_parse_gate",
+        "exact_sha256_binding": "forbidden",
+        "exact_line_count_binding": "forbidden",
+        "replay_semantics": "At each read-only observation, take a bounded open snapshot and strictly parse it. A valid result creates a timestamped observation receipt only; normal append changes neither this contract digest nor repair authority. An invalid result fails closed and requires a separately pinned incident.",
+        "parser_expected_result": {
+            "jsonl_result": "valid",
+            "error_line": None,
+            "error_column": None,
+        },
     }
-    assert boundary["supervisor_verification"]["required"] is True
-    assert contract["repair_authorization"]["authorized"] is False
-    assert "bootstrap_handoff_replay" in contract["repair_authorization"]["prohibited_actions"]
+    boundary = contract["admission_boundary"]
+    assert boundary == {
+        "mode": "read_only_external_bootstrap_observation_only",
+        "scratch_status_root_only": True,
+        "production_status_root_forbidden": True,
+        "normal_ai_status_prohibited": True,
+        "normal_outbox_recovery_prohibited": True,
+        "two_distinct_approvals": {
+            "required": True,
+            "roles": ["Human/Ops", "independent_runtime_reviewer"],
+            "self_approval_forbidden": True,
+        },
+        "supervisor_verification": {
+            "required": True,
+            "must_verify": [
+                "contract_sha256",
+                "source_observation",
+                "distinct_approval_identities",
+                "clean_worktree",
+                "scratch_status_root",
+                "zero_production_write_paths",
+                "single_run_id",
+                "expiry",
+            ],
+        },
+    }
+    authorization = contract["repair_authorization"]
+    assert authorization["authorized"] is False
+    assert authorization["prohibited_actions"] == [
+        "archive_repair",
+        "archive_quarantine",
+        "archive_replacement",
+        "archive_recompression",
+        "active_audit_mutation",
+        "outbox_recovery",
+        "outbox_clear",
+        "outbox_mutation",
+        "bootstrap_handoff_replay",
+        "task_or_dependency_mutation",
+        "status_state_mutation",
+    ]
+    non_goals = " ".join(contract["task"]["non_goals"]).lower()
+    for surface in ("archive", "outbox", "handoff", "ai-status.json", "active audit", "runtime", "deployment"):
+        assert surface in non_goals, surface
     print("archive audit incident packet: ok")
     return 0
 

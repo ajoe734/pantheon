@@ -32,7 +32,7 @@
       "current_maturity": "The reported PR #3652 corrupt-source pins are not reproduced by the currently observable archive; repair authority is absent.",
       "target_maturity": "product-level",
       "proof_required": [
-        "read-only source and active-log digest capture",
+        "read-only immutable-source digest capture and active-log strict parse receipt (the volatile active log is deliberately not digest-pinned by this contract)",
         "strict gzip and JSONL parser outputs",
         "two distinct approvals plus supervisor verification receipt if any isolated observation worker is admitted",
         "no-write before/after hashes for every prohibited surface"
@@ -66,9 +66,15 @@
       },
       "active_log": {
         "path": "ai-activity-log.jsonl",
-        "sha256": "fc61a40e7e38c9e9fa7d5f0d44e9c4018e4f009106f17eb19762573390f6aea3",
-        "jsonl_result": "valid",
-        "jsonl_line_count": 5399
+        "observation_mode": "volatile_read_only_parse_gate",
+        "exact_sha256_binding": "forbidden",
+        "exact_line_count_binding": "forbidden",
+        "replay_semantics": "At each read-only observation, take a bounded open snapshot and strictly parse it. A valid result creates a timestamped observation receipt only; normal append changes neither this contract digest nor repair authority. An invalid result fails closed and requires a separately pinned incident.",
+        "parser_expected_result": {
+          "jsonl_result": "valid",
+          "error_line": null,
+          "error_column": null
+        }
       }
     },
     "admission_boundary": {
@@ -103,13 +109,17 @@
         "archive_repair",
         "archive_quarantine",
         "archive_replacement",
+        "archive_recompression",
+        "active_audit_mutation",
         "outbox_recovery",
         "outbox_clear",
+        "outbox_mutation",
         "bootstrap_handoff_replay",
-        "task_or_dependency_mutation"
+        "task_or_dependency_mutation",
+        "status_state_mutation"
       ],
       "new_failure_rule": "A newly observed failure requires a new complete source pin, a new incident contract digest, and new two-person approval."
     }
   },
-  "contract_sha256": "91994882d17e07426c589e3ac849170293b9849c2494923bd5564a9661df2bc3"
+  "contract_sha256": "6059a2cd651fedeb9d6582e7d165e81dbaf8cc04e2069e8d16614d65c9a66f50"
 }

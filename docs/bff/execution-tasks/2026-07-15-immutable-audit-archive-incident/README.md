@@ -12,7 +12,10 @@ withdrawn before merge, not reinterpreted as a repair target.
 The machine contract
 [archive-audit-archive-incident.v1.json](fixtures/archive-audit-archive-incident.v1.json)
 binds the actual observation, two-person/supervisor boundary, scratch-only
-state root, and prohibition on normal `ai_status`/outbox use. The task rendering
+state root, and prohibition on normal `ai_status`/outbox use. The active log is
+deliberately a strict **volatile parse-only** gate: its bytes and line count
+are never static contract pins, because normal append activity would make such
+a contract operationally impossible. The task rendering
 is [LOOP-PROD-AUDIT-ARCHIVE-INCIDENT-001.md](LOOP-PROD-AUDIT-ARCHIVE-INCIDENT-001.md).
 
 This incident packet changes no archive, active audit log, status/outbox,
