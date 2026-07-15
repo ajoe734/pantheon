@@ -657,6 +657,13 @@ def _run() -> int:
         )
     print(f"[breach_readback] projected event_id={breach_event_id} drawdown={breach_value}")
 
+    tick_moment = datetime.now(timezone.utc)
+    if tick_moment.date() != moment.date():
+        _fail(
+            "configuration",
+            "verification crossed a UTC day boundary; rerun so producer dedupe identity is unambiguous",
+        )
+
     incident_status, incident = _get_incident(
         bff_base,
         identity.incident_id,
@@ -679,7 +686,7 @@ def _run() -> int:
             "state_path": state_path,
             "thresholds": [policy.threshold],
             "baselines": {str(binding["artifact_id"]): policy.baselines[str(binding["artifact_id"])]},
-            "now": moment,
+            "now": tick_moment,
             "fetch_summaries": _selected_summary_fetcher(str(binding["binding_id"])),
         }
         tick_result = run_tick(**tick_kwargs)
