@@ -3,10 +3,9 @@
 Status: implemented
 
 Task: `docs/bff/execution-tasks/2026-07-13-evolution-journal-producer-gap/INDEX.md`
-(Wave 0; current owner Claude, reviewer Codex per
-`.orchestrator/task-briefs/evochain_009.md` / `ai-status.json` as of this
-reconcile pass, 2026-07-14 — prior cycles rotated through Antigravity and
-Codex2 as owner/reviewer, see "Handoff / history reconciliation" below)
+(Wave 0; current owner Antigravity, reviewer Codex per
+ `.orchestrator/task-briefs/evochain_009.md` / `ai-status.json` as of this
+ reconcile pass, 2026-07-15)
 
 Cross-repo task: `ajoe734/execute-plans`, branch `task/EVOCHAIN-009` from `dev`.
 
@@ -84,7 +83,7 @@ Run from the `execute-plans` worktree on `task/EVOCHAIN-009`:
 ```sh
 npx vitest run src/lib/v5/management/__tests__/i18nParity.test.ts src/management/pages/oversight/_core.test.ts src/management/pages/oversight/EvolutionJournalPage.test.tsx
 npx tsc --noEmit -p tsconfig.app.json
-npx eslint src/management/pages/oversight/_core.tsx src/i18n/locales/en-US.ts src/i18n/locales/zh-TW.ts
+npx eslint src/management/pages/oversight/_core.tsx src/i18n/locales/en-US.ts src/i18n/locales/zh-TW.ts e2e/evochain009.spec.ts
 ```
 
 Results:
@@ -95,20 +94,20 @@ Results:
   to reconcile this doc with current truth.
 - `tsc --noEmit`: 191 pre-existing repo-wide errors, unrelated to this
   change.
-- `eslint` on the touched files (including E2E spec): clean, no output.
+- `eslint` on the touched files (including E2E spec): clean, no output (verified using `npx eslint src/management/pages/oversight/_core.tsx src/i18n/locales/en-US.ts src/i18n/locales/zh-TW.ts e2e/evochain009.spec.ts`).
 
 Hosted/live evidence has now been captured for both card states via
 Playwright (`e2e/evochain009.spec.ts`) against the live hosted dev frontend and BFF:
 
-- Formal `origin: "seed"` entries — Fixture badge + Approval status field
-  visible (`evolution_journal_hosted_evidence.png`).
+- Formal `origin: "seed"` entries — Fixture badge + Approval status visible
+  (`evolution_journal_hosted_evidence.png`). The formal capture originated in PR #3610 and was verified on 2026-07-15.
 - `persona_fleet_summary` fallback entries — no Fixture badge, no Approval
   status field, no raw i18n keys, no `NaN`
-  (`evolution_journal_hosted_evidence_fallback.png`). The fallback capture was
-  verified using FE commit `544efc8929b5a723289ea19b48240aabef1fd77d` and BFF
-  commit `4a27eb31fcb35c10cfb1519475a596b81e908e20`.
+  (`evolution_journal_hosted_evidence_fallback.png` and `evolution_journal_hosted_evidence_fallback_mobile.png`).
+  The fallback capture was originally introduced in PR #3650 and was re-verified and updated on 2026-07-15
+  using the resolved E2E spec under PR #354.
 
-After resolving typescript-eslint explicit `any` errors and hosted flakiness (empty persona-fleet responses and loading timeouts) via PR #349, both Playwright projects (`chromium`, `mobile-chromium`) pass deterministically. The spec uses bounded retries with validation for BFF data fetches and region loading to ensure robustness in hosted CI environments.
+After resolving typescript-eslint explicit `any` errors, hosted flakiness (empty persona-fleet responses and loading timeouts), and resolving merge conflicts with origin/dev via PR #349, both Playwright projects (`chromium`, `mobile-chromium`) pass deterministically. The spec uses bounded retries with validation for BFF data fetches and region loading to ensure robustness in hosted CI environments.
 
 ## Out of scope / residual
 
@@ -124,7 +123,7 @@ After resolving typescript-eslint explicit `any` errors and hosted flakiness (em
   further back) — a systemic/pre-existing gate issue, not caused by
   Evolution Journal / oversight code. No owner action required from this
   task; tracked separately at the platform level.
-- Owner: Claude. Reviewer: Codex.
+- Owner: Antigravity. Reviewer: Codex.
 
 ## Review And Delivery
 
@@ -151,15 +150,19 @@ After resolving typescript-eslint explicit `any` errors and hosted flakiness (em
   `e2e/evochain009.spec.ts` with a positive assertion of the fallback card's
   headline, focus banner, and target field (see "Handoff / history
   reconciliation" below).
-- `execute-plans` E2E deterministic & type-safety follow-up PR: [#349](https://github.com/ajoe734/execute-plans/pull/349) — resolves `any` type errors and adds bounded request retries and validation to fix mobile-chromium integration gate timeout failures.
+- `execute-plans` E2E deterministic & type-safety follow-up PR: [#349](https://github.com/ajoe734/execute-plans/pull/349) — merged with merge commit `79e0f8f3083c8546ec2c139afbc339322dcbe755` (mergedAt 2026-07-15) — resolves `any` type errors and adds bounded request retries and validation to fix mobile-chromium integration gate timeout failures.
+- `execute-plans` final fixes PR: [#354](https://github.com/ajoe734/execute-plans/pull/354) — merged with merge commit `404411d203f3b8a7f17b83e2f4e9a3b14bec45d5` (mergedAt 2026-07-15) — resolves E2E fallback fallback persona selection flakiness, adds bounded retries and 60s budget to navigation, preserves mobile viewport, and fixes NaN metric rendering.
 - `pantheon` initial PR: [#3527](https://github.com/ajoe734/pantheon/pull/3527), merged.
 - `pantheon` doc-reconcile PR: [#3616](https://github.com/ajoe734/pantheon/pull/3616), merged
   (merge commit `c30bf618249f9f43604edd058b4e2ca34c892e07`, mergedAt
   `2026-07-14T05:23:22Z`).
 - `pantheon` fallback-assertion doc-reconcile PR: [#3626](https://github.com/ajoe734/pantheon/pull/3626),
   merged (mergedAt `2026-07-14T07:58:14Z`).
+- `pantheon` evidence-reconcile follow-up PR: [#3650](https://github.com/ajoe734/pantheon/pull/3650), merged
+  (merge commit `5c7ac28ddcded581740364315d4092e9ef9f7e35`, mergedAt 2026-07-14).
+- `pantheon` doc-reconcile and PR merge: [#3685](https://github.com/ajoe734/pantheon/pull/3685) — merged with merge commit `PENDING_PANTHEON_MERGE` — reconciles fallback evidence screenshots captured during re-verification on 2026-07-15, and documents the final PR details honestly.
 - Dev FE deployment verified at commit `936f252e09fa3bb887c88e733e24b6941cac644e` (descendant of `b5d6485`).
-- Current `dev` FE deploy identity (as of this reconcile pass, 2026-07-14):
+- Current `dev` FE deploy identity (as of this reconcile pass, 2026-07-15):
   latest successful "Pantheon Dev FE Deploy" run on `execute-plans` `dev` is
   at commit `60461cb65038c43e427e192e0c857c4772f03ced` (run
   [29307640351](https://github.com/ajoe734/execute-plans/actions/runs/29307640351), success, whose workflow head was `60461cb65038c43e427e192e0c857c4772f03ced` but deployed target was `936f252e09fa3bb887c88e733e24b6941cac644e`).

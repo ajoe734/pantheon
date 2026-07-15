@@ -187,6 +187,58 @@ def _active_paper_binding(rm: RuntimeManagerService) -> str:
     return binding.binding_id
 
 
+def _canonical_authority_report(request: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "passed",
+        "authority": "canonical_deployment_registry_governance_capital",
+        "plan_id": request["plan_id"],
+        "plan_status": request["plan_status"],
+        "target_stage": request["target_stage"],
+        "artifact_id": request["artifact_id"],
+        "artifact_version": request["artifact_version"],
+        "strategy_id": request.get("strategy_id", "strategy-alpha"),
+        "approval_decision_id": request.get("approval_decision_id", "dec-123"),
+        "capital_pool_id": request["capital_pool_id"],
+        "sponsor_persona_id": request.get("sponsor_persona_id", "persona-123"),
+        "persona_capital_binding_id": request["persona_capital_binding_id"],
+        "persona_capital_binding_status": request["persona_capital_binding_status"],
+        "allowed_deployment_scope": request["allowed_deployment_scope"],
+        "deployment_plan_sha256": "sha256:" + "0" * 64,
+        "registry_entry_sha256": "sha256:" + "1" * 64,
+        "approval_decision_sha256": "sha256:" + "2" * 64,
+        "capital_pool_sha256": "sha256:" + "3" * 64,
+        "capital_admissibility_sha256": "sha256:" + "4" * 64,
+        "persona_capital_binding_sha256": "sha256:" + "5" * 64,
+    }
+
+
+def _seed_retired_target(rm: RuntimeManagerService, old_binding_id: str, plan_id: str, artifact_id: str, version: str) -> dict[str, Any]:
+    old_binding = rm.get(old_binding_id)
+    req = {
+        "plan_id": plan_id,
+        "plan_status": "approved",
+        "target_stage": "paper",
+        "artifact_id": artifact_id,
+        "artifact_version": version,
+        "capital_pool_id": old_binding.capital_pool_id,
+        "persona_capital_binding_id": old_binding.persona_capital_binding_id,
+        "persona_capital_binding_status": "active",
+        "allowed_deployment_scope": "live",
+        "loader_checks_passed": True,
+        "strategy_id": "strategy-alpha",
+        "approval_decision_id": "dec-123",
+        "sponsor_persona_id": "persona-123",
+    }
+    att = _canonical_authority_report(req)
+    req["metadata"] = {
+        "strategy_id": "strategy-alpha",
+        "authoritative_loader_attestation": att,
+    }
+    prior = rm.deploy(req, _allow_cutover_bypass=True)
+    rm.retire(prior.binding_id)
+    return att
+
+
 # ===========================================================================
 # Group A: Failure-path enforcement (AC-3)
 # Blocked reason must be recorded; these scenarios represent the retry-state
@@ -492,6 +544,7 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
         # Step 4: Call RuntimeManagerService.rollback() — this is the runtime plane
         # follow-through that the rollback operator / saga would execute.
         replacement_plan_id = f"rb-plan-{uuid.uuid4().hex[:8]}"
+        att = _seed_retired_target(runtime_manager, old_binding_id, replacement_plan_id, "artifact-fallback-001", "v2-fallback")
         result = runtime_manager.rollback({
             "current_binding_id": old_binding_id,
             "action_type": "replace",
@@ -503,6 +556,7 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
             "replacement_persona_capital_binding_status": "active",
             "replacement_allowed_deployment_scope": "live",
             "loader_checks_passed": True,
+            "replacement_authority_attestation": att,
         })
 
         # Step 5: Verify follow-through evidence.
@@ -527,17 +581,20 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
     def test_runtime_manager_rollback_pause_then_replace_strategy(self, runtime_manager):
         """pause_then_replace drains the old binding to paused before creating replacement."""
         old_binding_id = _active_paper_binding(runtime_manager)
+        replacement_plan_id = f"rb-plan-{uuid.uuid4().hex[:8]}"
+        att = _seed_retired_target(runtime_manager, old_binding_id, replacement_plan_id, "artifact-fallback-002", "v2-fallback")
 
         result = runtime_manager.rollback({
             "current_binding_id": old_binding_id,
             "action_type": "pause_then_replace",
-            "replacement_plan_id": f"rb-plan-{uuid.uuid4().hex[:8]}",
+            "replacement_plan_id": replacement_plan_id,
             "replacement_artifact_id": "artifact-fallback-002",
             "replacement_artifact_version": "v2-fallback",
             "replacement_persona_capital_binding_id": "pcb-alpha",
             "replacement_persona_capital_binding_status": "active",
             "replacement_allowed_deployment_scope": "live",
             "loader_checks_passed": True,
+            "replacement_authority_attestation": att,
         })
 
         assert result["old_binding"]["status"] == "retired"
@@ -547,11 +604,13 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
     def test_runtime_manager_rollback_liquidate_then_replace_start_paused(self, runtime_manager):
         """liquidate_then_replace with replacement_start_paused keeps new binding paused."""
         old_binding_id = _active_paper_binding(runtime_manager)
+        replacement_plan_id = f"rb-plan-{uuid.uuid4().hex[:8]}"
+        att = _seed_retired_target(runtime_manager, old_binding_id, replacement_plan_id, "artifact-fallback-003", "v2-fallback")
 
         result = runtime_manager.rollback({
             "current_binding_id": old_binding_id,
             "action_type": "liquidate_then_replace",
-            "replacement_plan_id": f"rb-plan-{uuid.uuid4().hex[:8]}",
+            "replacement_plan_id": replacement_plan_id,
             "replacement_artifact_id": "artifact-fallback-003",
             "replacement_artifact_version": "v2-fallback",
             "replacement_persona_capital_binding_id": "pcb-alpha",
@@ -559,6 +618,7 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
             "replacement_allowed_deployment_scope": "live",
             "loader_checks_passed": True,
             "replacement_start_paused": True,
+            "replacement_authority_attestation": att,
         })
 
         assert result["old_binding"]["status"] == "retired"
@@ -609,10 +669,12 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
         # === Runtime-manager side ===
         # 4. The operator / saga picks up the rollback command and calls runtime-manager.
         #    Parameters come from the RollbackCommand emitted by the evolution controller.
+        replacement_plan_id = f"evo-rb-{did[:12]}"
+        att = _seed_retired_target(runtime_manager, old_binding_id, replacement_plan_id, "artifact-fallback-001", "v2-fallback")
         rollback_result = runtime_manager.rollback({
             "current_binding_id": old_binding_id,
             "action_type": "replace",
-            "replacement_plan_id": f"evo-rb-{did[:12]}",
+            "replacement_plan_id": replacement_plan_id,
             "replacement_plan_status": "approved",
             "replacement_artifact_id": "artifact-fallback-001",
             "replacement_artifact_version": "v2-fallback",
@@ -620,6 +682,7 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
             "replacement_persona_capital_binding_status": "active",
             "replacement_allowed_deployment_scope": "live",
             "loader_checks_passed": True,
+            "replacement_authority_attestation": att,
         })
 
         # === Verify follow-through evidence ===

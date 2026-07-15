@@ -1,0 +1,36 @@
+{
+  "captured_at": "2026-07-15T00:10:15Z",
+  "duration_ms": 3.846,
+  "label": "capture-time-deployment_ready",
+  "request": {
+    "body": null,
+    "headers": {},
+    "method": "GET",
+    "started_at": "2026-07-15T00:10:15Z",
+    "url": "http://127.0.0.1:18095/readyz"
+  },
+  "response": {
+    "payload": {
+      "dependencies": {
+        "governance_store": {
+          "path": "/data/governance",
+          "status": "ok"
+        }
+      },
+      "details": {
+        "data_dir": "/data/governance"
+      },
+      "live": true,
+      "metrics": {
+        "plan_count": 20,
+        "saga_count": 5,
+        "service_up": 1
+      },
+      "ready": true,
+      "service": "pantheon-deployment",
+      "status": "ok",
+      "timestamp": "2026-07-15T00:10:15Z"
+    },
+    "status": 200
+  }
+}

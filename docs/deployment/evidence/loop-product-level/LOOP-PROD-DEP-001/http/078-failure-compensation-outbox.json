@@ -1,0 +1,140 @@
+{
+  "captured_at": "2026-07-15T00:12:02Z",
+  "duration_ms": 4.092,
+  "label": "failure-compensation-outbox",
+  "request": {
+    "body": null,
+    "headers": {},
+    "method": "GET",
+    "started_at": "2026-07-15T00:12:02Z",
+    "url": "http://127.0.0.1:18095/api/deployment/outbox?aggregate_id=deployment-saga-plan-loop-prod-dep-failure-20260715001015"
+  },
+  "response": {
+    "payload": [
+      {
+        "blocked_reason": null,
+        "delivery_attempts": 2,
+        "dlq_at": null,
+        "event": {
+          "aggregate_id": "deployment-saga-plan-loop-prod-dep-failure-20260715001015",
+          "aggregate_type": "deployment_saga",
+          "causal_parent_id": null,
+          "emitted_at": "2026-07-15T00:11:49Z",
+          "event_id": "deployment-saga-plan-loop-prod-dep-failure-20260715001015-evt-0001",
+          "event_time": "2026-07-15T00:11:49Z",
+          "event_type": "runtime.binding.requested",
+          "idempotency_key": "deployment-saga-plan-loop-prod-dep-failure-20260715001015:1:runtime.binding.requested",
+          "payload": {
+            "approval_decision_id": "approval-loop-prod-dep-failure-20260715001015",
+            "artifact_id": "artifact-loop-prod-dep-failure-20260715001015",
+            "artifact_version": "1.15.1015",
+            "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+            "plan_id": "plan-loop-prod-dep-failure-20260715001015",
+            "runtime_action": "deploy_new_binding",
+            "strategy_id": "tw_session_momentum",
+            "target_stage": "paper"
+          },
+          "sequence_no": 1,
+          "trace_id": "91777920-22f1-4399-bfa5-884c27ed32b0"
+        },
+        "last_attempt_at": "2026-07-15T00:11:49Z",
+        "last_error": "hosted transport timeout drill",
+        "last_replayed_at": "2026-07-15T00:11:49Z",
+        "next_retry_at": null,
+        "owner_service": "deployment-orchestrator",
+        "published_at": "2026-07-15T00:11:50Z",
+        "replay_count": 1,
+        "retry_policy": {
+          "consumer_name": "deployment-outbox-consumer",
+          "last_replay_reason": "LOOP-PROD-DEP-001 hosted replay proof",
+          "max_attempts": 2,
+          "retry_delay_seconds": 0,
+          "retryable": true
+        },
+        "status": "published"
+      },
+      {
+        "blocked_reason": null,
+        "delivery_attempts": 0,
+        "dlq_at": null,
+        "event": {
+          "aggregate_id": "deployment-saga-plan-loop-prod-dep-failure-20260715001015",
+          "aggregate_type": "deployment_saga",
+          "causal_parent_id": "deployment-saga-plan-loop-prod-dep-failure-20260715001015-evt-0001",
+          "emitted_at": "2026-07-15T00:11:50Z",
+          "event_id": "deployment-saga-plan-loop-prod-dep-failure-20260715001015-evt-0002",
+          "event_time": "2026-07-15T00:11:50Z",
+          "event_type": "deployment.compensation.requested",
+          "idempotency_key": "deployment-saga-plan-loop-prod-dep-failure-20260715001015:2:deployment.compensation.requested",
+          "payload": {
+            "compensation": {
+              "binding_status": "not_created",
+              "command_type": "abort_plan",
+              "incident_required": false,
+              "owner_service": "governance-svc",
+              "plan_status": "aborted",
+              "reason": "deploy authority rejected: registry authority mismatch: artifact_state expected 'approved', got 'candidate'; approval_decision_id expected 'approval-loop-prod-dep-failure-20260715001015', got None",
+              "safe_mode": false,
+              "write_scope": "DeploymentPlan.status only; no runtime tables are touched."
+            },
+            "failed_step": "binding_requested",
+            "plan_id": "plan-loop-prod-dep-failure-20260715001015",
+            "reason": "deploy authority rejected: registry authority mismatch: artifact_state expected 'approved', got 'candidate'; approval_decision_id expected 'approval-loop-prod-dep-failure-20260715001015', got None"
+          },
+          "sequence_no": 2,
+          "trace_id": "91777920-22f1-4399-bfa5-884c27ed32b0"
+        },
+        "last_attempt_at": null,
+        "last_error": null,
+        "last_replayed_at": null,
+        "next_retry_at": null,
+        "owner_service": "deployment-orchestrator",
+        "published_at": "2026-07-15T00:12:00Z",
+        "replay_count": 0,
+        "retry_policy": null,
+        "status": "published"
+      },
+      {
+        "blocked_reason": null,
+        "delivery_attempts": 0,
+        "dlq_at": null,
+        "event": {
+          "aggregate_id": "deployment-saga-plan-loop-prod-dep-failure-20260715001015",
+          "aggregate_type": "deployment_saga",
+          "causal_parent_id": "deployment-saga-plan-loop-prod-dep-failure-20260715001015-evt-0002",
+          "emitted_at": "2026-07-15T00:12:00Z",
+          "event_id": "deployment-saga-plan-loop-prod-dep-failure-20260715001015-evt-0003",
+          "event_time": "2026-07-15T00:12:00Z",
+          "event_type": "deployment.saga.aborted",
+          "idempotency_key": "deployment-saga-plan-loop-prod-dep-failure-20260715001015:3:deployment.saga.aborted",
+          "payload": {
+            "compensation": {
+              "binding_status": "not_created",
+              "command_type": "abort_plan",
+              "incident_required": false,
+              "owner_service": "governance-svc",
+              "plan_status": "aborted",
+              "reason": "deploy authority rejected: registry authority mismatch: artifact_state expected 'approved', got 'candidate'; approval_decision_id expected 'approval-loop-prod-dep-failure-20260715001015', got None",
+              "safe_mode": false,
+              "write_scope": "DeploymentPlan.status only; no runtime tables are touched."
+            },
+            "failure_reason": "deploy authority rejected: registry authority mismatch: artifact_state expected 'approved', got 'candidate'; approval_decision_id expected 'approval-loop-prod-dep-failure-20260715001015', got None",
+            "plan_id": "plan-loop-prod-dep-failure-20260715001015"
+          },
+          "sequence_no": 3,
+          "trace_id": "91777920-22f1-4399-bfa5-884c27ed32b0"
+        },
+        "last_attempt_at": null,
+        "last_error": null,
+        "last_replayed_at": null,
+        "next_retry_at": null,
+        "owner_service": "governance-svc",
+        "published_at": null,
+        "replay_count": 0,
+        "retry_policy": null,
+        "status": "pending"
+      }
+    ],
+    "status": 200
+  }
+}

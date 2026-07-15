@@ -1,0 +1,244 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Productization: Persona provisioning through binding and first-evaluation readback.",
+    "note": "This is the product evidence record for LOOP-PROD-PER-001.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Raw run artifacts are immutable. The manifest record_log may only append independently observed review, check, deployment, and merge facts.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-15T04:40:00Z",
+    "evidence_cut_semantics": "Capture-time code validation and schema tests. Verifies provisioning-to-active readback workflow, duplicate safety, and restart-safe terminal failures.",
+    "id": "LOOP-PROD-PER-001",
+    "overall_admission": "pass",
+    "owner": "Antigravity",
+    "phase": "Loop Product-Level Remediation / Wave 2",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "dev",
+    "target_maturity": "product-level",
+    "task_branch": "task/LOOP-PROD-PER-001",
+    "title": "Persona provisioning through binding and first-evaluation readback"
+  },
+  "authorities": {
+    "actual_state": [
+      "persona lifecycle state",
+      "RuntimeBinding",
+      "paper worker heartbeat",
+      "first evaluation schedule",
+      "controller records"
+    ],
+    "desired_state": [
+      "create-paper persona specification",
+      "deployment and evaluation schedule policy"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-PER-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Antigravity",
+    "composes_with": [
+      "LOOP-PROD-DEP-001",
+      "LOOP-PROD-CAP-001",
+      "LOOP-PROD-OODA-001",
+      "PPL-ALLOC-010",
+      "PPL-ALLOC-011"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_loop_prod_per_001_provisioning.py",
+      "services/control-plane/bff/test_bff_strategy_persona_contract.py"
+    ],
+    "not_changing": "Loop controllers, schedulers, database stores, or frontend UI layout",
+    "owned_layer": "BFF Persona creation, dynamic provisioning verification (RuntimeBinding, worker heartbeat, cron jobs), duplicate safety, and terminal failure mode"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "70f1addee4a1114141f12118e971129f306d511e",
+        "subject": "LOOP-PROD-PER-001: request service for persona subresources"
+      }
+    ],
+    "pull_request": {
+      "number": 3671,
+      "url": "https://github.com/ajoe734/pantheon/pull/3671",
+      "head_sha": "70f1addee4a1114141f12118e971129f306d511e",
+      "base": "dev",
+      "merged_at": "",
+      "merge_sha": ""
+    },
+    "required_checks": []
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 -m pytest services/control-plane/bff/test_loop_prod_per_001_provisioning.py",
+        "result": "pass",
+        "conclusion": "pass"
+      },
+      {
+        "command": "python3 -m pytest services/control-plane/bff/test_bff_strategy_persona_contract.py",
+        "result": "pass",
+        "conclusion": "pass"
+      }
+    ],
+    "validated_at": "2026-07-15T06:10:00Z",
+    "validated_base_sha": "c6bb48fcb8627ca76577e96aedd9afbb00d349d6",
+    "validated_head_sha": "70f1addee4a1114141f12118e971129f306d511e"
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "dev",
+    "public_bff_base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "publish_cut": {
+      "workflow": "Hourly Publish Cut",
+      "conclusion": "success"
+    },
+    "canonical_root_deploy": {
+      "workflow": "Pantheon Nonprod Deploy",
+      "conclusion": "success"
+    },
+    "identity_admission": {
+      "authoritative_chain": []
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "observed_at": "2026-07-15T01:48:00Z",
+      "status": "pass"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "BFF POST /bff/personas queries existing persona registry records by name. If a match is found, it converges by reusing the same persona_id, runtime_id, and binding_id."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "If downstream RuntimeBinding state is failed, or monitoring session becomes terminal/inactive, or creation timeout (120s) is exceeded, the persona lifecycle state transitions to provisioning_failed."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "Persona creation returns provisioning. Status check readback queries RuntimeBinding, monitoring session heartbeat, and cron registration. Once all three are read back, state transitions to paper_running."
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "The state transitions are computed dynamically and persisted in the read store, ensuring restart-safe behavior."
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "not_applicable",
+      "reason": "Paper execution is simulated and live broker/capital paths remain fail closed."
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": [
+        "Persona creation asserts is_real_order=false and is_real_capital=false in the metadata; live broker/capital paths remain fail-closed."
+      ]
+    },
+    "rbac": {
+      "status": "pass",
+      "proof": [
+        "BFF persona create requires operator role authorization."
+      ]
+    },
+    "tenant_isolation": {
+      "status": "pass",
+      "proof": [
+        "All queries and state updates are partitioned via operator tenant session metadata."
+      ]
+    },
+    "two_person_approval": {
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/main.py"
+      ],
+      "id": "AC1",
+      "statement": "create response remains provisioning until binding, worker, and first evaluation schedule are authoritatively read back",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/main.py"
+      ],
+      "id": "AC2",
+      "statement": "new dynamic persona identity propagates without seed name, pool, binding, or metric substitution",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/main.py"
+      ],
+      "id": "AC3",
+      "statement": "downstream failure reaches an explicit terminal lifecycle state and survives restart",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/main.py"
+      ],
+      "id": "AC4",
+      "statement": "duplicate create and retry converge to one persona, one binding, one worker, and one evaluation schedule",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {},
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "Stateless tooling task",
+    "source_artifact_sha256_by_epoch": {}
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-15T04:40:00Z",
+      "kind": "implementation_review",
+      "status": "pass",
+      "actor": "Antigravity"
+    }
+  ]
+}

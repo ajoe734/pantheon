@@ -148,6 +148,9 @@ from command_executor import (
     create_capital_pool,
     create_capital_rebalance_proposal,
     execute_command_with_status,
+    _runtime_manager_client,
+    _post_json,
+    _get_json,
 )
 from persona_allocation_policy import (
     build_pm12_allocation_policy_input,
@@ -313,8 +316,14 @@ def _dedupe_origins(origins: List[str]) -> List[str]:
     return deduped
 
 
+_BFF_VALID_AUTH_MODES = frozenset({"strict", "permissive"})
+
+
 def _bff_auth_mode() -> str:
-    return os.getenv("PANTHEON_BFF_AUTH_MODE", "strict").strip().lower() or "strict"
+    raw = os.getenv("PANTHEON_BFF_AUTH_MODE", "strict").strip().lower() or "strict"
+    if raw not in _BFF_VALID_AUTH_MODES:
+        return "strict"
+    return raw
 
 
 def _is_production_strict_mode() -> bool:
@@ -1063,30 +1072,26 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 #   Strict default still applies: stub tokens are not accepted in strict mode.
 
 
-def _dev_login_client_id() -> str:
-    return _first_nonblank(
-        os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_ID"),
-        os.getenv("PANTHEON_BFF_OIDC_CLIENT_ID"),
-    )
-
-
-def _dev_login_client_secret() -> str:
-    return _first_nonblank(
-        os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_SECRET"),
-        os.getenv("PANTHEON_BFF_OIDC_CLIENT_SECRET"),
-    )
+# Server-bound dev-login identities. Each identity issues tokens for exactly
+# one fixed role set, subject, and tenant scope; the caller cannot request
+# roles or tenants beyond what the identity is bound to. This closes the
+# self-elevation gap where a single shared credential could mint a token for
+# any role (including admin) or any tenant simply by asking for it in the
+# request body.
+_DEV_LOGIN_IDENTITY_DEFS: Dict[str, Dict[str, Any]] = {
+    "viewer": {"roles": ("viewer",), "subject_suffix": "viewer"},
+    "operator": {"roles": ("operator",), "subject_suffix": "operator"},
+    "approver": {"roles": ("approver",), "subject_suffix": "approver"},
+    "risk_owner": {"roles": ("risk_owner",), "subject_suffix": "risk-owner"},
+    "operator_a": {"roles": ("operator",), "subject_suffix": "operator-a"},
+    "operator_b": {"roles": ("operator",), "subject_suffix": "operator-b"},
+}
 
 
 def _dev_login_forbidden_environment() -> bool:
     env_name = os.getenv("PANTHEON_ENV", "").strip().lower()
     deployment_stage = os.getenv("PANTHEON_DEPLOYMENT_STAGE", "").strip().lower()
     return env_name in _PRODUCTION_STRICT_ENVIRONMENTS or deployment_stage in _PRODUCTION_STRICT_ENVIRONMENTS
-
-
-def _dev_login_enabled() -> bool:
-    if _dev_login_forbidden_environment():
-        return False
-    return bool(_dev_login_client_id() and _dev_login_client_secret())
 
 
 def _dev_login_ttl_seconds() -> int:
@@ -1098,21 +1103,81 @@ def _dev_login_ttl_seconds() -> int:
     return max(300, min(ttl, 3600))
 
 
-def _dev_login_roles() -> List[str]:
-    roles = _env_csv("PANTHEON_BFF_DEV_LOGIN_ROLES") or ["operator", "reviewer", "approver"]
-    return sorted(set(role for role in roles if role in _READ_ROLES or role in _WRITE_ROLES))
-
-
 def _dev_login_bool_env(name: str, *, default: bool) -> bool:
     return _bool_from_env(name, default=default)
 
 
-def _issue_dev_login_jwt(
-    client_id: str,
-    requested_roles: Optional[List[str]] = None,
-    requested_tenant_id: Optional[str] = None,
-    requested_allowed_tenants: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+def _dev_login_identity_registry() -> Dict[str, Dict[str, Any]]:
+    """Build the configured dev-login identity profiles from environment.
+
+    Each identity requires its own dedicated ``PANTHEON_BFF_DEV_LOGIN_<NAME>_
+    CLIENT_ID``/``_CLIENT_SECRET`` pair so distinct actors (e.g. operator A
+    vs. operator B) never share a credential or a subject. Only the
+    ``operator`` identity falls back to the legacy shared
+    ``PANTHEON_BFF_DEV_LOGIN_CLIENT_ID``/``PANTHEON_BFF_OIDC_CLIENT_ID``
+    credential for backward compatibility; unconfigured identities are simply
+    absent from the registry (dev-login as that identity is unavailable, it
+    does not fall back to a shared credential).
+    """
+    registry: Dict[str, Dict[str, Any]] = {}
+    for name, base in _DEV_LOGIN_IDENTITY_DEFS.items():
+        env_prefix = f"PANTHEON_BFF_DEV_LOGIN_{name.upper()}"
+        client_id = os.getenv(f"{env_prefix}_CLIENT_ID", "").strip()
+        client_secret = os.getenv(f"{env_prefix}_CLIENT_SECRET", "").strip()
+        if not (client_id and client_secret) and name == "operator":
+            client_id = _first_nonblank(
+                os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_ID"),
+                os.getenv("PANTHEON_BFF_OIDC_CLIENT_ID"),
+            )
+            client_secret = _first_nonblank(
+                os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_SECRET"),
+                os.getenv("PANTHEON_BFF_OIDC_CLIENT_SECRET"),
+            )
+        if not (client_id and client_secret):
+            continue
+
+        tenant_id = _first_nonblank(
+            os.getenv(f"{env_prefix}_TENANT_ID"),
+            os.getenv("PANTHEON_BFF_TENANT_ID"),
+            os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
+            os.getenv("PANTHEON_TENANT_ID"),
+            "tenant-dev",
+        )
+        allowed_tenants = _env_csv(f"{env_prefix}_ALLOWED_TENANTS") or [tenant_id]
+        if tenant_id not in allowed_tenants:
+            allowed_tenants = [tenant_id] + list(allowed_tenants)
+
+        mfa_verified = _dev_login_bool_env(f"{env_prefix}_MFA_VERIFIED", default=False)
+
+        registry[name] = {
+            "identity": name,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "roles": sorted(base["roles"]),
+            "subject": f"pantheon-dev-{base['subject_suffix']}",
+            "tenant_id": tenant_id,
+            "allowed_tenants": allowed_tenants,
+            "mfa_verified": mfa_verified,
+        }
+    return registry
+
+
+def _dev_login_enabled() -> bool:
+    if _dev_login_forbidden_environment():
+        return False
+    return bool(_dev_login_identity_registry())
+
+
+def _dev_login_match_identity(client_id: str, client_secret: str) -> Optional[Dict[str, Any]]:
+    for profile in _dev_login_identity_registry().values():
+        if hmac.compare_digest(client_id, profile["client_id"]) and hmac.compare_digest(
+            client_secret, profile["client_secret"]
+        ):
+            return profile
+    return None
+
+
+def _issue_dev_login_jwt(profile: Dict[str, Any]) -> Dict[str, Any]:
     try:
         from services.runtime_auth_inbound import encode_jwt_hs256
     except ImportError:
@@ -1132,20 +1197,8 @@ def _issue_dev_login_jwt(
     now = int(time.time())
     ttl = _dev_login_ttl_seconds()
     expires_at = now + ttl
+    roles = list(profile["roles"])
 
-    if requested_roles is not None:
-        roles = sorted(set(role for role in requested_roles if role in _READ_ROLES or role in _WRITE_ROLES))
-    else:
-        env_roles = _env_csv("PANTHEON_BFF_DEV_LOGIN_ROLES")
-        if env_roles:
-            roles = sorted(set(role for role in env_roles if role in _READ_ROLES or role in _WRITE_ROLES))
-        else:
-            roles = ["operator"]
-
-    subject = _first_nonblank(
-        os.getenv("PANTHEON_BFF_DEV_LOGIN_SUBJECT"),
-        f"pantheon-dev-{client_id}",
-    )
     issuer = _first_nonblank(
         os.getenv("PANTHEON_BFF_JWT_ISSUER"),
         "pantheon-dev",
@@ -1154,24 +1207,9 @@ def _issue_dev_login_jwt(
         os.getenv("PANTHEON_BFF_JWT_AUDIENCE"),
         "bff-operators",
     )
-    tenant_id = _first_nonblank(
-        requested_tenant_id,
-        os.getenv("PANTHEON_BFF_TENANT_ID"),
-        os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
-        os.getenv("PANTHEON_TENANT_ID"),
-        "tenant-dev",
-    )
-    if requested_allowed_tenants is not None:
-        allowed_tenants = requested_allowed_tenants
-    else:
-        allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [tenant_id]
 
-    if tenant_id not in allowed_tenants:
-        allowed_tenants = [tenant_id] + list(allowed_tenants)
-
-    mfa_verified = _dev_login_bool_env("PANTHEON_BFF_DEV_LOGIN_MFA_VERIFIED", default=False)
     claims: Dict[str, Any] = {
-        "sub": subject,
+        "sub": profile["subject"],
         "roles": roles,
         "iss": issuer,
         "aud": audience,
@@ -1179,12 +1217,13 @@ def _issue_dev_login_jwt(
         "nbf": now,
         "exp": expires_at,
         "jti": f"dev-login-{uuid.uuid4().hex}",
-        "client_id": client_id,
+        "client_id": profile["client_id"],
+        "identity": profile["identity"],
         "token_use": "pantheon-bff-dev-login",
-        "tenant_id": tenant_id,
-        "allowed_tenants": allowed_tenants,
+        "tenant_id": profile["tenant_id"],
+        "allowed_tenants": profile["allowed_tenants"],
     }
-    if mfa_verified:
+    if profile["mfa_verified"]:
         claims["mfa_verified"] = True
 
     token = encode_jwt_hs256(claims, secret=secret)
@@ -1200,7 +1239,15 @@ def _issue_dev_login_jwt(
 
 @app.post("/bff/auth/dev-login")
 async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict)):
-    """Dev-only client-credentials exchange for short-lived BFF JWTs."""
+    """Dev-only client-credentials exchange for short-lived BFF JWTs.
+
+    Each client_id/client_secret pair is bound server-side to exactly one
+    named identity (viewer/operator/approver/risk_owner/operator_a/
+    operator_b) with a fixed subject, role set, and tenant scope. Callers may
+    optionally echo ``roles``/``tenant_id``/``allowed_tenants`` in the
+    request, but any value outside what the matched identity is bound to is
+    rejected as an escalation attempt rather than silently honored.
+    """
     if not _dev_login_enabled():
         raise _bff_error(
             403,
@@ -1221,32 +1268,62 @@ async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict
 
     client_id = str(payload.get("client_id") or payload.get("clientId") or "").strip()
     client_secret = str(payload.get("client_secret") or payload.get("clientSecret") or "").strip()
-    expected_id = _dev_login_client_id()
-    expected_secret = _dev_login_client_secret()
-    if not (
-        hmac.compare_digest(client_id, expected_id)
-        and hmac.compare_digest(client_secret, expected_secret)
-    ):
+    profile = _dev_login_match_identity(client_id, client_secret)
+    if profile is None:
         raise _bff_error(
             401,
             ErrorCode.AUTH_REQUIRED,
             "Invalid dev login client credentials",
             "AUTH_DEV_LOGIN_CLIENT_CREDENTIALS",
-            suggestion="Use the configured PANTHEON_BFF_OIDC_CLIENT_ID and CLIENT_SECRET",
+            suggestion="Use the configured per-identity PANTHEON_BFF_DEV_LOGIN_<IDENTITY>_CLIENT_ID/SECRET",
         )
 
-    token_payload = _issue_dev_login_jwt(
-        client_id,
-        requested_roles=payload.get("roles"),
-        requested_tenant_id=payload.get("tenant_id") or payload.get("tenantId"),
-        requested_allowed_tenants=payload.get("allowed_tenants") or payload.get("allowedTenants"),
-    )
+    requested_roles = payload.get("roles")
+    if requested_roles is not None:
+        bound_roles = set(profile["roles"])
+        requested = set(requested_roles)
+        if not requested or not requested.issubset(bound_roles):
+            raise _bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Requested roles exceed the dev-login identity's bound roles",
+                "AUTH_DEV_LOGIN_ESCALATION_DENIED",
+                precondition_failed="roles",
+                suggestion=f"Identity '{profile['identity']}' is bound to roles {sorted(bound_roles)}",
+            )
+
+    requested_tenant = str(payload.get("tenant_id") or payload.get("tenantId") or "").strip()
+    if requested_tenant and requested_tenant != profile["tenant_id"]:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Requested tenant is outside the dev-login identity's bound tenant",
+            "AUTH_DEV_LOGIN_ESCALATION_DENIED",
+            precondition_failed="tenant_id",
+            suggestion=f"Identity '{profile['identity']}' is bound to tenant '{profile['tenant_id']}'",
+        )
+
+    requested_allowed_tenants = payload.get("allowed_tenants") or payload.get("allowedTenants")
+    if requested_allowed_tenants is not None and set(requested_allowed_tenants) - set(
+        profile["allowed_tenants"]
+    ):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Requested allowed_tenants exceed the dev-login identity's bound tenants",
+            "AUTH_DEV_LOGIN_ESCALATION_DENIED",
+            precondition_failed="allowed_tenants",
+            suggestion=f"Identity '{profile['identity']}' is bound to tenants {profile['allowed_tenants']}",
+        )
+
+    token_payload = _issue_dev_login_jwt(profile)
     return {
         **token_payload,
         "meta": {
             "route": "POST /bff/auth/dev-login",
             "contract": "FE-INT-GATE-OIDC-DEV-LOGIN",
             "ttl_seconds": token_payload["expires_in"],
+            "identity": profile["identity"],
         },
     }
 
@@ -26700,6 +26777,8 @@ _STRATEGY_BFF_LIFECYCLE_MAP = {
     "rollback_required": "rollback_required",
     "stopped": "stopped",
     "failed": "failed",
+    "provisioning": "provisioning",
+    "provisioning_failed": "failed",
 }
 
 _PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({
@@ -27736,14 +27815,169 @@ def _project_strategy_dto(
     return dto
 
 
+def _deployment_url(path: str) -> str:
+    base = os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip().rstrip("/")
+    if not base:
+        base = "http://deployment:8095"
+    return f"{base}{path}"
+
+
+def _evaluate_persona_provisioning_status(
+    persona_id: str,
+    raw: Dict[str, Any],
+    *,
+    all_bindings: Optional[Dict[str, Dict[str, Any]]] = None,
+    all_cron_registrations: Optional[Set[Tuple[str, str]]] = None,
+) -> str:
+    metadata = raw.get("metadata") or {}
+    current_state = raw.get("lifecycle_state") or raw.get("state")
+    if current_state not in ("provisioning", "draft", "paper_running"):
+        return str(current_state or "")
+
+    if current_state in ("provisioning_failed", "failed"):
+        return str(current_state or "")
+
+    if current_state == "paper_running":
+        return "paper_running"
+
+    if current_state != "provisioning":
+        return str(current_state or "")
+
+    # 1. Check RuntimeBinding
+    binding_id = metadata.get("runtime_binding_id") or metadata.get("binding_id")
+    binding = None
+    binding_ok = False
+    binding_failed = False
+    if binding_id:
+        try:
+            if all_bindings is not None:
+                binding = all_bindings.get(binding_id)
+            else:
+                client = _runtime_manager_client()
+                binding = client.get(binding_id)
+            if binding:
+                binding_state = str(binding.get("state") or binding.get("status") or "").lower()
+                if binding_state in ("running", "active", "ok"):
+                    binding_ok = True
+                elif binding_state in ("failed", "stopped", "error"):
+                    binding_failed = True
+        except Exception as exc:
+            logger.warning(f"Failed to query RuntimeBinding {binding_id} for {persona_id}: {exc}")
+
+    # 2. Check Paper Worker Heartbeat
+    runtime_id = metadata.get("runtime_id")
+    monitoring_session = None
+    telemetry_summary = None
+    if runtime_id and binding_id:
+        # Exact join on persona_id, runtime_id, and binding_id
+        for s in read_store.list_paper_runtime_monitoring_sessions():
+            s_pid = str(s.get("persona_id") or "").strip()
+            s_rtid = str(s.get("runtime_id") or "").strip()
+            s_bid = str(s.get("binding_id") or s.get("runtime_binding_id") or "").strip()
+            if s_rtid == runtime_id and s_bid == binding_id and (not s_pid or s_pid == persona_id):
+                monitoring_session = s
+                break
+    if runtime_id:
+        telemetry_summary = read_store.get_telemetry_summary(runtime_id)
+
+    heartbeat_ok = False
+    heartbeat_failed = False
+
+    last_hb = None
+    if monitoring_session:
+        last_hb = monitoring_session.get("last_heartbeat_at")
+        session_status = str(monitoring_session.get("status") or "").lower()
+        if session_status in ("failed", "ended", "error") or monitoring_session.get("active") is False:
+            heartbeat_failed = True
+    if not last_hb and telemetry_summary:
+        last_hb = telemetry_summary.get("last_heartbeat_at")
+
+    if last_hb:
+        heartbeat_ok = True
+
+    # 3. Check First Evaluation Schedule
+    cron_ok = False
+    try:
+        if all_cron_registrations is not None:
+            cron_ok = any(pid == persona_id for (pid, wfid) in all_cron_registrations)
+        else:
+            if "persona_cron_registrar" not in sys.modules:
+                _saved_modules = {
+                    name: sys.modules.pop(name)
+                    for name in ("models", "workflows")
+                    if name in sys.modules
+                }
+                sys.path.insert(0, _CRON_SERVICE_DIR)
+                try:
+                    import persona_cron_registrar  # noqa: F401
+                finally:
+                    sys.path.remove(_CRON_SERVICE_DIR)
+                    for name in ("models", "workflows"):
+                        sys.modules.pop(name, None)
+                    sys.modules.update(_saved_modules)
+            from persona_cron_registrar import PersonaCronRegistrar
+            registrar = PersonaCronRegistrar()
+            runtime = registrar._get_runtime()
+            if runtime is not None:
+                existing = registrar._existing_registrations(runtime)
+                cron_ok = any(pid == persona_id for (pid, wfid) in existing)
+    except Exception as exc:
+        logger.warning(f"Failed to query cron registrations for {persona_id}: {exc}")
+
+    # Timeout check (120 seconds)
+    is_timeout = False
+    created_at_str = raw.get("created_at") or metadata.get("created_at")
+    if created_at_str:
+        try:
+            if "T" in created_at_str:
+                clean_str = created_at_str.replace("Z", "+00:00")
+                created_at_dt = datetime.fromisoformat(clean_str)
+            else:
+                created_at_dt = datetime.fromisoformat(created_at_str)
+            now_dt = datetime.fromisoformat(utc_now().replace("Z", "+00:00"))
+            delta = (now_dt - created_at_dt).total_seconds()
+            if delta > 120:
+                is_timeout = True
+        except Exception:
+            pass
+
+    if binding_ok and heartbeat_ok and cron_ok:
+        new_state = "paper_running"
+    elif binding_failed or heartbeat_failed or is_timeout:
+        new_state = "provisioning_failed"
+    else:
+        new_state = "provisioning"
+
+    if new_state != current_state:
+        read_store.update_persona(persona_id, lifecycle_state=new_state)
+        if persona_id in _PERSONA_BFF_OVERLAY:
+            _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
+            _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
+        raw["lifecycle_state"] = new_state
+        raw["status"] = new_state
+        if "metadata" in raw:
+            raw["metadata"]["lifecycle_state"] = new_state
+
+    return new_state
+
+
 def _project_persona_dto(
     raw: Dict[str, Any],
     *,
     overlay: Optional[Dict[str, Any]] = None,
     routed_strategies: Optional[int] = None,
+    all_bindings: Optional[Dict[str, Dict[str, Any]]] = None,
+    all_cron_registrations: Optional[Set[Tuple[str, str]]] = None,
 ) -> Dict[str, Any]:
     """Project canonical persona data into execute-plans Persona DTO."""
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
+    if persona_id:
+        _evaluate_persona_provisioning_status(
+            persona_id,
+            raw,
+            all_bindings=all_bindings,
+            all_cron_registrations=all_cron_registrations,
+        )
     metadata = dict(raw.get("metadata") or {}) if isinstance(raw.get("metadata"), dict) else {}
     archetype = str(
         metadata.get("archetype")
@@ -43290,12 +43524,55 @@ async def bff_list_personas(
     _require_read_role(identity)
     snapshot_at = utc_now()
     raw_personas = _list_persona_records()
+
+    # Batch fetch runtime bindings and cron registrations for non-blocking readback
+    all_bindings: Dict[str, Dict[str, Any]] = {}
+    try:
+        client = _runtime_manager_client()
+        bindings_list = client.list_all()
+        for b in bindings_list:
+            b_id = b.get("binding_id") or b.get("id")
+            if b_id:
+                all_bindings[b_id] = b
+    except Exception as exc:
+        logger.warning(f"Failed to batch list runtime bindings: {exc}")
+
+    all_cron_registrations: Set[Tuple[str, str]] = set()
+    try:
+        if "persona_cron_registrar" not in sys.modules:
+            _saved_modules = {
+                name: sys.modules.pop(name)
+                for name in ("models", "workflows")
+                if name in sys.modules
+            }
+            sys.path.insert(0, _CRON_SERVICE_DIR)
+            try:
+                import persona_cron_registrar  # noqa: F401
+            finally:
+                sys.path.remove(_CRON_SERVICE_DIR)
+                for name in ("models", "workflows"):
+                    sys.modules.pop(name, None)
+                sys.modules.update(_saved_modules)
+        from persona_cron_registrar import PersonaCronRegistrar
+        registrar = PersonaCronRegistrar()
+        runtime = registrar._get_runtime()
+        if runtime is not None:
+            all_cron_registrations = registrar._existing_registrations(runtime)
+    except Exception as exc:
+        logger.warning(f"Failed to batch list cron registrations: {exc}")
+
     items = []
     for raw in raw_personas:
         persona_id = str(raw.get("persona_id") or raw.get("id") or "")
         overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
         routed = _routed_strategies_for_persona(persona_id)
-        dto = _project_persona_dto(raw, overlay=overlay, routed_strategies=routed)
+        dto = _project_persona_dto(
+            raw,
+            overlay=overlay,
+            routed_strategies=routed,
+            all_bindings=all_bindings,
+            all_cron_registrations=all_cron_registrations,
+        )
         items.append(dto)
     if state:
         items = [p for p in items if p.get("state") == state]
@@ -43475,13 +43752,44 @@ async def bff_create_persona(
             precondition_failed="name",
         )
     snapshot_at = utc_now()
-    persona_id = f"persona-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+
+    # 重重複建立與 retry 收斂邏輯
+    existing_personas = read_store.list_personas() or []
+    existing_persona = None
+    for p in existing_personas:
+        if str(p.get("name") or "").strip() == name:
+            existing_persona = p
+            break
+
+    if existing_persona:
+        persona_id = existing_persona.get("persona_id") or existing_persona.get("id")
+        existing_metadata = existing_persona.get("metadata") or {}
+        refs = {
+            "paper_ledger_id": existing_metadata.get("paper_ledger_id"),
+            "capital_pool_id": existing_metadata.get("legacy_paper_capital_pool_id") or existing_metadata.get("capital_pool_id"),
+            "binding_id": existing_metadata.get("binding_id") or existing_metadata.get("persona_capital_binding_id"),
+            "runtime_id": existing_metadata.get("runtime_id"),
+            "deployment_plan_id": existing_metadata.get("deployment_plan_id"),
+            "artifact_id": existing_metadata.get("artifact_id") or f"paper-artifact-{persona_id}",
+        }
+        if existing_persona.get("lifecycle_state") in ("provisioning_failed", "failed"):
+            read_store.update_persona(persona_id, lifecycle_state="provisioning")
+            existing_persona["lifecycle_state"] = "provisioning"
+            existing_persona["status"] = "provisioning"
+            if persona_id in _PERSONA_BFF_OVERLAY:
+                _PERSONA_BFF_OVERLAY[persona_id]["state"] = "provisioning"
+                _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = "provisioning"
+        persona_record = existing_persona
+    else:
+        persona_id = f"persona-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+        refs = _persona_create_paper_refs(persona_id, payload)
+        persona_record = None
+
     owner = str(payload.get("owner") or identity.operator_id)
     archetype = str(payload.get("archetype") or "generalist")
     risk = _normalize_risk_level(payload.get("risk") or "low")
     capital_mode = _persona_create_validate_paper_only(payload)
-    refs = _persona_create_paper_refs(persona_id, payload)
-    lifecycle_state = "paper_running"
+    lifecycle_state = "provisioning"
     market = str(payload.get("market") or "").strip().upper()
     required_data_sources = payload.get("required_data_sources") or payload.get("requiredDataSources")
     if not required_data_sources and market:
@@ -43584,71 +43892,106 @@ async def bff_create_persona(
             },
         }
     else:
-        persona_record = read_store.create_persona(
-            persona_id=persona_id,
-            name=name,
-            actor_id=owner,
-            created_at=snapshot_at,
-            archetype=archetype,
-            lifecycle_state=lifecycle_state,
-            risk_level=risk,
-            mandate=mandate,
-            strategy_family=strategy_family,
-            traits=traits,
-            metadata=persona_metadata,
-            required_data_sources=required_data_sources,
-        )
-        read_store.create_persona_binding(
-            binding_id=refs["binding_id"],
-            persona_id=persona_id,
-            capital_pool_id=refs["capital_pool_id"],
-            actor_id=owner,
-            created_at=snapshot_at,
-            role="paper_owner",
-            validity="active",
-            metadata={
-                "capital_mode": "paper",
-                "paper_ledger_id": refs["paper_ledger_id"],
-                "legacy_paper_capital_pool_id": refs["capital_pool_id"],
-                "live_capital_enabled": False,
-                "created_via": "POST /bff/personas",
-            },
-        )
-        read_store.create_deployment_plan(
-            plan_id=refs["deployment_plan_id"],
-            binding_id=refs["binding_id"],
-            artifact_id=refs["artifact_id"],
-            deployment_mode="paper",
-            capital_pool_id=refs["capital_pool_id"],
-            actor_id=owner,
-            created_at=snapshot_at,
-            params={
+        if existing_persona is None:
+            persona_record = read_store.create_persona(
+                persona_id=persona_id,
+                name=name,
+                actor_id=owner,
+                created_at=snapshot_at,
+                archetype=archetype,
+                lifecycle_state=lifecycle_state,
+                risk_level=risk,
+                mandate=mandate,
+                strategy_family=strategy_family,
+                traits=traits,
+                metadata=persona_metadata,
+                required_data_sources=required_data_sources,
+            )
+
+        if persona_record.get("lifecycle_state") == "provisioning":
+            # 1. Create the Capital binding
+            binding_payload = {
+                "actor_id": owner,
+                "actor_role": _capital_owner_role(identity),
+                "binding_id": refs["binding_id"],
                 "persona_id": persona_id,
-                "capital_mode": "paper",
-                "paper_ledger_id": refs["paper_ledger_id"],
-                "human_review_required_for_live": True,
-            },
-            locked=True,
-            status="approved",
-        )
-        read_store.create_runtime_binding(
-            runtime_id=refs["runtime_id"],
-            name=f"{name} paper runtime",
-            persona_id=persona_id,
-            binding_id=refs["binding_id"],
-            deployment_plan_id=refs["deployment_plan_id"],
-            runtime_kind="paper",
-            actor_id=owner,
-            created_at=snapshot_at,
-            params={
                 "capital_pool_id": refs["capital_pool_id"],
-                "capital_mode": "paper",
-                "paper_ledger_id": refs["paper_ledger_id"],
-                "live_write_enabled": False,
-                "order_side_effects_allowed": False,
-            },
-            state="running",
-        )
+                "role": "paper_owner",
+                "allowed_deployment_scope": "paper",
+                "idempotency_key": resolved_key,
+                "request_hash": request_hash,
+                "metadata": {
+                    "capital_mode": "paper",
+                    "paper_ledger_id": refs["paper_ledger_id"],
+                    "legacy_paper_capital_pool_id": refs["capital_pool_id"],
+                    "live_capital_enabled": False,
+                    "created_via": "POST /bff/personas",
+                },
+            }
+            create_capital_binding(binding_payload)
+
+            # 2. Create the Deployment plan (with GET check for idempotency)
+            plan_payload = {
+                "plan_id": refs["deployment_plan_id"],
+                "approval_decision_id": f"decision-persona-create-{persona_id}",
+                "capital_pool_id": refs["capital_pool_id"],
+                "target_stage": "paper",
+                "created_by": owner,
+                "sponsor_persona_id": persona_id,
+                "binding_id": refs["binding_id"],
+                "status": "approved",
+                "metadata": {
+                    "persona_id": persona_id,
+                    "capital_mode": "paper",
+                    "paper_ledger_id": refs["paper_ledger_id"],
+                    "human_review_required_for_live": True,
+                }
+            }
+            plan_exists = False
+            dep_url = _deployment_url(f"/api/deployment/plans/{refs['deployment_plan_id']}")
+            try:
+                _get_json(dep_url)
+                plan_exists = True
+            except Exception:
+                pass
+
+            if not plan_exists:
+                _post_json(_deployment_url("/api/deployment/plans"), plan_payload)
+
+            # 3. Deploy the Runtime (with GET check for idempotency)
+            runtime_payload = {
+                "plan_id": refs["deployment_plan_id"],
+                "plan_status": "approved",
+                "target_stage": "paper",
+                "artifact_id": refs["artifact_id"],
+                "artifact_version": "1.0.0",
+                "capital_pool_id": refs["capital_pool_id"],
+                "persona_capital_binding_id": refs["binding_id"],
+                "persona_capital_binding_status": "active",
+                "allowed_deployment_scope": "paper",
+                "loader_checks_passed": True,
+                "runtime_id": refs["runtime_id"],
+                "metadata": {
+                    "name": f"{name} paper runtime",
+                    "persona_id": persona_id,
+                    "binding_id": refs["binding_id"],
+                    "deployment_plan_id": refs["deployment_plan_id"],
+                    "runtime_kind": "paper",
+                    "capital_pool_id": refs["capital_pool_id"],
+                    "capital_mode": "paper",
+                    "paper_ledger_id": refs["paper_ledger_id"],
+                    "live_write_enabled": False,
+                    "order_side_effects_allowed": False,
+                }
+            }
+            client = _runtime_manager_client()
+            existing_binding = None
+            try:
+                existing_binding = client.get(refs["runtime_id"])
+            except Exception:
+                pass
+            if not existing_binding:
+                client.deploy(runtime_payload)
     overlay = _project_persona_dto(
         persona_record,
         overlay={
@@ -43691,7 +44034,7 @@ async def bff_create_persona(
         "data": overlay,
         "meta": {
             "snapshot_at": snapshot_at,
-            "create_flow": "one_shot_paper_running",
+            "create_flow": "one_shot_provisioning",
             "capital_mode": "paper",
             "paper_ledger_id": refs["paper_ledger_id"],
             "legacy_paper_capital_pool_id": refs["capital_pool_id"],

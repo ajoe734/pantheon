@@ -224,6 +224,8 @@ EXPECTED_COMPLETION_AUTHORITY = {
         "LOOP-PROD-ATTEST-001",
     ],
     "final_direct_dependency_ids": [
+        "EVOCHAIN-011",
+        "EVOLOOP-011",
         "LOOP-PROD-CLOSE-001",
         "LOOP-PROD-DELIVERY-001",
         "LOOP-PROD-WORKER-001",

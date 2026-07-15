@@ -102,6 +102,7 @@ class DatasetRecord(BaseModel):
     extracted_at: str
     # True when this response was served from an existing record (duplicate evidence_id)
     idempotent: bool = False
+    version: int = 1
 
 
 __all__ = [
