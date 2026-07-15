@@ -273,9 +273,10 @@ def test_source_failure_preserves_last_good_bundle(tmp_path):
     projector.project_records(
         lifecycle_rows()[:1], mode="live", source_high_watermark=1
     )
-    before = (tmp_path / "current").resolve()
+    before = _current_json(tmp_path, "trade_journey_events.json")["events"]
     projector.record_source_failure("postgres unavailable", backlog=7)
-    assert (tmp_path / "current").resolve() == before
+    assert _current_json(tmp_path, "trade_journey_events.json")["events"] == before
+    assert _current_json(tmp_path, "loop_runs.json")["controller"]["status"] == "degraded"
     assert projector.controller["status"] == "degraded"
     assert projector.controller["last_error"] == "postgres unavailable"
     assert projector.controller["backlog"] == 7

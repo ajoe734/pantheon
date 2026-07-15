@@ -366,8 +366,8 @@ class LifecycleProjector:
                 continue
             try:
                 identity = self._identity(event)
-                self._admit_identity(candidate, identity)
                 source_sequence = self._sequence_no(event)
+                self._admit_identity(candidate, identity)
             except InvalidLifecycleEvent as exc:
                 quarantined += 1
                 candidate.setdefault("quarantine", []).append(
@@ -503,16 +503,21 @@ class LifecycleProjector:
     def record_source_failure(self, error: str, *, backlog: int | None = None) -> None:
         """Record source failure while preserving the last-good read-model bundle."""
         candidate = copy.deepcopy(self.state)
+        candidate["generation"] = int(candidate.get("generation", 0)) + 1
         controller = candidate.setdefault("controller", {})
         controller.update(
             {
                 "status": "degraded",
                 "last_failure_at": self.clock(),
                 "last_error": str(error),
+                "generation": int(candidate["generation"]),
+                "restart_count": int(candidate.get("restart_count", 0)),
             }
         )
         if backlog is not None:
             controller["backlog"] = max(0, int(backlog))
+        journey_payload, loop_payload = self._render(candidate)
+        self.bundle.publish(candidate["generation"], journey_payload, loop_payload)
         _atomic_write_json(self.state_path, candidate)
         self.state = candidate
 
@@ -619,13 +624,19 @@ class LifecycleProjector:
         loop_records = self._loop_records(canonical_entries, materializer, controller)
         journey_payload = {
             "schema_version": JOURNEY_STORE_SCHEMA,
+            "projector_owned": True,
             "generation": int(state.get("generation", 0)),
+            "projection_mode": controller.get("mode"),
+            "accepted_live": bool(controller.get("accepted_live")),
             "controller": controller,
             "events": journey_events,
         }
         loop_payload = {
             "schema_version": LOOP_STORE_SCHEMA,
+            "projector_owned": True,
             "generation": int(state.get("generation", 0)),
+            "projection_mode": controller.get("mode"),
+            "accepted_live": bool(controller.get("accepted_live")),
             "controller": controller,
             "records": {record["id"]: record for record in loop_records},
         }
