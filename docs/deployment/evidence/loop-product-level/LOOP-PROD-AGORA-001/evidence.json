@@ -3,7 +3,8 @@
     {
       "evidence_refs": [
         "behavioral_proof.restart_and_recovery",
-        "behavioral_proof.inbox_persistence"
+        "behavioral_proof.inbox_persistence",
+        "behavioral_proof.round_2_toctou_and_restart_fix"
       ],
       "id": "AC-01",
       "statement": "Raw interaction/feedback/note/journal/insight events persist in Postgres-backed durable inbox surviving stack restart",
@@ -28,7 +29,8 @@
     },
     {
       "evidence_refs": [
-        "behavioral_proof.idempotency"
+        "behavioral_proof.idempotency",
+        "behavioral_proof.round_2_toctou_and_restart_fix"
       ],
       "id": "AC-04",
       "statement": "Worker and inbox processing are idempotent by evidence_id",
@@ -85,6 +87,16 @@
       "proof": [
         "get_backlog, get_dlq, and replay_dlq_item methods manage the inbox states.",
         "Exposed via /bff/agora/dataset-worker/ endpoints."
+      ],
+      "status": "pass"
+    },
+    "round_2_toctou_and_restart_fix": {
+      "proof": [
+        "PR #3675 (task/LOOP-PROD-AGORA-001, commit fb3190f0b) fixes the round-1 change request: Postgres add_to_inbox (extractor.py:184-260) now does SELECT, then INSERT ... ON CONFLICT (evidence_id) DO NOTHING RETURNING created_at, then re-SELECTs on conflict, closing the SELECT-then-INSERT TOCTOU race that previously raised an unhandled IntegrityError under concurrent duplicate submission.",
+        "New test test_concurrent_add_to_inbox_postgres (services/control-plane/bff/agora/dataset_extraction/test_extractor.py) fires 10 concurrent threads submitting the same evidence_id against a real Postgres backend; independently re-run in this review against the live pantheon-postgres-1 container (TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:15432/postgres pytest ... -k postgres) -> 2 passed (test_backlog_worker_and_handoff_lifecycle_postgres, test_concurrent_add_to_inbox_postgres), confirming exactly 1 is_new=True and 9 is_new=False.",
+        "process_inbox per-row work is now wrapped in conn.transaction() savepoints so one row's processing failure no longer aborts the shared connection transaction and blocks the failure-status UPDATE or other rows' commits in the same batch.",
+        "scripts/agora_workshop_restart_persistence_smoke.py seed/verify now also seeds an evidence row, asserts it is in the backlog, runs process_inbox, and asserts it lands in agora_dataset_records after a container restart; wired into .github/workflows/nonprod-deploy.yml alongside the existing workshop/governance postgres-backend and initialized-log checks. Independently re-run end-to-end against the live pantheon-postgres-1 container in this review (schema agora_smoke_test): `seed` then `verify` both exited 0, verify reporting `completed_outbox=replayed recovery_outbox=recovered` with the evidence row round-tripping through backlog -> process_inbox -> agora_dataset_records.",
+        "PR #3675 CI (Branch CI Gate: Commit trailers, Runtime mirror guard, Smoke acceptance; Orchestrator Sync) all green as of 2026-07-15T04:35:24Z; full scripts/test_agora_workshop_restart_persistence_smoke.py (5 passed) and services/control-plane/bff/agora/dataset_extraction/test_extractor.py (33 passed incl. the 2 postgres-only tests) independently re-run clean in this review."
       ],
       "status": "pass"
     }
