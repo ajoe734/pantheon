@@ -14,7 +14,16 @@
 # current one is always in .orchestrator/logs/cloudflared-dashboard.url.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# PANTHEON_DASHBOARD_ROOT lets this run from a code root that is not the root it
+# serves. Cron drives it from the auto-synced dev-root against the live status
+# root, the same split the supervisor watchdog uses, so worker churn in the live
+# tree cannot delete the guard. Without the override it manages its own checkout,
+# which silently hijacks the live port when run from a worktree.
+ROOT_DIR="${PANTHEON_DASHBOARD_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+if [[ ! -d "${ROOT_DIR}/scripts" ]]; then
+  echo "PANTHEON_DASHBOARD_ROOT=${ROOT_DIR} is not a pantheon checkout" >&2
+  exit 1
+fi
 cd "$ROOT_DIR"
 
 PORT="${PANTHEON_DASHBOARD_PORT:-4180}"
