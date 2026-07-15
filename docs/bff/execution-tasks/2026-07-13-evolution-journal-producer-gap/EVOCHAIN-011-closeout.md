@@ -268,20 +268,38 @@ live surface.
 
 ## Residual Risks
 
-1. **BFF/root redeploy pending human authorization.** The hosted BFF
-   container (`a10f752b3`) predates the final hardening rounds of
-   `EVOCHAIN-001`, `-003`, and `-007`. A redeploy
-   (`gh workflow run "Pantheon Nonprod Deploy" -f environment=dev -f
-   component=bff -f ref=dev`, or `-f component=root`) is required to bring
-   the running containers to `origin/dev` HEAD. This agent did not attempt
-   to dispatch that workflow: `nonprod-deploy.yml`'s `workflow_dispatch` is
-   a shared-infrastructure action that the Claude Code auto-mode permission
-   classifier blocks as "Modify Shared Resources" without explicit
-   human/chair authorization (confirmed twice previously on this exact
-   workflow, both FE and BFF components, task `AG-DYNUI-LIVE-AUTH-003`).
-   Owner: Human/Ops. Expiry: next chair-authorized dev deploy window (no
-   fixed date; blocking on availability of a human to dispatch the
-   workflow, not on further engineering work).
+1. **BFF/root redeploy pending human-provisioned deploy secrets.** The
+   hosted BFF container (`a10f752b3`) predates the final hardening rounds
+   of `EVOCHAIN-001`, `-003`, and `-007`. This agent still does not
+   dispatch `nonprod-deploy.yml` directly (the Claude Code auto-mode
+   permission classifier blocks it as "Modify Shared Resources"), but
+   ops/human operators *did* attempt two `workflow_dispatch` redeploys of
+   `component=root` after this packet's evidence capture, and both failed
+   before any container was touched, sharpening this from a generic
+   "needs a human to click the button" gap to a concrete secrets-provisioning
+   gap:
+   - Run `29418966102` (2026-07-15T13:23:20Z, `ref=4c96fe9ed...`
+     `DEV_AUTH_PROFILE=permissive-stub`): failed in the "Deploy requested
+     VM stack" step — `strict OpenClaw adapter service auth requires a
+     human-provisioned DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN; refusing to
+     deploy with an empty or fabricated service credential`.
+   - Run `29422676364` (2026-07-15T14:14:31Z, `ref=d9c4b46d2...`
+     `DEV_AUTH_PROFILE=strict`): failed earlier, in the "Enforce dev auth
+     deployment floor" gate — `Dev BFF deploy credentials are not
+     provisioned; refusing to run any target ref before strict auth can be
+     verified` (missing `DEV_BFF_JWT_SECRET` / `DEV_BFF_OIDC_CLIENT_ID` /
+     `DEV_BFF_OIDC_CLIENT_SECRET`).
+   - `gh secret list` on this repo confirms none of `DEV_BFF_JWT_SECRET`,
+     `DEV_BFF_OIDC_CLIENT_ID`, `DEV_BFF_OIDC_CLIENT_SECRET`, or
+     `DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN` are provisioned as repo secrets
+     yet. Neither the strict nor the permissive-stub deploy path can
+     currently complete for the `root`/BFF component regardless of which
+     profile is chosen; the hosted BFF remains at `a10f752b3` (confirmed
+     unchanged as of this note).
+   Owner: Human/Ops (must provision the four secrets above, the same gate
+   already tracked by `LOOP-PROD-AUTH-001`). Expiry: next window where an
+   operator provisions those secrets and re-dispatches
+   `nonprod-deploy.yml`; no fixed date.
 2. **TopBar global SNAPSHOT DATA badge persists** due to the unrelated
    `running_jobs` shell-summary surface reporting `unavailable`/`missing`.
    This is correct, honest badge behavior per `EVOCHAIN-008`'s classifier
