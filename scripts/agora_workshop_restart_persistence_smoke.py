@@ -29,10 +29,15 @@ from agora.strategy_workshop.store import (  # noqa: E402
     BACKEND_ENV as WORKSHOP_BACKEND_ENV,
     make_workshop_store,
 )
+from agora.dataset_extraction.extractor import (  # noqa: E402
+    BACKEND_ENV as DATASET_BACKEND_ENV,
+    AgoraDatasetStore,
+    AgoraInteractionEvidenceRequest,
+)
 
 
 def require_postgres_backends() -> None:
-    for env_name in (WORKSHOP_BACKEND_ENV, GOVERNANCE_BACKEND_ENV):
+    for env_name in (WORKSHOP_BACKEND_ENV, GOVERNANCE_BACKEND_ENV, DATASET_BACKEND_ENV):
         backend = os.environ.get(env_name, "").strip().lower()
         if backend != "postgres":
             raise RuntimeError(
@@ -43,6 +48,10 @@ def require_postgres_backends() -> None:
 
 def proposal_id_for(workshop_id: str) -> str:
     return f"proposal-{workshop_id}"
+
+
+def evidence_id_for(workshop_id: str) -> str:
+    return f"evidence-{workshop_id}"
 
 
 def proposal_record(
@@ -91,7 +100,11 @@ def seed(
     workshop_id: str,
     tenant_id: str,
     user_id: str,
+    dataset_store: AgoraDatasetStore | None = None,
 ) -> None:
+    if dataset_store is None:
+        dataset_store = AgoraDatasetStore()
+
     created = workshop_store.create_session(
         {
             "workshop_id": workshop_id,
@@ -185,6 +198,24 @@ def seed(
     # reclaimed by the fresh helper process after operator-bff restarts.
     proposal_store.release_side_effects(scope, recovery_key)
 
+    # Seed dataset/evidence inbox persistence check
+    evidence_id = evidence_id_for(workshop_id)
+    evidence = AgoraInteractionEvidenceRequest(
+        evidence_id=evidence_id,
+        interaction_kind="ask",
+        persona_id="persona-smoke",
+        captured_at="2026-07-14T00:00:00Z",
+        content={"text": f"smoke test query for {workshop_id}"},
+    )
+    _, is_new = dataset_store.add_to_inbox(
+        evidence,
+        tenant_id,
+        user_id,
+        "2026-07-14T00:01:00Z",
+    )
+    if not is_new:
+        raise RuntimeError(f"evidence {evidence_id!r} was already in inbox during seed")
+
 
 def verify_workshop_record(
     record: Any,
@@ -222,7 +253,11 @@ def verify(
     workshop_id: str,
     tenant_id: str,
     user_id: str,
+    dataset_store: AgoraDatasetStore | None = None,
 ) -> None:
+    if dataset_store is None:
+        dataset_store = AgoraDatasetStore()
+
     verify_workshop_record(
         workshop_store.get_session(workshop_id),
         workshop_id=workshop_id,
@@ -305,6 +340,28 @@ def verify(
     if len(proposal_store.history(proposal_id, tenant_id, user_id)) != 3:
         raise RuntimeError(f"proposal {proposal_id!r} replay created duplicate revisions")
 
+    # Verify dataset/evidence inbox persistence check
+    evidence_id = evidence_id_for(workshop_id)
+    backlog = dataset_store.get_backlog(tenant_id, user_id)
+    backlog_ids = [item["evidence_id"] for item in backlog]
+    if evidence_id not in backlog_ids:
+        raise RuntimeError(f"evidence {evidence_id!r} was not found in backlog during verify")
+
+    dataset_result = dataset_store.process_inbox()
+    if dataset_result["processed"] < 1:
+        raise RuntimeError(f"evidence {evidence_id!r} was not processed by dataset worker")
+
+    backlog_after = dataset_store.get_backlog(tenant_id, user_id)
+    backlog_ids_after = [item["evidence_id"] for item in backlog_after]
+    if evidence_id in backlog_ids_after:
+        raise RuntimeError(f"evidence {evidence_id!r} remained in backlog after processing")
+
+    record = dataset_store.get(evidence_id)
+    if record is None:
+        raise RuntimeError(f"dataset record for {evidence_id!r} was not found after processing")
+    if record.tenant_id != tenant_id or record.user_id != user_id:
+        raise RuntimeError(f"dataset record field mismatch for {evidence_id!r}")
+
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -320,6 +377,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     require_postgres_backends()
     workshop_store = make_workshop_store()
     proposal_store = ProposalStore()
+    dataset_store = AgoraDatasetStore()
 
     operation = seed if args.action == "seed" else verify
     operation(
@@ -328,6 +386,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         workshop_id=args.workshop_id,
         tenant_id=args.tenant_id,
         user_id=args.user_id,
+        dataset_store=dataset_store,
     )
     outbox_status = (
         "completed_outbox=completed recovery_outbox=pending"
@@ -336,7 +395,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     print(
         f"{args.action} ok: workshop={args.workshop_id} "
-        f"proposal={proposal_id_for(args.workshop_id)} {outbox_status}"
+        f"proposal={proposal_id_for(args.workshop_id)} "
+        f"evidence={evidence_id_for(args.workshop_id)} {outbox_status}"
     )
     return 0
 

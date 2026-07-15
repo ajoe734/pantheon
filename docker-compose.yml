@@ -139,18 +139,22 @@ services:
       SOURCE_INGEST_DATA_DIR: /data/source-ingest
       SOURCE_INGEST_CONNECTOR_STORE_PATH: /data/source-ingest/connector_config.jsonl
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
+      SOURCE_INGEST_CONTROLLER_STATE_PATH: /data/source-ingest/controller_state.json
+      SOURCE_INGEST_REQUIREMENT_STATE_PATH: /data/source-ingest/requirement_snapshots.jsonl
+      SOURCE_INGEST_CONTROLLER_TOKEN_FILE: /data/source-ingest/controller_token
       SOURCE_INGEST_MAX_RECORDS: ${SOURCE_INGEST_MAX_RECORDS:-100}
       SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}
       SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS: ${SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS:-2}
       SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS: ${SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS:-60}
+      SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS: ${SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS:-300}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
       PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
-      # Dev rollback defaults to JSONL; staging/prod select postgres via env.
-      SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-jsonl}
+      # Product-level default is transactional Postgres; JSONL remains an explicit local rollback mode.
+      SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-postgres}
       SOURCE_INGEST_EVIDENCE_DSN: ${SOURCE_INGEST_EVIDENCE_DSN:-}
       # Notify search service after completed ingest runs (event-driven refresh/materialization truth).
       SEARCH_INGEST_NOTIFY_URL: ${SEARCH_INGEST_NOTIFY_URL:-http://search-svc:8098}
@@ -172,35 +176,120 @@ services:
       retries: 10
       start_period: 5s
 
-  source-ingest-scheduler:
-    profiles: ["source-ingest-scheduler"]
+  source-ingest-controller-migrate:
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
-    command: ["python", "-m", "services.source_ingestion.scheduler_worker"]
+    command: ["bash", "scripts/db_migrate.sh"]
+    restart: "no"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Keep the legacy service key so non-prod upgrades replace the prior
+  # scheduler container instead of leaving a second ticking orphan behind.
+  source-ingest-scheduler:
+    build:
+      context: .
+      dockerfile: services/source_ingestion/Dockerfile
+    command: ["python", "-m", "services.source_ingestion.controller_worker"]
     restart: unless-stopped
     environment:
       SOURCE_INGEST_API_URL: http://source-ingest:8097
-      SOURCE_INGEST_SCHEDULER_INTERVAL_SECONDS: ${SOURCE_INGEST_SCHEDULER_INTERVAL_SECONDS:-60}
+      SOURCE_INGEST_DESIRED_STATE_PATH: /workspace/services/source_ingestion/default_desired_state.json
+      SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS: ${SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS:-60}
+      SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS: ${SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS:-30}
+      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}
+      SOURCE_INGEST_CONTROLLER_STATE_PATH: /data/source-ingest/controller_state.json
+      SOURCE_INGEST_CONTROLLER_ALIVE_PATH: /data/source-ingest/controller_alive
+      SOURCE_INGEST_CONTROLLER_TOKEN_FILE: /data/source-ingest/controller_token
+      SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL: reconciled_live_proof
       SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}
-      SOURCE_INGEST_SCHEDULER_MAX_TICKS: ${SOURCE_INGEST_SCHEDULER_MAX_TICKS:-0}
-      SOURCE_INGEST_SCHEDULER_STATE_PATH: /data/source-ingest/scheduler_state.json
-      SOURCE_INGEST_SCHEDULER_ALIVE_PATH: /data/source-ingest/scheduler_alive
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_LOOP_ID: source-ingestion
+      PANTHEON_CONTROLLER_NAME: source-ingestion-controller
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      GIT_SHA: ${GIT_SHA:-local-dev}
+      IMAGE_DIGEST: ${IMAGE_DIGEST:-}
+      BUILD_TIME: ${BUILD_TIME:-}
     volumes:
       - source-ingest-data:/data/source-ingest
     depends_on:
       source-ingest:
         condition: service_healthy
+      source-ingest-controller-migrate:
+        condition: service_completed_successfully
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import os, sys, time; s=os.stat('/data/source-ingest/scheduler_alive'); sys.exit(0 if time.time()-s.st_mtime < 300 else 1)\"",
+          "python -m services.source_ingestion.controller_healthcheck",
         ]
-      interval: 60s
+      interval: 30s
       timeout: 5s
       retries: 3
       start_period: 90s
+
+  strategy-distillation-worker:
+    build:
+      context: .
+      dockerfile: services/source_ingestion/Dockerfile
+    command: ["python", "-m", "services.source_ingestion.distillation_controller"]
+    restart: unless-stopped
+    environment:
+      SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS: ${SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS:-60}
+      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}
+      DISTILLATION_CONTROLLER_STATE_PATH: /data/source-ingest/distill_controller_state.json
+      DISTILLATION_CONTROLLER_ALIVE_PATH: /data/source-ingest/distill_controller_alive
+      DISTILLATION_JOB_QUEUE_PATH: /data/source-ingest/distill_job_queue.jsonl
+      STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
+      SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
+      PANTHEON_REGISTRY_URL: http://registry:8087
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_LOOP_ID: strategy_distillation
+      PANTHEON_CONTROLLER_NAME: strategy-distillation-controller
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      GIT_SHA: ${GIT_SHA:-local-dev}
+    volumes:
+      - source-ingest-data:/data/source-ingest
+    depends_on:
+      source-ingest:
+        condition: service_healthy
+      registry:
+        condition: service_healthy
+
+  alpha-replication-worker:
+    build:
+      context: .
+      dockerfile: services/research/Dockerfile
+    command: ["python", "-m", "services.research.alpha_replication.replication_controller"]
+    restart: unless-stopped
+    environment:
+      ALPHA_REPLICATION_CONTROLLER_INTERVAL_SECONDS: ${ALPHA_REPLICATION_CONTROLLER_INTERVAL_SECONDS:-60}
+      ALPHA_REPLICATION_CONTROLLER_MAX_TICKS: ${ALPHA_REPLICATION_CONTROLLER_MAX_TICKS:-0}
+      ALPHA_REPLICATION_DATA_DIR: /data/research-orchestrator/alpha-replication
+      ALPHA_REPLICATION_CONTROLLER_STATE_PATH: /data/research-orchestrator/alpha-replication/controller_state.json
+      STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
+      PANTHEON_REGISTRY_URL: http://registry:8087
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_LOOP_ID: alpha_replication
+      PANTHEON_CONTROLLER_NAME: alpha-replication-controller
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      GIT_SHA: ${GIT_SHA:-local-dev}
+      PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE: ${PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE:-handoff_only}
+    volumes:
+      - research-orchestrator-data:/data/research-orchestrator
+      - source-ingest-data:/data/source-ingest
+    depends_on:
+      research-orchestrator-svc:
+        condition: service_healthy
+      registry:
+        condition: service_healthy
 
   search-svc:
     build:
@@ -223,10 +312,10 @@ services:
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
       PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
-      # Dev rollback defaults to JSONL; staging/prod select postgres via env.
+      # Read the source owner's transactional evidence table by default.
       SEARCH_INDEX_STORE_BACKEND: ${SEARCH_INDEX_STORE_BACKEND:-jsonl}
       SEARCH_INDEX_STORE_DSN: ${SEARCH_INDEX_STORE_DSN:-}
-      SEARCH_EVIDENCE_BACKEND: ${SEARCH_EVIDENCE_BACKEND:-jsonl}
+      SEARCH_EVIDENCE_BACKEND: ${SEARCH_EVIDENCE_BACKEND:-postgres}
       SEARCH_EVIDENCE_DSN: ${SEARCH_EVIDENCE_DSN:-}
     volumes:
       - search-data:/data/search
@@ -235,6 +324,10 @@ services:
       - "${SEARCH_PORT:-18098}:8098"
     depends_on:
       postgres:
+        condition: service_healthy
+      # source-ingest owns and bootstraps source_ingest.source_evidence;
+      # search must not open its read-only view before the owner is ready.
+      source-ingest:
         condition: service_healthy
     healthcheck:
       test:
@@ -587,6 +680,8 @@ services:
       # to the governance service from this path.
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
+      PANTHEON_REGISTRY_API_URL: http://registry:8087
+      PANTHEON_CAPITAL_API_URL: http://capital:8092
     volumes:
       - runtime-data:/data/runtime
     depends_on:
@@ -763,12 +858,16 @@ services:
       dockerfile: services/control-plane/bff/Dockerfile
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
     restart: unless-stopped
     environment:
       BFF_DATA_DIR: /data/bff
       AGORA_WORKSHOP_STORE_BACKEND: ${AGORA_WORKSHOP_STORE_BACKEND:-postgres}
       AGORA_WORKSHOP_STORE_DSN: ${AGORA_WORKSHOP_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       AGORA_WORKSHOP_STORE_SCHEMA: ${AGORA_WORKSHOP_STORE_SCHEMA:-agora}
+      AGORA_DATASET_STORE_BACKEND: ${AGORA_DATASET_STORE_BACKEND:-postgres}
+      AGORA_DATASET_STORE_DSN: ${AGORA_DATASET_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      AGORA_DATASET_STORE_SCHEMA: ${AGORA_DATASET_STORE_SCHEMA:-agora}
       AGORA_GOVERNANCE_STORE_BACKEND: ${AGORA_GOVERNANCE_STORE_BACKEND:-postgres}
       AGORA_GOVERNANCE_STORE_DSN: ${AGORA_GOVERNANCE_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       AGORA_GOVERNANCE_STORE_SCHEMA: ${AGORA_GOVERNANCE_STORE_SCHEMA:-agora}
@@ -815,7 +914,7 @@ services:
       PANTHEON_BFF_AGORA_EVALUATION_SUITE_STORE: ${PANTHEON_BFF_AGORA_EVALUATION_SUITE_STORE:-/data/bff/agora_evaluation_suites.json}
       PANTHEON_BFF_AGORA_EVALUATION_RUN_STORE: ${PANTHEON_BFF_AGORA_EVALUATION_RUN_STORE:-/data/bff/agora_evaluation_runs.json}
       PANTHEON_BFF_POSTMORTEM_STORE: ${PANTHEON_BFF_POSTMORTEM_STORE:-/data/bff/postmortems.json}
-      PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE: ${PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE:-/workspace/status-root/trade_journey_events.json}
+      PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE: ${PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE:-/data/bff/trade_journey_events.json}
       PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND:-postgres}
       PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS: ${PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS:-5}
@@ -1263,13 +1362,20 @@ services:
     build:
       context: .
       dockerfile: services/deployment/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
     environment:
       PORT: "8095"
       DEPLOYMENT_DATA_DIR: /data/governance
       PANTHEON_GOVERNANCE_DATA_DIR: /data/governance
+      PANTHEON_CAPITAL_POOL_STORE_PATH: /data/capital/capital_pools.json
+      PANTHEON_PERSONA_BINDING_STORE_PATH: /data/capital/persona_capital_bindings.json
+      PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
     volumes:
       - governance-data:/data/governance
+      - capital-data:/data/capital:ro
+      - runtime-data:/data/runtime:ro
     depends_on:
       governance:
         condition: service_healthy
@@ -1283,10 +1389,11 @@ services:
       start_period: 5s
 
   deployment-outbox-consumer:
-    profiles: ["deployment-outbox-consumer"]
     build:
       context: .
       dockerfile: services/deployment/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     command: ["python", "-m", "services.deployment.outbox_consumer_worker"]
     restart: unless-stopped
     environment:
@@ -1295,10 +1402,20 @@ services:
       DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS: ${DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS:-10}
       DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS: ${DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS:-0}
       DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE: ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE:-}
+      # Empty for the default global consumer; task-scoped one-shot recovery can
+      # isolate a single saga without racing unrelated pending aggregates.
+      DEPLOYMENT_OUTBOX_CONSUMER_AGGREGATE_ID: ${DEPLOYMENT_OUTBOX_CONSUMER_AGGREGATE_ID:-}
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_REGISTRY_API_URL: http://registry:8087
+      PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
+      PANTHEON_CAPITAL_API_URL: http://capital:8092
+      PANTHEON_PAPER_FLEET_RECONCILER_URL: http://paper-fleet-reconciler:8011
+      PANTHEON_INCIDENTS_API_URL: http://incidents:8090
     depends_on:
       deployment:
+        condition: service_healthy
+      runtime-manager:
         condition: service_healthy
 
   evolution:
@@ -1452,6 +1569,26 @@ services:
       retries: 6
       start_period: 10s
 
+  paper-signal-producer:
+    build:
+      context: .
+      dockerfile: services/execution/lean_runtime/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
+    command: ["python", "services/execution/lean_runtime/paper_signal_producer.py"]
+    environment:
+      SIGNAL_STORE_URL: redis://signal-store:6379
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      PAPER_PRODUCER_INTERVAL_SECONDS: ${PAPER_PRODUCER_INTERVAL_SECONDS:-60}
+    depends_on:
+      runtime-manager:
+        condition: service_healthy
+      signal-store:
+        condition: service_healthy
+
   reconciliation-drift-svc:
     build:
       context: .
@@ -1498,7 +1635,6 @@ services:
       start_period: 5s
 
   reconciliation-drift-consumer:
-    profiles: ["reconciliation-drift-consumer"]
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -1515,7 +1651,6 @@ services:
         condition: service_healthy
 
   reconciliation-drift-scheduler:
-    profiles: ["reconciliation-drift-scheduler"]
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -1529,7 +1664,6 @@ services:
         condition: service_healthy
 
   reconciliation-drift-incident-listener:
-    profiles: ["reconciliation-drift-incident-listener"]
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile

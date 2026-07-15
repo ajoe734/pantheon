@@ -36,6 +36,9 @@ def _valid_deploy_request(**overrides):
         "target_stage": "paper",
         "artifact_id": "artifact-internal",
         "artifact_version": "1.0.0",
+        "strategy_id": "strategy-internal",
+        "approval_decision_id": "approval-internal",
+        "sponsor_persona_id": "persona-internal",
         "capital_pool_id": "pool-internal-001",
         "persona_capital_binding_id": "pcb-internal-001",
         "persona_capital_binding_status": "active",
@@ -65,11 +68,23 @@ class DeployableInternalApiTests(unittest.TestCase):
         self.store_path = Path(self.tempdir.name) / "bindings.json"
         self.command_state_path = Path(self.tempdir.name) / "commands.json"
         self.main = _load_main_module(self.store_path, self.command_state_path)
+        self.authority_patcher = patch.object(
+            self.main,
+            "verify_deploy_authorities",
+            return_value={
+                "status": "passed",
+                "authority": "test-canonical",
+                "persona_capital_binding_status": "active",
+                "allowed_deployment_scope": "live",
+            },
+        )
+        self.authority_patcher.start()
         self.client = self.main.app.test_client()
         self.auth = {"Authorization": "Bearer integration-test:operator"}
         self.legacy = importlib.import_module("services.control_plane.internal.internal_api")
 
     def tearDown(self) -> None:
+        self.authority_patcher.stop()
         self.tempdir.cleanup()
 
     def _deploy(self, **overrides):
@@ -123,7 +138,7 @@ class DeployableInternalApiTests(unittest.TestCase):
         ).get_json()
         self.assertEqual(readback["status"], "paused")
 
-    def test_legacy_rollback_route_retires_binding(self):
+    def test_legacy_rollback_route_requires_canonical_authority(self):
         binding = self._deploy(plan_id="plan-internal-002", capital_pool_id="pool-internal-002")
         response = self.client.post(
             "/api/internal/v1/rollbacks/execute",
@@ -133,17 +148,20 @@ class DeployableInternalApiTests(unittest.TestCase):
                 "rollback_to_version": "fallback-v1",
                 "rollback_action_type": "pause_then_replace",
             },
-            headers=self.auth,
+            # Rollback is an approver/risk-owner/admin action; an operator-only
+            # token must not be used as a positive-path fixture.
+            headers={"Authorization": "Bearer integration-approver:approver"},
         )
         payload = response.get_json()
-        self.assertEqual(response.status_code, 202, payload)
-        self.assertEqual(payload["status_after"], "retired")
+        self.assertEqual(response.status_code, 409, payload)
+        self.assertEqual(payload["error"]["code"], "CANONICAL_ROLLBACK_REQUIRED")
+        self.assertEqual(payload["error"]["canonical_endpoint"], "/api/rollback")
 
         readback = self.client.get(
             f"/api/runtime-bindings/{binding['binding_id']}",
             headers=self.auth,
         ).get_json()
-        self.assertEqual(readback["status"], "retired")
+        self.assertEqual(readback["status"], "active")
 
     def test_legacy_kill_switch_post_persists_state_for_canonical_readback(self):
         # Issue a soft trigger via the legacy operator path.

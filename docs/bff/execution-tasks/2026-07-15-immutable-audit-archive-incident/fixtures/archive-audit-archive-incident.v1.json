@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "fixture_set_id": "loop-product-immutable-audit-archive-incident-v1",
+  "contract_digest_algorithm": "sha256(utf8-json-sort-keys-compact whole contract object)",
+  "contract": {
+    "task": {
+      "id": "LOOP-PROD-AUDIT-ARCHIVE-INCIDENT-001",
+      "title": "Immutable audit archive claim discrepancy and no-repair incident",
+      "summary_zh": "#3652 所聲稱的 corrupt archive pins 與目前 authoritative status root 不符；目前同一路徑 gzip/JSONL 可嚴格解析。因此只建立 incident 與可重現證據，不授權 archive/outbox repair 或 handoff replay。",
+      "phase": "External bootstrap incident / no-op safety gate",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "todo",
+      "depends_on": [],
+      "artifacts": [
+        "docs/bff/execution-tasks/2026-07-15-immutable-audit-archive-incident",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-AUDIT-ARCHIVE-INCIDENT-001"
+      ],
+      "acceptance": [
+        "reproduce the exact source observation under a read-only status-root mount and bind every structured source field to the incident evidence",
+        "when parser_expected_result is valid, do not quarantine, transform, replace, repair, replay, consume, clear, or mutate any archive, active audit log, outbox, task, dependency, actor, or handoff",
+        "treat the prior 47d562e67b6f7f91fe5ea03ad08b36d473470d29e808a3981d44283e37623e24 / b16fd8057507ca8e76b3e40f07535e067f9fe5991dbe311b5e2e8ca43955fc07 assertion as unverified and withdrawn; it cannot be substituted for the observed object",
+        "if a distinct immutable source later exhibits a parser failure, open a new incident with that source's complete structured pin and two-person approval; do not broaden this incident",
+        "normal ai_status, normal outbox recovery, and LOOP-PROD-RUNTIME-BOOT-001 handoff replay remain prohibited by this incident packet"
+      ],
+      "next": "Collect read-only reproduction evidence or file a separately pinned incident if an actual failing immutable source is produced.",
+      "wave": -2,
+      "fleet_lane": "immutable-audit-archive-incident",
+      "target_repo": "pantheon",
+      "merge_target": "dev",
+      "loop_ids": ["bff_health_monitoring"],
+      "current_maturity": "The reported PR #3652 corrupt-source pins are not reproduced by the currently observable archive; repair authority is absent.",
+      "target_maturity": "product-level",
+      "proof_required": [
+        "read-only immutable-source digest capture and active-log strict parse receipt (the volatile active log is deliberately not digest-pinned by this contract)",
+        "strict gzip and JSONL parser outputs",
+        "two distinct approvals plus supervisor verification receipt if any isolated observation worker is admitted",
+        "no-write before/after hashes for every prohibited surface"
+      ],
+      "non_goals": [
+        "No archive or gzip rewrite, deletion, truncation, recompression, quarantine, or derived repair object",
+        "No ai-status.json, active audit, outbox, task, dependency, actor, handoff, scheduler, runtime, or deployment mutation",
+        "No bootstrap handoff replay or primary catalog materialization",
+        "No planner-authored product implementation"
+      ],
+      "product_level_required": true,
+      "requires_human_ops_signoff": true
+    },
+    "source_observation": {
+      "status_root": "/home/lupin/code/pantheon",
+      "source_path": "archive/logs/ai-activity-log.jsonl-2026-07-07T1503Z.gz",
+      "gzip_sha256": "229007353bfe5f521c8a114a6b3dd9582442398697bbf30022fb49839bb5b6dc",
+      "line": {
+        "number": 8004,
+        "bytes_with_newline": 1699,
+        "newline_terminated": true,
+        "sha256": "735fa860c852761e9c43a170432ef4458cf0d0559f0535a3246abfaf0fdc2ae9",
+        "json_valid": true
+      },
+      "parser_expected_result": {
+        "gzip_integrity": "valid",
+        "jsonl_result": "valid",
+        "jsonl_line_count": 10650,
+        "error_line": null,
+        "error_column": null
+      },
+      "active_log": {
+        "path": "ai-activity-log.jsonl",
+        "observation_mode": "volatile_read_only_parse_gate",
+        "exact_sha256_binding": "forbidden",
+        "exact_line_count_binding": "forbidden",
+        "replay_semantics": "At each read-only observation, take a bounded open snapshot and strictly parse it. A valid result creates a timestamped observation receipt only; normal append changes neither this contract digest nor repair authority. An invalid result fails closed and requires a separately pinned incident.",
+        "parser_expected_result": {
+          "jsonl_result": "valid",
+          "error_line": null,
+          "error_column": null
+        }
+      }
+    },
+    "admission_boundary": {
+      "mode": "read_only_external_bootstrap_observation_only",
+      "scratch_status_root_only": true,
+      "production_status_root_forbidden": true,
+      "normal_ai_status_prohibited": true,
+      "normal_outbox_recovery_prohibited": true,
+      "two_distinct_approvals": {
+        "required": true,
+        "roles": ["Human/Ops", "independent_runtime_reviewer"],
+        "self_approval_forbidden": true
+      },
+      "supervisor_verification": {
+        "required": true,
+        "must_verify": [
+          "contract_sha256",
+          "source_observation",
+          "distinct_approval_identities",
+          "clean_worktree",
+          "scratch_status_root",
+          "zero_production_write_paths",
+          "single_run_id",
+          "expiry"
+        ]
+      }
+    },
+    "repair_authorization": {
+      "authorized": false,
+      "reason": "The only currently observable pinned source passes gzip and strict JSONL validation, including line 8004; no failing immutable artifact was found in the authoritative current status root.",
+      "prohibited_actions": [
+        "archive_repair",
+        "archive_quarantine",
+        "archive_replacement",
+        "archive_recompression",
+        "active_audit_mutation",
+        "outbox_recovery",
+        "outbox_clear",
+        "outbox_mutation",
+        "bootstrap_handoff_replay",
+        "task_or_dependency_mutation",
+        "status_state_mutation"
+      ],
+      "new_failure_rule": "A newly observed failure requires a new complete source pin, a new incident contract digest, and new two-person approval."
+    }
+  },
+  "contract_sha256": "6059a2cd651fedeb9d6582e7d165e81dbaf8cc04e2069e8d16614d65c9a66f50"
+}

@@ -1,0 +1,20 @@
+{
+  "captured_at": "2026-07-15T00:10:26Z",
+  "command": [
+    "docker",
+    "compose",
+    "-p",
+    "pantheon",
+    "-f",
+    "/home/lupin/pantheon-ci-deploy/dev-root/docker-compose.yml",
+    "pause",
+    "runtime-manager"
+  ],
+  "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+  "duration_ms": 269.64,
+  "label": "positive-pause-runtime-manager-for-timeout",
+  "returncode": 0,
+  "started_at": "2026-07-15T00:10:26Z",
+  "stderr": " Container pantheon-runtime-manager-1  Paused\n",
+  "stdout": ""
+}

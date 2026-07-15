@@ -75,6 +75,31 @@ def _load_fleet_module():
     return module
 
 
+def _canonical_authority_report(request: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "passed",
+        "authority": "canonical_deployment_registry_governance_capital",
+        "plan_id": request["plan_id"],
+        "plan_status": request["plan_status"],
+        "target_stage": request["target_stage"],
+        "artifact_id": request["artifact_id"],
+        "artifact_version": request["artifact_version"],
+        "strategy_id": request["strategy_id"],
+        "approval_decision_id": request["approval_decision_id"],
+        "sponsor_persona_id": request["sponsor_persona_id"],
+        "capital_pool_id": request["capital_pool_id"],
+        "persona_capital_binding_id": request["persona_capital_binding_id"],
+        "persona_capital_binding_status": "active",
+        "allowed_deployment_scope": request["allowed_deployment_scope"],
+        "deployment_plan_sha256": "sha256:" + "0" * 64,
+        "registry_entry_sha256": "sha256:" + "1" * 64,
+        "approval_decision_sha256": "sha256:" + "2" * 64,
+        "capital_pool_sha256": "sha256:" + "3" * 64,
+        "capital_admissibility_sha256": "sha256:" + "4" * 64,
+        "persona_capital_binding_sha256": "sha256:" + "5" * 64,
+    }
+
+
 def _seed_runtime(runtime_client) -> dict[str, Any]:
     response = runtime_client.post(
         "/api/runtimes/deploy",
@@ -85,6 +110,8 @@ def _seed_runtime(runtime_client) -> dict[str, Any]:
             "target_stage": "paper",
             "artifact_id": "artifact-rescue-placeholder",
             "artifact_version": "1.0.0",
+            "approval_decision_id": "approval-rescue-paper",
+            "sponsor_persona_id": "persona-tw-equity",
             "capital_pool_id": "pool-evoloop-paper",
             "persona_capital_binding_id": "binding-evoloop-paper",
             "persona_capital_binding_status": "active",
@@ -289,6 +316,9 @@ def api_stack():
     reset_store()
     registry_client = TestClient(registry_app)
     runtime_main = _load_runtime_main(runtime_store)
+    runtime_main.verify_deploy_authorities = (
+        lambda request, **_kwargs: _canonical_authority_report(request)
+    )
     runtime_client = runtime_main.app.test_client()
     old_binding = _seed_runtime(runtime_client)
     registry_id = _register_artifact(registry_client, old_binding)

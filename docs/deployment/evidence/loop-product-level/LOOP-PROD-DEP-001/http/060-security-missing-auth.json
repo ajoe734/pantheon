@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-07-15T00:11:38Z",
+  "duration_ms": 2.111,
+  "label": "security-missing-auth",
+  "request": {
+    "body": null,
+    "headers": {},
+    "method": "GET",
+    "started_at": "2026-07-15T00:11:38Z",
+    "url": "http://127.0.0.1:18081/api/runtime-bindings"
+  },
+  "response": {
+    "payload": {
+      "error": {
+        "code": "401",
+        "message": "Unauthorized: missing Bearer token"
+      }
+    },
+    "status": 401
+  }
+}

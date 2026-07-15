@@ -97,3 +97,14 @@ def test_tampered_signature_rejected():
     h, p, s = t.split(".")
     with pytest.raises(A.AuthError):
         _v(f"{h}.{p}.{s[:-2]}AA")
+
+
+@pytest.mark.parametrize("bad_mode", ["strcit", "", "disabled", "strict-ish", "PERMISIVE"])
+def test_malformed_auth_mode_fails_closed_to_strict(bad_mode):
+    # A typo'd/unrecognized PANTHEON_RUNTIME_AUTH_MODE must not silently fall
+    # through to permissive structured-token parsing.
+    env = {"PANTHEON_RUNTIME_AUTH_MODE": bad_mode, "PANTHEON_RUNTIME_JWT_SECRET": ""}
+    with pytest.raises(A.AuthError) as e:
+        A.validate_request_auth(authorization="Bearer plain-actor:operator", env=env)
+    assert e.value.code == "AUTH_TOKEN_FORMAT"
+    assert e.value.status_code == 401

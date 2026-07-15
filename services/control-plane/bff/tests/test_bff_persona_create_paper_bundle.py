@@ -83,7 +83,7 @@ def test_bff_management_create_paper_bundle_success() -> None:
             persona_id = data["id"]
 
             # Acceptance verification
-            assert data["state"] == "paper_running"
+            assert data["state"] == "provisioning"
             assert data["capitalMode"] == "paper"
             assert data["deploymentStage"] == "paper"
             assert data["paperLedgerId"].startswith("paper-ledger-")
@@ -91,7 +91,7 @@ def test_bff_management_create_paper_bundle_success() -> None:
             assert data["runtimeBindingId"].endswith("-paper")
             assert "capitalPoolId" not in data
 
-            assert meta["create_flow"] == "one_shot_paper_running"
+            assert meta["create_flow"] == "one_shot_provisioning"
             assert meta["live_capital_side_effects"] is False
             assert meta["human_review_required_for_live"] is True
 
@@ -115,7 +115,7 @@ def test_bff_management_create_paper_bundle_success() -> None:
             assert detail_resp.status_code == 200, detail_resp.text
             detail = detail_resp.json()["data"]
 
-            assert detail["state"] == "paper_running"
+            assert detail["state"] == "provisioning"
             assert detail["mandate"] == "Trade TW equities using daily pricing"
             assert detail["archetype"] == "mean_reversion"
 

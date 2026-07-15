@@ -32,6 +32,7 @@ The service can now:
 |---|---|
 | `models.py` | Pydantic request / response models for plans, stage planner checks, sagas, outbox, inbox |
 | `service.py` | FastAPI app plus file-backed planner / orchestration service |
+| `outbox_consumer_worker.py` | Default dispatcher, authoritative runtime/controller readback, retry/DLQ/replay, and compensation execution |
 | `test_service.py` | In-process API coverage via `TestClient` |
 | `smoke_test.py` | HTTP smoke test against a live server |
 | `contract.md` | Canonical deployable API contract |
@@ -55,10 +56,18 @@ Approval lookups default to `${...}/approval_decisions.json`.
 
 Pool/runtime compatibility checks read:
 
-- `${CAPITAL_DATA_DIR|DEPLOYMENT_DATA_DIR|PANTHEON_GOVERNANCE_DATA_DIR}/capital_pools.json`
-- `${CAPITAL_DATA_DIR|DEPLOYMENT_DATA_DIR|PANTHEON_GOVERNANCE_DATA_DIR}/persona_capital_bindings.json`
+- `PANTHEON_CAPITAL_POOL_STORE_PATH`, or
+  `${CAPITAL_DATA_DIR|DEPLOYMENT_DATA_DIR|PANTHEON_GOVERNANCE_DATA_DIR}/capital_pools.json`
+- `PANTHEON_PERSONA_BINDING_STORE_PATH`, or
+  `${CAPITAL_DATA_DIR|DEPLOYMENT_DATA_DIR|PANTHEON_GOVERNANCE_DATA_DIR}/persona_capital_bindings.json`
 - `PANTHEON_RUNTIME_BINDING_STORE_PATH`, `${PANTHEON_RUNTIME_DATA_DIR}/runtime_bindings.json`,
   or `/tmp/pantheon/runtime-manager/bindings.json`
+
+The default Compose deployment mounts the Capital service's `capital-data`
+volume at `/data/capital:ro` and the Runtime Manager's `runtime-data` volume at
+`/data/runtime:ro`, with the exact store paths configured explicitly.  These
+are read-only composition inputs; the Deployment service does not own either
+store.
 
 Registry lookups are optional and use `PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH`.
 If that snapshot path is not configured, callers must embed `registry_entry` in
@@ -68,6 +77,65 @@ DEP-003 projection lookups read RuntimeBinding rows from
 `PANTHEON_RUNTIME_BINDING_STORE_PATH`, or
 `${PANTHEON_RUNTIME_DATA_DIR}/runtime_bindings.json`, or
 `/tmp/pantheon/runtime-manager/bindings.json`.
+
+## Default dispatcher safety
+
+`deployment-outbox-consumer` is part of the default Compose service set.  It
+does not treat a POST response as successful execution.  It reads the exact
+`RuntimeBinding`, paper fleet controller state where applicable, and the joined
+DEP-003 terminal projection before consuming the corresponding outbox event.
+The consumer requires a non-empty `PANTHEON_RUNTIME_MANAGER_URL` and always
+dispatches to that remote Runtime Manager authority; missing configuration is a
+startup/dispatch failure, never permission to create an in-process manager or
+write a local binding store.
+Its startup waits only for the unconditional Deployment and Runtime Manager
+authorities.  Paper fleet and Incident service reachability is conditional on
+the event being applied, so an unavailable conditional target fails closed and
+follows that event's retry policy instead of blocking the consumer process
+from starting.  A terminal or exhausted binding/load failure is first handed
+durably to saga compensation, then its predecessor receipt is written so the
+compensation event is not sequence-blocked.  The predecessor is never DLQ'd
+after that handoff; a lost receipt response is retried.
+
+Forward dispatch does not accept caller- or plan-authored loader booleans as
+proof.  Before dispatch it reads and binds four canonical authorities: the
+exact DeploymentPlan; the approved Registry entry and its embedded,
+schema-valid, checksum-matching StrategyArtifact; the exact decided,
+unconditional, unrevoked, and unexpired Governance ApprovalDecision; and the
+active CapitalPool, admissibility result, and exact active
+PersonaCapitalBinding/scope.  Every plan, strategy, artifact/version, approval,
+pool, persona, binding, target, and scope identity must agree.  The resulting
+target-bound report and canonical SHA-256 digests are persisted as
+`metadata.authoritative_loader_attestation`, and Runtime Manager repeats the
+same four-authority verification at its write boundary.
+Binding-created response-loss recovery accepts only `approved -> executing`
+plan lifecycle drift: immutable plan fields (including `current_stage`) remain
+digest-covered, while canonical `binding_id` and `metadata.runtime_lifecycle`
+must exactly match the recovered RuntimeBinding.
+
+Every newly created `RuntimeBinding` is paper-only.  Canary/live movement needs
+a separate governed promotion/cutover verifier and cannot be represented by a
+non-empty reference, legacy `loader_checks_passed`, or copied metadata.  Forward
+replace, evolution, rollback, kill-switch fallback, replay, and response-loss
+recovery paths must reuse exact canonical paper lineage or fail closed without
+fabricating a binding.  Safety containment may pause an existing binding and
+raise an exact IncidentCase; it does not manufacture admission proof.
+
+Compensation events execute the DEP-002 owner-scoped command before their inbox
+receipt is written.  Abort mutates only `DeploymentPlan.status`; binding
+failure, rollback, and safe-mode commands mutate only their canonical runtime
+or incident owners.  Rollback additionally requires exact prior
+binding/plan/artifact lineage to a retired paper RuntimeBinding whose persisted
+`authoritative_loader_attestation` contains the matching four-authority
+identities and canonical digests.  A plan-authored fallback attestation is not
+proof.  Missing or ambiguous lineage, invalid canonical proof, or a kill-wins
+state fails closed and routes to paused safe mode plus an exact IncidentCase
+instead of a blind replacement.
+
+Completed runtime-load history is not receipt-only.  Replay re-reads the exact
+active RuntimeBinding, paper fleet state where applicable, and terminal DEP-003
+projection before acknowledging the event, so a post-completion kill or stale
+projection cannot be mistaken for successful convergence.
 
 ## Tests
 

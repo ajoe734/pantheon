@@ -634,9 +634,11 @@ def update_status(
             incident_id,
             body.status,
             resolved_at=body.resolved_at or previous.resolved_at,
+            expected_snapshot=previous.to_dict(),
         )
     except IncidentError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        status_code = 409 if "changed concurrently" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc))
 
     log.info("IncidentCase %s → status=%s", incident_id, body.status)
 

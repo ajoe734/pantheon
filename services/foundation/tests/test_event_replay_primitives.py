@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import os
+import stat
+from dataclasses import replace
+
+import pytest
+
+import services.foundation.dead_letter as dead_letter_module
 from services.foundation import (
     ActorRef,
     ActorType,
@@ -124,3 +131,99 @@ def test_audited_idempotent_dlq_replay_applies_duplicate_event_once() -> None:
 
     statuses = [entry.status for entry in queue.entries()]
     assert statuses == [DeadLetterStatus.REPLAYED, DeadLetterStatus.DUPLICATE_SKIPPED]
+
+
+def test_dlq_replay_does_not_publish_status_before_audit_callback_succeeds() -> None:
+    registry = _registry()
+    queue = DeadLetterQueue()
+    queue.reject(
+        _event(registry),
+        reason="writer unavailable",
+        tags=("retry_exhausted",),
+        source_ref="outbox:1",
+    )
+    processor = DeadLetterReplayProcessor(schema_registry=registry)
+
+    with pytest.raises(OSError, match="audit persistence failed"):
+        processor.replay(
+            queue.pending_entries(),
+            actor_ref=_actor(),
+            environment=_environment(),
+            reason="operator-approved replay",
+            queue=queue,
+            apply_fn=lambda event: f"projection:{event.event_id}",
+            before_replace_fn=lambda _result: (_ for _ in ()).throw(
+                OSError("audit persistence failed")
+            ),
+        )
+
+    assert len(queue.pending_entries()) == 1
+    assert queue.entries()[0].status == DeadLetterStatus.PENDING
+
+
+def test_dlq_reject_does_not_publish_when_spill_fsync_fails(tmp_path, monkeypatch) -> None:
+    queue = DeadLetterQueue(tmp_path / "dlq.jsonl")
+
+    def fail_fsync(_fd: int) -> None:
+        raise OSError("spill fsync failed")
+
+    monkeypatch.setattr(dead_letter_module.os, "fsync", fail_fsync)
+
+    with pytest.raises(OSError, match="spill fsync failed"):
+        queue.reject(
+            _event(_registry()),
+            reason="writer unavailable",
+            tags=("writer_error",),
+            source_ref="outbox:1",
+        )
+
+    assert queue.entries() == []
+
+
+def test_dlq_replace_preserves_pending_entry_when_spill_persistence_fails(tmp_path, monkeypatch) -> None:
+    spill_path = tmp_path / "dlq.jsonl"
+    queue = DeadLetterQueue(spill_path)
+    pending = queue.reject(
+        _event(_registry()),
+        reason="writer unavailable",
+        tags=("writer_error",),
+        source_ref="outbox:1",
+    )
+    replayed = replace(pending, status=DeadLetterStatus.REPLAYED, replay_attempts=1)
+
+    def fail_append(_entry) -> None:
+        raise OSError("spill append failed")
+
+    monkeypatch.setattr(queue, "_append_to_spill", fail_append)
+
+    with pytest.raises(OSError, match="spill append failed"):
+        queue.replace_entry(replayed)
+
+    assert queue.entries() == [pending]
+    assert queue.pending_entries() == [pending]
+
+    reloaded = DeadLetterQueue(spill_path)
+    assert reloaded.load_from_spill() == 1
+    assert reloaded.pending_entries()[0].entry_id == pending.entry_id
+
+
+def test_dlq_spill_fsyncs_new_file_and_parent_directory(tmp_path, monkeypatch) -> None:
+    queue = DeadLetterQueue(tmp_path / "nested" / "dlq.jsonl")
+    fsync_targets: list[str] = []
+    real_fsync = os.fsync
+
+    def recording_fsync(fd: int) -> None:
+        mode = os.fstat(fd).st_mode
+        fsync_targets.append("directory" if stat.S_ISDIR(mode) else "file")
+        real_fsync(fd)
+
+    monkeypatch.setattr(dead_letter_module.os, "fsync", recording_fsync)
+
+    queue.reject(
+        _event(_registry()),
+        reason="writer unavailable",
+        tags=("writer_error",),
+        source_ref="outbox:1",
+    )
+
+    assert fsync_targets == ["file", "directory"]

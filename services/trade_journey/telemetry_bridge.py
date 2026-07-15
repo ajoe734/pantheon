@@ -130,15 +130,17 @@ def journey_events_from_telemetry(rows: Iterable[tuple[str, str, Mapping[str, An
 
 def merge_with_store(store_events: Iterable[Mapping[str, Any]],
                      backfill_events: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Replace prior backfill output while preserving every other source.
+    """Overlay fresh backfill events while preserving everything already stored.
 
-    Rebuilding from telemetry is idempotent, so stale ``telemetry_backfill``
-    events are dropped and re-derived; seed scenarios and any future
-    first-class producer events pass through untouched.
+    ``public.telemetry_events`` is routinely truncated, so a fresh derivation
+    only covers the current retention window. Prior ``telemetry_backfill``
+    events must therefore be kept, not replaced -- derived event ids are
+    deterministic (telemetry event id + stage suffix), so re-derived rows
+    overlay their older copies instead of duplicating them.
     """
     merged: dict[str, dict[str, Any]] = {}
     for event in store_events:
-        if not isinstance(event, Mapping) or event.get("source") == BACKFILL_SOURCE:
+        if not isinstance(event, Mapping):
             continue
         event_id = event.get("event_id")
         if isinstance(event_id, str) and event_id:
