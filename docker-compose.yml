@@ -1605,7 +1605,6 @@ services:
       start_period: 5s
 
   reconciliation-drift-consumer:
-    profiles: ["reconciliation-drift-consumer"]
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -1622,7 +1621,6 @@ services:
         condition: service_healthy
 
   reconciliation-drift-scheduler:
-    profiles: ["reconciliation-drift-scheduler"]
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -1636,7 +1634,6 @@ services:
         condition: service_healthy
 
   reconciliation-drift-incident-listener:
-    profiles: ["reconciliation-drift-incident-listener"]
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
