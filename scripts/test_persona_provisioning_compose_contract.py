@@ -10,6 +10,9 @@ from yaml.nodes import MappingNode, ScalarNode, SequenceNode
 ROOT = Path(__file__).resolve().parents[1]
 DATABASE_URL_DEFAULT = "${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}"
 REGISTRY_API_URL_DEFAULT = "${PANTHEON_REGISTRY_API_URL:-http://registry:8087}"
+PAPER_FLEET_URL_DEFAULT = (
+    "${PANTHEON_PAPER_FLEET_RECONCILER_URL:-http://paper-fleet-reconciler:8011}"
+)
 
 
 class _ComposeLoader(yaml.SafeLoader):
@@ -69,6 +72,22 @@ def test_operator_bff_uses_canonical_registry_owner_url(compose_path: str) -> No
     assert service["depends_on"]["registry"] == {"condition": "service_healthy"}
 
 
+@pytest.mark.parametrize(
+    ("compose_path", "expected"),
+    [
+        ("docker-compose.yml", PAPER_FLEET_URL_DEFAULT),
+        ("docker-compose.control.yml", "${PANTHEON_PAPER_FLEET_RECONCILER_URL:-}"),
+    ],
+)
+def test_operator_bff_reads_authoritative_paper_worker_sessions(
+    compose_path: str,
+    expected: str,
+) -> None:
+    service = _compose_service(compose_path)
+
+    assert service["environment"]["PANTHEON_PAPER_FLEET_RECONCILER_URL"] == expected
+
+
 @pytest.mark.parametrize("env_path", [".env.example", "env/prod-control.env.example"])
 def test_environment_examples_document_durable_persona_contract(env_path: str) -> None:
     environment = _env_contract(env_path)
@@ -76,3 +95,4 @@ def test_environment_examples_document_durable_persona_contract(env_path: str) -
     assert environment["PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND"] == "postgres"
     assert environment["PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA"] == "bff"
     assert environment["PANTHEON_REGISTRY_API_URL"] == "http://registry:8087"
+    assert "PANTHEON_PAPER_FLEET_RECONCILER_URL" in environment

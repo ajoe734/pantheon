@@ -80,7 +80,6 @@ def _deployment_projection(
 def _worker_session(**overrides: Any) -> dict[str, Any]:
     session = {
         "session_id": "paper-worker-alpha-1",
-        "persona_id": PERSONA_ID,
         "runtime_id": RUNTIME_ID,
         "binding_id": RUNTIME_BINDING_ID,
         "status": "running",
@@ -231,6 +230,20 @@ def test_exact_authoritative_identity_fresh_single_worker_and_first_eval_succeed
         "runtime_binding_id": RUNTIME_BINDING_ID,
         "runtime_id": RUNTIME_ID,
     }
+
+
+def test_conflicting_optional_worker_persona_identity_fails_closed(
+    harness: _Harness,
+) -> None:
+    harness.read_store.sessions = [_worker_session(persona_id="persona-other")]
+
+    state, _ = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning"
+    assert harness.provisioning_store.released == []
 
 
 @pytest.mark.parametrize(

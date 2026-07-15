@@ -28057,10 +28057,20 @@ def _evaluate_persona_provisioning_status(
     monitoring_sessions: List[Dict[str, Any]] = []
     if runtime_id and binding_id:
         for s in read_store.list_paper_runtime_monitoring_sessions():
+            # The paper-fleet reconciler owns worker sessions and joins them to
+            # RuntimeBinding by runtime_id + binding_id.  It does not duplicate
+            # Persona identity into the session.  Persona identity is instead
+            # proven above from the authoritative RuntimeBinding metadata.  If
+            # a future session does carry persona_id, treat a conflicting value
+            # as fail-closed rather than ignoring it.
             s_pid = str(s.get("persona_id") or "").strip()
             s_rtid = str(s.get("runtime_id") or "").strip()
             s_bid = str(s.get("binding_id") or s.get("runtime_binding_id") or "").strip()
-            if s_pid == persona_id and s_rtid == runtime_id and s_bid == binding_id:
+            if (
+                (not s_pid or s_pid == persona_id)
+                and s_rtid == runtime_id
+                and s_bid == binding_id
+            ):
                 monitoring_sessions.append(s)
 
     max_heartbeat_age = max(

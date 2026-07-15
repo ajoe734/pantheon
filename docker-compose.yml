@@ -986,6 +986,7 @@ services:
       PANTHEON_INTERNAL_API_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
+      PANTHEON_PAPER_FLEET_RECONCILER_URL: ${PANTHEON_PAPER_FLEET_RECONCILER_URL:-http://paper-fleet-reconciler:8011}
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
       # Wire approval read path directly to the real approval producer.
       # BFF will try http://promotion:8089/api/v1/approvals before the governance
