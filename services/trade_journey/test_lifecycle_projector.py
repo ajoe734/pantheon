@@ -172,6 +172,30 @@ def test_full_canonical_lifecycle_projects_one_identity_consistent_journey_and_l
     assert loops["controller"]["checkpoint"] == 8
 
 
+def test_paper_noop_order_does_not_duplicate_explicit_trade_decision_stage(tmp_path):
+    rows = lifecycle_rows()[:4]
+    rows[3]["event_type"] = "paper_order_simulated"
+    rows[3]["payload"]["event_type"] = "paper_order_simulated"
+    rows[3]["payload"]["metadata"]["order_status"] = "noop"
+
+    _projector(tmp_path).project_records(
+        rows,
+        mode="live",
+        source_high_watermark=4,
+    )
+
+    journey = _current_json(tmp_path, "trade_journey_events.json")
+    stages = [event["stage"] for event in journey["events"]]
+    assert stages == [
+        "signal_generation",
+        "trade_decision",
+        "risk_evaluation",
+        "order_submission",
+    ]
+    assert len(stages) == len(set(stages))
+    assert journey["events"][-1]["stage_status"] == "skipped"
+
+
 def test_exact_duplicate_is_idempotent_and_conflicting_duplicate_is_atomic(tmp_path):
     rows = lifecycle_rows()
     projector = _projector(tmp_path)

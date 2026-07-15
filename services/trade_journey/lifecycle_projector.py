@@ -713,7 +713,6 @@ class LifecycleProjector:
             return [("risk_evaluation", _stage_status(metadata.get("risk_status") or "succeeded"))]
         if event_type == "paper_order_simulated":
             return [
-                ("trade_decision", _stage_status(metadata.get("decision_status") or "succeeded")),
                 ("order_submission", _stage_status(metadata.get("order_status") or "succeeded")),
             ]
         if event_type == "order_submitted":
@@ -827,15 +826,24 @@ class PostgresLifecycleSource:
         conn = await asyncpg.connect(self.dsn)
         try:
             await conn.execute(
-                "ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS ingested_seq BIGSERIAL"
-            )
-            await conn.execute(
-                "ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS "
-                "ingested_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()"
-            )
-            await conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_telemetry_events_ingested_seq "
-                "ON telemetry_events (ingested_seq)"
+                """
+                CREATE SEQUENCE IF NOT EXISTS telemetry_events_ingested_seq_seq AS BIGINT;
+                ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS ingested_seq BIGINT;
+                ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS
+                    ingested_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp();
+                ALTER TABLE telemetry_events ALTER COLUMN ingested_seq
+                    SET DEFAULT nextval('telemetry_events_ingested_seq_seq');
+                UPDATE telemetry_events
+                    SET ingested_seq = nextval('telemetry_events_ingested_seq_seq')
+                    WHERE ingested_seq IS NULL;
+                ALTER TABLE telemetry_events ALTER COLUMN ingested_seq SET NOT NULL;
+                ALTER SEQUENCE telemetry_events_ingested_seq_seq
+                    OWNED BY telemetry_events.ingested_seq;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_telemetry_events_ingested_seq
+                    ON telemetry_events (ingested_seq);
+                CREATE INDEX IF NOT EXISTS idx_telemetry_events_ingested_at
+                    ON telemetry_events (ingested_at DESC);
+                """
             )
         finally:
             await conn.close()
