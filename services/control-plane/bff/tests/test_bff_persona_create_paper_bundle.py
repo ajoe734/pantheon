@@ -11,7 +11,9 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
+from persona_provisioning import MemoryPersonaProvisioningStore
 from read_store import ReadSurfaceStore
+from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
@@ -23,11 +25,10 @@ def _isolate_persona_create_service_clients(monkeypatch):
     subresource writes to the canonical Capital, Deployment, and Runtime
     services."""
 
-    monkeypatch.setattr(
-        bff_main,
-        "create_capital_binding",
-        lambda payload: {"binding_id": payload["binding_id"], "status": "created"},
-    )
+    transport = FakeOwnerTransport()
+    monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())
+    monkeypatch.setattr(bff_main, "_PersonaOwnerHttpTransport", lambda: transport)
+    monkeypatch.setattr(bff_main, "_register_persona_cron_required", _schedule_receipt)
 
     def _missing_deployment_plan(*_args, **_kwargs):
         raise RuntimeError("deployment plan not found")
@@ -95,7 +96,7 @@ def test_bff_management_create_paper_bundle_success() -> None:
             payload = {
                 "name": "Alpha Trader",
                 "archetype": "mean_reversion",
-                "risk": "medium",
+                "risk": "low",
                 "mandate": "Trade TW equities using daily pricing",
                 "market": "TW",
             }
@@ -120,11 +121,13 @@ def test_bff_management_create_paper_bundle_success() -> None:
             assert data["capitalMode"] == "paper"
             assert data["deploymentStage"] == "paper"
             assert data["paperLedgerId"].startswith("paper-ledger-")
-            assert data["runtimeId"].startswith("runtime-")
-            assert data["runtimeBindingId"].endswith("-paper")
+            assert "runtimeId" not in data
+            assert "runtimeBindingId" not in data
             assert "capitalPoolId" not in data
 
-            assert meta["create_flow"] == "one_shot_provisioning"
+            assert meta["create_flow"] == "durable_owner_coordinated_provisioning"
+            assert meta["runtime_id"] is None
+            assert meta["runtime_binding_id"] is None
             assert meta["live_capital_side_effects"] is False
             assert meta["human_review_required_for_live"] is True
 

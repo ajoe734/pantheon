@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -58,6 +61,16 @@ CONSULTATION_SERVICE_ACTOR = ActorRef(
     actor_id="consultation-svc",
 )
 
+_CREATE_FINGERPRINT_METADATA_KEY = "_pantheon_create_fingerprint_sha256"
+_REQUEST_COMMAND_LOCK = threading.RLock()
+_SUBMITTED_OR_LATER_STATUSES = {
+    ConsultRequestStatus.SUBMITTED,
+    ConsultRequestStatus.ASSIGNED,
+    ConsultRequestStatus.IN_PROGRESS,
+    ConsultRequestStatus.MEMO_PENDING,
+    ConsultRequestStatus.PUBLISHED,
+}
+
 
 def _actor_to_data(actor_ref: ActorRef | Dict[str, str]) -> Dict[str, str]:
     if hasattr(actor_ref, "model_dump"):
@@ -105,6 +118,83 @@ def _request_dict(req: Any, exclude: Optional[set[str]] = None) -> Dict[str, Any
     return req.dict(exclude=exclude or set())
 
 
+def _canonical_create_payload(req: Any) -> Dict[str, Any]:
+    """Return the normalized caller-owned fields used by create idempotency."""
+    payload = _request_dict(req, exclude={"request_id"})
+    metadata = dict(payload.get("metadata") or {})
+    metadata.pop(_CREATE_FINGERPRINT_METADATA_KEY, None)
+    payload["metadata"] = metadata
+    return payload
+
+
+def _create_fingerprint(request_id: str, payload: Dict[str, Any]) -> str:
+    canonical = json.dumps(
+        {"request_id": request_id, "request": payload},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
+
+
+def _stored_create_fingerprint(request: ConsultRequest) -> str:
+    metadata = dict(request.metadata or {})
+    recorded = metadata.get(_CREATE_FINGERPRINT_METADATA_KEY)
+    if isinstance(recorded, str) and recorded:
+        return recorded
+
+    # Legacy requests pre-date persisted create fingerprints. Reconstruct the
+    # original create shape when it is still available; changed legacy records
+    # fail closed because their reconstructed fingerprint will not match.
+    request_data = _request_dict(request)
+    create_fields = set(getattr(CreateConsultRequest, "model_fields", {}).keys())
+    if not create_fields:  # Pydantic v1 compatibility.
+        create_fields = set(getattr(CreateConsultRequest, "__fields__", {}).keys())
+    payload = {
+        field: request_data.get(field)
+        for field in create_fields
+        if field != "request_id"
+    }
+    payload_metadata = dict(payload.get("metadata") or {})
+    payload_metadata.pop(_CREATE_FINGERPRINT_METADATA_KEY, None)
+    payload["metadata"] = payload_metadata
+    return _create_fingerprint(request.request_id, payload)
+
+
+def _ensure_audit_once(
+    *,
+    action: str,
+    request: ConsultRequest,
+    payload_hash: Optional[str] = None,
+    before_state: Optional[str] = None,
+    after_state: Optional[str] = None,
+) -> None:
+    existing = [
+        event
+        for event in store.list_audit_for_request(request.request_id)
+        if event.action == action
+    ]
+    if existing:
+        recorded_hashes = {
+            event.payload_hash for event in existing if event.payload_hash is not None
+        }
+        if payload_hash and recorded_hashes and payload_hash not in recorded_hashes:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Persisted {action} fingerprint conflicts with request body",
+            )
+        return
+    _emit_audit(
+        action=action,
+        request_id=request.request_id,
+        actor_ref=request.requested_by,
+        trace_id=request.trace_id,
+        before_state=before_state,
+        after_state=after_state,
+        payload_hash=payload_hash,
+    )
+
+
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok", "service": "consultation"}
@@ -115,17 +205,39 @@ def health() -> Dict[str, str]:
 
 @app.post("/api/consult/requests", response_model=ConsultRequest, status_code=201)
 def create_request(req: CreateConsultRequest) -> ConsultRequest:
-    request_id = f"cr-{uuid.uuid4().hex[:12]}"
-    new_req = ConsultRequest(request_id=request_id, **_request_dict(req))
-    store.put_request(new_req)
-    _emit_audit(
-        action="request_created",
-        request_id=request_id,
-        actor_ref=req.requested_by,
-        trace_id=req.trace_id,
-        after_state=ConsultRequestStatus.DRAFT.value,
-    )
-    return new_req
+    request_id = req.request_id or f"cr-{uuid.uuid4().hex[:12]}"
+    create_payload = _canonical_create_payload(req)
+    fingerprint = _create_fingerprint(request_id, create_payload)
+
+    with _REQUEST_COMMAND_LOCK:
+        existing = store.get_request(request_id)
+        if existing is not None:
+            if _stored_create_fingerprint(existing) != fingerprint:
+                raise HTTPException(
+                    status_code=409,
+                    detail="ConsultRequest request_id already exists with a different canonical request",
+                )
+            _ensure_audit_once(
+                action="request_created",
+                request=existing,
+                payload_hash=fingerprint,
+                after_state=ConsultRequestStatus.DRAFT.value,
+            )
+            return existing
+
+        stored_payload = dict(create_payload)
+        stored_metadata = dict(create_payload.get("metadata") or {})
+        stored_metadata[_CREATE_FINGERPRINT_METADATA_KEY] = fingerprint
+        stored_payload["metadata"] = stored_metadata
+        new_req = ConsultRequest(request_id=request_id, **stored_payload)
+        store.put_request(new_req)
+        _ensure_audit_once(
+            action="request_created",
+            request=new_req,
+            payload_hash=fingerprint,
+            after_state=ConsultRequestStatus.DRAFT.value,
+        )
+        return new_req
 
 
 @app.get("/api/consult/requests", response_model=List[ConsultRequest])
@@ -151,25 +263,33 @@ def get_request(request_id: str) -> ConsultRequest:
 
 @app.post("/api/consult/requests/{request_id}/submit", response_model=ConsultRequest)
 def submit_request(request_id: str) -> ConsultRequest:
-    request = _get_request_or_404(request_id)
-    if request.status != ConsultRequestStatus.DRAFT:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot submit request in {request.status.value} state",
-        )
+    with _REQUEST_COMMAND_LOCK:
+        request = _get_request_or_404(request_id)
+        if request.status in _SUBMITTED_OR_LATER_STATUSES:
+            if request.status == ConsultRequestStatus.SUBMITTED:
+                _ensure_audit_once(
+                    action="request_submitted",
+                    request=request,
+                    before_state=ConsultRequestStatus.DRAFT.value,
+                    after_state=ConsultRequestStatus.SUBMITTED.value,
+                )
+            return request
+        if request.status != ConsultRequestStatus.DRAFT:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot submit request in {request.status.value} state",
+            )
 
-    before_state = request.status.value
-    request.status = ConsultRequestStatus.SUBMITTED
-    store.put_request(request)
-    _emit_audit(
-        action="request_submitted",
-        request_id=request_id,
-        actor_ref=request.requested_by,
-        trace_id=request.trace_id,
-        before_state=before_state,
-        after_state=request.status.value,
-    )
-    return request
+        before_state = request.status.value
+        request.status = ConsultRequestStatus.SUBMITTED
+        store.put_request(request)
+        _ensure_audit_once(
+            action="request_submitted",
+            request=request,
+            before_state=before_state,
+            after_state=request.status.value,
+        )
+        return request
 
 
 @app.post("/api/consult/requests/{request_id}/cancel", response_model=ConsultRequest)

@@ -1,0 +1,42 @@
+{
+  "bundle_version": "1.8",
+  "extends": {
+    "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_7.json",
+    "bundle_version": "1.7",
+    "bundle_index_sha256": "bf5290191e8fd651c21583ef68b67d119c0da8b51c20a53483c76680146ec69f"
+  },
+  "files": {
+    "specs/agora/v9/workshop_live_operations.schema.json": "602828f57d03b168c2ea5f6375ab0b141d39635f70ee5140db21f5d7a253fc06",
+    "specs/agora/v9/capability_manifest_v1_8.json": "42ecfda2a35ca54ef65481a8898297ad6bc9fe08a159b48bb1a5257ca1c7bacb"
+  },
+  "openapi": {
+    "path": "services/control-plane/openapi/agora_v1_8.openapi.yaml",
+    "sha256": "e0b7108922e76f51900f631477a5f87874f7aaf94630640b5d57d32e7f3feea3"
+  },
+  "required_definition_checksums": {
+    "WorkshopVersionCreateRequest": "067f69acc16925ea2ff4ed1fbe0a403a9b7c2c349ab11a1441a58994ea8f2db6",
+    "WorkshopResearchRunRequest": "86e1f324ddf94b355418c6f13eae186434c994b26ac4635278b9767c35155794",
+    "WorkshopConsultationRequest": "870849770c54a5e3bdc4abe3b1b12431e821824c6edfe1b9fd4050f12c79e7f3",
+    "WorkshopConcludeRequest": "5e0d42d38aaad1f7f4949cbfc4dfa6afbf6a2d1fd7dfea22940007e53737db7e",
+    "WorkshopCommandReceipt": "65486119132a7d005cefe19c626f57ec4da10ceaa7fb91921b6599e84655a800",
+    "WorkshopLiveOperationEnvelope": "f080feba0427e303c6b53edfdd808868f1398e8e6f9ccd7d0513306af0ef345e",
+    "NoDirectActionProof": "42cad9dc9c581225a7febfa4778ede8c0c25d340712119a2d33f4392b68b5fba"
+  },
+  "route_families": {
+    "strategy_workshop_live_operations": [
+      "GET /bff/agora/workshops/{workshop_id}/versions",
+      "POST /bff/agora/workshops/{workshop_id}/versions",
+      "POST /bff/agora/workshops/{workshop_id}/versions/{version_id}/select",
+      "POST /bff/agora/workshops/{workshop_id}/research-runs",
+      "POST /bff/agora/workshops/{workshop_id}/consultations",
+      "POST /bff/agora/workshops/{workshop_id}/conclude"
+    ]
+  },
+  "contract_refs": {
+    "implementation_router": "services/control-plane/bff/agora/strategy_workshop/router.py",
+    "command_store": "services/control-plane/bff/agora/strategy_workshop/store.py",
+    "canonical_adapters": "services/control-plane/bff/agora/strategy_workshop/operations.py",
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-AGORA-002.md"
+  },
+  "note": "Additive live-operation reconciliation over frozen v1.7. It records the six previously deferred Strategy Workshop routes as live canonical command operations with durable receipts, authoritative readback, and no execution authority."
+}

@@ -1,85 +1,191 @@
 # EVOCHAIN-010: Producer-Chain Live Verifier
 
 ## Objective
-The `verify_e2e_producer_chain.py` verifier validates the end-to-end integration of the threshold evaluation and evolution decision pipeline. It simulates a performance degradation incident, sweeps it into an evolution proposal, and verifies that the resulting proposal is correctly projected into both the Evolution Journal and the Persona Fleet.
 
-## Architecture
+`scripts/verify_e2e_producer_chain.py` tests the mutating producer verb on a
+dev paper runtime:
+
+1. inject a fresh heartbeat and a governed threshold breach;
+2. prove the exact deduped `IncidentCase` appeared;
+3. sweep that incident into one governed proposal;
+4. prove a live formal `mutation_review` journal entry exists; and
+5. prove Persona Fleet's latest formal MUTATION links to that entry.
+
+Every failure is emitted as `FAIL [stage_name]: ...`, so the suite can identify
+the broken segment without inferring it from a generic non-zero exit.
+
+## Mutating-Probe Safety Contract
+
+This is not a read-only health probe. It requires both:
+
+- `ALLOW_MUTATING_E2E=1`; and
+- an explicit `EVOCHAIN_VERIFY_RUNTIME_ID` naming the dev/disposable paper
+  runtime to exercise.
+
+The verifier never writes `threshold_sweep_baselines.json`. It only selects a
+runtime whose current telemetry summary resolves to an artifact with an
+already-governed positive baseline. Missing baseline, missing canonical
+identity, stale projection, or unsupported threshold policy fails closed.
+
+One exact incident and one exact decision are durable acceptance evidence and
+are intentionally not deleted. Reruns reuse those records. Fresh heartbeat and
+drawdown telemetry observations are still admitted on each invocation because
+the probe is testing the live write path.
+
+`scripts/run_e2e_verifiers.sh` includes the verifier but skips it unless the
+mutating opt-in is present. This keeps the default aggregate command read-only.
+
+## Stable Target and Dedupe Identity
+
+The target does not rotate when a proposal exists. Selection is pinned by
+`EVOCHAIN_VERIFY_RUNTIME_ID` and joins:
+
+- BFF `/bff/runtimes` for active paper runtime and persona identity;
+- telemetry `/api/telemetry/runtime-summaries` for the canonical binding,
+  artifact, plan, pool, and persona-capital-binding identity; and
+- the live threshold/baseline configuration for a governed breach value.
+
+For the enabled drawdown-ratio policy, the injected raw drawdown is derived
+from the actual baseline and threshold. No fixed `0.05 / 0.0303` assumption is
+used.
+
+The expected producer identity mirrors the implementation contract exactly:
+
+```text
+window = <configured-window>:<UTC-day>
+dedupe_key = JSON([binding_id, metric_name, window])
+telemetry_event_id = UUIDv5(NAMESPACE_URL, dedupe_key)
+incident_id = "inc-threshold-" + UUIDv5(
+  NAMESPACE_URL,
+  telemetry_event_id + ":" + metric_name
+).hex[:12]
+```
+
+The incident assertion requires all of the following, rather than matching an
+arbitrary open drawdown incident:
+
+- exact `incident_id`, binding, runtime, artifact, deployment plan, and
+  persona-capital binding;
+- exact deterministic producer event in `telemetry_event_ids`; and
+- exact `dedupe_key=...` marker in `evidence_summary`.
+
+## Chain and Replay Assertions
 
 ```mermaid
 sequenceDiagram
-    participant Verifier as verify_e2e_producer_chain.py
-    participant Baselines as threshold_sweep_baselines.json
-    participant Telemetry as telemetry-svc
-    participant Worker as sweep-worker (run_tick)
-    participant Incidents as incidents-svc
-    participant Evolution as evolution-svc
-    participant BFF as operator-bff
+    participant V as Producer verifier
+    participant BFF as Operator BFF
+    participant T as Telemetry
+    participant W as Threshold worker
+    participant I as Incidents
+    participant E as Evolution
 
-    Note over Verifier: 1. Fetch active paper binding
-    Verifier->>BFF: GET /bff/runtimes
-    BFF-->>Verifier: Return active bindings
-    
-    Note over Verifier: 2. Ensure baseline is registered
-    Verifier->>Baselines: Dynamically add expected_drawdown = 0.0303
-    
-    Note over Verifier: 3. Ingest fresh heartbeat
-    Verifier->>Telemetry: POST /api/telemetry/ingest (heartbeat)
-    
-    Note over Verifier: 4. Ingest threshold breach
-    Verifier->>Telemetry: POST /api/telemetry/ingest (drawdown_snapshot)
-    
-    Note over Verifier: 5. Trigger local sweep tick
-    Verifier->>Worker: Call run_tick()
-    Worker->>Telemetry: GET /api/telemetry/runtime-summaries
-    Worker->>Incidents: POST /api/incidents/consume-threshold
-    
-    Note over Verifier: 6. Verify incident exists
-    Verifier->>BFF: GET /bff/incidents
-    BFF-->>Verifier: Return open incident
-    
-    Note over Verifier: 7. Run daily sweep
-    Verifier->>Evolution: POST /api/evolution/daily-sweep
-    Evolution-->>Verifier: Return created decision proposal
-    
-    Note over Verifier: 8. Verify Journal projection
-    Verifier->>BFF: GET /bff/management/evolution-journal
-    BFF-->>Verifier: Return formal entry
-    
-    Note over Verifier: 9. Verify Persona Fleet link
-    Verifier->>BFF: GET /bff/management/persona-fleet
-    BFF-->>Verifier: Return mutation linked to proposal ID
-    
-    Note over Verifier: 10. Revert baseline configuration
-    Verifier->>Baselines: Revert threshold_sweep_baselines.json
+    V->>BFF: GET /bff/runtimes
+    V->>T: GET /api/telemetry/runtime-summaries
+    V->>T: POST heartbeat
+    V->>T: read back exact heartbeat projection
+    V->>T: POST governed drawdown breach
+    V->>T: read back exact drawdown projection
+    V->>BFF: GET exact deterministic incident
+    alt incident absent
+        V->>W: run_tick(selected summary only)
+        W->>T: admit deterministic derived evidence
+        W->>I: consume threshold
+        V->>W: replay same tick and assert one dedupe
+    else incident already exists
+        V->>V: assert exact dedupe lineage and reuse it
+    end
+    V->>E: POST daily-sweep for exact incident
+    V->>E: replay daily-sweep and assert same decision
+    V->>E: GET exact proposal and assert lineage
+    V->>BFF: GET exact live mutation_review
+    V->>BFF: GET Persona Fleet and assert exact journal href
 ```
 
-## Trace Stages and Verifications
+The worker receives only the selected canonical summary. Its verifier WAL is
+durable at `${EVOCHAIN_VERIFY_STATE_PATH}` or, by default,
+`/tmp/pantheon/evolution/evochain_010_verifier_state.json`; it is not deleted
+after a partial delivery. On a new incident, the verifier immediately repeats
+the tick and requires `created/deduped -> deduped` with zero second creation.
 
-The verifier executes the following steps in sequence, failing fast with detailed diagnostics if any step encounters a contract or functional violation:
+The daily sweep is also called twice. The first response may be `created` or
+`existing`, but the second must be `existing` with the same `decision_id`.
+`cooldown_blocked`, a wrong first item, or an unrelated target is a distinct
+`proposal_sweep` failure.
 
-1. **Active Binding Resolution**: Fetches all active paper runtime bindings from the BFF `/bff/runtimes` endpoint, dynamically filtering out any targets that are currently blocked by active evolution proposals to prevent cooldown interference.
-2. **Baseline Configuration Registration**: Dynamically writes a baseline `expected_drawdown` threshold of `0.0303` to `services/evolution/config/threshold_sweep_baselines.json` for the selected binding's artifact to guarantee a predictable breach ratio.
-3. **Heartbeat Ingestion**: Ingests a telemetry heartbeat event to ensure the runtime summary projection in `RuntimeSummaryProjectionStore` is active, fresh, and not marked as stale.
-4. **Breach Telemetry Ingestion**: Ingests a `drawdown_snapshot` telemetry event carrying a `drawdown_pct` value of `0.05`. (Ratio of `0.05 / 0.0303 = 1.65`, which exceeds the configured governance limit of `1.25`).
-5. **Threshold Sweep Worker Execution**: Invokes the sweep worker's `run_tick` logic locally using internal HTTP endpoints of the telemetry and incident services. This evaluates the runtime summary against baseline metrics and registers an open threshold incident.
-6. **Incident Assertion**: Queries the BFF `/bff/incidents` endpoint to verify that an open drawdown incident has been successfully registered with the correct binding ID.
-7. **Daily Sweep Proposal Generation**: Calls the evolution service `POST /api/evolution/daily-sweep` endpoint to sweep the newly created incident, creating a new `EvolutionDecision` proposal.
-8. **Evolution Journal Assertion**: Verifies that the created decision has been projected as a formal entry in `/bff/management/evolution-journal` matching the persona ID of the binding.
-9. **Persona Fleet Mutation Wire-up Assertion**: Verifies that `/bff/management/persona-fleet` contains a corresponding entry showing the persona's `last_mutation_kind` as `"formal_mutation"` and linking directly to the new `decision_id` as its mutation reference.
-10. **Cleanup**: Restores the original content of `threshold_sweep_baselines.json` to keep the repository's workspace clean and prevent git-dirty states.
+The exact proposal readback must link the incident, artifact/version, threshold
+window, incident evidence ref, and producer telemetry evidence ref. The journal
+assertion requires one exact non-seed `entry_type=mutation_review` and exact
+`source_id`; substring matches and decision-only rows do not pass. Journal
+provenance is fail-closed, so a canonical live service record without an
+explicit origin marker may report `origin=unknown`. The preceding exact
+telemetry, incident, and proposal assertions prove the live producer lineage.
+Persona Fleet must expose `last_mutation_kind=formal_mutation`, formal
+confidence, both decision IDs, and an `evolution_href` whose `persona` and
+`mutation_review` query values match exactly.
+
+## Failure Stages
+
+The main stage labels are:
+
+- `mutation_opt_in` / `configuration`
+- `baseline_policy` / `binding_resolution`
+- `heartbeat_ingest` / `heartbeat_readback`
+- `breach_ingest` / `breach_readback`
+- `threshold_sweep` / `threshold_sweep_replay`
+- `incident_dedupe`
+- `proposal_sweep` / `proposal_sweep_replay`
+- `formal_journal`
+- `persona_fleet`
 
 ## Commands
 
-Run the verifier directly:
+Offline decision-logic regression tests:
+
 ```bash
-BFF_BASE=http://localhost:18001 BFF_TOKEN=op-dev:admin:mfa python3 scripts/verify_e2e_producer_chain.py
+python3 -m pytest -q scripts/test_verify_e2e_producer_chain.py
 ```
 
-Run as part of the full verifier suite:
+Direct live run from the dev VM (the three service ports default to the values
+shown):
+
 ```bash
-BFF_BASE=http://localhost:18001 BFF_TOKEN=op-dev:admin:mfa ./scripts/run_e2e_verifiers.sh
+ALLOW_MUTATING_E2E=1 \
+EVOCHAIN_VERIFY_RUNTIME_ID=runtime-tw-equity-paper \
+BFF_BASE=http://localhost:18001 \
+TELEMETRY_API_URL=http://localhost:18083 \
+INCIDENTS_API_URL=http://localhost:18090 \
+EVOLUTION_API_URL=http://localhost:18093 \
+python3 scripts/verify_e2e_producer_chain.py
 ```
+
+Aggregate suite with the mutating verifier enabled:
+
+```bash
+ALLOW_MUTATING_E2E=1 \
+EVOCHAIN_VERIFY_RUNTIME_ID=runtime-tw-equity-paper \
+BFF_BASE=http://localhost:18001 \
+scripts/run_e2e_verifiers.sh
+```
+
+Without `ALLOW_MUTATING_E2E=1`, the aggregate suite reports the producer-chain
+entry as an explicit opt-in skip and continues with the read-only verifiers.
+
+## Closeout Evidence
+
+- Implementation merged to `dev` by PR #3716, merge commit
+  `20d4a61a0`.
+- Reviewer gate passed with task status `review_approved`; Codex2 closeout
+  re-checked the approved artifacts on 2026-07-15.
+- Focused regression: `python3 -m pytest -q scripts/test_verify_e2e_producer_chain.py`
+  passed, 11 tests.
+- Aggregate runner wiring was inspected in `scripts/run_e2e_verifiers.sh`;
+  the producer-chain verifier remains opt-in gated by `ALLOW_MUTATING_E2E=1`
+  and `EVOCHAIN_VERIFY_RUNTIME_ID`.
 
 ## References
-* Script implementation: [verify_e2e_producer_chain.py](file:///tmp/pantheon-worker-worktrees/pantheon/evochain-010/scripts/verify_e2e_producer_chain.py)
-* Integration suite: [run_e2e_verifiers.sh](file:///tmp/pantheon-worker-worktrees/pantheon/evochain-010/scripts/run_e2e_verifiers.sh)
+
+- [Verifier](../../../../scripts/verify_e2e_producer_chain.py)
+- [Offline tests](../../../../scripts/test_verify_e2e_producer_chain.py)
+- [Aggregate runner](../../../../scripts/run_e2e_verifiers.sh)
+- [Threshold producer contract](EVOCHAIN-001-threshold-breach-producer.md)
