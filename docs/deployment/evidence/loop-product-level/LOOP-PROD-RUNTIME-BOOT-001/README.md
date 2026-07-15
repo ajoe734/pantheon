@@ -120,3 +120,50 @@ reviewer creates the signed `completion.json`, the primary PR merges, and a
 root-controlled operator installs the external verifier policy/ledger. The
 post-closeout strict live dry-run and evidence-only follow-up remain separate
 post-merge requirements.
+
+## 2026-07-15 reviewer-fix round (commits a6e8116b5, 98fc2c5af)
+
+Fixed four of Codex2's confirmed exact-head findings on PR #3652:
+
+- `runtime_lock_source_inventory()`'s writer scanner missed module-style
+  `os.replace(src, dst)` / `os.rename(src, dst)` direct writes (it returned
+  early on the `Path.replace`/`Path.rename`-only receiver heuristic before
+  reaching the destination-argument check). Fixed, and taught the scanner to
+  recognize a write lexically inside `with canonical_task_state_lock_file(...):`
+  as lock-protected rather than expanding the frozen nine-path registry.
+  `scripts/reap_stale_in_progress.py`'s `ai-status.json` replace now runs
+  under that lock.
+- The dispatcher's `archive_status()`/`dependency_state()`/
+  `archived_primary_status()` used `Path.is_file()` + `read_json()`, both of
+  which follow symlinks, so a symlinked external-dependency archive leaf
+  (including this task's own bootstrap prerequisite) could report a forged
+  `done` status. Routed through the existing no-follow
+  `read_canonical_archive_payload()` reader; added a regression mirroring
+  the existing terminal-archive-symlink test.
+- `activity_audit_source_paths_unlocked()` returned rotated/active audit
+  source paths without rejecting symlinks; a symlinked archive leaf could
+  inject a forged payload into `activity_event_index()`. Now rejects any
+  symlink among the enumerated sources.
+- `scripts/test_ai_status.py`'s mixed-repo delivery-metadata test hardcoded
+  a "missing" checkout path that exists on this worker layout, making the
+  claimed 71-passed unfiltered run non-reproducible here. Now derives a
+  guaranteed-absent path from a `tempfile.TemporaryDirectory()`.
+
+Left open: Codex2 also flagged `canonical_writer_guard.py`'s
+`PANTHEON_ALLOW_ISOLATED_LEGACY_WRITES` override as reachable even when the
+target matches the configured `PANTHEON_STATUS_ROOT`, as long as that root
+isn't inside a git checkout. The literal fix (require the override target be
+outside the configured status root too) was prototyped and reverted: it
+breaks the existing isolated-fixture testing convention used by
+`scripts/test_dispatch_persona_trade_journal_2026_07_11.py` and other
+dispatcher tests that intentionally point `PANTHEON_STATUS_ROOT` at a tmp
+fixture. Resolving it needs a design decision on how to distinguish a
+legitimate isolated test root from a live one, not a mechanical patch.
+
+Also still open and unrelated to the code fixes above: the live canonical
+status root currently fails closed on every `scripts/ai-status.sh` command
+(`RuntimeError: activity event_id duplicate across sources:
+worker-commit-25c0969133ec31f889e948398d2291c43440256c`), the same defect
+Codex2 already reported repeatedly. Reproduced independently; not attempted
+to repair here since it requires the governed incident/recovery path, not an
+ad-hoc edit to `ai-activity-log.jsonl` or its rotated archives.
