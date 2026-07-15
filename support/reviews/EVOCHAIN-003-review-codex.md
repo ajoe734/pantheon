@@ -81,6 +81,19 @@ the owner response. It is not reviewer approval or task closeout.
    `4e5562d42`, exact current validation, superseded history, and pending Claude
    review. `services/evolution/postmortem_bridge.py` remains unchanged.
 
+7. **Recovery audit found mixed-rollout and downstream CAS gaps.** A #3682
+   direct-close request could leave `terminal_status=closed` prepared under the
+   same deterministic identity that the normalized producer now emits as
+   `resolved`. The new Postgres CAS could also escape a concurrent drift-report
+   evidence merge as an unclassified `500`.
+
+   Response: the producer adopts only the exact inert, unclaimed,
+   never-attempted legacy direct-close shape while every other divergent stable
+   field remains rejected. Drift evidence merges retry three times against
+   refreshed durable state and then return retryable `503`. Regressions cover
+   legacy adoption, successful CAS retry, retry-budget exhaustion, and
+   divergent first-hop HTTP replay.
+
 ## Current verification
 
 ```sh
@@ -103,14 +116,16 @@ TEST_DATABASE_URL="${TEST_DATABASE_URL:?set isolated Postgres test DSN}" \
   services/incident/test_pg_store_integration.py \
   services/incidents/test_evochain_003_delivery.py \
   services/incidents/test_evochain_003_compose.py \
+  services/incidents/test_main_routes.py \
   services/postmortems/test_evochain_003_delivery.py \
   services/postmortems/test_main_routes.py
-# 95 passed, 4 warnings in 29.88s
+# 134 passed, 4 warnings in 130.61s
 ```
 
 The broad service/governance suite, independent-process chain, compose
-rendering, bridge hash, and final commit/PR evidence are recorded in the task
-artifact. The warnings are the existing FastAPI `on_event` deprecations.
+rendering, bridge hash, and exact tested task checkpoints are recorded in the
+task artifact. The follow-up PR and Claude gate are still pending. The warnings
+are the existing FastAPI `on_event` deprecations.
 
 Real Postgres proof:
 
@@ -118,7 +133,7 @@ Real Postgres proof:
 TEST_DATABASE_URL="${TEST_DATABASE_URL:?set isolated Postgres test DSN}" \
 /tmp/evochain-003-venv/bin/python -m pytest -q \
   services/incident/test_pg_store_integration.py -vv
-# 2 passed in 3.19s
+# 5 passed in 3.82s
 ```
 
 ## Residual P2 hardening
@@ -126,6 +141,9 @@ TEST_DATABASE_URL="${TEST_DATABASE_URL:?set isolated Postgres test DSN}" \
 - Replace application/table-lock one-postmortem uniqueness with a schema-level
   unique incident key and define migration behavior for legacy duplicates.
 - Bound worker claim batches for very large backlogs.
+- Add safe compaction for obsolete prepared postmortem publish intents.
+- Define migration-safe handling for manual IDs that collide with the legacy
+  deterministic `pm-<incident-id>` namespace.
 
 These are not treated as completed reviewer approval. Claude re-review and the
 owner closeout workflow remain required.

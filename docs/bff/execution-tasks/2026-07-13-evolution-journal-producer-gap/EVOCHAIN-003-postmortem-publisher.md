@@ -80,6 +80,14 @@ activates the record; otherwise the route preserves the inert intent. It is
 never check-then-deleted underneath a concurrent winner, and a later direct
 close reuses and activates the same intent without an identity collision.
 
+Mixed-version rollout is also bounded. PR #3682 could persist an inert
+direct-close intent whose otherwise-identical event payload used
+`terminal_status=closed`. The normalized producer adopts only that exact
+unclaimed, never-attempted historical shape; ready/claimed records and every
+other payload, producer, schema, owner, or transition mismatch still fail
+closed. This prevents an upgrade from permanently stranding a nonterminal
+incident behind the old prepared identity.
+
 Published postmortems are terminal. Exact publication replay preserves the
 original timestamp and event marker; regression or republication with a new
 timestamp/event identity fails closed.
@@ -150,6 +158,11 @@ writes, reloads the latest snapshot while locked, and persists with atomic
 replacement plus `fsync`. Dedicated tests exercise both this store and the
 shared reliable-delivery record store with concurrent writers.
 
+Drift-report evidence merges retry a lost owner-store CAS against refreshed
+durable state so concurrent evidence is merged monotonically. Three consecutive
+conflicts exhaust the bounded retry budget and surface retryable HTTP `503`
+instead of leaking an unclassified `500` or misclassifying contention as `422`.
+
 Delivery workers CAS-claim due records with an expiring lease before issuing
 HTTP. Success/failure completion is conditional on the persisted claim token,
 so an expired/stale worker cannot replace a newer `published` result with
@@ -165,8 +178,11 @@ admission and review state remain durable.
 
 ## Verification Evidence
 
-The current post-PR-#3682 remediation branch (built from checkpoint
-`4e5562d42`) passed this focused suite:
+The recovered post-PR-#3682 remediation was validated at merged-base checkpoint
+`521f21dd06392f5ff1c92b719ff3de9b58df403c`. The task changes at that point
+include initial concurrency anchor `4e5562d42`, completed remediation
+`837bb253d`, and rollout/adversarial anchor `780e4741c`. It passed this expanded
+focused suite:
 
 ```sh
 INCIDENTS_DATA_DIR=/tmp/evochain003-root-focused-final2-$$ \
@@ -181,9 +197,10 @@ TEST_DATABASE_URL="${TEST_DATABASE_URL:?set isolated Postgres test DSN}" \
   services/incident/test_pg_store_integration.py \
   services/incidents/test_evochain_003_delivery.py \
   services/incidents/test_evochain_003_compose.py \
+  services/incidents/test_main_routes.py \
   services/postmortems/test_evochain_003_delivery.py \
   services/postmortems/test_main_routes.py
-# 95 passed, 4 warnings in 29.88s
+# 134 passed, 4 warnings in 130.61s
 ```
 
 The new regressions cover explicit-target row-level Postgres stale-writer and
@@ -191,8 +208,11 @@ cross-row ABA rejection, shared read/write exclusion, transactional parent
 checks, exclusive outbox claims, stale completion monotonicity, first-hop
 reservation/reclaim, manual-result reuse, stale-draft preservation,
 prepared-intent recovery, receipt CAS-loss classification, and published
-terminal semantics. Commit `4e5562d42` is the pre-final remediation checkpoint,
-not the commit that produced this expanded evidence.
+terminal semantics. They also exercise real-Postgres terminal-status CAS,
+outbox lease fencing, inbox stale-claim fencing, divergent HTTP replay, legacy
+direct-close intent adoption, and drift evidence CAS retry/exhaustion. Commit
+`4e5562d42` is a pre-final remediation checkpoint, not the commit that produced
+this expanded evidence.
 
 Real two-connection Postgres proof runs against an isolated per-test schema:
 
@@ -200,13 +220,17 @@ Real two-connection Postgres proof runs against an isolated per-test schema:
 TEST_DATABASE_URL="${TEST_DATABASE_URL:?set isolated Postgres test DSN}" \
 /tmp/evochain-003-venv/bin/python -m pytest -q \
   services/incident/test_pg_store_integration.py -vv
-# 2 passed in 3.19s
+# 5 passed in 3.82s
 ```
 
 It proves that a parent commit between domain validation and publication makes
 the transactional parent predicate reject without publishing, and that two
 different postmortem IDs racing for one incident produce exactly one durable
-commit.
+commit. It additionally proves that concurrent `resolved`/`closed` writes from
+one snapshot commit exactly once and preserve the first `resolved_at`, two
+Postgres-backed outbox claimers obtain one lease, an expired claimant cannot
+overwrite its successor, and an old inbox reservation cannot finalize the new
+claimant's receipt.
 
 The final broad service/governance regression and explicit independent-process
 chain also pass:
@@ -216,21 +240,22 @@ INCIDENTS_DATA_DIR=/tmp/evochain003-root-broad-final-$$ \
 POSTMORTEMS_DATA_DIR=/tmp/evochain003-root-broad-final-$$ \
 PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager.test \
 PANTHEON_RUNTIME_MANAGER_TOKEN=test-token \
+TEST_DATABASE_URL="${TEST_DATABASE_URL:?set isolated Postgres test DSN}" \
 /tmp/evochain-003-venv/bin/python -m pytest -q \
   services/incidents services/postmortems services/incident services/evolution \
   services/foundation/test_reliable_delivery.py \
   services/foundation/tests/test_control_plane_postgres_owner_stores.py \
   services/control-plane/governance/test_evolution_decision.py \
   services/control-plane/governance/test_evolution_dispatcher_invariants.py
-# 546 passed, 2 skipped, 4 warnings in 115.58s
+# 555 passed, 4 warnings in 433.56s
 
 INCIDENTS_DATA_DIR=/tmp/evochain003-root-chain-final-$$ \
 POSTMORTEMS_DATA_DIR=/tmp/evochain003-root-chain-final-$$ \
 PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager.test \
 PANTHEON_RUNTIME_MANAGER_TOKEN=test-token \
-/tmp/evochain-003-venv/bin/python -m pytest -q \
+  /tmp/evochain-003-venv/bin/python -m pytest -q \
   services/postmortems/test_evochain_003_http_chain.py -vv
-# 1 passed in 2.53s
+# 1 passed in 6.31s
 
 docker compose config --quiet
 PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager:8081 \
@@ -288,6 +313,9 @@ Task anchors retained for review:
 - `200165804` — evolution delivery admission
 - `9abbd6937` — concurrent store and full-chain proof
 - `99a493bf2` — crash-safe admission, commit markers, and real HTTP proof
+- `4e5562d42` — database CAS and delivery-claim remediation
+- `837bb253d` — monotonic delivery and evidence completion
+- `780e4741c` — rollout compatibility and real-Postgres adversarial proof
 
 ## Delivery History and Pending Re-review
 
@@ -325,9 +353,11 @@ identified the five P1 findings materialized in
 `support/reviews/EVOCHAIN-003-review-codex.md`: database-level CAS, claimed and
 monotonic delivery, losing prepared-intent repair, published terminal guards,
 and control-compose/runtime evidence. Codex2 checkpointed the initial repair in
-anchor `4e5562d42` and completed the expanded adversarial remediation on the
-current task branch. Claude re-review is still required; owner closeout and
-`done` have not occurred.
+anchor `4e5562d42`, completed the monotonic remediation in `837bb253d`, then
+closed a recovered mixed-version direct-close deadlock and production-Postgres
+evidence gaps in `780e4741c`. The follow-up task PR is not yet the reviewer
+gate at this artifact checkpoint. Claude re-review is still required; owner
+closeout and `done` have not occurred.
 
 ## Operational Notes and Residual Risks
 
@@ -342,10 +372,21 @@ current task branch. Claude re-review is still required; owner closeout and
 - Activation failures retain a prepared record for reconciliation after the
   domain commit. A losing nonterminal incident CAS also preserves its stable,
   inert terminal-boundary intent so no cleanup can race a concurrent winner.
-- The remaining P2 hardening opportunity is a schema-level unique incident key
-  plus migration policy for legacy duplicate postmortems. The implemented
-  owner paths enforce the invariant transactionally today, and real
-  two-connection tests prove the relevant lock ordering.
+- P2 hardening remains for a schema-level unique incident key plus migration
+  policy for legacy duplicate postmortems. The implemented owner paths enforce
+  the invariant transactionally today, and real two-connection tests prove the
+  relevant lock ordering.
+- A losing concurrent postmortem publication can leave a provably obsolete,
+  inert prepared intent whose event marker differs from the committed publish.
+  It is never delivered, but a future compaction policy should tombstone it so
+  reconciliation does not scan it indefinitely.
+- A legacy-safe deterministic `pm-<incident-id>` can collide with a manually
+  assigned ID owned by another incident. Admission fails closed and retries to
+  the governed DLQ; migration-safe identity allocation remains follow-up work.
+- Workers currently claim the complete due set. Claim batches should be bounded
+  before very large backlogs so later sequential HTTP attempts do not outlive
+  their leases; inbox fencing already prevents state corruption on duplicate
+  attempts.
 - The legacy `/api/evolution/proposals/from-postmortem-published` route remains
   for compatibility, but this producer chain uses the required generic route.
 - BFF incident command stubs are outside this task. The proved entry point is
