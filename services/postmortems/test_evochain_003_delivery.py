@@ -4,14 +4,30 @@ import httpx
 from pathlib import Path
 import pytest
 import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 # Allow import of parent package
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fastapi.testclient import TestClient
-from services.incident.incident import IncidentCase, IncidentStatus, Postmortem
+from services.incident.incident import (
+    IncidentCase,
+    IncidentConcurrencyError,
+    IncidentStatus,
+    Postmortem,
+)
+from services.foundation import (
+    EnvironmentName,
+    EnvironmentScope,
+    EventEnvelope,
+    TraceContext,
+)
+from services.foundation.reliable_delivery import ReliableInboxConcurrencyError
 from services.postmortems import main as postmortems_main
+from services.postmortems.consumer import postmortem_id_for_incident
 from services.postmortems.main import (
     app,
     inbox_store,
@@ -103,6 +119,316 @@ def _seed_postmortem(postmortem_id="pm-123", incident_id="inc-123"):
     )
     store._postmortems[postmortem_id] = pm
     return pm
+
+
+def _resolved_incident_event(incident_id="inc-123"):
+    trace = TraceContext.new(
+        environment=EnvironmentScope(name=EnvironmentName.LIVE),
+        source_system="incident-svc",
+        idempotency_key=f"idmp-{incident_id}",
+    )
+    return EventEnvelope(
+        event_id=f"evt-{incident_id}",
+        event_type="incident.resolved",
+        aggregate_type="incident",
+        aggregate_id=incident_id,
+        sequence_no=1,
+        trace=trace,
+        payload={"incident_id": incident_id, "terminal_status": "resolved"},
+        idempotency_key=f"idmp-{incident_id}",
+        producer_service="incident-svc",
+    )
+
+
+def test_concurrent_exact_first_hop_is_claimed_instead_of_false_rejected(monkeypatch):
+    incident = _seed_incident()
+    store._incidents[incident.incident_id] = replace(
+        incident,
+        status="resolved",
+        resolved_at="2026-07-15T00:00:00Z",
+    )
+    event = _resolved_incident_event()
+    request = {"incident_id": "inc-123", "event": event.to_dict()}
+    entered = threading.Event()
+    release = threading.Event()
+    consumer_type = postmortems_main.ResolvedIncidentPostmortemDraftConsumer
+    real_consume = consumer_type.consume
+
+    def delayed_consume(self, payload):
+        entered.set()
+        assert release.wait(timeout=5)
+        return real_consume(self, payload)
+
+    monkeypatch.setattr(consumer_type, "consume", delayed_consume)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first_future = pool.submit(
+            lambda: TestClient(app).post(
+                "/api/postmortems/consume-resolved-incident",
+                json=request,
+            )
+        )
+        assert entered.wait(timeout=5)
+        concurrent = TestClient(app).post(
+            "/api/postmortems/consume-resolved-incident",
+            json=request,
+        )
+        release.set()
+        first = first_future.result(timeout=5)
+
+    assert first.status_code == 201, first.text
+    assert concurrent.status_code == 503, concurrent.text
+    assert concurrent.status_code != 422
+    replay = TestClient(app).post(
+        "/api/postmortems/consume-resolved-incident",
+        json=request,
+    )
+    assert replay.status_code == 200, replay.text
+    assert len(store.list_postmortems()) == 1
+
+
+def test_first_hop_divergent_exact_identity_replay_fails_closed():
+    incident = _seed_incident()
+    store._incidents[incident.incident_id] = replace(
+        incident,
+        status="resolved",
+        resolved_at="2026-07-15T00:00:00Z",
+    )
+    event = _resolved_incident_event()
+    accepted = client.post(
+        "/api/postmortems/consume-resolved-incident",
+        json={"incident_id": incident.incident_id, "event": event.to_dict()},
+    )
+    divergent = replace(
+        event,
+        payload={"incident_id": incident.incident_id, "terminal_status": "closed"},
+    )
+    rejected = client.post(
+        "/api/postmortems/consume-resolved-incident",
+        json={"incident_id": incident.incident_id, "event": divergent.to_dict()},
+    )
+
+    assert accepted.status_code == 201, accepted.text
+    assert rejected.status_code == 409, rejected.text
+    assert "divergent" in rejected.json()["detail"]
+    assert len(store.list_postmortems()) == 1
+
+
+def test_receipt_cas_contention_returns_retryable_first_hop(monkeypatch):
+    incident = _seed_incident()
+    store._incidents[incident.incident_id] = replace(
+        incident,
+        status="resolved",
+        resolved_at="2026-07-15T00:00:00Z",
+    )
+    event = _resolved_incident_event()
+    monkeypatch.setattr(
+        inbox_store,
+        "record_applied",
+        MagicMock(
+            side_effect=ReliableInboxConcurrencyError(
+                "inbox reservation changed concurrently"
+            )
+        ),
+    )
+
+    response = client.post(
+        "/api/postmortems/consume-resolved-incident",
+        json={"incident_id": "inc-123", "event": event.to_dict()},
+    )
+
+    assert response.status_code == 503, response.text
+    assert response.status_code != 409
+    assert store.find_postmortem_for_incident("inc-123") is not None
+
+
+@pytest.mark.parametrize("legacy_postmortem_id", ["legacy-manual-pm", "pm-inc-123"])
+def test_first_hop_reuses_preexisting_postmortem_and_exact_replay(
+    legacy_postmortem_id,
+):
+    incident = _seed_incident()
+    store._incidents[incident.incident_id] = replace(
+        incident,
+        status="resolved",
+        resolved_at="2026-07-15T00:00:00Z",
+    )
+    _seed_postmortem(postmortem_id=legacy_postmortem_id)
+    event = _resolved_incident_event()
+    request = {"incident_id": "inc-123", "event": event.to_dict()}
+
+    first = client.post(
+        "/api/postmortems/consume-resolved-incident",
+        json=request,
+    )
+    replay = client.post(
+        "/api/postmortems/consume-resolved-incident",
+        json=request,
+    )
+
+    assert first.status_code == 200, first.text
+    assert replay.status_code == 200, replay.text
+    assert first.json()["postmortem_id"] == legacy_postmortem_id
+    assert replay.json()["postmortem_id"] == legacy_postmortem_id
+    assert len(store.list_postmortems()) == 1
+    state, receipt = inbox_store.classify(event)
+    assert state == "duplicate"
+    assert receipt is not None
+    assert receipt["state"] == "applied"
+    assert receipt["result_ref"] == legacy_postmortem_id
+
+
+def test_postmortem_identity_does_not_collapse_sanitized_incident_ids():
+    left = _seed_incident("a b")
+    right = _seed_incident("a-b")
+    store._incidents[left.incident_id] = replace(
+        left,
+        status="resolved",
+        resolved_at="2026-07-15T00:00:00Z",
+    )
+    store._incidents[right.incident_id] = replace(
+        right,
+        status="resolved",
+        resolved_at="2026-07-15T00:00:00Z",
+    )
+
+    left_event = _resolved_incident_event("a b")
+    right_event = _resolved_incident_event("a-b")
+    left_response = client.post(
+        "/api/postmortems/consume-resolved-incident",
+        json={"incident_id": "a b", "event": left_event.to_dict()},
+    )
+    right_response = client.post(
+        "/api/postmortems/consume-resolved-incident",
+        json={"incident_id": "a-b", "event": right_event.to_dict()},
+    )
+
+    assert left_response.status_code == 201, left_response.text
+    assert right_response.status_code == 201, right_response.text
+    assert left_response.json()["postmortem_id"] != right_response.json()["postmortem_id"]
+    assert postmortem_id_for_incident("a b") != postmortem_id_for_incident("a-b")
+
+
+def test_concurrent_draft_owner_write_returns_retryable_first_hop(monkeypatch):
+    incident = _seed_incident()
+    store._incidents[incident.incident_id] = replace(
+        incident,
+        status="resolved",
+        resolved_at="2026-07-15T00:00:00Z",
+    )
+    _seed_postmortem(postmortem_id="legacy-manual-pm")
+    event = _resolved_incident_event()
+    request = {"incident_id": "inc-123", "event": event.to_dict()}
+    real_update = store.update_postmortem_draft
+    monkeypatch.setattr(
+        store,
+        "update_postmortem_draft",
+        MagicMock(
+            side_effect=IncidentConcurrencyError(
+                "Postmortem changed concurrently before durable write: legacy-manual-pm"
+            )
+        ),
+    )
+
+    raced = client.post(
+        "/api/postmortems/consume-resolved-incident",
+        json=request,
+    )
+    assert raced.status_code == 503, raced.text
+    assert inbox_store.classify(event)[0] == "new"
+
+    monkeypatch.setattr(store, "update_postmortem_draft", real_update)
+    retried = client.post(
+        "/api/postmortems/consume-resolved-incident",
+        json=request,
+    )
+    assert retried.status_code == 200, retried.text
+    assert inbox_store.classify(event)[1]["state"] == "applied"
+
+
+def test_real_concurrent_draft_edit_is_preserved_and_retried(monkeypatch):
+    incident = _seed_incident()
+    store._incidents[incident.incident_id] = replace(
+        incident,
+        status="resolved",
+        resolved_at="2026-07-15T00:00:00Z",
+    )
+    original = _seed_postmortem(postmortem_id="legacy-manual-pm")
+    event = _resolved_incident_event()
+    request = {"incident_id": "inc-123", "event": event.to_dict()}
+    real_update = store.update_postmortem_draft
+
+    def edit_before_generated_cas(generated, *, expected_snapshot=None):
+        current = store.require_postmortem(original.postmortem_id)
+        edited = Postmortem(
+            **{
+                **current.to_dict(),
+                "root_cause": "operator edit committed during draft generation",
+            }
+        )
+        real_update(edited, expected_snapshot=current.to_dict())
+        return real_update(generated, expected_snapshot=expected_snapshot)
+
+    monkeypatch.setattr(
+        store,
+        "update_postmortem_draft",
+        edit_before_generated_cas,
+    )
+    raced = client.post(
+        "/api/postmortems/consume-resolved-incident",
+        json=request,
+    )
+
+    assert raced.status_code == 503, raced.text
+    assert (
+        store.require_postmortem(original.postmortem_id).root_cause
+        == "operator edit committed during draft generation"
+    )
+    assert inbox_store.classify(event)[0] == "new"
+
+    monkeypatch.setattr(store, "update_postmortem_draft", real_update)
+    retried = client.post(
+        "/api/postmortems/consume-resolved-incident",
+        json=request,
+    )
+    assert retried.status_code == 200, retried.text
+    assert (
+        store.require_postmortem(original.postmortem_id).root_cause
+        == "operator edit committed during draft generation"
+    )
+    assert inbox_store.classify(event)[1]["state"] == "applied"
+
+
+def test_concurrent_manual_postmortem_create_returns_retryable_first_hop(monkeypatch):
+    incident = _seed_incident()
+    store._incidents[incident.incident_id] = replace(
+        incident,
+        status="resolved",
+        resolved_at="2026-07-15T00:00:00Z",
+    )
+    event = _resolved_incident_event()
+    request = {"incident_id": "inc-123", "event": event.to_dict()}
+    real_create = store.create_postmortem
+
+    def create_after_manual_race(generated):
+        _seed_postmortem(postmortem_id="pm-manual-race")
+        return real_create(generated)
+
+    monkeypatch.setattr(store, "create_postmortem", create_after_manual_race)
+    raced = client.post(
+        "/api/postmortems/consume-resolved-incident",
+        json=request,
+    )
+
+    assert raced.status_code == 503, raced.text
+    assert inbox_store.classify(event)[0] == "new"
+    monkeypatch.setattr(store, "create_postmortem", real_create)
+
+    retried = client.post(
+        "/api/postmortems/consume-resolved-incident",
+        json=request,
+    )
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["postmortem_id"] == "pm-manual-race"
+    assert inbox_store.classify(event)[1]["state"] == "applied"
 
 def test_publish_delivery_success():
     _seed_incident()
@@ -273,6 +599,33 @@ def test_duplicate_publish_transition_keeps_one_logical_event():
     records = outbox_store.list_pending_and_failed()
     assert len(records) == 1
     assert records[0].event.event_id.startswith("evt-postmortem-published-")
+
+
+def test_published_postmortem_cannot_regress_or_replace_publish_identity():
+    _seed_incident()
+    _seed_postmortem()
+
+    published = client.post(
+        "/api/postmortems/pm-123/status",
+        json={"status": "published"},
+    )
+    regressed = client.post(
+        "/api/postmortems/pm-123/status",
+        json={"status": "draft"},
+    )
+    republished = client.post(
+        "/api/postmortems/pm-123/status",
+        json={"status": "published", "published_at": "2030-01-01T00:00:00Z"},
+    )
+
+    assert published.status_code == 200
+    assert regressed.status_code == 400
+    assert "cannot transition" in regressed.json()["detail"]
+    assert republished.status_code == 400
+    assert "cannot replace" in republished.json()["detail"]
+    durable = store.get_postmortem("pm-123")
+    assert durable.status == "published"
+    assert durable.published_at == published.json()["published_at"]
 
 
 def test_prepare_failure_does_not_publish_postmortem(monkeypatch):
@@ -450,4 +803,3 @@ def test_critical_frozen_normalization():
     assert proposal["target_stage"] == "frozen"
     assert proposal["metadata"]["bridge_proposed_action"] == "freeze"
     assert proposal["metadata"]["bridge_action_normalized"] is True
-
