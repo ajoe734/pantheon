@@ -336,7 +336,19 @@ def drain_task_packet_inbox(
                     BridgeDispatchRequest(packet=packet, repoRoot=str(root), dryRun=dry_run)
                 )
                 receipt["result"] = result.model_dump(mode="json", by_alias=True)
-                if result.replay_rejected and not dry_run:
+                if result.retryable and not dry_run:
+                    # Admission/replay-store durability is not terminal. Keep
+                    # the claimed processing item in place and write no receipt
+                    # so the next supervisor tick retries it automatically.
+                    receipt["status"] = "retryable"
+                    receipt["retryable"] = True
+                elif (
+                    result.replay_rejected
+                    and not dry_run
+                    and not result.errors
+                    and result.admission_record is not None
+                    and result.admission_status == "admitted_replay"
+                ):
                     # The packet was already durably admitted by a previous
                     # dispatch, but this processing item still needs its local
                     # receipt/archive commit (for example after receipt fsync
@@ -345,7 +357,10 @@ def drain_task_packet_inbox(
                     receipt["status"] = "processed"
                     receipt["recoveredFromReplay"] = True
                 elif result.replay_rejected:
-                    receipt["status"] = "replay_rejected"
+                    # A seen row without an exact durable admission (including
+                    # legacy id-only rows) is not evidence of successful work.
+                    receipt["status"] = "failed" if not dry_run else "replay_rejected"
+                    receipt["nonAdmittedReplay"] = True
                 elif result.errors:
                     receipt["status"] = "failed"
                 else:
@@ -356,6 +371,10 @@ def drain_task_packet_inbox(
 
             if dry_run:
                 (errors if receipt["status"] == "error" else processed).append(receipt)
+                continue
+
+            if receipt.get("retryable") is True:
+                errors.append(receipt)
                 continue
 
             target_dir = _receipt_target_dir(inbox, receipt)

@@ -131,4 +131,6 @@ class BridgeDispatchResult(BridgeBaseModel):
     admission_record: Optional[Dict[str, Any]] = Field(
         default=None, alias="admissionRecord"
     )
+    admission_status: str = Field(default="not_attempted", alias="admissionStatus")
+    retryable: bool = False
     errors: List[str] = Field(default_factory=list)

@@ -27,6 +27,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.parse import quote
 
 from .dev_bridge_admission import load_admission_record, persist_admission_record
 from .dev_bridge_models import (
@@ -187,6 +188,101 @@ def _admission_tasks(packet: DevTaskPacket) -> List[Dict[str, object]]:
     ]
 
 
+def _admission_provenance(packet: DevTaskPacket) -> Dict[str, object]:
+    return {
+        "packet_version": packet.version,
+        "actor": packet.actor.model_dump(mode="json", by_alias=True),
+        "mode": packet.mode,
+        "intent": packet.intent,
+        "conversation_id": packet.source_conversation_id,
+        "source_turn_ids": list(packet.source_turn_ids),
+        "documents": [
+            document.model_dump(mode="json", by_alias=True)
+            for document in packet.documents
+        ],
+        "audit_conversation_href": packet.audit_conversation_href,
+        "emitted_at": packet.emitted_at,
+        "constraints": packet.constraints.model_dump(mode="json", by_alias=True),
+        "tasks": _admission_tasks(packet),
+    }
+
+
+def _materialized_task_candidates(*, repo_root: str, task_id: str) -> List[Dict[str, object]]:
+    candidates: List[Dict[str, object]] = []
+    status_path = Path(repo_root) / "ai-status.json"
+    try:
+        status_payload = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError) as exc:
+        raise OSError(f"could not read active ai-status state: {status_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"active ai-status state is invalid JSON: {status_path}") from exc
+    if not isinstance(status_payload, dict):
+        raise ValueError("active ai-status state must be an object")
+    tasks = status_payload.get("tasks", [])
+    if tasks is not None and not isinstance(tasks, list):
+        raise ValueError("active ai-status tasks must be a list")
+    for item in tasks or []:
+        if isinstance(item, dict) and str(item.get("id") or "") == task_id:
+            candidates.append(item)
+
+    archive_name = quote(task_id, safe="-_.") + ".json"
+    archive_path = Path(repo_root) / "ai-task-archive" / "tasks" / archive_name
+    if archive_path.exists():
+        try:
+            archive = json.loads(archive_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError) as exc:
+            raise OSError(f"could not read terminal task snapshot: {archive_path}") from exc
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"terminal task snapshot is invalid JSON: {archive_path}") from exc
+        task = archive.get("task") if isinstance(archive, dict) else None
+        if not isinstance(task, dict):
+            raise ValueError(f"terminal task snapshot is invalid: {archive_path}")
+        candidates.append(task)
+    return candidates
+
+
+def _validate_materialized_tasks(packet: DevTaskPacket, *, repo_root: str) -> None:
+    """Bind a successful dispatch/admission to authoritative task state."""
+
+    for task in packet.tasks:
+        candidates = _materialized_task_candidates(
+            repo_root=repo_root,
+            task_id=task.id,
+        )
+        if not candidates:
+            raise ValueError(f"materialized task {task.id!r} is missing")
+        expected_spec = _task_spec(task)
+        expected_bridge = _task_metadata(packet, task)["dev_bridge"]
+        for candidate in candidates:
+            for field in ("depends_on", "artifacts", "acceptance"):
+                value = candidate.get(field)
+                if not isinstance(value, list) or any(
+                    not isinstance(item, str) for item in value
+                ):
+                    raise ValueError(
+                        f"materialized task {task.id!r} has invalid {field} provenance"
+                    )
+            observed_spec = {
+                "id": candidate.get("id"),
+                "title": candidate.get("title"),
+                "owner": candidate.get("owner"),
+                "reviewer": candidate.get("reviewer"),
+                "phase": candidate.get("phase"),
+                "depends_on": list(candidate["depends_on"]),
+                "artifacts": list(candidate["artifacts"]),
+                "acceptance": list(candidate["acceptance"]),
+                "summary": candidate.get("summary_zh"),
+            }
+            if observed_spec != expected_spec:
+                raise ValueError(
+                    f"materialized task {task.id!r} does not match the signed task spec"
+                )
+            if candidate.get("dev_bridge") != expected_bridge:
+                raise ValueError(
+                    f"materialized task {task.id!r} does not match signed bridge provenance"
+                )
+
+
 # ---------------------------------------------------------------------------
 # Per-task dispatch
 # ---------------------------------------------------------------------------
@@ -307,15 +403,48 @@ def dispatch_task_packet(
                 raise ValueError(
                     f"Packet id {packet.packet_id!r} is already bound to a different payload"
                 )
-            admission_record = (
-                load_admission_record(
-                    repo_root=repo_root,
-                    packet_id=packet.packet_id,
-                    packet_digest=digest,
+            admission_record = None
+            replay_errors: List[str] = []
+            replay_retryable = False
+            if recorded_digest:
+                try:
+                    admission_record = load_admission_record(
+                        repo_root=repo_root,
+                        packet_id=packet.packet_id,
+                        packet_digest=digest,
+                        expected_provenance=_admission_provenance(packet),
+                    )
+                except (OSError, ValueError) as exc:
+                    replay_errors.append(f"bridge admission replay validation: {exc}")
+                    admission_status = "invalid_replay_admission"
+                else:
+                    if admission_record is None:
+                        replay_errors.append(
+                            "bridge admission replay validation: durable admission record is missing"
+                        )
+                        admission_status = "missing_replay_admission"
+                    else:
+                        try:
+                            _validate_materialized_tasks(packet, repo_root=repo_root)
+                        except OSError as exc:
+                            replay_errors.append(
+                                f"bridge materialization replay validation: {exc}"
+                            )
+                            admission_status = "materialization_read_retryable"
+                            replay_retryable = True
+                        except ValueError as exc:
+                            replay_errors.append(
+                                f"bridge materialization replay validation: {exc}"
+                            )
+                            admission_status = "invalid_replay_materialization"
+                        else:
+                            admission_status = "admitted_replay"
+            else:
+                replay_errors.append(
+                    "bridge admission replay validation: legacy replay row has no digest "
+                    "and is non-admitted"
                 )
-                if recorded_digest
-                else None
-            )
+                admission_status = "legacy_non_admitted_replay"
             return BridgeDispatchResult(
                 packetId=packet.packet_id,
                 dispatchedAt=dispatched_at,
@@ -332,6 +461,9 @@ def dispatch_task_packet(
                 dryRun=dry_run,
                 auditRefs=audit_refs,
                 admissionRecord=admission_record,
+                admissionStatus=admission_status,
+                retryable=replay_retryable,
+                errors=replay_errors,
             )
 
         task_records: List[TaskDispatchRecord] = []
@@ -351,39 +483,67 @@ def dispatch_task_packet(
                 errors.append(f"{task.id}: {rec.error}")
 
         admission_record = None
+        admission_status = "dry_run" if dry_run else "not_attempted"
+        retryable = False
         if not dry_run and not errors:
             try:
+                _validate_materialized_tasks(packet, repo_root=repo_root)
+            except OSError as exc:
+                errors.append(f"bridge materialization: {exc}")
+                admission_status = "materialization_read_retryable"
+                retryable = True
+            except ValueError as exc:
+                errors.append(f"bridge materialization: {exc}")
+                admission_status = "invalid_materialization"
+        if not dry_run and not errors:
+            try:
+                provenance = _admission_provenance(packet)
                 admission_record = persist_admission_record(
                     repo_root=repo_root,
                     packet_id=packet.packet_id,
                     packet_digest=digest,
                     admitted_at=dispatched_at,
-                    actor=packet.actor.model_dump(mode="json", by_alias=True),
-                    mode=packet.mode,
-                    intent=packet.intent,
-                    conversation_id=packet.source_conversation_id,
-                    source_turn_ids=packet.source_turn_ids,
-                    documents=[
-                        document.model_dump(mode="json", by_alias=True)
-                        for document in packet.documents
-                    ],
-                    audit_conversation_href=packet.audit_conversation_href,
-                    tasks=_admission_tasks(packet),
+                    packet_version=str(provenance["packet_version"]),
+                    actor=provenance["actor"],
+                    mode=str(provenance["mode"]),
+                    intent=str(provenance["intent"]),
+                    conversation_id=str(provenance["conversation_id"]),
+                    source_turn_ids=provenance["source_turn_ids"],
+                    documents=provenance["documents"],
+                    audit_conversation_href=provenance["audit_conversation_href"],
+                    emitted_at=str(provenance["emitted_at"]),
+                    constraints=provenance["constraints"],
+                    tasks=provenance["tasks"],
                     dispatch_records=[
                         record.model_dump(mode="json", by_alias=True)
                         for record in task_records
                     ],
                 )
-            except (OSError, ValueError) as exc:
+                admission_status = "admitted_unmarked"
+            except OSError as exc:
                 errors.append(f"bridge admission: {exc}")
+                admission_status = "admission_persistence_retryable"
+                retryable = True
+            except ValueError as exc:
+                errors.append(f"bridge admission: {exc}")
+                admission_status = "invalid_admission"
 
         if not dry_run and not errors:
-            mark_packet_seen(
-                packet.packet_id,
-                repo_root=repo_root,
-                digest=digest,
-                lock_held=True,
-            )
+            try:
+                mark_packet_seen(
+                    packet.packet_id,
+                    repo_root=repo_root,
+                    digest=digest,
+                    lock_held=True,
+                )
+                admission_status = "admitted"
+            except OSError as exc:
+                errors.append(f"bridge replay mark: {exc}")
+                admission_status = "replay_mark_persistence_retryable"
+                retryable = True
+            except ValueError as exc:
+                errors.append(f"bridge replay mark: {exc}")
+                admission_status = "invalid_replay_mark"
 
     return BridgeDispatchResult(
         packetId=packet.packet_id,
@@ -393,5 +553,7 @@ def dispatch_task_packet(
         dryRun=dry_run,
         auditRefs=audit_refs,
         admissionRecord=admission_record,
+        admissionStatus=admission_status,
+        retryable=retryable,
         errors=errors,
     )

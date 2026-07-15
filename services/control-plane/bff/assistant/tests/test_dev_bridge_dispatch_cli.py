@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ..dev_bridge_models import BridgeActor, BridgeTask, DevTaskPacket
 from ..dev_bridge_signer import sign_packet
+from .dev_bridge_test_support import write_materializing_ai_status
 
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -46,29 +47,7 @@ def _make_packet(packet_id: str) -> DevTaskPacket:
 def _write_fake_repo(tmp_path: Path) -> Path:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
-    (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
-    scripts_dir = repo_root / "scripts"
-    scripts_dir.mkdir()
-    (scripts_dir / "ai_status.py").write_text(
-        "\n".join(
-            [
-                "import json",
-                "import os",
-                "import sys",
-                "from pathlib import Path",
-                "record = {",
-                "    'argv': sys.argv[1:],",
-                "    'ai_name': os.environ.get('AI_NAME'),",
-                "    'metadata': json.loads(os.environ.get('TASK_METADATA_JSON', '{}')),",
-                "}",
-                "with Path('calls.jsonl').open('a', encoding='utf-8') as fh:",
-                "    fh.write(json.dumps(record, sort_keys=True) + '\\n')",
-                "sys.exit(0)",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    write_materializing_ai_status(repo_root)
     return repo_root
 
 

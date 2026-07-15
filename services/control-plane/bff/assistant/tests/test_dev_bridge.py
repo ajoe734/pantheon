@@ -33,6 +33,7 @@ from ..dev_bridge_signer import (
     verify_packet,
 )
 from ..dev_bridge_dispatcher import dispatch_task_packet
+from .dev_bridge_test_support import write_materializing_ai_status
 
 
 # ---------------------------------------------------------------------------
@@ -220,11 +221,7 @@ class TestDispatcher(unittest.TestCase):
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
         self.repo_root = self._tmpdir.name
-        Path(self.repo_root, "ai-status.json").write_text("{}", encoding="utf-8")
-        # Create a mock scripts/ai_status.py
-        scripts_dir = Path(self.repo_root, "scripts")
-        scripts_dir.mkdir()
-        (scripts_dir / "ai_status.py").write_text("import sys; sys.exit(0)\n", encoding="utf-8")
+        write_materializing_ai_status(Path(self.repo_root))
 
     def tearDown(self):
         self._tmpdir.cleanup()
