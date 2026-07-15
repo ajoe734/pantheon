@@ -57,6 +57,35 @@ def _load_service_module(data_dir: str):
         sys.modules.pop("store", None)
 
 
+def _healthy_runtime_summary(**overrides):
+    summary = {
+        "binding_id": "rtb-sched-healthy-001",
+        "runtime_id": "runtime-sched-healthy-001",
+        "deployment_stage": "paper",
+        "deployment_plan_id": "plan-sched-001",
+        "capital_pool_id": "pool-sched-001",
+        "persona_capital_binding_id": "pcb-sched-001",
+        "artifact_id": "artifact-sched-001",
+        "artifact_version": "1.0.0",
+        "trace_id": "trace-sched-001",
+        "last_event_id": "evt-sched-001",
+        "last_heartbeat_event_id": "evt-heartbeat-sched-001",
+        "state": "active",
+        "health_summary": {
+            "paper_runtime": "ok",
+            "bridge": "ok",
+            "telemetry": "ok",
+            "broker": "not_applicable",
+        },
+        "queue_lag_ms": 10,
+        "event_delivery_lag_ms": 20,
+        "avg_slippage_bps": 1.5,
+        "baseline_metrics": {"avg_slippage_bps": 1.5},
+    }
+    summary.update(overrides)
+    return summary
+
+
 # ---------------------------------------------------------------------------
 # scheduler_worker unit tests
 # ---------------------------------------------------------------------------
@@ -126,7 +155,7 @@ def test_scheduled_reconcile_empty_telemetry() -> None:
         assert payload2["evaluated_binding_count"] == 0
 
 
-def test_scheduled_reconcile_with_telemetry_summaries() -> None:
+def test_scheduled_reconcile_never_marks_incomplete_actual_state_green() -> None:
     from fastapi.testclient import TestClient
 
     with tempfile.TemporaryDirectory() as data_dir:
@@ -137,17 +166,8 @@ def test_scheduled_reconcile_with_telemetry_summaries() -> None:
             {
                 "binding_id": "rtb-sched-test-001",
                 "runtime_id": "runtime-sched-001",
-                "telemetry_event_ids": ["evt-001", "evt-002"],
-                "observed_metrics": {"avg_slippage_bps": 1.5},
-                "baseline_metrics": {"avg_slippage_bps": 2.0},
-            },
-            {
-                "binding_id": "rtb-sched-test-002",
-                "runtime_id": "runtime-sched-002",
-                "telemetry_event_ids": [],
-                "observed_metrics": {},
-                "baseline_metrics": {},
-            },
+                "last_event_id": "evt-001",
+            }
         ]
 
         with mock.patch.object(svc, "_fetch_telemetry_runtime_summaries", return_value=fake_summaries):
@@ -157,11 +177,11 @@ def test_scheduled_reconcile_with_telemetry_summaries() -> None:
             )
         assert resp.status_code == 201
         payload = resp.json()
-        assert payload["status"] == "ok"
+        assert payload["status"] == "degraded"
         assert payload["tick_id"] == "tick-test-002"
-        assert payload["evaluated_binding_count"] == 2
+        assert payload["evaluated_binding_count"] == 1
         assert payload["skipped_binding_count"] == 0
-        assert len(payload["evaluation_ids"]) == 2
+        assert len(payload["evaluation_ids"]) == 1
 
         # Verify evaluation records are persisted with the right fields
         listed = client.get("/api/reconciliation-drift/evaluations",
@@ -174,13 +194,127 @@ def test_scheduled_reconcile_with_telemetry_summaries() -> None:
         assert ev["runtime_id"] == "runtime-sched-001"
         assert ev["tick_id"] == "tick-test-002"
         assert ev["trigger"] == "scheduled"
-        recon_checks = ev["reconciliation_checks"]
-        assert len(recon_checks) == 1
-        check = recon_checks[0]
-        assert check["check"] == "telemetry_runtime_alignment"
-        assert check["binding_id"] == "rtb-sched-test-001"
-        assert check["runtime_id"] == "runtime-sched-001"
-        assert check["telemetry_event_ids"] == ["evt-001", "evt-002"]
+        assert ev["status"] == "degraded"
+        checks = {check["check"]: check for check in ev["reconciliation_checks"]}
+        assert checks["authoritative_actual_identity"]["status"] == "ok"
+        assert checks["actual_metrics_presence"]["status"] == "degraded"
+        assert checks["queue_lag_ms"]["status"] == "degraded"
+        assert checks["event_delivery_lag_ms"]["status"] == "degraded"
+
+
+def test_scheduled_reconcile_uses_authoritative_health_and_lag_for_green() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        with mock.patch.object(
+            svc,
+            "_fetch_telemetry_runtime_summaries",
+            return_value=[_healthy_runtime_summary()],
+        ):
+            response = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-healthy-001"},
+            )
+
+        assert response.status_code == 201
+        payload = response.json()
+        assert payload["status"] == "ok"
+        assert payload["drift_report_ids"] == []
+        evaluation = client.get(
+            "/api/reconciliation-drift/evaluations",
+            params={"binding_id": "rtb-sched-healthy-001"},
+        ).json()[0]
+        assert evaluation["status"] == "ok"
+        assert all(
+            check["status"] == "ok" for check in evaluation["reconciliation_checks"]
+        )
+
+
+def test_scheduled_lag_breach_creates_deterministic_report_and_dedup_incident() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _healthy_runtime_summary(queue_lag_ms=20_000)
+        with (
+            mock.patch.object(
+                svc,
+                "_fetch_telemetry_runtime_summaries",
+                return_value=[summary],
+            ),
+            mock.patch.object(
+                svc,
+                "_classify_drift_report_incident",
+                return_value={"incident_id": "inc-drift-sched-001"},
+            ) as classify,
+        ):
+            first = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-lag-001"},
+            )
+            duplicate_tick = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-lag-001"},
+            )
+            next_tick = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-lag-002"},
+            )
+
+        first_payload = first.json()
+        assert first_payload["status"] == "critical"
+        assert first_payload["incident_ids"] == ["inc-drift-sched-001"]
+        assert first_payload["incident_delivery_errors"] == []
+        assert duplicate_tick.json()["drift_report_ids"] == first_payload["drift_report_ids"]
+        assert next_tick.json()["drift_report_ids"] == first_payload["drift_report_ids"]
+        assert next_tick.json()["incident_ids"] == ["inc-drift-sched-001"]
+        assert classify.call_count == 2
+        assert len(svc.store.list_drift_reports()) == 1
+
+
+def test_scheduled_same_tick_replays_retryable_incident_delivery() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _healthy_runtime_summary(event_delivery_lag_ms=40_000)
+        with (
+            mock.patch.object(
+                svc,
+                "_fetch_telemetry_runtime_summaries",
+                return_value=[summary],
+            ),
+            mock.patch.object(
+                svc,
+                "_classify_drift_report_incident",
+                side_effect=[
+                    svc.HTTPException(status_code=502, detail="incidents unavailable"),
+                    {"incident_id": "inc-drift-replayed-001"},
+                ],
+            ) as classify,
+        ):
+            failed = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-delivery-retry-001"},
+            )
+            replayed = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-delivery-retry-001"},
+            )
+
+        assert failed.json()["status"] == "failure"
+        assert failed.json()["incident_delivery_errors"][0]["status_code"] == 502
+        assert replayed.json()["status"] == "critical"
+        assert replayed.json()["incident_ids"] == ["inc-drift-replayed-001"]
+        assert classify.call_count == 2
+        evaluation = svc.store.get_evaluation(
+            svc._tick_evaluation_id("tick-delivery-retry-001", summary["binding_id"])
+        )
+        assert evaluation["incident_delivery"]["status"] == "delivered"
 
 
 def test_scheduled_reconcile_idempotent_same_tick_id() -> None:

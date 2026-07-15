@@ -270,7 +270,11 @@ def build_drift_report_from_event(
         normalized.get("persona_capital_binding_id") or normalized.get("persona_binding_id") or ""
     ).strip()
     trace_id = str(normalized.get("trace_id") or "").strip()
-    baseline_ref = str(normalized.get("baseline_ref") or normalized.get("paper_baseline_ref") or "telemetry_fixture_baseline")
+    baseline_ref = str(
+        normalized.get("baseline_ref")
+        or normalized.get("paper_baseline_ref")
+        or "governed-runtime-baseline"
+    )
     current_ref = str(normalized.get("current_ref") or normalized.get("actual_ref") or event_id or report_id)
 
     evidence_refs: list[str] = []
