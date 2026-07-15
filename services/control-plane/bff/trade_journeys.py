@@ -56,6 +56,8 @@ from services.trade_journey.slo_data_quality import (
 )
 
 EVENTS_STORE_ENV = "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"
+PROJECTOR_STORE_SCHEMA = "pantheon.trade-journey-projection.v1"
+PROJECTOR_CONTROLLER_ID = "canonical-lifecycle-projector"
 _ALLOWED_ENVIRONMENTS = {"paper", "broker_sandbox", "canary", "live"}
 _ANOMALY_DIAGNOSTIC_CODES = {"identifier_conflict", "conflicting_terminal_states", "orphan_identifier"}
 _ALLOWED_SORTS = {"updated_at_desc", "updated_at_asc", "created_at_desc", "created_at_asc"}
@@ -87,6 +89,30 @@ _JOURNEY_ACTIONS = {
     "reconciliation_retry", "incident_acknowledge",
 }
 _LIVE_ACTIONS = {"pause", "cancel", "reconciliation_retry"}
+
+
+def _projector_store_metadata(raw: Any) -> Dict[str, Any]:
+    """Return truth metadata only for the lifecycle-projector-owned wrapper."""
+    if not isinstance(raw, Mapping):
+        return {}
+    schema_version = str(raw.get("schema_version") or "")
+    raw_controller = raw.get("controller")
+    controller = dict(raw_controller) if isinstance(raw_controller, Mapping) else {}
+    controller_id = str(
+        controller.get("controller_id") or controller.get("controller_name") or ""
+    )
+    projector_owned = (
+        schema_version == PROJECTOR_STORE_SCHEMA
+        or controller_id == PROJECTOR_CONTROLLER_ID
+    )
+    if not projector_owned:
+        return {}
+    return {
+        "schema_version": schema_version or PROJECTOR_STORE_SCHEMA,
+        "generation": raw.get("generation"),
+        "projector_owned": True,
+        "controller": controller,
+    }
 
 
 class TradeJourneyActionRequest(BaseModel):
@@ -125,6 +151,13 @@ class TradeJourneyFreshness(BaseModel):
     materializer_revision: int
     rebuild_status: str
     source_watermarks: Dict[str, str] = Field(default_factory=dict)
+    projection_schema_version: Optional[str] = None
+    generation: Optional[int] = None
+    projector_owned: bool = False
+    projection_mode: Optional[str] = None
+    truth_level: Optional[str] = None
+    accepted_live: Optional[bool] = None
+    controller: Dict[str, Any] = Field(default_factory=dict)
 
     model_config = ConfigDict(extra="allow")
 
@@ -182,6 +215,7 @@ class TradeJourneyEventStore:
         self._cache_key: Optional[Tuple[str, float]] = None
         self._materializer: Optional[JourneyMaterializer] = None
         self._events: List[Dict[str, Any]] = []
+        self._projection_metadata: Dict[str, Any] = {}
 
     def _source_path(self) -> Optional[Path]:
         raw = os.getenv(self._path_env, "").strip()
@@ -195,6 +229,7 @@ class TradeJourneyEventStore:
         if path is None:
             self._materializer = None
             self._events = []
+            self._projection_metadata = {}
             self._cache_key = None
             return False
         try:
@@ -202,6 +237,7 @@ class TradeJourneyEventStore:
         except OSError:
             self._materializer = None
             self._events = []
+            self._projection_metadata = {}
             self._cache_key = None
             return False
         key = (str(path), mtime)
@@ -212,8 +248,10 @@ class TradeJourneyEventStore:
         except (OSError, ValueError):
             self._materializer = None
             self._events = []
+            self._projection_metadata = {}
             self._cache_key = None
             return False
+        self._projection_metadata = _projector_store_metadata(raw)
         if isinstance(raw, list):
             events = [dict(item) for item in raw if isinstance(item, Mapping)]
         elif isinstance(raw, Mapping) and isinstance(raw.get("events"), list):
@@ -239,6 +277,14 @@ class TradeJourneyEventStore:
     def events(self) -> List[Dict[str, Any]]:
         self._refresh()
         return list(self._events)
+
+    def projection_metadata(self) -> Dict[str, Any]:
+        """Expose cached projector/controller truth for response composition."""
+        self._refresh()
+        return json.loads(json.dumps(self._projection_metadata))
+
+    def projector_owned(self) -> bool:
+        return bool(self.projection_metadata().get("projector_owned"))
 
 
 EVENT_STORE = TradeJourneyEventStore()
@@ -321,38 +367,110 @@ def _mask_live_capital(row: Dict[str, Any], identity: Any, environment: str) -> 
     return masked
 
 
-def _meta(snapshot_at: str, read_state: str, materializer: JourneyMaterializer) -> Dict[str, Any]:
+def _store_projection_metadata(store: Optional[TradeJourneyEventStore]) -> Dict[str, Any]:
+    getter = getattr(store, "projection_metadata", None)
+    if not callable(getter):
+        return {}
+    metadata = getter()
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _projector_freshness(metadata: Mapping[str, Any]) -> Dict[str, Any]:
+    if not metadata.get("projector_owned"):
+        return {}
+    controller = metadata.get("controller")
+    controller = dict(controller) if isinstance(controller, Mapping) else {}
+    generation = metadata.get("generation")
+    if generation is None:
+        generation = controller.get("generation")
+    return {
+        "projection_schema_version": metadata.get("schema_version"),
+        "generation": generation,
+        "projector_owned": True,
+        "projection_mode": controller.get("mode"),
+        "truth_level": controller.get("truth_level"),
+        "accepted_live": bool(controller.get("accepted_live")),
+        "controller": controller,
+    }
+
+
+def _effective_projection_read_state(read_state: str, metadata: Mapping[str, Any]) -> str:
+    if not metadata.get("projector_owned"):
+        return read_state
+    controller = metadata.get("controller")
+    canonical_live = bool(
+        isinstance(controller, Mapping)
+        and controller.get("accepted_live") is True
+        and controller.get("status") == "ready"
+        and controller.get("mode") == "live"
+        and controller.get("truth_level") == "canonical_live"
+    )
+    if not canonical_live and read_state != "unavailable":
+        return "degraded"
+    return read_state
+
+
+def _meta(
+    snapshot_at: str,
+    read_state: str,
+    materializer: JourneyMaterializer,
+    *,
+    store: Optional[TradeJourneyEventStore] = None,
+) -> Dict[str, Any]:
+    projection_metadata = _store_projection_metadata(store)
     return {
         "snapshot_at": snapshot_at,
-        "read_state": read_state,
+        "read_state": _effective_projection_read_state(read_state, projection_metadata),
         "freshness": {
             "materializer_revision": materializer.revision,
             "rebuild_status": materializer.rebuild_status,
             "source_watermarks": dict(materializer.source_watermarks),
+            **_projector_freshness(projection_metadata),
         },
     }
 
 
-def _unavailable_meta(snapshot_at: str) -> Dict[str, Any]:
+def _unavailable_meta(
+    snapshot_at: str,
+    *,
+    store: Optional[TradeJourneyEventStore] = None,
+) -> Dict[str, Any]:
+    projection_metadata = _store_projection_metadata(store)
     return {
         "snapshot_at": snapshot_at,
         "read_state": "unavailable",
-        "freshness": {"materializer_revision": 0, "rebuild_status": "idle", "source_watermarks": {}},
+        "freshness": {
+            "materializer_revision": 0,
+            "rebuild_status": "idle",
+            "source_watermarks": {},
+            **_projector_freshness(projection_metadata),
+        },
     }
 
 
-def _unavailable_envelope(snapshot_at: str, *, entity_id: str) -> Dict[str, Any]:
+def _unavailable_envelope(
+    snapshot_at: str,
+    *,
+    entity_id: str,
+    store: Optional[TradeJourneyEventStore] = None,
+) -> Dict[str, Any]:
     return {
         "data": {"id": entity_id, "status": "unavailable"},
-        "meta": _unavailable_meta(snapshot_at),
+        "meta": _unavailable_meta(snapshot_at, store=store),
     }
 
 
-def _unavailable_list_envelope(snapshot_at: str, page_size: int, *, entity_id: str) -> Dict[str, Any]:
+def _unavailable_list_envelope(
+    snapshot_at: str,
+    page_size: int,
+    *,
+    entity_id: str,
+    store: Optional[TradeJourneyEventStore] = None,
+) -> Dict[str, Any]:
     return {
         "data": {"id": entity_id, "items": [], "status": "unavailable"},
         "page_info": {"next_page_token": None, "total": 0, "page_size": page_size, "returned": 0, "has_more": False},
-        "meta": _unavailable_meta(snapshot_at),
+        "meta": _unavailable_meta(snapshot_at, store=store),
     }
 
 
@@ -888,9 +1006,12 @@ def create_trade_journeys_router(
         if not _tenant_allowed(identity, tenant_id):
             return _err(403, "FORBIDDEN", "Cross-tenant access denied")
         snapshot_at = utc_now()
-        materializer = get_event_store().materializer()
+        store = get_event_store()
+        materializer = store.materializer()
         if materializer is None:
-            return _unavailable_list_envelope(snapshot_at, 200, entity_id="trade-journey-attention")
+            return _unavailable_list_envelope(
+                snapshot_at, 200, entity_id="trade-journey-attention", store=store
+            )
         now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
         items = [item for projection in materializer.projections
                  if projection.tenant_id == tenant_id and projection.environment == environment
@@ -899,7 +1020,7 @@ def create_trade_journeys_router(
         return {"data": {"id": "trade-journey-attention", "tenant_id": tenant_id,
                          "environment": environment, "items": items},
                 "page_info": {"total": len(items), "returned": len(items), "has_more": False},
-                "meta": _meta(snapshot_at, "formal", materializer)}
+                "meta": _meta(snapshot_at, "formal", materializer, store=store)}
 
     @router.get("/bff/management/trade-journeys/resolve", response_model=TradeJourneyDetailEnvelope)
     async def bff_trade_journeys_resolve(
@@ -926,9 +1047,10 @@ def create_trade_journeys_router(
             return _err(403, "FORBIDDEN", "Cross-tenant access denied")
 
         snapshot_at = utc_now()
-        materializer = get_event_store().materializer()
+        store = get_event_store()
+        materializer = store.materializer()
         if materializer is None:
-            return _unavailable_envelope(snapshot_at, entity_id="trade-journey-resolve")
+            return _unavailable_envelope(snapshot_at, entity_id="trade-journey-resolve", store=store)
 
         types_to_try = (identifier_type,) if identifier_type else _RESOLVABLE_IDENTIFIER_TYPES
         candidates: List[Dict[str, Any]] = []
@@ -950,7 +1072,7 @@ def create_trade_journeys_router(
             "journey_ids": sorted(all_ids),
             "ambiguous": len(all_ids) > 1,
         }
-        meta = _meta(snapshot_at, "formal", materializer)
+        meta = _meta(snapshot_at, "formal", materializer, store=store)
         latency_recorder.record("resolve", (time.perf_counter() - _slo_timer_start) * 1000.0)
         return {"data": data, "meta": meta}
 
@@ -974,16 +1096,17 @@ def create_trade_journeys_router(
             return _err(403, "FORBIDDEN", "Cross-tenant access denied")
 
         snapshot_at = utc_now()
-        materializer = get_event_store().materializer()
+        store = get_event_store()
+        materializer = store.materializer()
         if materializer is None:
-            return _unavailable_envelope(snapshot_at, entity_id="trade-journey-metrics")
+            return _unavailable_envelope(snapshot_at, entity_id="trade-journey-metrics", store=store)
 
         now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
         projections = [p for p in materializer.projections if p.tenant_id == tenant_id and p.environment == environment]
         metrics = _metrics(projections, now=now)
         data = {"id": "trade-journey-metrics", "tenant_id": tenant_id, "environment": environment, **metrics}
         read_state = "formal" if projections else "partial"
-        meta = _meta(snapshot_at, read_state, materializer)
+        meta = _meta(snapshot_at, read_state, materializer, store=store)
         return {"data": data, "meta": meta}
 
     @router.get("/bff/management/trade-journeys/slo", response_model=TradeJourneyDetailEnvelope)
@@ -1010,9 +1133,10 @@ def create_trade_journeys_router(
             return _err(403, "FORBIDDEN", "Cross-tenant access denied")
 
         snapshot_at = utc_now()
-        materializer = get_event_store().materializer()
+        store = get_event_store()
+        materializer = store.materializer()
         if materializer is None:
-            return _unavailable_envelope(snapshot_at, entity_id="trade-journey-slo")
+            return _unavailable_envelope(snapshot_at, entity_id="trade-journey-slo", store=store)
 
         now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
         projections = [p for p in materializer.projections if p.tenant_id == tenant_id and p.environment == environment]
@@ -1040,7 +1164,7 @@ def create_trade_journeys_router(
             "dashboard": dashboard_snapshot,
         }
         read_state = "formal" if projections else "partial"
-        meta = _meta(snapshot_at, read_state, materializer)
+        meta = _meta(snapshot_at, read_state, materializer, store=store)
         return {"data": data, "meta": meta}
 
     @router.get(
@@ -1083,9 +1207,12 @@ def create_trade_journeys_router(
             return _err(403, "FORBIDDEN", "Cross-tenant access denied")
 
         snapshot_at = utc_now()
-        materializer = get_event_store().materializer()
+        store = get_event_store()
+        materializer = store.materializer()
         if materializer is None:
-            return _unavailable_list_envelope(snapshot_at, page_size, entity_id="trade-journeys")
+            return _unavailable_list_envelope(
+                snapshot_at, page_size, entity_id="trade-journeys", store=store
+            )
 
         now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
         date_from_norm = _normalize_bound(date_from)
@@ -1131,7 +1258,7 @@ def create_trade_journeys_router(
             overall_state = "partial"
 
         data = {"id": "trade-journeys", "tenant_id": tenant_id, "environment": environment, "items": items}
-        meta = _meta(snapshot_at, overall_state, materializer)
+        meta = _meta(snapshot_at, overall_state, materializer, store=store)
         return {
             "data": data,
             "page_info": {
@@ -1159,9 +1286,10 @@ def create_trade_journeys_router(
             return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
 
         snapshot_at = utc_now()
-        materializer = get_event_store().materializer()
+        store = get_event_store()
+        materializer = store.materializer()
         if materializer is None:
-            return _unavailable_envelope(snapshot_at, entity_id=journey_id)
+            return _unavailable_envelope(snapshot_at, entity_id=journey_id, store=store)
 
         projection = (
             materializer.get(journey_id, tenant_id=tenant_id, environment=environment)
@@ -1173,7 +1301,9 @@ def create_trade_journeys_router(
 
         now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
         detail = _mask_live_capital(_detail(projection, now=now), identity, projection.environment)
-        meta = _meta(snapshot_at, detail.get("read_state", "formal"), materializer)
+        meta = _meta(
+            snapshot_at, detail.get("read_state", "formal"), materializer, store=store
+        )
         latency_recorder.record("detail", (time.perf_counter() - _slo_timer_start) * 1000.0)
         return {"data": detail, "meta": meta}
 
@@ -1196,9 +1326,15 @@ def create_trade_journeys_router(
             return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
 
         snapshot_at = utc_now()
-        materializer = get_event_store().materializer()
+        store = get_event_store()
+        materializer = store.materializer()
         if materializer is None:
-            return _unavailable_list_envelope(snapshot_at, page_size, entity_id=f"{journey_id}-timeline")
+            return _unavailable_list_envelope(
+                snapshot_at,
+                page_size,
+                entity_id=f"{journey_id}-timeline",
+                store=store,
+            )
 
         projection = (
             materializer.get(journey_id, tenant_id=tenant_id, environment=environment)
@@ -1216,7 +1352,7 @@ def create_trade_journeys_router(
 
         data = {"id": f"{journey_id}-timeline", "journey_id": journey_id, "items": page}
         read_state = _read_state(projection.snapshot, projection.diagnostics)
-        meta = _meta(snapshot_at, read_state, materializer)
+        meta = _meta(snapshot_at, read_state, materializer, store=store)
         return {
             "data": data,
             "page_info": {
@@ -1243,9 +1379,12 @@ def create_trade_journeys_router(
             return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
 
         snapshot_at = utc_now()
-        materializer = get_event_store().materializer()
+        store = get_event_store()
+        materializer = store.materializer()
         if materializer is None:
-            return _unavailable_envelope(snapshot_at, entity_id=f"{journey_id}-graph")
+            return _unavailable_envelope(
+                snapshot_at, entity_id=f"{journey_id}-graph", store=store
+            )
 
         projection = (
             materializer.get(journey_id, tenant_id=tenant_id, environment=environment)
@@ -1257,7 +1396,7 @@ def create_trade_journeys_router(
 
         data = _graph(projection)
         read_state = _read_state(projection.snapshot, projection.diagnostics)
-        meta = _meta(snapshot_at, read_state, materializer)
+        meta = _meta(snapshot_at, read_state, materializer, store=store)
         return {"data": data, "meta": meta}
 
     @router.get("/bff/management/trade-journeys/{journey_id}/evidence", response_model=TradeJourneyDetailEnvelope)
@@ -1274,9 +1413,12 @@ def create_trade_journeys_router(
             return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
 
         snapshot_at = utc_now()
-        materializer = get_event_store().materializer()
+        store = get_event_store()
+        materializer = store.materializer()
         if materializer is None:
-            return _unavailable_envelope(snapshot_at, entity_id=f"{journey_id}-evidence")
+            return _unavailable_envelope(
+                snapshot_at, entity_id=f"{journey_id}-evidence", store=store
+            )
 
         projection = (
             materializer.get(journey_id, tenant_id=tenant_id, environment=environment)
@@ -1288,7 +1430,7 @@ def create_trade_journeys_router(
 
         data = _evidence(projection)
         read_state = _read_state(projection.snapshot, projection.diagnostics)
-        meta = _meta(snapshot_at, read_state, materializer)
+        meta = _meta(snapshot_at, read_state, materializer, store=store)
         return {"data": data, "meta": meta}
 
     @router.get("/bff/management/trade-journeys/{journey_id}/replay", response_model=TradeJourneyDetailEnvelope)
@@ -1319,7 +1461,9 @@ def create_trade_journeys_router(
         store = get_event_store()
         materializer = store.materializer()
         if materializer is None:
-            return _unavailable_envelope(snapshot_at, entity_id=f"{journey_id}-replay")
+            return _unavailable_envelope(
+                snapshot_at, entity_id=f"{journey_id}-replay", store=store
+            )
 
         current_projection = (
             materializer.get(journey_id, tenant_id=tenant_id, environment=environment)
@@ -1344,13 +1488,15 @@ def create_trade_journeys_router(
         now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
         if projection is None:
             data = {"id": f"{journey_id}-replay", "journey_id": journey_id, "as_of": as_of, "exists_at_as_of": False}
-            meta = _meta(snapshot_at, "formal", materializer)
+            meta = _meta(snapshot_at, "formal", materializer, store=store)
             return {"data": data, "meta": meta}
 
         detail = _mask_live_capital(_detail(projection, now=now), identity, projection.environment)
         detail["as_of"] = as_of
         detail["exists_at_as_of"] = True
-        meta = _meta(snapshot_at, detail.get("read_state", "formal"), materializer)
+        meta = _meta(
+            snapshot_at, detail.get("read_state", "formal"), materializer, store=store
+        )
         return {"data": detail, "meta": meta}
 
     @router.post(
@@ -1434,6 +1580,26 @@ def create_trade_journeys_router(
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
 
                 # Now we hold the lock!
+                if store_path.is_file():
+                    try:
+                        raw_store = json.loads(store_path.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        return _err(
+                            503,
+                            "STORE_UNAVAILABLE",
+                            "Events store cannot be read safely",
+                            retryable=True,
+                        )
+                    if _projector_store_metadata(raw_store).get("projector_owned"):
+                        return _err(
+                            409,
+                            "PROJECTOR_OWNED_STORE",
+                            (
+                                "Canonical lifecycle projector owns this read-model file; "
+                                "publish through the canonical telemetry append path"
+                            ),
+                        )
+
                 existing = load_store_events(store_path)
 
                 # Check conflict with existing store events
