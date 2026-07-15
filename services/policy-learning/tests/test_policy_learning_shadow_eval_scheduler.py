@@ -334,3 +334,99 @@ def test_list_candidates_filter_by_eval_type() -> None:
         )
         assert len(imitation_list.json()) == 1
         assert imitation_list.json()[0]["eval_type"] == "imitation"
+
+
+def test_worker_backlog_dlq_process_retry_replay_restart_endpoints() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+
+        # 1. Propose candidates
+        resp = client.post(
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-worker-test",
+                "eval_type": "shadow",
+                "dataset_refs": [{"id": "ds-limit-1", "type": "trace_dataset"}, {"id": "ds-limit-2", "type": "trace_dataset"}],
+            },
+        )
+        assert resp.status_code == 201
+        
+        # 2. Check backlog
+        backlog_resp = client.get("/api/policy-learning/worker/backlog")
+        assert backlog_resp.status_code == 200
+        backlog = backlog_resp.json()
+        assert len(backlog) == 2
+        for c in backlog:
+            assert c["status"] == "proposed"
+
+        # 3. Process backlog
+        process_resp = client.post("/api/policy-learning/worker/process")
+        assert process_resp.status_code == 200
+        assert process_resp.json()["processed_count"] == 2
+
+        # 4. Check backlog is now empty, and candidates are processed
+        backlog_resp = client.get("/api/policy-learning/worker/backlog")
+        assert len(backlog_resp.json()) == 0
+
+        # Check listed candidates
+        listed = client.get("/api/policy-learning/candidates")
+        candidates = listed.json()
+        assert len(candidates) == 2
+        for c in candidates:
+            assert c["status"] == "processed"
+            assert "metrics" in c
+            assert "evaluation_summary" in c
+            assert "policy_weights" in c
+            assert "lineage" in c
+
+        # 5. Test DLQ and Replay/Retry: manually put a failed candidate
+        c1 = candidates[0]
+        c1["status"] = "failed"
+        c1["error_message"] = "mock evaluation failure"
+        svc.store.put_candidate(c1)
+
+        # Check DLQ returns the failed candidate
+        dlq_resp = client.get("/api/policy-learning/worker/dlq")
+        assert dlq_resp.status_code == 200
+        dlq = dlq_resp.json()
+        assert len(dlq) == 1
+        assert dlq[0]["candidate_id"] == c1["candidate_id"]
+
+        # Replay DLQ item
+        replay_resp = client.post(f"/api/policy-learning/worker/dlq/{c1['candidate_id']}/replay")
+        assert replay_resp.status_code == 200
+        # Replay automatically runs _process_backlog, so it shifts back to processed!
+        assert replay_resp.json()["status"] == "processed"
+
+        # DLQ should be empty now
+        dlq_resp = client.get("/api/policy-learning/worker/dlq")
+        assert len(dlq_resp.json()) == 0
+
+        # Fail it again to test retry
+        c1 = listed.json()[0]
+        c1["status"] = "failed"
+        c1["error_message"] = "mock evaluation failure"
+        svc.store.put_candidate(c1)
+
+        retry_resp = client.post(f"/api/policy-learning/worker/retry/{c1['candidate_id']}")
+        assert retry_resp.status_code == 200
+        assert retry_resp.json()["status"] == "processed"
+
+        # Fail both to test restart
+        for c in listed.json():
+            c["status"] = "failed"
+            c["error_message"] = "mock evaluation failure"
+            svc.store.put_candidate(c)
+
+        restart_resp = client.post("/api/policy-learning/worker/restart")
+        assert restart_resp.status_code == 200
+        assert restart_resp.json()["reset_count"] == 2
+
+        # Check readback
+        readback_resp = client.get(f"/api/policy-learning/worker/readback/{c1['candidate_id']}")
+        assert readback_resp.status_code == 200
+        assert readback_resp.json()["status"] == "processed"
+

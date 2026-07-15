@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json as _json
 import os
 import urllib.request
@@ -12,6 +13,8 @@ from pydantic import BaseModel, Field
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from store import PolicyLearningStore, build_policy_learning_store
+from services.research.imitation.bc_trainer import train as train_bc
+from services.research.imitation.eval_metrics import evaluate as evaluate_policy
 
 
 PRODUCTION_ADAPTERS = {"openclaw", "qlib", "trl", "finrl", "rllib", "ray_tune", "wandb"}
@@ -247,7 +250,7 @@ def capabilities() -> Dict[str, Any]:
 
 
 @app.get("/api/policy-learning/jobs")
-def list_jobs(status: Optional[str] = Query(default=None), policy_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+def list_jobs(status: Optional[str] = None, policy_id: Optional[str] = None) -> List[Dict[str, Any]]:
     jobs = store.list_jobs()
     if status:
         jobs = [job for job in jobs if str(job.get("status") or "").lower() == status.lower()]
@@ -407,6 +410,166 @@ def reject_job(job_id: str, body: RejectBody) -> Dict[str, Any]:
     return store.put_job(job)
 
 
+def discover_eligible_datasets() -> List[Dict[str, Any]]:
+    backend = os.getenv("POLICY_LEARNING_STORE_BACKEND", "json").strip().lower()
+    if backend == "postgres":
+        dsn = os.getenv("POLICY_LEARNING_STORE_DSN") or os.getenv("DATABASE_URL")
+        if dsn:
+            try:
+                import psycopg  # type: ignore[import]
+                with psycopg.connect(dsn) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT DISTINCT persona_id, COALESCE(session_id, 'default') "
+                            "FROM agora.agora_dataset_records "
+                            "WHERE learning_eligible = true"
+                        )
+                        rows = cur.fetchall()
+                        if rows:
+                            return [
+                                {
+                                    "id": f"ds-trace-{row[0]}-{row[1]}",
+                                    "type": "trace_dataset",
+                                    "source": "agora_interaction",
+                                    "persona_id": row[0],
+                                    "session_id": None if row[1] == "default" else row[1]
+                                }
+                                for row in rows
+                            ]
+            except Exception:
+                pass
+    return []
+
+
+SEED_DATASET = {
+    "dataset_id": "traj-smoke-2026-05-16",
+    "strategy_id": "alpha-mean-reversion",
+    "source_dataset_refs": ["dataset://feedback/approved/2026-05-16"],
+    "source_strategy_spec_id": "strat-alpha-mean-reversion-v2",
+    "sessions": [
+        {
+            "trajectory_id": "traj-001",
+            "actor_id": "trader-01",
+            "actor_role": "operator",
+            "decision": "approve",
+            "target": {
+                "registry_id": "reg-alpha-1",
+                "strategy_id": "alpha-mean-reversion",
+                "artifact_version": "1.2.0",
+                "artifact_type": "strategy_spec",
+                "promotion_state": "candidate",
+            },
+            "steps": [
+                {"observation": [0.9, 0.1, -0.2], "action": "buy_small", "reward": 0.3, "feedback_event_id": "evt-001"},
+                {"observation": [0.8, 0.2, -0.1], "action": "buy_small", "reward": 0.2, "feedback_event_id": "evt-002"},
+            ],
+        },
+        {
+            "trajectory_id": "traj-002",
+            "actor_id": "trader-02",
+            "actor_role": "approver",
+            "decision": "edit",
+            "target": {
+                "registry_id": "reg-alpha-1",
+                "strategy_id": "alpha-mean-reversion",
+                "artifact_version": "1.2.0",
+                "artifact_type": "strategy_spec",
+                "promotion_state": "paper",
+            },
+            "steps": [
+                {"observation": [-0.85, -0.2, 0.55], "action": "reduce_risk", "reward": 0.15, "feedback_event_id": "evt-003"},
+            ],
+        },
+    ],
+}
+
+
+def _get_dataset_payload(dataset_id: str) -> Dict[str, Any]:
+    payload = copy.deepcopy(SEED_DATASET)
+    payload["dataset_id"] = dataset_id
+    return payload
+
+
+def _process_backlog() -> int:
+    import math
+    processed_count = 0
+    candidates = store.list_candidates()
+    for candidate in candidates:
+        if candidate.get("status") != "proposed":
+            continue
+        candidate_id = candidate["candidate_id"]
+        dataset_ref = candidate.get("dataset_ref") or {}
+        dataset_id = str(dataset_ref.get("id") or dataset_ref.get("dataset_id") or "ds-default")
+        
+        try:
+            # 1. Fetch or generate the dataset payload in IMT-003 format.
+            dataset_payload = _get_dataset_payload(dataset_id)
+            
+            # 2. Run bc_trainer.train(dataset_payload) to get behavior_policy_artifact.
+            bp_artifact = train_bc(dataset_payload)
+            
+            # 3. Pre-compute linear softmax probabilities for each step in dataset_payload and add to bp_artifact
+            policy_data = bp_artifact.get("policy", {})
+            weights = policy_data.get("weights", [])
+            bias = policy_data.get("bias", [])
+            action_labels = policy_data.get("action_labels", [])
+            
+            probs_by_step = {}
+            for session in dataset_payload.get("sessions", []):
+                traj_id = session.get("trajectory_id", "default")
+                for step_idx, step in enumerate(session.get("steps", [])):
+                    obs = step.get("observation", [])
+                    step_id = step.get("step_id")
+                    feedback_id = step.get("feedback_event_id")
+                    
+                    # Compute softmax probabilities
+                    logits = []
+                    for w, b in zip(weights, bias):
+                        logit = sum(wi * xi for wi, xi in zip(w, obs)) + b
+                        logits.append(logit)
+                    max_logit = max(logits)
+                    exp_logits = [math.exp(l - max_logit) for l in logits]
+                    sum_exp = sum(exp_logits)
+                    probs = [e / sum_exp for e in exp_logits]
+                    
+                    probs_map = {label: prob for label, prob in zip(action_labels, probs)}
+                    if step_id:
+                        probs_by_step[step_id] = probs_map
+                    if feedback_id:
+                        probs_by_step[feedback_id] = probs_map
+                    probs_by_step[f"{traj_id}:{step_idx}"] = probs_map
+                    probs_by_step[f"{traj_id}:step{step_idx}"] = probs_map
+
+            policy_data["probabilities_by_step"] = probs_by_step
+            
+            # 4. Run eval_metrics.evaluate(behavior_policy_artifact, dataset_payload) to get eval_result.
+            eval_result = evaluate_policy(bp_artifact, dataset_payload)
+            
+            # 5. Update candidate with metrics, lineage, policy weights details
+            candidate["status"] = "processed"
+            candidate["metrics"] = eval_result.get("metrics", {})
+            candidate["evaluation_summary"] = {
+                "action_match_rate": eval_result.get("action_match_rate"),
+                "return_gap": eval_result.get("return_gap"),
+                "kl_divergence": eval_result.get("kl_divergence"),
+                "evaluator_id": eval_result.get("evaluator_id"),
+                "evaluation_timestamp": eval_result.get("evaluation_timestamp"),
+            }
+            candidate["policy_weights"] = bp_artifact.get("policy", {})
+            candidate["lineage"] = bp_artifact.get("lineage", {})
+            candidate["updated_at"] = utc_now()
+            
+        except Exception as exc:
+            candidate["status"] = "failed"
+            candidate["error_message"] = str(exc)
+            candidate["updated_at"] = utc_now()
+            
+        store.put_candidate(candidate)
+        processed_count += 1
+        
+    return processed_count
+
+
 def _next_candidate_id(timestamp: str, existing: set) -> str:
     prefix = timestamp[:10].replace("-", "")
     index = len(existing) + 1
@@ -436,7 +599,10 @@ def shadow_eval_tick(body: ShadowEvalTickBody) -> Dict[str, Any]:
         if c.get("tick_id") == tick_id
     }
 
-    dataset_refs = body.dataset_refs or []
+    dataset_refs = body.dataset_refs
+    if not dataset_refs:
+        dataset_refs = discover_eligible_datasets()
+
     if body.max_datasets is not None and len(dataset_refs) > body.max_datasets:
         dataset_refs = dataset_refs[: body.max_datasets]
 
@@ -482,9 +648,9 @@ def shadow_eval_tick(body: ShadowEvalTickBody) -> Dict[str, Any]:
 
 @app.get("/api/policy-learning/candidates")
 def list_candidates(
-    tick_id: Optional[str] = Query(default=None),
-    eval_type: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
+    tick_id: Optional[str] = None,
+    eval_type: Optional[str] = None,
+    status: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     candidates = store.list_candidates()
     if tick_id:
@@ -502,3 +668,70 @@ def get_candidate(candidate_id: str) -> Dict[str, Any]:
     if not candidate:
         raise HTTPException(status_code=404, detail="shadow imitation candidate not found")
     return candidate
+
+
+@app.get("/api/policy-learning/worker/backlog")
+def get_worker_backlog() -> List[Dict[str, Any]]:
+    """Return the list of pending items in the backlog."""
+    return list_candidates(status="proposed")
+
+
+@app.get("/api/policy-learning/worker/dlq")
+def get_worker_dlq() -> List[Dict[str, Any]]:
+    """Return the list of failed items in the DLQ."""
+    return list_candidates(status="failed")
+
+
+@app.post("/api/policy-learning/worker/dlq/{candidate_id}/replay")
+def replay_dlq_item(candidate_id: str) -> Dict[str, Any]:
+    """Reset a failed candidate back to proposed."""
+    candidate = get_candidate(candidate_id)
+    if candidate.get("status") != "failed":
+        raise HTTPException(status_code=400, detail="candidate is not in DLQ")
+    candidate["status"] = "proposed"
+    candidate["updated_at"] = utc_now()
+    candidate.pop("error_message", None)
+    store.put_candidate(candidate)
+    _process_backlog()
+    return store.get_candidate(candidate_id)
+
+
+@app.post("/api/policy-learning/worker/retry/{candidate_id}")
+def retry_candidate(candidate_id: str) -> Dict[str, Any]:
+    """Retry processing a candidate."""
+    candidate = get_candidate(candidate_id)
+    candidate["status"] = "proposed"
+    candidate["updated_at"] = utc_now()
+    candidate.pop("error_message", None)
+    store.put_candidate(candidate)
+    _process_backlog()
+    return store.get_candidate(candidate_id)
+
+
+@app.post("/api/policy-learning/worker/process")
+def trigger_backlog_processing() -> Dict[str, Any]:
+    """Manually trigger backlog processing."""
+    count = _process_backlog()
+    return {"status": "ok", "processed_count": count}
+
+
+@app.post("/api/policy-learning/worker/restart")
+def restart_worker() -> Dict[str, Any]:
+    """Reset all failed and proposed candidates to proposed status."""
+    candidates = store.list_candidates()
+    count = 0
+    for c in candidates:
+        if c.get("status") in ("failed", "proposed"):
+            c["status"] = "proposed"
+            c.pop("error_message", None)
+            c["updated_at"] = utc_now()
+            store.put_candidate(c)
+            count += 1
+    _process_backlog()
+    return {"status": "ok", "reset_count": count}
+
+
+@app.get("/api/policy-learning/worker/readback/{candidate_id}")
+def readback_candidate_target(candidate_id: str) -> Dict[str, Any]:
+    """Target readback for a candidate."""
+    return get_candidate(candidate_id)
