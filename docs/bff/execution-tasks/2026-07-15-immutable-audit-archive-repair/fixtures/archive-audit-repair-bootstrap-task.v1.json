@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "fixture_set_id": "loop-product-immutable-audit-archive-repair-bootstrap-v1",
+  "task_contract_algorithm": "sha256(json-sort-keys-compact projection excluding owner reviewer status next)",
+  "task": {
+    "id": "LOOP-PROD-AUDIT-ARCHIVE-REPAIR-001",
+    "title": "Immutable audit archive parser repair and bootstrap handoff recovery",
+    "summary_zh": "針對 #3652 鎖定的單一 immutable audit archive corruption，保留原始 bytes、以 content-addressed quarantine/repair/attestation record 修復可解析投影，重放 bootstrap handoff；不得改寫歷史、任務、dependency、actor 或 audit payload。",
+    "phase": "External bootstrap / archive integrity recovery",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "todo",
+    "depends_on": [],
+    "artifacts": [
+      ".orchestrator/task_archive.py",
+      ".orchestrator/runtime_state.py",
+      "scripts/ai_status.py",
+      "scripts/repair_immutable_audit_archive.py",
+      "scripts/test_repair_immutable_audit_archive.py",
+      "docs/deployment/immutable-audit-archive-repair-runbook.md",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-AUDIT-ARCHIVE-REPAIR-001"
+    ],
+    "acceptance": [
+      "accepts only source archive SHA-256 47d562e67b6f7f91fe5ea03ad08b36d473470d29e808a3981d44283e37623e24 and complete malformed line 8004 SHA-256 b16fd8057507ca8e76b3e40f07535e067f9fe5991dbe311b5e2e8ca43955fc07; every other source, line, byte count, newline status, or parser location fails closed",
+      "preserves the original gzip object as immutable evidence and quarantines it by its source digest; no repair path truncates, overwrites, recompresses, deletes, or renames the original archive",
+      "creates a content-addressed repair object and separate reviewer attestation that bind source archive digest, bad-line digest, parser diagnostic, repair transform version, repaired projection digest, verifier identity, approval identity, exact task/run/commit, and UTC time",
+      "the repaired projection is derived deterministically and is never represented as original history; original, quarantined source, repair object, and attestation remain independently addressable",
+      "strict parser validation succeeds for every archived audit log and the active ai-activity-log.jsonl; invalid, missing, duplicate, or un-attested repair objects fail closed and leave the normal outbox blocked",
+      "the deterministic outbox recovery test proves exactly-once behavior across crash/restart and does not consume, drop, duplicate, reorder, fabricate, or silently change task, dependency, actor, timestamp, event type, or audit payload",
+      "after validated repair and only after distinct reviewer plus Human/Ops approval, replay the previously blocked LOOP-PROD-RUNTIME-BOOT-001 handoff from its original intent; record a new replay receipt linked to the old failed handoff without changing its historical row",
+      "replay never performs primary catalog materialization, task reassignment, dependency modification, task completion, deployment, or any write outside the declared repair transaction",
+      "exact merged repair SHA passes strict no-write parser/outbox preflight and a post-repair bootstrap-handoff replay/readback matrix before LOOP-PROD-RUNTIME-BOOT-001 may re-enter normal review"
+    ],
+    "next": "Obtain the two-person external bootstrap admission described in RUNBOOK.md, then let one clean-worktree fleet worker implement and prove the repair.",
+    "wave": -2,
+    "fleet_lane": "immutable-audit-archive-repair-bootstrap",
+    "target_repo": "pantheon",
+    "merge_target": "dev",
+    "loop_ids": ["bff_health_monitoring"],
+    "current_maturity": "PR #3652 owner handoff is blocked because a single immutable archived audit row cannot be parsed; normal outbox recovery and normal task-state admission must fail closed.",
+    "target_maturity": "product-level",
+    "desired_state_sources": [
+      "original immutable gzip archive",
+      "content-addressed quarantine and repair/attestation records",
+      "strict archived and active audit parser results",
+      "deterministic activity outbox recovery receipt",
+      "LOOP-PROD-RUNTIME-BOOT-001 replay handoff receipt"
+    ],
+    "actual_state_sources": [
+      "archive/logs/ai-activity-log.jsonl-2026-07-07T1503Z.gz",
+      "ai-activity-log.jsonl",
+      "pending status-activity outbox",
+      "PR #3652 owner-to-reviewer handoff failure"
+    ],
+    "proof_required": [
+      "two-person external bootstrap admission envelope and isolated worktree launch receipt",
+      "source gzip, complete-line, byte-count, newline, parser-location, and active-log preimage digests",
+      "quarantine, deterministic repair projection, reviewer attestation, and postimage digest chain",
+      "field-level original-versus-repair comparison proving no task/dependency/actor/audit-payload change or silent drop",
+      "all-archives plus active-log strict parser matrix and no-write failure matrix",
+      "crash/restart exactly-once outbox recovery and bootstrap-handoff replay/readback evidence",
+      "exact PR/merge/deploy identities, distinct-runtime review, and Human/Ops final sign-off"
+    ],
+    "non_goals": [
+      "No direct ai-status.json or ai-activity-log.jsonl rewrite",
+      "No direct gzip archive rewrite, deletion, truncation, recompression, or history replacement",
+      "No task/dependency/owner/reviewer/actor/status manipulation to bypass the blocker",
+      "No primary catalog materialization or scheduler/deploy change",
+      "No planner-authored product implementation"
+    ],
+    "dispatch_rules": [
+      "this is an external/bootstrap prerequisite to LOOP-PROD-RUNTIME-BOOT-001 and is not dispatched through the blocked normal outbox",
+      "admission is only the two-person, content-addressed external-bootstrap envelope in RUNBOOK.md; it authorizes one isolated clean worktree and has no permission to mutate production status, audit, archive, scheduler, or deploy state",
+      "the envelope must bind this task contract digest, source archive digest, malformed-line digest, exact base commit, admitted run, provider, worktree, declared scope, expected branch, remote, merge target, expiry, Human/Ops approver, and distinct reviewer",
+      "missing, expired, mismatched, self-approved, or replayed envelope fails closed; a normal ai_status command, direct file edit, or unrecorded worker launch is not admission",
+      "implementation may be performed only by the admitted fleet worker; planner work is limited to this packet and validation",
+      "a distinct admitted runtime reviewer and Human/Ops must approve the exact PR head before merge; current #3652 remains blocked until this task is complete"
+    ],
+    "product_level_required": true,
+    "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AUDIT-ARCHIVE-REPAIR-001/",
+    "task_doc": "docs/bff/execution-tasks/2026-07-15-immutable-audit-archive-repair/LOOP-PROD-AUDIT-ARCHIVE-REPAIR-001.md",
+    "requires_human_ops_signoff": true
+  },
+  "task_contract_sha256": "26d358c5f2c071bc2ab4fc4dc27ff934bca0ba2f9606dbdbdd9b29fe07defd1d"
+}
