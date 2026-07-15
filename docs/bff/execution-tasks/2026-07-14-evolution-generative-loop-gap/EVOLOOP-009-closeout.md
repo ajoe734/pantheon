@@ -4,7 +4,7 @@ Status: **blocked pre-closeout — do not mark `done`**
 
 Evidence captured: 2026-07-15 13:16-13:25 UTC
 
-Owner: Codex  
+Owner: Codex
 Reviewer: Antigravity
 
 ## Outcome
