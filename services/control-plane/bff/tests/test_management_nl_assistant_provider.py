@@ -25,6 +25,7 @@ from management_nl_command_idempotency import (
     ManagementNlCommandPayloadConflict,
     ManagementNlCommandRecoveryRequired,
     ManagementNlCommandScope,
+    ManagementNlCommandStorageError,
 )
 from models import OperatorIdentity
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
@@ -423,7 +424,12 @@ def test_management_nl_command_store_reloads_exact_result_and_scopes_every_bound
     request_hash = "a" * 64
     result = {
         "status": "accepted",
-        "data": {"status": "completed", "message_id": "mnl-durable"},
+        "data": {
+            "status": "completed",
+            "message_id": "mnl-durable",
+            "answer": "canonical replay for browser-key",
+        },
+        "meta": {"idempotency": {"idempotencyKey": "browser-key"}},
     }
     scope = ManagementNlCommandScope(
         actor_id="operator-a",
@@ -442,6 +448,7 @@ def test_management_nl_command_store_reloads_exact_result_and_scopes_every_bound
     assert replay.state == "complete"
     assert replay.result == result
     assert store_path.stat().st_mode & 0o777 == 0o600
+    assert "browser-key" not in store_path.read_text(encoding="utf-8")
 
     with pytest.raises(ManagementNlCommandPayloadConflict):
         reloaded.admit(scope, request_hash="b" * 64)
@@ -491,6 +498,100 @@ def test_management_nl_command_store_reload_expires_to_uncertain_without_reexecu
     document = json.loads(path.read_text(encoding="utf-8"))
     assert list(document["records"].values())[0]["status"] == "uncertain"
     assert list(document["records"].values())[0]["reason"] == "reservation_expired"
+
+
+def test_management_nl_command_store_size_retention_and_corruption_fail_closed(
+    tmp_path: Path,
+) -> None:
+    now = [100.0]
+    path = tmp_path / "bounded-management-nl-commands.json"
+    store = ManagementNlCommandIdempotencyStore(
+        str(path),
+        retention_seconds=1,
+        max_response_bytes=1024,
+        clock=lambda: now[0],
+    )
+    first_scope = ManagementNlCommandScope(
+        "operator-a", "tenant-a", "POST /bff/management/nl/ask", "first-key"
+    )
+    first = store.admit(first_scope, request_hash="d" * 64)
+    assert first.reservation is not None
+    store.complete(first.reservation, {"data": {"status": "completed"}})
+
+    now[0] = 102.0
+    second_scope = ManagementNlCommandScope(
+        "operator-a", "tenant-a", "POST /bff/management/nl/ask", "second-key"
+    )
+    second = store.admit(second_scope, request_hash="e" * 64)
+    assert second.reservation is not None
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert ManagementNlCommandIdempotencyStore.storage_key(first_scope) not in document["records"]
+    assert ManagementNlCommandIdempotencyStore.storage_key(second_scope) in document["records"]
+
+    with pytest.raises(ManagementNlCommandStorageError, match="size limit"):
+        store.complete(
+            second.reservation,
+            {"data": {"status": "completed", "answer": "x" * 2048}},
+        )
+    still_reserved = store.observe(second_scope, request_hash="e" * 64)
+    assert still_reserved.state == "wait"
+
+    corrupt_path = tmp_path / "corrupt-management-nl-commands.json"
+    corrupt_path.write_text("{not-json", encoding="utf-8")
+    corrupt = ManagementNlCommandIdempotencyStore(str(corrupt_path))
+    with pytest.raises(ManagementNlCommandStorageError, match="unreadable"):
+        corrupt.admit(first_scope, request_hash="f" * 64)
+
+
+def test_management_nl_request_exception_marks_reservation_uncertain_immediately(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    try:
+        _clear_provider_env(monkeypatch)
+        _enable_management_nl_command_idempotency(tmp_path, monkeypatch)
+        _seeded_client(tmp_path, monkeypatch)
+        payload = {
+            "question": "Exercise fail-closed command admission.",
+            "focus": "portfolio",
+            "sessionId": "mgmt-command-exception",
+        }
+        kwargs = {
+            "payload": payload,
+            "authorization": OPERATOR_HEADERS["Authorization"],
+            "idempotency_key": "mgmt-command-exception-key",
+            "x_idempotency_key": None,
+            "x_tenant_id": None,
+            "x_pantheon_tenant": None,
+        }
+
+        with mock.patch.object(
+            bff_main,
+            "_management_ai_ensure_session",
+            side_effect=RuntimeError("injected session failure"),
+        ) as ensure_session:
+            with pytest.raises(RuntimeError, match="injected session failure"):
+                asyncio.run(bff_main.bff_management_nl_ask(**kwargs))
+            assert ensure_session.call_count == 1
+
+        path = tmp_path / "management-nl-command-idempotency.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        record = next(iter(document["records"].values()))
+        assert record["status"] == "uncertain"
+        assert record["reason"] == "request_failed_before_terminal_commit"
+
+        with pytest.raises(HTTPException) as retry:
+            asyncio.run(bff_main.bff_management_nl_ask(**kwargs))
+        assert retry.value.status_code == 409
+        assert retry.value.detail["error"]["details"]["precondition_failed"] == (
+            "idempotency_recovery_required"
+        )
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_STORE = None
+        bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
 
 
 def test_management_nl_concurrent_exact_request_invokes_provider_once_and_replays_terminal(

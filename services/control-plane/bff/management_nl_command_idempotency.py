@@ -59,6 +59,7 @@ class ManagementNlCommandReservation:
     storage_key: str
     request_hash: str
     token: str
+    idempotency_key: str
 
 
 @dataclass(frozen=True)
@@ -190,22 +191,36 @@ class ManagementNlCommandIdempotencyStore:
 
             if legacy is not None and legacy_terminal:
                 if isinstance(record, dict) and record.get("status") == "complete":
-                    replay = self._completed_result(record)
+                    replay = self._completed_result(
+                        record,
+                        idempotency_key=scope.idempotency_key,
+                    )
                     if _canonical_json(replay) != _canonical_json(legacy):
                         raise ManagementNlCommandStorageError(
                             "Management NL durable replay stores disagree on the terminal result"
                         )
                     return ManagementNlCommandAdmission(state="complete", result=replay)
+                protected_legacy = self._protect_idempotency_key(
+                    legacy,
+                    scope.idempotency_key,
+                )
+                self._validate_response_size(protected_legacy)
                 records[storage_key] = self._complete_record(
                     request_hash=clean_hash,
-                    result=legacy,
+                    result=protected_legacy,
                     source="legacy_conversation_store",
                 )
                 self._write_document(document)
                 return ManagementNlCommandAdmission(state="complete", result=legacy)
 
             if isinstance(record, dict):
-                return self._existing_admission(document, storage_key, record, clean_hash)
+                return self._existing_admission(
+                    document,
+                    storage_key,
+                    record,
+                    clean_hash,
+                    idempotency_key=scope.idempotency_key,
+                )
 
             if legacy is not None:
                 records[storage_key] = {
@@ -241,6 +256,7 @@ class ManagementNlCommandIdempotencyStore:
                     storage_key=storage_key,
                     request_hash=clean_hash,
                     token=token,
+                    idempotency_key=str(scope.idempotency_key).strip(),
                 ),
                 recovery_after=now + self.recovery_seconds,
             )
@@ -265,7 +281,13 @@ class ManagementNlCommandIdempotencyStore:
                 raise ManagementNlCommandPayloadConflict(
                     "Management NL idempotency key is bound to a different payload"
                 )
-            return self._existing_admission(document, storage_key, record, clean_hash)
+            return self._existing_admission(
+                document,
+                storage_key,
+                record,
+                clean_hash,
+                idempotency_key=scope.idempotency_key,
+            )
 
     def complete(
         self,
@@ -274,6 +296,8 @@ class ManagementNlCommandIdempotencyStore:
     ) -> Dict[str, Any]:
         copied = copy.deepcopy(dict(result))
         self._validate_response_size(copied)
+        protected = self._protect_idempotency_key(copied, reservation.idempotency_key)
+        self._validate_response_size(protected)
         with self._locked_document() as document:
             record = document["records"].get(reservation.storage_key)
             if not isinstance(record, dict):
@@ -285,7 +309,10 @@ class ManagementNlCommandIdempotencyStore:
                     "Management NL command reservation request hash changed"
                 )
             if record.get("status") == "complete":
-                replay = self._completed_result(record)
+                replay = self._completed_result(
+                    record,
+                    idempotency_key=reservation.idempotency_key,
+                )
                 if _canonical_json(replay) != _canonical_json(copied):
                     raise ManagementNlCommandStorageError(
                         "Management NL command was completed with a different result"
@@ -301,7 +328,7 @@ class ManagementNlCommandIdempotencyStore:
                 )
             document["records"][reservation.storage_key] = self._complete_record(
                 request_hash=reservation.request_hash,
-                result=copied,
+                result=protected,
                 source="command_owner",
             )
             self._write_document(document)
@@ -344,12 +371,17 @@ class ManagementNlCommandIdempotencyStore:
         storage_key: str,
         record: Dict[str, Any],
         request_hash: str,
+        *,
+        idempotency_key: str,
     ) -> ManagementNlCommandAdmission:
         status = str(record.get("status") or "")
         if status == "complete":
             return ManagementNlCommandAdmission(
                 state="complete",
-                result=self._completed_result(record),
+                result=self._completed_result(
+                    record,
+                    idempotency_key=idempotency_key,
+                ),
             )
         if status == "uncertain":
             raise ManagementNlCommandRecoveryRequired(
@@ -390,14 +422,60 @@ class ManagementNlCommandIdempotencyStore:
             "result": copy.deepcopy(dict(result)),
         }
 
-    @staticmethod
-    def _completed_result(record: Mapping[str, Any]) -> Dict[str, Any]:
+    @classmethod
+    def _completed_result(
+        cls,
+        record: Mapping[str, Any],
+        *,
+        idempotency_key: str,
+    ) -> Dict[str, Any]:
         result = record.get("result")
         if not isinstance(result, dict):
             raise ManagementNlCommandStorageError(
                 "Completed Management NL command result is missing"
             )
-        return copy.deepcopy(result)
+        restored = cls._restore_idempotency_key(result, idempotency_key)
+        if not isinstance(restored, dict):
+            raise ManagementNlCommandStorageError(
+                "Completed Management NL command result has an invalid shape"
+            )
+        return restored
+
+    @staticmethod
+    def _idempotency_key_token(idempotency_key: str) -> str:
+        return f"__pantheon_management_nl_idempotency_{_digest(str(idempotency_key).strip())}__"
+
+    @classmethod
+    def _protect_idempotency_key(cls, value: Any, idempotency_key: str) -> Any:
+        clean_key = str(idempotency_key or "").strip()
+        if not clean_key:
+            raise ManagementNlCommandStorageError(
+                "Management NL idempotency key is missing while protecting replay data"
+            )
+        token = cls._idempotency_key_token(clean_key)
+        return cls._replace_string_recursive(value, clean_key, token)
+
+    @classmethod
+    def _restore_idempotency_key(cls, value: Any, idempotency_key: str) -> Any:
+        clean_key = str(idempotency_key or "").strip()
+        token = cls._idempotency_key_token(clean_key)
+        return cls._replace_string_recursive(value, token, clean_key)
+
+    @classmethod
+    def _replace_string_recursive(cls, value: Any, source: str, target: str) -> Any:
+        if isinstance(value, str):
+            return value.replace(source, target)
+        if isinstance(value, list):
+            return [cls._replace_string_recursive(item, source, target) for item in value]
+        if isinstance(value, tuple):
+            return [cls._replace_string_recursive(item, source, target) for item in value]
+        if isinstance(value, dict):
+            return {
+                cls._replace_string_recursive(key, source, target) if isinstance(key, str) else key:
+                cls._replace_string_recursive(item, source, target)
+                for key, item in value.items()
+            }
+        return copy.deepcopy(value)
 
     def _validate_response_size(self, result: Mapping[str, Any]) -> None:
         encoded = _canonical_json(result).encode("utf-8")

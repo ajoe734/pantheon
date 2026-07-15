@@ -17,7 +17,7 @@ from collections import deque
 from concurrent.futures import Executor, ThreadPoolExecutor
 from contextvars import ContextVar, copy_context
 from datetime import datetime, timedelta, timezone
-from functools import partial
+from functools import partial, wraps
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 from urllib.parse import quote, urlencode
@@ -37408,6 +37408,9 @@ async def bff_management_evolution_journal(
 _MGMT_NL_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _MGMT_NL_COMMAND_IDEMPOTENCY_STORE: Optional[ManagementNlCommandIdempotencyStore] = None
 _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG: Optional[Tuple[str, float]] = None
+_MGMT_NL_COMMAND_RESERVATION_CONTEXT: ContextVar[
+    Optional[ManagementNlCommandReservation]
+] = ContextVar("management_nl_command_reservation", default=None)
 
 _MGMT_NL_VALID_FOCUS = {"cockpit", "trading_pulse", "portfolio", "persona_fleet", "all"}
 _MGMT_NL_FOCUS_ALIASES = {
@@ -39828,6 +39831,36 @@ async def _mgmt_nl_command_mark_uncertain(
         log.exception("Failed to mark Management NL command reservation uncertain")
 
 
+def _mgmt_nl_command_reservation_guard(handler: Callable[..., Any]) -> Callable[..., Any]:
+    """Mark any owned reservation uncertain before an exceptional response exits."""
+
+    @wraps(handler)
+    async def guarded(*args: Any, **kwargs: Any) -> Any:
+        token = _MGMT_NL_COMMAND_RESERVATION_CONTEXT.set(None)
+        try:
+            return await handler(*args, **kwargs)
+        except BaseException:
+            reservation = _MGMT_NL_COMMAND_RESERVATION_CONTEXT.get()
+            if reservation is not None:
+                try:
+                    await asyncio.shield(
+                        _mgmt_nl_command_mark_uncertain(
+                            reservation,
+                            reason="request_failed_before_terminal_commit",
+                        )
+                    )
+                except BaseException:
+                    # The durable recovery deadline still turns an abandoned
+                    # in-progress record uncertain if cancellation interrupts
+                    # this best-effort immediate transition.
+                    log.exception("Management NL reservation uncertainty guard failed")
+            raise
+        finally:
+            _MGMT_NL_COMMAND_RESERVATION_CONTEXT.reset(token)
+
+    return guarded
+
+
 def _mgmt_nl_surface_confidence(surfaces: Dict[str, Any]) -> str:
     statuses = [v.get("status", "unavailable") for v in surfaces.values() if isinstance(v, dict)]
     if not statuses:
@@ -41480,6 +41513,7 @@ def _mgmt_nl_schedule_provider_finalize(**kwargs: Any) -> None:
 
 
 @app.post("/bff/management/nl/ask", status_code=202)
+@_mgmt_nl_command_reservation_guard
 async def bff_management_nl_ask(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -41586,6 +41620,7 @@ async def bff_management_nl_ask(
         legacy_result=legacy_cached,
         display_key=resolved_key,
     )
+    _MGMT_NL_COMMAND_RESERVATION_CONTEXT.set(command_reservation)
     if cached is not None:
         cached_data = cached.get("data") if isinstance(cached, dict) else {}
         _management_ai_record_event(
