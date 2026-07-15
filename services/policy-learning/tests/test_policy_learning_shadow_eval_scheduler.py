@@ -580,6 +580,3 @@ def test_get_dataset_payload_postgres_loading() -> None:
             res = _get_dataset_payload("ds-trace-persona1-session1")
             assert res["dataset_id"] == "ds-trace-persona1-session1"
             assert len(res["sessions"]) == 2
-
-
-
