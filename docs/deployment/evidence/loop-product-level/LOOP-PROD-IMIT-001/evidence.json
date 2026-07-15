@@ -269,6 +269,35 @@
       "kind": "local_validation",
       "status": "pass",
       "reference": "pytest policy-learning, research/imitation, learning/imitation, and evidence schema verification"
+    },
+    {
+      "sequence": 3,
+      "recorded_at": "2026-07-15T16:06:05Z",
+      "kind": "pr_merge",
+      "status": "merged_with_review_gap",
+      "reference": "PR #3725 merged into dev; independent review found _get_dataset_payload always returned hardcoded SEED_DATASET regardless of the discovered dataset_id, so candidate training/eval never used real discovered dataset content. Verdict: CHANGES REQUESTED."
+    },
+    {
+      "sequence": 4,
+      "recorded_at": "2026-07-15T18:14:47Z",
+      "kind": "anchor_commit",
+      "status": "recorded",
+      "sha": "c6c3f554c54d06bf5694e6de8a5fe13cf2aca262",
+      "reference": "Owner fix: _get_dataset_payload loads real content from agora.agora_dataset_records for ds-trace-* dataset ids when POLICY_LEARNING_STORE_BACKEND=postgres, falling back to SEED_DATASET only when no backend/DSN/matching rows are available"
+    },
+    {
+      "sequence": 5,
+      "recorded_at": "2026-07-15T18:30:00Z",
+      "kind": "review_reverify",
+      "status": "pass",
+      "reference": "Reviewer re-ran python3 -m pytest services/policy-learning/tests services/learning/imitation (31 passed) and python3 -m jsonschema -i evidence.json schemas/product-evidence.schema.json (pass) after merging origin/dev into task/LOOP-PROD-IMIT-001 (d15b2e969032376740d7c32a1417f671aa2db745); confirmed the dataset-loading fix closes the previously flagged gap and _process_backlog now threads the discovered dataset_id through to real content."
+    },
+    {
+      "sequence": 6,
+      "recorded_at": "2026-07-15T18:35:00Z",
+      "kind": "pr_opened",
+      "status": "open_auto_merge_enabled",
+      "reference": "PR #3726 (task/LOOP-PROD-IMIT-001 -> dev) opened to land the dataset-loading fix that PR #3725 did not include; auto-merge enabled, pending required checks."
     }
   ]
 }
