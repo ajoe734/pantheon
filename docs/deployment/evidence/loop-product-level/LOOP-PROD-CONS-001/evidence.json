@@ -74,10 +74,11 @@
       }
     ],
     "pull_request": {
-      "number": 3679,
-      "url": "https://github.com/ajoe734/pantheon/pull/3679",
+      "number": 3680,
+      "url": "https://github.com/ajoe734/pantheon/pull/3680",
       "head_sha": "c48e4eb69fd34f632163e462c7df57f88428b3f0",
-      "merge_sha": "933054935d2c2554d61040fdad3785882f84fb2c"
+      "merge_sha": "933054935d2c2554d61040fdad3785882f84fb2c",
+      "base": "dev"
     },
     "required_checks": []
   },
@@ -183,26 +184,49 @@
       "id": "AC-01",
       "statement": "Remove the success path of automatically generating committee/memo/recommendation",
       "status": "pass",
-      "proof": "Removed Step 3 from the workflow executor; system-authored memos are no longer auto-generated."
+      "evidence_refs": [
+        "services/consultation/workflow_executor.py"
+      ]
     },
     {
       "id": "AC-02",
       "statement": "Only qualified real participant/provider-authored transcripts, memos, and reviews can be published/handed off",
       "status": "pass",
-      "proof": "Added validation helper at the API publishing and handoff layer, and in the workflow executor tick loop."
+      "evidence_refs": [
+        "services/consultation/main.py",
+        "services/consultation/workflow_executor.py"
+      ]
     },
     {
       "id": "AC-03",
       "statement": "Workflow executor stalls and returns 'blocked' when the provider is unavailable or unqualified",
       "status": "pass",
-      "proof": "Workflow executor correctly evaluates participants, transcripts, and evidence qualification, setting outcome to 'blocked' if any check fails."
+      "evidence_refs": [
+        "services/consultation/workflow_executor.py",
+        "services/consultation/test_workflow_executor.py"
+      ]
     }
   ],
+  "residual_risks": {},
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-CONS-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CONS-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CONS-001/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion file hashes evidence.json to avoid a recursive self-hash.",
+    "source_artifact_sha256_by_epoch": {}
+  },
   "record_log": [
     {
+      "sequence": 1,
+      "recorded_at": "2026-07-15T04:58:00Z",
       "kind": "review",
       "status": "pass",
-      "timestamp": "2026-07-15T05:05:00Z",
       "actor": "Claude",
       "note": "Reviewed product-level evidence.json and verification commands. Implementation meets all requirements and safety limits."
     }
