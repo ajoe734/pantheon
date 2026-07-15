@@ -752,7 +752,12 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def durable_write_bytes(path: Path, payload: bytes) -> None:
+def durable_write_bytes(
+    path: Path,
+    payload: bytes,
+    *,
+    mode: int | None = None,
+) -> None:
     """Atomically replace one file and durably publish its directory entry."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -766,11 +771,169 @@ def durable_write_bytes(path: Path, payload: bytes) -> None:
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(payload)
             handle.flush()
+            if mode is not None:
+                os.fchmod(handle.fileno(), mode)
             os.fsync(handle.fileno())
         os.replace(temp_path, path)
         _fsync_directory(path.parent)
     finally:
         temp_path.unlink(missing_ok=True)
+
+
+def durable_create_bytes(
+    path: Path,
+    payload: bytes,
+    *,
+    mode: int = 0o600,
+) -> None:
+    """Durably create one regular-file evidence leaf without clobbering it."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(path, flags, mode)
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        path_stat = path.lstat()
+        if (
+            not stat.S_ISREG(descriptor_stat.st_mode)
+            or stat.S_ISLNK(path_stat.st_mode)
+            or (path_stat.st_dev, path_stat.st_ino)
+            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        ):
+            raise RuntimeError(f"created evidence leaf is not stable: {path}")
+        view = memoryview(payload)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError(f"evidence write made no progress: {path}")
+            view = view[written:]
+        os.fchmod(descriptor, mode)
+        os.fsync(descriptor)
+        after_stat = path.lstat()
+        readback = bytearray()
+        offset = 0
+        while len(readback) < len(payload):
+            chunk = os.pread(descriptor, len(payload) - len(readback), offset)
+            if not chunk:
+                break
+            readback.extend(chunk)
+            offset += len(chunk)
+        if (
+            stat.S_ISLNK(after_stat.st_mode)
+            or (after_stat.st_dev, after_stat.st_ino)
+            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+            or bytes(readback) != payload
+        ):
+            raise RuntimeError(f"created evidence readback mismatch: {path}")
+    finally:
+        os.close(descriptor)
+    _fsync_directory(path.parent)
+
+
+def read_regular_file_snapshot(
+    path: Path,
+    *,
+    source: str,
+) -> tuple[bytes, os.stat_result]:
+    """Read one stable regular-file leaf and return bytes plus its FD stat."""
+
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(path, flags)
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        path_stat = path.lstat()
+        if (
+            not stat.S_ISREG(descriptor_stat.st_mode)
+            or stat.S_ISLNK(path_stat.st_mode)
+            or (path_stat.st_dev, path_stat.st_ino)
+            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        ):
+            raise RuntimeError(f"{source} must be a stable regular file: {path}")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after_stat = path.lstat()
+        if (
+            stat.S_ISLNK(after_stat.st_mode)
+            or (after_stat.st_dev, after_stat.st_ino)
+            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        ):
+            raise RuntimeError(f"{source} changed during read: {path}")
+        return b"".join(chunks), descriptor_stat
+    finally:
+        os.close(descriptor)
+
+
+def read_regular_file_bytes(path: Path, *, source: str) -> bytes:
+    """Read one stable regular-file leaf without following a symlink."""
+
+    payload, _ = read_regular_file_snapshot(path, source=source)
+    return payload
+
+
+def restore_canonical_task_state_bytes(
+    status_file: str | Path,
+    payload: bytes,
+    *,
+    mode: int = 0o664,
+) -> None:
+    """Durably restore canonical task state under its stable lock and read it back."""
+
+    status_path = Path(status_file).expanduser()
+    with canonical_task_state_lock_file(status_path):
+        durable_write_bytes(status_path, payload, mode=mode)
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        descriptor = os.open(status_path, flags)
+        try:
+            descriptor_stat = os.fstat(descriptor)
+            path_stat = status_path.lstat()
+            if (
+                not stat.S_ISREG(descriptor_stat.st_mode)
+                or stat.S_ISLNK(path_stat.st_mode)
+                or (path_stat.st_dev, path_stat.st_ino)
+                != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+            ):
+                raise RuntimeError(
+                    f"canonical task-state changed during restore: {status_path}"
+                )
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            after_stat = status_path.lstat()
+            if (
+                stat.S_ISLNK(after_stat.st_mode)
+                or (after_stat.st_dev, after_stat.st_ino)
+                != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+                or b"".join(chunks) != payload
+            ):
+                raise RuntimeError(
+                    f"canonical task-state restore readback mismatch: {status_path}"
+                )
+        finally:
+            os.close(descriptor)
+        _fsync_directory(status_path.parent)
 
 
 def _durable_write_gzip(path: Path, payload: bytes) -> None:
