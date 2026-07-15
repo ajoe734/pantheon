@@ -189,9 +189,11 @@ class TestAlphaRevalidationWorkerRunOnce:
             }
         }
         
-        with mock.patch.object(worker, "_fetch_spec_from_registry", return_value=mock_spec) as mock_fetch:
+        with mock.patch.object(worker, "_fetch_spec_from_registry", return_value=mock_spec) as mock_fetch, \
+             mock.patch.object(worker, "_writeback_lineage_to_registry") as mock_writeback:
             result = worker.run_once()
             mock_fetch.assert_called_once_with("s1", "1.0")
+            mock_writeback.assert_called_once_with("s1", "1.0", mock.ANY, "dataset:synthetic", mock.ANY)
 
         assert result["processed"] == 1
         assert len(result["created_run_ids"]) == 1
@@ -359,7 +361,8 @@ class TestAlphaRevalidationWorkerBehavioralProof:
             "governance": {"approval_required": True, "policy_id": "policy-1", "risk_profile": "research_only"},
             "provenance": {"source_kind": "workflow", "created_at": "2026-05-17T11:10:00Z", "source_refs": ["source:1"], "created_by": "Codex"}
         }
-        with mock.patch.object(worker, "_fetch_spec_from_registry", return_value=mock_spec):
+        with mock.patch.object(worker, "_fetch_spec_from_registry", return_value=mock_spec), \
+             mock.patch.object(worker, "_writeback_lineage_to_registry") as mock_writeback:
             result2 = worker.run_once()
             assert result2["processed"] == 1
             assert len(result2["created_run_ids"]) == 1
@@ -368,4 +371,84 @@ class TestAlphaRevalidationWorkerBehavioralProof:
         entries = queue.list_all()
         assert len(entries) == 1
         assert entries[0]["last_revalidation_status"] == "completed"
+
+    def test_run_once_tenant_scoped_claiming(self, tmp_path):
+        queue, worker = _make_worker(tmp_path)
+        
+        # Enqueue spec for tenant A
+        spec_a = _approved_spec("s-a")
+        spec_a["tenant_id"] = "tenant-a"
+        queue.enqueue(spec_a)
+        
+        # Enqueue spec for tenant B
+        spec_b = _approved_spec("s-b")
+        spec_b["tenant_id"] = "tenant-b"
+        queue.enqueue(spec_b)
+        
+        # Run for tenant-a only
+        result_a = worker.run_once(tenant_id="tenant-a")
+        assert result_a["processed"] == 1
+        assert len(result_a["created_run_ids"]) == 1
+        assert result_a["created_run_ids"][0].startswith("arvrun-s-a-")
+        
+        # Run for tenant-b only
+        result_b = worker.run_once(tenant_id="tenant-b")
+        assert result_b["processed"] == 1
+        assert len(result_b["created_run_ids"]) == 1
+        assert result_b["created_run_ids"][0].startswith("arvrun-s-b-")
+
+    def test_worker_replay_dlq(self, tmp_path):
+        queue, worker = _make_worker(tmp_path)
+        spec = _approved_spec("s1")
+        queue.enqueue(spec)
+        
+        # Fail it 3 times to move to DLQ
+        for _ in range(3):
+            queue.mark_failed("s1", "1.0", error="error", max_retries=3)
+            
+        entries = queue.list_all()
+        assert entries[0]["status"] == "dlq"
+        
+        # Replay via worker
+        assert worker.replay_dlq("s1", "1.0") is True
+        
+        entries = queue.list_all()
+        assert entries[0]["status"] == "pending"
+
+    def test_non_stub_writeback_lineage_fail_closed_and_readback(self, tmp_path):
+        import json
+        queue, worker = _make_worker(tmp_path, dispatch_mode="handoff_only")
+        
+        # 1. Test success (POST returns registry_id, GET returns correct producer_run_id)
+        mock_response_post = mock.MagicMock()
+        mock_response_post.__enter__.return_value = mock_response_post
+        mock_response_post.read.return_value = json.dumps({"entry": {"registry_id": "reg-1"}}).encode("utf-8")
+        
+        mock_response_get = mock.MagicMock()
+        mock_response_get.__enter__.return_value = mock_response_get
+        mock_response_get.read.return_value = json.dumps({"entry": {"producer_run_id": "run-1"}}).encode("utf-8")
+        
+        with mock.patch("urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.side_effect = [mock_response_post, mock_response_get]
+            
+            # This should run without raising an error
+            worker._writeback_lineage_to_registry("s1", "1.0", "run-1", "dataset-1", "code-1")
+            
+            assert mock_urlopen.call_count == 2
+            
+        # 2. Test readback mismatch (GET returns wrong producer_run_id)
+        mock_response_get_mismatch = mock.MagicMock()
+        mock_response_get_mismatch.__enter__.return_value = mock_response_get_mismatch
+        mock_response_get_mismatch.read.return_value = json.dumps({"entry": {"producer_run_id": "run-mismatch"}}).encode("utf-8")
+        
+        with mock.patch("urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.side_effect = [mock_response_post, mock_response_get_mismatch]
+            
+            with pytest.raises(RuntimeError, match="Readback verification failed"):
+                worker._writeback_lineage_to_registry("s1", "1.0", "run-1", "dataset-1", "code-1")
+
+        # 3. Test HTTP failure (fails closed / raises RuntimeError)
+        with mock.patch("urllib.request.urlopen", side_effect=Exception("HTTP connection failed")):
+            with pytest.raises(RuntimeError, match="Lineage writeback or readback verification failed"):
+                worker._writeback_lineage_to_registry("s1", "1.0", "run-1", "dataset-1", "code-1")
 
