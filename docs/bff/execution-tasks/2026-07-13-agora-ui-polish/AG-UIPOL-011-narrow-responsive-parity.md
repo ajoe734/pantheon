@@ -1,9 +1,10 @@
 # AG-UIPOL-011: Narrow responsive task parity
 
-Status: active delivery. The frontend implementation merged through
+Status: completed. The frontend implementation merged through
 `execute-plans` PR #344 at
-`cbc6877630e0af087cd4d119da6024d816e4e495`; hosted acceptance and the
-post-delivery parity readback remain in progress.
+`cbc6877630e0af087cd4d119da6024d816e4e495`, with drawer gates hardened in
+PR #345 and PR #346. Hosted acceptance has been completed and verified against
+the dev deployment.
 
 Priority: 6 — cross-surface behavioral gate after desktop IA ownership is clear.
 

@@ -8,12 +8,12 @@ This record pins the reviewer-approved narrow responsive Trading Desk delivery t
 
 - Frontend: `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`
 - BFF: `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`
-- `execute-plans@dev`: `b6a5bc9311941cf7333c5f738526868715533101`
+- `execute-plans@dev`: `cb139ca8a4e4a1236033b2ccbdd917907de592cc`
 - Pantheon BFF recorded by the manifest:
   `9d393816acfe322a12ba1b295218f829db36ac28`
-- Manifest deployment time: `20260714T075837Z`
+- Manifest deployment time: `20260714T083059Z`
 - Successful atomic deploy and read-only browser/BFF probe:
-  [GitHub Actions run 28490060564](https://github.com/ajoe734/execute-plans/actions/runs/28490060564) (or similar build system)
+  [GitHub Actions run 29318299639](https://github.com/ajoe734/execute-plans/actions/runs/29318299639) (or similar build system)
 
 The hosted `deployment.json` exactly matched the frontend merge SHA and reported these safe build settings:
 
@@ -29,6 +29,7 @@ The hosted `deployment.json` exactly matched the frontend merge SHA and reported
 
 - execute-plans [PR #344](https://github.com/ajoe734/execute-plans/pull/344), merge `cbc6877630e0af087cd4d119da6024d816e4e495`: narrow responsive parity implementation across all tabs and drawers (rows G-06, PF-07, and SRV-03).
 - execute-plans [PR #345](https://github.com/ajoe734/execute-plans/pull/345), merge `b6a5bc9311941cf7333c5f738526868715533101`: harden hosted drawer gate.
+- execute-plans [PR #346](https://github.com/ajoe734/execute-plans/pull/346), merge `cb139ca8a4e4a1236033b2ccbdd917907de592cc`: harden hosted drawer gate test and verification.
 
 ## Hosted browser acceptance
 
