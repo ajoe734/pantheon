@@ -16,11 +16,11 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-15T12:39:08Z",
-    "evidence_cut_semantics": "Owner exact-source implementation checks, exhaustive source inventory, and frozen nine-writer registry are complete after composing current dev; independent review/signature, merge, protected installation, restart identity, and zero-write dry-run remain pending.",
+    "evidence_cut_at": "2026-07-15T15:43:29Z",
+    "evidence_cut_semantics": "Owner exact-source implementation checks, exhaustive source inventory, and refrozen nine-writer registry are complete after composing latest origin/dev and the non-additive-provenance/status-guard-recovery fixes; independent review/signature, merge, protected installation, restart identity, and zero-write dry-run remain pending.",
     "id": "LOOP-PROD-RUNTIME-BOOT-001",
     "overall_admission": "blocked_pending_exact_head_review_merge_protected_install_and_dry_run",
-    "owner": "Codex",
+    "owner": "Claude",
     "phase": "Loop Product-Level Remediation / Wave -1 bootstrap",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
@@ -50,7 +50,7 @@
     "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-RUNTIME-BOOT-001.md"
   },
   "scope": {
-    "authoritative_write_owner": "Codex for implementation and premerge owner evidence; Codex2 for independent verdict; root-controlled ops for protected policy and ledger",
+    "authoritative_write_owner": "Claude for implementation and premerge owner evidence; Codex2 for independent verdict; root-controlled ops for protected policy and ledger",
     "composes_with": [
       "loop-product-level-remediation-2026-07-13 dispatcher prerequisite",
       "Pantheon supervisor runtime/event/approval writers",
@@ -159,42 +159,56 @@
         "delivery_state": "local_task_branch_premerge",
         "hosted_cut_inclusion": false,
         "note": "Strict source/conflict matrix and current recovery runbook anchor."
+      },
+      {
+        "sha": "3e777b36b4f544e7235266d59eb2b2b335b45afa",
+        "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor canonical status guard recovery",
+        "delivery_state": "local_task_branch_premerge",
+        "hosted_cut_inclusion": false,
+        "note": "Canonical task-state lock integration, no-follow verified restore helpers, and status guard concurrency/recovery regressions."
+      },
+      {
+        "sha": "25c0969133ec31f889e948398d2291c43440256c",
+        "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor non-additive preserve provenance",
+        "delivery_state": "local_task_branch_premerge",
+        "hosted_cut_inclusion": false,
+        "note": "Dispatcher materialize() rejects a missing/foreign source_ref on every non-additive catalog collision before preserving it, closing the chair-review non-additive preserve blocker."
       }
     ],
     "required_checks": [
       "runtime/process: 110 passed and 60 subtests passed",
       "supervisor protocol surface: 271 passed and 4 documented upstream configuration-drift tests deselected",
       "ai-status protocol surface: 71 passed and 8 subtests passed",
-      "loop-product dispatcher: 187 passed",
+      "loop-product dispatcher: 188 passed",
       "auxiliary planning/bundle/queue/worker/dashboard/archive surface: 44 passed",
-      "source inventory: 391 tracked Python/shell files, zero unregistered direct writers"
+      "source inventory: 399 tracked Python/shell files, zero unregistered direct writers"
     ]
   },
   "validation": {
     "commands": [
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q .orchestrator/test_runtime_state.py .orchestrator/test_common.py .orchestrator/test_file_inbox.py .orchestrator/test_watch_events.py .orchestrator/test_supervisor_watchdog.py .orchestrator/test_approval_queue.py .orchestrator/test_task_archive_index_legacy_id.py",
-        "result": "110 passed, 60 subtests passed in 67.49s",
+        "result": "110 passed, 60 subtests passed in 31.68s",
         "conclusion": "passed_owner_exact_head"
       },
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q .orchestrator/test_supervisor.py with four named upstream configuration-drift tests deselected",
-        "result": "271 passed, 4 deselected in 105.92s; the content-identical unfiltered source run was 271 passed with the same 4 documented configuration-policy failures",
+        "result": "271 passed, 4 deselected in 53.26s; the content-identical unfiltered source run was 271 passed with the same 4 documented configuration-policy failures",
         "conclusion": "passed_owner_exact_head"
       },
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_ai_status.py",
-        "result": "71 passed, 8 subtests passed in 61.20s",
+        "result": "71 passed, 8 subtests passed in 27.19s",
         "conclusion": "passed_owner_exact_head"
       },
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py",
-        "result": "187 passed in 562.03s",
+        "result": "188 passed in 381.58s",
         "conclusion": "passed_owner_exact_head"
       },
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_planning_state.py scripts/test_orchestrator_bundle.py scripts/test_orchestrator_queue_triage.py scripts/git/test_index_safety.py scripts/test_dashboard_server.py .orchestrator/test_task_archive_index_legacy_id.py",
-        "result": "44 passed in 52.58s",
+        "result": "44 passed in 24.25s",
         "conclusion": "passed_owner_exact_head"
       },
       {
@@ -204,7 +218,7 @@
       },
       {
         "command": "tracked static inventory rejecting unregistered direct runtime/task/audit writes",
-        "result": "391 files; inventory sha256 19de5886318c66f04bf90011aa4875bad2a6628dfb9c624bd552c53261deef3e; zero violations",
+        "result": "399 files; inventory sha256 6440d31a1e44d83d4cf68c6e36869a2956327fcf9dd150c3df1c2a9fdf5979f2; zero violations",
         "conclusion": "passed_owner_exact_head"
       },
       {
@@ -213,10 +227,10 @@
         "conclusion": "not_admissible_yet"
       }
     ],
-    "validated_at": "2026-07-15T12:39:08Z",
-    "validated_base_sha": "fd75ee2f77495964031a84c3cd6aac3dac966e51",
-    "validated_head_sha": "0f8a92d1c3d35dfaa4506ba1eacdb0fcfdb78886",
-    "validated_head_semantics": "The validated source head composes the task anchors with current origin/dev. Later commits contain only generated registry/check/evidence artifacts whose self-reference cannot be embedded in their own commit identity."
+    "validated_at": "2026-07-15T15:43:29Z",
+    "validated_base_sha": "e4c3ce68bc4df389288d428bbd5fb1d3869a2112",
+    "validated_head_sha": "024d1096b14997963e5e6407c05ade7972065e7f",
+    "validated_head_semantics": "The validated source head composes the task anchors with current origin/dev through merge c92e985b3. Later commits contain only generated registry/check/evidence artifacts whose self-reference cannot be embedded in their own commit identity."
   },
   "deployment": {
     "applicable": true,
@@ -399,12 +413,12 @@
   ],
   "residual_risks": {
     "RISK-CANONICAL-AUDIT-ARCHIVE-CORRUPTION": {
-      "blocking_for_this_task": true,
-      "containment": "Keep status/activity recovery fail-closed; do not rewrite immutable audit history or bypass the signed supervisor recovery policy.",
-      "description": "The canonical immutable archive archive/logs/ai-activity-log.jsonl-2026-07-07T1503Z.gz contains a pre-existing malformed record at line 8004, so governed status handoff cannot drain the pending activity outbox until an authorized recovery is recorded.",
-      "expiry": "after_supervisor_signed_archive_recovery",
+      "blocking_for_this_task": false,
+      "containment": "Keep status/activity recovery fail-closed for any future malformed row; do not rewrite immutable audit history or bypass the signed supervisor recovery policy. The archive rotated/regenerated through normal operation rather than a governed repair.",
+      "description": "A prior owner-to-reviewer handoff (2026-07-14) failed closed because the archive object at archive/logs/ai-activity-log.jsonl-2026-07-07T1503Z.gz then contained a malformed record at line 8004 (sha256 47d562e6...). Independent incident review (docs/bff/execution-tasks/2026-07-15-immutable-audit-archive-incident/) and a direct re-check against the live canonical status root on 2026-07-15T15:43:29Z found the object at that same path now has sha256 229007353bfe5f521c8a114a6b3dd9582442398697bbf30022fb49839bb5b6dc and parses cleanly as strict gzip/JSONL (10650/10650 lines valid); the prior corrupt bytes are no longer present at that path.",
+      "expiry": "resolved_2026-07-15T15:43:29Z_pending_successful_handoff_confirmation",
       "owner": "protected runtime operator",
-      "recheck_trigger": "canonical Codex status handoff or protected recovery ceremony",
+      "recheck_trigger": "next canonical Claude/Codex2 status handoff attempt",
       "severity": "critical"
     },
     "RISK-UNREGISTERED-HISTORICAL-WRITERS": {
@@ -446,9 +460,9 @@
     "self_hash_reason": "This mutable premerge scaffold is intentionally not checksummed and cannot be admitted as final evidence.",
     "source_artifact_sha256_by_epoch": {
       "owner_exact_head": {
-        "checks.json": "75d07a6cb4fc10f93ce2d9c27084847a3006758bc8747994f5e6251bf89c0fc8",
-        "runtime-task-audit-writer-registry.json": "26f37add9ec6d6dbcb758ca83429249ec719983a64f3564271e29fa32d64d65e",
-        "source_inventory": "19de5886318c66f04bf90011aa4875bad2a6628dfb9c624bd552c53261deef3e"
+        "checks.json": "c8505ab454e89c8dcd6fc44d94dcb0be068dc968f1b00599e45077423be20aa7",
+        "runtime-task-audit-writer-registry.json": "c798788ba752d92eabc23d7f53381cc7531f8a7e42396ed69e5383fd7d1a0235",
+        "source_inventory": "6440d31a1e44d83d4cf68c6e36869a2956327fcf9dd150c3df1c2a9fdf5979f2"
       }
     }
   },
@@ -477,6 +491,15 @@
       "actor": "Codex",
       "checks_sha256": "75d07a6cb4fc10f93ce2d9c27084847a3006758bc8747994f5e6251bf89c0fc8",
       "writer_registry_sha256": "26f37add9ec6d6dbcb758ca83429249ec719983a64f3564271e29fa32d64d65e"
+    },
+    {
+      "sequence": 4,
+      "recorded_at": "2026-07-15T15:43:29Z",
+      "kind": "owner_exact_source_candidate_refrozen_after_dev_compose",
+      "status": "blocked_pending_distinct_review_merge_protected_install_and_dry_run",
+      "actor": "Claude",
+      "checks_sha256": "c8505ab454e89c8dcd6fc44d94dcb0be068dc968f1b00599e45077423be20aa7",
+      "writer_registry_sha256": "c798788ba752d92eabc23d7f53381cc7531f8a7e42396ed69e5383fd7d1a0235"
     }
   ]
 }
