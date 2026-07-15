@@ -350,6 +350,15 @@ def test_control_mode_commands_replay_stably_and_validate_aliases_and_tenant(
     assert alias_conflict.status_code == 400
     assert alias_conflict.json()["error"]["details"]["reason"] == "idempotency_header_conflict"
 
+    missing_deactivate = client.post(
+        "/bff/assistant/control-mode/deactivate",
+        json={"reason": "must not deactivate without a key"},
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert missing_deactivate.status_code == 400
+    assert missing_deactivate.json()["error"]["details"]["reason"] == "idempotency_key_required"
+    assert store.status_for_actor("op-security")["active"] is True
+
     deactivate_headers = {
         **OPERATOR_TOOL_HEADERS,
         "X-Idempotency-Key": "deactivate-stable",
@@ -647,6 +656,28 @@ def test_repair_worktree_prepare_replays_across_router_reload(tmp_path, monkeypa
         "expectedBranch": "task/MGMT-AI-IDEMPOTENT",
     }
     headers = {**OPERATOR_TOOL_HEADERS, "Idempotency-Key": "prepare-stable"}
+    missing = client.post(
+        "/bff/assistant/repair-worktrees/prepare",
+        json=payload,
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert missing.status_code == 400
+    assert missing.json()["error"]["details"]["reason"] == "idempotency_key_required"
+    assert calls == []
+
+    wrong_tenant = client.post(
+        "/bff/assistant/repair-worktrees/prepare",
+        json=payload,
+        headers={
+            **OPERATOR_TOOL_HEADERS,
+            "Idempotency-Key": "prepare-wrong-tenant",
+            "X-Tenant-Id": "tenant-other",
+        },
+    )
+    assert wrong_tenant.status_code == 403
+    assert wrong_tenant.json()["error"]["details"]["reason"] == "tenant_mismatch"
+    assert calls == []
+
     first = client.post(
         "/bff/assistant/repair-worktrees/prepare",
         json=payload,

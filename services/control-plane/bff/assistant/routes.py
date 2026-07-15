@@ -858,6 +858,8 @@ def create_assistant_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> dict[str, Any]:
         """Generate SA/SD artifacts from a Management AI conversation.
 
@@ -877,11 +879,24 @@ def create_assistant_router(
         trace_id = str(payload.get("traceId") or payload.get("trace_id") or "").strip() or None
         actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
         activation_id = control_status.get("activation_id") or control_status.get("activationId")
+        tenant_id = _resolve_identity_tenant(
+            identity,
+            requested_tenant=_resolve_tenant_header(
+                x_tenant_id,
+                x_pantheon_tenant,
+                bff_error=bff_error,
+            ),
+            bff_error=bff_error,
+        )
         with _assistant_command_idempotency(
             _command_idempotency_store,
             actor_id=actor_id,
             route="/bff/assistant/dev-docs/generate",
-            payload={"payload": payload, "control_activation_id": activation_id},
+            payload={
+                "payload": payload,
+                "control_activation_id": activation_id,
+                "tenant_id": tenant_id,
+            },
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
             bff_error=bff_error,
@@ -990,6 +1005,8 @@ def create_assistant_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> dict[str, Any]:
         """Sign or queue a DevTaskPacket for repo-local dispatch.
 
@@ -1006,11 +1023,24 @@ def create_assistant_router(
         )
         actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
         activation_id = control_status.get("activation_id") or control_status.get("activationId")
+        tenant_id = _resolve_identity_tenant(
+            identity,
+            requested_tenant=_resolve_tenant_header(
+                x_tenant_id,
+                x_pantheon_tenant,
+                bff_error=bff_error,
+            ),
+            bff_error=bff_error,
+        )
         with _assistant_command_idempotency(
             _command_idempotency_store,
             actor_id=actor_id,
             route="/bff/assistant/dev-bridge/task-packet",
-            payload={"payload": payload, "control_activation_id": activation_id},
+            payload={
+                "payload": payload,
+                "control_activation_id": activation_id,
+                "tenant_id": tenant_id,
+            },
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
             bff_error=bff_error,

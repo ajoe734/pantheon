@@ -269,6 +269,30 @@ def test_dev_docs_and_bridge_commands_are_exactly_replayed(tmp_path, monkeypatch
     }
     generate_headers = {**HEADERS, "Idempotency-Key": "generate-dev-doc-stable"}
 
+    missing_generate = client.post(
+        "/bff/assistant/dev-docs/generate",
+        json=payload,
+        headers=HEADERS,
+    )
+    assert missing_generate.status_code == 400
+    assert (
+        missing_generate.json()["detail"]["error"]["details"]["reason"]
+        == "idempotency_key_required"
+    )
+    assert authorization_calls == []
+
+    wrong_tenant_generate = client.post(
+        "/bff/assistant/dev-docs/generate",
+        json=payload,
+        headers={**generate_headers, "X-Tenant-Id": "tenant-other"},
+    )
+    assert wrong_tenant_generate.status_code == 403
+    assert (
+        wrong_tenant_generate.json()["detail"]["error"]["details"]["reason"]
+        == "tenant_mismatch"
+    )
+    assert authorization_calls == []
+
     first = client.post(
         "/bff/assistant/dev-docs/generate",
         json=payload,
@@ -293,6 +317,16 @@ def test_dev_docs_and_bridge_commands_are_exactly_replayed(tmp_path, monkeypatch
 
     bridge_payload = {"devDocPacket": first.json()["data"]}
     bridge_headers = {**HEADERS, "X-Idempotency-Key": "bridge-packet-stable"}
+    missing_bridge = client.post(
+        "/bff/assistant/dev-bridge/task-packet",
+        json=bridge_payload,
+        headers=HEADERS,
+    )
+    assert missing_bridge.status_code == 400
+    assert (
+        missing_bridge.json()["detail"]["error"]["details"]["reason"]
+        == "idempotency_key_required"
+    )
     bridge = client.post(
         "/bff/assistant/dev-bridge/task-packet",
         json=bridge_payload,
