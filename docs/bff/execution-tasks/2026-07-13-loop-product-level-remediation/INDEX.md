@@ -68,6 +68,34 @@ The exact corrected catalog in this follow-up validates as 48 tasks with digest
 the dispatcher suite collects and passes 172 tests. Product materialization
 remains gated as described above.
 
+### GAP-ADDENDUM-002 closeout record
+
+Correction PR `#3688` merged to `dev` as
+`2f0e82dc5257da26d081fbe353682e6068ee035f`. It added the convergence audit
+table above, the `LOOP-PROD-CLOSE-002` consumed-dependency note, and restored
+`LOOP-PROD-PER-001`'s planning-authority owner/reviewer/`review_file` fields in
+the immutable catalog (a live task/evidence-field drift had broken current-tip
+catalog validation; no central live task state was changed). Independent
+reviewer (Claude) re-verified exact head `68c492b71` before merge: catalog
+valid (48 tasks), dispatcher suite `172 passed`, `git diff --check` clean, and
+the 11-task grep showing only `LOOP-PROD-CLOSE-002.md` carries EVO terms.
+
+Post-merge re-validation at current tip (`AI_NAME=Claude python3
+scripts/dispatch_loop_product_level_remediation_2026-07-13.py
+--validate-only`):
+
+```
+Catalog valid: program=loop-product-level-remediation-2026-07-13 tasks=48 sha256=44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357
+```
+
+`--dry-run`/`--apply` remain unrunnable: `LOOP-PROD-RUNTIME-BOOT-001` is still
+`review`, not `done`, so the dispatch-prerequisite gate described above still
+fails closed by design. This satisfies GAP-ADDENDUM-002's acceptance via the
+documented-gating path (§ Addendum Gating & Batching Rationale) rather than by
+forcing dispatch of the ten gated tasks; forcing dispatch before the
+prerequisite is `done` would itself violate the packet's own fail-closed
+runtime-lock contract.
+
 ## Product contract
 
 This packet contains 48 primary execution tasks plus one external pre-dispatch
