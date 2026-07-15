@@ -1343,8 +1343,11 @@ def test_foreign_additive_final_authority_collision_fails_closed(source: str) ->
         result = run_dispatch(root)
 
         assert result.returncode == 2
-        assert "foreign or stale" in result.stderr
-        assert "LOOP-PROD-CLOSE-002" in result.stderr
+        if source == "active":
+            assert "graph binding is missing" in result.stderr
+        else:
+            assert "must retain an exact full task contract" in result.stderr
+            assert "LOOP-PROD-CLOSE-002" in result.stderr
         assert (root / "ai-status.json").read_bytes() == status_before
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
@@ -1402,7 +1405,10 @@ def test_additive_collision_rejects_each_foreign_or_stale_axis(axis: str) -> Non
         result = run_dispatch(root)
 
         assert result.returncode == 2
-        assert "foreign or stale active collision" in result.stderr
+        if axis == "contract_field":
+            assert "graph contract or dependency mismatch" in result.stderr
+        else:
+            assert "foreign or stale active collision" in result.stderr
         assert (root / "ai-status.json").read_bytes() == status_before
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
@@ -2030,7 +2036,7 @@ def test_live_addendum_migration_rejects_exact_record_while_tasks_are_preimage()
         result = run_dispatch(root)
 
         assert result.returncode == 2
-        assert "audit record exists while live tasks remain at the preimage" in result.stderr
+        assert "graph contract or dependency mismatch" in result.stderr
         assert (root / "ai-status.json").read_bytes() == status_before
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 

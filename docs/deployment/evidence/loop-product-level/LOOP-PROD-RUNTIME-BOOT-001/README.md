@@ -106,9 +106,16 @@ status root. Maintenance bundle/rebuild/queue paths have equivalent canonical
 target guards, and the tracked source inventory currently reports zero
 unregistered direct writers.
 
+The dispatcher now binds the complete catalog task/dependency graph to one
+unique install audit event. Active/archive sources are status-independent,
+archive leaves cannot be symlinks, and pending audit recovery survives a valid
+terminal archive performed after status commit. Rotated audit history is
+scanned without trusting mtimes; missing or duplicate binding proof fails
+closed.
+
 That technical boundary is necessary but not completion authority. The owner
-exact-head checks and nine writer digests are now frozen in `checks.json` and
-the writer registry. This packet remains blocked until the distinct `Codex`
+exact-head checks and nine writer digests must be refrozen after the current
+source/test updates. This packet remains blocked until the distinct `Codex2`
 reviewer creates the signed `completion.json`, the primary PR merges, and a
 root-controlled operator installs the external verifier policy/ledger. The
 post-closeout strict live dry-run and evidence-only follow-up remain separate

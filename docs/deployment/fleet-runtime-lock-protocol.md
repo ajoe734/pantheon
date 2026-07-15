@@ -1,7 +1,7 @@
 # Fleet runtime, task-state, and activity-audit lock protocol
 
-Status: protocol version 1 implementation and bootstrap runbook  
-Protocol ID: `pantheon-runtime-task-audit-lock-v1`  
+Status: protocol version 1 implementation and bootstrap runbook
+Protocol ID: `pantheon-runtime-task-audit-lock-v1`
 Bootstrap task: `LOOP-PROD-RUNTIME-BOOT-001`
 
 ## Purpose and authority
@@ -117,6 +117,21 @@ the transaction.
 
 `--validate-only` validates repository contracts and the DAG; it is not live
 runtime proof and does not satisfy the bootstrap dry-run requirement.
+
+The first admitted materialization atomically installs a content-bound program
+graph binding with the completion-authority overlay. The graph projection binds
+the catalog digest, ordered task IDs, every task-contract digest, dependency
+edges, external dependencies, and additive IDs. Every later dry-run/apply
+requires all program tasks to resolve from exactly one active row or one exact
+modern terminal archive, independent of runtime status. A missing, recreated,
+or mismatched binding fails closed; only the exact historical pre-addendum
+projection may take the one declared migration path. Any other recovery
+requires supervisor-signed intervention outside the dispatcher.
+
+One unique `completion_authority_install` event must bind the graph, overlay,
+catalog epoch, and predecessor projection. No-op reruns still scan active and
+rotated audit history and reject a missing, duplicate, or payload-divergent
+install proof.
 
 ## Strict runtime admission decision
 
@@ -246,7 +261,20 @@ the transaction fails closed.
 The planning dispatcher uses its own content-addressed
 `program_activity_outbox` with the same status-before-audit and exact-replay
 principle. Pending outbox recovery must finish before a new program
-transaction is created.
+transaction is created. Recovery resolves each bound task from either its
+active row or an exact modern terminal archive, so another registered writer
+may complete a terminal archive after the dispatcher status commit without
+stranding the audit transaction. Audit preflight scans every rotated source;
+archive mtime is never uniqueness authority. A legacy schema-4 pending outbox
+cannot be silently rewritten into the graph-bound schema and therefore
+requires explicit supervisor-signed recovery.
+
+Canonical archive leaves, runtime sources, inbox files, queues, watchdog
+state, and metrics are opened without following symlinks and are checked as
+regular files with file-descriptor/path inode readback. Runtime state, event
+queue, approval queue, task state, and activity audit must resolve to one
+canonical status root; split roots and symlinked lock directories fail before
+lock creation.
 
 ## Exact writer registry and historical boundary
 
@@ -314,7 +342,7 @@ Three different artifacts serve different purposes:
 
 Run the full exact-head checks, save a redacted machine-readable checks report,
 and calculate its SHA-256. Generate the writer registry from the frozen nine
-blobs. The owner identity is `Codex2`; the reviewer identity is `Codex` and
+blobs. The current owner identity is `Codex`; the reviewer identity is `Codex2` and
 must independently inspect and run the exact candidate.
 
 The reviewer, not the owner, creates the final signature for `completion.json`.
@@ -419,7 +447,7 @@ runtime producer is active. Capture SHA-256 and file identity for, at minimum:
 Then run from the exact merged checkout:
 
 ```bash
-AI_NAME=Codex2 \
+AI_NAME=Codex \
 PANTHEON_STATUS_ROOT=/absolute/canonical/pantheon-root \
 PANTHEON_RUNTIME_LOCK_VERIFIER_POLICY=/absolute/protected/runtime-lock-policy.json \
 python3 scripts/dispatch_loop_product_level_remediation_2026-07-13.py --dry-run

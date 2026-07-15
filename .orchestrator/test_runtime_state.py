@@ -581,6 +581,137 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                     "failed admission mutated a canonical runtime source",
                 )
 
+    def test_runtime_source_schema_and_unreadable_matrix_fails_closed(self) -> None:
+        mutations = {
+            "runtime-older-version": lambda: self._write_valid_sources(
+                runtime={"version": 1, "workers": {}, "queue": {"events": {}}}
+            ),
+            "runtime-newer-version": lambda: self._write_valid_sources(
+                runtime={"version": 3, "workers": {}, "queue": {"events": {}}}
+            ),
+            "approval-older-version": lambda: self._write_valid_sources(
+                approvals={"version": 1, "pending": [], "history": []}
+            ),
+            "approval-newer-version": lambda: self._write_valid_sources(
+                approvals={"version": 3, "pending": [], "history": []}
+            ),
+            "duplicate-event-id": lambda: self._write_valid_sources(
+                events=[
+                    {"event_id": "evt-duplicate", "task_id": "TASK-A"},
+                    {"event_id": "evt-duplicate", "task_id": "TASK-B"},
+                ]
+            ),
+            "blank-event-task": lambda: self._write_valid_sources(
+                events=[{"event_id": "evt-blank", "task_id": ""}]
+            ),
+            "blank-worker-task": lambda: self._write_valid_sources(
+                runtime={
+                    "version": 2,
+                    "workers": {"run-blank": {"task_id": "", "status": "running"}},
+                    "queue": {"events": {}},
+                }
+            ),
+            "blank-approval-task": lambda: self._write_valid_sources(
+                approvals={
+                    "version": 2,
+                    "pending": [{"approval_id": "approval-blank", "task_id": ""}],
+                    "history": [],
+                }
+            ),
+        }
+        for label, prepare in mutations.items():
+            with self.subTest(source=label):
+                prepare()
+                before = {
+                    path: path.read_bytes()
+                    for path in (
+                        self.state_path,
+                        self.event_queue_path,
+                        self.approval_queue_path,
+                    )
+                }
+                with runtime_state.tasks_runtime_admission_guard(
+                    self.config,
+                    ["TASK-A"],
+                    strict=True,
+                    shared=False,
+                    nonblocking=True,
+                ) as decision:
+                    self.assertFalse(decision["allowed"])
+                    self.assertEqual(decision["reason_id"], "runtime_source_invalid")
+                    self.assertEqual(decision["conflicts"], [])
+                self.assertEqual(
+                    {path: path.read_bytes() for path in before},
+                    before,
+                )
+
+        self._write_valid_sources()
+        real_read = runtime_state._read_canonical_runtime_source
+
+        def unreadable(path: Path, *, source_id: str) -> bytes:
+            if source_id == "event_queue":
+                raise PermissionError("injected unreadable source")
+            return real_read(path, source_id=source_id)
+
+        with mock.patch.object(
+            runtime_state,
+            "_read_canonical_runtime_source",
+            side_effect=unreadable,
+        ):
+            with runtime_state.tasks_runtime_admission_guard(
+                self.config,
+                ["TASK-A"],
+                strict=True,
+                shared=False,
+                nonblocking=True,
+            ) as decision:
+                self.assertFalse(decision["allowed"])
+                self.assertEqual(decision["reason_id"], "runtime_source_invalid")
+                self.assertEqual(
+                    decision["source_sha256"]["event_queue"],
+                    hashlib.sha256(b"").hexdigest(),
+                )
+
+    def test_every_runtime_conflict_status_blocks_with_exact_reason(self) -> None:
+        for status in sorted(runtime_state.RUNTIME_ADMISSION_CONFLICT_STATUSES):
+            with self.subTest(status=status):
+                self._write_valid_sources(
+                    runtime={
+                        "version": 2,
+                        "workers": {
+                            "run-target": {
+                                "run_id": "run-target",
+                                "task_id": "TASK-A",
+                                "status": status,
+                            }
+                        },
+                        "queue": {"events": {}},
+                    }
+                )
+                with runtime_state.tasks_runtime_admission_guard(
+                    self.config,
+                    ["TASK-A"],
+                    strict=True,
+                    shared=True,
+                    nonblocking=True,
+                ) as decision:
+                    self.assertFalse(decision["allowed"])
+                    self.assertEqual(
+                        decision["reason_id"],
+                        "target_has_runtime_admission",
+                    )
+                    self.assertEqual(
+                        decision["conflicts"],
+                        [
+                            {
+                                "source_id": "runtime_state",
+                                "task_id": "TASK-A",
+                                "status": status,
+                                "record_id": "run-target",
+                            }
+                        ],
+                    )
+
     def test_runtime_source_leaf_symlinks_fail_closed_without_reading_targets(self) -> None:
         source_paths = {
             "runtime_state": self.state_path,
