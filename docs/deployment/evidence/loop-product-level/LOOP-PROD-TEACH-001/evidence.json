@@ -33,7 +33,8 @@
       "evidence_refs": [
         "behavioral_proof.duplicate_safety",
         "behavioral_proof.rollback_or_compensation",
-        "validation.commands[1]"
+        "validation.commands[1]",
+        "validation.commands[6]"
       ],
       "id": "AC-04",
       "statement": "duplicate job, stale candidate, approval negative, worker restart, and rollback are proven",
@@ -62,7 +63,8 @@
       "evidence_refs": [
         "behavioral_proof.duplicate_safety",
         "behavioral_proof.default_worker_and_restart",
-        "behavioral_proof.rollback_or_compensation"
+        "behavioral_proof.rollback_or_compensation",
+        "validation.commands[6]"
       ],
       "id": "AC-07",
       "statement": "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
@@ -133,7 +135,10 @@
       "proof": [
         "TrainingSessionStore writes JSON/JSONL under file locks with fsync and conflict detection.",
         "Teaching event ids include a session-derived token, preventing same-day cross-session event_id collisions while preserving session-local sequencing.",
-        "Replay decisions require Idempotency-Key/X-Idempotency-Key and replay the same stored decision without duplicate commit/discard events."
+        "Replay decisions require Idempotency-Key/X-Idempotency-Key and replay the same stored decision without duplicate commit/discard events.",
+        "TrainingSessionStore.mutate_replay serializes replay pending-decision check, bounded persona authority commit, decision event append, and replay write under the replay file lock.",
+        "Concurrent HTTP replay commit test proves two same-session requests with the same Idempotency-Key produce one external persona commit call, one commit event, and one persona_commit_terminal_readback evidence record.",
+        "RuntimeEvidenceLog.append_or_get performs request_hash match and append under the evidence log exclusive lock; concurrent same-request_hash writers converge to one checksum-linked record."
       ],
       "status": "pass"
     },
@@ -165,7 +170,8 @@
       "proof": [
         "services/knowledge/evidence/runtime_log.py writes locked O_APPEND JSONL records with recursive redaction, sequence numbers, previous_checksum, per-record checksum, fsync, and full-chain verification.",
         "training-session proofs bind to runtime evidence sequence/checksum; commit admission verifies the referenced terminal preview evidence before mutating replay state.",
-        "HTTP tests use temp runtime evidence paths and no longer append to repo deployment evidence during validation."
+        "HTTP tests use temp runtime evidence paths and no longer append to repo deployment evidence during validation.",
+        "Runtime evidence request_hash deduplication is now atomic under the log lock and covered by a ThreadPoolExecutor concurrency test."
       ],
       "status": "pass"
     },
@@ -173,7 +179,8 @@
       "proof": [
         "Runtime evidence redacts identity, token, credential, and free-form note fields recursively.",
         "Persona target write path requires TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN and exact configured authority URLs; missing token/URL fails closed.",
-        "No browser bearer/secret path, live broker authority, or live-capital write is added in this task."
+        "No browser bearer/secret path, live broker authority, or live-capital write is added in this task.",
+        "Runtime evidence redaction now treats auth_header/auth and jwt fields as secret-bearing keys."
       ],
       "status": "pass"
     }
@@ -232,6 +239,10 @@
       {
         "sha": "93859f4a4b06a5db57bbdbedfaedb391770a5a66",
         "subject": "LOOP-PROD-TEACH-001: anchor HTTP strict worker proof"
+      },
+      {
+        "sha": "5aae577d249847728b0cb83fc19c31b1451e3f88",
+        "subject": "LOOP-PROD-TEACH-001: anchor replay race fix"
       }
     ],
     "pull_request": {
@@ -247,7 +258,7 @@
       }
     ],
     "validated_base_sha": "e4c3ce68bc4df389288d428bbd5fb1d3869a2112",
-    "validated_head_sha": "93859f4a4b06a5db57bbdbedfaedb391770a5a66"
+    "validated_head_sha": "5aae577d249847728b0cb83fc19c31b1451e3f88"
   },
   "integrity": {
     "checksum_algorithm": "sha256",
@@ -353,6 +364,49 @@
       },
       "recorded_at": "2026-07-15T14:59:35Z",
       "sequence": 3
+    },
+    {
+      "checksum": "557b1928032e65fbf7b779d8d174443e87a5061e2cc37db323393c092c03c15e",
+      "event_type": "review_fix_validation_completed",
+      "payload": {
+        "anchor_commit": {
+          "sha": "5aae577d249847728b0cb83fc19c31b1451e3f88",
+          "subject": "LOOP-PROD-TEACH-001: anchor replay race fix"
+        },
+        "commands": [
+          {
+            "command": "python3 -m py_compile services/training-session/main.py services/training-session/store.py services/knowledge/evidence/runtime_log.py services/training-session/tests/test_http_service.py services/knowledge/evidence/tests/test_runtime_log.py",
+            "conclusion": "no output",
+            "result": "pass"
+          },
+          {
+            "command": "pytest services/knowledge/evidence/tests/test_runtime_log.py services/training-session/tests/test_store_durability.py services/training-session/tests/test_http_service.py",
+            "conclusion": "21 passed in 8.66s",
+            "result": "pass"
+          },
+          {
+            "command": "git diff --check",
+            "conclusion": "no output",
+            "result": "pass"
+          }
+        ],
+        "review_change_required": "AC-04/AC-07 duplicate-safety race in replay decision and runtime evidence request_hash dedup.",
+        "validated_head_sha": "5aae577d249847728b0cb83fc19c31b1451e3f88"
+      },
+      "recorded_at": "2026-07-15T15:19:52Z",
+      "sequence": 4
+    },
+    {
+      "checksum": "5a1abb8b5127a6890a33e8fc7f094e400c73877892d78070e751088ee4bc788d",
+      "event_type": "review_fix_evidence_manifest_cut",
+      "payload": {
+        "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
+        "evidence_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
+        "redacted": true,
+        "validated_head_sha": "5aae577d249847728b0cb83fc19c31b1451e3f88"
+      },
+      "recorded_at": "2026-07-15T15:19:52Z",
+      "sequence": 5
     }
   ],
   "residual_risks": [
@@ -376,6 +430,13 @@
       "id": "RISK-REVIEW-001",
       "owner": "Claude",
       "status": "open_until_independent_review"
+    },
+    {
+      "description": "TRAINING_SESSION_CANONICAL_DATASET_PATH remains a direct DatasetVersion path override used by strict tests/dev fixtures; docker-compose production defaults do not set it, and production promotion must either leave it unset in favor of source-ingest authority or add an explicit environment gate.",
+      "expires_at": "before production deployment promotion of training-session teaching writes",
+      "id": "RISK-DATASET-PATH-001",
+      "owner": "Codex2",
+      "status": "open_until_prod_env_policy"
     }
   ],
   "schema_status": {
@@ -428,8 +489,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-15T14:59:35Z",
-    "evidence_cut_semantics": "Implementation branch has fail-closed training-session evaluation, default preview worker, runtime evidence, durable store, source DatasetVersion authority, persona terminal readback, and focused validation; PR/check/merge evidence remains pending closeout.",
+    "evidence_cut_at": "2026-07-15T15:19:52Z",
+    "evidence_cut_semantics": "Implementation branch has fail-closed training-session evaluation, default preview worker, runtime evidence, durable store, source DatasetVersion authority, persona terminal readback, and the AC-04/AC-07 replay/evidence duplicate-safety review fix with focused validation; PR/check/merge evidence remains pending closeout.",
     "id": "LOOP-PROD-TEACH-001",
     "overall_admission": "implementation_ready_for_independent_review",
     "owner": "Codex2",
@@ -474,10 +535,25 @@
         "command": "git diff --check origin/dev...HEAD",
         "conclusion": "no output",
         "result": "pass"
+      },
+      {
+        "command": "python3 -m py_compile services/training-session/main.py services/training-session/store.py services/knowledge/evidence/runtime_log.py services/training-session/tests/test_http_service.py services/knowledge/evidence/tests/test_runtime_log.py",
+        "conclusion": "no output",
+        "result": "pass"
+      },
+      {
+        "command": "pytest services/knowledge/evidence/tests/test_runtime_log.py services/training-session/tests/test_store_durability.py services/training-session/tests/test_http_service.py",
+        "conclusion": "21 passed in 8.66s",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "no output",
+        "result": "pass"
       }
     ],
-    "validated_at": "2026-07-15T14:59:35Z",
+    "validated_at": "2026-07-15T15:19:52Z",
     "validated_base_sha": "e4c3ce68bc4df389288d428bbd5fb1d3869a2112",
-    "validated_head_sha": "93859f4a4b06a5db57bbdbedfaedb391770a5a66"
+    "validated_head_sha": "5aae577d249847728b0cb83fc19c31b1451e3f88"
   }
 }
