@@ -868,6 +868,8 @@ class BridgeAdmissionTests(unittest.TestCase):
         admission = {
             "schema": "pantheon.assistant-dev-bridge-admission.v1",
             "record_kind": "assistant_dev_bridge_admission",
+            "durable": True,
+            "packet_version": packet["version"],
             "packet_id": packet["packetId"],
             "packet_digest": digest,
             "admitted_at": "2026-07-15T00:00:01Z",
@@ -878,6 +880,8 @@ class BridgeAdmissionTests(unittest.TestCase):
             "actor": packet["actor"],
             "mode": packet["mode"],
             "intent": packet["intent"],
+            "emitted_at": packet["emittedAt"],
+            "constraints": packet["constraints"],
             "conversation_id": packet["sourceConversationId"],
             "source_turn_ids": packet["sourceTurnIds"],
             "documents": packet["documents"],
@@ -899,6 +903,7 @@ class BridgeAdmissionTests(unittest.TestCase):
                 }
             ],
         }
+        admission["record_payload_sha256"] = ascii_json_hash(admission)
         bridge_provenance = {
             "packet_id": packet["packetId"],
             "packet_digest": digest,

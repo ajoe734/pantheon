@@ -2723,16 +2723,23 @@ class ManagementAiRepairVerifier:
         expected = {
             "schema": BRIDGE_ADMISSION_VERSION,
             "record_kind": "assistant_dev_bridge_admission",
+            "packet_version": str(
+                packet.get("version") or "pantheon.assistant.dev-task.v1"
+            ),
             "packet_id": packet_id,
             "packet_digest": packet_digest,
             "conversation_id": conversation_id,
             "mode": str(packet.get("mode") or ""),
             "intent": str(packet.get("intent") or "generate_sa_sd_and_dispatch"),
+            "emitted_at": packet.get("emittedAt") or packet.get("emitted_at"),
+            "constraints": packet.get("constraints"),
         }
         violations = []
         for field, expected_value in expected.items():
-            if value.get(field) != expected_value:
+            if canonical_json(value.get(field)) != canonical_json(expected_value):
                 violations.append(f"{field} mismatch")
+        if value.get("durable") is not True:
+            violations.append("durable must be true")
         expected_path = (
             "ai-task-archive/tasks/assistant-dev-bridge-admissions/"
             f"{re.sub(r'[^A-Za-z0-9._-]+', '_', packet_id)[:160] or 'packet'}"
@@ -2742,6 +2749,17 @@ class ManagementAiRepairVerifier:
             violations.append("admission_record_path mismatch")
         if not str(value.get("admitted_at") or "").strip():
             violations.append("admitted_at is required")
+        payload_digest = str(value.get("record_payload_sha256") or "").strip()
+        if not re.fullmatch(r"[0-9a-f]{64}", payload_digest):
+            violations.append("record_payload_sha256 is missing")
+        elif payload_digest != _ascii_json_hash(
+            {
+                key: item
+                for key, item in value.items()
+                if key != "record_payload_sha256"
+            }
+        ):
+            violations.append("record_payload_sha256 mismatch")
         expected_actor = packet.get("actor") if isinstance(packet.get("actor"), Mapping) else {}
         if canonical_json(value.get("actor")) != canonical_json(expected_actor):
             violations.append("actor mismatch")
