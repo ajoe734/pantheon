@@ -5,6 +5,7 @@ import os
 import re
 import urllib.error
 import urllib.request
+import uuid
 from datetime import datetime, timezone
 from statistics import mean
 from typing import Any, Dict, List, Optional
@@ -15,12 +16,45 @@ from pydantic import BaseModel, Field
 from consumer import build_drift_report_from_event
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
+from services.trade_journey.correlation_envelope import (
+    CorrelationEnvelopeError,
+    propagate_envelope,
+    validate_envelope,
+)
 from store import ReconciliationDriftStore, build_reconciliation_drift_store
 
 
 DEFAULT_WARNING_RELATIVE_DELTA = 0.2
 DEFAULT_CRITICAL_RELATIVE_DELTA = 0.5
 RECONCILIATION_ERROR_SEVERITIES = {"critical", "error"}
+_LIFECYCLE_APPEND_PRODUCER = "reconciliation-drift.scheduled"
+_RETRYABLE_HTTP_STATUSES = {408, 425, 429}
+_REQUIRED_LIFECYCLE_IDENTITY_FIELDS = (
+    "event_id",
+    "event_type",
+    "created_at",
+    "tenant_id",
+    "environment",
+    "execution_mode",
+    "deployment_stage",
+    "binding_id",
+    "runtime_id",
+    "capital_pool_id",
+    "artifact_id",
+    "artifact_version",
+    "plan_id",
+    "persona_capital_binding_id",
+    "trace_id",
+    "signal_id",
+    "run_id",
+    "loop_run_id",
+    "aggregate_type",
+    "aggregate_id",
+    "sequence_no",
+    "source_mode",
+    "target",
+    "correlation_envelope",
+)
 
 
 def utc_now() -> str:
@@ -1288,6 +1322,559 @@ def _summary_observed_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
     return observed
 
 
+def _paper_lifecycle_identity(
+    summary: Dict[str, Any],
+    *,
+    binding_id: str,
+    runtime_id: str,
+) -> tuple[Dict[str, Any] | None, str | None]:
+    """Return a complete live paper lifecycle identity or a fail-closed reason."""
+    raw_identity = summary.get("last_lifecycle_identity")
+    if not isinstance(raw_identity, dict):
+        return None, "missing_lifecycle_identity"
+    identity = json.loads(json.dumps(raw_identity))
+    missing = [
+        field
+        for field in _REQUIRED_LIFECYCLE_IDENTITY_FIELDS
+        if identity.get(field) in (None, "", [], {})
+    ]
+    if missing:
+        return None, "incomplete_lifecycle_identity:" + ",".join(missing)
+
+    sequence_no = identity.get("sequence_no")
+    if isinstance(sequence_no, bool) or not isinstance(sequence_no, int) or sequence_no < 1:
+        return None, "invalid_lifecycle_sequence"
+
+    raw_envelope = identity.get("correlation_envelope")
+    try:
+        envelope = validate_envelope(raw_envelope)
+    except (CorrelationEnvelopeError, TypeError, ValueError):
+        return None, "invalid_correlation_envelope"
+
+    paper_scopes = {
+        str(summary.get("deployment_stage") or "").strip().lower(),
+        str(identity.get("environment") or "").strip().lower(),
+        str(identity.get("execution_mode") or "").strip().lower(),
+        str(identity.get("deployment_stage") or "").strip().lower(),
+        str(envelope.get("environment") or "").strip().lower(),
+    }
+    if paper_scopes != {"paper"}:
+        return None, "non_paper_lifecycle"
+    if str(identity.get("source_mode") or "").strip().lower() != "live":
+        return None, "non_live_lifecycle_source"
+    if str(identity.get("binding_id")) != binding_id:
+        return None, "lifecycle_binding_mismatch"
+    if str(identity.get("runtime_id")) != runtime_id:
+        return None, "lifecycle_runtime_mismatch"
+    if str(identity.get("event_id")) != str(envelope.get("event_id")):
+        return None, "lifecycle_event_envelope_mismatch"
+    if str(identity.get("tenant_id")) != str(envelope.get("tenant_id")):
+        return None, "lifecycle_tenant_mismatch"
+    if str(identity.get("trace_id")) != str(envelope.get("trace_id")):
+        return None, "lifecycle_trace_mismatch"
+    if str(identity.get("aggregate_type")) != "trade_journey":
+        return None, "invalid_lifecycle_aggregate_type"
+    if str(identity.get("aggregate_id")) != str(envelope.get("journey_id")):
+        return None, "lifecycle_aggregate_mismatch"
+
+    authority_refs = identity.get("authority_refs")
+    if not isinstance(authority_refs, dict):
+        authority_refs = {}
+    metadata = identity.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    authority_persona_id = authority_refs.get("persona_id")
+    metadata_persona_id = metadata.get("persona_id")
+    authority_persona_id = (
+        authority_persona_id.strip()
+        if isinstance(authority_persona_id, str)
+        else ""
+    )
+    metadata_persona_id = (
+        metadata_persona_id.strip()
+        if isinstance(metadata_persona_id, str)
+        else ""
+    )
+    if not authority_persona_id and not metadata_persona_id:
+        return None, "missing_lifecycle_persona_id"
+    if (
+        authority_persona_id
+        and metadata_persona_id
+        and authority_persona_id != metadata_persona_id
+    ):
+        return None, "lifecycle_persona_id_mismatch"
+    persona_id = authority_persona_id or metadata_persona_id
+    # Normalize the projector-complete persona identity into both locations so
+    # every appended lifecycle event preserves the authority reference and the
+    # metadata projection used by downstream readers.
+    authority_refs["persona_id"] = persona_id
+    metadata["persona_id"] = persona_id
+    identity["authority_refs"] = authority_refs
+    identity["metadata"] = metadata
+
+    target = identity.get("target")
+    if not isinstance(target, dict) or not str(target.get("strategy_id") or "").strip():
+        return None, "incomplete_lifecycle_target"
+
+    for summary_field, identity_field in (
+        ("capital_pool_id", "capital_pool_id"),
+        ("artifact_id", "artifact_id"),
+        ("artifact_version", "artifact_version"),
+        ("persona_capital_binding_id", "persona_capital_binding_id"),
+    ):
+        summary_value = summary.get(summary_field)
+        if summary_value not in (None, "") and str(summary_value) != str(identity.get(identity_field)):
+            return None, f"lifecycle_{identity_field}_mismatch"
+    summary_plan_id = summary.get("deployment_plan_id") or summary.get("plan_id")
+    if summary_plan_id not in (None, "") and str(summary_plan_id) != str(identity.get("plan_id")):
+        return None, "lifecycle_plan_id_mismatch"
+    return identity, None
+
+
+def _scheduled_lifecycle_event(
+    *,
+    summary: Dict[str, Any],
+    evaluation: Dict[str, Any],
+    timestamp: str,
+) -> tuple[Dict[str, Any] | None, str | None]:
+    binding_id = str(evaluation.get("binding_id") or "").strip()
+    runtime_id = str(evaluation.get("runtime_id") or "").strip()
+    identity, reason = _paper_lifecycle_identity(
+        summary,
+        binding_id=binding_id,
+        runtime_id=runtime_id,
+    )
+    if identity is None:
+        return None, reason
+    if identity["event_type"] in {
+        "reconciliation_completed",
+        "reconciliation_failed",
+    }:
+        return None, "lifecycle_already_reconciled"
+
+    evaluation_id = str(evaluation["evaluation_id"])
+    event_id = str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"pantheon:scheduled-reconciliation:{evaluation_id}",
+        )
+    )
+    event_type = (
+        "reconciliation_completed"
+        if str(evaluation.get("status") or "").lower() == "ok"
+        else "reconciliation_failed"
+    )
+    sequence_no = int(identity["sequence_no"]) + 1
+    envelope = propagate_envelope(
+        identity["correlation_envelope"],
+        producer=_LIFECYCLE_APPEND_PRODUCER,
+        event_id=event_id,
+        event_time=timestamp,
+        received_at=timestamp,
+        producer_revision=1,
+    )
+    metadata = json.loads(json.dumps(identity.get("metadata") or {}))
+    metadata.update(
+        {
+            "reconciliation_evaluation_id": evaluation_id,
+            "reconciliation_tick_id": evaluation.get("tick_id"),
+            "reconciliation_status": evaluation.get("status"),
+            "signal_id": identity["signal_id"],
+            "run_id": identity["run_id"],
+            "loop_run_id": identity["loop_run_id"],
+            "journey_id": envelope["journey_id"],
+            "correlation_envelope": envelope,
+            "sequence_no": sequence_no,
+            "causal_parent_id": identity["event_id"],
+            "source_mode": "live",
+        }
+    )
+    event: Dict[str, Any] = {
+        "event_id": event_id,
+        "event_type": event_type,
+        "created_at": timestamp,
+        "tenant_id": identity["tenant_id"],
+        "environment": "paper",
+        "execution_mode": "paper",
+        "deployment_stage": "paper",
+        "binding_id": identity["binding_id"],
+        "runtime_id": identity["runtime_id"],
+        "capital_pool_id": identity["capital_pool_id"],
+        "artifact_id": identity["artifact_id"],
+        "artifact_version": identity["artifact_version"],
+        "plan_id": identity["plan_id"],
+        "persona_capital_binding_id": identity["persona_capital_binding_id"],
+        "trace_id": envelope["trace_id"],
+        "signal_id": identity["signal_id"],
+        "run_id": identity["run_id"],
+        "loop_run_id": identity["loop_run_id"],
+        "journey_id": envelope["journey_id"],
+        "aggregate_type": identity["aggregate_type"],
+        "aggregate_id": identity["aggregate_id"],
+        "sequence_no": sequence_no,
+        "causal_parent_id": identity["event_id"],
+        "source_mode": "live",
+        "reconciliation_id": event_id,
+        "target": json.loads(json.dumps(identity["target"])),
+        "metrics": {
+            "action": event_type,
+            "reconciliation_status": evaluation.get("status"),
+            "drift_check_count": len(evaluation.get("drift_checks") or []),
+            "reconciliation_check_count": len(evaluation.get("reconciliation_checks") or []),
+        },
+        "metadata": metadata,
+        "correlation_envelope": envelope,
+    }
+    if isinstance(identity.get("authority_refs"), dict):
+        event["authority_refs"] = json.loads(json.dumps(identity["authority_refs"]))
+    return event, None
+
+
+def _latest_accepted_lifecycle_append(
+    binding_id: str,
+) -> tuple[Dict[str, Any], Dict[str, Any]] | None:
+    """Return the latest accepted scheduled append for a runtime binding."""
+    candidates: List[
+        tuple[datetime, str, str, Dict[str, Any], Dict[str, Any]]
+    ] = []
+    for evaluation in store.list_evaluations():
+        if str(evaluation.get("binding_id") or "") != binding_id:
+            continue
+        raw_state = evaluation.get("lifecycle_append")
+        if not isinstance(raw_state, dict) or raw_state.get("status") != "accepted":
+            continue
+        state = dict(raw_state)
+        accepted_at_text = str(
+            state.get("accepted_at")
+            or state.get("attempted_at")
+            or evaluation.get("evaluated_at")
+            or ""
+        )
+        accepted_at = _strict_lifecycle_datetime(accepted_at_text) or datetime.min.replace(
+            tzinfo=timezone.utc
+        )
+        candidates.append(
+            (
+                accepted_at,
+                accepted_at_text,
+                str(evaluation.get("evaluation_id") or evaluation.get("id") or ""),
+                evaluation,
+                state,
+            )
+        )
+    if not candidates:
+        return None
+    _, _, _, evaluation, state = max(candidates, key=lambda candidate: candidate[:3])
+    return evaluation, state
+
+
+def _strict_lifecycle_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _accepted_append_visibility_reason(
+    *,
+    summary: Dict[str, Any],
+    binding_id: str,
+    timestamp: str,
+) -> tuple[str | None, Dict[str, Any]]:
+    """Fail closed until a prior accepted append is visible in the projector.
+
+    Once the projector has returned the accepted event itself, the persisted
+    visibility acknowledgement permits a later, strictly newer lifecycle event
+    to be reconciled.  This avoids both stale sequence reuse and a permanent
+    deadlock after a subsequent non-reconciliation lifecycle stage arrives.
+    """
+    latest = _latest_accepted_lifecycle_append(binding_id)
+    if latest is None:
+        return None, {}
+
+    accepted_evaluation, accepted_state = latest
+    accepted_event = (
+        accepted_state.get("event")
+        if isinstance(accepted_state.get("event"), dict)
+        else {}
+    )
+    accepted_event_id = str(
+        accepted_state.get("event_id") or accepted_event.get("event_id") or ""
+    ).strip()
+    raw_identity = summary.get("last_lifecycle_identity")
+    identity = raw_identity if isinstance(raw_identity, dict) else {}
+    observed_event_id = str(identity.get("event_id") or "").strip()
+    raw_recent_event_ids = summary.get("recent_lifecycle_event_ids")
+    recent_event_ids = (
+        [str(value or "").strip() for value in raw_recent_event_ids]
+        if isinstance(raw_recent_event_ids, list)
+        else []
+    )
+    recent_event_ids = [value for value in recent_event_ids if value]
+
+    visibility = {
+        "waiting_for_event_id": accepted_event_id or None,
+        "observed_event_id": observed_event_id or None,
+    }
+    if not accepted_event_id:
+        return "accepted_lifecycle_append_state_incomplete", visibility
+
+    ordered_after_accepted = (
+        accepted_event_id in recent_event_ids
+        and observed_event_id in recent_event_ids
+        and recent_event_ids[-1] == observed_event_id
+        and recent_event_ids.index(accepted_event_id)
+        < recent_event_ids.index(observed_event_id)
+    )
+    visibility_source = None
+    if observed_event_id == accepted_event_id:
+        visibility_source = "last_lifecycle_identity"
+    elif ordered_after_accepted:
+        visibility_source = "recent_lifecycle_event_ids"
+
+    if visibility_source is not None:
+        if not accepted_state.get("summary_visibility_confirmed_at"):
+            accepted_state["summary_visibility_confirmed_at"] = timestamp
+            accepted_state["summary_visibility_event_id"] = accepted_event_id
+            accepted_state["summary_visibility_observed_event_id"] = observed_event_id or None
+            accepted_state["summary_visibility_source"] = visibility_source
+            accepted_evaluation["lifecycle_append"] = accepted_state
+            store.put_evaluation(accepted_evaluation)
+
+    if observed_event_id == accepted_event_id:
+        return None, visibility
+
+    if not accepted_state.get("summary_visibility_confirmed_at"):
+        return "accepted_lifecycle_append_not_visible", visibility
+
+    raw_observed_sequence = identity.get("sequence_no")
+    raw_accepted_sequence = accepted_event.get("sequence_no")
+    observed_sequence = (
+        raw_observed_sequence
+        if isinstance(raw_observed_sequence, int)
+        and not isinstance(raw_observed_sequence, bool)
+        else -1
+    )
+    accepted_sequence = (
+        raw_accepted_sequence
+        if isinstance(raw_accepted_sequence, int)
+        and not isinstance(raw_accepted_sequence, bool)
+        else -1
+    )
+    same_aggregate = (
+        str(identity.get("aggregate_type") or "")
+        == str(accepted_event.get("aggregate_type") or "")
+        and str(identity.get("aggregate_id") or "")
+        == str(accepted_event.get("aggregate_id") or "")
+    )
+    if same_aggregate:
+        if observed_sequence <= accepted_sequence:
+            return "accepted_lifecycle_append_not_visible", visibility
+        return None, visibility
+
+    # Aggregate sequence numbers restart for a new journey. Ordered projector
+    # receipts are the only authoritative proof that the new aggregate was
+    # observed after the accepted reconciliation; producer timestamps can be
+    # skewed or backfilled and therefore cannot replace projector order.
+    if ordered_after_accepted:
+        return None, visibility
+    return "accepted_lifecycle_append_not_visible", visibility
+
+
+def _telemetry_response_body(raw: bytes) -> tuple[Dict[str, Any] | None, str | None]:
+    if not raw:
+        return {}, None
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return None, str(exc)
+    if not isinstance(parsed, dict):
+        return None, "telemetry response body is not an object"
+    return parsed, None
+
+
+def _append_telemetry_lifecycle_event(
+    telemetry_url: str,
+    event: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Append once and distinguish terminal acceptance from retryable ambiguity."""
+    url = telemetry_url.rstrip("/") + "/api/telemetry/ingest"
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(event, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:  # noqa: S310
+            response_status = getattr(response, "status", None)
+            http_status = int(response_status if response_status is not None else response.getcode())
+            raw_body = response.read()
+    except urllib.error.HTTPError as exc:
+        raw_body = exc.read()
+        response_body, parse_error = _telemetry_response_body(raw_body)
+        http_status = int(exc.code)
+        retryable = http_status >= 500 or http_status in _RETRYABLE_HTTP_STATUSES
+        return {
+            "status": "retryable_error" if retryable else "terminal_rejected",
+            "terminal": not retryable,
+            "retryable": retryable,
+            "outcome": "failed",
+            "http_status": http_status,
+            "response": response_body,
+            "error": parse_error or f"telemetry ingest returned HTTP {http_status}",
+        }
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return {
+            "status": "retryable_error",
+            "terminal": False,
+            "retryable": True,
+            "outcome": "ambiguous",
+            "http_status": None,
+            "response": None,
+            "error": str(getattr(exc, "reason", exc)),
+        }
+
+    response_body, parse_error = _telemetry_response_body(raw_body)
+    if http_status == 202 and response_body is not None and response_body.get("status") == "accepted":
+        return {
+            "status": "accepted",
+            "terminal": True,
+            "retryable": False,
+            "outcome": "accepted",
+            "http_status": http_status,
+            "response": response_body,
+            "error": None,
+        }
+    return {
+        "status": "retryable_error",
+        "terminal": False,
+        "retryable": True,
+        "outcome": "ambiguous",
+        "http_status": http_status,
+        "response": response_body,
+        "error": parse_error or "telemetry ingest did not return terminal accepted status",
+    }
+
+
+def _ensure_scheduled_lifecycle_append(
+    *,
+    summary: Dict[str, Any],
+    evaluation: Dict[str, Any],
+    telemetry_url: str,
+    timestamp: str,
+) -> Dict[str, Any]:
+    """Persist-before-send and retry the same event for an idempotent evaluation."""
+    raw_state = evaluation.get("lifecycle_append")
+    state: Dict[str, Any] = dict(raw_state) if isinstance(raw_state, dict) else {}
+    if state.get("status") in {"accepted", "terminal_rejected", "not_eligible"}:
+        return state
+
+    event = state.get("event") if isinstance(state.get("event"), dict) else None
+    if event is None:
+        visibility_reason, visibility = _accepted_append_visibility_reason(
+            summary=summary,
+            binding_id=str(evaluation.get("binding_id") or "").strip(),
+            timestamp=timestamp,
+        )
+        if visibility_reason is not None:
+            state.update(
+                {
+                    "status": "deferred",
+                    "terminal": False,
+                    "retryable": True,
+                    "outcome": "deferred",
+                    "reason": visibility_reason,
+                    "attempt_count": int(state.get("attempt_count") or 0),
+                    "deferred_count": int(state.get("deferred_count") or 0) + 1,
+                    "event_id": None,
+                    "updated_at": timestamp,
+                    **visibility,
+                }
+            )
+            evaluation["lifecycle_append"] = state
+            store.put_evaluation(evaluation)
+            return state
+        event, reason = _scheduled_lifecycle_event(
+            summary=summary,
+            evaluation=evaluation,
+            timestamp=timestamp,
+        )
+        if event is None:
+            state = {
+                "status": "not_eligible",
+                "terminal": True,
+                "retryable": False,
+                "reason": reason,
+                "attempt_count": 0,
+                "deferred_count": int(state.get("deferred_count") or 0),
+                "event_id": None,
+                "updated_at": timestamp,
+            }
+            evaluation["lifecycle_append"] = state
+            store.put_evaluation(evaluation)
+            return state
+        state = {
+            "status": "pending",
+            "terminal": False,
+            "retryable": True,
+            "reason": None,
+            "attempt_count": 0,
+            "deferred_count": int(state.get("deferred_count") or 0),
+            "event_id": event["event_id"],
+            "upstream_event_id": event["causal_parent_id"],
+            "event": event,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        evaluation["lifecycle_append"] = state
+        # Persist the exact deterministic payload before any ambiguous network
+        # boundary so a retry can only produce an exact duplicate.
+        store.put_evaluation(evaluation)
+
+    try:
+        delivery = _append_telemetry_lifecycle_event(telemetry_url, event)
+    except Exception as exc:  # noqa: BLE001 - delivery ambiguity must remain retryable.
+        delivery = {
+            "status": "retryable_error",
+            "terminal": False,
+            "retryable": True,
+            "outcome": "ambiguous",
+            "http_status": None,
+            "response": None,
+            "error": str(exc),
+        }
+    state.update(delivery)
+    state["attempt_count"] = int(state.get("attempt_count") or 0) + 1
+    state["attempted_at"] = timestamp
+    state["updated_at"] = timestamp
+    if state.get("status") == "accepted":
+        state["accepted_at"] = timestamp
+    evaluation["lifecycle_append"] = state
+    store.put_evaluation(evaluation)
+    return state
+
+
+def _lifecycle_append_receipt(binding_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "binding_id": binding_id,
+        "event_id": state.get("event_id"),
+        "status": state.get("status"),
+        "terminal": bool(state.get("terminal")),
+        "retryable": bool(state.get("retryable")),
+        "outcome": state.get("outcome"),
+        "attempt_count": int(state.get("attempt_count") or 0),
+        "reason": state.get("reason"),
+        "http_status": state.get("http_status"),
+        "error": state.get("error"),
+    }
+
+
 def _lag_check(metric: str, value: float | None, *, warning: float, critical: float) -> Dict[str, Any]:
     if value is None:
         return {
@@ -1634,6 +2221,23 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
     drift_report_ids: List[str] = []
     incident_ids: List[str] = []
     incident_delivery_errors: List[Dict[str, Any]] = []
+    lifecycle_append_results: List[Dict[str, Any]] = []
+    lifecycle_accepted_event_ids: List[str] = []
+    lifecycle_retryable_errors: List[Dict[str, Any]] = []
+    lifecycle_terminal_rejections: List[Dict[str, Any]] = []
+    lifecycle_ineligible_binding_ids: List[str] = []
+
+    def record_lifecycle_append(binding_id: str, state: Dict[str, Any]) -> None:
+        receipt = _lifecycle_append_receipt(binding_id, state)
+        lifecycle_append_results.append(receipt)
+        if receipt["status"] == "accepted" and receipt["event_id"]:
+            lifecycle_accepted_event_ids.append(str(receipt["event_id"]))
+        elif receipt["status"] in {"retryable_error", "deferred"}:
+            lifecycle_retryable_errors.append(receipt)
+        elif receipt["status"] == "terminal_rejected":
+            lifecycle_terminal_rejections.append(receipt)
+        elif receipt["status"] == "not_eligible":
+            lifecycle_ineligible_binding_ids.append(binding_id)
 
     for summary in summaries:
         binding_id = str(
@@ -1673,6 +2277,13 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
             if existing_evaluation is None:
                 continue
             evaluation_statuses.append(str(existing_evaluation.get("status") or status))
+            lifecycle_state = _ensure_scheduled_lifecycle_append(
+                summary=summary,
+                evaluation=existing_evaluation,
+                telemetry_url=telemetry_url,
+                timestamp=timestamp,
+            )
+            record_lifecycle_append(binding_id, lifecycle_state)
             report = _scheduled_drift_report(
                 summary=summary,
                 evaluation=existing_evaluation,
@@ -1750,6 +2361,13 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
         existing_evaluation_ids.add(evaluation_id)
         created_evaluation_ids.append(stored["evaluation_id"])
         evaluation_statuses.append(status)
+        lifecycle_state = _ensure_scheduled_lifecycle_append(
+            summary=summary,
+            evaluation=stored,
+            telemetry_url=telemetry_url,
+            timestamp=timestamp,
+        )
+        record_lifecycle_append(binding_id, lifecycle_state)
 
         report = _scheduled_drift_report(
             summary=summary,
@@ -1778,7 +2396,7 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
             )
 
     tick_status = _worst_status(evaluation_statuses)
-    if incident_delivery_errors:
+    if incident_delivery_errors or lifecycle_retryable_errors or lifecycle_terminal_rejections:
         tick_status = "failure"
     elif not created_evaluation_ids and skipped_binding_ids:
         tick_status = _worst_status(evaluation_statuses)
@@ -1796,6 +2414,11 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
         "drift_report_ids": drift_report_ids,
         "incident_ids": list(dict.fromkeys(incident_ids)),
         "incident_delivery_errors": incident_delivery_errors,
+        "lifecycle_append_results": lifecycle_append_results,
+        "lifecycle_accepted_event_ids": list(dict.fromkeys(lifecycle_accepted_event_ids)),
+        "lifecycle_retryable_errors": lifecycle_retryable_errors,
+        "lifecycle_terminal_rejections": lifecycle_terminal_rejections,
+        "lifecycle_ineligible_binding_ids": list(dict.fromkeys(lifecycle_ineligible_binding_ids)),
         "telemetry_summaries_fetched": len(summaries),
         "triggered_at": timestamp,
     }

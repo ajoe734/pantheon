@@ -480,7 +480,10 @@ import json, sys
 
 payload = json.loads(sys.argv[1])
 posture = payload.get("config_posture")
-assert isinstance(posture, dict), f"config_posture={posture!r}, expected object"
+if not isinstance(posture, dict):
+    # Compatibility with deployment targets that predate the canonical
+    # config_posture envelope. New BFF versions publish posture only there.
+    posture = payload
 assert posture.get("auth_stub") is False, f"auth_stub={posture.get(\"auth_stub\")!r}, expected False"
 assert posture.get("auth_mode") == "strict", f"auth_mode={posture.get(\"auth_mode\")!r}, expected strict"
 ' "$version_payload" || error "hosted BFF auth posture is not strict: ${version_payload}"

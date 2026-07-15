@@ -207,6 +207,7 @@ def test_auth_gate_checks_hosted_posture_and_fixed_bearer_negative() -> None:
     assert 'posture = payload.get("config_posture")' in script
     assert 'posture.get("auth_stub") is False' in script
     assert 'posture.get("auth_mode") == "strict"' in script
+    assert "posture = payload" in script
     assert "/bff/auth/dev-login" in script
     assert "Bearer op-fixed:operator:mfa" in script
     assert "accepted a fixed/arbitrary bearer token" in script
