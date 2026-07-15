@@ -101,7 +101,9 @@
         "conclusion": "pass"
       }
     ],
-    "validated_at": "2026-07-15T11:08:53Z"
+    "validated_at": "2026-07-15T11:08:53Z",
+    "validated_base_sha": "9eaf3f18b70a0b68a201ccc1c0cf64305df1aef0",
+    "validated_head_sha": "f8c987b59eb4cdb3a3c20790757a3e5c9b0e271a"
   },
   "deployment": {
     "applicable": true,
