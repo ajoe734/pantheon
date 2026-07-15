@@ -4,6 +4,8 @@ import json
 import os
 import sys
 import tempfile
+
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -13,6 +15,37 @@ from read_store import ReadSurfaceStore
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
+
+
+@pytest.fixture(autouse=True)
+def _isolate_persona_create_service_clients(monkeypatch):
+    """Keep this BFF contract test local after persona creation moved its
+    subresource writes to the canonical Capital, Deployment, and Runtime
+    services."""
+
+    monkeypatch.setattr(
+        bff_main,
+        "create_capital_binding",
+        lambda payload: {"binding_id": payload["binding_id"], "status": "created"},
+    )
+
+    def _missing_deployment_plan(*_args, **_kwargs):
+        raise RuntimeError("deployment plan not found")
+
+    monkeypatch.setattr(bff_main, "_get_json", _missing_deployment_plan)
+    monkeypatch.setattr(bff_main, "_post_json", lambda *_args, **_kwargs: {"status": "created"})
+
+    class _RuntimeManagerClient:
+        def get(self, _binding_id):
+            return None
+
+        def deploy(self, request):
+            return {"runtime_id": request["runtime_id"], "status": "accepted"}
+
+        def list_all(self):
+            return []
+
+    monkeypatch.setattr(bff_main, "_runtime_manager_client", _RuntimeManagerClient)
 
 
 def _fresh_client(td: str) -> TestClient:
