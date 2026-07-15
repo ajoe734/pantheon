@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Callable, Iterator
+from uuid import uuid4
 
 
 class JsonlRegistryStore:
@@ -52,12 +53,26 @@ class JsonlRegistryStore:
         self._ensure_parent()
         with open(self._path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
 
     def overwrite_all(self, records: list[dict[str, Any]]) -> None:
         self._ensure_parent()
-        with open(self._path, "w", encoding="utf-8") as fh:
-            for record in records:
-                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        temp_path = self._path.with_name(f".{self._path.name}.{os.getpid()}.{uuid4().hex}.tmp")
+        try:
+            with open(temp_path, "x", encoding="utf-8") as fh:
+                for record in records:
+                    fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(temp_path, self._path)
+            directory_fd = os.open(self._path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            temp_path.unlink(missing_ok=True)
 
     def upsert(self, record: dict[str, Any]) -> None:
         """Replace existing record with same id_field or append if absent."""

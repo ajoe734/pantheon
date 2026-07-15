@@ -410,6 +410,8 @@
       "LOOP-PROD-ATTEST-001"
     ],
     "final_direct_dependency_ids": [
+      "EVOCHAIN-011",
+      "EVOLOOP-011",
       "LOOP-PROD-CLOSE-001",
       "LOOP-PROD-DELIVERY-001",
       "LOOP-PROD-WORKER-001",
@@ -580,6 +582,7 @@
     "AG-GAP-013",
     "AG-GAP-014",
     "EVOCHAIN-011",
+    "EVOLOOP-011",
     "MGMT-SSE-001",
     "OPENCLAW-CRON-WRITE-SCOPE",
     "OPENCLAW-PERSONA-CRON-BACKFILL",
@@ -4545,6 +4548,8 @@
       "reviewer": "Codex",
       "status": "todo",
       "depends_on": [
+        "EVOCHAIN-011",
+        "EVOLOOP-011",
         "LOOP-PROD-CLOSE-001",
         "LOOP-PROD-DELIVERY-001",
         "LOOP-PROD-WORKER-001",

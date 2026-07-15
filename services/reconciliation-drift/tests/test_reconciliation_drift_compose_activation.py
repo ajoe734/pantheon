@@ -27,7 +27,7 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
     assert "healthcheck" in drift
 
     consumer = services["reconciliation-drift-consumer"]
-    assert consumer["profiles"] == ["reconciliation-drift-consumer"]
+    assert "profiles" not in consumer
     assert consumer["build"]["dockerfile"] == "services/reconciliation-drift/Dockerfile"
     assert consumer["command"] == ["python", "services/reconciliation-drift/consumer.py"]
     assert consumer["environment"]["RECONCILIATION_DRIFT_URL"] == "http://reconciliation-drift-svc:8102"
@@ -44,7 +44,7 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
     assert consumer["depends_on"]["reconciliation-drift-svc"]["condition"] == "service_healthy"
 
     scheduler = services["reconciliation-drift-scheduler"]
-    assert scheduler["profiles"] == ["reconciliation-drift-scheduler"]
+    assert "profiles" not in scheduler
     assert scheduler["build"]["dockerfile"] == "services/reconciliation-drift/Dockerfile"
     assert scheduler["command"] == ["python", "services/reconciliation-drift/scheduler_worker.py"]
     assert scheduler["environment"]["RECONCILIATION_DRIFT_URL"] == "http://reconciliation-drift-svc:8102"
@@ -59,7 +59,7 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
     assert scheduler["depends_on"]["reconciliation-drift-svc"]["condition"] == "service_healthy"
 
     listener = services["reconciliation-drift-incident-listener"]
-    assert listener["profiles"] == ["reconciliation-drift-incident-listener"]
+    assert "profiles" not in listener
     assert listener["build"]["dockerfile"] == "services/reconciliation-drift/Dockerfile"
     assert listener["command"] == ["python", "services/reconciliation-drift/incident_listener.py"]
     assert listener["environment"]["RECONCILIATION_DRIFT_URL"] == "http://reconciliation-drift-svc:8102"

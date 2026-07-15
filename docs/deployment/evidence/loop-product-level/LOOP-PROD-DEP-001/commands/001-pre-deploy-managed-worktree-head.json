@@ -1,0 +1,15 @@
+{
+  "captured_at": "2026-07-15T00:06:36Z",
+  "command": [
+    "git",
+    "rev-parse",
+    "HEAD"
+  ],
+  "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+  "duration_ms": 18.143,
+  "label": "pre-deploy-managed-worktree-head",
+  "returncode": 0,
+  "started_at": "2026-07-15T00:06:36Z",
+  "stderr": "",
+  "stdout": "a10f752b3ea4420f271535e255f2d4e7d3d498b2\n"
+}

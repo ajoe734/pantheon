@@ -50,9 +50,76 @@ def test_context_resolution_is_idempotent_and_versioned(monkeypatch):
     assert first.status_code == second.status_code == 200, first.text
     assert first.json()["data"] == second.json()["data"]
     assert first.json()["data"]["verified"] is True
+    workshop_id = first.json()["data"]["workshop_id"]
+    workshop = c.get(f"/bff/agora/workshops/{workshop_id}", headers=AUTH)
+    assert workshop.status_code == 200, workshop.text
+    session = workshop.json()["data"]
+    assert session["strategy_id"] == "strategy-1"
+    assert session["active_strategy_spec_registry_id"] == "v1"
+    assert session["selected_version_id"] is None
     invalid = c.post("/bff/agora/interactions/context:resolve", headers={**AUTH, "Idempotency-Key": "invalid"},
                      json={"context_refs": [{"type": "strategy", "id": "strategy-1"}]})
     assert invalid.status_code == 422
+
+
+def test_context_resolution_rejects_strategy_or_registry_version_mismatch(monkeypatch):
+    c = client(monkeypatch)
+    resolved = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": "pointer-authority"},
+        json=context_payload(),
+    ).json()["data"]
+
+    for key, strategy_id, version_id in (
+        ("wrong-strategy", "strategy-other", "v1"),
+        ("wrong-version", "strategy-1", "v2"),
+    ):
+        response = c.post(
+            "/bff/agora/interactions/context:resolve",
+            headers={**AUTH, "Idempotency-Key": key},
+            json={
+                "workshop_id": resolved["workshop_id"],
+                "environment": "paper",
+                "context_refs": [
+                    {"type": "strategy", "id": strategy_id, "version_id": version_id},
+                ],
+            },
+        )
+        assert response.status_code == 409, response.text
+        assert "strategy_version_mismatch" in response.text
+
+
+def test_submission_uses_strategy_registry_pointer_not_workshop_version_alias(monkeypatch):
+    c = client(monkeypatch)
+    resolved = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": "registry-pointer-submit"},
+        json=context_payload(),
+    ).json()["data"]
+    original_get_session = MemoryWorkshopStore.get_session
+
+    def get_session_with_unrelated_workshop_version(self, workshop_id):
+        session = original_get_session(self, workshop_id)
+        if session is not None and workshop_id == resolved["workshop_id"]:
+            session["selected_version_id"] = "workshop-version-unrelated"
+        return session
+
+    monkeypatch.setattr(MemoryWorkshopStore, "get_session", get_session_with_unrelated_workshop_version)
+
+    response = c.post(
+        "/bff/agora/interactions",
+        headers={**AUTH, "Idempotency-Key": "registry-pointer-interaction"},
+        json={
+            "workshop_id": resolved["workshop_id"],
+            "mode": "consult",
+            "environment": "paper",
+            "topic": "Review immutable strategy registry pointer",
+            "participant_persona_ids": ["ready"],
+            "context_refs": context_payload()["context_refs"],
+        },
+    )
+
+    assert response.status_code == 202, response.text
 
 
 def test_eligibility_includes_and_excludes_with_reasons(monkeypatch):

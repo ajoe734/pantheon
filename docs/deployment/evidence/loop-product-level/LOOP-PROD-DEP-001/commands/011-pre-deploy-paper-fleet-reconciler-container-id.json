@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-07-15T00:06:38Z",
+  "command": [
+    "docker",
+    "compose",
+    "-p",
+    "pantheon",
+    "-f",
+    "/home/lupin/pantheon-ci-deploy/dev-root/docker-compose.yml",
+    "ps",
+    "-q",
+    "paper-fleet-reconciler"
+  ],
+  "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+  "duration_ms": 312.812,
+  "label": "pre-deploy-paper-fleet-reconciler-container-id",
+  "returncode": 0,
+  "started_at": "2026-07-15T00:06:38Z",
+  "stderr": "",
+  "stdout": "e2e1b7d582c09cfdd85a3229198358b3a82b61c5fa9ed6b3d46b98e25555bf15\n"
+}
