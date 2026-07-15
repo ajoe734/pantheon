@@ -243,10 +243,11 @@ def run_full_cycle_verification(base, token, ctx):
         b for b in bindings 
         if b.get("status") in ("active", "running") 
         and b.get("artifact_id")
+        and b.get("persona_id")
         and b.get("artifact_id") not in active_targets
     ]
     if not active:
-        raise RuntimeError("No active runtime bindings found without active target conflicts to initiate evolutionary breach loop.")
+        raise RuntimeError("No active runtime bindings with valid persona_id found without active target conflicts to initiate evolutionary breach loop.")
 
     b = active[0]
     print(f"  Selected active binding: {b['binding_id']} with artifact: {b['artifact_id']}")
@@ -425,16 +426,24 @@ def run_full_cycle_verification(base, token, ctx):
     print(f"  Artifact v2 registered successfully: {new_artifact_id}")
 
     # Step 8.5: Advance registry artifact v2 state to 'approved'
-    print(f"  Advancing registry artifact v2 state to 'approved'...")
-    adv_payload = {
-        "target_state": "approved",
-        "approver": "approver-e2e-008",
-        "approval_decision_id": f"apv-redeploy-{run_seed}"
-    }
-    adv_status, adv_res = _http_request(f"{registry_url}/api/registry/strategy-artifacts/{new_artifact_id}/advance", data=adv_payload, method="POST", ctx=ctx)
-    if adv_status != 200:
-        raise RuntimeError(f"Failed to advance strategy artifact state. Status: {adv_status}, Error: {adv_res}")
-    print(f"  Artifact v2 advanced to approved state.")
+    current_state = registry_entry.get("artifact_state")
+    if current_state == "approved":
+        print(f"  Artifact v2 is already in 'approved' state.")
+    else:
+        print(f"  Advancing registry artifact v2 state from '{current_state}' to 'approved'...")
+        adv_payload = {
+            "target_state": "approved",
+            "approver": "approver-e2e-008",
+            "approval_decision_id": f"apv-redeploy-{run_seed}"
+        }
+        adv_status, adv_res = _http_request(f"{registry_url}/api/registry/strategy-artifacts/{new_artifact_id}/advance", data=adv_payload, method="POST", ctx=ctx)
+        if adv_status != 200:
+            if isinstance(adv_res, dict) and "Forbidden artifact-state transition: approved -> approved" in str(adv_res.get("detail", "")):
+                print(f"  Artifact v2 is already in 'approved' state (transition ignored).")
+            else:
+                raise RuntimeError(f"Failed to advance strategy artifact state. Status: {adv_status}, Error: {adv_res}")
+        else:
+            print(f"  Artifact v2 advanced to approved state.")
 
     # Re-fetch registry entry to ensure we carry the approved state
     print(f"  Re-fetching registry entry for advanced artifact...")
