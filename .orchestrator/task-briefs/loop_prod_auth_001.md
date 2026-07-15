@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review
 - Owner: Antigravity
 - Reviewer: Claude
-- Next: PR #3617 is updated, local tests are passing, auto-merge is enabled. Ready for review.
+- Next: Auto-reassigned review from Codex to Claude after repeated Codex auth: Authentication failure
 
 ## Summary
 沿用既有 /bff/auth/dev-login，將 hosted dev 切到 AUTH_STUB=false/strict；使用短效 role/tenant identities，移除 default all-role bearer，並在 /bff/version 暴露非敏感 git SHA、image digest、build time、environment、config posture。
