@@ -188,37 +188,32 @@
     "commands": [
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q .orchestrator/test_runtime_state.py .orchestrator/test_common.py .orchestrator/test_file_inbox.py .orchestrator/test_watch_events.py .orchestrator/test_supervisor_watchdog.py .orchestrator/test_approval_queue.py .orchestrator/test_task_archive_index_legacy_id.py",
-        "result": "110 passed, 60 subtests passed in 31.68s",
+        "result": "113 passed, 60 subtests passed in 27.07s",
         "conclusion": "passed_owner_exact_head"
       },
       {
-        "command": "PYTHONPATH=.orchestrator:scripts pytest -q .orchestrator/test_supervisor.py with four named upstream configuration-drift tests deselected",
-        "result": "271 passed, 4 deselected in 53.26s; the content-identical unfiltered source run was 271 passed with the same 4 documented configuration-policy failures",
+        "command": "PYTHONPATH=.orchestrator:scripts pytest -q .orchestrator/test_supervisor.py --deselect .orchestrator/test_supervisor.py::RuntimeConfigTests::test_antigravity_workers_are_in_dispatcher_pool --deselect .orchestrator/test_supervisor.py::RuntimeConfigTests::test_claude2_new_work_target_and_concurrency_are_capped --deselect .orchestrator/test_supervisor.py::RuntimeConfigTests::test_claude_concurrency_is_explicitly_capped_at_three --deselect .orchestrator/test_supervisor.py::UnderutilizationSidecarDispatchTests::test_unregistered_runtime_config_agent_is_not_eligible_for_sidecars",
+        "result": "271 passed, 4 deselected in 38.18s",
         "conclusion": "passed_owner_exact_head"
       },
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_ai_status.py",
-        "result": "71 passed, 8 subtests passed in 27.19s",
+        "result": "71 passed, 8 subtests passed in 16.33s",
         "conclusion": "passed_owner_exact_head"
       },
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py",
-        "result": "188 passed in 381.58s",
+        "result": "189 passed in 398.00s (0:06:37)",
         "conclusion": "passed_owner_exact_head"
       },
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_planning_state.py scripts/test_orchestrator_bundle.py scripts/test_orchestrator_queue_triage.py scripts/git/test_index_safety.py scripts/test_dashboard_server.py .orchestrator/test_task_archive_index_legacy_id.py",
-        "result": "44 passed in 24.25s",
+        "result": "44 passed in 16.48s",
         "conclusion": "passed_owner_exact_head"
       },
       {
-        "command": "python3 -m py_compile selected runtime/task/audit implementation modules and git diff --check",
-        "result": "exit 0",
-        "conclusion": "passed_owner_exact_head"
-      },
-      {
-        "command": "tracked static inventory rejecting unregistered direct runtime/task/audit writes",
-        "result": "399 files; inventory sha256 6440d31a1e44d83d4cf68c6e36869a2956327fcf9dd150c3df1c2a9fdf5979f2; zero violations",
+        "command": "python3 -m py_compile selected runtime/task/audit implementation modules && git diff --check && exact source-inventory assertion",
+        "result": "exit 0; 399 files; zero violations",
         "conclusion": "passed_owner_exact_head"
       },
       {
@@ -227,10 +222,10 @@
         "conclusion": "not_admissible_yet"
       }
     ],
-    "validated_at": "2026-07-15T15:43:29Z",
+    "validated_at": "2026-07-15T22:02:17Z",
     "validated_base_sha": "e4c3ce68bc4df389288d428bbd5fb1d3869a2112",
-    "validated_head_sha": "024d1096b14997963e5e6407c05ade7972065e7f",
-    "validated_head_semantics": "The validated source head composes the task anchors with current origin/dev through merge c92e985b3. Later commits contain only generated registry/check/evidence artifacts whose self-reference cannot be embedded in their own commit identity."
+    "validated_head_sha": "a6e8116b51bf7ec2927aa8a8a484582e65636585",
+    "validated_head_semantics": "The validated source head is the owner fix commit that resolves Codex2's confirmed exact-head findings (writer-scanner os.replace/os.rename blind spot, external-dependency and activity-audit-archive symlink following, and the non-hermetic mixed-repo delivery-metadata test), composed on top of origin/dev through the prior merge c8af36c00a. Later commits contain only generated registry/check/evidence artifacts whose self-reference cannot be embedded in their own commit identity."
   },
   "deployment": {
     "applicable": true,
@@ -460,9 +455,9 @@
     "self_hash_reason": "This mutable premerge scaffold is intentionally not checksummed and cannot be admitted as final evidence.",
     "source_artifact_sha256_by_epoch": {
       "owner_exact_head": {
-        "checks.json": "c8505ab454e89c8dcd6fc44d94dcb0be068dc968f1b00599e45077423be20aa7",
-        "runtime-task-audit-writer-registry.json": "c798788ba752d92eabc23d7f53381cc7531f8a7e42396ed69e5383fd7d1a0235",
-        "source_inventory": "6440d31a1e44d83d4cf68c6e36869a2956327fcf9dd150c3df1c2a9fdf5979f2"
+        "checks.json": "2c07ac100e48cd40330178bfab511755e53a2271471ee0a4b93f34d000d3b466",
+        "runtime-task-audit-writer-registry.json": "43f92870cc3209afff461fa57671631c7ffb8de9f2a3452fdf82cde80ffe6c74",
+        "source_inventory": "beacb21ba7b7c579c6051704ace2e25beec443c764740202f435912abb9dd928"
       }
     }
   },
@@ -500,6 +495,15 @@
       "actor": "Claude",
       "checks_sha256": "c8505ab454e89c8dcd6fc44d94dcb0be068dc968f1b00599e45077423be20aa7",
       "writer_registry_sha256": "c798788ba752d92eabc23d7f53381cc7531f8a7e42396ed69e5383fd7d1a0235"
+    },
+    {
+      "sequence": 5,
+      "recorded_at": "2026-07-15T22:02:17Z",
+      "kind": "owner_exact_source_candidate_refrozen_after_reviewer_fix",
+      "status": "blocked_pending_distinct_review_merge_protected_install_and_dry_run",
+      "actor": "Claude",
+      "checks_sha256": "2c07ac100e48cd40330178bfab511755e53a2271471ee0a4b93f34d000d3b466",
+      "writer_registry_sha256": "43f92870cc3209afff461fa57671631c7ffb8de9f2a3452fdf82cde80ffe6c74"
     }
   ]
 }
