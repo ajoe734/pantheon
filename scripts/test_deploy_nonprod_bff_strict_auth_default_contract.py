@@ -23,7 +23,10 @@ def test_nonprod_deploy_defaults_to_strict_bff_auth() -> None:
 
 
 def test_workflow_rejects_refs_that_predate_the_strict_auth_contract() -> None:
-    """The dispatch workflow must gate an older checkout before deployment."""
+    """The workflow definition comes from the dispatch ref, but checkout can
+    replace the workspace with an older target ref before the deploy script is
+    executed. Keep a workflow-level guard ahead of the remote deploy so an old
+    script cannot silently restore permissive/stub auth."""
     workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
 
     gate = workflow.index("- name: Enforce dev auth deployment floor")
@@ -50,7 +53,9 @@ def test_workflow_rejects_refs_that_predate_the_strict_auth_contract() -> None:
 
 
 def test_nonprod_workflow_has_bounded_dev_permissive_stub_profile() -> None:
-    """The explicit dev-only fallback must transport one atomic auth pair."""
+    """Manual proof runs may deploy an older exact SHA, so the workflow must
+    pass an atomic auth pair into that SHA's deploy script instead of relying
+    on either the script's historical defaults or the remote .env file."""
     workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
 
     assert "dev_auth_profile:" in workflow

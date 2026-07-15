@@ -10726,6 +10726,8 @@ class ReadSurfaceStore:
             "id": decision_id,
             "decision_id": decision_id,
             "program_id": raw.get("program_id"),
+            "persona_id": raw.get("persona_id"),
+            "capital_pool_id": raw.get("capital_pool_id"),
             "action_type": raw.get("action_type"),
             "risk_level": raw.get("risk_level"),
             "status": decision_state,
@@ -10755,6 +10757,8 @@ class ReadSurfaceStore:
             "required_approvals": raw.get("required_approvals"),
             "rollback_followthrough": raw.get("rollback_followthrough"),
             "metadata": raw.get("metadata"),
+            "origin": raw.get("origin"),
+            "provenance": raw.get("provenance"),
             "execution_result": raw.get("execution_result"),
         }
 
