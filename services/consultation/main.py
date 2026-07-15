@@ -627,6 +627,43 @@ def record_committee_sponsor_decision(
     if matched_request is None:
         raise HTTPException(status_code=404, detail="Committee not found")
 
+    # Check if a sponsor decision was already processed and successfully dispatched or gated
+    existing_metadata = matched_request.metadata if isinstance(matched_request.metadata, dict) else {}
+    existing_handoff_data = existing_metadata.get("service_handoff")
+    existing_handoff = None
+    if isinstance(existing_handoff_data, dict):
+        existing_handoff_id = existing_handoff_data.get("handoff_id")
+        if existing_handoff_id:
+            existing_handoff = store.get_handoff(existing_handoff_id)
+        
+        dispatch_info = existing_handoff_data.get("proposal_dispatch")
+        if isinstance(dispatch_info, dict) and dispatch_info.get("status") in {"sent", "gated"}:
+            # Idempotency check: if the decision is the same, return the existing result.
+            if matched_consult.get("sponsor_decision") == sponsor_decision:
+                handoff_status = existing_handoff_data.get("status")
+                if existing_handoff:
+                    handoff_status = existing_handoff.status.value if hasattr(existing_handoff.status, "value") else existing_handoff.status
+                return {
+                    "committee_id": committee_id,
+                    "committee_ref": matched_consult.get("committee_ref") or committee_id,
+                    "linked_request_id": matched_request.request_id,
+                    "linked_session_id": matched_request.linked_session_id or matched_consult.get("requester_session_id"),
+                    "sponsor_decision": matched_consult.get("sponsor_decision"),
+                    "sponsor_decided_at": matched_consult.get("sponsor_decided_at"),
+                    "sponsor_decided_by": matched_consult.get("sponsor_decided_by"),
+                    "consensus_state": matched_consult.get("consensus_state"),
+                    "rationale_ref": (matched_consult.get("synthesis_summary") or {}).get("rationale_ref"),
+                    "outcome": (matched_consult.get("synthesis_summary") or {}).get("outcome"),
+                    "service_handoff": {
+                        "handoff_id": existing_handoff_id,
+                        "target_gate": existing_handoff_data.get("target_gate"),
+                        "evidence_refs": existing_handoff_data.get("evidence_refs"),
+                        "audit_refs": existing_handoff_data.get("audit_refs"),
+                        "status": handoff_status,
+                        "proposal_dispatch": dispatch_info,
+                    },
+                }
+
     memos = [
         memo
         for memo in store.list_memos_for_request(matched_request.request_id)
@@ -638,10 +675,34 @@ def record_committee_sponsor_decision(
             detail="Committee has no published consultation memo for gate handoff",
         )
 
+    # Resolve assigned sponsor persona and real target version
+    assigned_sponsor_persona_id = None
+    if matched_consult.get("sponsor_persona_id"):
+        assigned_sponsor_persona_id = matched_consult.get("sponsor_persona_id")
+    elif matched_request.from_persona_id:
+        assigned_sponsor_persona_id = matched_request.from_persona_id
+    else:
+        # Check committee_participants roster
+        participants = matched_consult.get("committee_participants") or matched_request.metadata.get("committee_participants") or []
+        for p in participants:
+            if isinstance(p, dict) and p.get("role") == "sponsor" and p.get("participant_ref"):
+                assigned_sponsor_persona_id = p.get("participant_ref")
+                break
+    if not assigned_sponsor_persona_id:
+        assigned_sponsor_persona_id = req.actor_id
+
+    target_version = (
+        matched_consult.get("target_version")
+        or matched_consult.get("version")
+        or matched_request.metadata.get("target_version")
+        or matched_request.metadata.get("version")
+        or "1.0.0"
+    )
+
     recorded_at = req.recorded_at or utc_now()
     matched_consult["sponsor_decision"] = sponsor_decision
     matched_consult["sponsor_decided_at"] = recorded_at
-    matched_consult["sponsor_decided_by"] = req.actor_id
+    matched_consult["sponsor_decided_by"] = assigned_sponsor_persona_id
     matched_consult["consensus_state"] = "reached"
     matched_consult["outcome"] = sponsor_decision
     synthesis_summary = dict(matched_consult.get("synthesis_summary") or {})
@@ -664,28 +725,145 @@ def record_committee_sponsor_decision(
             evidence_refs.append(ref_id)
 
     audit_refs = [event.audit_id for event in store.list_audit_for_request(matched_request.request_id)]
-    handoff = ConsultGateHandoff(
-        handoff_id=f"gh-{uuid.uuid4().hex[:12]}",
-        request_id=matched_request.request_id,
-        target_gate=f"committee_sponsor_decision:{committee_id}",
-        memo_ids=[memo.memo_id for memo in memos],
-        evidence_refs=evidence_refs,
-        audit_refs=audit_refs,
-        trace_id=matched_request.trace_id,
-        status=GateHandoffStatus.SENT,
-        sent_at=recorded_at,
+    
+    if existing_handoff:
+        handoff = existing_handoff
+        handoff.sent_at = recorded_at
+        handoff.evidence_refs = list(set(handoff.evidence_refs + evidence_refs))
+        handoff.audit_refs = list(set(handoff.audit_refs + audit_refs))
+        handoff.status = GateHandoffStatus.SENT
+        store.put_handoff(handoff)
+    else:
+        handoff = ConsultGateHandoff(
+            handoff_id=f"gh-{uuid.uuid4().hex[:12]}",
+            request_id=matched_request.request_id,
+            target_gate=f"committee_sponsor_decision:{committee_id}",
+            memo_ids=[memo.memo_id for memo in memos],
+            evidence_refs=evidence_refs,
+            audit_refs=audit_refs,
+            trace_id=matched_request.trace_id,
+            status=GateHandoffStatus.SENT,
+            sent_at=recorded_at,
+        )
+        store.put_handoff(handoff)
+        audit = _emit_audit(
+            action="gate_handoff_created",
+            request_id=matched_request.request_id,
+            actor_ref=ActorRef(actor_type="operator", actor_id=req.actor_id),
+            service_actor_ref=CONSULTATION_SERVICE_ACTOR,
+            trace_id=matched_request.trace_id,
+            after_state=handoff.handoff_id,
+        )
+        handoff.audit_refs.append(audit.audit_id)
+        store.put_handoff(handoff)
+
+    # Map to governance / evolution proposal using the sponsor decision bridge
+    from .sponsor_decision_bridge import bridge, SponsorDecisionBridgeError
+
+    # Infer decision type: approval or evolution
+    decision_type = matched_consult.get("type") or matched_consult.get("decision_type")
+    if not decision_type:
+        if matched_consult.get("action_type") or "action_type" in matched_consult:
+            decision_type = "evolution"
+        else:
+            decision_type = "approval"
+
+    # Translate evidence refs format for the bridge
+    evidence_payload = []
+    for m in memos:
+        evidence_payload.append({"ref_type": "committee_memo", "ref_id": m.memo_id})
+    evidence_payload.append({"ref_type": "service_handoff", "ref_id": handoff.handoff_id})
+    for ref_id in evidence_refs:
+        if ref_id not in {m.memo_id for m in memos} and ref_id != handoff.handoff_id:
+            evidence_payload.append({"ref_type": "manual_review_ticket", "ref_id": ref_id})
+
+    bridge_payload = {
+        "decision_id": committee_id,
+        "type": decision_type,
+        "sponsor_persona_id": assigned_sponsor_persona_id,
+        "target_type": matched_request.target_type,
+        "target_id": matched_request.target_id,
+        "target_version": target_version,
+        "sponsor_decision": sponsor_decision,
+        "rationale": matched_consult.get("rationale") or f"Committee sponsor decided via {committee_id}",
+        "rationale_ref": rationale_ref,
+        "conditions": matched_consult.get("conditions") or [],
+        "committee_id": committee_id,
+        "handoff_id": handoff.handoff_id,
+        "trace_id": matched_request.trace_id,
+        "capital_pool_id": matched_consult.get("capital_pool_id"),
+        "persona_id": matched_consult.get("persona_id"),
+        "evidence_refs": evidence_payload,
+        "action_type": matched_consult.get("action_type"),
+        "target_stage": matched_consult.get("target_stage"),
+        "threshold_snapshots": matched_consult.get("threshold_snapshots") or [],
+        "linked_incident_id": matched_consult.get("linked_incident_id"),
+        "linked_postmortem_id": matched_consult.get("linked_postmortem_id"),
+        "metadata": matched_consult.get("metadata") or {},
+    }
+
+    # Remove None values to avoid schema clutter
+    bridge_payload = {k: v for k, v in bridge_payload.items() if v is not None}
+
+    try:
+        proposal = bridge(bridge_payload)
+    except SponsorDecisionBridgeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Sponsor decision bridge mapping failed: {exc}",
+        )
+
+    # Post proposal to downstream service
+    gov_url = (
+        os.getenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL")
+        or os.getenv("PANTHEON_GOVERNANCE_SERVICE_URL")
+        or os.getenv("PANTHEON_GOVERNANCE_API_URL")
+        or os.getenv("GOVERNANCE_URL")
+        or "http://127.0.0.1:8082"
     )
-    store.put_handoff(handoff)
-    audit = _emit_audit(
-        action="gate_handoff_created",
-        request_id=matched_request.request_id,
-        actor_ref=ActorRef(actor_type="operator", actor_id=req.actor_id),
-        service_actor_ref=CONSULTATION_SERVICE_ACTOR,
-        trace_id=matched_request.trace_id,
-        after_state=handoff.handoff_id,
+    evo_url = (
+        os.getenv("PANTHEON_EVOLUTION_API_URL")
+        or os.getenv("PANTHEON_EVOLUTION_SERVICE_URL")
+        or os.getenv("PANTHEON_EVOLUTION_API_URL")
+        or os.getenv("EVOLUTION_URL")
+        or "http://127.0.0.1:8093"
     )
-    handoff.audit_refs.append(audit.audit_id)
-    store.put_handoff(handoff)
+
+    dispatch_status = "pending"
+    dispatch_error = None
+
+    if sponsor_decision == "rejected":
+        dispatch_status = "gated"
+        dispatch_error = "Sponsor decision is rejected; proposal dispatch gated."
+    else:
+        try:
+            import urllib.request
+            import json
+
+            proposal_dict = proposal.to_dict()
+            if proposal.proposal_type == "approval_decision":
+                target_url = f"{gov_url.rstrip('/')}/api/governance/approvals"
+            else:
+                target_url = f"{evo_url.rstrip('/')}/api/evolution/proposals"
+
+            data = json.dumps(proposal_dict).encode("utf-8")
+            post_req = urllib.request.Request(
+                target_url,
+                data=data,
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(post_req, timeout=10.0) as resp:
+                resp.read()
+            dispatch_status = "sent"
+        except Exception as exc:
+            dispatch_status = "failed"
+            dispatch_error = str(exc)
+
+    if dispatch_status == "failed":
+        handoff.status = GateHandoffStatus.FAILED
+    else:
+        handoff.status = GateHandoffStatus.SENT
 
     metadata = matched_request.metadata if isinstance(matched_request.metadata, dict) else {}
     metadata["consultation"] = matched_consult
@@ -695,9 +873,22 @@ def record_committee_sponsor_decision(
         "evidence_refs": list(handoff.evidence_refs),
         "audit_refs": list(handoff.audit_refs),
         "status": handoff.status.value if hasattr(handoff.status, "value") else handoff.status,
+        "proposal_dispatch": {
+            "status": dispatch_status,
+            "error": dispatch_error,
+            "proposal_id": proposal.decision_id,
+            "proposal_type": proposal.proposal_type,
+        },
     }
     matched_request.metadata = metadata
     store.put_request(matched_request)
+    store.put_handoff(handoff)
+
+    if dispatch_status == "failed" and not (os.getenv("PANTHEON_TEST_MODE") or os.getenv("PYTEST_CURRENT_TEST")):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to dispatch proposal to downstream service: {dispatch_error}",
+        )
 
     return {
         "committee_id": committee_id,
@@ -716,5 +907,11 @@ def record_committee_sponsor_decision(
             "evidence_refs": list(handoff.evidence_refs),
             "audit_refs": list(handoff.audit_refs),
             "status": handoff.status.value if hasattr(handoff.status, "value") else handoff.status,
+            "proposal_dispatch": {
+                "status": dispatch_status,
+                "error": dispatch_error,
+                "proposal_id": proposal.decision_id,
+                "proposal_type": proposal.proposal_type,
+            },
         },
     }

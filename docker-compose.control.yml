@@ -189,6 +189,8 @@ services:
       PORT: "8090"
       INCIDENTS_DATA_DIR: /data/incidents
       PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-}
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-}
       POSTMORTEMS_URL: http://postmortems:8091
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
@@ -228,6 +230,8 @@ services:
       POSTMORTEMS_DATA_DIR: /data/incidents
       INCIDENTS_DATA_DIR: /data/incidents
       PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-}
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-}
       EVOLUTION_URL: http://evolution:8093
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}

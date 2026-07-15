@@ -404,3 +404,107 @@ def test_prepare_requires_configured_repo_source(tmp_path: Path) -> None:
 
     assert exc_info.value.code == "REPAIR_REPO_URL_NOT_CONFIGURED"
     assert exc_info.value.status_code == 503
+
+
+@pytest.mark.parametrize(
+    ("override", "error_code"),
+    [
+        ({"repoKey": "legacy-frontend"}, "REPAIR_REPO_KEY_FORBIDDEN"),
+        ({"expectedBranch": "main"}, "REPAIR_EXPECTED_BRANCH_FORBIDDEN"),
+        ({"mergeTarget": "master"}, "REPAIR_MERGE_TARGET_FORBIDDEN"),
+        ({"remote": "upstream"}, "REPAIR_REMOTE_FORBIDDEN"),
+    ],
+)
+def test_prepare_rejects_caller_selected_repository_targets(
+    tmp_path: Path,
+    override: dict[str, str],
+    error_code: str,
+) -> None:
+    source = _init_source_repo(tmp_path)
+    workflow = AssistantRepairWorkflow(
+        {
+            "PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": (tmp_path / "prepared-worktrees").as_posix(),
+            "PANTHEON_ASSISTANT_REPAIR_REPO_URL": source.as_posix(),
+        },
+        pr_lookup=lambda _worktree, _branch: None,
+    )
+
+    with pytest.raises(AssistantRepairWorkflowError) as exc_info:
+        workflow.prepare(
+            {
+                "task_id": "MGMT-AI-REPAIR-TARGET-GUARD",
+                "declared_scope": ["services/control-plane/bff"],
+                **override,
+            }
+        )
+
+    assert exc_info.value.code == error_code
+
+
+def test_prepare_rejects_caller_selected_worktree(tmp_path: Path) -> None:
+    source = _init_source_repo(tmp_path)
+    worktree_root = tmp_path / "prepared-worktrees"
+    workflow = AssistantRepairWorkflow(
+        {
+            "PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": worktree_root.as_posix(),
+            "PANTHEON_ASSISTANT_REPAIR_REPO_URL": source.as_posix(),
+        },
+        pr_lookup=lambda _worktree, _branch: None,
+    )
+
+    with pytest.raises(AssistantRepairWorkflowError) as exc_info:
+        workflow.prepare(
+            {
+                "task_id": "MGMT-AI-REPAIR-WORKTREE-GUARD",
+                "task_worktree": (worktree_root / "shared-live-checkout").as_posix(),
+                "declared_scope": ["services/control-plane/bff"],
+            }
+        )
+
+    assert exc_info.value.code == "REPAIR_WORKTREE_OVERRIDE_FORBIDDEN"
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [".", "/tmp/absolute", "services/../secrets", ".git/config"],
+)
+def test_prepare_rejects_non_relative_or_repository_control_scope(tmp_path: Path, scope: str) -> None:
+    source = _init_source_repo(tmp_path)
+    workflow = AssistantRepairWorkflow(
+        {
+            "PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": (tmp_path / "prepared-worktrees").as_posix(),
+            "PANTHEON_ASSISTANT_REPAIR_REPO_URL": source.as_posix(),
+        },
+        pr_lookup=lambda _worktree, _branch: None,
+    )
+
+    with pytest.raises(AssistantRepairWorkflowError) as exc_info:
+        workflow.prepare(
+            {
+                "task_id": "MGMT-AI-REPAIR-SCOPE-GUARD",
+                "declared_scope": [scope],
+            }
+        )
+
+    assert exc_info.value.code == "REPAIR_SCOPE_INVALID"
+
+
+def test_prepare_rejects_non_branch_safe_task_id(tmp_path: Path) -> None:
+    source = _init_source_repo(tmp_path)
+    workflow = AssistantRepairWorkflow(
+        {
+            "PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": (tmp_path / "prepared-worktrees").as_posix(),
+            "PANTHEON_ASSISTANT_REPAIR_REPO_URL": source.as_posix(),
+        },
+        pr_lookup=lambda _worktree, _branch: None,
+    )
+
+    with pytest.raises(AssistantRepairWorkflowError) as exc_info:
+        workflow.prepare(
+            {
+                "task_id": "../../shared-live-checkout",
+                "declared_scope": ["services/control-plane/bff"],
+            }
+        )
+
+    assert exc_info.value.code == "REPAIR_TASK_ID_INVALID"

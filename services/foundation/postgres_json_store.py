@@ -117,6 +117,96 @@ class PostgresJsonOwnerStore:
                 (record_id, json.dumps(payload, ensure_ascii=True, sort_keys=True)),
             )
 
+    def compare_and_set(
+        self,
+        record_id: str,
+        expected_payload: Optional[Dict[str, Any]],
+        payload: Dict[str, Any],
+    ) -> tuple[bool, Optional[Dict[str, Any]]]:
+        """Atomically replace one row only when its JSONB snapshot matches.
+
+        ``expected_payload=None`` means the row must not exist.  Existing-row
+        updates use JSONB equality in the ``UPDATE`` predicate, so competing
+        service instances cannot both commit from the same stale snapshot.
+        The returned payload is the durable canonical value after the attempt.
+        """
+
+        if not record_id:
+            raise ValueError("record_id is required")
+        if self.read_only:
+            raise PermissionError(
+                f"{self.table_name} is read-only for this store; "
+                f"writes must go through {self.owner_service}"
+            )
+        encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+        with self._connect() as conn:
+            if expected_payload is None:
+                cursor = conn.execute(
+                    f"""
+                    INSERT INTO {self.table} (record_id, payload, updated_at)
+                    VALUES (%s, %s::jsonb, now())
+                    ON CONFLICT (record_id) DO NOTHING
+                    RETURNING payload
+                    """,
+                    (record_id, encoded),
+                )
+            else:
+                cursor = conn.execute(
+                    f"""
+                    UPDATE {self.table}
+                    SET payload = %s::jsonb, updated_at = now()
+                    WHERE record_id = %s AND payload = %s::jsonb
+                    RETURNING payload
+                    """,
+                    (
+                        encoded,
+                        record_id,
+                        json.dumps(expected_payload, ensure_ascii=True, sort_keys=True),
+                    ),
+                )
+            row = self._fetch_one(cursor)
+            if row is not None:
+                canonical = row[0] if isinstance(row, tuple) else row.get("payload")
+                return True, self._decode_payload(canonical)
+
+            current_cursor = conn.execute(
+                f"SELECT payload FROM {self.table} WHERE record_id = %s",
+                (record_id,),
+            )
+            current_row = self._fetch_one(current_cursor)
+            if current_row is None:
+                return False, None
+            current = (
+                current_row[0]
+                if isinstance(current_row, tuple)
+                else current_row.get("payload")
+            )
+            return False, self._decode_payload(current)
+
+    def delete_if_matches(self, record_id: str, expected_payload: Dict[str, Any]) -> bool:
+        """Delete one row only if it is still the supplied canonical snapshot."""
+
+        if not record_id:
+            raise ValueError("record_id is required")
+        if self.read_only:
+            raise PermissionError(
+                f"{self.table_name} is read-only for this store; "
+                f"writes must go through {self.owner_service}"
+            )
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"""
+                DELETE FROM {self.table}
+                WHERE record_id = %s AND payload = %s::jsonb
+                RETURNING payload
+                """,
+                (
+                    record_id,
+                    json.dumps(expected_payload, ensure_ascii=True, sort_keys=True),
+                ),
+            )
+            return self._fetch_one(cursor) is not None
+
     def insert_if_absent(
         self,
         record_id: str,
@@ -171,7 +261,7 @@ class PostgresJsonOwnerStore:
                 INSERT INTO {self.table} (record_id, payload)
                 VALUES (%s, %s::jsonb)
                 ON CONFLICT (record_id)
-                DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()
+                DO NOTHING
                 """,
                 (record_id, json.dumps(payload, ensure_ascii=True, sort_keys=True)),
             )

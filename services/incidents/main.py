@@ -80,6 +80,7 @@ import asyncio
 from services.foundation import (
     EventEnvelope,
     OutboxRecord,
+    OutboxRecordStatus,
     TraceContext,
     EnvironmentScope,
     EnvironmentName,
@@ -101,6 +102,7 @@ if str(_INC_DIR) not in sys.path:
 try:
     from services.incident.incident import (  # type: ignore
         IncidentCase,
+        IncidentConcurrencyError,
         IncidentError,
         IncidentStatus,
         IncidentStore,
@@ -110,6 +112,7 @@ try:
 except ImportError:
     from incident.incident import (  # type: ignore
         IncidentCase,
+        IncidentConcurrencyError,
         IncidentError,
         IncidentStatus,
         IncidentStore,
@@ -127,6 +130,7 @@ try:
     from .consumer import (
         DriftReportIncidentConsumer,
         IncidentConsumerError,
+        IncidentConsumerRetryableError,
         ThresholdTelemetryIncidentConsumer,
     )
 except ImportError:
@@ -139,6 +143,7 @@ except ImportError:
     from consumer import (  # type: ignore
         DriftReportIncidentConsumer,
         IncidentConsumerError,
+        IncidentConsumerRetryableError,
         ThresholdTelemetryIncidentConsumer,
     )
 
@@ -287,6 +292,8 @@ def create_incident(body: CreateIncidentRequest) -> IncidentResponse:
 
     try:
         store.create_incident(inc)
+    except IncidentConcurrencyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except IncidentError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -346,6 +353,8 @@ def consume_drift_report_incident(
         result = consumer.consume(body)
     except CanonicalReferenceError as exc:
         raise HTTPException(status_code=422, detail={"reference_errors": exc.errors})
+    except IncidentConsumerRetryableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     except IncidentConsumerError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -450,7 +459,62 @@ def _delivery_environment(deployment_stage: str | None) -> EnvironmentName:
             return EnvironmentName.DEV
 
 
-def _prepare_postmortem_delivery(incident_id: str, terminal_status: str) -> ReliableOutboxRecord:
+def _is_legacy_direct_close_intent(
+    existing: ReliableOutboxRecord,
+    *,
+    incoming_record: OutboxRecord,
+    transition: Dict[str, Any],
+) -> bool:
+    """Recognize the inert direct-close intent emitted before normalization.
+
+    PR #3682 used the same terminal-boundary IDs but copied the requested
+    direct-close status into the event payload. A crash or losing domain CAS
+    could leave that exact intent prepared while the Incident stayed open.
+    Adopt only that historical shape; every other divergent identity still
+    fails closed through ``ReliableOutboxStore.prepare``.
+    """
+
+    expected_payload = {
+        "incident_id": incoming_record.event.aggregate_id,
+        "terminal_status": "closed",
+    }
+    incoming_payload = {
+        "incident_id": incoming_record.event.aggregate_id,
+        "terminal_status": "resolved",
+    }
+    stable_event_fields = (
+        "event_id",
+        "event_type",
+        "aggregate_type",
+        "aggregate_id",
+        "sequence_no",
+        "idempotency_key",
+        "causal_parent_id",
+        "producer_service",
+        "schema_ref",
+        "schema_version",
+    )
+    return (
+        existing.status == OutboxRecordStatus.PENDING
+        and not existing.delivery_ready
+        and existing.claim_token is None
+        and existing.delivery_attempts == 0
+        and existing.last_error is None
+        and existing.next_attempt_at is None
+        and existing.redrive_count == 0
+        and existing.owner_service == incoming_record.owner_service
+        and existing.record.schema_version == incoming_record.schema_version
+        and dict(existing.transition or {}) == transition
+        and dict(existing.event.payload) == expected_payload
+        and dict(incoming_record.event.payload) == incoming_payload
+        and all(
+            getattr(existing.event, field) == getattr(incoming_record.event, field)
+            for field in stable_event_fields
+        )
+    )
+
+
+def _prepare_postmortem_delivery(incident_id: str) -> ReliableOutboxRecord:
     incident = store.get_incident(incident_id)
     if incident is None:
         raise ValueError(f"incident not found while preparing delivery: {incident_id}")
@@ -467,7 +531,11 @@ def _prepare_postmortem_delivery(incident_id: str, terminal_status: str) -> Reli
         aggregate_id=incident_id,
         sequence_no=1,
         trace=trace,
-        payload={"incident_id": incident_id, "terminal_status": terminal_status},
+        # The deterministic event represents the first terminal boundary, not
+        # a request attempt.  Keep the legacy-compatible ``resolved`` value
+        # stable so failed resolve and later direct-close attempts can reuse
+        # one durable intent without an identity collision.
+        payload={"incident_id": incident_id, "terminal_status": "resolved"},
         idempotency_key=idempotency_key,
         producer_service="incident-svc",
     )
@@ -476,14 +544,27 @@ def _prepare_postmortem_delivery(incident_id: str, terminal_status: str) -> Reli
         owner_service="incident-svc",
         event=event,
     )
-    prepared = outbox_store.prepare(
-        record=record,
-        transition={
-            "aggregate_type": "incident",
-            "aggregate_id": incident_id,
-            "expected_statuses": sorted(_TERMINAL_INCIDENT_STATUSES),
-        },
-    )
+    transition = {
+        "aggregate_type": "incident",
+        "aggregate_id": incident_id,
+        "expected_statuses": sorted(_TERMINAL_INCIDENT_STATUSES),
+    }
+    try:
+        prepared = outbox_store.prepare(record=record, transition=transition)
+    except ValueError:
+        existing = outbox_store.get(outbox_id)
+        if existing is None or not _is_legacy_direct_close_intent(
+            existing,
+            incoming_record=record,
+            transition=transition,
+        ):
+            raise
+        prepared = existing
+        log.warning(
+            "AUDIT: Adopted legacy prepared direct-close intent %s for incident %s",
+            outbox_id,
+            incident_id,
+        )
     log.info("AUDIT: Prepared resolved incident %s in outbox %s", incident_id, outbox_id)
     return prepared
 
@@ -501,10 +582,40 @@ def reconcile_incidents_outbox() -> int:
     return reconcile_prepared(outbox_store, transition_applied=_incident_transition_applied)
 
 
+def _repair_prepared_after_transition_conflict(record: ReliableOutboxRecord) -> None:
+    """Activate a winning terminal transition or preserve its future intent.
+
+    A nonterminal conflict cannot safely delete the deterministic record: a
+    concurrent terminal winner may already have reused the exact prepared
+    snapshot and be between its domain CAS and activation.  The transition-
+    neutral intent stays inert until a later terminal commit activates it.
+    """
+
+    try:
+        if _incident_transition_applied(dict(record.transition or {})):
+            outbox_store.activate(record)
+        else:
+            log.info(
+                "AUDIT: Preserved prepared incident intent %s after nonterminal CAS conflict",
+                record.outbox_id,
+            )
+    except Exception:
+        # Preserve the original domain conflict for the caller.  The exact
+        # compare/activate operation above cannot regress a concurrently
+        # advanced outbox record.
+        log.exception(
+            "AUDIT: Could not reconcile losing prepared incident intent %s",
+            record.outbox_id,
+        )
+
+
 # background delivery loop for incidents
 async def process_incidents_outbox():
     reconcile_incidents_outbox()
-    records = outbox_store.list_due()
+    records = outbox_store.claim_due(
+        worker_id="incidents-outbox-worker",
+        lease_seconds=_positive_int_env("INCIDENTS_OUTBOX_CLAIM_SECONDS", 30),
+    )
     if not records:
         return
 
@@ -526,28 +637,44 @@ async def process_incidents_outbox():
                 )
                 if resp.status_code in {200, 201}:
                     log.info("AUDIT: Successfully delivered resolved incident %s to postmortems via outbox. Status: %d", incident_id, resp.status_code)
-                    outbox_store.put(record.mark_published())
+                    applied, canonical = outbox_store.complete_published(record)
+                    if not applied:
+                        log.warning(
+                            "AUDIT: Ignored stale success completion for incident outbox %s; canonical status=%s",
+                            record.outbox_id,
+                            canonical.status,
+                        )
                 else:
                     err_msg = f"status_code={resp.status_code} body={resp.text}"
                     log.warning("AUDIT: Outbox delivery attempt %d for resolved incident %s returned error: %s", record.delivery_attempts + 1, incident_id, err_msg)
-                    outbox_store.put(
-                        record.mark_failed(
-                            err_msg,
-                            max_attempts=max_attempts,
-                            base_delay_seconds=base_delay,
-                            permanent=resp.status_code in {400, 409, 422},
-                        )
-                    )
-            except Exception as exc:
-                err_msg = str(exc)
-                log.warning("AUDIT: Outbox delivery attempt %d for resolved incident %s failed with exception: %s", record.delivery_attempts + 1, incident_id, err_msg)
-                outbox_store.put(
-                    record.mark_failed(
+                    applied, canonical = outbox_store.complete_failed(
+                        record,
                         err_msg,
                         max_attempts=max_attempts,
                         base_delay_seconds=base_delay,
+                        permanent=resp.status_code in {400, 409, 422},
                     )
+                    if not applied:
+                        log.warning(
+                            "AUDIT: Ignored stale failure completion for incident outbox %s; canonical status=%s",
+                            record.outbox_id,
+                            canonical.status,
+                        )
+            except Exception as exc:
+                err_msg = str(exc)
+                log.warning("AUDIT: Outbox delivery attempt %d for resolved incident %s failed with exception: %s", record.delivery_attempts + 1, incident_id, err_msg)
+                applied, canonical = outbox_store.complete_failed(
+                    record,
+                    err_msg,
+                    max_attempts=max_attempts,
+                    base_delay_seconds=base_delay,
                 )
+                if not applied:
+                    log.warning(
+                        "AUDIT: Ignored stale exception completion for incident outbox %s; canonical status=%s",
+                        record.outbox_id,
+                        canonical.status,
+                    )
 
 async def incidents_outbox_loop():
     while True:
@@ -622,7 +749,7 @@ def update_status(
     prepared: ReliableOutboxRecord | None = None
     if crosses_terminal_boundary:
         try:
-            prepared = _prepare_postmortem_delivery(incident_id, body.status)
+            prepared = _prepare_postmortem_delivery(incident_id)
         except Exception as exc:
             log.exception("AUDIT: Could not prepare incident outbox for %s", incident_id)
             raise HTTPException(
@@ -637,6 +764,8 @@ def update_status(
             expected_snapshot=previous.to_dict(),
         )
     except IncidentError as exc:
+        if prepared is not None:
+            _repair_prepared_after_transition_conflict(prepared)
         status_code = 409 if "changed concurrently" in str(exc) else 400
         raise HTTPException(status_code=status_code, detail=str(exc))
 

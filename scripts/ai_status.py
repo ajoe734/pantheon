@@ -879,13 +879,20 @@ def save_state(state: dict[str, Any]) -> None:
         os.fsync(handle.fileno())
         temp_path = Path(handle.name)
     os.replace(temp_path, STATUS_FILE)
-    directory_fd = os.open(STATUS_FILE.parent, os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
+    _fsync_directory(STATUS_FILE.parent)
     if STATUS_FILE.read_text(encoding="utf-8") != serialized:
         raise RuntimeError("canonical task-state readback mismatch")
+
+
+def _fsync_directory(path: Path) -> None:
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def ensure_sprint_started_at(state: dict[str, Any]) -> None:
@@ -3966,7 +3973,109 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
             )
 
 
-def command_assign(state: dict[str, Any], args: list[str]) -> None:
+def _bridge_assignment_from_metadata(
+    metadata: dict[str, Any],
+    *,
+    task_id: str,
+    owner: str,
+    reviewer: str,
+    title: str | None,
+) -> dict[str, Any] | None:
+    bridge = metadata.get("dev_bridge")
+    if bridge is None:
+        return None
+    if not isinstance(bridge, dict):
+        raise SystemExit("TASK_METADATA_JSON.dev_bridge must be an object")
+    packet_id = str(bridge.get("packet_id") or "").strip()
+    packet_digest = str(bridge.get("packet_digest") or "").strip()
+    expected_hash = str(bridge.get("task_spec_hash") or "").strip()
+    spec = bridge.get("task_spec")
+    if (
+        not packet_id
+        or not re.fullmatch(r"[0-9a-f]{64}", packet_digest)
+        or not expected_hash
+        or not isinstance(spec, dict)
+    ):
+        raise SystemExit(
+            "TASK_METADATA_JSON.dev_bridge requires packet_id, a SHA-256 packet_digest, "
+            "task_spec_hash, and task_spec"
+        )
+
+    conversation_id = bridge.get("conversation_id")
+    source_turn_ids = bridge.get("source_turn_ids")
+    documents = bridge.get("documents")
+    if not isinstance(conversation_id, str) or not conversation_id.strip():
+        raise SystemExit("Bridge assignment conversation_id is required")
+    if not isinstance(source_turn_ids, list) or any(
+        not isinstance(item, str) for item in source_turn_ids
+    ):
+        raise SystemExit("Bridge assignment source_turn_ids must be a string list")
+    if not isinstance(documents, list) or any(
+        not isinstance(item, dict) for item in documents
+    ):
+        raise SystemExit("Bridge assignment documents must be an object list")
+    if any(
+        not isinstance(item.get("path"), str) or not item["path"].strip()
+        for item in documents
+    ):
+        raise SystemExit("Bridge assignment documents entries require a non-empty path")
+
+    required_text = {
+        "id": task_id,
+        "owner": owner,
+        "reviewer": reviewer,
+    }
+    normalized_spec = deepcopy(spec)
+    for field, expected in required_text.items():
+        actual = str(spec.get(field) or "").strip()
+        if field in {"owner", "reviewer"}:
+            actual = canonical_agent_name(actual)
+        if actual != expected:
+            raise SystemExit(
+                f"Bridge assignment {field} mismatch: command={expected!r} metadata={actual!r}"
+            )
+        normalized_spec[field] = actual
+    spec_title = str(spec.get("title") or "").strip()
+    if not spec_title:
+        raise SystemExit("Bridge assignment task_spec.title is required")
+    if title and spec_title != title:
+        raise SystemExit(
+            f"Bridge assignment title mismatch: command={title!r} metadata={spec_title!r}"
+        )
+    normalized_spec["title"] = spec_title
+
+    for field in ("depends_on", "artifacts", "acceptance"):
+        value = spec.get(field)
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise SystemExit(f"Bridge assignment task_spec.{field} must be a string list")
+        normalized_spec[field] = list(value)
+    for field in ("phase", "summary"):
+        value = spec.get(field)
+        if value is not None and not isinstance(value, str):
+            raise SystemExit(f"Bridge assignment task_spec.{field} must be a string or null")
+        normalized_spec[field] = value
+
+    encoded = json.dumps(
+        normalized_spec,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    actual_hash = hashlib.sha256(encoded).hexdigest()
+    if actual_hash != expected_hash:
+        raise SystemExit("Bridge assignment task_spec_hash does not match task_spec")
+    normalized_bridge = deepcopy(bridge)
+    normalized_bridge["packet_id"] = packet_id
+    normalized_bridge["packet_digest"] = packet_digest
+    normalized_bridge["conversation_id"] = conversation_id.strip()
+    normalized_bridge["source_turn_ids"] = list(source_turn_ids)
+    normalized_bridge["documents"] = deepcopy(documents)
+    normalized_bridge["task_spec"] = normalized_spec
+    metadata["dev_bridge"] = normalized_bridge
+    return normalized_bridge
+
+
+def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     from wave_guards import WaveGuardError, check_wave_assign
 
     if len(args) < 3:
@@ -3984,6 +4093,27 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     if owner == reviewer:
         raise SystemExit("Reviewer cannot equal owner")
 
+    bridge = _bridge_assignment_from_metadata(
+        metadata,
+        task_id=task_id,
+        owner=owner,
+        reviewer=reviewer,
+        title=title,
+    )
+    if bridge is not None:
+        spec = bridge["task_spec"]
+        title = spec["title"]
+        summary_zh = spec.get("summary")
+        phase = spec.get("phase") or "Unassigned"
+        depends_on = list(spec.get("depends_on") or [])
+        artifacts = list(spec.get("artifacts") or [])
+        acceptance = list(spec.get("acceptance") or [])
+    else:
+        phase = os.environ.get("TASK_PHASE", "Unassigned")
+        depends_on = parse_csv_env("TASK_DEPENDS_ON")
+        artifacts = parse_csv_env("TASK_ARTIFACTS")
+        acceptance = parse_csv_env("TASK_ACCEPTANCE")
+
     task = get_task(state, task_id)
     timestamp = iso_now()
     if task is None:
@@ -3995,19 +4125,39 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
             "id": task_id,
             "title": title,
             "summary_zh": summary_zh,
-            "phase": os.environ.get("TASK_PHASE", "Unassigned"),
+            "phase": phase,
             "owner": owner,
             "reviewer": reviewer,
             "status": "todo",
-            "depends_on": parse_csv_env("TASK_DEPENDS_ON"),
-            "artifacts": parse_csv_env("TASK_ARTIFACTS"),
-            "acceptance": parse_csv_env("TASK_ACCEPTANCE"),
+            "depends_on": depends_on,
+            "artifacts": artifacts,
+            "acceptance": acceptance,
             "next": "Assignment created",
             "last_update": timestamp,
         }
         task.update(metadata)
         state["tasks"].append(task)
     else:
+        if bridge is not None:
+            existing_bridge = task.get("dev_bridge")
+            if not isinstance(existing_bridge, dict):
+                raise SystemExit(
+                    f"Bridge assignment conflict: task {task_id} already exists without bridge provenance"
+                )
+            existing_packet = str(existing_bridge.get("packet_id") or "").strip()
+            existing_digest = str(existing_bridge.get("packet_digest") or "").strip()
+            existing_hash = str(existing_bridge.get("task_spec_hash") or "").strip()
+            if (
+                existing_packet == bridge["packet_id"]
+                and existing_digest == bridge["packet_digest"]
+                and existing_hash == bridge["task_spec_hash"]
+                and existing_bridge == bridge
+            ):
+                return False
+            raise SystemExit(
+                f"Bridge assignment conflict: task {task_id} is already bound to "
+                f"packet={existing_packet!r} digest={existing_digest!r} spec={existing_hash!r}"
+            )
         task["owner"] = owner
         task["reviewer"] = reviewer
         if title:
@@ -4521,7 +4671,9 @@ def main(argv: list[str]) -> int:
         recover_status_archive_outbox(state)
         recover_status_activity_outbox(state)
         with buffer_activity_events():
-            commands[command](state, args)
+            command_result = commands[command](state, args)
+            if command_result is False:
+                return 0
             sync_all(state)
     return 0
 

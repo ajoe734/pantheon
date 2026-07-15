@@ -94,9 +94,9 @@ class TestAlphaRevalidationWorkerRunOnce:
         queue.enqueue(_approved_spec("s1"))
         worker.run_once()
         result2 = worker.run_once()
-        # Second tick: already processed, returns skipped run_id
-        assert result2["processed"] == 1
-        assert len(result2["created_run_ids"]) == 1
+        # Second tick: already processed, leaves pending
+        assert result2["processed"] == 0
+        assert len(result2["created_run_ids"]) == 0
         runs = worker.list_runs()
         assert len(runs) == 1  # no duplicate run created
 
@@ -203,7 +203,7 @@ class TestAlphaRevalidationWorkerRunOnce:
         assert run["status"] == "completed"
         assert run["started_at"] is not None
         assert run["finished_at"] is not None
-        assert run["output_manifest_ref"].startswith("alpha-replication://")
+        assert run["output_manifest_ref"].startswith("manifest://")
         assert run["artifact_refs"] == ["reg-strategy-spec-s1"]
         assert run["metadata"].get("input_source") == "registry"
         assert run["metadata"].get("production_activation") == "disabled"
@@ -217,15 +217,15 @@ class TestAlphaRevalidationWorkerRunOnce:
             mock_fetch.assert_called_once_with("s1", "1.0")
 
         assert result["processed"] == 1
-        assert len(result["created_run_ids"]) == 1
-        assert result["dispatch_mode"] == "handoff_only"
-
+        assert len(result["created_run_ids"]) == 0
+        assert len(result["errors"]) == 1
+        assert "Stale, retired, or missing StrategySpec" in result["errors"][0]["error"]
+        
         runs = worker.list_runs()
         assert len(runs) == 1
         run = runs[0]
         assert run["status"] == "failed"
-        assert run["failure_reason"] == "Registry fetch failed, using synthetic fallback spec"
-        assert run["metadata"].get("input_source") == "synthetic"
+        assert "Stale, retired, or missing StrategySpec" in run["failure_reason"]
         assert run["metadata"].get("production_activation") == "disabled"
 
 
