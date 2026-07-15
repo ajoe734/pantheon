@@ -17,7 +17,7 @@ def test_dispatch_is_idempotent_and_disables_live_orders():
         env = {
             **os.environ,
             "PANTHEON_STATUS_ROOT": tmp,
-            "PANTHEON_ALLOW_ISOLATED_LEGACY_WRITES": "1",
+            "PANTHEON_ALLOW_ISOLATED_TEST_WRITES": "1",
         }
         subprocess.run(["python3", str(SCRIPT)], check=True, env=env, capture_output=True, text=True)
         subprocess.run(["python3", str(SCRIPT)], check=True, env=env, capture_output=True, text=True)

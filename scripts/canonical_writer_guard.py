@@ -64,8 +64,10 @@ def assert_isolated_legacy_write_target(
     target = _normalized(path)
     configured_root = str(os.environ.get("PANTHEON_STATUS_ROOT") or "").strip()
     if configured_root and _matches_canonical_root(target, _normalized(configured_root)):
+        # PANTHEON_ALLOW_ISOLATED_LEGACY_WRITES cannot authorize writes to the configured
+        # PANTHEON_STATUS_ROOT. For isolated test fixtures, use PANTHEON_ALLOW_ISOLATED_TEST_WRITES instead.
         isolated_override = (
-            os.environ.get("PANTHEON_ALLOW_ISOLATED_LEGACY_WRITES") == "1"
+            os.environ.get("PANTHEON_ALLOW_ISOLATED_TEST_WRITES") == "1"
             and _containing_git_root(target) is None
         )
         if not isolated_override:
