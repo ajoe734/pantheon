@@ -158,12 +158,25 @@ def _fsync_directory(path: Path) -> None:
         os.close(fd)
 
 
+def _ensure_directory(path: Path) -> None:
+    """Create *path* and durably link each new directory from its parent."""
+
+    missing: list[Path] = []
+    cursor = path
+    while not cursor.exists() and cursor.parent != cursor:
+        missing.append(cursor)
+        cursor = cursor.parent
+    for directory in reversed(missing):
+        directory.mkdir(exist_ok=True)
+        _fsync_directory(directory.parent)
+
+
 @contextmanager
 def packet_replay_lock(*, repo_root: Optional[str] = None) -> Iterator[None]:
     """Serialize packet replay check-and-mark across processes."""
 
     lock_path = _replay_lock_path(repo_root)
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_directory(lock_path.parent)
     with lock_path.open("a+", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
@@ -243,7 +256,7 @@ def mark_packet_seen(
                 )
             return
         store = _replay_store_path(repo_root)
-        store.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_directory(store.parent)
         payload = {"packet_id": packet_id, "digest": digest}
         with store.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")

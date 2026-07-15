@@ -52,8 +52,21 @@ def _safe_packet_id(packet_id: str) -> str:
     return safe[:160]
 
 
+def _ensure_directory(path: Path) -> None:
+    """Create *path* and durably link each new directory from its parent."""
+
+    missing: list[Path] = []
+    cursor = path
+    while not cursor.exists() and cursor.parent != cursor:
+        missing.append(cursor)
+        cursor = cursor.parent
+    for directory in reversed(missing):
+        directory.mkdir(exist_ok=True)
+        _fsync_directory(directory.parent)
+
+
 def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_directory(path.parent)
     tmp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -93,7 +106,7 @@ def _fsync_directory(path: Path) -> None:
 
 @contextmanager
 def _file_lock(path: Path) -> Iterator[None]:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_directory(path.parent)
     with path.open("a+", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
@@ -222,7 +235,7 @@ def _processing_files(inbox: Path) -> Iterable[Path]:
 
 
 def _move(path: Path, target_dir: Path) -> Path:
-    target_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_directory(target_dir)
     target = target_dir / path.name
     if target.exists():
         target = target_dir / f"{path.stem}-{int(datetime.now(timezone.utc).timestamp())}{path.suffix}"
@@ -236,7 +249,7 @@ def _move(path: Path, target_dir: Path) -> Path:
 def _finalize_processing(path: Path, target_dir: Path) -> Path:
     """Move a processing item once, or discard a stale duplicate safely."""
 
-    target_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_directory(target_dir)
     target = target_dir / path.name
     if target.exists():
         path.unlink(missing_ok=True)
