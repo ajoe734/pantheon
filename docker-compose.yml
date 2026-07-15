@@ -1053,7 +1053,6 @@ services:
       PANTHEON_RESEARCH_ORCHESTRATOR_API_URL: http://research-orchestrator-svc:8101
       PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL: http://research-worker-gateway-svc:8103
       PANTHEON_MEMORY_API_URL: http://memory:8086
-      PANTHEON_REGISTRY_API_URL: ${PANTHEON_REGISTRY_API_URL:-http://registry:8087}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
@@ -1089,8 +1088,6 @@ services:
       research-worker-gateway-svc:
         condition: service_healthy
       memory:
-        condition: service_healthy
-      registry:
         condition: service_healthy
       openclaw-gateway-adapter:
         condition: service_healthy
