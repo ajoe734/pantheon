@@ -346,7 +346,7 @@ def run_full_cycle_verification(base, token, ctx):
             break
     if not pm_draft:
         raise RuntimeError(f"Postmortem draft was not created for incident {incident_id}")
-    print(f"  Postmortem draft created: {postmortem_id} (status: pm_draft.get('status'))")
+    print(f"  Postmortem draft created: {postmortem_id} (status: {pm_draft.get('status')})")
 
     # Step 5: Publish postmortem draft -> outbox worker automatically creates evolution proposal
     print("[5/11] Publishing the postmortem draft...")

@@ -29,7 +29,7 @@ def test_workflow_rejects_refs_that_predate_the_strict_auth_contract() -> None:
     script cannot silently restore permissive/stub auth."""
     workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
 
-    gate = workflow.index("- name: Enforce dev strict-auth deployment floor")
+    gate = workflow.index("- name: Enforce dev auth deployment floor")
     deploy = workflow.index("- name: Deploy requested VM stack")
     assert gate < deploy
 
@@ -41,6 +41,7 @@ def test_workflow_rejects_refs_that_predate_the_strict_auth_contract() -> None:
         assert secret in workflow[gate:deploy]
 
     for marker in (
+        'case "${DEV_AUTH_PROFILE}" in',
         'DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"',
         'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"',
         "no governed verifier/dev-login credentials",
@@ -49,6 +50,22 @@ def test_workflow_rejects_refs_that_predate_the_strict_auth_contract() -> None:
         assert marker in workflow[gate:deploy]
 
     assert "refusing to run any target ref before strict auth can be verified" in workflow[gate:deploy]
+
+
+def test_nonprod_workflow_has_bounded_dev_permissive_stub_profile() -> None:
+    """Manual proof runs may deploy an older exact SHA, so the workflow must
+    pass an atomic auth pair into that SHA's deploy script instead of relying
+    on either the script's historical defaults or the remote .env file."""
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "dev_auth_profile:" in workflow
+    assert "default: strict" in workflow
+    assert "- permissive-stub" in workflow
+    assert "export DEV_BFF_AUTH_STUB=false" in workflow
+    assert "export DEV_BFF_AUTH_MODE=strict" in workflow
+    assert "export DEV_BFF_AUTH_STUB=true" in workflow
+    assert "export DEV_BFF_AUTH_MODE=permissive" in workflow
+    assert "Auth profile permissive-stub is valid only for dev deployments." in workflow
 
 
 def _run_deploy_script(extra_env: dict) -> subprocess.CompletedProcess:
