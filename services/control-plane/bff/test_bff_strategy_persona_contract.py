@@ -18,6 +18,7 @@ import os
 import sys
 import tempfile
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -29,6 +30,54 @@ from read_store import ReadSurfaceStore
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
+
+
+@pytest.fixture(autouse=True)
+def mock_external_services(monkeypatch):
+    # Mock create_capital_binding
+    monkeypatch.setattr(bff_main, "create_capital_binding", lambda payload: {"status": "created"})
+    
+    # Mock _post_json to do nothing and return empty dict
+    monkeypatch.setattr(bff_main, "_post_json", lambda *args, **kwargs: {})
+    
+    # Mock _get_json to raise urllib.error.HTTPError for 404 (not found) by default
+    import urllib.error
+    from io import BytesIO
+    fp = BytesIO(b"")
+    mock_404 = urllib.error.HTTPError("url", 404, "Not Found", {}, fp)
+    monkeypatch.setattr(bff_main, "_get_json", lambda *args, **kwargs: (_ for _ in ()).throw(mock_404))
+    
+    # Mock _runtime_manager_client
+    class MockRuntimeManagerClient:
+        def deploy(self, request):
+            binding_id = (
+                request.get("persona_capital_binding_id")
+                or request.get("binding_id")
+                or request.get("runtime_binding_id")
+                or "test-binding"
+            )
+            bff_main.read_store.create_runtime_binding(
+                runtime_id=request.get("runtime_id", "test-runtime"),
+                name=request.get("metadata", {}).get("name", "test"),
+                persona_id=request.get("metadata", {}).get("persona_id", "test"),
+                binding_id=binding_id,
+                deployment_plan_id=request.get("plan_id", "test-plan"),
+                runtime_kind="paper",
+                actor_id="test",
+                created_at=bff_main.utc_now(),
+                params=request.get("metadata", {}),
+                state=request.get("state") or "running",
+            )
+            return bff_main.read_store.get_runtime_binding(binding_id)
+            
+        def get(self, binding_id):
+            return bff_main.read_store.get_runtime_binding(binding_id)
+            
+        def list_all(self):
+            return list((bff_main.read_store._ensure_local_overlay_records("runtime_bindings") or {}).values())
+            
+    mock_client = MockRuntimeManagerClient()
+    monkeypatch.setattr(bff_main, "_runtime_manager_client", lambda: mock_client)
 
 
 def _error(resp):
@@ -290,14 +339,14 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
             create_body = create.json()
             created = create_body["data"]
             persona_id = created["id"]
-            assert created["state"] == "paper_running"
+            assert created["state"] == "provisioning"
             assert created["capitalMode"] == "paper"
             assert created["deploymentStage"] == "paper"
             assert created["paperLedgerId"].startswith("paper-ledger-")
             assert "capitalPoolId" not in created
             assert created["runtimeId"].startswith("runtime-")
             assert created["runtimeBindingId"].endswith("-paper")
-            assert create_body["meta"]["create_flow"] == "one_shot_paper_running"
+            assert create_body["meta"]["create_flow"] == "one_shot_provisioning"
             assert create_body["meta"]["paper_ledger_id"] == created["paperLedgerId"]
             assert create_body["meta"]["live_capital_side_effects"] is False
             assert create_body["meta"]["human_review_required_for_live"] is True
@@ -307,6 +356,41 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
                 os.path.join(td, "read_surfaces.json"),
                 allow_local_snapshot_fallback=False,
             )
+            binding_id = created["runtimeBindingId"]
+            runtime_id = created["runtimeId"]
+            bff_main.read_store.create_runtime_binding(
+                runtime_id=runtime_id,
+                name="Macro Macro paper runtime",
+                persona_id=persona_id,
+                binding_id=binding_id,
+                deployment_plan_id=created["deploymentPlanId"],
+                runtime_kind="paper",
+                actor_id="test",
+                created_at=bff_main.utc_now(),
+                params={},
+                state="running",
+            )
+            bff_main.read_store._ensure_local_overlay_records("paper_runtime_monitoring_sessions")[
+                f"{runtime_id}:{binding_id}"
+            ] = {
+                "session_id": "session-1",
+                "runtime_id": runtime_id,
+                "binding_id": binding_id,
+                "active": True,
+                "last_heartbeat_at": bff_main.utc_now(),
+            }
+            # Mock evaluation schedule (cron job) - PersonaCronRegistrar readback mock
+            import sys
+            from unittest.mock import MagicMock
+            mock_registrar_instance = MagicMock()
+            mock_registrar_instance._get_runtime.return_value = "dummy-runtime"
+            mock_registrar_instance._existing_registrations.return_value = [(persona_id, "workflow-1")]
+            
+            class DummyModule:
+                PersonaCronRegistrar = MagicMock(return_value=mock_registrar_instance)
+                
+            sys.modules["persona_cron_registrar"] = DummyModule
+
             detail = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
             assert detail.status_code == 200, detail.text
             assert detail.json()["data"]["id"] == persona_id
