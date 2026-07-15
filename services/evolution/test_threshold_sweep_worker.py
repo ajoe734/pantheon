@@ -126,6 +126,14 @@ def _summary(**overrides) -> dict:
         "last_heartbeat_at": "2026-07-13T00:00:00Z",
         "drawdown_at": "2026-07-13T00:00:00Z",
         "pnl_at": "2026-07-13T00:00:00Z",
+        # Provenance markers RuntimeSummaryProjectionStore stamps per metric
+        # field; evaluate_breaches treats a metric with no matching
+        # provenance as ambiguous/fail-closed (round-7 review point 2), so
+        # this hand-built fixture must carry them to exercise the intended
+        # happy path. Tests that specifically probe the missing/mismatched
+        # provenance path override these explicitly.
+        "drawdown_binding_id": "rb-evochain-001",
+        "pnl_binding_id": "rb-evochain-001",
     }
     base.update(overrides)
     return base
@@ -1285,6 +1293,7 @@ def test_evaluate_breaches_handles_overflow_error():
         "drawdown": 10**1000,  # huge integer
         "drawdown_at": _NOW.isoformat().replace("+00:00", "Z"),
         "last_heartbeat_at": _NOW.isoformat().replace("+00:00", "Z"),
+        "drawdown_binding_id": "rb-paper-1",
     }
     payloads, diagnostics = evaluate_breaches(
         [huge_summary],
@@ -1388,7 +1397,45 @@ def test_run_tick_filters_duplicate_thresholds_with_diagnostic():
     # Check that duplicates were filtered: candidates should not be duplicated
     assert result["candidates"] == 1
     # Check that warning was logged
-    assert any("warning: duplicate threshold entry" in d for d in result["diagnostics"])
+    assert any("duplicate identical threshold entry" in d and "coalesced" in d for d in result["diagnostics"])
+
+
+def test_run_tick_disables_conflicting_threshold_entries_fail_closed():
+    """Two non-identical threshold definitions for the same (metric_name,
+    window) identity must never let JSON ordering decide whether a breach
+    exists (round-9 review point 3): both must be disabled fail-closed,
+    regardless of which definition happened to load first."""
+    conflicting = dict(THRESHOLDS[0])
+    conflicting["threshold_value"] = THRESHOLDS[0]["threshold_value"] + 1000.0
+    breach_first = THRESHOLDS + [conflicting]
+    safe_first = [conflicting] + THRESHOLDS
+
+    def fetch(*_args, **_kwargs):
+        return [_summary()]
+
+    def admit(*_args, **_kwargs):
+        return {"status": 202, "body": {}}
+
+    def post(*_args, **_kwargs):
+        return {"status": 201, "body": {}}
+
+    for ordering in (breach_first, safe_first):
+        result = run_tick(
+            telemetry_api_url="http://telemetry.test",
+            incidents_api_url="http://incidents.test",
+            thresholds=ordering,
+            baselines=BASELINES,
+            fetch_summaries=fetch,
+            admit_telemetry_event=admit,
+            post_incident=post,
+            state_path=None,
+            now=_NOW,
+        )
+        # Neither ordering may create a candidate for the conflicting identity.
+        assert result["candidates"] == 0
+        assert any(
+            "fail-closed: conflicting threshold entries" in d for d in result["diagnostics"]
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1578,7 +1625,7 @@ def test_run_tick_retains_undelivered_incidents_across_day_rollover(tmp_path):
     assert posted_incidents[0]["telemetry_event"]["event_id"] == "evt-prior-day"
     assert result["incidents_created"] == 1
 
-    updated_pending = _load_pending_evidence(state_path)
+    updated_pending, _ = _load_pending_evidence(state_path)
     assert "evt-prior-day" in updated_pending
     assert updated_pending["evt-prior-day"]["delivered"] is True
 
@@ -1602,13 +1649,13 @@ def test_telemetry_duplicate_retry_rejects_content_mismatch_and_preserves_canoni
             self.admitted.append((event, binding))
 
     lineage = DummyLineageWrite()
-    
+
     # Build ingest service
     ingest = TelemetryIngestService(
         schema_path=os.path.join(os.path.dirname(__file__), "..", "telemetry", "telemetry_event.schema.json"),
         lineage_write_store=lineage,
     )
-    
+
     event_id = "00000000-0000-0000-0000-000000000001"
     original_event = {
         "event_id": event_id,
@@ -1638,7 +1685,7 @@ def test_telemetry_duplicate_retry_rejects_content_mismatch_and_preserves_canoni
     # Ingest duplicate retry with content mismatch (different metrics/binding/event_type)
     mismatched_event = dict(original_event)
     mismatched_event["metrics"] = {"drawdown_pct": 0.99}  # changed metrics
-    
+
     ok_retry = asyncio.run(ingest.ingest(mismatched_event))
     assert ok_retry is False  # Rejected content mismatch
     assert len(lineage.admitted) == 1  # No new admission
@@ -1646,7 +1693,7 @@ def test_telemetry_duplicate_retry_rejects_content_mismatch_and_preserves_canoni
     # Ingest duplicate retry with identical content (except created_at)
     valid_retry = dict(original_event)
     valid_retry["created_at"] = "2026-07-13T00:01:00Z"  # time can change
-    
+
     ok_valid_retry = asyncio.run(ingest.ingest(valid_retry))
     assert ok_valid_retry is True  # Allowed as idempotent skip
     assert len(lineage.admitted) == 2
@@ -1659,10 +1706,10 @@ def test_wal_loading_unreadable_or_malformed_fails_closed(tmp_path):
     fail-closed diagnostic and run_tick returns early instead of recomputing
     different payloads under the same deterministic event_id."""
     state_path = tmp_path / "corrupted_state.json"
-    
+
     # 1. Unreadable/malformed JSON
     state_path.write_text("{invalid json", encoding="utf-8")
-    
+
     result = run_tick(
         telemetry_api_url="http://telemetry.test",
         incidents_api_url="http://incidents.test",
@@ -1675,7 +1722,7 @@ def test_wal_loading_unreadable_or_malformed_fails_closed(tmp_path):
 
     # 2. Non-UTF-8 bytes
     state_path.write_bytes(b"\x80\xff\x99")
-    
+
     result_non_utf8 = run_tick(
         telemetry_api_url="http://telemetry.test",
         incidents_api_url="http://incidents.test",
@@ -1692,7 +1739,11 @@ def test_wal_loading_ignores_structurally_invalid_records(tmp_path):
     invalid_data = {
         "valid_id": {
             "window_bucket": "2026-07-13",
-            "telemetry_event": {"event_id": "valid_id"},
+            "telemetry_event": {
+                "event_id": "valid_id",
+                "event_type": "drawdown_snapshot",
+                "metrics": {"drawdown_pct": 0.5},
+            },
             "threshold_snapshot": {},
             "delivered": True
         },
@@ -1702,18 +1753,22 @@ def test_wal_loading_ignores_structurally_invalid_records(tmp_path):
         }
     }
     state_path.write_text(json.dumps(invalid_data), encoding="utf-8")
-    
+
     from services.evolution.threshold_sweep_worker import _load_pending_evidence
-    loaded = _load_pending_evidence(str(state_path))
+    loaded, quarantined = _load_pending_evidence(str(state_path))
     assert "valid_id" in loaded
     assert "invalid_id" not in loaded
+    # Structurally invalid records must be reserved, not merely dropped, so a
+    # later tick cannot recompute a fresh payload under the same event_id
+    # (round-7 review point 1).
+    assert "invalid_id" in quarantined
 
 
 def test_pending_undelivered_records_retry_independently_of_config_and_fetch_success(tmp_path):
     """Verify that pending undelivered records are retried even if thresholds config fails
     or telemetry fetch returns errors."""
     state_path = tmp_path / "retry_state.json"
-    
+
     event_id = "evt-retry-1"
     pending = {
         event_id: {
@@ -1749,7 +1804,7 @@ def test_pending_undelivered_records_retry_independently_of_config_and_fetch_suc
             "delivered": False
         }
     }
-    
+
     from services.evolution.threshold_sweep_worker import _save_pending_evidence, _load_pending_evidence
     _save_pending_evidence(str(state_path), pending)
 
@@ -1779,14 +1834,14 @@ def test_pending_undelivered_records_retry_independently_of_config_and_fetch_suc
         state_path=str(state_path),
         now=_NOW,
     )
-    
+
     # Verify retry occurred despite empty thresholds and fetch error!
     assert len(posted_incidents) == 1
     assert posted_incidents[0]["telemetry_event"]["event_id"] == event_id
     assert result["incidents_created"] == 1
-    
+
     # State updated to delivered=True
-    updated = _load_pending_evidence(str(state_path))
+    updated, _ = _load_pending_evidence(str(state_path))
     assert updated[event_id]["delivered"] is True
 
 
@@ -1796,7 +1851,7 @@ def test_runtime_summary_projection_store_reset_on_binding_rollover():
     from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 
     store = RuntimeSummaryProjectionStore(path=None)
-    
+
     event_binding_a = {
         "event_id": "evt-a",
         "event_type": "heartbeat",
@@ -1807,13 +1862,13 @@ def test_runtime_summary_projection_store_reset_on_binding_rollover():
         "metrics": {"drawdown_pct": 0.15},
         "metadata": {"runtime_binding_effective_at": "2026-07-13T00:00:00Z"},
     }
-    
+
     # Project binding A
     summary_a = store.project_event(event_binding_a)
     assert summary_a["binding_id"] == "binding-a"
     assert summary_a["drawdown"] == 0.15
     assert summary_a["drawdown_binding_id"] == "binding-a"
-    
+
     # Project binding B (rollover!)
     event_binding_b = {
         "event_id": "evt-b",
@@ -1826,7 +1881,7 @@ def test_runtime_summary_projection_store_reset_on_binding_rollover():
         "metadata": {"runtime_binding_effective_at": "2026-07-13T00:01:00Z"},
     }
     summary_b = store.project_event(event_binding_b)
-    
+
     assert summary_b["binding_id"] == "binding-b"
     # Metrics from binding A should be cleared/reset!
     assert "drawdown" not in summary_b
@@ -1851,7 +1906,7 @@ def test_evaluate_breaches_validates_metric_provenance():
         # but drawdown came from binding-a!
         "drawdown_binding_id": "binding-a",
     }
-    
+
     thresholds = [
         {
             "metric_name": "rolling_drawdown_multiple",
@@ -1864,14 +1919,18 @@ def test_evaluate_breaches_validates_metric_provenance():
             "enabled": True,
         }
     ]
-    
+
     payloads, diagnostics = evaluate_breaches(
         [summary_with_provenance_mismatch],
         thresholds,
         window_bucket="2026-07-13",
-        now=datetime(2026, 7, 13, tzinfo=timezone.utc),
+        # after last_heartbeat_at (00:01:00Z above); a `now` before the
+        # heartbeat would itself be flagged as an ambiguous future
+        # timestamp and mask the provenance-mismatch diagnostic this test
+        # is exercising.
+        now=datetime(2026, 7, 13, 0, 2, 0, tzinfo=timezone.utc),
     )
-    
+
     assert not payloads
     assert any("metric provenance mismatch: metric binding 'binding-a' does not match current summary binding 'binding-b'" in d for d in diagnostics)
 
@@ -1905,11 +1964,22 @@ def test_run_tick_never_raises_on_corrupt_wal_records(tmp_path):
     }
     state_path.write_text(json.dumps(corrupt_data), encoding="utf-8")
 
-    # This should run without raising KeyError or any other error,
-    # as corrupt records are safely filtered out by _load_pending_evidence.
+    # This should run without raising KeyError or any other error, as
+    # corrupt records are safely quarantined (reserved) by
+    # _load_pending_evidence rather than raising. Uses an explicit
+    # fetch_summaries stub so this stays hermetic instead of making a real
+    # network request to http://telemetry.test (round-7 review point 3: the
+    # prior version of this test relied on the default fetch, which never
+    # actually exercised the new no-candidates-this-tick path deterministically).
+    def fetch(*_args, **_kwargs):
+        return []
+
     result = run_tick(
         telemetry_api_url="http://telemetry.test",
         incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch,
         state_path=str(state_path),
         now=_NOW,
     )
@@ -1917,10 +1987,352 @@ def test_run_tick_never_raises_on_corrupt_wal_records(tmp_path):
     assert result["errors"] == 0
 
 
+def test_run_tick_quarantines_corrupt_wal_record_instead_of_recomputing_under_same_event_id(tmp_path):
+    """A structurally invalid undelivered WAL record must not be silently
+    forgotten: when a fresh candidate this tick hashes to the exact same
+    deterministic event_id, the worker must refuse to recompute/re-admit/
+    re-post a new payload under that id, rather than losing the original
+    frozen evidence (round-7 review point 1)."""
+    state_path = tmp_path / "state.json"
+
+    # The exact deterministic event_id a genuine drawdown candidate for this
+    # summary/threshold/window bucket hashes to.
+    candidates, _ = evaluate_breaches(
+        [_summary(drawdown=0.30)], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+    )
+    drawdown_candidate = next(
+        c for c in candidates if c["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
+    )
+    event_id = drawdown_candidate["telemetry_event"]["event_id"]
+
+    # A corrupt undelivered WAL record under that exact event_id: missing
+    # the inner event_id, so it cannot be structurally validated.
+    corrupt_state = {
+        event_id: {
+            "window_bucket": "2026-07-13",
+            "telemetry_event": {"event_type": "drawdown_snapshot", "metrics": {"drawdown_pct": 0.30}},
+            "threshold_snapshot": {"metric_name": "rolling_drawdown_multiple"},
+            "delivered": False,
+        }
+    }
+    state_path.write_text(json.dumps(corrupt_state), encoding="utf-8")
+
+    admit_calls = []
+    post_calls = []
+
+    def fetch(*_args, **_kwargs):
+        return [_summary(drawdown=0.30)]
+
+    def admit(_url, event, **_kwargs):
+        admit_calls.append(event)
+        return {"status": 202, "body": {}}
+
+    def post(_url, payload, **_kwargs):
+        post_calls.append(payload)
+        return {"status": 201, "body": {}}
+
+    result = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch,
+        admit_telemetry_event=admit,
+        post_incident=post,
+        state_path=str(state_path),
+        now=_NOW,
+    )
+
+    assert not admit_calls
+    assert not post_calls
+    assert result["incidents_created"] == 0
+    assert result["errors"] >= 1
+    assert any("corrupt/unreadable prior WAL record" in d for d in result["diagnostics"])
+
+    # The on-disk WAL must not have been overwritten with a freshly
+    # recomputed payload under the quarantined key.
+    on_disk = json.loads(state_path.read_text(encoding="utf-8"))
+    assert on_disk == corrupt_state
+
+
+def test_run_tick_quarantines_malformed_delivered_record_instead_of_fabricating_dedupe(tmp_path):
+    """A ``delivered: true`` WAL record with missing/malformed telemetry
+    integrity (no real event_type/metrics) must be quarantined, not trusted
+    as valid delivered evidence: a genuine candidate hashing to the same
+    deterministic event_id must fail closed instead of being silently
+    counted as an already-delivered dedupe (round-9 review point 2)."""
+    state_path = tmp_path / "state.json"
+
+    candidates, _ = evaluate_breaches(
+        [_summary(drawdown=0.30)], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+    )
+    drawdown_candidate = next(
+        c for c in candidates if c["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
+    )
+    event_id = drawdown_candidate["telemetry_event"]["event_id"]
+
+    # A structurally-shaped but integrity-malformed "delivered" record: the
+    # inner/outer event_id matches, window_bucket/delivered types are correct,
+    # but the telemetry event carries no real event_type/metrics.
+    malformed_delivered_state = {
+        event_id: {
+            "window_bucket": "2026-07-13",
+            "telemetry_event": {"event_id": event_id},
+            "threshold_snapshot": {},
+            "delivered": True,
+        }
+    }
+    state_path.write_text(json.dumps(malformed_delivered_state), encoding="utf-8")
+
+    admit_calls = []
+    post_calls = []
+
+    def fetch(*_args, **_kwargs):
+        return [_summary(drawdown=0.30)]
+
+    def admit(_url, event, **_kwargs):
+        admit_calls.append(event)
+        return {"status": 202, "body": {}}
+
+    def post(_url, payload, **_kwargs):
+        post_calls.append(payload)
+        return {"status": 201, "body": {}}
+
+    result = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch,
+        admit_telemetry_event=admit,
+        post_incident=post,
+        state_path=str(state_path),
+        now=_NOW,
+    )
+
+    # Must fail closed, not silently dedupe the genuine candidate away.
+    assert result["incidents_deduped"] == 0
+    assert result["incidents_created"] == 0
+    assert not admit_calls
+    assert not post_calls
+    assert result["errors"] >= 1
+    assert any("corrupt/unreadable prior WAL record" in d for d in result["diagnostics"])
+
+
+def test_run_tick_persists_quarantine_tombstone_across_prune_and_delivery_saves(tmp_path):
+    """A quarantine tombstone must survive every subsequent save triggered by
+    an unrelated candidate or delivery, in the same tick or a later one, not
+    just the tick that first quarantined it (round-8 review point 1). Before
+    the fix, ``_save_pending_evidence`` always wrote only the currently-valid
+    ``pending`` dict, so the very next prune/new-candidate/delivery save
+    silently dropped the quarantine tombstone from disk; a later tick then
+    reloaded a WAL with no record under that id at all and recomputed and
+    posted a fresh payload under the same deterministic event_id."""
+    state_path = tmp_path / "state.json"
+
+    summary = _summary(drawdown=0.30, pnl=-600.0)
+    candidates, _ = evaluate_breaches(
+        [summary], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+    )
+    drawdown_candidate = next(
+        c for c in candidates if c["threshold_snapshot"]["metric_name"] == "rolling_drawdown_multiple"
+    )
+    pnl_candidate = next(
+        c for c in candidates if c["threshold_snapshot"]["metric_name"] == "rolling_pnl_floor"
+    )
+    quarantined_event_id = drawdown_candidate["telemetry_event"]["event_id"]
+    fresh_event_id = pnl_candidate["telemetry_event"]["event_id"]
+
+    # A corrupt undelivered WAL record under the drawdown event_id: missing
+    # the inner event_id, so it cannot be structurally validated.
+    corrupt_record = {
+        "window_bucket": "2026-07-13",
+        "telemetry_event": {"event_type": "drawdown_snapshot", "metrics": {"drawdown_pct": 0.30}},
+        "threshold_snapshot": {"metric_name": "rolling_drawdown_multiple"},
+        "delivered": False,
+    }
+    state_path.write_text(json.dumps({quarantined_event_id: corrupt_record}), encoding="utf-8")
+
+    admit_calls = []
+    post_calls = []
+
+    def fetch(*_args, **_kwargs):
+        return [summary]
+
+    def admit(_url, event, **_kwargs):
+        admit_calls.append(event["event_id"])
+        return {"status": 202, "body": {}}
+
+    def post(_url, payload, **_kwargs):
+        post_calls.append(payload["telemetry_event"]["event_id"])
+        return {"status": 201, "body": {}}
+
+    from services.evolution.threshold_sweep_worker import _load_pending_evidence
+
+    # Tick 1: the drawdown candidate is quarantined and refused; the pnl
+    # candidate is a genuinely new candidate, which triggers a write-ahead-log
+    # save before delivery and a second save after delivery — both of which
+    # must fold the quarantine tombstone back in.
+    result_1 = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch,
+        admit_telemetry_event=admit,
+        post_incident=post,
+        state_path=str(state_path),
+        now=_NOW,
+    )
+    assert admit_calls == [fresh_event_id]
+    assert post_calls == [fresh_event_id]
+    assert result_1["incidents_created"] == 1
+    assert result_1["errors"] >= 1
+    assert any("corrupt/unreadable prior WAL record" in d for d in result_1["diagnostics"])
+
+    on_disk_after_tick_1 = json.loads(state_path.read_text(encoding="utf-8"))
+    assert on_disk_after_tick_1[quarantined_event_id] == corrupt_record
+    assert on_disk_after_tick_1[fresh_event_id]["delivered"] is True
+
+    # Tick 2: with the tombstone intact on disk, the drawdown event_id must
+    # still be refused rather than recomputed/admitted/posted.
+    result_2 = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch,
+        admit_telemetry_event=admit,
+        post_incident=post,
+        state_path=str(state_path),
+        now=_NOW,
+    )
+    assert admit_calls == [fresh_event_id]
+    assert post_calls == [fresh_event_id]
+    assert result_2["incidents_created"] == 0
+    assert result_2["incidents_deduped"] == 1
+    assert result_2["errors"] >= 1
+    assert any("corrupt/unreadable prior WAL record" in d for d in result_2["diagnostics"])
+
+    valid_after_tick_2, quarantined_after_tick_2 = _load_pending_evidence(str(state_path))
+    assert quarantined_event_id in quarantined_after_tick_2
+    assert valid_after_tick_2[fresh_event_id]["delivered"] is True
+
+
+# ---------------------------------------------------------------------------
+# Missing metric provenance is fail-open (round-7 review point 2)
+# ---------------------------------------------------------------------------
+
+def test_evaluate_breaches_missing_metric_provenance_is_diagnostic_only_fail_closed():
+    """Removing `<field>_binding_id` entirely (not just mismatching it) must
+    still be diagnostic-only: the old check only rejected a present-but-
+    mismatched provenance marker, so a summary with no provenance on record
+    at all fell through to a real candidate."""
+    summary_without_provenance = _summary()
+    del summary_without_provenance["drawdown_binding_id"]
+
+    payloads, diagnostics = evaluate_breaches(
+        [summary_without_provenance], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+    )
+    assert all(p["threshold_snapshot"]["metric_name"] != "rolling_drawdown_multiple" for p in payloads)
+    assert any(
+        "metric provenance missing for telemetry field 'drawdown'" in d for d in diagnostics
+    )
+
+
+# ---------------------------------------------------------------------------
+# run_tick never raises on IncompleteRead from the HTTP transport
+# (round-7 review point 3)
+# ---------------------------------------------------------------------------
+
+def test_run_tick_fails_closed_when_telemetry_fetch_raises_incomplete_read():
+    """http.client.IncompleteRead (raised by urllib on a truncated HTTP
+    response body) must not escape run_tick's "never raises" contract."""
+    import http.client
+
+    def fetch(*_args, **_kwargs):
+        raise http.client.IncompleteRead(b"partial")
+
+    def admit(*_args, **_kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("admit_telemetry_event must not be called when telemetry fetch fails")
+
+    def post(*_args, **_kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("post_incident must not be called when telemetry fetch fails")
+
+    result = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=fetch,
+        admit_telemetry_event=admit,
+        post_incident=post,
+        now=_NOW,
+    )
+    assert result["incidents_created"] == 0
+    assert any("telemetry fetch failed" in d for d in result["diagnostics"])
+
+
+# ---------------------------------------------------------------------------
+# Dedupe key encoding must be injective across tuple element boundaries
+# (round-7 review point 6)
+# ---------------------------------------------------------------------------
+
+def test_evaluate_breaches_dedupe_key_is_not_collision_prone_across_colon_boundaries():
+    """Colon-joining metric_name/window without escaping lets two distinct
+    (metric_name, window) tuples that only differ in *where* a colon falls
+    mint the same event_id, silently suppressing one candidate as a
+    duplicate of the other."""
+    thresholds_a = [{**THRESHOLDS[0], "metric_name": "a:b", "window": "c"}]
+    thresholds_b = [{**THRESHOLDS[0], "metric_name": "a", "window": "b:c"}]
+
+    payloads_a, _ = evaluate_breaches(
+        [_summary(drawdown=0.30)], thresholds_a, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+    )
+    payloads_b, _ = evaluate_breaches(
+        [_summary(drawdown=0.30)], thresholds_b, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+    )
+    assert payloads_a[0]["telemetry_event"]["event_id"] != payloads_b[0]["telemetry_event"]["event_id"]
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat freshness must not be fail-open for ambiguous timestamps
+# (round-7 review additional finding)
+# ---------------------------------------------------------------------------
+
+def test_evaluate_breaches_skips_summary_with_unparseable_heartbeat_timestamp():
+    """A malformed `last_heartbeat_at` ("not-a-date") must not read as fresh
+    just because the field is present/truthy."""
+    payloads, diagnostics = evaluate_breaches(
+        [_summary(last_heartbeat_at="not-a-date")],
+        THRESHOLDS,
+        window_bucket="2026-07-13",
+        baselines=BASELINES,
+        now=_NOW,
+    )
+    assert payloads == []
+    assert any("stale/degraded" in d for d in diagnostics)
+
+
+def test_evaluate_breaches_skips_summary_with_future_heartbeat_timestamp():
+    """A `last_heartbeat_at` in the future is ambiguous telemetry and must be
+    diagnostic-only, not treated as fresh."""
+    future = (_NOW + timedelta(days=1)).isoformat().replace("+00:00", "Z")
+    payloads, diagnostics = evaluate_breaches(
+        [_summary(last_heartbeat_at=future)],
+        THRESHOLDS,
+        window_bucket="2026-07-13",
+        baselines=BASELINES,
+        now=_NOW,
+    )
+    assert payloads == []
+    assert any("stale/degraded" in d for d in diagnostics)
+
+
 def test_load_thresholds_rejects_empty_metric_name_or_policy_source(tmp_path):
     """Verify that config entries with empty/whitespace metric_name or policy_source are rejected."""
     cfg = tmp_path / "cfg.json"
-    
+
     # 1. Empty metric_name
     bad_entry_1 = dict(THRESHOLDS[0])
     bad_entry_1["metric_name"] = "  "
@@ -1946,3 +2358,73 @@ def test_load_baselines_handles_non_utf8_baselines_file(tmp_path):
     cfg = tmp_path / "baselines.json"
     cfg.write_bytes(b"\xff\xfe\xfd\xfc")
     assert load_baselines(str(cfg)) == {}
+
+
+# ---------------------------------------------------------------------------
+# Round-9 review: crash-durable, serialized WAL (review point 1)
+# ---------------------------------------------------------------------------
+
+def test_save_pending_evidence_fsyncs_temp_file_and_parent_directory(tmp_path, monkeypatch):
+    """A bare ``os.replace()`` only makes the new name visible; without an
+    fsync of the temp file's data and of the directory entry, a host/volume
+    crash right after the write can resurrect the previous WAL contents even
+    though ``run_tick`` already treated the save as durable authorization to
+    admit telemetry and post an incident (round-9 review point 1)."""
+    import os as os_module
+
+    from services.evolution.threshold_sweep_worker import _save_pending_evidence
+
+    state_path = tmp_path / "state.json"
+    fsynced_fds = []
+    real_fsync = os_module.fsync
+
+    def spy_fsync(fd):
+        fsynced_fds.append(fd)
+        return real_fsync(fd)
+
+    monkeypatch.setattr("services.evolution.threshold_sweep_worker.os.fsync", spy_fsync)
+
+    _save_pending_evidence(str(state_path), {"evt-1": {"delivered": True}})
+
+    # One fsync for the temp file's data, one for the parent directory entry
+    # (proves the rename itself is durable, not just the bytes).
+    assert len(fsynced_fds) == 2
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {"evt-1": {"delivered": True}}
+    # No leftover temp file after a successful write.
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_wal_lock_serializes_concurrent_holders(tmp_path):
+    """Two overlapping worker instances racing on the same on-disk WAL state
+    must not interleave their read-modify-write cycles: the second holder
+    must block until the first's full transaction (load through save)
+    releases the lock, instead of last-writer-winning away the other's
+    pending record or frozen delivered payload (round-9 review point 1)."""
+    import threading
+    import time as time_module
+
+    from services.evolution.threshold_sweep_worker import _wal_lock
+
+    state_path = str(tmp_path / "state.json")
+    order = []
+    order_lock = threading.Lock()
+
+    def hold_and_release(tag, hold_seconds):
+        with _wal_lock(state_path):
+            with order_lock:
+                order.append(f"{tag}-enter")
+            time_module.sleep(hold_seconds)
+            with order_lock:
+                order.append(f"{tag}-exit")
+
+    first = threading.Thread(target=hold_and_release, args=("a", 0.2))
+    first.start()
+    time_module.sleep(0.05)  # ensure "a" acquires the lock first
+    second = threading.Thread(target=hold_and_release, args=("b", 0.0))
+    second.start()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert not first.is_alive() and not second.is_alive()
+    # "b" must never enter while "a" still holds the lock.
+    assert order == ["a-enter", "a-exit", "b-enter", "b-exit"]
