@@ -276,9 +276,28 @@ class MemoryPersonaProvisioningStore:
 class PostgresPersonaProvisioningStore:
     """Cross-replica durable ledger backed by one Postgres authority table."""
 
+    _RECORD_FIELDS = (
+        "tenant_id",
+        "idempotency_key",
+        "request_hash",
+        "normalized_name",
+        "persona_id",
+        "request_payload",
+        "state",
+        "current_step",
+        "references",
+        "result",
+        "error",
+        "compensation",
+        "created_at",
+        "updated_at",
+        "lease_owner",
+        "lease_expires_at",
+        "attempt_count",
+    )
     _COLUMNS = (
         "tenant_id,idempotency_key,request_hash,normalized_name,persona_id,"
-        "request_payload,state,current_step,references,result,error,compensation,"
+        'request_payload,state,current_step,"references",result,error,compensation,'
         "created_at,updated_at,lease_owner,lease_expires_at,attempt_count"
     )
 
@@ -319,7 +338,7 @@ class PostgresPersonaProvisioningStore:
                     request_payload JSONB NOT NULL,
                     state TEXT NOT NULL,
                     current_step TEXT NOT NULL,
-                    references JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                    "references" JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                     result JSONB,
                     error JSONB,
                     compensation JSONB,
@@ -349,7 +368,7 @@ class PostgresPersonaProvisioningStore:
             if values[index] is not None and hasattr(values[index], "isoformat"):
                 values[index] = values[index].isoformat().replace("+00:00", "Z")
         return ProvisioningRecord.from_mapping(
-            dict(zip(cls._COLUMNS.split(","), values, strict=True))
+            dict(zip(cls._RECORD_FIELDS, values, strict=True))
         )
 
     def _select(self, cur: Any, where: str, params: tuple[Any, ...]) -> ProvisioningRecord | None:
@@ -459,7 +478,7 @@ class PostgresPersonaProvisioningStore:
         with self._connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(
                 f"""UPDATE {self.table}
-                    SET state=%s,current_step=%s,references=%s::jsonb,result=%s::jsonb,
+                    SET state=%s,current_step=%s,"references"=%s::jsonb,result=%s::jsonb,
                         error=%s::jsonb,compensation=%s::jsonb,
                         lease_expires_at=now() + (%s * interval '1 second'),
                         updated_at=now()

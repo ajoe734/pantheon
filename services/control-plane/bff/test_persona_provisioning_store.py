@@ -381,6 +381,7 @@ def test_postgres_bootstrap_enforces_tenant_scoped_uniqueness() -> None:
 
     assert store.table == "bff_test.persona_provisioning"
     create_table = next(sql for sql, _ in connect.executions if "CREATE TABLE" in sql)
+    assert '"references" JSONB' in create_table
     assert "PRIMARY KEY (tenant_id, idempotency_key)" in create_table
     assert "UNIQUE (tenant_id, normalized_name)" in create_table
     assert "UNIQUE (tenant_id, persona_id)" in create_table
