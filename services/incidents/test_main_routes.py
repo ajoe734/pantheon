@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fastapi.testclient import TestClient
 
-from services.incident.incident import IncidentStore
+from services.incident.incident import IncidentConcurrencyError, IncidentStore
 from services.incident.reference_validation import CanonicalReferenceError
 from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
 from services.incidents.main import app, outbox_store, store
@@ -524,6 +524,75 @@ def test_consume_drift_report_route_dedupes_by_binding_runtime_cluster():
         "recon-run-002",
     ]
     assert len(store.list_incidents()) == 1
+
+
+def test_consume_drift_report_retries_owner_store_cas_conflict(monkeypatch):
+    first_payload = _drift_report_payload()
+    second_payload = _drift_report_payload(
+        drift_report_id="drift-report-cas-retry",
+        recon_run_id="recon-run-cas-retry",
+        telemetry_event_ids=["evt-drift-cas-retry"],
+        evidence_refs=[
+            "telemetry_event:evt-drift-cas-retry",
+            "drift_report:drift-report-cas-retry",
+            "reconciliation_record:recon-run-cas-retry",
+        ],
+        generated_at="2026-06-27T15:10:00Z",
+    )
+    first = client.post(
+        "/api/incidents/consume-drift-report",
+        json={"drift_report": first_payload},
+    )
+    assert first.status_code == 201, first.text
+
+    real_merge = store.merge_incident_evidence
+    attempts = 0
+
+    def conflict_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise IncidentConcurrencyError("injected owner-store CAS race")
+        return real_merge(*args, **kwargs)
+
+    monkeypatch.setattr(store, "merge_incident_evidence", conflict_once)
+    retried = client.post(
+        "/api/incidents/consume-drift-report",
+        json={"drift_report": second_payload},
+    )
+
+    assert retried.status_code == 200, retried.text
+    assert attempts == 2
+    assert retried.json()["telemetry_event_ids"] == [
+        "evt-drift-001",
+        "evt-drift-cas-retry",
+    ]
+
+
+def test_consume_drift_report_returns_retryable_after_cas_budget(monkeypatch):
+    payload = _drift_report_payload()
+    created = client.post(
+        "/api/incidents/consume-drift-report",
+        json={"drift_report": payload},
+    )
+    assert created.status_code == 201, created.text
+
+    attempts = 0
+
+    def always_conflicts(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise IncidentConcurrencyError("injected persistent owner-store CAS race")
+
+    monkeypatch.setattr(store, "merge_incident_evidence", always_conflicts)
+    retried = client.post(
+        "/api/incidents/consume-drift-report",
+        json={"drift_report": payload},
+    )
+
+    assert retried.status_code == 503, retried.text
+    assert attempts == 3
+    assert "retry budget" in retried.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

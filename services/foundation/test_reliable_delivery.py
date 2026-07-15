@@ -16,6 +16,7 @@ from services.foundation import (
 )
 from services.foundation.reliable_delivery import (
     AtomicJsonRecordStore,
+    ReliableInboxConcurrencyError,
     ReliableInboxStore,
     ReliableOutboxStore,
     reconcile_prepared,
@@ -119,6 +120,28 @@ def test_atomic_json_insert_if_absent_reserves_record_and_composite_identity(tmp
         "value": "first",
     }
     assert first.list_all() == [canonical]
+
+
+def test_atomic_json_compare_and_set_and_delete_are_snapshot_guarded(tmp_path):
+    first = AtomicJsonRecordStore(tmp_path / "records.json")
+    second = AtomicJsonRecordStore(tmp_path / "records.json")
+
+    inserted, canonical = first.compare_and_set("record-1", None, {"state": "pending"})
+    stale, observed = second.compare_and_set("record-1", None, {"state": "other"})
+    advanced, canonical = second.compare_and_set(
+        "record-1",
+        {"state": "pending"},
+        {"state": "published"},
+    )
+
+    assert inserted is True
+    assert stale is False
+    assert observed == {"state": "pending"}
+    assert advanced is True
+    assert canonical == {"state": "published"}
+    assert first.delete_if_matches("record-1", {"state": "pending"}) is False
+    assert second.delete_if_matches("record-1", {"state": "published"}) is True
+    assert first.get("record-1") is None
 
 
 def test_prepared_record_survives_restart_and_reconciles(tmp_path):
@@ -303,6 +326,81 @@ def test_backoff_dead_letter_and_governed_redrive_are_durable(tmp_path):
     assert _outbox(tmp_path).get("outbox-1").redrive_count == 1  # type: ignore[union-attr]
 
 
+def test_outbox_claim_lease_prevents_stale_worker_completion(tmp_path):
+    store = _outbox(tmp_path)
+    prepared = store.prepare(
+        record=OutboxRecord(outbox_id="outbox-1", owner_service="incident-svc", event=_event()),
+        transition={"aggregate_type": "incident", "aggregate_id": "inc-1"},
+    )
+    store.activate(prepared)
+    started = datetime(2026, 7, 15, tzinfo=timezone.utc)
+
+    first_claim = store.claim_due(
+        worker_id="worker-a",
+        lease_seconds=1,
+        now=started,
+    )
+    assert len(first_claim) == 1
+    assert _outbox(tmp_path).claim_due(
+        worker_id="worker-b",
+        lease_seconds=1,
+        now=started,
+    ) == []
+
+    second_claim = _outbox(tmp_path).claim_due(
+        worker_id="worker-b",
+        lease_seconds=10,
+        now=started + timedelta(seconds=2),
+    )
+    assert len(second_claim) == 1
+    published, canonical = store.complete_published(second_claim[0])
+    assert published is True
+    assert canonical.status == "published"
+
+    stale, canonical = store.complete_failed(
+        first_claim[0],
+        "late failure",
+        max_attempts=3,
+        base_delay_seconds=0,
+        now=started + timedelta(seconds=3),
+    )
+    assert stale is False
+    assert canonical.status == "published"
+    assert _outbox(tmp_path).get("outbox-1").status == "published"  # type: ignore[union-attr]
+
+
+def test_prepare_retry_and_activate_cannot_clear_live_delivery_claim(tmp_path):
+    store = _outbox(tmp_path)
+    transition = {"aggregate_type": "incident", "aggregate_id": "inc-1"}
+    prepared = store.prepare(
+        record=OutboxRecord(
+            outbox_id="outbox-1",
+            owner_service="incident-svc",
+            event=_event(),
+        ),
+        transition=transition,
+    )
+    store.activate(prepared)
+    claimed = store.claim_due(worker_id="worker-a", lease_seconds=30)
+    assert len(claimed) == 1
+
+    retried = _outbox(tmp_path).prepare(
+        record=OutboxRecord(
+            outbox_id="outbox-1",
+            owner_service="incident-svc",
+            event=_event(),
+        ),
+        transition=transition,
+    )
+    canonical = _outbox(tmp_path).activate(retried)
+
+    assert canonical.claim_token == claimed[0].claim_token
+    assert _outbox(tmp_path).claim_due(worker_id="worker-b") == []
+    applied, completed = store.complete_published(claimed[0])
+    assert applied is True
+    assert completed.status == "published"
+
+
 def test_inbox_accepts_exact_retry_and_rejects_divergent_replay(tmp_path):
     inbox = _inbox(tmp_path)
     event = _event()
@@ -320,6 +418,114 @@ def test_inbox_accepts_exact_retry_and_rejects_divergent_replay(tmp_path):
     assert state == "conflict"
     with pytest.raises(ValueError, match="divergent replay"):
         inbox.record_applied(divergent, result_ref="pm-other")
+
+
+def test_inbox_reservation_is_atomic_and_completion_is_monotonic(tmp_path):
+    first = _inbox(tmp_path)
+    second = _inbox(tmp_path)
+    event = _event()
+
+    first_state, reservation = first.reserve(event, result_ref="pm-inc-1")
+    second_state, duplicate = second.reserve(event, result_ref="pm-inc-1")
+
+    assert first_state == "claimed"
+    assert second_state == "in_progress"
+    assert duplicate == reservation
+    applied = second.record_applied(
+        event,
+        result_ref="pm-inc-1",
+        reservation=reservation,
+    )
+    assert applied["state"] == "applied"
+    assert first.release_reservation(event, reservation) is False
+    replay_state, replay = first.reserve(event, result_ref="pm-inc-1")
+    assert replay_state == "applied"
+    assert replay["state"] == "applied"
+
+
+def test_inbox_expired_reservation_can_be_reclaimed_after_crash(tmp_path):
+    inbox = _inbox(tmp_path)
+    event = _event()
+    started = datetime(2026, 7, 15, tzinfo=timezone.utc)
+
+    state, abandoned = inbox.reserve(
+        event,
+        result_ref="pm-inc-1",
+        lease_seconds=1,
+        now=started,
+    )
+    duplicate_state, _ = _inbox(tmp_path).reserve(
+        event,
+        result_ref="pm-inc-1",
+        lease_seconds=1,
+        now=started,
+    )
+    reclaimed_state, reclaimed = _inbox(tmp_path).reserve(
+        event,
+        result_ref="pm-inc-1",
+        lease_seconds=10,
+        now=started + timedelta(seconds=2),
+    )
+
+    assert state == "claimed"
+    assert duplicate_state == "in_progress"
+    assert reclaimed_state == "claimed"
+    assert reclaimed["reservation_token"] != abandoned["reservation_token"]
+    assert inbox.release_reservation(event, abandoned) is False
+    with pytest.raises(ReliableInboxConcurrencyError, match="changed concurrently"):
+        inbox.record_applied(
+            event,
+            result_ref="pm-inc-1",
+            reservation=abandoned,
+        )
+    canonical = _inbox(tmp_path).impl.get(event.event_id)
+    assert canonical["reservation_token"] == reclaimed["reservation_token"]
+    assert inbox.record_applied(
+        event,
+        result_ref="pm-inc-1",
+        reservation=reclaimed,
+    )["state"] == "applied"
+
+
+def test_inbox_applied_receipt_finalizes_provisional_result_reference(tmp_path):
+    inbox = _inbox(tmp_path)
+    event = _event()
+
+    state, reservation = inbox.reserve(event, result_ref="pm-provisional")
+    applied = inbox.record_applied(
+        event,
+        result_ref="pm-legacy",
+        reservation=reservation,
+    )
+    replay_state, replay = _inbox(tmp_path).reserve(event, result_ref="pm-legacy")
+
+    assert state == "claimed"
+    assert reservation["result_ref"] == "pm-provisional"
+    assert applied["result_ref"] == "pm-legacy"
+    assert replay_state == "applied"
+    assert replay["result_ref"] == "pm-legacy"
+
+
+def test_inbox_receipt_cas_loss_is_retryable_not_semantic_conflict(
+    tmp_path,
+    monkeypatch,
+):
+    inbox = _inbox(tmp_path)
+    event = _event()
+    state, reservation = inbox.reserve(event, result_ref="pm-inc-1")
+    assert state == "claimed"
+    monkeypatch.setattr(
+        inbox.impl,
+        "compare_and_set",
+        lambda *args, **kwargs: (False, None),
+    )
+
+    with pytest.raises(ReliableInboxConcurrencyError, match="disappeared concurrently"):
+        inbox.record_applied(
+            event,
+            result_ref="pm-inc-1",
+            reservation=reservation,
+        )
 
 
 def test_concurrent_divergent_inbox_idempotency_key_fails_closed(tmp_path, monkeypatch):

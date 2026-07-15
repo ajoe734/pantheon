@@ -19,7 +19,12 @@ from services.incident.evidence_collector import (
     RuntimeBindingEvidence,
     TelemetryEvidence,
 )
-from services.incident.incident import IncidentCase, IncidentError, IncidentStore
+from services.incident.incident import (
+    IncidentCase,
+    IncidentConcurrencyError,
+    IncidentError,
+    IncidentStore,
+)
 
 
 def _utc_now() -> str:
@@ -44,6 +49,10 @@ _CANONICAL_SIGNAL_TYPES = {
     "manual_review",
 }
 _CANONICAL_COMPARATORS = {"gt", "gte", "lt", "lte", "eq", "neq"}
+
+
+class IncidentConsumerRetryableError(IncidentConsumerError):
+    """Raised when repeated owner-store CAS contention requires upstream retry."""
 
 
 @dataclass(frozen=True)
@@ -126,7 +135,7 @@ class DriftReportIncidentConsumer:
 
         existing = self._find_existing_incident(incident)
         if existing is not None:
-            updated = self._store.merge_incident_evidence(existing.incident_id, incident)
+            updated = self._merge_incident_evidence(existing.incident_id, incident)
             return DriftReportIncidentResult(
                 incident=updated,
                 created=False,
@@ -138,7 +147,7 @@ class DriftReportIncidentConsumer:
         except IncidentError as exc:
             existing = self._store.get_incident(incident.incident_id)
             if existing is not None:
-                updated = self._store.merge_incident_evidence(existing.incident_id, incident)
+                updated = self._merge_incident_evidence(existing.incident_id, incident)
                 return DriftReportIncidentResult(
                     incident=updated,
                     created=False,
@@ -151,6 +160,28 @@ class DriftReportIncidentConsumer:
             created=True,
             incident_cluster_id=incident.incident_cluster_id or "",
         )
+
+    def _merge_incident_evidence(
+        self,
+        incident_id: str,
+        incoming: IncidentCase,
+        *,
+        max_attempts: int = 3,
+    ) -> IncidentCase:
+        last_conflict: IncidentConcurrencyError | None = None
+        for _ in range(max(1, int(max_attempts))):
+            try:
+                # The store refreshes durable state inside every guarded write,
+                # so a retry merges incoming evidence onto the CAS winner.
+                return self._store.merge_incident_evidence(incident_id, incoming)
+            except IncidentConcurrencyError as exc:
+                last_conflict = exc
+            except IncidentError as exc:
+                raise IncidentConsumerError(str(exc)) from exc
+        raise IncidentConsumerRetryableError(
+            "Incident evidence changed concurrently after retry budget: "
+            f"{incident_id}: {last_conflict}"
+        ) from last_conflict
 
     def _find_existing_incident(self, incident: IncidentCase) -> IncidentCase | None:
         direct = self._store.get_incident(incident.incident_id)
