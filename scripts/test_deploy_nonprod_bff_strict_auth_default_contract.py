@@ -187,8 +187,9 @@ def test_auth_gate_checks_hosted_posture_and_fixed_bearer_negative() -> None:
     not just check health/readyz/source SHA."""
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     assert "assert_bff_auth_gate" in script
-    assert 'payload.get("auth_stub") is False' in script
-    assert 'payload.get("auth_mode") == "strict"' in script
+    assert 'posture = payload.get("config_posture")' in script
+    assert 'posture.get("auth_stub") is False' in script
+    assert 'posture.get("auth_mode") == "strict"' in script
     assert "/bff/auth/dev-login" in script
     assert "Bearer op-fixed:operator:mfa" in script
     assert "accepted a fixed/arbitrary bearer token" in script
