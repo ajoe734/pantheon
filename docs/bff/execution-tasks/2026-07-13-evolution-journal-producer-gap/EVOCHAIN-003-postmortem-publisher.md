@@ -1,6 +1,6 @@
 # EVOCHAIN-003: Postmortem Publisher on Incident Resolution
 
-Status: remediation implemented; Claude re-review pending
+Status: reviewer approved; implementation merged; closeout evidence recorded
 
 Owner: Codex2
 
@@ -317,7 +317,7 @@ Task anchors retained for review:
 - `837bb253d` — monotonic delivery and evidence completion
 - `780e4741c` — rollout compatibility and real-Postgres adversarial proof
 
-## Delivery History and Pending Re-review
+## Delivery History and Final Approval
 
 Claude's approval of the PR #3627 implementation was later superseded by
 additional concurrency review and follow-up changes. It is retained as history,
@@ -355,9 +355,50 @@ monotonic delivery, losing prepared-intent repair, published terminal guards,
 and control-compose/runtime evidence. Codex2 checkpointed the initial repair in
 anchor `4e5562d42`, completed the monotonic remediation in `837bb253d`, then
 closed a recovered mixed-version direct-close deadlock and production-Postgres
-evidence gaps in `780e4741c`. The follow-up task PR is not yet the reviewer
-gate at this artifact checkpoint. Claude re-review is still required; owner
-closeout and `done` have not occurred.
+evidence gaps in `780e4741c`.
+
+Remediation PR [#3699](https://github.com/ajoe734/pantheon/pull/3699) merged into
+`dev` on 2026-07-15 at merge commit
+`7d031fb1fb1327b6b1c00c0ec71d0234fd304613`. Its exact task patch is
+`d72c705baf8357c3897f9bb11474d922666a2e14..1105d45236a47724b7e1d36f64bf19e54d286bf4`
+and changes 19 files. Commit trailers, Runtime mirror guard, Smoke acceptance,
+and orchestrator forwarding checks all passed.
+
+Claude then independently re-reviewed all seven claims in
+`support/reviews/EVOCHAIN-003-review-codex.md` against the merged remediation.
+The reviewer reran the seven-file compile check and 116 non-Postgres tests;
+all passed. Database-dependent tests skipped cleanly without
+`TEST_DATABASE_URL`, and the reviewer accepted the owner's separately recorded
+five-test real-Postgres proof. The task moved to `review_approved` at
+2026-07-15T12:06:43Z.
+
+Owner closeout on the merged code reran this focused, non-Postgres suite:
+
+```sh
+env -u TEST_DATABASE_URL \
+INCIDENTS_DATA_DIR=/tmp/evochain003-closeout-focused-incidents-$$ \
+POSTMORTEMS_DATA_DIR=/tmp/evochain003-closeout-focused-postmortems-$$ \
+PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager.test \
+PANTHEON_RUNTIME_MANAGER_TOKEN=test-token \
+/tmp/evochain-003-venv/bin/python -m pytest -q \
+  services/foundation/test_reliable_delivery.py \
+  services/foundation/tests/test_control_plane_postgres_owner_stores.py \
+  services/incident/test_incident_store_concurrency.py \
+  services/incident/test_pg_store_integration.py \
+  services/incidents/test_evochain_003_delivery.py \
+  services/incidents/test_evochain_003_compose.py \
+  services/incidents/test_main_routes.py \
+  services/postmortems/test_evochain_003_delivery.py \
+  services/postmortems/test_main_routes.py
+# 129 passed, 5 skipped, 4 warnings in 150.83s
+```
+
+The five skips are the expected live-Postgres cases when no isolated test DSN
+is configured. The four warnings are the existing FastAPI `on_event`
+deprecations. Closeout also reran the seven-file compile check, the subprocess
+HTTP chain (`1 passed in 12.82s`), both compose renders, and the bridge
+zero-diff/checksum check. The worktree and `origin/dev` bridge hashes both
+remain `b68b4924a6e59ca472fe8103804b2b82c3985d7d`.
 
 ## Operational Notes and Residual Risks
 
@@ -380,6 +421,12 @@ closeout and `done` have not occurred.
   inert prepared intent whose event marker differs from the committed publish.
   It is never delivered, but a future compaction policy should tombstone it so
   reconciliation does not scan it indefinitely.
+- The postmortem-publish CAS-loss path has no repair-intent call analogous to
+  the incident terminal transition. Reviewer analysis classified this as a
+  non-blocking asymmetry outside the accepted task boundary.
+- `ReliableOutboxStore.discard_prepared` currently has no production caller.
+  It is retained as unused hardening surface rather than claimed as part of the
+  delivered chain.
 - A legacy-safe deterministic `pm-<incident-id>` can collide with a manually
   assigned ID owned by another incident. Admission fails closed and retries to
   the governed DLQ; migration-safe identity allocation remains follow-up work.

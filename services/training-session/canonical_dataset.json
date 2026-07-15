@@ -1,0 +1,816 @@
+{
+  "dataset_id": "canonical-dataset-v1",
+  "generated_at": "2026-07-15T12:00:00Z",
+  "records": [
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-01",
+      "open": 60000.0,
+      "high": 60500.0,
+      "low": 59500.0,
+      "close": 60100.0,
+      "volume": 15000.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-01",
+      "open": 3000.0,
+      "high": 3030.0,
+      "low": 2970.0,
+      "close": 3002.0,
+      "volume": 80000.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-02",
+      "open": 60150.0,
+      "high": 60650.0,
+      "low": 59650.0,
+      "close": 60250.0,
+      "volume": 15001.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-02",
+      "open": 3008.0,
+      "high": 3038.0,
+      "low": 2978.0,
+      "close": 3010.0,
+      "volume": 80001.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-03",
+      "open": 60300.0,
+      "high": 60800.0,
+      "low": 59800.0,
+      "close": 60400.0,
+      "volume": 15002.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-03",
+      "open": 3016.0,
+      "high": 3046.0,
+      "low": 2986.0,
+      "close": 3018.0,
+      "volume": 80002.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-04",
+      "open": 60450.0,
+      "high": 60950.0,
+      "low": 59950.0,
+      "close": 60550.0,
+      "volume": 15003.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-04",
+      "open": 3024.0,
+      "high": 3054.0,
+      "low": 2994.0,
+      "close": 3026.0,
+      "volume": 80003.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-05",
+      "open": 60600.0,
+      "high": 61100.0,
+      "low": 60100.0,
+      "close": 60700.0,
+      "volume": 15004.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-05",
+      "open": 3032.0,
+      "high": 3062.0,
+      "low": 3002.0,
+      "close": 3034.0,
+      "volume": 80004.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-06",
+      "open": 60750.0,
+      "high": 61250.0,
+      "low": 60250.0,
+      "close": 60850.0,
+      "volume": 15005.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-06",
+      "open": 3040.0,
+      "high": 3070.0,
+      "low": 3010.0,
+      "close": 3042.0,
+      "volume": 80005.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-07",
+      "open": 60900.0,
+      "high": 61400.0,
+      "low": 60400.0,
+      "close": 61000.0,
+      "volume": 15006.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-07",
+      "open": 3048.0,
+      "high": 3078.0,
+      "low": 3018.0,
+      "close": 3050.0,
+      "volume": 80006.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-08",
+      "open": 61050.0,
+      "high": 61550.0,
+      "low": 60550.0,
+      "close": 61150.0,
+      "volume": 15007.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-08",
+      "open": 3056.0,
+      "high": 3086.0,
+      "low": 3026.0,
+      "close": 3058.0,
+      "volume": 80007.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-09",
+      "open": 61200.0,
+      "high": 61700.0,
+      "low": 60700.0,
+      "close": 61300.0,
+      "volume": 15008.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-09",
+      "open": 3064.0,
+      "high": 3094.0,
+      "low": 3034.0,
+      "close": 3066.0,
+      "volume": 80008.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-10",
+      "open": 61350.0,
+      "high": 61850.0,
+      "low": 60850.0,
+      "close": 61450.0,
+      "volume": 15009.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-10",
+      "open": 3072.0,
+      "high": 3102.0,
+      "low": 3042.0,
+      "close": 3074.0,
+      "volume": 80009.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-11",
+      "open": 61500.0,
+      "high": 62000.0,
+      "low": 61000.0,
+      "close": 61600.0,
+      "volume": 15010.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-11",
+      "open": 3080.0,
+      "high": 3110.0,
+      "low": 3050.0,
+      "close": 3082.0,
+      "volume": 80010.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-12",
+      "open": 61650.0,
+      "high": 62150.0,
+      "low": 61150.0,
+      "close": 61750.0,
+      "volume": 15011.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-12",
+      "open": 3088.0,
+      "high": 3118.0,
+      "low": 3058.0,
+      "close": 3090.0,
+      "volume": 80011.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-13",
+      "open": 61800.0,
+      "high": 62300.0,
+      "low": 61300.0,
+      "close": 61900.0,
+      "volume": 15012.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-13",
+      "open": 3096.0,
+      "high": 3126.0,
+      "low": 3066.0,
+      "close": 3098.0,
+      "volume": 80012.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-14",
+      "open": 61950.0,
+      "high": 62450.0,
+      "low": 61450.0,
+      "close": 62050.0,
+      "volume": 15013.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-14",
+      "open": 3104.0,
+      "high": 3134.0,
+      "low": 3074.0,
+      "close": 3106.0,
+      "volume": 80013.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-15",
+      "open": 62100.0,
+      "high": 62600.0,
+      "low": 61600.0,
+      "close": 62200.0,
+      "volume": 15014.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-15",
+      "open": 3112.0,
+      "high": 3142.0,
+      "low": 3082.0,
+      "close": 3114.0,
+      "volume": 80014.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-16",
+      "open": 62250.0,
+      "high": 62750.0,
+      "low": 61750.0,
+      "close": 62350.0,
+      "volume": 15015.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-16",
+      "open": 3120.0,
+      "high": 3150.0,
+      "low": 3090.0,
+      "close": 3122.0,
+      "volume": 80015.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-17",
+      "open": 62400.0,
+      "high": 62900.0,
+      "low": 61900.0,
+      "close": 62500.0,
+      "volume": 15016.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-17",
+      "open": 3128.0,
+      "high": 3158.0,
+      "low": 3098.0,
+      "close": 3130.0,
+      "volume": 80016.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-18",
+      "open": 62550.0,
+      "high": 63050.0,
+      "low": 62050.0,
+      "close": 62650.0,
+      "volume": 15017.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-18",
+      "open": 3136.0,
+      "high": 3166.0,
+      "low": 3106.0,
+      "close": 3138.0,
+      "volume": 80017.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-19",
+      "open": 62700.0,
+      "high": 63200.0,
+      "low": 62200.0,
+      "close": 62800.0,
+      "volume": 15018.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-19",
+      "open": 3144.0,
+      "high": 3174.0,
+      "low": 3114.0,
+      "close": 3146.0,
+      "volume": 80018.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-20",
+      "open": 62850.0,
+      "high": 63350.0,
+      "low": 62350.0,
+      "close": 62950.0,
+      "volume": 15019.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-20",
+      "open": 3152.0,
+      "high": 3182.0,
+      "low": 3122.0,
+      "close": 3154.0,
+      "volume": 80019.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-21",
+      "open": 63000.0,
+      "high": 63500.0,
+      "low": 62500.0,
+      "close": 63100.0,
+      "volume": 15020.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-21",
+      "open": 3160.0,
+      "high": 3190.0,
+      "low": 3130.0,
+      "close": 3162.0,
+      "volume": 80020.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-22",
+      "open": 63150.0,
+      "high": 63650.0,
+      "low": 62650.0,
+      "close": 63250.0,
+      "volume": 15021.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-22",
+      "open": 3168.0,
+      "high": 3198.0,
+      "low": 3138.0,
+      "close": 3170.0,
+      "volume": 80021.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-23",
+      "open": 63300.0,
+      "high": 63800.0,
+      "low": 62800.0,
+      "close": 63400.0,
+      "volume": 15022.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-23",
+      "open": 3176.0,
+      "high": 3206.0,
+      "low": 3146.0,
+      "close": 3178.0,
+      "volume": 80022.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-24",
+      "open": 63450.0,
+      "high": 63950.0,
+      "low": 62950.0,
+      "close": 63550.0,
+      "volume": 15023.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-24",
+      "open": 3184.0,
+      "high": 3214.0,
+      "low": 3154.0,
+      "close": 3186.0,
+      "volume": 80023.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-25",
+      "open": 63600.0,
+      "high": 64100.0,
+      "low": 63100.0,
+      "close": 63700.0,
+      "volume": 15024.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-25",
+      "open": 3192.0,
+      "high": 3222.0,
+      "low": 3162.0,
+      "close": 3194.0,
+      "volume": 80024.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-26",
+      "open": 63750.0,
+      "high": 64250.0,
+      "low": 63250.0,
+      "close": 63850.0,
+      "volume": 15025.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-26",
+      "open": 3200.0,
+      "high": 3230.0,
+      "low": 3170.0,
+      "close": 3202.0,
+      "volume": 80025.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-27",
+      "open": 63900.0,
+      "high": 64400.0,
+      "low": 63400.0,
+      "close": 64000.0,
+      "volume": 15026.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-27",
+      "open": 3208.0,
+      "high": 3238.0,
+      "low": 3178.0,
+      "close": 3210.0,
+      "volume": 80026.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-28",
+      "open": 64050.0,
+      "high": 64550.0,
+      "low": 63550.0,
+      "close": 64150.0,
+      "volume": 15027.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-28",
+      "open": 3216.0,
+      "high": 3246.0,
+      "low": 3186.0,
+      "close": 3218.0,
+      "volume": 80027.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-29",
+      "open": 64200.0,
+      "high": 64700.0,
+      "low": 63700.0,
+      "close": 64300.0,
+      "volume": 15028.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-29",
+      "open": 3224.0,
+      "high": 3254.0,
+      "low": 3194.0,
+      "close": 3226.0,
+      "volume": 80028.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-06-30",
+      "open": 64350.0,
+      "high": 64850.0,
+      "low": 63850.0,
+      "close": 64450.0,
+      "volume": 15029.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-06-30",
+      "open": 3232.0,
+      "high": 3262.0,
+      "low": 3202.0,
+      "close": 3234.0,
+      "volume": 80029.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-07-01",
+      "open": 64500.0,
+      "high": 65000.0,
+      "low": 64000.0,
+      "close": 64600.0,
+      "volume": 15030.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-07-01",
+      "open": 3240.0,
+      "high": 3270.0,
+      "low": 3210.0,
+      "close": 3242.0,
+      "volume": 80030.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-07-02",
+      "open": 64650.0,
+      "high": 65150.0,
+      "low": 64150.0,
+      "close": 64750.0,
+      "volume": 15031.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-07-02",
+      "open": 3248.0,
+      "high": 3278.0,
+      "low": 3218.0,
+      "close": 3250.0,
+      "volume": 80031.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-07-03",
+      "open": 64800.0,
+      "high": 65300.0,
+      "low": 64300.0,
+      "close": 64900.0,
+      "volume": 15032.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-07-03",
+      "open": 3256.0,
+      "high": 3286.0,
+      "low": 3226.0,
+      "close": 3258.0,
+      "volume": 80032.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-07-04",
+      "open": 64950.0,
+      "high": 65450.0,
+      "low": 64450.0,
+      "close": 65050.0,
+      "volume": 15033.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-07-04",
+      "open": 3264.0,
+      "high": 3294.0,
+      "low": 3234.0,
+      "close": 3266.0,
+      "volume": 80033.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-07-05",
+      "open": 65100.0,
+      "high": 65600.0,
+      "low": 64600.0,
+      "close": 65200.0,
+      "volume": 15034.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-07-05",
+      "open": 3272.0,
+      "high": 3302.0,
+      "low": 3242.0,
+      "close": 3274.0,
+      "volume": 80034.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-07-06",
+      "open": 65250.0,
+      "high": 65750.0,
+      "low": 64750.0,
+      "close": 65350.0,
+      "volume": 15035.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-07-06",
+      "open": 3280.0,
+      "high": 3310.0,
+      "low": 3250.0,
+      "close": 3282.0,
+      "volume": 80035.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-07-07",
+      "open": 65400.0,
+      "high": 65900.0,
+      "low": 64900.0,
+      "close": 65500.0,
+      "volume": 15036.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-07-07",
+      "open": 3288.0,
+      "high": 3318.0,
+      "low": 3258.0,
+      "close": 3290.0,
+      "volume": 80036.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-07-08",
+      "open": 65550.0,
+      "high": 66050.0,
+      "low": 65050.0,
+      "close": 65650.0,
+      "volume": 15037.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-07-08",
+      "open": 3296.0,
+      "high": 3326.0,
+      "low": 3266.0,
+      "close": 3298.0,
+      "volume": 80037.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-07-09",
+      "open": 65700.0,
+      "high": 66200.0,
+      "low": 65200.0,
+      "close": 65800.0,
+      "volume": 15038.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-07-09",
+      "open": 3304.0,
+      "high": 3334.0,
+      "low": 3274.0,
+      "close": 3306.0,
+      "volume": 80038.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-07-10",
+      "open": 65850.0,
+      "high": 66350.0,
+      "low": 65350.0,
+      "close": 65950.0,
+      "volume": 15039.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-07-10",
+      "open": 3312.0,
+      "high": 3342.0,
+      "low": 3282.0,
+      "close": 3314.0,
+      "volume": 80039.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-07-11",
+      "open": 66000.0,
+      "high": 66500.0,
+      "low": 65500.0,
+      "close": 66100.0,
+      "volume": 15040.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-07-11",
+      "open": 3320.0,
+      "high": 3350.0,
+      "low": 3290.0,
+      "close": 3322.0,
+      "volume": 80040.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-07-12",
+      "open": 66150.0,
+      "high": 66650.0,
+      "low": 65650.0,
+      "close": 66250.0,
+      "volume": 15041.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-07-12",
+      "open": 3328.0,
+      "high": 3358.0,
+      "low": 3298.0,
+      "close": 3330.0,
+      "volume": 80041.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-07-13",
+      "open": 66300.0,
+      "high": 66800.0,
+      "low": 65800.0,
+      "close": 66400.0,
+      "volume": 15042.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-07-13",
+      "open": 3336.0,
+      "high": 3366.0,
+      "low": 3306.0,
+      "close": 3338.0,
+      "volume": 80042.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-07-14",
+      "open": 66450.0,
+      "high": 66950.0,
+      "low": 65950.0,
+      "close": 66550.0,
+      "volume": 15043.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-07-14",
+      "open": 3344.0,
+      "high": 3374.0,
+      "low": 3314.0,
+      "close": 3346.0,
+      "volume": 80043.0
+    },
+    {
+      "instrument": "BTCUSD",
+      "date": "2026-07-15",
+      "open": 66600.0,
+      "high": 67100.0,
+      "low": 66100.0,
+      "close": 66700.0,
+      "volume": 15044.0
+    },
+    {
+      "instrument": "ETHUSD",
+      "date": "2026-07-15",
+      "open": 3352.0,
+      "high": 3382.0,
+      "low": 3322.0,
+      "close": 3354.0,
+      "volume": 80044.0
+    }
+  ]
+}

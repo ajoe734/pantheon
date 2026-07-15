@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fastapi.testclient import TestClient
 
-from services.incident.incident import IncidentConcurrencyError
+from services.incident.incident import IncidentConcurrencyError, IncidentStore
 from services.incident.reference_validation import CanonicalReferenceError
 from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
 from services.incidents.main import app, outbox_store, store
@@ -34,25 +34,35 @@ from services.incidents.main import app, outbox_store, store
 
 @pytest.fixture(autouse=True)
 def clean_store(monkeypatch):
-    """Reset the in-memory store before each test."""
+    """Give each test an isolated in-memory IncidentStore, plus a clean outbox.
+
+    The module-level `store` defaults to a persistent store backed by the
+    developer/runtime-shared `/tmp/pantheon/incidents/incidents.json` file.
+    Clearing and unlinking that real file before/after every test (the
+    previous approach) mutated shared state outside the test's own sandbox.
+    Instead, inject a fresh in-memory `IncidentStore(path=None)` for the
+    route module *and* this test module's own `store` name (both must point
+    at the same object: route handlers read the module global directly, and
+    tests assert against the locally-imported name), so incident data never
+    touches disk (round-7 review point 5). `outbox_store` has no in-memory
+    mode (`AtomicJsonRecordStore` always requires a real path — see
+    EVOCHAIN-003's crash-safe delivery admission), so its JSON file is still
+    reset between tests the old way.
+    """
     class _AcceptAllValidator:
         def validate_incident(self, incident):
             return None
 
     monkeypatch.setattr("services.incidents.main.reference_validator", _AcceptAllValidator())
-    _reset_store()
+    fresh_store = IncidentStore(path=None)
+    monkeypatch.setattr("services.incidents.main.store", fresh_store)
+    monkeypatch.setattr(sys.modules[__name__], "store", fresh_store)
+    _reset_outbox()
     yield
-    _reset_store()
+    _reset_outbox()
 
 
-def _reset_store():
-    store._incidents.clear()
-    store._postmortems.clear()
-    path = getattr(store, "_path", None)
-    if path is not None and path.exists():
-        path.unlink()
-    if hasattr(store, "_loaded_mtime_ns"):
-        store._loaded_mtime_ns = None
+def _reset_outbox():
     outbox_path = getattr(outbox_store.impl, "path", None)
     if outbox_path is not None and outbox_path.exists():
         outbox_path.unlink()
@@ -265,6 +275,123 @@ def test_consume_threshold_route_rejects_unbreached_threshold():
     assert store.get_incident("inc-unbreached-threshold") is None
 
 
+def test_consume_threshold_route_rejects_explicit_incident_id_collision_across_identities():
+    """A producer-supplied explicit `incident_id` must not let a second
+    payload for an unrelated event/binding/metric silently masquerade as a
+    duplicate of the first (round-8 review point 4). Reusing the same id for
+    a different binding_id/runtime_id/telemetry_event_id must be rejected,
+    not treated as created=false against the unrelated first incident."""
+    shared_id = "inc-collision-001"
+    first = _threshold_fixture()
+    first["incident_id"] = shared_id
+
+    r1 = client.post("/api/incidents/consume-threshold", json=first)
+    assert r1.status_code == 201, r1.text
+
+    second = _threshold_fixture()
+    second["incident_id"] = shared_id
+    second["telemetry_event"]["event_id"] = "tel-threshold-fixture-002-unrelated"
+    second["telemetry_event"]["runtime_binding_id"] = "rb-threshold-fixture-paper-002-unrelated"
+    second["telemetry_event"]["runtime_id"] = "runtime-threshold-fixture-002-unrelated"
+    second["threshold_snapshot"]["metric_name"] = "rolling_pnl_floor"
+
+    r2 = client.post("/api/incidents/consume-threshold", json=second)
+
+    assert r2.status_code == 422
+    assert "conflicts with an existing incident" in r2.text
+    # The first incident must remain exactly as originally created — not
+    # overwritten and not falsely reported as a dedupe target.
+    assert store.get_incident(shared_id).binding_id == "rb-threshold-fixture-paper-001"
+
+
+def test_consume_threshold_route_rejects_explicit_incident_id_collision_across_metric_only():
+    """Same explicit incident_id, same binding/runtime/event_id, but a
+    *different metric* must not be treated as a dedupe of the first breach
+    (round-9 review point 4): reusing all identity fields except metric_name
+    previously returned created=false against the unrelated first incident."""
+    shared_id = "inc-collision-metric-001"
+    first = _threshold_fixture()
+    first["incident_id"] = shared_id
+
+    r1 = client.post("/api/incidents/consume-threshold", json=first)
+    assert r1.status_code == 201, r1.text
+
+    second = _threshold_fixture()
+    second["incident_id"] = shared_id
+    second["threshold_snapshot"]["metric_name"] = "rolling_pnl_floor"
+
+    r2 = client.post("/api/incidents/consume-threshold", json=second)
+
+    assert r2.status_code == 422
+    assert "conflicts with an existing incident" in r2.text
+
+
+def test_consume_threshold_route_rejects_explicit_incident_id_collision_via_supplemental_id_injection():
+    """Changing the real primary event while injecting the *old* event_id as
+    a supplemental ``telemetry_event_ids`` entry must not satisfy the
+    collision guard's shared-evidence check (round-9 review point 4): only
+    the canonical primary event id counts, not an arbitrary set
+    intersection."""
+    shared_id = "inc-collision-supplemental-001"
+    first = _threshold_fixture()
+    first["incident_id"] = shared_id
+    old_event_id = first["telemetry_event"]["event_id"]
+
+    r1 = client.post("/api/incidents/consume-threshold", json=first)
+    assert r1.status_code == 201, r1.text
+
+    second = _threshold_fixture()
+    second["incident_id"] = shared_id
+    second["telemetry_event"]["event_id"] = "tel-threshold-fixture-001-genuinely-new"
+    # Inject the old primary event id as a supplemental top-level id.
+    second["telemetry_event_ids"] = [old_event_id]
+
+    r2 = client.post("/api/incidents/consume-threshold", json=second)
+
+    assert r2.status_code == 422
+    assert "conflicts with an existing incident" in r2.text
+
+
+def test_consume_threshold_route_rejects_non_string_window():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-bad-window-type"
+    payload["threshold_snapshot"]["window"] = ["daily"]
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "window must be a string" in r.text
+    assert store.get_incident("inc-bad-window-type") is None
+
+
+def test_consume_threshold_route_rejects_non_string_note():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-bad-note-type"
+    payload["threshold_snapshot"]["note"] = {"bad": True}
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "note must be a string" in r.text
+    assert store.get_incident("inc-bad-note-type") is None
+
+
+def test_consume_threshold_route_rejects_non_boolean_breached():
+    """The governance schema (evolution_decision.schema.json threshold_snapshots[]
+    .breached) declares this field boolean-typed. A truthy non-bool value (e.g.
+    the string "yes") must be rejected rather than coerced into an open
+    incident (round-8 review point 3)."""
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-non-bool-breached"
+    payload["threshold_snapshot"]["breached"] = "yes"
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "breached" in r.text
+    assert store.get_incident("inc-non-bool-breached") is None
+
+
 def test_consume_threshold_route_rejects_empty_metric_name():
     payload = _threshold_fixture()
     payload["incident_id"] = "inc-empty-metric"
@@ -287,6 +414,69 @@ def test_consume_threshold_route_rejects_empty_policy_source():
     assert r.status_code == 422
     assert "policy_source is required" in r.text
     assert store.get_incident("inc-empty-policy-source") is None
+
+
+def test_consume_threshold_route_rejects_missing_signal_type():
+    """The canonical ThresholdSnapshot requires signal_type
+    (evolution_decision.schema.json); dropping it must not still create an
+    IncidentCase (round-7 review point 4)."""
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-missing-signal-type"
+    del payload["threshold_snapshot"]["signal_type"]
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "signal_type is required" in r.text
+    assert store.get_incident("inc-missing-signal-type") is None
+
+
+def test_consume_threshold_route_rejects_unknown_signal_type():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-bad-signal-type"
+    payload["threshold_snapshot"]["signal_type"] = "not_a_canonical_signal_type"
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "signal_type is required" in r.text
+    assert store.get_incident("inc-bad-signal-type") is None
+
+
+def test_consume_threshold_route_rejects_missing_comparator():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-missing-comparator"
+    del payload["threshold_snapshot"]["comparator"]
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "comparator is required" in r.text
+    assert store.get_incident("inc-missing-comparator") is None
+
+
+def test_consume_threshold_route_rejects_missing_observed_value():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-missing-observed-value"
+    del payload["threshold_snapshot"]["observed_value"]
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "observed_value is required" in r.text
+    assert store.get_incident("inc-missing-observed-value") is None
+
+
+def test_consume_threshold_route_rejects_missing_threshold_value():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-missing-threshold-value"
+    del payload["threshold_snapshot"]["threshold_value"]
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "threshold_value is required" in r.text
+    assert store.get_incident("inc-missing-threshold-value") is None
 
 
 def test_consume_drift_report_route_creates_incident_case():
