@@ -74,9 +74,18 @@
   },
   "implementation_delivery": {
     "anchor_commits": [
-      "f560c408b0870fb8ee74c102a0a2df339bb5c697",
-      "43e490f6e04c5b74bd1a409dd7340cb839cef78d",
-      "4673af97b789110917a499da8ba11f86f614467c"
+      {
+        "sha": "f560c408b0870fb8ee74c102a0a2df339bb5c697",
+        "subject": "LOOP-PROD-TEL-001: anchor compose-and-drift"
+      },
+      {
+        "sha": "43e490f6e04c5b74bd1a409dd7340cb839cef78d",
+        "subject": "LOOP-PROD-TEL-001: anchor real telemetry consumer"
+      },
+      {
+        "sha": "4673af97b789110917a499da8ba11f86f614467c",
+        "subject": "LOOP-PROD-TEL-001: anchor actual-state telemetry chain"
+      }
     ],
     "pull_request": {
       "number": 3689,
@@ -87,10 +96,21 @@
       "merge_sha": "9eaf3f18b70a0b68a201ccc1c0cf64305df1aef0"
     },
     "required_checks": [
-      "Branch CI Gate/Commit trailers",
-      "Branch CI Gate/Runtime mirror guard",
-      "Branch CI Gate/Smoke acceptance",
-      "Orchestrator Sync/Forward"
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "conclusion": "success",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        }
+      },
+      {
+        "workflow": "Orchestrator Sync/Forward",
+        "event": "push",
+        "conclusion": "success"
+      }
     ]
   },
   "validation": {
