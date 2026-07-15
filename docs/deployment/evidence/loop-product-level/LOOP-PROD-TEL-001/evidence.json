@@ -74,9 +74,18 @@
   },
   "implementation_delivery": {
     "anchor_commits": [
-      "f560c408b0870fb8ee74c102a0a2df339bb5c697",
-      "43e490f6e04c5b74bd1a409dd7340cb839cef78d",
-      "4673af97b789110917a499da8ba11f86f614467c"
+      {
+        "sha": "f560c408b0870fb8ee74c102a0a2df339bb5c697",
+        "subject": "LOOP-PROD-TEL-001: anchor compose-and-drift"
+      },
+      {
+        "sha": "43e490f6e04c5b74bd1a409dd7340cb839cef78d",
+        "subject": "LOOP-PROD-TEL-001: anchor real telemetry consumer"
+      },
+      {
+        "sha": "4673af97b789110917a499da8ba11f86f614467c",
+        "subject": "LOOP-PROD-TEL-001: anchor actual-state telemetry chain"
+      }
     ],
     "pull_request": {
       "number": 3689,
