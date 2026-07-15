@@ -125,7 +125,11 @@
       },
       "workflow_guard_anchor": {
         "commit": "20fd88f91b6b813471272e4297f45f999f114e62",
+        "composed_merge_commit": "edc48a412a2df54ab3cd56b275f555ab0f2a355f",
         "prevents_historical_ref_strict_auth_bypass": true,
+        "default_profile": "strict",
+        "explicit_bounded_permissive_stub_profile_supported": true,
+        "permissive_stub_profile_is_strict_acceptance_evidence": false,
         "repairs_current_live_auth": false
       }
     }
@@ -212,6 +216,10 @@
     "pantheon_strict_auth_deploy_contract": {
       "passed": 6,
       "duration_seconds": 6.27
+    },
+    "pantheon_composed_deploy_workflow_contracts": {
+      "passed": 17,
+      "duration_seconds": 20.07
     },
     "execute_plans_full_vitest": {
       "files_passed": 154,

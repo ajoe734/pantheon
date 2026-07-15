@@ -13,9 +13,12 @@ The rescue work repaired two concrete delivery defects:
   deploys, made `/bff/version` the runtime identity authority, added
   gate-before-switch and rollback protection, and shipped a zero-finding
   production dependency graph.
-- Pantheon anchor `20fd88f91b6b813471272e4297f45f999f114e62`
-  adds a workflow-level strict-auth floor so a requested historical ref cannot
-  execute an older permissive deploy script before current safety checks run.
+- Pantheon anchor `20fd88f91b6b813471272e4297f45f999f114e62`,
+  composed with the concurrent bounded auth-profile change at merge
+  `edc48a412a2df54ab3cd56b275f555ab0f2a355f`, adds a workflow-level floor so
+  the default/strict profile cannot execute a historical permissive deploy
+  script before current safety checks run. Only an explicitly selected
+  `permissive-stub` profile may opt into the bounded proof posture.
 
 The packet remains blocked. There is still no single governance-produced
 Persona identity joining the canonical quarterly ranking through Runtime and
@@ -139,10 +142,13 @@ required `DEV_BFF_JWT_SECRET`, `DEV_BFF_OIDC_CLIENT_ID`, and
 fail-closed deploy contract correctly states that a human must provision them;
 this worker did not generate, recover, or substitute credentials.
 
-Anchor `20fd88f91...` moves the credential and strict-contract checks into the
-workflow before any remote deployment. It prevents another historical target
-ref from bypassing the current deploy script's preflight, but it cannot repair
-the already-running permissive service without governed credentials.
+Anchor `20fd88f91...`, after composing with the concurrent bounded-profile
+change, moves credential and strict-contract checks into the workflow before
+any remote deployment. Default/strict runs cannot use a historical target to
+bypass the current deploy script's preflight. An operator may still explicitly
+select `permissive-stub` for a bounded governed proof run; that profile is not
+strict acceptance evidence. The guard cannot repair the already-running
+permissive service without governed credentials.
 
 ## Hosted Deployment Identity At Cutoff
 
@@ -180,8 +186,9 @@ Pantheon:
 
 - focused create-paper, promotion review, allocation policy, rebalance, and
   containment suite: `105 passed, 22 warnings in 149.18s`;
-- strict-auth deployment contract after the historical-ref guard:
-  `6 passed in 6.27s`;
+- strict-auth and adjacent deploy-workflow contracts after composing the
+  historical-ref guard with the explicit bounded profile:
+  `17 passed in 20.07s`;
 - workflow YAML parse and `git diff --check`: passed.
 
 Execute Plans:
