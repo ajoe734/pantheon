@@ -303,6 +303,7 @@ def test_real_paper_runtime_identity_drives_formal_persona_attribution_and_fleet
     capital_binding_b = "binding-persona-paper-beta-paper"
     pool_a = "pool-persona-paper-alpha-paper"
     pool_b = "pool-persona-paper-beta-paper"
+    observed_at = bff_main.utc_now()
 
     def write_store(name: str, payload: object) -> Path:
         path = tmp_path / name
@@ -345,7 +346,29 @@ def test_real_paper_runtime_identity_drives_formal_persona_attribution_and_fleet
                 },
             },
         ),
-        "PANTHEON_BFF_PERSONA_SESSION_STORE": write_store("sessions.json", {}),
+            "PANTHEON_BFF_PERSONA_SESSION_STORE": write_store(
+                "sessions.json",
+                {
+                    "session-paper-alpha": {
+                        "session_id": "session-paper-alpha",
+                        "persona_id": persona_a,
+                        "runtime_id": runtime_a,
+                        "runtime_binding_id": runtime_binding_a,
+                        "status": "active",
+                        "active": True,
+                        "last_heartbeat_at": observed_at,
+                    },
+                    "session-paper-beta": {
+                        "session_id": "session-paper-beta",
+                        "persona_id": persona_b,
+                        "runtime_id": runtime_b,
+                        "runtime_binding_id": runtime_binding_b,
+                        "status": "active",
+                        "active": True,
+                        "last_heartbeat_at": observed_at,
+                    },
+                },
+            ),
         "PANTHEON_BFF_PERSONA_BINDING_STORE": write_store(
             "persona_capital_bindings.json",
             {
@@ -1420,6 +1443,7 @@ def test_canonical_binding_precedence_and_mixed_topology(
     rt_devloop = "rt-devloop"
     rt_missing = "rt-missing"
     binding_missing = "binding-missing"
+    observed_at = bff_main.utc_now()
 
     def write_store(name: str, payload: object) -> Path:
         path = tmp_path / name
@@ -1456,7 +1480,20 @@ def test_canonical_binding_precedence_and_mixed_topology(
                 },
             },
         ),
-        "PANTHEON_BFF_PERSONA_SESSION_STORE": write_store("sessions.json", {}),
+        "PANTHEON_BFF_PERSONA_SESSION_STORE": write_store(
+            "sessions.json",
+            {
+                "session-assigned": {
+                    "session_id": "session-assigned",
+                    "persona_id": persona_test,
+                    "runtime_id": rt_assigned,
+                    "runtime_binding_id": "rb-assigned",
+                    "status": "active",
+                    "active": True,
+                    "last_heartbeat_at": observed_at,
+                }
+            },
+        ),
         "PANTHEON_BFF_PERSONA_BINDING_STORE": write_store(
             "persona_capital_bindings.json",
             {

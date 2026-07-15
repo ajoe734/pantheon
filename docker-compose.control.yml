@@ -318,6 +318,12 @@ services:
       PANTHEON_INTERNAL_API_URL: ${PANTHEON_INTERNAL_API_URL:-}
       PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-}
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-}
+      # Production persona provisioning must use the authoritative adapter RPC
+      # boundary.  An empty URL would make the cron registrar fall back to its
+      # non-authoritative dry-run runtime, so fail compose rendering instead.
+      PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: ${PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL:?set a nonblank reachable OpenClaw gateway adapter URL}
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:?set the reviewed OpenClaw adapter service token}
+      PANTHEON_PAPER_FLEET_RECONCILER_URL: ${PANTHEON_PAPER_FLEET_RECONCILER_URL:-}
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
       PANTHEON_CAPITAL_API_URL: http://capital:8092
@@ -328,7 +334,11 @@ services:
       PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
       PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_REGISTRY_URL: http://registry:8087
+      PANTHEON_REGISTRY_API_URL: ${PANTHEON_REGISTRY_API_URL:-http://registry:8087}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND: ${PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND:-postgres}
+      PANTHEON_PERSONA_PROVISIONING_STORE_DSN: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA: ${PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA:-bff}
       MANAGEMENT_AI_STORE_BACKEND: ${MANAGEMENT_AI_STORE_BACKEND:-postgres}
       PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND:-postgres}
       PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -353,6 +363,8 @@ services:
       incidents:
         condition: service_healthy
       postmortems:
+        condition: service_healthy
+      registry:
         condition: service_healthy
       postgres:
         condition: service_healthy
@@ -706,6 +718,9 @@ volumes:
   lineage-data:
   minio-data:
   nats-data:
+  # Required when docker-compose.staging-full.yml adds the external adapter
+  # service; extends does not import top-level volume declarations.
+  openclaw-adapter-data:
   postgres-data:
   promotion-data:
   reconciliation-drift-data:

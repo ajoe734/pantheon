@@ -335,7 +335,9 @@ class AssistantOpenClawProvider:
 
     # Only these gateway RPC methods may be proxied — persona OODA-loop cron
     # registration/inspection. Keeps the proxy from becoming an arbitrary RPC hole.
-    _CRON_METHODS = frozenset({"cron.add", "cron.list", "cron.run", "cron.runs", "cron.remove"})
+    _CRON_METHODS = frozenset(
+        {"cron.add", "cron.list", "cron.run", "cron.runs", "cron.update", "cron.remove"}
+    )
 
     def gateway_cron_call(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Proxy a whitelisted `cron.*` gateway RPC via `openclaw gateway call`.
