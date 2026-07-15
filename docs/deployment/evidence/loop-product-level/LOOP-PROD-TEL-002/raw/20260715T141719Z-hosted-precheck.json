@@ -1,0 +1,61 @@
+{
+  "schema_version": "loop_product_raw_evidence.v1",
+  "task_id": "LOOP-PROD-TEL-002",
+  "captured_at": "2026-07-15T14:17:19Z",
+  "source": "Public HTTPS probes from the task worktree after the strict deployment gate refused admission",
+  "base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "expected_task_merge_sha": "d9c4b46d2d28cbb3ba343639fe69f3ab439ee283",
+  "version_response": {
+    "service": "operator-bff",
+    "version": "0.2.0",
+    "source_commit_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+    "source_commit_known": true,
+    "image_digest": "unknown",
+    "build_time": "unknown",
+    "environment": "dev",
+    "config_posture": {
+      "auth_stub": true,
+      "auth_mode": "permissive",
+      "dev_login_enabled": false,
+      "mfa_required": false,
+      "assistant_kernel_enabled": true
+    }
+  },
+  "health_response": {
+    "http_status": 200,
+    "status": "ok",
+    "service": "operator-bff",
+    "version": "0.2.0",
+    "timestamp": "2026-07-15T14:17:17Z"
+  },
+  "security_probes": {
+    "unauthenticated_loop_runs": {
+      "route": "GET /bff/v5/loop-runs",
+      "http_status": 401,
+      "expected": 401,
+      "conclusion": "pass"
+    },
+    "fixed_bearer_me": {
+      "route": "GET /bff/me",
+      "credential_kind": "public fixed non-secret test bearer",
+      "http_status": 200,
+      "expected_for_strict_auth": 401,
+      "conclusion": "fail"
+    },
+    "unauthenticated_trade_journey_write": {
+      "route": "POST /bff/management/trade-journeys/events",
+      "http_status": 401,
+      "expected": 401,
+      "conclusion": "pass"
+    }
+  },
+  "admission": {
+    "exact_source_sha": false,
+    "strict_auth": false,
+    "dev_login_enabled": false,
+    "fixed_bearer_rejected": false,
+    "hosted_lifecycle_proof_available": false,
+    "overall": "blocked"
+  },
+  "conclusion": "The failed workflow did not mutate the VM. The prior dev deployment remains healthy but is neither the requested SHA nor acceptable strict-auth product truth."
+}

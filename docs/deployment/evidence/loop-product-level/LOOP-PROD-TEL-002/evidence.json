@@ -1,0 +1,242 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "task_id": "LOOP-PROD-TEL-002",
+  "title": "Canonical loop-run and Trade Journey lifecycle projector",
+  "captured_at": "2026-07-15T14:17:19Z",
+  "outcome": "blocked",
+  "terminal_success": false,
+  "environment": "dev",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "review": {
+    "status": "not_requested_while_blocked",
+    "review_file": null,
+    "reason": "Independent approval is intentionally deferred because authoritative target deployment and hosted correlation evidence are absent."
+  },
+  "delivery": {
+    "merge_target": "dev",
+    "implementation_pull_requests": [
+      {
+        "number": 3710,
+        "url": "https://github.com/ajoe734/pantheon/pull/3710",
+        "head_sha": "280c80cac98d5048ebf3cba42f6a9eb00f72b3c8",
+        "merge_sha": "8e542d22d0b3d753ae15c6295ac5dd9e3e52c741",
+        "merged_at": "2026-07-15T13:32:04Z",
+        "required_checks": "passed"
+      },
+      {
+        "number": 3711,
+        "url": "https://github.com/ajoe734/pantheon/pull/3711",
+        "head_sha": "fe3cc021c8b71e7365ff73bd2d1cb925e90f9546",
+        "merge_sha": "e508096d46ff0ed722d5de8b93682fb670028820",
+        "merged_at": "2026-07-15T13:36:35Z",
+        "required_checks": "passed"
+      },
+      {
+        "number": 3715,
+        "url": "https://github.com/ajoe734/pantheon/pull/3715",
+        "head_sha": "c2d2f57ac420b1f9e17c5e8c60cd7562b6414e08",
+        "merge_sha": "d9c4b46d2d28cbb3ba343639fe69f3ab439ee283",
+        "merged_at": "2026-07-15T14:13:38Z",
+        "required_checks": "passed"
+      }
+    ],
+    "runtime_delivery_sha": "d9c4b46d2d28cbb3ba343639fe69f3ab439ee283",
+    "code_delivery_complete": true,
+    "target_deployment_complete": false
+  },
+  "implemented_boundary": {
+    "committed_source": "Postgres telemetry_events ordered by monotonic ingested_seq",
+    "producers": [
+      "paper signal generation and decision",
+      "paper order, committed fill, and position snapshot",
+      "scheduled reconciliation"
+    ],
+    "durability": "Crash-safe exact-payload lifecycle outbox after durable local admission",
+    "projection": "One atomic generation for Trade Journey and loop-run stores with a durable controller checkpoint",
+    "truth_gate": "Backfill, replay, recovery, degraded, stale, and non-live controller states cannot satisfy canonical BFF truth",
+    "hosted_proof": "Post-deploy natural producer/causation/UUID/source-watermark proof plus authenticated public-BFF exact-ID readback",
+    "rpo_claim": "RPO=0 applies only to lifecycle append commands after durable local outbox admission. No Redis signal claim, paper ledger, and outbox cross-media transaction is claimed."
+  },
+  "local_validation": [
+    {
+      "scope": "Trade Journey complete suite before hosted-proof follow-up",
+      "result": "67 passed, 1 skipped",
+      "skip": "Existing TEST_DATABASE_URL-gated action-ledger integration test"
+    },
+    {
+      "scope": "Telemetry task-focused and adjacent suite",
+      "result": "97 passed"
+    },
+    {
+      "scope": "Paper signal/runtime suite",
+      "result": "62 passed, 27 subtests passed"
+    },
+    {
+      "scope": "Reconciliation suite",
+      "result": "57 passed"
+    },
+    {
+      "scope": "BFF canonical truth-focused suite",
+      "result": "67 passed"
+    },
+    {
+      "scope": "Final Trade Journey plus hosted workflow/readback regression",
+      "command": "pytest -q services/trade_journey scripts/test_loop_prod_tel_002_hosted_workflow.py",
+      "result": "84 passed, 1 skipped"
+    },
+    {
+      "scope": "Static and deployment contract validation",
+      "result": "docker compose config, py_compile, bash -n, workflow YAML parse, and git diff --check passed"
+    }
+  ],
+  "deployment_attempt": {
+    "workflow": "Pantheon Nonprod Deploy",
+    "run_id": 29422676364,
+    "url": "https://github.com/ajoe734/pantheon/actions/runs/29422676364",
+    "requested_sha": "d9c4b46d2d28cbb3ba343639fe69f3ab439ee283",
+    "workflow_head_sha": "d9c4b46d2d28cbb3ba343639fe69f3ab439ee283",
+    "profile": "dev/root/strict",
+    "conclusion": "failure",
+    "failed_step": "Enforce dev auth deployment floor",
+    "vm_mutation_started": false,
+    "rollback_required": false,
+    "hosted_probe_executed": false,
+    "public_bff_readback_executed": false
+  },
+  "authoritative_readback": {
+    "expected_source_sha": "d9c4b46d2d28cbb3ba343639fe69f3ab439ee283",
+    "observed_source_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+    "source_sha_matches": false,
+    "health_status": "ok",
+    "config_posture": {
+      "auth_stub": true,
+      "auth_mode": "permissive",
+      "dev_login_enabled": false,
+      "mfa_required": false
+    },
+    "security_negative": {
+      "unauthenticated_loop_runs_http_status": 401,
+      "unauthenticated_trade_journey_write_http_status": 401,
+      "fixed_bearer_me_http_status": 200,
+      "fixed_bearer_expected_status": 401,
+      "strict_auth_conclusion": "fail"
+    },
+    "canonical_lifecycle_correlation": "not_observed",
+    "conclusion": "blocked"
+  },
+  "acceptance": [
+    {
+      "id": "AC-01",
+      "requirement": "One real paper lifecycle produces one identity-consistent loop-run and multi-stage journey",
+      "status": "blocked",
+      "evidence": "Local integration and provenance tests pass; natural hosted proof did not execute because deployment admission failed."
+    },
+    {
+      "id": "AC-02",
+      "requirement": "Projection consumes append-only canonical events rather than incidents or manufactured fixtures",
+      "status": "blocked",
+      "evidence": "Committed-source and real-producer negative tests pass locally; no target readback exists."
+    },
+    {
+      "id": "AC-03",
+      "requirement": "Restart, duplicate, out-of-order, backfill, and replay converge without duplicate stages",
+      "status": "pass_local_only",
+      "evidence": "Focused projector, restart, duplicate, out-of-order, backfill, replay, and atomic-switch tests passed."
+    },
+    {
+      "id": "AC-04",
+      "requirement": "Manual or cron rebuild cannot satisfy live freshness or controller truth",
+      "status": "pass_local_only",
+      "evidence": "Backfill/replay/degraded controller negative tests passed; BFF truth gates reject non-canonical controller state."
+    },
+    {
+      "id": "AC-05",
+      "requirement": "Branch, PR, checks, merge SHA, independent review, and residual risk owner/expiry",
+      "status": "blocked",
+      "evidence": "Three code PRs merged with checks; independent review is deferred until hosted evidence exists."
+    },
+    {
+      "id": "AC-06",
+      "requirement": "Authoritative pre/post readback, not seed, stub, fixture, snapshot, or synthetic receipt",
+      "status": "fail_closed",
+      "evidence": "Observed hosted SHA is stale and posture is permissive/stub; no post-deploy proof was manufactured."
+    },
+    {
+      "id": "AC-07",
+      "requirement": "Duplicate safety, degraded/recovery behavior, rollback or compensation, and admitted-command RPO=0",
+      "status": "blocked",
+      "evidence": "Local durability/failure tests pass and deployment required no rollback because mutation never began; hosted recovery proof is absent."
+    },
+    {
+      "id": "AC-08",
+      "requirement": "Exact deployment identity and controller truth",
+      "status": "fail_closed",
+      "evidence": "Expected d9c4b46d2 differs from hosted a10f752b3; natural hosted controller proof did not execute."
+    },
+    {
+      "id": "AC-09",
+      "requirement": "Preserve RBAC, MFA, environment, and no-live-capital boundaries",
+      "status": "fail_closed",
+      "evidence": "No live broker/capital action occurred, but the current hosted BFF accepted the fixed test bearer with HTTP 200 and is not strict."
+    },
+    {
+      "id": "AC-10",
+      "requirement": "Redacted append-only checksummed evidence; missing or contradicted evidence fails closed",
+      "status": "pass_for_blocker_only",
+      "evidence": "This checksummed manifest records blocked truth and does not claim completion."
+    }
+  ],
+  "blockers": [
+    {
+      "id": "BLOCKER-LOOP-PROD-TEL-002-DEV-AUTH-SECRETS",
+      "status": "open",
+      "severity": "blocking",
+      "owner": "Pantheon dev environment credential owner",
+      "description": "The GitHub dev environment contains none of DEV_BFF_JWT_SECRET, DEV_BFF_OIDC_CLIENT_ID, or DEV_BFF_OIDC_CLIENT_SECRET. The strict floor correctly refuses deployment before any target mutation.",
+      "required_action": "A human must provision all three governed GitHub dev environment secrets, then rerun workflow 269991390 for dev/root/strict at the exact runtime delivery SHA with run_loop_prod_tel_002_probe=true.",
+      "prohibited_workaround": "Do not fabricate repository credentials, weaken the strict floor, or use permissive-stub as product-level evidence.",
+      "recheck_by": "2026-07-22T14:15:02Z"
+    }
+  ],
+  "residual_risks": [
+    {
+      "id": "RISK-LOOP-PROD-TEL-002-CROSS-MEDIA-ATOMICITY",
+      "owner": "Execution Platform / LOOP-PROD follow-up",
+      "expires_at": "2026-08-15T00:00:00Z",
+      "status": "accepted_scope_boundary_not_yet_reviewed",
+      "description": "Redis signal claim, paper ledger admission, and lifecycle outbox admission are separate durable media. This task does not claim one cross-media transaction; RPO=0 begins after durable lifecycle outbox admission."
+    },
+    {
+      "id": "RISK-LOOP-PROD-TEL-002-TENANT-CLAIM-ALIAS",
+      "owner": "BFF Security",
+      "expires_at": "2026-08-15T00:00:00Z",
+      "status": "out_of_scope_not_claimed",
+      "description": "The hosted proof validates authenticated same-tenant reads but does not claim a cross-tenant negative until Trade Journey recognizes the dev-login allowed_tenants claim alias."
+    }
+  ],
+  "raw_artifacts": [
+    {
+      "path": "raw/20260715T141502Z-strict-deploy-blocker.json",
+      "sha256": "00ff55583c1fb788040b6a94b1cc77d165b96fec104839df52e41a63db44b535"
+    },
+    {
+      "path": "raw/20260715T141719Z-hosted-precheck.json",
+      "sha256": "d430faf6389b4bbeabb2b12dd92f22bcaa11e3428d0f62eab6b085a398261e75"
+    }
+  ],
+  "record_log": [
+    {
+      "recorded_at": "2026-07-15T14:17:19Z",
+      "actor": "Codex",
+      "event": "strict_deployment_blocked",
+      "message": "Merged runtime delivery SHA d9c4b46d2 was submitted to dev/root/strict. Human-managed dev-login/JWT secrets were absent, so the fail-closed floor stopped before target mutation; stale hosted posture was recorded without claiming success."
+    }
+  ],
+  "redaction": {
+    "secret_values_included": false,
+    "tokens_included": false,
+    "telemetry_payloads_included": false,
+    "capital_values_included": false
+  }
+}
