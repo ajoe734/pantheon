@@ -39184,6 +39184,7 @@ def _mgmt_nl_handle_control_command(
     focus: str,
     ui_snapshot: Dict[str, Any],
     resolved_key: str,
+    idempotency_storage_key: str,
     request_hash: str,
     session_id: str,
     message_id: str,
@@ -39450,7 +39451,7 @@ def _mgmt_nl_handle_control_command(
         conversation_href=conversation_href,
         control_command=command_kind,
     )
-    _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
+    _mgmt_nl_idempotency_put(idempotency_storage_key, request_hash=request_hash, result=result)
     return JSONResponse(status_code=202, content=result)
 
 
@@ -39529,10 +39530,32 @@ def _mgmt_nl_record_high_risk_refusal(
         return None
 
 
-def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional[Dict[str, Any]]:
-    existing = _management_ai_conversation_store().get_idempotency(resolved_key)
+def _mgmt_nl_idempotency_storage_key(
+    resolved_key: str,
+    *,
+    actor_id: str,
+    tenant_id: str,
+) -> str:
+    material = "\x00".join(
+        [
+            "management-nl-v2",
+            str(actor_id or "").strip(),
+            str(tenant_id or "").strip(),
+            str(resolved_key or "").strip(),
+        ]
+    )
+    return f"management-nl-v2:{hashlib.sha256(material.encode('utf-8')).hexdigest()}"
+
+
+def _mgmt_nl_idempotency_check(
+    storage_key: str,
+    request_hash: str,
+    *,
+    display_key: str,
+) -> Optional[Dict[str, Any]]:
+    existing = _management_ai_conversation_store().get_idempotency(storage_key)
     if existing is None:
-        existing = _MGMT_NL_IDEMPOTENCY.get(resolved_key)
+        existing = _MGMT_NL_IDEMPOTENCY.get(storage_key)
     if existing is None:
         return None
     if existing.get("request_hash") != request_hash:
@@ -39540,7 +39563,7 @@ def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional
             409,
             ErrorCode.IDEMPOTENCY_CONFLICT,
             "Idempotency key was already used with a different payload",
-            f"Key {resolved_key!r} is bound to a different management NL request hash",
+            f"Key {display_key!r} is bound to a different management NL request hash",
             precondition_failed="idempotency_conflict",
             suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
         )
@@ -39548,17 +39571,17 @@ def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional
 
 
 def _mgmt_nl_idempotency_put(
-    resolved_key: str,
+    storage_key: str,
     *,
     request_hash: str,
     result: Dict[str, Any],
 ) -> None:
     _management_ai_conversation_store().put_idempotency(
-        resolved_key,
+        storage_key,
         request_hash=request_hash,
         result=result,
     )
-    _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    _MGMT_NL_IDEMPOTENCY[storage_key] = {"request_hash": request_hash, "result": result}
 
 
 def _mgmt_nl_surface_confidence(surfaces: Dict[str, Any]) -> str:
@@ -41025,6 +41048,34 @@ def _mgmt_nl_provider_inline_grace_seconds() -> float:
     return value if value > 0 else _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS
 
 
+def _mgmt_nl_provider_inline_wait_seconds(control_mode: Dict[str, Any]) -> float:
+    """Keep admitted repair writes synchronous through durable result storage.
+
+    User/debug turns may finish asynchronously for UI responsiveness. A repair
+    turn can mutate its prepared worktree, so returning while only an in-memory
+    finalizer owns the terminal response would lose bounded recovery on BFF
+    restart. Wait through the adapter's provider timeout, then persist the
+    terminal result before returning the 202 response.
+    """
+
+    if not control_mode.get("active") or str(control_mode.get("mode") or "") != "kernel_repair":
+        return _mgmt_nl_provider_inline_grace_seconds()
+    raw = os.getenv("PANTHEON_MANAGEMENT_NL_REPAIR_INLINE_TIMEOUT_SECONDS", "").strip()
+    if raw:
+        try:
+            configured = float(raw)
+        except (TypeError, ValueError):
+            configured = 0.0
+        if configured > 0:
+            return configured
+    provider_raw = os.getenv("PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS", "180.0").strip()
+    try:
+        provider_timeout = max(float(provider_raw), 0.1)
+    except (TypeError, ValueError):
+        provider_timeout = 180.0
+    return provider_timeout + 5.0
+
+
 def _mgmt_nl_stream_read_timeout_seconds() -> float:
     raw = os.getenv("PANTHEON_MANAGEMENT_NL_STREAM_READ_TIMEOUT_SECONDS")
     if raw is None or not str(raw).strip():
@@ -41092,6 +41143,7 @@ async def _mgmt_nl_finalize_provider_turn(
     trace_id: str,
     focus: str,
     resolved_key: str,
+    idempotency_storage_key: Optional[str] = None,
     request_hash: str,
     audit_log_href: str,
     conversation_href: str,
@@ -41153,7 +41205,7 @@ async def _mgmt_nl_finalize_provider_turn(
             conversation_href=conversation_href,
         )
         _mgmt_nl_idempotency_put(
-            resolved_key,
+            idempotency_storage_key or resolved_key,
             request_hash=request_hash,
             result=_mgmt_nl_finalize_result(
                 base_result,
@@ -41234,8 +41286,17 @@ async def bff_management_nl_ask(
     allowed_action_kinds = _mgmt_nl_allowed_action_kinds(ui_snapshot)
 
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    idempotency_storage_key = _mgmt_nl_idempotency_storage_key(
+        resolved_key,
+        actor_id=identity.operator_id,
+        tenant_id=caller_tenant_id,
+    )
     request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
-    cached = _mgmt_nl_idempotency_check(resolved_key, request_hash)
+    cached = _mgmt_nl_idempotency_check(
+        idempotency_storage_key,
+        request_hash,
+        display_key=resolved_key,
+    )
     if cached is not None:
         cached_data = cached.get("data") if isinstance(cached, dict) else {}
         _management_ai_record_event(
@@ -41288,6 +41349,7 @@ async def bff_management_nl_ask(
             focus=focus,
             ui_snapshot=ui_snapshot,
             resolved_key=resolved_key,
+            idempotency_storage_key=idempotency_storage_key,
             request_hash=request_hash,
             session_id=session_id,
             message_id=message_id,
@@ -41498,7 +41560,7 @@ async def bff_management_nl_ask(
         )
     )
     done, _ = await asyncio.wait(
-        {provider_task}, timeout=_mgmt_nl_provider_inline_grace_seconds()
+        {provider_task}, timeout=_mgmt_nl_provider_inline_wait_seconds(control_mode)
     )
     provider_pending = provider_task not in done
     if provider_pending:
@@ -41617,7 +41679,7 @@ async def bff_management_nl_ask(
         audit_log_href=audit_log_href,
         conversation_href=conversation_href,
     )
-    _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
+    _mgmt_nl_idempotency_put(idempotency_storage_key, request_hash=request_hash, result=result)
     if provider_pending:
         # The assistant turn was intentionally NOT persisted above: the store's
         # append_turn is not an upsert, so writing a placeholder here would leave
@@ -41633,6 +41695,7 @@ async def bff_management_nl_ask(
             trace_id=trace_id,
             focus=focus,
             resolved_key=resolved_key,
+            idempotency_storage_key=idempotency_storage_key,
             request_hash=request_hash,
             audit_log_href=audit_log_href,
             conversation_href=conversation_href,
@@ -41684,6 +41747,11 @@ def bff_management_nl_ask_stream(
 
     if control_command is not None:
         resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        idempotency_storage_key = _mgmt_nl_idempotency_storage_key(
+            resolved_key,
+            actor_id=identity.operator_id,
+            tenant_id=caller_tenant_id,
+        )
         request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask/stream", "payload": payload})
         control_response = _mgmt_nl_handle_control_command(
             control_command=control_command,
@@ -41693,6 +41761,7 @@ def bff_management_nl_ask_stream(
             focus=focus,
             ui_snapshot=ui_snapshot,
             resolved_key=resolved_key,
+            idempotency_storage_key=idempotency_storage_key,
             request_hash=request_hash,
             session_id=session_id,
             message_id=message_id,

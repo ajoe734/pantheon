@@ -353,6 +353,42 @@ def test_management_ai_conversation_store_persists_sessions_and_turns_to_json(tm
     assert reloaded.list_sessions(owner_id="other-operator", tenant_id="tenant-other") == []
 
 
+def test_management_nl_idempotency_storage_is_scoped_by_actor_and_tenant() -> None:
+    client_key = "same-browser-key"
+
+    actor_a = bff_main._mgmt_nl_idempotency_storage_key(
+        client_key,
+        actor_id="operator-a",
+        tenant_id="tenant-alpha",
+    )
+    actor_b = bff_main._mgmt_nl_idempotency_storage_key(
+        client_key,
+        actor_id="operator-b",
+        tenant_id="tenant-alpha",
+    )
+    tenant_b = bff_main._mgmt_nl_idempotency_storage_key(
+        client_key,
+        actor_id="operator-a",
+        tenant_id="tenant-beta",
+    )
+
+    assert len({actor_a, actor_b, tenant_b}) == 3
+    assert all(client_key not in value for value in (actor_a, actor_b, tenant_b))
+
+
+def test_management_nl_repair_waits_through_provider_timeout_before_return(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_PROVIDER_INLINE_GRACE_SECONDS", "0.2")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS", "12")
+    monkeypatch.delenv("PANTHEON_MANAGEMENT_NL_REPAIR_INLINE_TIMEOUT_SECONDS", raising=False)
+
+    assert bff_main._mgmt_nl_provider_inline_wait_seconds(
+        {"active": True, "mode": "kernel_repair"}
+    ) == 17.0
+    assert bff_main._mgmt_nl_provider_inline_wait_seconds(
+        {"active": True, "mode": "kernel_debug"}
+    ) == 0.2
+
+
 def test_openclaw_client_invokes_codex_provider_contract(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
     recorded: dict[str, Any] = {}
