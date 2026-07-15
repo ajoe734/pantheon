@@ -15,7 +15,7 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-15T01:48:00Z",
+    "evidence_cut_at": "2026-07-15T04:40:00Z",
     "evidence_cut_semantics": "Capture-time code validation and schema tests. Verifies provisioning-to-active readback workflow, duplicate safety, and restart-safe terminal failures.",
     "id": "LOOP-PROD-PER-001",
     "overall_admission": "pass",
@@ -90,7 +90,7 @@
         "conclusion": "pass"
       }
     ],
-    "validated_at": "2026-07-15T01:48:00Z"
+    "validated_at": "2026-07-15T04:40:00Z"
   },
   "deployment": {
     "applicable": true,
@@ -227,7 +227,7 @@
   "record_log": [
     {
       "sequence": 1,
-      "recorded_at": "2026-07-15T01:48:00Z",
+      "recorded_at": "2026-07-15T04:40:00Z",
       "kind": "implementation_review",
       "status": "pass",
       "actor": "Antigravity"

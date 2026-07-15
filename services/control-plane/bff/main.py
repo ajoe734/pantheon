@@ -27813,12 +27813,12 @@ def _evaluate_persona_provisioning_status(persona_id: str, raw: Dict[str, Any]) 
         registrar = PersonaCronRegistrar()
         runtime = registrar._get_runtime()
         if runtime is None:
-            cron_ok = bool(metadata.get("cron_registered_count") or metadata.get("cron_registration_mode"))
+            cron_ok = False
         else:
             existing = registrar._existing_registrations(runtime)
             cron_ok = any(pid == persona_id for (pid, wfid) in existing)
     except Exception:
-        cron_ok = bool(metadata.get("cron_registered_count") or metadata.get("cron_registration_mode"))
+        cron_ok = False
 
     # Timeout check (120 seconds)
     is_timeout = False
@@ -43489,71 +43489,74 @@ async def bff_create_persona(
             },
         }
     else:
-        persona_record = read_store.create_persona(
-            persona_id=persona_id,
-            name=name,
-            actor_id=owner,
-            created_at=snapshot_at,
-            archetype=archetype,
-            lifecycle_state=lifecycle_state,
-            risk_level=risk,
-            mandate=mandate,
-            strategy_family=strategy_family,
-            traits=traits,
-            metadata=persona_metadata,
-            required_data_sources=required_data_sources,
-        )
-        read_store.create_persona_binding(
-            binding_id=refs["binding_id"],
-            persona_id=persona_id,
-            capital_pool_id=refs["capital_pool_id"],
-            actor_id=owner,
-            created_at=snapshot_at,
-            role="paper_owner",
-            validity="active",
-            metadata={
-                "capital_mode": "paper",
-                "paper_ledger_id": refs["paper_ledger_id"],
-                "legacy_paper_capital_pool_id": refs["capital_pool_id"],
-                "live_capital_enabled": False,
-                "created_via": "POST /bff/personas",
-            },
-        )
-        read_store.create_deployment_plan(
-            plan_id=refs["deployment_plan_id"],
-            binding_id=refs["binding_id"],
-            artifact_id=refs["artifact_id"],
-            deployment_mode="paper",
-            capital_pool_id=refs["capital_pool_id"],
-            actor_id=owner,
-            created_at=snapshot_at,
-            params={
-                "persona_id": persona_id,
-                "capital_mode": "paper",
-                "paper_ledger_id": refs["paper_ledger_id"],
-                "human_review_required_for_live": True,
-            },
-            locked=True,
-            status="approved",
-        )
-        read_store.create_runtime_binding(
-            runtime_id=refs["runtime_id"],
-            name=f"{name} paper runtime",
-            persona_id=persona_id,
-            binding_id=refs["binding_id"],
-            deployment_plan_id=refs["deployment_plan_id"],
-            runtime_kind="paper",
-            actor_id=owner,
-            created_at=snapshot_at,
-            params={
-                "capital_pool_id": refs["capital_pool_id"],
-                "capital_mode": "paper",
-                "paper_ledger_id": refs["paper_ledger_id"],
-                "live_write_enabled": False,
-                "order_side_effects_allowed": False,
-            },
-            state="running",
-        )
+        if existing_persona is None:
+            persona_record = read_store.create_persona(
+                persona_id=persona_id,
+                name=name,
+                actor_id=owner,
+                created_at=snapshot_at,
+                archetype=archetype,
+                lifecycle_state=lifecycle_state,
+                risk_level=risk,
+                mandate=mandate,
+                strategy_family=strategy_family,
+                traits=traits,
+                metadata=persona_metadata,
+                required_data_sources=required_data_sources,
+            )
+            read_store.create_persona_binding(
+                binding_id=refs["binding_id"],
+                persona_id=persona_id,
+                capital_pool_id=refs["capital_pool_id"],
+                actor_id=owner,
+                created_at=snapshot_at,
+                role="paper_owner",
+                validity="active",
+                metadata={
+                    "capital_mode": "paper",
+                    "paper_ledger_id": refs["paper_ledger_id"],
+                    "legacy_paper_capital_pool_id": refs["capital_pool_id"],
+                    "live_capital_enabled": False,
+                    "created_via": "POST /bff/personas",
+                },
+            )
+            read_store.create_deployment_plan(
+                plan_id=refs["deployment_plan_id"],
+                binding_id=refs["binding_id"],
+                artifact_id=refs["artifact_id"],
+                deployment_mode="paper",
+                capital_pool_id=refs["capital_pool_id"],
+                actor_id=owner,
+                created_at=snapshot_at,
+                params={
+                    "persona_id": persona_id,
+                    "capital_mode": "paper",
+                    "paper_ledger_id": refs["paper_ledger_id"],
+                    "human_review_required_for_live": True,
+                },
+                locked=True,
+                status="approved",
+            )
+            read_store.create_runtime_binding(
+                runtime_id=refs["runtime_id"],
+                name=f"{name} paper runtime",
+                persona_id=persona_id,
+                binding_id=refs["binding_id"],
+                deployment_plan_id=refs["deployment_plan_id"],
+                runtime_kind="paper",
+                actor_id=owner,
+                created_at=snapshot_at,
+                params={
+                    "capital_pool_id": refs["capital_pool_id"],
+                    "capital_mode": "paper",
+                    "paper_ledger_id": refs["paper_ledger_id"],
+                    "live_write_enabled": False,
+                    "order_side_effects_allowed": False,
+                },
+                state="running",
+            )
+        else:
+            persona_record = existing_persona
     overlay = _project_persona_dto(
         persona_record,
         overlay={

@@ -102,11 +102,16 @@ def test_persona_provisioning_completes_upon_readback_success() -> None:
                 "last_heartbeat_at": bff_main.utc_now(),
             }
 
-            # Mock evaluation schedule (cron job) - PersonaCronRegistrar uses metadata as fallback
-            # when gateway_rpc fails or is dry_run. So we store it in metadata
-            persona = bff_main.read_store.get_persona(persona_id)
-            persona["metadata"]["cron_registered_count"] = 4
-            bff_main.read_store.update_persona(persona_id, metadata=persona["metadata"])
+            # Mock evaluation schedule (cron job) - PersonaCronRegistrar readback mock
+            from unittest.mock import MagicMock
+            mock_registrar_instance = MagicMock()
+            mock_registrar_instance._get_runtime.return_value = "dummy-runtime"
+            mock_registrar_instance._existing_registrations.return_value = [(persona_id, "workflow-1")]
+            
+            class DummyModule:
+                PersonaCronRegistrar = MagicMock(return_value=mock_registrar_instance)
+                
+            sys.modules["persona_cron_registrar"] = DummyModule
 
             # Query the persona -> should transition to paper_running
             get_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
@@ -220,5 +225,52 @@ def test_persona_duplicate_create_converges() -> None:
             # They must converge to the same persona and binding
             assert persona_id_1 == persona_id_2
             assert binding_id_1 == binding_id_2
+        finally:
+            bff_main.read_store = original
+
+
+def test_persona_duplicate_create_does_not_clobber_or_reset_timeout() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            
+            # 1. Create the persona
+            resp1 = client.post(
+                "/bff/personas",
+                json={"name": "Trader Safety"},
+                headers={**HEADERS, "Idempotency-Key": "create-safety-1"},
+            )
+            data1 = resp1.json()["data"]
+            persona_id = data1["id"]
+            
+            # 2. Advance the state and manually update runtime binding's created_at to old time
+            old_created_at = "2026-07-15T04:00:00Z"
+            
+            bff_main.read_store.update_persona(persona_id, lifecycle_state="paper_running")
+            
+            # update runtime binding
+            rb = bff_main.read_store.get_runtime_binding(data1["runtimeBindingId"])
+            rb["created_at"] = old_created_at
+            rb["state"] = "running"
+            bff_main.read_store._ensure_local_overlay_records("runtime_bindings")[data1["runtimeBindingId"]] = rb
+            bff_main.read_store._save()
+
+            # 3. Request creation again with same name but new idempotency key
+            resp2 = client.post(
+                "/bff/personas",
+                json={"name": "Trader Safety"},
+                headers={**HEADERS, "Idempotency-Key": "create-safety-2"},
+            )
+            
+            # 4. Check that state was not clobbered (is still paper_running in read_store)
+            persisted_persona = bff_main.read_store.get_persona(persona_id)
+            assert persisted_persona["lifecycle_state"] == "paper_running"
+            
+            # 5. Check that runtime binding state and created_at were not clobbered/reset
+            persisted_rb = bff_main.read_store.get_runtime_binding(data1["runtimeBindingId"])
+            assert persisted_rb["created_at"] == old_created_at
+            assert persisted_rb["state"] == "running"
+            
         finally:
             bff_main.read_store = original

@@ -330,9 +330,17 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
                 "active": True,
                 "last_heartbeat_at": bff_main.utc_now(),
             }
-            persona = bff_main.read_store.get_persona(persona_id)
-            persona["metadata"]["cron_registered_count"] = 4
-            bff_main.read_store.update_persona(persona_id, metadata=persona["metadata"])
+            # Mock evaluation schedule (cron job) - PersonaCronRegistrar readback mock
+            import sys
+            from unittest.mock import MagicMock
+            mock_registrar_instance = MagicMock()
+            mock_registrar_instance._get_runtime.return_value = "dummy-runtime"
+            mock_registrar_instance._existing_registrations.return_value = [(persona_id, "workflow-1")]
+            
+            class DummyModule:
+                PersonaCronRegistrar = MagicMock(return_value=mock_registrar_instance)
+                
+            sys.modules["persona_cron_registrar"] = DummyModule
 
             detail = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
             assert detail.status_code == 200, detail.text
