@@ -157,6 +157,23 @@ def test_service_auth_refuses_deploy_without_human_provisioned_token() -> None:
     assert "gcloud is required" not in result.stderr
 
 
+def test_service_auth_refuses_public_placeholder_token() -> None:
+    result = _run_deploy_script(
+        {
+            "DEV_BFF_JWT_SECRET": "real-looking-secret",
+            "DEV_BFF_OIDC_CLIENT_ID": "real-looking-client",
+            "DEV_BFF_OIDC_CLIENT_SECRET": "real-looking-client-secret",
+            "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN": (
+                "replace-me-openclaw-adapter-service-token"
+            ),
+        }
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "empty or fabricated service credential" in result.stderr
+    assert "gcloud is required" not in result.stderr
+
+
 def test_service_auth_has_no_fabricated_deploy_default() -> None:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
@@ -187,8 +204,10 @@ def test_auth_gate_checks_hosted_posture_and_fixed_bearer_negative() -> None:
     not just check health/readyz/source SHA."""
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     assert "assert_bff_auth_gate" in script
-    assert 'payload.get("auth_stub") is False' in script
-    assert 'payload.get("auth_mode") == "strict"' in script
+    assert 'posture = payload.get("config_posture")' in script
+    assert 'posture.get("auth_stub") is False' in script
+    assert 'posture.get("auth_mode") == "strict"' in script
+    assert "posture = payload" in script
     assert "/bff/auth/dev-login" in script
     assert "Bearer op-fixed:operator:mfa" in script
     assert "accepted a fixed/arbitrary bearer token" in script

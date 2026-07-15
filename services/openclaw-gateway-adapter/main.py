@@ -44,6 +44,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -111,6 +112,7 @@ OPENCLAW_GATEWAY_URL = os.getenv("OPENCLAW_GATEWAY_URL", "")
 _UPSTREAM_TIMEOUT = int(os.getenv("OPENCLAW_UPSTREAM_TIMEOUT", "3"))
 _UPSTREAM_RETRIES = int(os.getenv("OPENCLAW_UPSTREAM_RETRIES", "1"))
 _ASSISTANT_API_PREFIX = "/api/openclaw-adapter/assistant"
+_CRON_API_PATH = "/api/openclaw-adapter/gateway/cron"
 _ASSISTANT_SERVICE_TOKEN = os.getenv("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", "")
 _ASSISTANT_SERVICE_AUTH_REQUIRED = os.getenv(
     "PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED",
@@ -635,22 +637,34 @@ app = FastAPI(
 
 @app.middleware("http")
 async def require_assistant_service_token(request: Request, call_next):
-    """Authenticate BFF-to-adapter calls at the shared assistant boundary."""
+    """Authenticate BFF-to-adapter assistant and cron control calls."""
 
     path = request.url.path.rstrip("/")
-    if path != _ASSISTANT_API_PREFIX and not path.startswith(f"{_ASSISTANT_API_PREFIX}/"):
+    is_assistant_api = path == _ASSISTANT_API_PREFIX or path.startswith(
+        f"{_ASSISTANT_API_PREFIX}/"
+    )
+    is_cron_api = path == _CRON_API_PATH
+    if not is_assistant_api and not is_cron_api:
         return await call_next(request)
 
     if not _ASSISTANT_SERVICE_TOKEN:
-        if _ASSISTANT_SERVICE_AUTH_REQUIRED:
+        # Cron mutations and readback are a privileged control-plane surface,
+        # so they always fail closed when the shared service token is absent.
+        # The wider assistant boundary retains its existing opt-in requirement
+        # for local development compatibility.
+        if is_cron_api or _ASSISTANT_SERVICE_AUTH_REQUIRED:
             return JSONResponse(
                 status_code=503,
                 content={
                     "status": "service_auth_error",
-                    "error_code": "ASSISTANT_SERVICE_AUTH_MISCONFIGURED",
+                    "error_code": (
+                        "CRON_SERVICE_AUTH_MISCONFIGURED"
+                        if is_cron_api
+                        else "ASSISTANT_SERVICE_AUTH_MISCONFIGURED"
+                    ),
                     "message": (
-                        "Assistant service authentication is required, but the adapter service token "
-                        "is not configured."
+                        "Adapter service authentication is required, but the "
+                        "adapter service token is not configured."
                     ),
                 },
             )
@@ -662,7 +676,11 @@ async def require_assistant_service_token(request: Request, call_next):
             status_code=401,
             content={
                 "status": "service_auth_error",
-                "error_code": "ASSISTANT_SERVICE_AUTH_DENIED",
+                "error_code": (
+                    "CRON_SERVICE_AUTH_DENIED"
+                    if is_cron_api
+                    else "ASSISTANT_SERVICE_AUTH_DENIED"
+                ),
                 "message": "A valid X-Pantheon-Service-Token header is required.",
             },
         )
@@ -1559,6 +1577,216 @@ class GatewayCronCallRequest(BaseModel):
     params: Optional[Dict[str, Any]] = None
 
 
+_PERSONA_CRON_CATALOG: Dict[str, Dict[str, str]] = {
+    "pantheon.ingest": {
+        "schedule": "0 */6 * * *",
+        "policy_id": "oc002.cron.ingest",
+        "upstream_entrypoint": "research.ingest",
+    },
+    "pantheon.review": {
+        "schedule": "15 7 * * 1-5",
+        "policy_id": "oc002.cron.review",
+        "upstream_entrypoint": "governance.review",
+    },
+    "pantheon.retrain": {
+        "schedule": "0 2 * * 1-5",
+        "policy_id": "oc002.cron.retrain",
+        "upstream_entrypoint": "learning.retrain",
+    },
+    "pantheon.deploy": {
+        "schedule": "*/15 * * * *",
+        "policy_id": "oc002.cron.deploy",
+        "upstream_entrypoint": "deployment.plan",
+    },
+    "pantheon.persona.first-evaluation": {
+        "schedule": "*/15 * * * *",
+        "policy_id": "oc002.cron.persona-first-evaluation",
+        "upstream_entrypoint": "evaluation.persona.first",
+    },
+}
+
+
+def _canonical_persona_cron_job_name(workflow_id: str, persona_id: str) -> str:
+    workflow_slug = re.sub(r"[^a-z0-9]+", "-", workflow_id.lower()).strip("-")
+    persona_slug = re.sub(r"[^a-z0-9]+", "-", persona_id.lower()).strip("-")
+    prefix = f"pantheon-{workflow_slug}-"
+    budget = 60 - len(prefix)
+    if len(persona_slug) > budget:
+        digest = hashlib.sha1(persona_slug.encode("utf-8")).hexdigest()[:8]
+        keep = max(0, budget - len(digest) - 1)
+        persona_slug = f"{persona_slug[:keep]}-{digest}"
+    return f"{prefix}{persona_slug}"
+
+
+def _pantheon_persona_cron_owner(job: Dict[str, Any]) -> Optional[tuple[str, str]]:
+    """Return a validated Pantheon persona/workflow owner key for a cron row."""
+
+    name = job.get("name")
+    payload = job.get("payload")
+    if not isinstance(name, str) or not name.startswith("pantheon-"):
+        return None
+    if not isinstance(payload, dict) or payload.get("kind") != "systemEvent":
+        return None
+    text = payload.get("text")
+    if not isinstance(text, str):
+        return None
+    try:
+        event = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(event, dict) or event.get("kind") != "pantheon.workflow.dispatch":
+        return None
+    persona_id = event.get("persona_id")
+    workflow_id = event.get("workflow_id")
+    if not isinstance(persona_id, str) or not persona_id.strip():
+        return None
+    if not isinstance(workflow_id, str) or not workflow_id.startswith("pantheon."):
+        return None
+    return persona_id, workflow_id
+
+
+def _is_well_formed_persona_cron_job(job: Dict[str, Any]) -> bool:
+    """Validate the complete adapter-owned Persona cron envelope."""
+
+    owner = _pantheon_persona_cron_owner(job)
+    payload = job.get("payload")
+    schedule = job.get("schedule")
+    delivery = job.get("delivery")
+    if owner is None or not isinstance(payload, dict):
+        return False
+    try:
+        event = json.loads(str(payload.get("text") or ""))
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(event, dict):
+        return False
+    persona_id, workflow_id = owner
+    contract = _PERSONA_CRON_CATALOG.get(workflow_id)
+    if contract is None:
+        return False
+    return bool(
+        job.get("name")
+        == _canonical_persona_cron_job_name(workflow_id, persona_id)
+        and job.get("enabled") is True
+        and job.get("deleteAfterRun") is False
+        and isinstance(schedule, dict)
+        and schedule.get("kind") == "cron"
+        and schedule.get("expr") == contract["schedule"]
+        and job.get("sessionTarget") == persona_id
+        and job.get("wakeMode") == "next-heartbeat"
+        and delivery == {"mode": "none"}
+        and event.get("request_id")
+        == f"persona-provisioning:{persona_id}:{workflow_id}"
+        and event.get("policy_id") == contract["policy_id"]
+        and event.get("upstream_entrypoint") == contract["upstream_entrypoint"]
+    )
+
+
+def _assert_persona_owned_cron_call(
+    method: str,
+    params: Optional[Dict[str, Any]],
+) -> None:
+    """Fence the proxy to the Persona namespace and its required RPC subset."""
+
+    request_params = params if isinstance(params, dict) else {}
+    if method == "cron.list":
+        return
+    if method == "cron.add":
+        if not _is_well_formed_persona_cron_job(request_params):
+            raise GatewayOpenClawProviderError(
+                "cron.add requires a complete Pantheon persona-owned job envelope.",
+                status_code=403,
+                error_code="OPENCLAW_CRON_TARGET_FORBIDDEN",
+            )
+        return
+    if method not in {"cron.update", "cron.remove"}:
+        raise GatewayOpenClawProviderError(
+            f"{method} is outside the Persona cron proxy contract.",
+            status_code=403,
+            error_code="OPENCLAW_CRON_TARGET_FORBIDDEN",
+        )
+    target_id = request_params.get("id")
+    if not isinstance(target_id, str) or not target_id.strip():
+        raise GatewayOpenClawProviderError(
+            f"{method} requires a non-empty Pantheon persona cron job id.",
+            status_code=403,
+            error_code="OPENCLAW_CRON_TARGET_FORBIDDEN",
+        )
+
+    matches: list[Dict[str, Any]] = []
+    offset = 0
+    seen_offsets: set[int] = set()
+    while True:
+        if offset in seen_offsets:
+            raise GatewayOpenClawProviderError(
+                "cron.list returned a pagination cycle while authorizing a mutation.",
+                status_code=503,
+                error_code="OPENCLAW_CRON_AUTHORIZATION_UNAVAILABLE",
+            )
+        seen_offsets.add(offset)
+        listing = _OPENCLAW_AGENT_PROVIDER.gateway_cron_call(
+            "cron.list",
+            {"limit": 200, "offset": offset},
+        )
+        jobs = listing.get("jobs") if isinstance(listing, dict) else None
+        if not isinstance(jobs, list):
+            raise GatewayOpenClawProviderError(
+                "cron.list returned an invalid payload while authorizing a mutation.",
+                status_code=503,
+                error_code="OPENCLAW_CRON_AUTHORIZATION_UNAVAILABLE",
+            )
+        matches.extend(
+            job
+            for job in jobs
+            if isinstance(job, dict) and job.get("id") == target_id
+        )
+        if not listing.get("hasMore"):
+            break
+        next_offset = listing.get("nextOffset", offset + len(jobs))
+        if not isinstance(next_offset, int) or next_offset < 0:
+            raise GatewayOpenClawProviderError(
+                "cron.list returned an invalid offset while authorizing a mutation.",
+                status_code=503,
+                error_code="OPENCLAW_CRON_AUTHORIZATION_UNAVAILABLE",
+            )
+        offset = next_offset
+
+    if len(matches) != 1:
+        raise GatewayOpenClawProviderError(
+            f"{method} target is not one authoritative Pantheon persona cron row.",
+            status_code=403,
+            error_code="OPENCLAW_CRON_TARGET_FORBIDDEN",
+        )
+    current_owner = _pantheon_persona_cron_owner(matches[0])
+    reserved_name = str(matches[0].get("name") or "").startswith("pantheon-")
+    if current_owner is None and not (method == "cron.remove" and reserved_name):
+        raise GatewayOpenClawProviderError(
+            f"{method} target is outside the Pantheon persona cron namespace.",
+            status_code=403,
+            error_code="OPENCLAW_CRON_TARGET_FORBIDDEN",
+        )
+
+    if method == "cron.update":
+        patch = request_params.get("patch")
+        if not isinstance(patch, dict):
+            raise GatewayOpenClawProviderError(
+                "cron.update requires a complete Pantheon persona-owned patch.",
+                status_code=403,
+                error_code="OPENCLAW_CRON_TARGET_FORBIDDEN",
+            )
+        patched_owner = _pantheon_persona_cron_owner(patch)
+        if (
+            current_owner is None
+            or patched_owner != current_owner
+            or not _is_well_formed_persona_cron_job(patch)
+        ):
+            raise GatewayOpenClawProviderError(
+                "cron.update cannot change or erase the Pantheon persona cron owner key.",
+                status_code=403,
+                error_code="OPENCLAW_CRON_TARGET_FORBIDDEN",
+            )
+
+
 @app.post("/api/openclaw-adapter/gateway/cron")
 def gateway_cron_call(req: GatewayCronCallRequest) -> JSONResponse:
     """Proxy a whitelisted `cron.*` gateway RPC through the adapter.
@@ -1569,7 +1797,21 @@ def gateway_cron_call(req: GatewayCronCallRequest) -> JSONResponse:
     persona OODA cron jobs on the BFF's behalf. Only `cron.*` methods are allowed.
     """
     try:
+        _assert_persona_owned_cron_call(req.method, req.params)
         result = _OPENCLAW_AGENT_PROVIDER.gateway_cron_call(req.method, req.params)
+        if req.method == "cron.list" and isinstance(result, dict):
+            jobs = result.get("jobs")
+            if isinstance(jobs, list):
+                result = {
+                    **result,
+                    "jobs": [
+                        job
+                        for job in jobs
+                        if isinstance(job, dict)
+                        and isinstance(job.get("name"), str)
+                        and job["name"].startswith("pantheon-")
+                    ],
+                }
     except GatewayOpenClawProviderError as exc:
         return JSONResponse(
             status_code=exc.status_code if exc.status_code in (403, 503) else 200,

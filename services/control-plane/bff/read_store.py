@@ -3055,6 +3055,8 @@ class ServiceBackedReadAdapter:
             "filenames": (),
             "keys": ["id"],
             "snapshot_key": "loop_runs",
+            "nested_key": "records",
+            "snapshot_requires_key": True,
         },
         "loop_health": {
             "env": "PANTHEON_BFF_LOOP_HEALTH_STORE",
@@ -3232,6 +3234,7 @@ class ServiceBackedReadAdapter:
         self._cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._cache_meta: Dict[str, tuple[str, int]] = {}
         self._cache_source: Dict[str, str] = {}
+        self._cache_envelope_metadata: Dict[str, Dict[str, Any]] = {}
         self._snapshot_path = snapshot_path or _default_bff_snapshot_path()
         self._allow_snapshot_fallback = allow_snapshot_fallback
 
@@ -3304,6 +3307,15 @@ class ServiceBackedReadAdapter:
                 return True, self._cache.get(dataset, {})
 
             payload = _load_record_store_payload(path)
+            if dataset == "loop_runs" and isinstance(payload, dict):
+                controller = payload.get("controller")
+                self._cache_envelope_metadata[dataset] = {
+                    "schema_version": payload.get("schema_version"),
+                    "generation": payload.get("generation"),
+                    "controller": dict(controller) if isinstance(controller, dict) else {},
+                }
+            else:
+                self._cache_envelope_metadata.pop(dataset, None)
             if dataset == "ooda_packets":
                 payload = _project_ooda_packet_store_payload(payload)
             if dataset == "synthesis_conflict_logs":
@@ -3319,6 +3331,14 @@ class ServiceBackedReadAdapter:
 
         snapshot_key = self._DATASETS[dataset].get("snapshot_key")
         if include_snapshot_fallback and self._allow_snapshot_fallback and snapshot_key:
+            if self._DATASETS[dataset].get("snapshot_requires_key") and self._snapshot_path.exists():
+                try:
+                    snapshot_payload = _load_record_store_payload(self._snapshot_path)
+                except (OSError, ValueError):
+                    snapshot_payload = None
+                if not isinstance(snapshot_payload, dict) or snapshot_key not in snapshot_payload:
+                    self._cache_envelope_metadata.pop(dataset, None)
+                    return False, {}
             available, normalized, cache_meta = _load_snapshot_dataset(
                 self._snapshot_path,
                 str(snapshot_key),
@@ -3329,8 +3349,10 @@ class ServiceBackedReadAdapter:
                     self._cache[dataset] = normalized
                     self._cache_meta[dataset] = cache_meta
                     self._cache_source[dataset] = "local_snapshot"
+                    self._cache_envelope_metadata.pop(dataset, None)
                 return True, self._cache.get(dataset, normalized)
 
+        self._cache_envelope_metadata.pop(dataset, None)
         return False, {}
 
     def source(self, dataset: str) -> str:
@@ -3339,6 +3361,10 @@ class ServiceBackedReadAdapter:
     def cached_source(self, dataset: str) -> Optional[str]:
         """Return provenance from an earlier read without touching the backend."""
         return self._cache_source.get(dataset)
+
+    def envelope_metadata(self, dataset: str) -> Dict[str, Any]:
+        """Return wrapper metadata retained during the most recent dataset read."""
+        return json.loads(json.dumps(self._cache_envelope_metadata.get(dataset, {})))
 
     def list_records(
         self,
@@ -3384,6 +3410,14 @@ class ServiceBackedReadAdapter:
             "derived_from_incident_id": inc_id,
             "runtime_id": inc.get("runtime_id"),
             "binding_id": inc.get("binding_id"),
+            # Incident reconstruction is retained only as an explicitly
+            # degraded compatibility view.  It is neither the canonical loop
+            # ledger nor evidence that the lifecycle projector is live.
+            "source": "legacy_incident_backfill",
+            "projection_mode": "backfill",
+            "truth_level": "legacy_backfill",
+            "accepted_live": False,
+            "read_state": "degraded",
         }
 
     _SENTINEL_KIND_KEYWORDS: Dict[str, List[str]] = {
@@ -3420,32 +3454,30 @@ class ServiceBackedReadAdapter:
         }
 
     def list_loop_runs(self) -> tuple[bool, List[Dict[str, Any]]]:
-        # Merge the dedicated v5 loop-run ledger (paper-binding execution loops,
-        # populated by the loop-run projector) with incident-derived recovery
-        # loops. Previously incidents short-circuited this method, so the
-        # projector's PANTHEON_BFF_LOOP_RUN_STORE records never surfaced whenever
-        # any incident existed — leaving the ledger blank despite active runtimes.
-        runs: List[Dict[str, Any]] = []
-        seen: set = set()
+        # A configured projector ledger is authoritative, including when it is
+        # valid but empty.  Incident reconstruction is an incident-only legacy
+        # fallback and must never be merged into canonical lifecycle truth.
         avail_lr, lr_data = self._load_dataset("loop_runs")
         if avail_lr:
-            for run in lr_data.values():
-                if isinstance(run, dict):
-                    runs.append(run)
-                    seen.add(str(run.get("id") or ""))
+            return True, [run for run in lr_data.values() if isinstance(run, dict)]
+
         avail_inc, incidents = self._load_dataset("incidents")
-        if avail_inc:
-            for inc in incidents.values():
-                if not isinstance(inc, dict):
-                    continue
-                if "sentinel" in str(inc.get("title") or "").lower():
-                    continue
-                derived = self._derive_loop_run(inc)
-                if str(derived.get("id") or "") not in seen:
-                    runs.append(derived)
-        return (avail_lr or avail_inc), runs
+        if not avail_inc:
+            return False, []
+        return True, [
+            self._derive_loop_run(inc)
+            for inc in incidents.values()
+            if isinstance(inc, dict)
+            and "sentinel" not in str(inc.get("title") or "").lower()
+        ]
 
     def get_loop_run(self, loop_run_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
+        # Canonical lookup is first and conclusive.  A missing ID in an
+        # available canonical ledger must not resolve to an unrelated incident.
+        avail_lr, lr_data = self._load_dataset("loop_runs")
+        if avail_lr:
+            return True, lr_data.get(loop_run_id)
+
         avail_inc, incidents = self._load_dataset("incidents")
         if avail_inc:
             inc = incidents.get(loop_run_id)
@@ -3460,14 +3492,7 @@ class ServiceBackedReadAdapter:
                 ]
                 if 1 <= n <= len(non_sentinel):
                     return True, self._derive_loop_run(non_sentinel[n - 1], override_id=loop_run_id)
-        # Fall through to the dedicated loop-run ledger for projector-written
-        # records (e.g. lr-rb-*) that are not incident-derived.
-        avail_lr, lr_data = self._load_dataset("loop_runs")
-        if avail_lr and loop_run_id in lr_data:
-            return True, lr_data.get(loop_run_id)
         if avail_inc:
-            return True, None
-        if avail_lr:
             return True, None
         return False, None
 
@@ -11534,6 +11559,32 @@ class ReadSurfaceStore:
             reverse=True,
         )
 
+    def list_authoritative_paper_runtime_monitoring_sessions(self) -> List[Dict[str, Any]]:
+        """Return only paper-fleet owner records, never local/snapshot substitutes.
+
+        Persona provisioning is a safety-relevant lifecycle gate.  Local BFF
+        overlays and bundled snapshots remain useful for operator read views,
+        but they cannot prove that the canonical paper worker has joined its
+        RuntimeBinding.  An unavailable owner therefore reads back as no
+        authoritative evidence and leaves provisioning pending.
+        """
+
+        available, raw_sessions = self._canonical.list_records(
+            "paper_runtime_monitoring_sessions",
+            include_snapshot_fallback=False,
+        )
+        if not available:
+            return []
+        return sorted(
+            [
+                json.loads(json.dumps(session))
+                for session in raw_sessions
+                if isinstance(session, dict)
+            ],
+            key=self._paper_runtime_monitoring_sort_key,
+            reverse=True,
+        )
+
     def get_paper_runtime_monitoring_session(
         self,
         *,
@@ -16309,6 +16360,9 @@ class ReadSurfaceStore:
 
     def list_loop_runs(self) -> tuple[bool, List[Dict[str, Any]]]:
         return self._service.list_loop_runs()
+
+    def loop_run_projection_metadata(self) -> Dict[str, Any]:
+        return self._service.envelope_metadata("loop_runs")
 
     def get_loop_run(self, loop_run_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
         return self._service.get_loop_run(loop_run_id)

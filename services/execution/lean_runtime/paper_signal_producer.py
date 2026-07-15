@@ -20,6 +20,12 @@ import os
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
+from services.trade_journey.correlation_envelope import (
+    CorrelationEnvelopeError,
+    mint_trade_envelope,
+    validate_envelope,
+)
+
 log = logging.getLogger(__name__)
 
 SIGNAL_SCHEMA_VERSION = "1.0"
@@ -32,6 +38,8 @@ class BindingRef:
     binding_id: str
     strategy_id: str
     symbol: str = "AAPL.US"
+    tenant_id: str = "default"
+    environment: str = "paper"
 
 
 # A strategy turns a binding + wall-clock into zero or more signal payloads.
@@ -53,9 +61,20 @@ def build_smoke_signal(
     The shape satisfies both ``validate_signal_payload_minimal`` (store side)
     and the canonical ``services/research/schema.json`` consumer validation.
     """
+    signal_id = f"sig-{binding.binding_id}-{now_iso}-{seq}"
+    run_id = f"run-{binding.binding_id}-{now_iso}-{seq}"
+    envelope = mint_trade_envelope(
+        {
+            "tenant_id": binding.tenant_id,
+            "environment": binding.environment,
+        },
+        producer="execution.paper-signal-producer",
+        event_id=f"signal:{signal_id}",
+        now=now_iso,
+    )
     return {
         "version": SIGNAL_SCHEMA_VERSION,
-        "signal_id": f"sig-{binding.binding_id}-{now_iso}-{seq}",
+        "signal_id": signal_id,
         "strategy_id": binding.strategy_id,
         "timestamp": now_iso,
         "symbol": binding.symbol,
@@ -64,6 +83,18 @@ def build_smoke_signal(
         "quantity": quantity,
         "quantity_type": quantity_type,
         "binding_id": binding.binding_id,
+        "run_id": run_id,
+        "tenant_id": binding.tenant_id,
+        "environment": binding.environment,
+        "journey_id": envelope["journey_id"],
+        "correlation_envelope": envelope,
+        "metadata": {
+            "tenant_id": binding.tenant_id,
+            "environment": binding.environment,
+            "journey_id": envelope["journey_id"],
+            "is_real_order": False,
+            "is_real_capital": False,
+        },
     }
 
 
@@ -112,8 +143,24 @@ class BoundedPaperStrategy:
             if len(parts) >= 2:
                 persona_id = parts[1]
 
-        tenant_id = os.getenv("PANTHEON_TENANT_ID", "default")
-        strategy_id = b_dict.get("metadata", {}).get("strategy_id") or b_dict.get("strategy_id") or "smoke-strategy"
+        binding_metadata = b_dict.get("metadata") if isinstance(b_dict.get("metadata"), Mapping) else {}
+        tenant_id = (
+            b_dict.get("tenant_id")
+            or binding_metadata.get("tenant_id")
+            or os.getenv("PANTHEON_TENANT_ID", "default")
+        )
+        environment = str(
+            b_dict.get("environment")
+            or b_dict.get("deployment_stage")
+            or b_dict.get("deployment_mode")
+            or binding_metadata.get("environment")
+            or "paper"
+        ).strip().lower()
+        strategy_id = (
+            binding_metadata.get("strategy_id")
+            or b_dict.get("strategy_id")
+            or "smoke-strategy"
+        )
         symbol = b_dict.get("symbol") or self._symbol
 
         decision = {
@@ -128,10 +175,13 @@ class BoundedPaperStrategy:
             "binding_id": binding_id,
             "runtime_id": runtime_id,
             "capital_pool_id": capital_pool_id,
-            "run_id": f"run-{binding_id}-{now_iso}",
+            "run_id": f"run-{binding_id}-{now_iso}-{self._seq}",
+            "tenant_id": tenant_id,
+            "environment": environment,
             "source_worker": "paper-signal-producer",
             "metadata": {
                 "tenant_id": tenant_id,
+                "environment": environment,
                 "persona_id": persona_id,
                 "persona_capital_binding_id": pcb_id,
                 "capital_pool_id": capital_pool_id,
@@ -156,7 +206,79 @@ def _binding_dict_from_obj(binding: Any) -> dict[str, Any]:
         "persona_capital_binding_id": getattr(binding, "persona_capital_binding_id", "pcb-default-001"),
         "symbol": getattr(binding, "symbol", "AAPL.US"),
         "strategy_id": getattr(binding, "strategy_id", "smoke-strategy"),
+        "tenant_id": getattr(binding, "tenant_id", "default"),
+        "environment": getattr(binding, "environment", "paper"),
     }
+
+
+def _paper_signal_identity(
+    signal: dict[str, Any],
+    binding: Mapping[str, Any],
+    now_iso: str,
+) -> None:
+    """Attach a valid paper journey envelope to a legacy pre-built signal."""
+    metadata = signal.setdefault("metadata", {})
+    if not isinstance(metadata, dict):
+        raise ValueError("paper signal metadata must be an object")
+    binding_metadata = binding.get("metadata") if isinstance(binding.get("metadata"), Mapping) else {}
+    tenant_id = str(
+        signal.get("tenant_id")
+        or metadata.get("tenant_id")
+        or binding.get("tenant_id")
+        or binding_metadata.get("tenant_id")
+        or os.getenv("PANTHEON_TENANT_ID", "default")
+    ).strip()
+    environment = str(
+        signal.get("environment")
+        or metadata.get("environment")
+        or binding.get("environment")
+        or binding.get("deployment_stage")
+        or binding.get("deployment_mode")
+        or binding_metadata.get("environment")
+        or "paper"
+    ).strip().lower()
+    signal_id = str(signal.get("signal_id") or "").strip()
+    if not signal_id:
+        raise ValueError("paper signal_id is required")
+
+    raw_envelope = signal.get("correlation_envelope") or metadata.get("correlation_envelope")
+    try:
+        if isinstance(raw_envelope, Mapping) and raw_envelope.get("journey_id"):
+            envelope = validate_envelope(raw_envelope)
+            if envelope["tenant_id"] != tenant_id:
+                raise CorrelationEnvelopeError(
+                    "tenant_id conflicts with correlation_envelope.tenant_id"
+                )
+            if envelope["environment"] != environment:
+                raise CorrelationEnvelopeError(
+                    "environment conflicts with correlation_envelope.environment"
+                )
+        else:
+            if raw_envelope is not None and not isinstance(raw_envelope, Mapping):
+                raise CorrelationEnvelopeError("correlation_envelope must be an object")
+            upstream = dict(raw_envelope or {})
+            upstream["tenant_id"] = tenant_id
+            upstream["environment"] = environment
+            envelope = mint_trade_envelope(
+                upstream,
+                producer="execution.paper-signal-producer",
+                event_id=f"signal:{signal_id}",
+                journey_id=str(signal.get("journey_id") or "").strip() or None,
+                now=now_iso,
+            )
+    except CorrelationEnvelopeError as exc:
+        raise ValueError(f"invalid paper signal correlation envelope: {exc}") from exc
+
+    binding_id = str(signal.get("binding_id") or binding.get("binding_id") or "").strip()
+    signal["tenant_id"] = tenant_id
+    signal["environment"] = environment
+    signal["journey_id"] = envelope["journey_id"]
+    signal["correlation_envelope"] = envelope
+    if not str(signal.get("run_id") or "").strip():
+        signal["run_id"] = f"run-{binding_id}-{now_iso}"
+    metadata.setdefault("tenant_id", tenant_id)
+    metadata.setdefault("environment", environment)
+    metadata.setdefault("journey_id", envelope["journey_id"])
 
 
 class PaperSignalProducer:
@@ -188,7 +310,7 @@ class PaperSignalProducer:
                 if isinstance(sig["metadata"], dict):
                     sig["metadata"]["is_real_order"] = False
                     sig["metadata"]["is_real_capital"] = False
-                    sig["metadata"]["tenant_id"] = os.getenv("PANTHEON_TENANT_ID", "default")
+                _paper_signal_identity(sig, b_dict, now_iso)
                 store.enqueue(sig)
                 enqueued += 1
         elif isinstance(out, dict):
@@ -201,7 +323,29 @@ class PaperSignalProducer:
             if isinstance(out["metadata"], dict):
                 out["metadata"]["is_real_order"] = False
                 out["metadata"]["is_real_capital"] = False
-                out["metadata"]["tenant_id"] = os.getenv("PANTHEON_TENANT_ID", "default")
+                binding_metadata = b_dict.get("metadata") if isinstance(b_dict.get("metadata"), Mapping) else {}
+                tenant_id = (
+                    out.get("tenant_id")
+                    or out["metadata"].get("tenant_id")
+                    or b_dict.get("tenant_id")
+                    or binding_metadata.get("tenant_id")
+                    or os.getenv("PANTHEON_TENANT_ID", "default")
+                )
+                environment = (
+                    out.get("environment")
+                    or out["metadata"].get("environment")
+                    or b_dict.get("environment")
+                    or b_dict.get("deployment_stage")
+                    or b_dict.get("deployment_mode")
+                    or binding_metadata.get("environment")
+                    or "paper"
+                )
+                out["tenant_id"] = str(tenant_id)
+                out["environment"] = str(environment).strip().lower()
+                out["metadata"].setdefault("tenant_id", str(tenant_id))
+                out["metadata"].setdefault(
+                    "environment", str(environment).strip().lower()
+                )
 
             batch = dsp.produce(
                 out,
