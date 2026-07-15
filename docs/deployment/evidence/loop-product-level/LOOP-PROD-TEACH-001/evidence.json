@@ -251,9 +251,9 @@
     ],
     "merge_refresh": {
       "compose_repair_commit": "432792398a09faa631f2e81259079e4933199ab5",
-      "merge_commit": "91891a5d875af14ff8c5422a851cfe2e7c92a58a",
-      "merged_origin_dev_sha": "c5d7b8c0d1becd8746518b1190818fdcfe96e8fe",
-      "repair_summary": "Removed duplicate operator-bff PANTHEON_REGISTRY_API_URL and depends_on.registry keys after origin/dev integration so docker compose config remains admissible.",
+      "merge_commit": "dd5bd78e51574173f25d57e0bcebcbfe55e65eb8",
+      "merged_origin_dev_sha": "4693b1c45b7ab6ae83b61750f0837621c13574bf",
+      "repair_summary": "Latest origin/dev merge was docs-only for EVOCHAIN-011 after the compose repair; no training-session runtime files changed in this refresh.",
       "status": "validated_after_merge"
     },
     "pull_request": {
@@ -268,8 +268,8 @@
         "status": "pending_pr_refresh_after_push"
       }
     ],
-    "validated_base_sha": "c5d7b8c0d1becd8746518b1190818fdcfe96e8fe",
-    "validated_head_sha": "432792398a09faa631f2e81259079e4933199ab5"
+    "validated_base_sha": "4693b1c45b7ab6ae83b61750f0837621c13574bf",
+    "validated_head_sha": "dd5bd78e51574173f25d57e0bcebcbfe55e65eb8"
   },
   "integrity": {
     "checksum_algorithm": "sha256",
@@ -469,11 +469,57 @@
       },
       "recorded_at": "2026-07-15T15:30:09Z",
       "sequence": 7
+    },
+    {
+      "checksum": "0cdf31c47b28f696b005a51e73f60327af4d99151187e3d96b1a4150ae365dac",
+      "event_type": "dev_merge_refresh_validation_completed",
+      "payload": {
+        "commands": [
+          {
+            "command": "docker compose config --quiet",
+            "conclusion": "no output after docs-only origin/dev merge dd5bd78e51574173f25d57e0bcebcbfe55e65eb8",
+            "result": "pass"
+          },
+          {
+            "command": "sha256sum --check docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
+            "conclusion": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json: OK",
+            "result": "pass"
+          },
+          {
+            "command": "git diff --check origin/dev...HEAD",
+            "conclusion": "no output",
+            "result": "pass"
+          },
+          {
+            "command": "rg -n \"STUB1|STUB2|stub-ref|unconditional passed|manufactures a passing proof|auto.?pass\" services/training-session services/knowledge/evidence docker-compose.yml",
+            "conclusion": "no matches; rg exited 1",
+            "result": "pass"
+          }
+        ],
+        "compose_repair_commit": "432792398a09faa631f2e81259079e4933199ab5",
+        "merge_commit": "dd5bd78e51574173f25d57e0bcebcbfe55e65eb8",
+        "merged_origin_dev_sha": "4693b1c45b7ab6ae83b61750f0837621c13574bf",
+        "validated_head_sha": "dd5bd78e51574173f25d57e0bcebcbfe55e65eb8"
+      },
+      "recorded_at": "2026-07-15T15:34:11Z",
+      "sequence": 8
+    },
+    {
+      "checksum": "c7be12b39f41962b68fec742de887409e73b7e3517acacaea9e9f14b58d3d333",
+      "event_type": "dev_merge_refresh_evidence_manifest_cut",
+      "payload": {
+        "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
+        "evidence_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
+        "redacted": true,
+        "validated_head_sha": "dd5bd78e51574173f25d57e0bcebcbfe55e65eb8"
+      },
+      "recorded_at": "2026-07-15T15:34:11Z",
+      "sequence": 9
     }
   ],
   "residual_risks": [
     {
-      "description": "Implementation evidence is refreshed on origin/dev c5d7b8c0d1becd8746518b1190818fdcfe96e8fe with compose repair commit 432792398a09faa631f2e81259079e4933199ab5, but PR required checks, review approval, merge SHA, and final done publication are still pending closeout.",
+      "description": "Implementation evidence is refreshed on origin/dev 4693b1c45b7ab6ae83b61750f0837621c13574bf with latest merge commit dd5bd78e51574173f25d57e0bcebcbfe55e65eb8; PR required checks, review approval, merge SHA, and final done publication are still pending closeout.",
       "expires_at": "before scripts/ai-status.sh done LOOP-PROD-TEACH-001",
       "id": "RISK-PR-MERGE-001",
       "owner": "Codex2",
@@ -551,8 +597,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-15T15:30:09Z",
-    "evidence_cut_semantics": "Implementation branch has fail-closed training-session evaluation, default preview worker, runtime evidence, durable store, source DatasetVersion authority, persona terminal readback, AC-04/AC-07 replay/evidence duplicate-safety fix, and an origin/dev merge-refresh compose repair with focused validation; PR review/check/merge evidence remains pending closeout.",
+    "evidence_cut_at": "2026-07-15T15:34:11Z",
+    "evidence_cut_semantics": "Implementation branch has fail-closed training-session evaluation, default preview worker, runtime evidence, durable store, source DatasetVersion authority, persona terminal readback, AC-04/AC-07 replay/evidence duplicate-safety fix, origin/dev compose merge repair, and a latest docs-only dev merge refresh with quick validation; PR review/check/merge evidence remains pending closeout.",
     "id": "LOOP-PROD-TEACH-001",
     "overall_admission": "implementation_ready_for_independent_review",
     "owner": "Codex2",
@@ -622,10 +668,30 @@
         "command": "docker compose config --quiet",
         "conclusion": "no output after compose merge repair commit 432792398a09faa631f2e81259079e4933199ab5",
         "result": "pass"
+      },
+      {
+        "command": "docker compose config --quiet",
+        "conclusion": "no output after docs-only origin/dev merge dd5bd78e51574173f25d57e0bcebcbfe55e65eb8",
+        "result": "pass"
+      },
+      {
+        "command": "sha256sum --check docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
+        "conclusion": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json: OK",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check origin/dev...HEAD",
+        "conclusion": "no output",
+        "result": "pass"
+      },
+      {
+        "command": "rg -n \"STUB1|STUB2|stub-ref|unconditional passed|manufactures a passing proof|auto.?pass\" services/training-session services/knowledge/evidence docker-compose.yml",
+        "conclusion": "no matches; rg exited 1",
+        "result": "pass"
       }
     ],
-    "validated_at": "2026-07-15T15:30:09Z",
-    "validated_base_sha": "c5d7b8c0d1becd8746518b1190818fdcfe96e8fe",
-    "validated_head_sha": "432792398a09faa631f2e81259079e4933199ab5"
+    "validated_at": "2026-07-15T15:34:11Z",
+    "validated_base_sha": "4693b1c45b7ab6ae83b61750f0837621c13574bf",
+    "validated_head_sha": "dd5bd78e51574173f25d57e0bcebcbfe55e65eb8"
   }
 }
