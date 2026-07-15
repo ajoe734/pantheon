@@ -1,0 +1,349 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Loop product-level remediation evidence contract",
+    "note": "Pre-review owner evidence for live Strategy Workshop operations and v1.8 contract reconciliation.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-002/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Raw validation output is immutable; future PR, review, merge, and deployment facts append to record_log only.",
+    "recording_mode": "logical_append_only_record_log_with_immutable_validation_cut",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-15T14:24:17Z",
+    "evidence_cut_semantics": "Owner implementation and local validation cut after merging origin/dev into the task branch; independent review, PR merge, and deployment identity are intentionally not asserted.",
+    "id": "LOOP-PROD-AGORA-002",
+    "overall_admission": "review_required_evidence_only",
+    "owner": "Codex2",
+    "phase": "Loop Product-Level Remediation / Wave 1",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-002/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "isolated-target-dev",
+    "target_maturity": "integrated",
+    "task_branch": "task/LOOP-PROD-AGORA-002",
+    "title": "Implement six deferred Strategy Workshop operations"
+  },
+  "authorities": {
+    "actual_state": [
+      "canonical StrategySpec version store",
+      "ExperimentRun store",
+      "consultation store",
+      "conclusion receipt and audit"
+    ],
+    "desired_state": [
+      "Strategy Workshop v1.5 OpenAPI operations",
+      "version/research/consultation/conclude governance policy"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-AGORA-002.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex2 for Strategy Workshop BFF command routing, command receipt store, canonical adapters, consultation idempotency bridge, and Agora contract reconciliation",
+    "composes_with": [
+      "LOOP-PROD-CONS-001",
+      "LOOP-PROD-ALPHA-001",
+      "AG-GAP-005",
+      "LOOP-PROD-AGORA-003"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-002/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-002/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "docker-compose.yml",
+      "docker-compose.staging-full.yml",
+      "services/consultation/client.py",
+      "services/consultation/main.py",
+      "services/consultation/models.py",
+      "services/consultation/test_request_idempotency.py",
+      "services/control-plane/bff/agora/router.py",
+      "services/control-plane/bff/agora/strategy_workshop/operations.py",
+      "services/control-plane/bff/agora/strategy_workshop/router.py",
+      "services/control-plane/bff/agora/strategy_workshop/store.py",
+      "services/control-plane/bff/tests/test_agora_strategy_workshop.py",
+      "services/control-plane/bff/tests/test_agora_workshop_live_operations.py",
+      "services/control-plane/bff/tests/test_strategy_workshop_command_store.py",
+      "services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
+      "services/control-plane/openapi/agora_v1_8.openapi.yaml",
+      "services/control-plane/specs/agora/bundle_index.v1_8.json",
+      "services/control-plane/specs/agora/v9/workshop_live_operations.schema.json",
+      "services/control-plane/specs/agora/v9/capability_manifest_v1_8.json",
+      "docs/contracts/agora/dev-compatibility-manifest.json",
+      "scripts/agora_compat_manifest.py",
+      "scripts/test_agora_compat_manifest.py",
+      "scripts/test_agora_v1_8_bundle.py"
+    ],
+    "not_changing": "Frontend generated client, hosted dev deployment, live broker, live capital, RuntimeBinding writes, or frozen Agora v1.1/v1.2 artifacts",
+    "owned_layer": "Strategy Workshop live operation backend, durable command receipt/readback model, and additive Agora v1.8 contract truth"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "7667ef849610367ac2fc34ceae0989c2a1d4b322",
+        "subject": "LOOP-PROD-AGORA-002: anchor canonical workshop operations"
+      },
+      {
+        "sha": "102d354742fa616caa5fdb67f0ef5d0ab24145c8",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/LOOP-PROD-AGORA-002"
+      }
+    ],
+    "required_checks": []
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 -m pytest -q services/control-plane/bff/tests/test_agora_strategy_workshop.py services/control-plane/bff/tests/test_agora_workshop_live_operations.py services/control-plane/bff/tests/test_strategy_workshop_command_store.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
+        "result": "pass",
+        "conclusion": "111 passed, 1 skipped"
+      },
+      {
+        "command": "python3 -m pytest -q services/consultation",
+        "result": "pass",
+        "conclusion": "65 passed"
+      },
+      {
+        "command": "python3 -m pytest -q scripts/test_agora_compat_manifest.py scripts/test_agora_v1_2_bundle.py scripts/test_agora_v1_5_bundle.py scripts/test_agora_v1_6_bundle.py scripts/test_agora_v1_7_bundle.py scripts/test_agora_v1_8_bundle.py",
+        "result": "pass",
+        "conclusion": "48 passed"
+      },
+      {
+        "command": "python3 scripts/agora_compat_manifest.py verify --manifest docs/contracts/agora/dev-compatibility-manifest.json --allow-pending",
+        "result": "pass",
+        "conclusion": "manifest shape, contract hashes, and required capabilities verified; deployment gate remains pending on frontend generated types and runtime commit"
+      }
+    ],
+    "validated_at": "2026-07-15T14:24:17Z",
+    "validated_base_sha": "a8b73d142e9d6ce31986e00220dcfb4b4dd0a45b",
+    "validated_head_sha": "102d354742fa616caa5fdb67f0ef5d0ab24145c8"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "isolated-target-dev",
+    "public_bff_base_url": "not_applicable_pre_review_backend_contract_cut",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "This owner evidence cut does not claim shared hosted-dev deployment."
+    },
+    "canonical_root_deploy": {
+      "conclusion": "not_applicable",
+      "reason": "Backend code and contract were locally validated; exact deployment identity is deferred to reviewed PR merge and dev deploy flow."
+    },
+    "identity_admission": {
+      "status": "not_applicable",
+      "reason": "No live container or image deployment identity is collected in this owner cut."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "not_applicable",
+      "reason": "Shared hosted-dev readback is not claimed before PR review and deploy."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "test_exact_replay_is_stable_and_changed_body_conflicts",
+        "test_admit_is_rpo_zero_and_exact_replay_precedes_etag_check",
+        "test_concurrent_same_key_has_one_admission_and_one_replay",
+        "test_create_with_caller_id_replays_exact_record_without_new_events"
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "test_downstream_rejection_has_durable_failure_receipt_and_safe_compensation",
+        "test_consultation_projection_failure_cancels_downstream_and_keeps_receipt",
+        "test_create_replay_repairs_missing_audit_after_durable_write"
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "test_all_six_operations_read_back_canonical_state_and_never_execute",
+        "test_complete_atomically_records_version_session_event_and_readback",
+        "Agora v1.8 bundle route parity and hash tests"
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "test_create_replay_survives_store_restart_and_returns_current_readback",
+        "PostgresWorkshopStore DDL bootstrap includes version links and command receipts"
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pass",
+      "proof": [
+        "failed canonical effects are recorded with compensation metadata",
+        "consultation projection failure invokes canonical cancel_consultation and replays as COMMAND_PREVIOUSLY_FAILED"
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Research dispatch is schema- and runtime-restricted to stub, handoff_only, or manual modes; live/canary/production parameters fail closed."
+    },
+    "hosted_frontend": {
+      "status": "pending",
+      "proof": "Compatibility manifest remains pending until LOOP-PROD-AGORA-003 supplies execute-plans generated types and frontend runtime commit."
+    },
+    "mfa": {
+      "status": "pass",
+      "proof": "write routes require X-MFA-Token and focused tests assert missing MFA fails before canonical downstream calls"
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "route meta emits no_direct_action false-only proof; canonical fake fails tests if deploy or order methods are invoked"
+    },
+    "rbac": {
+      "status": "pass",
+      "proof": "read/write role hooks remain router assembly inputs; write paths require write scope and MFA before admission"
+    },
+    "tenant_isolation": {
+      "status": "pass",
+      "proof": "wrong tenant test returns 403 CROSS_USER_ACCESS_FORBIDDEN and makes no canonical downstream calls"
+    },
+    "two_person_approval": {
+      "status": "pass",
+      "proof": "research and conclude require approval_decision_id; same-actor approval is rejected before research dispatch"
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC-01",
+      "statement": "all six operations perform canonical commands and return terminal authoritative readback instead of 501",
+      "status": "pass",
+      "evidence_refs": [
+        "services/control-plane/bff/agora/strategy_workshop/router.py",
+        "services/control-plane/bff/agora/strategy_workshop/operations.py",
+        "services/control-plane/bff/tests/test_agora_workshop_live_operations.py"
+      ]
+    },
+    {
+      "id": "AC-02",
+      "statement": "RBAC, MFA, idempotency, stale revision, wrong tenant, and missing approval negatives pass",
+      "status": "pass",
+      "evidence_refs": [
+        "services/control-plane/bff/tests/test_agora_workshop_live_operations.py",
+        "services/control-plane/bff/tests/test_strategy_workshop_command_store.py"
+      ]
+    },
+    {
+      "id": "AC-03",
+      "statement": "OpenAPI, contract bundle, generated hashes, and compatibility manifest are exact and green",
+      "status": "pass",
+      "evidence_refs": [
+        "services/control-plane/openapi/agora_v1_8.openapi.yaml",
+        "services/control-plane/specs/agora/bundle_index.v1_8.json",
+        "scripts/test_agora_v1_8_bundle.py",
+        "docs/contracts/agora/dev-compatibility-manifest.json"
+      ]
+    },
+    {
+      "id": "AC-04",
+      "statement": "no conclude path directly deploys or trades",
+      "status": "pass",
+      "evidence_refs": [
+        "services/control-plane/bff/tests/test_agora_workshop_live_operations.py",
+        "services/control-plane/specs/agora/v9/workshop_live_operations.schema.json"
+      ]
+    },
+    {
+      "id": "AC-05",
+      "statement": "write a redacted append-only checksummed evidence.json",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-002/evidence.json",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-002/evidence.sha256"
+      ]
+    }
+  ],
+  "residual_risks": {
+    "RISK-01": {
+      "blocking_for_this_task": false,
+      "containment": "Keep compatibility_status pending and require LOOP-PROD-AGORA-003 generated client evidence before frontend/deployment compatibility is accepted.",
+      "description": "Backend contract v1.8 is ready, but execute-plans generated types and runtime commit are not included in this Pantheon task.",
+      "expiry": "2026-08-15Z",
+      "owner": "Codex2",
+      "recheck_trigger": "LOOP-PROD-AGORA-003 review",
+      "severity": "medium"
+    },
+    "RISK-02": {
+      "blocking_for_this_task": false,
+      "containment": "Shared hosted-dev deployment identity remains outside this owner evidence cut and must be captured by the deploy/closeout flow.",
+      "description": "Local validation proves the backend and contract surfaces; it does not prove the shared dev VM is serving this branch.",
+      "expiry": "2026-08-15Z",
+      "owner": "Claude",
+      "recheck_trigger": "review approval and task closeout",
+      "severity": "medium"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-002/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-002/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-002/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "Companion evidence.sha256 covers evidence.json to avoid self-referential manifest hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "2026-07-15T14:24:17Z": {
+        "docs/contracts/agora/dev-compatibility-manifest.json": "7801b1fa4479fadc0ce15c077007514f580fc8a9aa850d27aadb129b1d0d0e0f",
+        "services/control-plane/bff/agora/strategy_workshop/operations.py": "939e59f3bc908bcf0769eee53d73a04be7a70a8ea2c703ba1ef5add2669eb75c",
+        "services/control-plane/bff/agora/strategy_workshop/router.py": "562430ee69d5a5e718175676eb6846e2818fd6c63dfcf24f63c347ebdb5cce6f",
+        "services/control-plane/bff/agora/strategy_workshop/store.py": "4e44095fbc7a7b83c2fed76b8fb63ae04663f870056a68abf1ab2f5769ab0edf",
+        "services/control-plane/openapi/agora_v1_8.openapi.yaml": "e0b7108922e76f51900f631477a5f87874f7aaf94630640b5d57d32e7f3feea3",
+        "services/control-plane/specs/agora/bundle_index.v1_8.json": "8bedd60c2d0be4edf9d1c2c76d77e4771d6116cffb4e059092441a9b30dfe653",
+        "services/control-plane/specs/agora/v9/capability_manifest_v1_8.json": "42ecfda2a35ca54ef65481a8898297ad6bc9fe08a159b48bb1a5257ca1c7bacb",
+        "services/control-plane/specs/agora/v9/workshop_live_operations.schema.json": "602828f57d03b168c2ea5f6375ab0b141d39635f70ee5140db21f5d7a253fc06",
+        "services/consultation/client.py": "32fcc45bcb12a9366e49133e56982fb6d5fc66fa4dfd8d3f92e226553cb632ec",
+        "services/consultation/main.py": "15a361ccf2d52dc583ba1e10a397e548b7f4d800d6dc109fd5f65d5163feba39",
+        "services/consultation/models.py": "7c0a59826199ddfbd8cefa1091d5dee008504de7e4c4b19126b08718e765cca7"
+      }
+    }
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-15T13:44:15Z",
+      "kind": "anchor_commit",
+      "status": "recorded",
+      "sha": "7667ef849610367ac2fc34ceae0989c2a1d4b322",
+      "reference": "six live Strategy Workshop operations, durable command receipts, canonical adapters, and focused regressions"
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-07-15T14:12:00Z",
+      "kind": "dev_compose_merge",
+      "status": "recorded",
+      "sha": "102d354742fa616caa5fdb67f0ef5d0ab24145c8",
+      "reference": "origin/dev merged into task branch without conflicts"
+    },
+    {
+      "sequence": 3,
+      "recorded_at": "2026-07-15T14:18:00Z",
+      "kind": "contract_reconciliation",
+      "status": "recorded",
+      "reference": "agora_v1_8 OpenAPI, v1_8 bundle, v9 schemas, and dev compatibility manifest"
+    },
+    {
+      "sequence": 4,
+      "recorded_at": "2026-07-15T14:24:17Z",
+      "kind": "local_validation",
+      "status": "pass",
+      "reference": "BFF 111 passed/1 skipped; consultation 65 passed; Agora contract/compat 48 passed"
+    }
+  ]
+}

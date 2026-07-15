@@ -1,0 +1,60 @@
+{
+  "manifest_version": "1.8",
+  "extends": "v1.7",
+  "description": "Agora BFF capability manifest v1.8. Reconciles the Strategy Workshop operations that were previously documented as fail-closed deferred routes with their live canonical command implementation.",
+  "schema_bundle_index": "services/control-plane/specs/agora/bundle_index.v1_8.json",
+  "openapi_ref": "services/control-plane/openapi/agora_v1_8.openapi.yaml",
+  "capabilities": [
+    {
+      "id": "strategy_workshop_live_operations",
+      "name": "agora.workshop.live_operations.v1",
+      "version": "1.0",
+      "description": "List and create StrategySpec versions, select a version, dispatch research-only runs, open consultations, and conclude a workshop through durable command receipts and authoritative downstream readback.",
+      "schemas": [
+        "WorkshopVersionCreateRequest",
+        "WorkshopResearchRunRequest",
+        "WorkshopConsultationRequest",
+        "WorkshopConcludeRequest",
+        "WorkshopCommandReceipt",
+        "WorkshopLiveOperationEnvelope",
+        "NoDirectActionProof"
+      ],
+      "routes": [
+        "GET /bff/agora/workshops/{workshop_id}/versions",
+        "POST /bff/agora/workshops/{workshop_id}/versions",
+        "POST /bff/agora/workshops/{workshop_id}/versions/{version_id}/select",
+        "POST /bff/agora/workshops/{workshop_id}/research-runs",
+        "POST /bff/agora/workshops/{workshop_id}/consultations",
+        "POST /bff/agora/workshops/{workshop_id}/conclude"
+      ],
+      "implementation_status": "live"
+    }
+  ],
+  "required_definition_checksums": [
+    "WorkshopVersionCreateRequest",
+    "WorkshopResearchRunRequest",
+    "WorkshopConsultationRequest",
+    "WorkshopConcludeRequest",
+    "WorkshopCommandReceipt",
+    "WorkshopLiveOperationEnvelope",
+    "NoDirectActionProof"
+  ],
+  "canonical_authorities": {
+    "versions": "strategy_registry",
+    "research_runs": "research_orchestrator",
+    "consultations": "consultation_service",
+    "conclude": "workshop_store+strategy_registry+approval_decision_store"
+  },
+  "safety_boundary": {
+    "direct_order_route": false,
+    "capital_binding": false,
+    "deployment_triggered_by_conclude": false,
+    "live_capital_changed_by_conclude": false,
+    "mfa_required_for_writes": true,
+    "idempotency_required_for_writes": true,
+    "etag_cas_required_for_writes": true,
+    "two_person_approval_required_for_research_and_conclude": true,
+    "terminal_workshop_rejects_mutation": true
+  },
+  "note": "This additive bundle changes availability truth for the six Strategy Workshop operation routes only. It does not modify frozen v1.1/v1.2 artifacts and grants no broker, order, capital, deployment, rollback, or runtime-binding authority."
+}
