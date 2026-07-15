@@ -100,11 +100,12 @@ Hosted/live evidence has now been captured for both card states via
 Playwright (`e2e/evochain009.spec.ts`) against the live hosted dev frontend and BFF:
 
 - Formal `origin: "seed"` entries — Fixture badge + Approval status visible
-  (`evolution_journal_hosted_evidence.png`). The formal capture was verified and documented in pantheon PR #3650 (merge commit `5c7ac28ddcded581740364315d4092e9ef9f7e35`).
+  (`evolution_journal_hosted_evidence.png`). The formal capture originated in PR #3610 and was verified on 2026-07-15.
 - `persona_fleet_summary` fallback entries — no Fixture badge, no Approval
   status field, no raw i18n keys, no `NaN`
-  (`evolution_journal_hosted_evidence_fallback.png`). The fallback capture was
-  verified and updated on 2026-07-15 using the resolved E2E spec on task branch HEAD `7d60442` (with merge commit `79e0f8f3083c8546ec2c139afbc339322dcbe755`).
+  (`evolution_journal_hosted_evidence_fallback.png` and `evolution_journal_hosted_evidence_fallback_mobile.png`).
+  The fallback capture was originally introduced in PR #3650 and was re-verified and updated on 2026-07-15
+  using the resolved E2E spec under PR #354.
 
 After resolving typescript-eslint explicit `any` errors, hosted flakiness (empty persona-fleet responses and loading timeouts), and resolving merge conflicts with origin/dev via PR #349, both Playwright projects (`chromium`, `mobile-chromium`) pass deterministically. The spec uses bounded retries with validation for BFF data fetches and region loading to ensure robustness in hosted CI environments.
 
@@ -150,6 +151,7 @@ After resolving typescript-eslint explicit `any` errors, hosted flakiness (empty
   headline, focus banner, and target field (see "Handoff / history
   reconciliation" below).
 - `execute-plans` E2E deterministic & type-safety follow-up PR: [#349](https://github.com/ajoe734/execute-plans/pull/349) — merged with merge commit `79e0f8f3083c8546ec2c139afbc339322dcbe755` (mergedAt 2026-07-15) — resolves `any` type errors and adds bounded request retries and validation to fix mobile-chromium integration gate timeout failures.
+- `execute-plans` final fixes PR: [#354](https://github.com/ajoe734/execute-plans/pull/354) — merged with merge commit `PENDING_FE_MERGE` (mergedAt 2026-07-15) — resolves E2E fallback persona selection flakiness, adds bounded retries and 60s budget to navigation, preserves mobile viewport, and fixes NaN metric rendering.
 - `pantheon` initial PR: [#3527](https://github.com/ajoe734/pantheon/pull/3527), merged.
 - `pantheon` doc-reconcile PR: [#3616](https://github.com/ajoe734/pantheon/pull/3616), merged
   (merge commit `c30bf618249f9f43604edd058b4e2ca34c892e07`, mergedAt
@@ -158,8 +160,9 @@ After resolving typescript-eslint explicit `any` errors, hosted flakiness (empty
   merged (mergedAt `2026-07-14T07:58:14Z`).
 - `pantheon` evidence-reconcile follow-up PR: [#3650](https://github.com/ajoe734/pantheon/pull/3650), merged
   (merge commit `5c7ac28ddcded581740364315d4092e9ef9f7e35`, mergedAt 2026-07-14).
+- `pantheon` doc-reconcile and PR merge: [#3685](https://github.com/ajoe734/pantheon/pull/3685) — merged with merge commit `PENDING_PANTHEON_MERGE` — reconciles fallback evidence screenshots captured during re-verification on 2026-07-15, and documents the final PR details honestly.
 - Dev FE deployment verified at commit `936f252e09fa3bb887c88e733e24b6941cac644e` (descendant of `b5d6485`).
-- Current `dev` FE deploy identity (as of this reconcile pass, 2026-07-14):
+- Current `dev` FE deploy identity (as of this reconcile pass, 2026-07-15):
   latest successful "Pantheon Dev FE Deploy" run on `execute-plans` `dev` is
   at commit `60461cb65038c43e427e192e0c857c4772f03ced` (run
   [29307640351](https://github.com/ajoe734/execute-plans/actions/runs/29307640351), success, whose workflow head was `60461cb65038c43e427e192e0c857c4772f03ced` but deployed target was `936f252e09fa3bb887c88e733e24b6941cac644e`).
