@@ -453,28 +453,39 @@ class ManagementNlCommandIdempotencyStore:
                 "Management NL idempotency key is missing while protecting replay data"
             )
         token = cls._idempotency_key_token(clean_key)
-        return cls._replace_string_recursive(value, clean_key, token)
+        return cls._replace_idempotency_metadata(value, clean_key, token)
 
     @classmethod
     def _restore_idempotency_key(cls, value: Any, idempotency_key: str) -> Any:
         clean_key = str(idempotency_key or "").strip()
         token = cls._idempotency_key_token(clean_key)
-        return cls._replace_string_recursive(value, token, clean_key)
+        return cls._replace_idempotency_metadata(value, token, clean_key)
 
     @classmethod
-    def _replace_string_recursive(cls, value: Any, source: str, target: str) -> Any:
-        if isinstance(value, str):
-            return value.replace(source, target)
+    def _replace_idempotency_metadata(cls, value: Any, source: str, target: str) -> Any:
+        """Protect only contract idempotency fields, never arbitrary response text.
+
+        A client key can legally be one character. Replacing every occurrence
+        in answers, URLs, and audit prose would corrupt the canonical response
+        and could expand a bounded result far beyond its storage limit. The
+        header value is emitted by this route only in the named idempotency
+        metadata fields, so those exact values are the durable protection
+        boundary.
+        """
+
         if isinstance(value, list):
-            return [cls._replace_string_recursive(item, source, target) for item in value]
+            return [cls._replace_idempotency_metadata(item, source, target) for item in value]
         if isinstance(value, tuple):
-            return [cls._replace_string_recursive(item, source, target) for item in value]
+            return [cls._replace_idempotency_metadata(item, source, target) for item in value]
         if isinstance(value, dict):
-            return {
-                cls._replace_string_recursive(key, source, target) if isinstance(key, str) else key:
-                cls._replace_string_recursive(item, source, target)
-                for key, item in value.items()
-            }
+            protected: Dict[Any, Any] = {}
+            for key, item in value.items():
+                normalized = str(key).replace("-", "_").lower() if isinstance(key, str) else ""
+                if normalized in {"idempotencykey", "idempotency_key"} and item == source:
+                    protected[key] = target
+                else:
+                    protected[key] = cls._replace_idempotency_metadata(item, source, target)
+            return protected
         return copy.deepcopy(value)
 
     def _validate_response_size(self, result: Mapping[str, Any]) -> None:

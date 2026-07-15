@@ -427,7 +427,7 @@ def test_management_nl_command_store_reloads_exact_result_and_scopes_every_bound
         "data": {
             "status": "completed",
             "message_id": "mnl-durable",
-            "answer": "canonical replay for browser-key",
+            "answer": "canonical replay remains byte-for-byte stable",
         },
         "meta": {"idempotency": {"idempotencyKey": "browser-key"}},
     }
@@ -448,7 +448,24 @@ def test_management_nl_command_store_reloads_exact_result_and_scopes_every_bound
     assert replay.state == "complete"
     assert replay.result == result
     assert store_path.stat().st_mode & 0o777 == 0o600
-    assert "browser-key" not in store_path.read_text(encoding="utf-8")
+    persisted = json.loads(store_path.read_text(encoding="utf-8"))
+    persisted_result = next(iter(persisted["records"].values()))["result"]
+    assert persisted_result["meta"]["idempotency"]["idempotencyKey"] != "browser-key"
+
+    short_scope = ManagementNlCommandScope(
+        actor_id="operator-a",
+        tenant_id="tenant-a",
+        route="POST /bff/management/nl/ask",
+        idempotency_key="a",
+    )
+    short_result = {
+        "data": {"status": "completed", "answer": "alpha stays unchanged"},
+        "meta": {"idempotency": {"idempotencyKey": "a"}},
+    }
+    short = reloaded.admit(short_scope, request_hash="c" * 64)
+    assert short.reservation is not None
+    reloaded.complete(short.reservation, short_result)
+    assert reloaded.admit(short_scope, request_hash="c" * 64).result == short_result
 
     with pytest.raises(ManagementNlCommandPayloadConflict):
         reloaded.admit(scope, request_hash="b" * 64)
