@@ -96,6 +96,33 @@ forcing dispatch of the ten gated tasks; forcing dispatch before the
 prerequisite is `done` would itself violate the packet's own fail-closed
 runtime-lock contract.
 
+Codex2 review replay on 2026-07-15 re-ran catalog validation and dispatcher
+tests at the merged packet state:
+
+```
+AI_NAME=Codex2 python3 scripts/dispatch_loop_product_level_remediation_2026-07-13.py --validate-only
+Catalog valid: program=loop-product-level-remediation-2026-07-13 tasks=48 sha256=44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357
+
+python3 -m pytest scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py
+172 passed in 340.81s
+```
+
+The same replay confirmed `--dry-run` is still fail-closed before any live-board
+materialization. In the auto-worker environment, the central
+`PANTHEON_STATUS_ROOT` runtime-lock capability binding now fails even earlier
+than the bootstrap-status gate because the recorded writer digest for
+`.orchestrator/adapters/file_inbox.py` no longer matches the shared status root:
+
+```
+AI_NAME=Codex2 python3 scripts/dispatch_loop_product_level_remediation_2026-07-13.py --dry-run
+ERROR: runtime lock capability writer digest mismatch: .orchestrator/adapters/file_inbox.py
+Catalog valid: program=loop-product-level-remediation-2026-07-13 tasks=48 sha256=44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357
+```
+
+The ten gated addendum tasks therefore remain intentionally undispatched until
+both the runtime-lock capability binding is current and
+`LOOP-PROD-RUNTIME-BOOT-001` satisfies the `done` prerequisite.
+
 ## Product contract
 
 This packet contains 48 primary execution tasks plus one external pre-dispatch
