@@ -11,6 +11,32 @@ from pathlib import Path
 from typing import Any, Optional
 
 
+_LIFECYCLE_IDENTITY_EVENT_TYPES = frozenset(
+    {
+        "signal_generation",
+        "trade_decision",
+        "risk_evaluation",
+        "paper_order_simulated",
+        "order_submitted",
+        "order_accepted",
+        "order_partially_filled",
+        "paper_fill_simulated",
+        "fill_received",
+        "order_filled",
+        "order_rejection",
+        "order_rejection_simulated",
+        "order_canceled",
+        "order_cancelled",
+        "position_snapshot",
+        "position_snapshot_received",
+        "broker_position_snapshot",
+        "reconciliation_completed",
+        "reconciliation_failed",
+    }
+)
+_DEFAULT_RECENT_LIFECYCLE_EVENT_LIMIT = 512
+
+
 def utc_now_rfc3339() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -121,6 +147,31 @@ def _json_safe_object(value: Any) -> Optional[dict[str, Any]]:
     return cloned if isinstance(cloned, dict) else None
 
 
+def _append_recent_lifecycle_event_id(
+    values: Any,
+    event_id: Any,
+    *,
+    limit: int,
+) -> list[str]:
+    """Return an ordered, deduplicated, bounded lifecycle receipt list."""
+    recent: list[str] = []
+    seen: set[str] = set()
+    if isinstance(values, list):
+        for value in values:
+            normalized = str(value or "").strip()
+            if normalized and normalized not in seen:
+                recent.append(normalized)
+                seen.add(normalized)
+    normalized_event_id = str(event_id or "").strip()
+    if normalized_event_id:
+        # A replay through this projection becomes the most recent observation
+        # without creating a second receipt, keeping the history tail aligned
+        # with last_lifecycle_identity.
+        recent = [value for value in recent if value != normalized_event_id]
+        recent.append(normalized_event_id)
+    return recent[-limit:]
+
+
 class RuntimeSummaryProjectionStore:
     """Small telemetry-owned read model for BFF runtime status surfaces."""
 
@@ -129,9 +180,11 @@ class RuntimeSummaryProjectionStore:
         path: Optional[str | Path] = None,
         *,
         heartbeat_stale_after_seconds: int = 90,
+        recent_lifecycle_event_limit: int = _DEFAULT_RECENT_LIFECYCLE_EVENT_LIMIT,
     ) -> None:
         self._path = Path(path) if path else None
         self._heartbeat_stale_after_seconds = max(int(heartbeat_stale_after_seconds), 1)
+        self._recent_lifecycle_event_limit = max(int(recent_lifecycle_event_limit), 1)
         self._lock = threading.RLock()
         self._summaries: dict[str, dict[str, Any]] = {}
         self._load()
@@ -146,6 +199,7 @@ class RuntimeSummaryProjectionStore:
                 "summary_count": len(self._summaries),
                 "path": self.path,
                 "heartbeat_stale_after_seconds": self._heartbeat_stale_after_seconds,
+                "recent_lifecycle_event_limit": self._recent_lifecycle_event_limit,
             }
 
     _VALID_STAGES = frozenset({"paper", "canary", "live", "frozen"})
@@ -252,7 +306,8 @@ class RuntimeSummaryProjectionStore:
                     "last_heartbeat_at", "last_heartbeat_event_id",
                     "state", "connectivity_status", "broker_status",
                     "queue_lag_ms", "event_delivery_lag_ms", "reported_health_summary",
-                    "trace_id", "correlation_envelope",
+                    "trace_id", "correlation_envelope", "last_lifecycle_identity",
+                    "recent_lifecycle_event_ids",
                 ]
                 for key in keys_to_clear:
                     current.pop(key, None)
@@ -315,6 +370,51 @@ class RuntimeSummaryProjectionStore:
                 current.pop("trace_id", None)
             if correlation_envelope is not None:
                 current["correlation_envelope"] = correlation_envelope
+                if event_type in _LIFECYCLE_IDENTITY_EVENT_TYPES:
+                    # Preserve the last complete lifecycle chain separately
+                    # from general runtime freshness. A later heartbeat may
+                    # update the summary without erasing the identity needed
+                    # by the real reconciliation producer.
+                    current["last_lifecycle_identity"] = {
+                        field: json.loads(json.dumps(event[field]))
+                        for field in (
+                            "event_id",
+                            "event_type",
+                            "created_at",
+                            "tenant_id",
+                            "environment",
+                            "execution_mode",
+                            "deployment_stage",
+                            "binding_id",
+                            "runtime_id",
+                            "capital_pool_id",
+                            "artifact_id",
+                            "artifact_version",
+                            "plan_id",
+                            "persona_capital_binding_id",
+                            "trace_id",
+                            "signal_id",
+                            "run_id",
+                            "loop_run_id",
+                            "aggregate_type",
+                            "aggregate_id",
+                            "sequence_no",
+                            "causal_parent_id",
+                            "source_mode",
+                            "target",
+                            "authority_refs",
+                            "metadata",
+                            "correlation_envelope",
+                        )
+                        if event.get(field) not in (None, "", [], {})
+                    }
+                    current["recent_lifecycle_event_ids"] = (
+                        _append_recent_lifecycle_event_id(
+                            current.get("recent_lifecycle_event_ids"),
+                            event.get("event_id"),
+                            limit=self._recent_lifecycle_event_limit,
+                        )
+                    )
             else:
                 current.pop("correlation_envelope", None)
 
@@ -685,6 +785,15 @@ class RuntimeSummaryProjectionStore:
                 continue
             key = _summary_key(item)
             if key:
+                recent_lifecycle_event_ids = _append_recent_lifecycle_event_id(
+                    item.get("recent_lifecycle_event_ids"),
+                    None,
+                    limit=self._recent_lifecycle_event_limit,
+                )
+                if recent_lifecycle_event_ids:
+                    item["recent_lifecycle_event_ids"] = recent_lifecycle_event_ids
+                else:
+                    item.pop("recent_lifecycle_event_ids", None)
                 normalized[key] = item
         self._summaries = normalized
 
