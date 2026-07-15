@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 
 from services.incident.reference_validation import CanonicalReferenceError
 from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
-from services.incidents.main import app, store
+from services.incidents.main import app, outbox_store, store
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +39,6 @@ def clean_store(monkeypatch):
             return None
 
     monkeypatch.setattr("services.incidents.main.reference_validator", _AcceptAllValidator())
-    monkeypatch.setattr("services.incidents.main._publish_to_postmortems_if_resolved", lambda incident_id: None)
     _reset_store()
     yield
     _reset_store()
@@ -53,6 +52,9 @@ def _reset_store():
         path.unlink()
     if hasattr(store, "_loaded_mtime_ns"):
         store._loaded_mtime_ns = None
+    outbox_path = getattr(outbox_store.impl, "path", None)
+    if outbox_path is not None and outbox_path.exists():
+        outbox_path.unlink()
 
 
 client = TestClient(app)
@@ -260,6 +262,30 @@ def test_consume_threshold_route_rejects_unbreached_threshold():
 
     assert r.status_code == 422
     assert store.get_incident("inc-unbreached-threshold") is None
+
+
+def test_consume_threshold_route_rejects_empty_metric_name():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-empty-metric"
+    payload["threshold_snapshot"]["metric_name"] = ""
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "metric_name is required" in r.text
+    assert store.get_incident("inc-empty-metric") is None
+
+
+def test_consume_threshold_route_rejects_empty_policy_source():
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-empty-policy-source"
+    payload["threshold_snapshot"]["policy_source"] = "   "
+
+    r = client.post("/api/incidents/consume-threshold", json=payload)
+
+    assert r.status_code == 422
+    assert "policy_source is required" in r.text
+    assert store.get_incident("inc-empty-policy-source") is None
 
 
 def test_consume_drift_report_route_creates_incident_case():

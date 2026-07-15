@@ -23,7 +23,7 @@ DB_DSN = os.environ.get("DATABASE_URL") or "postgresql://pantheon_app:pantheon_a
 @pytest.mark.asyncio
 async def test_store_crud_and_validation():
     store = LoopControllerStore(DB_DSN)
-    
+
     # Clean up test record if exists
     conn = await store.store.connect() if hasattr(store, "store") and hasattr(store.store, "connect") else None
     # Let's do cleanup directly using asyncpg connection
@@ -64,9 +64,9 @@ async def test_store_crud_and_validation():
         "evidence_refs": ["ref-1", "ref-2"],
         "payload": {"key": "value"}
     }
-    
+
     await store.upsert_record(valid_record)
-    
+
     # 3. Get record
     fetched = await store.get_record("test-loop-1", "default", "test")
     assert fetched is not None
@@ -117,24 +117,24 @@ async def test_writer_sdk():
     assert record["actual_state_query"] == "actual-q"
     assert record["backlog"] == 10
     assert record["lag"] == 2
-    
+
     # Record success
     await writer.record_success(
         loop_id="test-writer-loop",
         summary="Run was success",
         evidence_refs=["ref-w2"]
     )
-    
+
     record = await store.get_record("test-writer-loop", "default", "test")
     assert record["last_success_at"] is not None
-    
+
     # Record failure
     await writer.record_failure(
         loop_id="test-writer-loop",
         reason="Something crashed",
         dlq_count=5
     )
-    
+
     record = await store.get_record("test-writer-loop", "default", "test")
     assert record["last_failure_at"] is not None
     assert record["last_failure_reason"] == "Something crashed"
@@ -170,7 +170,7 @@ async def test_lease_safety_and_stale_heartbeats():
 
     # Try to write with a heartbeat 1 hour in the past
     past_heartbeat = datetime.now(timezone.utc) - timedelta(hours=1)
-    
+
     # Use store directly or writer with past heartbeat
     writer_stale = LoopControllerWriter(DB_DSN, tenant_id="default", environment="test", controller_id="ctrl-lease-1")
     await writer_stale._write_status("test-lease-loop", "reconciled_live_proof", last_heartbeat_at=past_heartbeat)
@@ -207,11 +207,96 @@ def test_projector():
         "payload": '{"last_success_summary": "Successfully projected"}'
     }
 
-    projected = project_controller_record_to_bff(row)
-    
+    projected = project_controller_record_to_bff(
+        row,
+        now=datetime(2026, 7, 13, 20, 1, 0, tzinfo=timezone.utc),
+    )
+
     assert projected["loop_id"] == "test-loop-proj"
-    assert projected["controller_health"]["status"] == "ok"
+    assert projected["controller_health"]["status"] == "healthy"
     assert projected["controller_health"]["controller_name"] == "ProjController"
     assert projected["last_success"]["summary"] == "Successfully projected"
     assert projected["evidence_packet"]["highest_truth_level"] == "reconciled_live_proof"
     assert "ref-p1" in projected["refs"]
+
+
+def test_projector_does_not_manufacture_evidence_or_healthy_expired_lease():
+    row = {
+        "loop_id": "test-loop-expired",
+        "tenant_id": "default",
+        "environment": "dev",
+        "controller_id": "ctrl-expired",
+        "controller_name": "ExpiredController",
+        "deployment_sha": "sha-expired",
+        "last_heartbeat_at": datetime(2026, 7, 13, 20, 0, 0, tzinfo=timezone.utc),
+        "last_success_at": datetime(2026, 7, 13, 20, 0, 0, tzinfo=timezone.utc),
+        "lease_expires_at": datetime(2026, 7, 13, 20, 1, 0, tzinfo=timezone.utc),
+        "evidence_refs": [],
+        "truth_level": "reconciled_live_proof",
+        "payload": {},
+    }
+
+    projected = project_controller_record_to_bff(
+        row,
+        now=datetime(2026, 7, 13, 20, 2, 0, tzinfo=timezone.utc),
+    )
+
+    assert projected["refs"] == []
+    assert projected["evidence_packet"]["refs"] == []
+    assert projected["truth_status"] == "missing_evidence"
+    assert projected["controller_health"]["status"] == "degraded"
+    assert projected["controller_health"]["degraded_reason"] == "controller lease expired"
+
+
+def test_projector_reports_later_failure_as_unhealthy():
+    row = {
+        "loop_id": "test-loop-failed",
+        "tenant_id": "default",
+        "environment": "dev",
+        "controller_id": "ctrl-failed",
+        "controller_name": "FailedController",
+        "deployment_sha": "sha-failed",
+        "last_heartbeat_at": datetime(2026, 7, 13, 20, 2, 0, tzinfo=timezone.utc),
+        "last_success_at": datetime(2026, 7, 13, 20, 0, 0, tzinfo=timezone.utc),
+        "last_failure_at": datetime(2026, 7, 13, 20, 1, 0, tzinfo=timezone.utc),
+        "last_failure_reason": "downstream unavailable",
+        "lease_expires_at": datetime(2026, 7, 13, 20, 5, 0, tzinfo=timezone.utc),
+        "evidence_refs": ["runtime:failed-controller"],
+        "truth_level": "reconciled_live_proof",
+        "payload": {},
+    }
+
+    projected = project_controller_record_to_bff(
+        row,
+        now=datetime(2026, 7, 13, 20, 2, 0, tzinfo=timezone.utc),
+    )
+
+    assert projected["controller_health"]["status"] == "unhealthy"
+    assert projected["controller_health"]["degraded_reason"] == "downstream unavailable"
+
+
+def test_projector_stale_heartbeat_and_query_text_do_not_manufacture_actual_state():
+    row = {
+        "loop_id": "test-loop-stale",
+        "tenant_id": "default",
+        "environment": "dev",
+        "controller_id": "ctrl-stale",
+        "controller_name": "StaleController",
+        "last_heartbeat_at": datetime(2026, 7, 13, 19, 0, 0, tzinfo=timezone.utc),
+        "last_tick_at": datetime(2026, 7, 13, 19, 0, 0, tzinfo=timezone.utc),
+        "actual_state_query": "SELECT claimed_actual_state",
+        "evidence_refs": ["runtime:stale-controller"],
+        "truth_level": "scheduled_tick",
+        "payload": {},
+    }
+
+    projected = project_controller_record_to_bff(
+        row,
+        now=datetime(2026, 7, 13, 20, 0, 0, tzinfo=timezone.utc),
+    )
+
+    assert projected["controller_health"]["status"] == "degraded"
+    assert projected["controller_health"]["degraded_reason"] == "controller heartbeat is stale"
+    assert projected["downstream_actual_state"]["status"] == "unobserved"
+    assert projected["downstream_actual_state"]["checked_at"] is None
+    assert projected["evidence_packet"]["captured_at"].startswith("2026-07-13T19:00:00")

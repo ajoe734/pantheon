@@ -1,9 +1,9 @@
 # TJ-E2E-003 Sidecar Review Packet
 
-Task: `TJ-E2E-003-SIDECAR-REVIEW`  
-Parent: `TJ-E2E-003`  
-Owner: Codex2  
-Reviewer: Codex  
+Task: `TJ-E2E-003-SIDECAR-REVIEW`
+Parent: `TJ-E2E-003`
+Owner: Codex2
+Reviewer: Codex
 Disposition: handoff ready; parent remains blocked
 
 ## Review boundary

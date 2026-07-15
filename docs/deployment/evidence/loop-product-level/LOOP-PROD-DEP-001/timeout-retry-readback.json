@@ -1,0 +1,41 @@
+{
+  "blocked_reason": null,
+  "delivery_attempts": 1,
+  "dlq_at": null,
+  "event": {
+    "aggregate_id": "deployment-saga-plan-loop-prod-dep-20260715001015",
+    "aggregate_type": "deployment_saga",
+    "causal_parent_id": null,
+    "emitted_at": "2026-07-15T00:10:26Z",
+    "event_id": "deployment-saga-plan-loop-prod-dep-20260715001015-evt-0001",
+    "event_time": "2026-07-15T00:10:26Z",
+    "event_type": "runtime.binding.requested",
+    "idempotency_key": "deployment-saga-plan-loop-prod-dep-20260715001015:1:runtime.binding.requested",
+    "payload": {
+      "approval_decision_id": "approval-loop-prod-dep-20260715001015",
+      "artifact_id": "artifact-loop-prod-dep-20260715001015",
+      "artifact_version": "1.14.1015",
+      "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+      "plan_id": "plan-loop-prod-dep-20260715001015",
+      "runtime_action": "deploy_new_binding",
+      "strategy_id": "tw_session_momentum",
+      "target_stage": "paper"
+    },
+    "sequence_no": 1,
+    "trace_id": "dae4254c-7edb-44d5-bb15-022f1ac5e89a"
+  },
+  "last_attempt_at": "2026-07-15T00:10:42Z",
+  "last_error": "transient dispatch failure: authoritative pre-dispatch binding recovery failed: timed out",
+  "last_replayed_at": null,
+  "next_retry_at": "2026-07-15T00:11:12Z",
+  "owner_service": "deployment-orchestrator",
+  "published_at": null,
+  "replay_count": 0,
+  "retry_policy": {
+    "consumer_name": "deployment-outbox-consumer",
+    "max_attempts": 3,
+    "retry_delay_seconds": 30,
+    "retryable": true
+  },
+  "status": "pending"
+}

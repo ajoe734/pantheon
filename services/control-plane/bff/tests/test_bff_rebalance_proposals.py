@@ -1357,7 +1357,7 @@ def test_action_adapter_rebalance_apply_forwarding(tmp_path: Path) -> None:
             rebalance_id,
             suffix="adapter-apply",
         )
-        
+
         # Call the action adapter endpoint
         response = harness.client.post(
             f"/bff/actions/rebalance/{rebalance_id}/apply",
@@ -1369,14 +1369,14 @@ def test_action_adapter_rebalance_apply_forwarding(tmp_path: Path) -> None:
         )
         assert response.status_code == 202, response.text
         command_id = response.json()["data"]["command_id"]
-        
+
         receipt = _command_receipt(harness, command_id)
         assert receipt["status"] == "executed"
         result = receipt["result"]
         assert result["status"] == "applied"
         assert result["dispatch_path"] == "capital_service_rebalance_authority"
         assert result["entity_id"] == rebalance_id
-        
+
         proposal = harness.client.get(
             f"/bff/rebalances/{rebalance_id}", headers=HEADERS
         ).json()["data"]
@@ -1389,13 +1389,13 @@ def test_action_adapter_emergency_containment_forwarding(tmp_path: Path) -> None
         persona_id = "p-containment-forward"
         harness.create_persona(persona_id)
         assert harness.client is not None
-        
+
         sig_id, apply_headers = _containment_security_evidence(
             harness,
             suffix="containment-forward",
             persona_id=persona_id,
         )
-        
+
         # Call the action adapter endpoint for persona emergency containment
         response = harness.client.post(
             f"/bff/actions/persona/{persona_id}/EmergencyContainment",
@@ -1412,14 +1412,14 @@ def test_action_adapter_emergency_containment_forwarding(tmp_path: Path) -> None
         )
         assert response.status_code == 202, response.text
         command_id = response.json()["data"]["command_id"]
-        
+
         receipt = _command_receipt(harness, command_id)
         assert receipt["status"] == "executed"
         result = receipt["result"]
         assert result["containment"] is True
         assert result["containment_state"] == "frozen"
         assert result["dispatch_path"] == "capital_service_containment_authority"
-        
+
         persona = harness.client.get(
             f"/bff/personas/{persona_id}", headers=HEADERS
         ).json()["data"]
@@ -1431,10 +1431,10 @@ def test_restart_preserves_pending_proposals_via_write_datasets(tmp_path: Path) 
     with CapitalBffAuthorityHarness(tmp_path) as harness:
         created = _create_proposal(harness, key="rb-proposal-pending-restart")
         rebalance_id = created.json()["rebalance_id"]
-        
+
         harness.restart()
         assert harness.client is not None
-        
+
         proposal = harness.client.get(
             f"/bff/rebalances/{rebalance_id}", headers=HEADERS
         )

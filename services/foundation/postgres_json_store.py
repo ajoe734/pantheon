@@ -110,11 +110,69 @@ class PostgresJsonOwnerStore:
                 f"""
                 INSERT INTO {self.table} (record_id, payload)
                 VALUES (%s, %s::jsonb)
+                """,
+                (record_id, json.dumps(payload, ensure_ascii=True, sort_keys=True)),
+            )
+
+    def insert_if_absent(
+        self,
+        record_id: str,
+        payload: Dict[str, Any],
+        *,
+        unique_fields: tuple[str, ...] = (),
+    ) -> tuple[bool, Dict[str, Any]]:
+        """Atomically insert a record or return its identity collision.
+
+        ``unique_fields`` defines an optional composite identity in addition to
+        ``record_id``.  Delivery inboxes use it to reserve an idempotency key
+        even when a divergent replay supplies a different event ID.  The table
+        lock keeps the read/decision/write sequence in one transaction; normal
+        ``put`` writers acquire a conflicting row-exclusive table lock.
+        """
+
+        if not record_id:
+            raise ValueError("record_id is required")
+        if self.read_only:
+            raise PermissionError(
+                f"{self.table_name} is read-only for this store; "
+                f"writes must go through {self.owner_service}"
+            )
+        fields = tuple(str(field).strip() for field in unique_fields)
+        if any(not field for field in fields):
+            raise ValueError("unique_fields must contain non-empty field names")
+        missing = [field for field in fields if field not in payload]
+        if missing:
+            raise ValueError(f"payload missing unique fields: {missing}")
+
+        with self._connect() as conn:
+            conn.execute(f"LOCK TABLE {self.table} IN SHARE ROW EXCLUSIVE MODE")
+            direct_cursor = conn.execute(
+                f"SELECT payload FROM {self.table} WHERE record_id = %s",
+                (record_id,),
+            )
+            direct_row = self._fetch_one(direct_cursor)
+            if direct_row is not None:
+                existing = direct_row[0] if isinstance(direct_row, tuple) else direct_row.get("payload")
+                return False, dict(self._decode_payload(existing) or {})
+
+            if fields:
+                cursor = conn.execute(f"SELECT payload FROM {self.table} ORDER BY updated_at ASC")
+                for row in cursor.fetchall():
+                    existing = row[0] if isinstance(row, tuple) else row.get("payload")
+                    decoded = self._decode_payload(existing)
+                    if decoded is not None and all(decoded.get(field) == payload.get(field) for field in fields):
+                        return False, dict(decoded)
+
+            conn.execute(
+                f"""
+                INSERT INTO {self.table} (record_id, payload)
+                VALUES (%s, %s::jsonb)
                 ON CONFLICT (record_id)
                 DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()
                 """,
                 (record_id, json.dumps(payload, ensure_ascii=True, sort_keys=True)),
             )
+        return True, dict(payload)
 
     def get(self, record_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:

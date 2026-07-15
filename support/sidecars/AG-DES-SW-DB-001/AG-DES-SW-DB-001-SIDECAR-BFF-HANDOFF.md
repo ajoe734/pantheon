@@ -1,12 +1,12 @@
 # AG-DES-SW-DB-001 BFF & Frontend Handoff Packet
 
-**Sidecar ID:** AG-DES-SW-DB-001-SIDECAR-BFF-HANDOFF  
-**Parent Task:** AG-DES-SW-DB-001 — Workshop tables, lifecycle alignment, exact index migration  
-**Sidecar Kind:** bff_handoff_packet  
-**Date:** 2026-06-21  
-**Author:** Claude (auto-worker)  
-**Reviewer:** Claude2  
-**Status:** publication_ready  
+**Sidecar ID:** AG-DES-SW-DB-001-SIDECAR-BFF-HANDOFF
+**Parent Task:** AG-DES-SW-DB-001 — Workshop tables, lifecycle alignment, exact index migration
+**Sidecar Kind:** bff_handoff_packet
+**Date:** 2026-06-21
+**Author:** Claude (auto-worker)
+**Reviewer:** Claude2
+**Status:** publication_ready
 
 > **Scope notice.** This packet is a support artifact only.
 > It does not modify canonical truth (L1 policy, OpenAPI contracts, DB schemas, or service implementations).

@@ -35,6 +35,33 @@ except ImportError:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+def _authority_report() -> Dict[str, Any]:
+    return {
+        "status": "passed",
+        "authority": "canonical_deployment_registry_governance_capital",
+        "plan_id": "plan-001",
+        "plan_status": "approved",
+        "target_stage": "paper",
+        "artifact_id": "artifact-001",
+        "artifact_version": "v1.0.0",
+        "strategy_id": "strat-001",
+        "approval_decision_id": "adec-001",
+        "capital_pool_id": "pool-paper-001",
+        "sponsor_persona_id": "persona-001",
+        "persona_capital_binding_id": "pcb-001",
+        "deployment_plan_current_stage": "none",
+        "deployment_plan_binding_id": None,
+        "deployment_plan_runtime_lifecycle": {},
+        "deployment_plan_sha256": "sha256:" + "0" * 64,
+        "deployment_plan_authority_sha256": "sha256:" + "a" * 64,
+        "registry_entry_sha256": "sha256:" + "1" * 64,
+        "approval_decision_sha256": "sha256:" + "2" * 64,
+        "capital_pool_sha256": "sha256:" + "3" * 64,
+        "capital_admissibility_sha256": "sha256:" + "4" * 64,
+        "persona_capital_binding_sha256": "sha256:" + "5" * 64,
+    }
+
+
 def _make_saga(*, binding_id: Optional[str] = None) -> Dict[str, Any]:
     return {
         "saga_id": "deployment-saga-plan-001",
@@ -58,11 +85,13 @@ def _make_saga(*, binding_id: Optional[str] = None) -> Dict[str, Any]:
 
 def _make_deploy_context(**overrides: Any) -> Dict[str, Any]:
     ctx = {
+        "sponsor_persona_id": "persona-001",
         "persona_capital_binding_id": "pcb-001",
         "persona_capital_binding_status": "active",
         "allowed_deployment_scope": "paper",
         "loader_checks_passed": True,
         "plan_status": "approved",
+        "metadata": {"authoritative_loader_attestation": _authority_report()},
     }
     ctx.update(overrides)
     return ctx
@@ -71,12 +100,19 @@ def _make_deploy_context(**overrides: Any) -> Dict[str, Any]:
 def _make_binding(binding_id: str = "rb-abc123") -> Dict[str, Any]:
     return {
         "binding_id": binding_id,
+        "plan_id": "plan-001",
         "runtime_id": "rt-001",
         "capital_pool_id": "pool-paper-001",
         "artifact_id": "artifact-001",
         "artifact_version": "v1.0.0",
         "deployment_mode": "paper",
+        "execution_mode": "paper",
+        "persona_capital_binding_id": "pcb-001",
         "status": "active",
+        "metadata": {
+            "strategy_id": "strat-001",
+            "authoritative_loader_attestation": _authority_report(),
+        },
     }
 
 
@@ -84,7 +120,7 @@ def _make_client(
     *,
     deploy_return: Optional[Dict[str, Any]] = None,
     deploy_raise: Optional[Exception] = None,
-    get_return: Optional[Dict[str, Any]] = None,
+    get_return: Any = ...,
     get_raise: Optional[Exception] = None,
 ) -> MagicMock:
     client = MagicMock()
@@ -95,7 +131,9 @@ def _make_client(
     if get_raise is not None:
         client.get.side_effect = get_raise
     else:
-        client.get.return_value = get_return
+        client.get.return_value = (
+            client.deploy.return_value if get_return is ... else get_return
+        )
     return client
 
 
@@ -125,16 +163,22 @@ class TestNewDispatch:
     def test_deploy_request_uses_saga_and_context_fields(self):
         client = _make_client(deploy_return=_make_binding())
         saga = _make_saga()
-        ctx = _make_deploy_context(runtime_id="rt-custom-001", idempotency_key="idem-key")
+        ctx = _make_deploy_context(
+            runtime_id="rt-custom-001",
+            idempotency_key="idem-key",
+            promotion_gate={"promotion_gate_decision_id": "gate-001"},
+        )
         dispatch_to_runtime_manager(saga=saga, deploy_context=ctx, client=client)
 
         call_args = client.deploy.call_args[0][0]
         assert call_args["plan_id"] == saga["plan_id"]
+        assert call_args["approval_decision_id"] == saga["approval_decision_id"]
         assert call_args["artifact_id"] == saga["artifact_id"]
         assert call_args["artifact_version"] == saga["artifact_version"]
         assert call_args["capital_pool_id"] == saga["capital_pool_id"]
         assert call_args["target_stage"] == saga["target_stage"]
         assert call_args["strategy_id"] == saga["strategy_id"]
+        assert call_args["sponsor_persona_id"] == "persona-001"
         assert call_args["persona_capital_binding_id"] == "pcb-001"
         assert call_args["persona_capital_binding_status"] == "active"
         assert call_args["allowed_deployment_scope"] == "paper"
@@ -142,15 +186,85 @@ class TestNewDispatch:
         assert call_args["plan_status"] == "approved"
         assert call_args["runtime_id"] == "rt-custom-001"
         assert call_args["idempotency_key"] == "idem-key"
+        assert call_args["promotion_gate"] == {
+            "promotion_gate_decision_id": "gate-001"
+        }
 
-    def test_get_is_not_called_for_new_dispatch(self):
+    def test_new_dispatch_requires_authoritative_get_readback(self):
         client = _make_client(deploy_return=_make_binding())
         dispatch_to_runtime_manager(
             saga=_make_saga(),
             deploy_context=_make_deploy_context(),
             client=client,
         )
-        client.get.assert_not_called()
+        client.get.assert_called_once_with("rb-abc123")
+
+    def test_post_receipt_is_replaced_by_authoritative_readback(self):
+        receipt = _make_binding("rb-newbinding")
+        receipt["status"] = "submitted"
+        readback = _make_binding("rb-newbinding")
+        client = _make_client(deploy_return=receipt, get_return=readback)
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(),
+            deploy_context=_make_deploy_context(),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.SUCCESS
+        assert result.binding == readback
+        assert result.binding["status"] == "active"
+
+    def test_missing_authoritative_readback_is_retryable(self):
+        client = _make_client(deploy_return=_make_binding(), get_return=None)
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(),
+            deploy_context=_make_deploy_context(),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.RETRYABLE_ERROR
+        assert result.error_code == "BINDING_READBACK_PENDING"
+
+    def test_mismatched_authoritative_readback_is_terminal(self):
+        readback = _make_binding()
+        readback["artifact_version"] = "tampered"
+        client = _make_client(deploy_return=_make_binding(), get_return=readback)
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(),
+            deploy_context=_make_deploy_context(),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.TERMINAL_ERROR
+        assert result.error_code == "BINDING_READBACK_MISMATCH"
+        assert "artifact_version" in (result.error_message or "")
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("execution_mode", "live"),
+            ("persona_capital_binding_id", "pcb-tampered"),
+        ],
+    )
+    def test_governance_or_execution_identity_mismatch_is_terminal(
+        self, field, value
+    ):
+        readback = _make_binding()
+        readback[field] = value
+        client = _make_client(deploy_return=_make_binding(), get_return=readback)
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(),
+            deploy_context=_make_deploy_context(),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.TERMINAL_ERROR
+        assert result.error_code == "BINDING_READBACK_MISMATCH"
+        assert field in (result.error_message or "")
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +291,110 @@ class TestIdempotentReplay:
         assert result.idempotent_replay is True
         client.deploy.assert_not_called()
         client.get.assert_called_once_with("rb-existing")
+
+    def test_binding_created_response_loss_allows_only_plan_lifecycle_drift(self):
+        admitted = _authority_report()
+        current = {
+            **admitted,
+            "plan_status": "executing",
+            "deployment_plan_binding_id": "rb-existing",
+            "deployment_plan_runtime_lifecycle": {
+                "binding_id": "rb-existing",
+                "runtime_id": "rt-001",
+            },
+            "deployment_plan_sha256": "sha256:" + "b" * 64,
+        }
+        binding = _make_binding("rb-existing")
+        binding["metadata"]["authoritative_loader_attestation"] = admitted
+        client = _make_client(get_return=binding)
+        saga = _make_saga(binding_id="rb-existing")
+
+        result = dispatch_to_runtime_manager(
+            saga=saga,
+            deploy_context=_make_deploy_context(
+                plan_status="executing",
+                metadata={"authoritative_loader_attestation": current},
+            ),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.SUCCESS
+        assert result.idempotent_replay is True
+        client.deploy.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("deployment_plan_binding_id", "rb-other"),
+            (
+                "deployment_plan_runtime_lifecycle",
+                {"binding_id": "rb-other", "runtime_id": "rt-001"},
+            ),
+            (
+                "deployment_plan_runtime_lifecycle",
+                {"binding_id": "rb-existing", "runtime_id": "rt-other"},
+            ),
+        ],
+    )
+    def test_binding_created_response_loss_rejects_lifecycle_readback_drift(
+        self, field, value
+    ):
+        admitted = _authority_report()
+        current = {
+            **admitted,
+            "plan_status": "executing",
+            "deployment_plan_binding_id": "rb-existing",
+            "deployment_plan_runtime_lifecycle": {
+                "binding_id": "rb-existing",
+                "runtime_id": "rt-001",
+            },
+            "deployment_plan_sha256": "sha256:" + "b" * 64,
+            field: value,
+        }
+        binding = _make_binding("rb-existing")
+        binding["metadata"]["authoritative_loader_attestation"] = admitted
+        client = _make_client(get_return=binding)
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(binding_id="rb-existing"),
+            deploy_context=_make_deploy_context(
+                plan_status="executing",
+                metadata={"authoritative_loader_attestation": current},
+            ),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.TERMINAL_ERROR
+        assert "current canonical DeploymentPlan" in (result.error_message or "")
+
+    def test_binding_created_response_loss_rejects_authority_projection_drift(self):
+        admitted = _authority_report()
+        current = {
+            **admitted,
+            "plan_status": "executing",
+            "deployment_plan_binding_id": "rb-existing",
+            "deployment_plan_runtime_lifecycle": {
+                "binding_id": "rb-existing",
+                "runtime_id": "rt-001",
+            },
+            "deployment_plan_sha256": "sha256:" + "b" * 64,
+            "deployment_plan_authority_sha256": "sha256:" + "c" * 64,
+        }
+        binding = _make_binding("rb-existing")
+        binding["metadata"]["authoritative_loader_attestation"] = admitted
+        client = _make_client(get_return=binding)
+
+        result = dispatch_to_runtime_manager(
+            saga=_make_saga(binding_id="rb-existing"),
+            deploy_context=_make_deploy_context(
+                plan_status="executing",
+                metadata={"authoritative_loader_attestation": current},
+            ),
+            client=client,
+        )
+
+        assert result.outcome == DispatchOutcome.TERMINAL_ERROR
+        assert "authority projection" in (result.error_message or "")
 
     def test_binding_not_found_is_terminal_inconsistency(self):
         client = _make_client(get_return=None)
@@ -393,6 +611,7 @@ class TestBuildDeployRequest:
         req = _build_deploy_request(saga=saga, deploy_context=ctx)
 
         assert req["plan_id"] == saga["plan_id"]
+        assert req["approval_decision_id"] == saga["approval_decision_id"]
         assert req["artifact_id"] == saga["artifact_id"]
         assert req["artifact_version"] == saga["artifact_version"]
         assert req["capital_pool_id"] == saga["capital_pool_id"]
@@ -405,6 +624,7 @@ class TestBuildDeployRequest:
         req = _build_deploy_request(saga=saga, deploy_context=ctx)
 
         assert req["persona_capital_binding_id"] == ctx["persona_capital_binding_id"]
+        assert req["sponsor_persona_id"] == ctx["sponsor_persona_id"]
         assert req["persona_capital_binding_status"] == ctx["persona_capital_binding_status"]
         assert req["allowed_deployment_scope"] == ctx["allowed_deployment_scope"]
         assert req["loader_checks_passed"] is True
@@ -417,7 +637,10 @@ class TestBuildDeployRequest:
             idempotency_key="ik-001",
             rollback_parent="rb-old",
             rollback_action_type="replace",
-            metadata={"source": "test"},
+            metadata={
+                "source": "test",
+                "authoritative_loader_attestation": _authority_report(),
+            },
         )
         req = _build_deploy_request(saga=saga, deploy_context=ctx)
 
@@ -425,7 +648,10 @@ class TestBuildDeployRequest:
         assert req["idempotency_key"] == "ik-001"
         assert req["rollback_parent"] == "rb-old"
         assert req["rollback_action_type"] == "replace"
-        assert req["metadata"] == {"source": "test"}
+        assert req["metadata"] == {
+            "source": "test",
+            "authoritative_loader_attestation": _authority_report(),
+        }
 
     def test_plan_status_defaults_to_approved_when_missing(self):
         saga = _make_saga()

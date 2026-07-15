@@ -365,12 +365,31 @@ def restart_attempt_counts(attempts: list[dict[str, Any]], now: datetime, settin
     return {"window": in_window, "hour": in_hour}
 
 
+def early_close_cleared_pressure_circuit(
+    watchdog_state: dict[str, Any],
+    now: datetime,
+    pressure_reasons: list[str] | None = None,
+) -> bool:
+    """Close only when this tick explicitly proved prior resource pressure cleared."""
+    circuit = watchdog_state.setdefault("circuit", {"open": False, "reason": None, "opened_at": None, "until": None})
+    circuit_reason = str(circuit.get("reason") or "")
+    if (
+        not circuit.get("open")
+        or not circuit_reason.startswith("resource_pressure:")
+        or pressure_reasons != []
+    ):
+        return False
+    circuit["open"] = False
+    circuit["closed_at"] = isoformat_utc(now)
+    return True
+
+
 def budget_suppression_reason(watchdog_state: dict[str, Any], now: datetime, settings: dict[str, Any]) -> str | None:
     circuit = watchdog_state.setdefault("circuit", {"open": False, "reason": None, "opened_at": None, "until": None})
     until = parse_utc_timestamp(str(circuit.get("until") or ""))
     if circuit.get("open") and until is not None and now < until:
         return "watchdog_circuit_open"
-    if circuit.get("open") and (until is None or now >= until):
+    if circuit.get("open"):
         circuit["open"] = False
         circuit["closed_at"] = isoformat_utc(now)
 
@@ -516,6 +535,8 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
     health = evaluate_supervisor_health(runtime_state, pid, alive, now, settings)
     resource = resource_snapshot(config, runtime_state, settings)
     pressure_reasons = resource_pressure_reasons(resource, settings, state_error)
+    if settings.get("enabled", True):
+        early_close_cleared_pressure_circuit(watchdog_state, now, pressure_reasons)
     restart_counts = restart_attempt_counts(attempts, now, settings)
     decision = "observe_only"
     reason = str(health.get("reason") or "healthy")
@@ -529,7 +550,13 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
         decision = "suppress_restart"
         reason = "resource_pressure:" + ",".join(pressure_reasons)
         if not health.get("healthy"):
-            open_circuit(watchdog_state, now, reason, settings)
+            circuit = watchdog_state.get("circuit", {})
+            circuit_open = bool(circuit.get("open")) if isinstance(circuit, dict) else False
+            circuit_reason = str(circuit.get("reason") or "") if circuit_open else ""
+            # Transient pressure must not relabel a genuine crash-loop circuit;
+            # otherwise the next clean scan could early-close its cooldown.
+            if not circuit_open or circuit_reason.startswith("resource_pressure:"):
+                open_circuit(watchdog_state, now, reason, settings)
     elif health.get("healthy"):
         decision = "observe_only"
         reason = "supervisor_healthy"

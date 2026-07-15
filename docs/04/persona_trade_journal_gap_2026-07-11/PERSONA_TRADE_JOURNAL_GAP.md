@@ -1,7 +1,7 @@
 # Persona Trade Journal 與逐筆交易反思 Gap
 
-日期：2026-07-11  
-狀態：execution-ready design；尚未宣稱實作完成  
+日期：2026-07-11
+狀態：execution-ready design；尚未宣稱實作完成
 範圍：Pantheon BFF、telemetry/lineage、persona OODA/memory、`execute-plans` 管理前端
 
 ## 1. 問題與目標
@@ -209,4 +209,3 @@ Persona detail 新增 `Trade Journal`：
 
 只有當 canonical joins、reflection worker、BFF、frontend、governance、replay/hosted acceptance
 全部通過，才可稱 Persona Trade Journal 完成。僅有 UI mock、LLM summary 或 local test 都不算完成。
-

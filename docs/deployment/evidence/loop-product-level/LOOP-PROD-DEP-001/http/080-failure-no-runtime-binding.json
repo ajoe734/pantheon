@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-07-15T00:12:02Z",
+  "duration_ms": 3.026,
+  "label": "failure-no-runtime-binding",
+  "request": {
+    "body": null,
+    "headers": {
+      "Authorization": "Bearer <redacted>"
+    },
+    "method": "GET",
+    "started_at": "2026-07-15T00:12:02Z",
+    "url": "http://127.0.0.1:18081/api/runtime-bindings?plan_id=plan-loop-prod-dep-failure-20260715001015"
+  },
+  "response": {
+    "payload": {
+      "bindings": [],
+      "count": 0
+    },
+    "status": 200
+  }
+}

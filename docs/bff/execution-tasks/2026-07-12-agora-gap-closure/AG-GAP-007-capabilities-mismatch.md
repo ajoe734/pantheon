@@ -5,7 +5,7 @@ Status: completed
 ## 1. Capabilities Endpoint Fix
 
 ### Bug Description
-A relative path traversal issue was identified in `services/control-plane/bff/agora/router.py` for the definition of `_CAPABILITY_MANIFEST_PATH`. 
+A relative path traversal issue was identified in `services/control-plane/bff/agora/router.py` for the definition of `_CAPABILITY_MANIFEST_PATH`.
 The path incorrectly traversed up 3 parent directories instead of 2 (resolving to `services/specs/agora/capability_manifest.json` instead of `services/control-plane/specs/agora/capability_manifest.json`). This caused file loading to fail silently under `_load_capability_manifest()` and return an empty `capabilities` array, while `/me` continued to successfully return all 7 granted capabilities from the token claims.
 
 ### Fix

@@ -1,6 +1,9 @@
 # AG-UIPOL-011: Narrow responsive task parity
 
-Status: draft follow-up from AG-UIPOL-005. Not yet dispatched.
+Status: active delivery. The frontend implementation merged through
+`execute-plans` PR #344 at
+`cbc6877630e0af087cd4d119da6024d816e4e495`; hosted acceptance and the
+post-delivery parity readback remain in progress.
 
 Priority: 6 — cross-surface behavioral gate after desktop IA ownership is clear.
 
@@ -53,6 +56,43 @@ Primary repo: `ajoe734/execute-plans@dev`.
 - A native app or a second mobile-only information architecture.
 - Replacing the desktop content work owned by AG-UIPOL-006–010.
 - Pixel matching an artboard that does not exist.
+
+## Implementation record
+
+The shipped contract uses a shared `900px` implementation breakpoint. That
+number is an application contract, not recovered pixel truth: the source only
+authorizes the behavioral priorities described above.
+
+- The shell owns vertical scrolling, contains horizontal overflow, preserves
+  safe-area space, and turns the desktop Servant rail into a modal sheet on
+  narrow screens.
+- Trading Room puts current task, decision, and risk context before diagnostic
+  depth; lens navigation collapses; candidates become cards; Candidate Review
+  and Servant use focus-contained full-width overlays.
+- Strategy Workshop switches between conversation and readiness/next-question
+  panes instead of squeezing the three-column desktop layout.
+- Performance switches between decisions, selected outcome, and strategy cards
+  rather than clipping the desktop comparison table.
+- Winner Branch workspace grid coordinates remain desktop-authoritative. The
+  narrow projection is a deterministic vertical card order, with proposal,
+  edit, widget-library, revision, history, and action controls kept reachable.
+
+Local delivery validation before merge:
+
+- TypeScript: `npx tsc --noEmit`.
+- Production build: live BFF mode, strict fallback, real writes and dev-stub
+  writes disabled.
+- Vitest: 151 files and 1,387 tests passed; the five focused Agora suites passed
+  137 tests.
+- Local Playwright: `e2e/29-persona-interaction.spec.ts`, 10 tests passed
+  against the production preview.
+- Task-scoped ESLint: zero errors and one existing Fast Refresh warning.
+
+The repository-wide lint and contract commands still expose two unrelated
+base-branch defects: two `no-explicit-any` errors in `e2e/evochain009.spec.ts`
+and a pre-existing `openapi/agora_v1_3.openapi.yaml` bundle hash mismatch.
+Neither file is changed by AG-UIPOL-011; the task-scoped and required branch
+gates remain green.
 
 ## Acceptance
 

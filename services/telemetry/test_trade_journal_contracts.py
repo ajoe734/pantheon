@@ -277,4 +277,3 @@ def test_event_schema_negative_cases() -> None:
     }
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(instance=invalid_event_seq_type, schema=schema)
-

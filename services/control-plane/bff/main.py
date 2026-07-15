@@ -313,8 +313,14 @@ def _dedupe_origins(origins: List[str]) -> List[str]:
     return deduped
 
 
+_BFF_VALID_AUTH_MODES = frozenset({"strict", "permissive"})
+
+
 def _bff_auth_mode() -> str:
-    return os.getenv("PANTHEON_BFF_AUTH_MODE", "strict").strip().lower() or "strict"
+    raw = os.getenv("PANTHEON_BFF_AUTH_MODE", "strict").strip().lower() or "strict"
+    if raw not in _BFF_VALID_AUTH_MODES:
+        return "strict"
+    return raw
 
 
 def _is_production_strict_mode() -> bool:
@@ -1063,30 +1069,26 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 #   Strict default still applies: stub tokens are not accepted in strict mode.
 
 
-def _dev_login_client_id() -> str:
-    return _first_nonblank(
-        os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_ID"),
-        os.getenv("PANTHEON_BFF_OIDC_CLIENT_ID"),
-    )
-
-
-def _dev_login_client_secret() -> str:
-    return _first_nonblank(
-        os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_SECRET"),
-        os.getenv("PANTHEON_BFF_OIDC_CLIENT_SECRET"),
-    )
+# Server-bound dev-login identities. Each identity issues tokens for exactly
+# one fixed role set, subject, and tenant scope; the caller cannot request
+# roles or tenants beyond what the identity is bound to. This closes the
+# self-elevation gap where a single shared credential could mint a token for
+# any role (including admin) or any tenant simply by asking for it in the
+# request body.
+_DEV_LOGIN_IDENTITY_DEFS: Dict[str, Dict[str, Any]] = {
+    "viewer": {"roles": ("viewer",), "subject_suffix": "viewer"},
+    "operator": {"roles": ("operator",), "subject_suffix": "operator"},
+    "approver": {"roles": ("approver",), "subject_suffix": "approver"},
+    "risk_owner": {"roles": ("risk_owner",), "subject_suffix": "risk-owner"},
+    "operator_a": {"roles": ("operator",), "subject_suffix": "operator-a"},
+    "operator_b": {"roles": ("operator",), "subject_suffix": "operator-b"},
+}
 
 
 def _dev_login_forbidden_environment() -> bool:
     env_name = os.getenv("PANTHEON_ENV", "").strip().lower()
     deployment_stage = os.getenv("PANTHEON_DEPLOYMENT_STAGE", "").strip().lower()
     return env_name in _PRODUCTION_STRICT_ENVIRONMENTS or deployment_stage in _PRODUCTION_STRICT_ENVIRONMENTS
-
-
-def _dev_login_enabled() -> bool:
-    if _dev_login_forbidden_environment():
-        return False
-    return bool(_dev_login_client_id() and _dev_login_client_secret())
 
 
 def _dev_login_ttl_seconds() -> int:
@@ -1098,21 +1100,81 @@ def _dev_login_ttl_seconds() -> int:
     return max(300, min(ttl, 3600))
 
 
-def _dev_login_roles() -> List[str]:
-    roles = _env_csv("PANTHEON_BFF_DEV_LOGIN_ROLES") or ["operator", "reviewer", "approver"]
-    return sorted(set(role for role in roles if role in _READ_ROLES or role in _WRITE_ROLES))
-
-
 def _dev_login_bool_env(name: str, *, default: bool) -> bool:
     return _bool_from_env(name, default=default)
 
 
-def _issue_dev_login_jwt(
-    client_id: str,
-    requested_roles: Optional[List[str]] = None,
-    requested_tenant_id: Optional[str] = None,
-    requested_allowed_tenants: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+def _dev_login_identity_registry() -> Dict[str, Dict[str, Any]]:
+    """Build the configured dev-login identity profiles from environment.
+
+    Each identity requires its own dedicated ``PANTHEON_BFF_DEV_LOGIN_<NAME>_
+    CLIENT_ID``/``_CLIENT_SECRET`` pair so distinct actors (e.g. operator A
+    vs. operator B) never share a credential or a subject. Only the
+    ``operator`` identity falls back to the legacy shared
+    ``PANTHEON_BFF_DEV_LOGIN_CLIENT_ID``/``PANTHEON_BFF_OIDC_CLIENT_ID``
+    credential for backward compatibility; unconfigured identities are simply
+    absent from the registry (dev-login as that identity is unavailable, it
+    does not fall back to a shared credential).
+    """
+    registry: Dict[str, Dict[str, Any]] = {}
+    for name, base in _DEV_LOGIN_IDENTITY_DEFS.items():
+        env_prefix = f"PANTHEON_BFF_DEV_LOGIN_{name.upper()}"
+        client_id = os.getenv(f"{env_prefix}_CLIENT_ID", "").strip()
+        client_secret = os.getenv(f"{env_prefix}_CLIENT_SECRET", "").strip()
+        if not (client_id and client_secret) and name == "operator":
+            client_id = _first_nonblank(
+                os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_ID"),
+                os.getenv("PANTHEON_BFF_OIDC_CLIENT_ID"),
+            )
+            client_secret = _first_nonblank(
+                os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_SECRET"),
+                os.getenv("PANTHEON_BFF_OIDC_CLIENT_SECRET"),
+            )
+        if not (client_id and client_secret):
+            continue
+
+        tenant_id = _first_nonblank(
+            os.getenv(f"{env_prefix}_TENANT_ID"),
+            os.getenv("PANTHEON_BFF_TENANT_ID"),
+            os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
+            os.getenv("PANTHEON_TENANT_ID"),
+            "tenant-dev",
+        )
+        allowed_tenants = _env_csv(f"{env_prefix}_ALLOWED_TENANTS") or [tenant_id]
+        if tenant_id not in allowed_tenants:
+            allowed_tenants = [tenant_id] + list(allowed_tenants)
+
+        mfa_verified = _dev_login_bool_env(f"{env_prefix}_MFA_VERIFIED", default=False)
+
+        registry[name] = {
+            "identity": name,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "roles": sorted(base["roles"]),
+            "subject": f"pantheon-dev-{base['subject_suffix']}",
+            "tenant_id": tenant_id,
+            "allowed_tenants": allowed_tenants,
+            "mfa_verified": mfa_verified,
+        }
+    return registry
+
+
+def _dev_login_enabled() -> bool:
+    if _dev_login_forbidden_environment():
+        return False
+    return bool(_dev_login_identity_registry())
+
+
+def _dev_login_match_identity(client_id: str, client_secret: str) -> Optional[Dict[str, Any]]:
+    for profile in _dev_login_identity_registry().values():
+        if hmac.compare_digest(client_id, profile["client_id"]) and hmac.compare_digest(
+            client_secret, profile["client_secret"]
+        ):
+            return profile
+    return None
+
+
+def _issue_dev_login_jwt(profile: Dict[str, Any]) -> Dict[str, Any]:
     try:
         from services.runtime_auth_inbound import encode_jwt_hs256
     except ImportError:
@@ -1132,20 +1194,8 @@ def _issue_dev_login_jwt(
     now = int(time.time())
     ttl = _dev_login_ttl_seconds()
     expires_at = now + ttl
-    
-    if requested_roles is not None:
-        roles = sorted(set(role for role in requested_roles if role in _READ_ROLES or role in _WRITE_ROLES))
-    else:
-        env_roles = _env_csv("PANTHEON_BFF_DEV_LOGIN_ROLES")
-        if env_roles:
-            roles = sorted(set(role for role in env_roles if role in _READ_ROLES or role in _WRITE_ROLES))
-        else:
-            roles = ["operator"]
+    roles = list(profile["roles"])
 
-    subject = _first_nonblank(
-        os.getenv("PANTHEON_BFF_DEV_LOGIN_SUBJECT"),
-        f"pantheon-dev-{client_id}",
-    )
     issuer = _first_nonblank(
         os.getenv("PANTHEON_BFF_JWT_ISSUER"),
         "pantheon-dev",
@@ -1154,24 +1204,9 @@ def _issue_dev_login_jwt(
         os.getenv("PANTHEON_BFF_JWT_AUDIENCE"),
         "bff-operators",
     )
-    tenant_id = _first_nonblank(
-        requested_tenant_id,
-        os.getenv("PANTHEON_BFF_TENANT_ID"),
-        os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
-        os.getenv("PANTHEON_TENANT_ID"),
-        "tenant-dev",
-    )
-    if requested_allowed_tenants is not None:
-        allowed_tenants = requested_allowed_tenants
-    else:
-        allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [tenant_id]
 
-    if tenant_id not in allowed_tenants:
-        allowed_tenants = [tenant_id] + list(allowed_tenants)
-
-    mfa_verified = _dev_login_bool_env("PANTHEON_BFF_DEV_LOGIN_MFA_VERIFIED", default=False)
     claims: Dict[str, Any] = {
-        "sub": subject,
+        "sub": profile["subject"],
         "roles": roles,
         "iss": issuer,
         "aud": audience,
@@ -1179,12 +1214,13 @@ def _issue_dev_login_jwt(
         "nbf": now,
         "exp": expires_at,
         "jti": f"dev-login-{uuid.uuid4().hex}",
-        "client_id": client_id,
+        "client_id": profile["client_id"],
+        "identity": profile["identity"],
         "token_use": "pantheon-bff-dev-login",
-        "tenant_id": tenant_id,
-        "allowed_tenants": allowed_tenants,
+        "tenant_id": profile["tenant_id"],
+        "allowed_tenants": profile["allowed_tenants"],
     }
-    if mfa_verified:
+    if profile["mfa_verified"]:
         claims["mfa_verified"] = True
 
     token = encode_jwt_hs256(claims, secret=secret)
@@ -1200,7 +1236,15 @@ def _issue_dev_login_jwt(
 
 @app.post("/bff/auth/dev-login")
 async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict)):
-    """Dev-only client-credentials exchange for short-lived BFF JWTs."""
+    """Dev-only client-credentials exchange for short-lived BFF JWTs.
+
+    Each client_id/client_secret pair is bound server-side to exactly one
+    named identity (viewer/operator/approver/risk_owner/operator_a/
+    operator_b) with a fixed subject, role set, and tenant scope. Callers may
+    optionally echo ``roles``/``tenant_id``/``allowed_tenants`` in the
+    request, but any value outside what the matched identity is bound to is
+    rejected as an escalation attempt rather than silently honored.
+    """
     if not _dev_login_enabled():
         raise _bff_error(
             403,
@@ -1221,32 +1265,62 @@ async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict
 
     client_id = str(payload.get("client_id") or payload.get("clientId") or "").strip()
     client_secret = str(payload.get("client_secret") or payload.get("clientSecret") or "").strip()
-    expected_id = _dev_login_client_id()
-    expected_secret = _dev_login_client_secret()
-    if not (
-        hmac.compare_digest(client_id, expected_id)
-        and hmac.compare_digest(client_secret, expected_secret)
-    ):
+    profile = _dev_login_match_identity(client_id, client_secret)
+    if profile is None:
         raise _bff_error(
             401,
             ErrorCode.AUTH_REQUIRED,
             "Invalid dev login client credentials",
             "AUTH_DEV_LOGIN_CLIENT_CREDENTIALS",
-            suggestion="Use the configured PANTHEON_BFF_OIDC_CLIENT_ID and CLIENT_SECRET",
+            suggestion="Use the configured per-identity PANTHEON_BFF_DEV_LOGIN_<IDENTITY>_CLIENT_ID/SECRET",
         )
 
-    token_payload = _issue_dev_login_jwt(
-        client_id,
-        requested_roles=payload.get("roles"),
-        requested_tenant_id=payload.get("tenant_id") or payload.get("tenantId"),
-        requested_allowed_tenants=payload.get("allowed_tenants") or payload.get("allowedTenants"),
-    )
+    requested_roles = payload.get("roles")
+    if requested_roles is not None:
+        bound_roles = set(profile["roles"])
+        requested = set(requested_roles)
+        if not requested or not requested.issubset(bound_roles):
+            raise _bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Requested roles exceed the dev-login identity's bound roles",
+                "AUTH_DEV_LOGIN_ESCALATION_DENIED",
+                precondition_failed="roles",
+                suggestion=f"Identity '{profile['identity']}' is bound to roles {sorted(bound_roles)}",
+            )
+
+    requested_tenant = str(payload.get("tenant_id") or payload.get("tenantId") or "").strip()
+    if requested_tenant and requested_tenant != profile["tenant_id"]:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Requested tenant is outside the dev-login identity's bound tenant",
+            "AUTH_DEV_LOGIN_ESCALATION_DENIED",
+            precondition_failed="tenant_id",
+            suggestion=f"Identity '{profile['identity']}' is bound to tenant '{profile['tenant_id']}'",
+        )
+
+    requested_allowed_tenants = payload.get("allowed_tenants") or payload.get("allowedTenants")
+    if requested_allowed_tenants is not None and set(requested_allowed_tenants) - set(
+        profile["allowed_tenants"]
+    ):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Requested allowed_tenants exceed the dev-login identity's bound tenants",
+            "AUTH_DEV_LOGIN_ESCALATION_DENIED",
+            precondition_failed="allowed_tenants",
+            suggestion=f"Identity '{profile['identity']}' is bound to tenants {profile['allowed_tenants']}",
+        )
+
+    token_payload = _issue_dev_login_jwt(profile)
     return {
         **token_payload,
         "meta": {
             "route": "POST /bff/auth/dev-login",
             "contract": "FE-INT-GATE-OIDC-DEV-LOGIN",
             "ttl_seconds": token_payload["expires_in"],
+            "identity": profile["identity"],
         },
     }
 
@@ -1327,7 +1401,7 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
     mfa_verified = False
     tenant_ids = None
     token_capabilities = []
-    
+
     if len(parts) > 2:
         if parts[2] == "mfa":
             mfa_verified = True
@@ -1339,7 +1413,7 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
             tenant_ids = parts[2].split(",")
             if len(parts) > 3 and parts[3]:
                 token_capabilities = parts[3].split(",")
-                
+
     capabilities = _stub_identity_capabilities(token_capabilities, roles)
     claims = {"sub": operator_id, "roles": roles, "capabilities": capabilities}
     if tenant_ids:
@@ -5925,7 +5999,7 @@ def _enforce_ops_console_preconditions(
                 "Persona not found",
                 f"Persona {persona_id} does not exist",
             )
-        
+
         read_model = _ops_read_model_entry_for_persona(persona_id)
         if read_model:
             confidence = read_model.data_confidence
@@ -5935,7 +6009,7 @@ def _enforce_ops_console_preconditions(
                 confidence_str = confidence.value
             else:
                 confidence_str = str(confidence)
-            
+
             if confidence_str.lower() in ("unavailable", "unverifiable"):
                 raise _bff_error(
                     422,
@@ -5944,7 +6018,7 @@ def _enforce_ops_console_preconditions(
                     "Source confidence must be formal, partial, fallback, or degraded",
                     precondition_failed="source_confidence",
                 )
-            
+
             if required_bindings:
                 if "runtime" in required_bindings:
                     if not read_model.identity.runtime_ids:
@@ -7373,7 +7447,7 @@ def _filter_by_common_identifiers(
         item_sleeve_ids = _extract_ids_from_item(item, ["sleeve_id", "sleeveId", "sleeve_ids", "sleeve"])
         item_artifact_ids = _extract_ids_from_item(item, ["artifact_id", "artifactId", "artifact_ids", "artifact"])
         item_broker_ids = _extract_ids_from_item(item, ["broker_id", "brokerId", "broker_ids", "broker"])
-        
+
         # 額外支援在 source_refs, target 或 links 中查找
         source_refs = item.get("source_refs") or {}
         if isinstance(source_refs, dict):
@@ -7385,7 +7459,7 @@ def _filter_by_common_identifiers(
                 item_strategy_ids.extend(source_refs["strategy_ids"])
             if "capital_pool_ids" in source_refs:
                 item_pool_ids.extend(source_refs["capital_pool_ids"])
-        
+
         target = item.get("target") or {}
         if isinstance(target, dict):
             t_type = target.get("type")
@@ -7408,16 +7482,16 @@ def _filter_by_common_identifiers(
             continue
         if bk_id and not any(str(bk_id).strip() == str(val).strip() for val in item_broker_ids):
             continue
-        
+
         # stage, period, as_of 匹配
         item_stage = item.get("stage") or item.get("lifecycle_state") or item.get("status")
         if stage and str(item_stage).strip().lower() != str(stage).strip().lower():
             continue
-            
+
         item_period = item.get("period")
         if period and str(item_period).strip().lower() != str(period).strip().lower():
             continue
-            
+
         # as_of 可以檢查 meta 或是 item_as_of
         item_as_of = item.get("as_of") or item.get("observed_at") or item.get("collected_at")
         if as_of and str(item_as_of).strip() != str(as_of).strip():
@@ -32556,7 +32630,7 @@ async def bff_management_portfolio_book_exposure(
         risk_policy_ref=risk_policy_ref,
     )
     entries = sources["entries"]
-    
+
     # Resolve capital pool filter
     resolved_pool_id = capital_pool_id or pool
     if resolved_pool_id:
@@ -59245,7 +59319,7 @@ async def sem_bff_version():
     image_digest = os.getenv("BFF_IMAGE_DIGEST") or os.getenv("IMAGE_DIGEST") or "unknown"
     build_time = os.getenv("BFF_BUILD_TIME") or os.getenv("BUILD_TIME") or "unknown"
     environment = os.getenv("PANTHEON_ENV") or os.getenv("ENVIRONMENT") or "unknown"
-    
+
     config_posture = {
         "auth_stub": _bff_auth_stub_enabled(),
         "auth_mode": _bff_auth_mode(),
@@ -59253,7 +59327,7 @@ async def sem_bff_version():
         "mfa_required": _bool_from_env("PANTHEON_BFF_MFA_REQUIRED", default=False),
         "assistant_kernel_enabled": _bool_from_env("PANTHEON_ASSISTANT_KERNEL_ENABLED", default=False),
     }
-    
+
     return {
         "service": "operator-bff",
         "version": "0.2.0",
@@ -64109,6 +64183,7 @@ app.include_router(
     _create_agora_router(
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
+        require_write_role=_require_operator_role,
         bff_error=_bff_error,
         utc_now=utc_now,
         get_read_store=lambda: read_store,

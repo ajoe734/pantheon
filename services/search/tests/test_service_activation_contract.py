@@ -25,6 +25,7 @@ def test_compose_wires_search_service_and_bff_normal_path() -> None:
     assert "search-data:/data/search" in search["volumes"]
     assert "source-ingest-data:/data/source-ingest:ro" in search["volumes"]
     assert search["ports"] == ["${SEARCH_PORT:-18098}:8098"]
+    assert search["depends_on"]["source-ingest"]["condition"] == "service_healthy"
     assert "healthcheck" in search
 
     bff = services["operator-bff"]

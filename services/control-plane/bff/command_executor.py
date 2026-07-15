@@ -113,6 +113,37 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _parse_jwt_payload(token: str) -> Dict[str, Any]:
+    try:
+        parts = token.split(".")
+        if len(parts) == 3:
+            payload_b64 = parts[1]
+            padding = len(payload_b64) % 4
+            if padding:
+                payload_b64 += "=" * (4 - padding)
+            import base64
+            payload_bytes = base64.b64decode(payload_b64)
+            return json.loads(payload_bytes.decode("utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _extract_actor_id(auth_token: Optional[str]) -> str:
+    if not auth_token:
+        return "operator-command"
+    token = auth_token.strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    if token.startswith("ey") and "." in token:
+        jwt_payload = _parse_jwt_payload(token)
+        return jwt_payload.get("sub") or jwt_payload.get("actor_id") or "operator-command"
+    parts = token.split(":")
+    if parts and parts[0].strip():
+        return parts[0].strip()
+    return "operator-command"
+
+
 def _actor_context(
     params: Dict[str, Any],
     auth_token: Optional[str] = None,
@@ -120,13 +151,25 @@ def _actor_context(
     """Resolve actor_id/actor_role for governance-owned evolution commands."""
     token_actor_id: Optional[str] = None
     token_roles: list[str] = []
-    if auth_token:
-        token_parts = auth_token.split(":")
-        if token_parts:
-            raw_actor_id = token_parts[0].strip()
-            token_actor_id = raw_actor_id or None
-        if len(token_parts) > 1:
-            token_roles = [role.strip() for role in token_parts[1].split(",") if role.strip()]
+    token = auth_token.strip() if auth_token else None
+    if token and token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    if token:
+        if token.startswith("ey") and "." in token:
+            jwt_payload = _parse_jwt_payload(token)
+            token_actor_id = jwt_payload.get("sub") or jwt_payload.get("actor_id")
+            raw_roles = jwt_payload.get("roles") or jwt_payload.get("role") or []
+            if isinstance(raw_roles, str):
+                token_roles = [r.strip() for r in raw_roles.split(",") if r.strip()]
+            elif isinstance(raw_roles, list):
+                token_roles = [str(r) for r in raw_roles]
+        else:
+            token_parts = token.split(":")
+            if token_parts:
+                raw_actor_id = token_parts[0].strip()
+                token_actor_id = raw_actor_id or None
+            if len(token_parts) > 1:
+                token_roles = [role.strip() for role in token_parts[1].split(",") if role.strip()]
 
     actor_id = (
         params.get("approved_by_id")
@@ -135,7 +178,15 @@ def _actor_context(
     )
     actor_role = params.get("approved_by_role") or params.get("actor_role")
     if not actor_role:
-        for preferred_role in ("admin", "approver", "reviewer", "operator"):
+        for preferred_role in (
+            "governance_committee",
+            "risk_owner",
+            "governance_reviewer",
+            "admin",
+            "approver",
+            "reviewer",
+            "operator",
+        ):
             if preferred_role in token_roles:
                 actor_role = preferred_role
                 break
@@ -145,6 +196,20 @@ def _actor_context(
     if not actor_role:
         raise ValueError("Evolution command requires actor_role/approved_by_role or a role-bearing operator token.")
     return str(actor_id), str(actor_role)
+
+
+# The BFF authorizes 'admin' operators to execute evolution mutations
+# (_MUTATION_EXECUTION_ROLES / the admin-gated checks in bff/main.py), but
+# services/control-plane/governance/evolution_decision.py's EvolutionActorRole
+# enum has no 'admin' member — EXECUTION_ROLES only recognizes
+# evolution_controller/operator. Sending "admin" straight through used to
+# raise an unhandled ValueError inside the evolution service instead of a
+# clean 4xx. Map any non-controller user execution role onto "operator" specifically
+# for evolution execution payloads.
+def _evolution_actor_role(actor_role: str) -> str:
+    if actor_role == "evolution_controller":
+        return actor_role
+    return "operator"
 
 
 def _post_json(
@@ -203,6 +268,15 @@ def _owner_post_may_have_committed(exc: Exception) -> bool:
             EOFError,
         ),
     )
+
+
+# The real internal rollback-execute API (services/control-plane/internal/
+# internal_api.py::execute_rollback) reports its terminal state as "executed",
+# not "completed". The governance canonical status is normalized to
+# "completed" for any of these so the same-command replay short-circuit below
+# actually recognizes a prior completion instead of re-dispatching the
+# rollback action on every retry.
+_ROLLBACK_TERMINAL_STATUSES = frozenset({"completed", "executed", "succeeded", "success"})
 
 
 def _record_matches(record: Dict[str, Any], expected: Dict[str, Any], fields: tuple[str, ...]) -> bool:
@@ -528,36 +602,58 @@ def _execute_rollback(
     auth_token: Optional[str] = None, mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Dispatch ExecuteRollback to internal API /rollbacks/execute."""
-    payload = {
-        "rollback_target_type": params.get("rollback_target_type", "deployment"),
-        "target_id": params.get("target_id", "unknown"),
-        "rollback_to_version": params.get("rollback_to_version", "previous"),
-    }
-    if "rollback_action_type" in params:
-        payload["rollback_action_type"] = params.get("rollback_action_type")
-    if "target_artifact_id" in params:
-        payload["target_artifact_id"] = params.get("target_artifact_id")
-    url = _internal_url("/api/internal/v1/rollbacks/execute")
-    body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    
-    rollback_id = body.get("rollback_id") or f"rollback-{uuid.uuid4().hex[:12]}"
+    target_id = params.get("target_id", "unknown")
+
+    # Generate deterministic rollback ID based on command_id
+    import hashlib
+    h = hashlib.sha256(command_id.encode("utf-8")).hexdigest()[:8]
+    rollback_id = f"rb-{target_id}-{h}"
+
+    # Check if this rollback has already been recorded in governance
+    existing_gov = None
+    try:
+        url = _governance_approval_url(f"/api/governance/rollbacks/{rollback_id}")
+        existing_gov = _get_json(url, auth_token=auth_token, mfa_token=mfa_token)
+    except Exception:
+        pass
+
+    if existing_gov and existing_gov.get("status") in _ROLLBACK_TERMINAL_STATUSES:
+        return {
+            "rollback_id": rollback_id,
+            "command_id": command_id,
+            "runtime_id": existing_gov.get("runtime_id") or params.get("runtime_id"),
+            "runtime_binding_id": existing_gov.get("runtime_binding_id") or params.get("runtime_binding_id") or target_id,
+            "target_artifact_id": existing_gov.get("target_artifact_id") or params.get("target_artifact_id"),
+            "rollback_action_type": existing_gov.get("action_type") or params.get("rollback_action_type"),
+            "status": "completed",
+            "tracking_url": f"/api/internal/v1/commands/{command_id}",
+        }
+
     try:
         actor_id, actor_role = _actor_context(params, auth_token=auth_token)
     except Exception:
-        actor_id = "operator-command"
-        if auth_token:
-            parts = auth_token.split(":")
-            if parts and parts[0].strip():
-                actor_id = parts[0].strip()
+        actor_id = _extract_actor_id(auth_token)
         actor_role = "operator"
+
+    # The canonical governance record requires runtime_id; callers commonly
+    # only supply target_id (see _ROLLBACK_REQUIRED in bff/main.py, which does
+    # not list runtime_id). Derive it from the runtime/binding identifiers we
+    # already have rather than sending a bare POST that 400s.
+    runtime_id = (
+        params.get("runtime_id")
+        or params.get("runtime_binding_id")
+        or params.get("binding_id")
+        or target_id
+    )
+
     timestamp = _utc_now()
     gov_payload = {
         "rollback_id": rollback_id,
         "id": rollback_id,
-        "runtime_id": params.get("runtime_id"),
+        "runtime_id": runtime_id,
         "runtime_binding_id": params.get("runtime_binding_id") or params.get("target_id") or params.get("binding_id"),
         "action_type": params.get("rollback_action_type") or "replace",
-        "status": body.get("status") or "completed",
+        "status": "initiated",
         "target_artifact_id": params.get("target_artifact_id") or params.get("rollback_to_version"),
         "actor": actor_role,
         "identity": actor_id,
@@ -566,16 +662,52 @@ def _execute_rollback(
         "requested_at": timestamp,
         "source_command_id": command_id,
     }
+
+    # Write initiated to governance first before executing side effects
+    if not existing_gov or existing_gov.get("status") != "completed":
+        _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
+
+    payload = {
+        "rollback_target_type": params.get("rollback_target_type", "deployment"),
+        "target_id": target_id,
+        "rollback_to_version": params.get("rollback_to_version", "previous"),
+        "rollback_id": rollback_id,
+    }
+    if "rollback_action_type" in params:
+        payload["rollback_action_type"] = params.get("rollback_action_type")
+    if "target_artifact_id" in params:
+        payload["target_artifact_id"] = params.get("target_artifact_id")
+
+    try:
+        url = _internal_url("/api/internal/v1/rollbacks/execute")
+        body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
+    except Exception as exc:
+        gov_payload["status"] = "failed"
+        try:
+            gov_payload["transition_actor"] = actor_role
+            gov_payload["transition_identity"] = actor_id
+            gov_payload["transition_source_command_id"] = command_id
+            _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
+        except Exception:
+            pass
+        raise exc
+
+    raw_status = body.get("status") or "completed"
+    normalized_status = "completed" if raw_status in _ROLLBACK_TERMINAL_STATUSES else raw_status
+    gov_payload["status"] = normalized_status
+    gov_payload["transition_actor"] = actor_role
+    gov_payload["transition_identity"] = actor_id
+    gov_payload["transition_source_command_id"] = command_id
     _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
 
     return {
         "rollback_id": rollback_id,
         "command_id": command_id,
-        "runtime_id": params.get("runtime_id"),
+        "runtime_id": runtime_id,
         "runtime_binding_id": params.get("runtime_binding_id") or params.get("target_id"),
         "target_artifact_id": params.get("target_artifact_id"),
         "rollback_action_type": params.get("rollback_action_type"),
-        "status": body.get("status") or "completed",
+        "status": normalized_status,
         "tracking_url": body.get("tracking_url"),
     }
 
@@ -593,15 +725,11 @@ def _execute_approve_rollback(
     }
     url = _internal_url(f"/api/internal/v1/rollbacks/{rollback_id}/approve")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    
+
     try:
         actor_id, actor_role = _actor_context(params, auth_token=auth_token)
     except Exception:
-        actor_id = "operator-command"
-        if auth_token:
-            parts = auth_token.split(":")
-            if parts and parts[0].strip():
-                actor_id = parts[0].strip()
+        actor_id = _extract_actor_id(auth_token)
         actor_role = "operator"
     timestamp = _utc_now()
     gov_payload = {
@@ -613,6 +741,9 @@ def _execute_approve_rollback(
         "updated_at": timestamp,
         "approved_at": body.get("approved_at") or timestamp,
         "source_command_id": command_id,
+        "transition_actor": actor_role,
+        "transition_identity": actor_id,
+        "transition_source_command_id": command_id,
         "approval_notes": params.get("approval_notes"),
     }
     _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
@@ -640,15 +771,11 @@ def _execute_reject_rollback(
     }
     url = _internal_url(f"/api/internal/v1/rollbacks/{rollback_id}/reject")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    
+
     try:
         actor_id, actor_role = _actor_context(params, auth_token=auth_token)
     except Exception:
-        actor_id = "operator-command"
-        if auth_token:
-            parts = auth_token.split(":")
-            if parts and parts[0].strip():
-                actor_id = parts[0].strip()
+        actor_id = _extract_actor_id(auth_token)
         actor_role = "operator"
     timestamp = _utc_now()
     gov_payload = {
@@ -660,6 +787,9 @@ def _execute_reject_rollback(
         "updated_at": timestamp,
         "rejected_at": body.get("rejected_at") or timestamp,
         "source_command_id": command_id,
+        "transition_actor": actor_role,
+        "transition_identity": actor_id,
+        "transition_source_command_id": command_id,
         "rejection_reason": params.get("rejection_reason"),
     }
     _write_to_governance("/api/governance/rollbacks", gov_payload, auth_token=auth_token, mfa_token=mfa_token)
@@ -690,16 +820,12 @@ def _execute_activate_kill_switch(
         payload["action_override"] = params.get("action_override")
     url = _internal_url("/api/internal/v1/kill-switch")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
-    
+
     kill_switch_order_id = body.get("kill_switch_order_id") or f"ks-{uuid.uuid4().hex[:12]}"
     try:
         actor_id, actor_role = _actor_context(params, auth_token=auth_token)
     except Exception:
-        actor_id = "operator-command"
-        if auth_token:
-            parts = auth_token.split(":")
-            if parts and parts[0].strip():
-                actor_id = parts[0].strip()
+        actor_id = _extract_actor_id(auth_token)
         actor_role = "operator"
     timestamp = _utc_now()
     freeze_order_id = f"freeze-{kill_switch_order_id}"
@@ -838,7 +964,7 @@ def _execute_evolution_action(
     actor_id, actor_role = _actor_context(params, auth_token=auth_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
-        "actor_role": actor_role,
+        "actor_role": _evolution_actor_role(actor_role),
     }
     for optional_key in (
         "has_active_runtime",
@@ -858,6 +984,28 @@ def _execute_evolution_action(
     url = _governance_url(f"/api/evolution/proposals/{decision_id}/execute")
     body = _post_json(url, payload, auth_token=auth_token, mfa_token=mfa_token)
     execution_result = body.get("execution_result") or {}
+
+    freeze_mode = params.get("freeze_mode")
+    force_stage_freeze = params.get("force_stage_freeze")
+    is_real_freeze = freeze_mode and freeze_mode != "governance_only"
+    if is_real_freeze or force_stage_freeze:
+        timestamp = _utc_now()
+        freeze_order_id = f"freeze-{decision_id}"
+        freeze_payload = {
+            "freeze_order_id": freeze_order_id,
+            "id": freeze_order_id,
+            "status": "active",
+            "scope": str(freeze_mode or "persona"),
+            "target_id": body.get("target_id") or params.get("persona_id") or params.get("target_id") or "unknown",
+            "actor": actor_role,
+            "identity": actor_id,
+            "created_at": timestamp,
+            "issued_at": timestamp,
+            "source_command_id": command_id,
+            "reason": params.get("note") or params.get("rationale") or "Evolution action freeze.",
+        }
+        _write_to_governance("/api/governance/freeze-orders", freeze_payload, auth_token=auth_token, mfa_token=mfa_token)
+
     return {
         "command_id": command_id,
         "evolution_decision_id": body.get("decision_id", decision_id),
@@ -991,7 +1139,7 @@ def _execute_execute_mutation(
     actor_id, actor_role = _actor_context(params, auth_token=auth_token)
     payload: Dict[str, Any] = {
         "actor_id": actor_id,
-        "actor_role": actor_role,
+        "actor_role": _evolution_actor_role(actor_role),
     }
     for optional_key in (
         "has_active_runtime",
@@ -1757,7 +1905,7 @@ def execute_command_with_status(
         # Covers connection failures, timeouts, SSL errors
         reason = str(getattr(exc, "reason", exc))
         is_timeout = "timed out" in reason.lower() or "timeout" in reason.lower()
-        code = "COMMAND_TIMEOUT" if is_timeout else "DOWNSTREAM_UNAVAILABLE"
+        code = "COMMAND_TIMEOUT" if is_timeout else "DEPENDENCY_UNAVAILABLE"
         status = CommandStatus.TIMEOUT if is_timeout else CommandStatus.FAILED
         error = {
             "code": code,

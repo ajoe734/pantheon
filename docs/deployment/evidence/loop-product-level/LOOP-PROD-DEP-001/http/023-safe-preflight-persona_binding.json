@@ -1,0 +1,37 @@
+{
+  "captured_at": "2026-07-15T00:10:15Z",
+  "duration_ms": 3.265,
+  "label": "safe-preflight-persona_binding",
+  "request": {
+    "body": null,
+    "headers": {},
+    "method": "GET",
+    "started_at": "2026-07-15T00:10:15Z",
+    "url": "http://127.0.0.1:18092/api/bindings/pcb-rescue-0260531-6f175c5c"
+  },
+  "response": {
+    "payload": {
+      "allowed_deployment_scope": "paper",
+      "approval_decision_id": "approval-rescue-0260531-6f175c5c",
+      "binding_id": "pcb-rescue-0260531-6f175c5c",
+      "budget": 10000.0,
+      "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+      "capital_sleeve_id": null,
+      "created_at": "2026-06-03T08:15:33Z",
+      "created_by": "codex-live-rescue",
+      "effective_from": null,
+      "effective_to": null,
+      "idempotent_replay": false,
+      "mandate": "Dev paper runtime rescue binding",
+      "metadata": {
+        "runtime_id": "rt-rescue-0260531-6f175c5c",
+        "source": "20260603-live-rescue"
+      },
+      "persona_id": "persona-20260531-6f175c5c",
+      "role": "paper_owner",
+      "status": "active",
+      "updated_at": "2026-06-03T08:15:33Z"
+    },
+    "status": 200
+  }
+}

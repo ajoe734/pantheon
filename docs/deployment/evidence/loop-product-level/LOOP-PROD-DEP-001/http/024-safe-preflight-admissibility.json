@@ -1,0 +1,29 @@
+{
+  "captured_at": "2026-07-15T00:10:15Z",
+  "duration_ms": 2.988,
+  "label": "safe-preflight-admissibility",
+  "request": {
+    "body": null,
+    "headers": {},
+    "method": "GET",
+    "started_at": "2026-07-15T00:10:15Z",
+    "url": "http://127.0.0.1:18092/api/bindings/admissibility?persona_id=persona-20260531-6f175c5c&capital_pool_id=pool-rescue-0260531-6f175c5c&target_stage=paper"
+  },
+  "response": {
+    "payload": {
+      "active_live_owner_binding_id": null,
+      "allowed_deployment_scope": "paper",
+      "binding_id": "pcb-rescue-0260531-6f175c5c",
+      "binding_role": "paper_owner",
+      "binding_status": "active",
+      "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+      "permitted": true,
+      "persona_id": "persona-20260531-6f175c5c",
+      "pool_status": "active",
+      "reason": null,
+      "single_runtime_enforced": true,
+      "target_stage": "paper"
+    },
+    "status": 200
+  }
+}

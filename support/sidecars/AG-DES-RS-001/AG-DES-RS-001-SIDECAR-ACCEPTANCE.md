@@ -1,12 +1,12 @@
 # AG-DES-RS-001 Acceptance Packet
 
-**Sidecar ID:** AG-DES-RS-001-SIDECAR-ACCEPTANCE  
-**Parent Task:** AG-DES-RS-001 — Research facade / stage routing / run projection  
-**Sidecar Kind:** acceptance_packet  
-**Date:** 2026-06-21  
-**Author:** Claude (auto-worker)  
-**Reviewer:** Claude2  
-**Status:** ready_for_review  
+**Sidecar ID:** AG-DES-RS-001-SIDECAR-ACCEPTANCE
+**Parent Task:** AG-DES-RS-001 — Research facade / stage routing / run projection
+**Sidecar Kind:** acceptance_packet
+**Date:** 2026-06-21
+**Author:** Claude (auto-worker)
+**Reviewer:** Claude2
+**Status:** ready_for_review
 
 > **Scope notice.** This packet is a support artifact only.
 > It does not modify canonical truth (L1 policy, OpenAPI contracts, DB schemas, or service implementations).

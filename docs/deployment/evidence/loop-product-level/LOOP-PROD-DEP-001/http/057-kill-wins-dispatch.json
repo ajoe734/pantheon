@@ -1,0 +1,271 @@
+{
+  "captured_at": "2026-07-15T00:11:38Z",
+  "duration_ms": 24.867,
+  "label": "kill-wins-dispatch",
+  "request": {
+    "body": {
+      "action_override": "pause",
+      "actor_id": "loop-prod-dep-001-operator",
+      "binding_id": "rb-a1300e9ad5a74ff999cd8bb3e508d7b4",
+      "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+      "idempotency_key": "LOOP-PROD-DEP-001:20260715001015:kill",
+      "reason": "operator_emergency_stop",
+      "severity": 1
+    },
+    "headers": {
+      "Authorization": "Bearer <redacted>"
+    },
+    "method": "POST",
+    "started_at": "2026-07-15T00:11:38Z",
+    "url": "http://127.0.0.1:18081/api/kill-switch/dispatch"
+  },
+  "response": {
+    "payload": {
+      "audit_entry": {
+        "action_type": "pause",
+        "actor_id": "loop-prod-dep-001-operator",
+        "audit_id": "audit-838a0449fb8a",
+        "audited_at": "2026-07-15T00:11:38Z",
+        "binding_id": "rb-a1300e9ad5a74ff999cd8bb3e508d7b4",
+        "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+        "command_id": "ks-48e4e84fcf02",
+        "emergency_class": "hard",
+        "outcome_note": "hard emergency: operator_emergency_stop -> pause; safe mode normal -> paused",
+        "reason": "operator_emergency_stop",
+        "safe_mode_after": "paused",
+        "safe_mode_before": "normal",
+        "trigger_id": "trig-e1d8b66da798"
+      },
+      "binding_action": {
+        "action": "pause",
+        "binding": {
+          "artifact_id": "artifact-loop-prod-dep-20260715001015",
+          "artifact_version": "1.14.1015",
+          "binding_id": "rb-a1300e9ad5a74ff999cd8bb3e508d7b4",
+          "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+          "deployment_mode": "paper",
+          "effective_at": "2026-07-15T00:10:26Z",
+          "execution_mode": "paper",
+          "metadata": {
+            "authoritative_loader_attestation": {
+              "allowed_deployment_scope": "paper",
+              "approval_actor_id": "loop-prod-dep-001-risk-owner",
+              "approval_decision_id": "approval-loop-prod-dep-20260715001015",
+              "approval_decision_sha256": "sha256:1c89352d553920ac5b11398beb33d758575d68bc57576ed72a3d316c7d041082",
+              "approval_proof_url": "http://governance:8082/api/governance/approvals/approval-loop-prod-dep-20260715001015",
+              "artifact_checksum": "sha256:93785cda87b79560ff9a503825db071983f5b34ee0ba3557466ea867bbecce89",
+              "artifact_id": "artifact-loop-prod-dep-20260715001015",
+              "artifact_version": "1.14.1015",
+              "authority": "canonical_deployment_registry_governance_capital",
+              "capital_admissibility_proof_url": "http://capital:8092/api/bindings/admissibility?persona_id=persona-20260531-6f175c5c&capital_pool_id=pool-rescue-0260531-6f175c5c&target_stage=paper",
+              "capital_admissibility_sha256": "sha256:d7c12e60d81725a6e08c6cd1bab664dba682e0aafe788507bf477893e1887883",
+              "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+              "capital_pool_proof_url": "http://capital:8092/api/capital-pools/pool-rescue-0260531-6f175c5c",
+              "capital_pool_sha256": "sha256:50b0a072a60abb135fef39efdca2a3a37df1ec1fda16067e850e174021a4da6a",
+              "deployment_plan_authority_sha256": "sha256:13674d434eeaff00b7b02b0ed92b1215c0b5faada5a633bbb3d3f7e50191f0ae",
+              "deployment_plan_binding_id": null,
+              "deployment_plan_current_stage": "none",
+              "deployment_plan_runtime_lifecycle": {},
+              "deployment_plan_sha256": "sha256:a57c55ea408b04fb02ecec2d705e69a8a1591859b3bb93656fbfda7f4e0fe0e7",
+              "deployment_proof_url": "http://deployment:8095/api/deployment/plans/plan-loop-prod-dep-20260715001015",
+              "persona_binding_proof_url": "http://capital:8092/api/bindings/pcb-rescue-0260531-6f175c5c",
+              "persona_capital_binding_id": "pcb-rescue-0260531-6f175c5c",
+              "persona_capital_binding_sha256": "sha256:8e7868ee8eb1d9f90202f59c1ed18d8fe7e877149b71f5431cb49a7de350b6d4",
+              "persona_capital_binding_status": "active",
+              "plan_id": "plan-loop-prod-dep-20260715001015",
+              "plan_status": "approved",
+              "registry_deployment_stage": "none",
+              "registry_entry_sha256": "sha256:5c87032cb7d814b5d8e74c520acac97990f794c3dfaa1c2f120774bbfd4c795d",
+              "registry_proof_url": "http://registry:8087/api/registry/strategy-artifacts/artifact-loop-prod-dep-20260715001015",
+              "registry_view_sha256": "sha256:b98bbdd23402448f6460462a30ba6d70455d4ccce18b931d790740e6016ea471",
+              "single_runtime_enforced": true,
+              "sponsor_persona_id": "persona-20260531-6f175c5c",
+              "status": "passed",
+              "strategy_id": "tw_session_momentum",
+              "target_stage": "paper",
+              "verified_at": "2026-07-15T00:10:26.619816Z"
+            },
+            "source_task_id": "LOOP-PROD-DEP-001",
+            "strategy_id": "tw_session_momentum"
+          },
+          "persona_capital_binding_id": "pcb-rescue-0260531-6f175c5c",
+          "plan_id": "plan-loop-prod-dep-20260715001015",
+          "runtime_id": "runtime-loop-prod-dep-20260715001015",
+          "status": "paused"
+        }
+      },
+      "command": {
+        "action_type": "pause",
+        "actor_id": "loop-prod-dep-001-operator",
+        "binding_id": "rb-a1300e9ad5a74ff999cd8bb3e508d7b4",
+        "bypass_review_queue": true,
+        "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+        "command_id": "ks-48e4e84fcf02",
+        "dispatch_path": "runtime_manager_fast_path",
+        "emergency_class": "hard",
+        "issued_at": "2026-07-15T00:11:38Z",
+        "metadata": {
+          "foundation_command_id": "cmd-aa5225be7713480c8f701a4075236a72",
+          "foundation_correlation_id": "trace-798ed2f89f274b19a596f548e3d0ded1",
+          "foundation_trace_id": "trace-798ed2f89f274b19a596f548e3d0ded1",
+          "trigger_reason": "operator_emergency_stop"
+        },
+        "priority": 1,
+        "trigger_id": "trig-e1d8b66da798"
+      },
+      "foundation": {
+        "audit_action": {
+          "action_id": "audit-dca32bcd68d84461bd54fba9614a2f91",
+          "action_type": "runtime_manager.kill_switch.accepted",
+          "actor_ref": {
+            "actor_id": "loop-prod-dep-001-operator",
+            "actor_type": "user",
+            "roles": []
+          },
+          "correlation_id": "trace-798ed2f89f274b19a596f548e3d0ded1",
+          "environment": {
+            "name": "dev",
+            "timezone": "UTC"
+          },
+          "metadata": {
+            "path": "RuntimeManagerService.execute_kill_switch"
+          },
+          "payload_checksum": "424e559e2bb55fe7d3032a3a944ea936a5e1029fe55e02cab43794530dc572bb",
+          "policy_decision_ref": "poldec-5dde3fb4e65e47648fbae019ac8d0f67",
+          "reason": "operator_emergency_stop",
+          "target_ref": "CapitalPool:pool-rescue-0260531-6f175c5c",
+          "timestamp": "2026-07-15T00:11:38Z",
+          "trace_id": "trace-798ed2f89f274b19a596f548e3d0ded1"
+        },
+        "command_envelope": {
+          "actor_ref": {
+            "actor_id": "loop-prod-dep-001-operator",
+            "actor_type": "user",
+            "roles": []
+          },
+          "authority_scope": {
+            "action": "runtime_manager.kill_switch.dispatch",
+            "attributes": {},
+            "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+            "environment": {
+              "name": "dev",
+              "timezone": "UTC"
+            },
+            "runtime_id": "rb-a1300e9ad5a74ff999cd8bb3e508d7b4",
+            "target_id": "pool-rescue-0260531-6f175c5c",
+            "target_ref": "CapitalPool:pool-rescue-0260531-6f175c5c",
+            "target_type": "CapitalPool"
+          },
+          "command_id": "cmd-aa5225be7713480c8f701a4075236a72",
+          "command_type": "runtime_manager.kill_switch.dispatch",
+          "idempotency_key": "LOOP-PROD-DEP-001:20260715001015:kill",
+          "payload": {
+            "action_override": "pause",
+            "binding_id": "rb-a1300e9ad5a74ff999cd8bb3e508d7b4",
+            "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+            "context": {},
+            "fallback_artifact_id": null,
+            "fallback_artifact_version": null,
+            "operation": "runtime_manager.kill_switch.dispatch",
+            "reason": "operator_emergency_stop",
+            "severity": 1
+          },
+          "requested_at": "2026-07-15T00:11:38Z",
+          "schema_version": "command_envelope.v1",
+          "trace": {
+            "actor_ref": {
+              "actor_id": "loop-prod-dep-001-operator",
+              "actor_type": "user",
+              "roles": []
+            },
+            "correlation_id": "trace-798ed2f89f274b19a596f548e3d0ded1",
+            "created_at": "2026-07-15T00:11:38Z",
+            "environment": {
+              "name": "dev",
+              "timezone": "UTC"
+            },
+            "idempotency_key": "LOOP-PROD-DEP-001:20260715001015:kill",
+            "schema_version": "trace_context.v1",
+            "source_system": "runtime-manager",
+            "trace_id": "trace-798ed2f89f274b19a596f548e3d0ded1"
+          }
+        },
+        "idempotency_record": {
+          "first_seen_at": "2026-07-15T00:11:38Z",
+          "idempotency_key": "LOOP-PROD-DEP-001:20260715001015:kill",
+          "last_seen_at": "2026-07-15T00:11:38Z",
+          "operation_type": "runtime_manager.kill_switch.dispatch",
+          "request_hash": "424e559e2bb55fe7d3032a3a944ea936a5e1029fe55e02cab43794530dc572bb",
+          "result_ref": "kill_switch:ks-48e4e84fcf02",
+          "status": "succeeded",
+          "target_ref": "CapitalPool:pool-rescue-0260531-6f175c5c",
+          "trace_id": "trace-798ed2f89f274b19a596f548e3d0ded1"
+        },
+        "policy_decision": {
+          "action": "runtime_manager.kill_switch.dispatch",
+          "actor_ref": {
+            "actor_id": "loop-prod-dep-001-operator",
+            "actor_type": "user",
+            "roles": []
+          },
+          "decision": "allow",
+          "decision_id": "poldec-5dde3fb4e65e47648fbae019ac8d0f67",
+          "environment": {
+            "name": "dev",
+            "timezone": "UTC"
+          },
+          "evaluated_at": "2026-07-15T00:11:38Z",
+          "policy_id": "runtime-manager.kill-switch.fast-path",
+          "policy_version": "2026-04-27",
+          "reasons": [],
+          "target_ref": "CapitalPool:pool-rescue-0260531-6f175c5c",
+          "trace_id": "trace-798ed2f89f274b19a596f548e3d0ded1"
+        },
+        "trace_context": {
+          "actor_ref": {
+            "actor_id": "loop-prod-dep-001-operator",
+            "actor_type": "user",
+            "roles": []
+          },
+          "correlation_id": "trace-798ed2f89f274b19a596f548e3d0ded1",
+          "created_at": "2026-07-15T00:11:38Z",
+          "environment": {
+            "name": "dev",
+            "timezone": "UTC"
+          },
+          "idempotency_key": "LOOP-PROD-DEP-001:20260715001015:kill",
+          "schema_version": "trace_context.v1",
+          "source_system": "runtime-manager",
+          "trace_id": "trace-798ed2f89f274b19a596f548e3d0ded1"
+        }
+      },
+      "safe_mode_after": "paused",
+      "telemetry_ack": {
+        "ack_id": "ks-telemetry-ack:ks-48e4e84fcf02",
+        "ack_received": true,
+        "ack_required": true,
+        "ack_status": "acknowledged",
+        "ack_version": "2026-05-01",
+        "action_type": "pause",
+        "audit_action_ref": "audit-dca32bcd68d84461bd54fba9614a2f91",
+        "audit_id": "audit-838a0449fb8a",
+        "binding_id": "rb-a1300e9ad5a74ff999cd8bb3e508d7b4",
+        "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+        "capital_state_recorded": true,
+        "command_id": "ks-48e4e84fcf02",
+        "correlation_id": "trace-798ed2f89f274b19a596f548e3d0ded1",
+        "event_type": "kill_switch_action",
+        "fail_closed": false,
+        "reason": "runtime binding follow-through recorded before ack",
+        "runtime_binding_id": "rb-a1300e9ad5a74ff999cd8bb3e508d7b4",
+        "runtime_id": "runtime-loop-prod-dep-20260715001015",
+        "runtime_state_recorded": true,
+        "runtime_status_after": "paused",
+        "safe_mode_after": "paused",
+        "telemetry_event_type": "kill_switch_action",
+        "trace_id": "trace-798ed2f89f274b19a596f548e3d0ded1"
+      }
+    },
+    "status": 200
+  }
+}

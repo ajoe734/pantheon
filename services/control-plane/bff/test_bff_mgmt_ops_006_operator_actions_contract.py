@@ -53,7 +53,7 @@ def test_operator_roles_check() -> None:
         lifecycle_state="deployed",
         metadata={},
     )
-    
+
     with _client_with_store(store) as client:
         # PausePaperRuntime without operator/admin role should be forbidden
         response = client.post(
@@ -79,11 +79,11 @@ def test_rejected_preconditions_unverifiable_source_confidence() -> None:
         lifecycle_state="deployed",
         metadata={},
     )
-    
+
     original_ops_model = bff_main._ops_read_model_entry_for_persona
-    
+
     from operations_read_model import OperationsReadModelEntry, OperationsIdentity, DataConfidence as OpsDataConfidence, OperationsPerformance
-    
+
     def mock_ops_model(persona_id, period="latest"):
         return OperationsReadModelEntry(
             identity=OperationsIdentity(persona_id=persona_id, period=period, as_of="2026-07-09T00:00:00Z"),
@@ -92,9 +92,9 @@ def test_rejected_preconditions_unverifiable_source_confidence() -> None:
             sources=[],
             diagnostics=[]
         )
-        
+
     bff_main._ops_read_model_entry_for_persona = mock_ops_model
-    
+
     try:
         with _client_with_store(store) as client:
             response = client.post(
@@ -122,7 +122,7 @@ def test_emergency_containment_limit() -> None:
         lifecycle_state="deployed",
         metadata={},
     )
-    
+
     with _client_with_store(store) as client:
         # EmergencyContainment trying to increase allocation or promote should fail
         response = client.post(
@@ -151,7 +151,7 @@ def test_command_idempotency() -> None:
         lifecycle_state="deployed",
         metadata={},
     )
-    
+
     runtimes = [
         {
             "id": "rb-test",
@@ -163,11 +163,11 @@ def test_command_idempotency() -> None:
     ]
     store.list_runtime_bindings = lambda **_: runtimes
     store.get_runtime_binding_by_runtime_id = lambda runtime_id: runtimes[0] if runtime_id == "runtime-test" else None
-    
+
     original_ops_model = bff_main._ops_read_model_entry_for_persona
-    
+
     from operations_read_model import OperationsReadModelEntry, OperationsIdentity, DataConfidence as OpsDataConfidence, OperationsPerformance
-    
+
     def mock_ops_model(persona_id, period="latest"):
         return OperationsReadModelEntry(
             identity=OperationsIdentity(persona_id=persona_id, period=period, as_of="2026-07-09T00:00:00Z"),
@@ -176,9 +176,9 @@ def test_command_idempotency() -> None:
             sources=[],
             diagnostics=[]
         )
-        
+
     bff_main._ops_read_model_entry_for_persona = mock_ops_model
-    
+
     try:
         with _client_with_store(store) as client:
             body = {
@@ -192,11 +192,11 @@ def test_command_idempotency() -> None:
                 "Idempotency-Key": "key-idempotency-ops-006",
                 "X-Correlation-Id": "corr-idempotency-ops-006",
             }
-            
+
             first = client.post("/bff/v1/commands", headers=headers, json=body)
             assert first.status_code == 202, first.text
             assert first.json()["data"]["command_id"]
-            
+
             second = client.post("/bff/v1/commands", headers=headers, json=body)
             assert second.status_code == 202
             assert second.json()["data"]["command_id"] == first.json()["data"]["command_id"]

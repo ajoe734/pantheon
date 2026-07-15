@@ -906,6 +906,7 @@ def create_strategy_workshop_router(
     *,
     extract_identity: Callable[..., Any],
     require_read_role: Callable[..., None],
+    require_write_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
     workshop_store: Any = None,
@@ -923,12 +924,19 @@ def create_strategy_workshop_router(
     router = APIRouter(tags=["agora-workshop"])
 
     # Lazy import to avoid circular import at module load time
-    def _scope(authorization: Optional[str], x_tenant_id: Optional[str] = None) -> Any:
+    def _scope(
+        authorization: Optional[str],
+        x_tenant_id: Optional[str] = None,
+        *,
+        write: bool = False,
+    ) -> Any:
         from ..identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
         from ..models import AgoraErrorCode
 
         identity = _identity_for_scope(extract_identity(authorization))
         require_read_role(identity)
+        if write:
+            require_write_role(identity)
         try:
             return resolve_agora_user_scope(
                 identity,
@@ -1026,7 +1034,7 @@ def create_strategy_workshop_router(
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _scope(authorization, x_tenant_id, write=True)
         # Idempotency-Key is mandatory for all write operations on this endpoint.
         if idempotency_key is None:
             from models import ErrorCode
@@ -1145,7 +1153,7 @@ def create_strategy_workshop_router(
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _scope(authorization, x_tenant_id, write=True)
         # If-Match is mandatory: mutations without a precondition are rejected (RFC 6585 §428).
         if if_match is None:
             from models import ErrorCode
@@ -1320,7 +1328,7 @@ def create_strategy_workshop_router(
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _scope(authorization, x_tenant_id, write=True)
         session = _scoped_session(workshop_id, scope)
         if if_match is None:
             from models import ErrorCode
@@ -1519,7 +1527,7 @@ def create_strategy_workshop_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
         del body
-        scope = _scope(authorization, x_tenant_id)
+        scope = _scope(authorization, x_tenant_id, write=True)
         session = _scoped_session(workshop_id, scope)
         if if_match is None:
             from models import ErrorCode
@@ -1629,7 +1637,7 @@ def create_strategy_workshop_router(
         workshop_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _scope(authorization)
+        _scope(authorization, write=True)
         _not_implemented("POST /bff/agora/workshops/{workshop_id}/versions")
         return {}
 
@@ -1639,7 +1647,7 @@ def create_strategy_workshop_router(
         version_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _scope(authorization)
+        _scope(authorization, write=True)
         _not_implemented("POST /bff/agora/workshops/{workshop_id}/versions/{version_id}/select")
         return {}
 
@@ -1648,7 +1656,7 @@ def create_strategy_workshop_router(
         workshop_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _scope(authorization)
+        _scope(authorization, write=True)
         _not_implemented("POST /bff/agora/workshops/{workshop_id}/research-runs")
         return {}
 
@@ -1657,7 +1665,7 @@ def create_strategy_workshop_router(
         workshop_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _scope(authorization)
+        _scope(authorization, write=True)
         _not_implemented("POST /bff/agora/workshops/{workshop_id}/consultations")
         return {}
 
@@ -1666,7 +1674,7 @@ def create_strategy_workshop_router(
         workshop_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _scope(authorization)
+        _scope(authorization, write=True)
         _not_implemented("POST /bff/agora/workshops/{workshop_id}/conclude")
         return {}
 

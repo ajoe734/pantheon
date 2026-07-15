@@ -1,9 +1,9 @@
 # APP-002 Operator Action Contract
 
-**Parent Task**: APP-002 — Define operator-facing deployment, incident, and evolution surfaces  
-**Created by**: Copilot  
-**Date**: 2026-04-10  
-**Status**: Design artifact (APP-002 support)  
+**Parent Task**: APP-002 — Define operator-facing deployment, incident, and evolution surfaces
+**Created by**: Copilot
+**Date**: 2026-04-10
+**Status**: Design artifact (APP-002 support)
 
 > This is a support artifact derived from the APP-001 BFF API Contract and EVOLUTION_REVIEW_AND_THRESHOLDS.md. It defines how operators interact with the system through the BFF—not how the system executes those actions internally.
 
@@ -437,14 +437,14 @@ If the downstream command processing queue is unreachable:
 
 ## 8. Acceptance Criteria for APP-002
 
-✅ Command submission endpoint defined with preconditions  
-✅ All three operator journey types (deployment, incident, evolution) have formalized commands  
-✅ Error handling and validation rules are explicit  
-✅ Audit trail requirement is clear  
-✅ Degraded mode behavior is specified  
-✅ This contract maps to canonical objects (ApprovalDecision, IncidentCase, EvolutionDecision, etc.)  
-✅ This contract does NOT modify APP-001 BFF read surfaces  
-✅ Separate "review" vs "execution" actions pending EVO-004 resolution  
+✅ Command submission endpoint defined with preconditions
+✅ All three operator journey types (deployment, incident, evolution) have formalized commands
+✅ Error handling and validation rules are explicit
+✅ Audit trail requirement is clear
+✅ Degraded mode behavior is specified
+✅ This contract maps to canonical objects (ApprovalDecision, IncidentCase, EvolutionDecision, etc.)
+✅ This contract does NOT modify APP-001 BFF read surfaces
+✅ Separate "review" vs "execution" actions pending EVO-004 resolution
 
 ---
 

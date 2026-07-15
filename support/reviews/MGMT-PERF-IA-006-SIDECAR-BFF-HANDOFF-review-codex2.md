@@ -1,9 +1,9 @@
 # MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF Review — Codex2
 
-Task: `MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF`  
-Owner: Codex  
-Reviewer: Codex2  
-Review date: 2026-07-12  
+Task: `MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF`
+Owner: Codex
+Reviewer: Codex2
+Review date: 2026-07-12
 Disposition: **approved**
 
 ## Scope Reviewed

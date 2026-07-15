@@ -98,6 +98,7 @@ def test_scheduled_reconcile_empty_telemetry() -> None:
         svc = _load_service_module(data_dir)
         client = TestClient(svc.app)
 
+        # 1. Telemetry API URL is empty -> failure status (unavailable)
         with mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": ""}):
             with mock.patch.object(svc, "PANTHEON_TELEMETRY_API_URL", "", create=True):
                 resp = client.post(
@@ -106,11 +107,23 @@ def test_scheduled_reconcile_empty_telemetry() -> None:
                 )
         assert resp.status_code == 201
         payload = resp.json()
-        assert payload["status"] == "ok"
+        assert payload["status"] == "failure"
         assert payload["tick_id"] == "tick-test-001"
         assert payload["evaluated_binding_count"] == 0
         assert payload["skipped_binding_count"] == 0
         assert payload["evaluation_ids"] == []
+
+        # 2. Telemetry API URL configured but returns empty summaries -> degraded status
+        with mock.patch.object(svc, "_fetch_telemetry_runtime_summaries", return_value=[]):
+            resp2 = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-test-002"},
+            )
+        assert resp2.status_code == 201
+        payload2 = resp2.json()
+        assert payload2["status"] == "degraded"
+        assert payload2["tick_id"] == "tick-test-002"
+        assert payload2["evaluated_binding_count"] == 0
 
 
 def test_scheduled_reconcile_with_telemetry_summaries() -> None:

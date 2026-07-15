@@ -8,8 +8,13 @@ drifted, so repeated ticks do not append duplicate JSONL records.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from hashlib import sha256
+from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
+
+from jsonschema import Draft7Validator
 
 from .configured import JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
 from .connectors import SourceConnector, SourceConnectorProvider, SourceEvidenceError
@@ -34,6 +39,23 @@ class _RequirementLike(Protocol):
 LIVE_SOURCE_CLASSES = frozenset({"live_push", "live_pull"})
 DEFAULT_CONTROLLER_NAME = "persona_source_provisioning_reconciler"
 DEFAULT_SCHEMA_VERSION = "persona_source_provisioning_reconcile_result.v1"
+RECONCILIATION_METADATA_KEY = "persona_source_reconciliation"
+REQUIRED_DATA_SOURCE_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[1] / "control-plane" / "persona" / "required_data_sources.schema.json"
+)
+REQUIRED_DATA_SOURCE_VALIDATOR = Draft7Validator(
+    json.loads(REQUIRED_DATA_SOURCE_SCHEMA_PATH.read_text(encoding="utf-8"))
+)
+SUPPORTED_POLICY_GATES = frozenset(
+    {
+        "no_live_capital",
+        "public-source-only",
+        "require_connector_approved",
+        "require_freshness_within_1d",
+        "require_schedule_active",
+        "require_source_health_ok",
+    }
+)
 
 CADENCE_INTERVAL_SECONDS: dict[str, int] = {
     "realtime": 60,
@@ -204,7 +226,23 @@ class SourceProvisioningReconciler:
         *,
         dry_run: bool = False,
     ) -> tuple[SourceProvisioningResult, ...]:
-        return tuple(self.reconcile_persona(persona, dry_run=dry_run) for persona in personas)
+        persona_items = tuple(personas)
+        connector_bindings: dict[str, str] = {}
+        for persona in persona_items:
+            for requirement in _requirements(persona):
+                if not requirement.is_live_binding:
+                    continue
+                connector_id = self._select_connector_id(requirement)
+                if connector_id is None:
+                    continue
+                previous = connector_bindings.get(connector_id)
+                if previous is not None and previous != requirement.idempotency_key:
+                    raise SourceEvidenceError(
+                        "singleton connector cannot prove multiple persona data requirements: "
+                        f"{connector_id} ({previous}, {requirement.idempotency_key})"
+                    )
+                connector_bindings[connector_id] = requirement.idempotency_key
+        return tuple(self.reconcile_persona(persona, dry_run=dry_run) for persona in persona_items)
 
     def _reconcile_requirement(
         self,
@@ -222,6 +260,17 @@ class SourceProvisioningReconciler:
                 schedule_action="skipped_seed_only",
                 idempotency_key=requirement.idempotency_key,
                 details={"reason": "seed_only requirements are labels, not live source bindings"},
+            )
+        if requirement.source_class == "live_push" or requirement.cadence == "on_demand":
+            return SourceProvisioningAction(
+                persona_id=requirement.persona_id,
+                dataset=requirement.dataset,
+                connector_id=None,
+                status="unsupported",
+                connector_action="unsupported_supervised_mode",
+                schedule_action="not_attempted",
+                idempotency_key=requirement.idempotency_key,
+                details={"reason": "default supervised source controller currently requires scheduled live_pull"},
             )
 
         connector_id = self._select_connector_id(requirement)
@@ -241,7 +290,21 @@ class SourceProvisioningReconciler:
         if plan is None:
             existing = self.connector_store.get_config(connector_id)
             if existing is not None:
-                self.manager.upsert_connector(existing.connector)
+                gate_results = self._policy_gate_results(existing.connector, requirement)
+                failed_gates = sorted(gate for gate, result in gate_results.items() if not result["passed"])
+                if failed_gates:
+                    return SourceProvisioningAction(
+                        persona_id=requirement.persona_id,
+                        dataset=requirement.dataset,
+                        connector_id=connector_id,
+                        status="conflict",
+                        connector_action="policy_gate_failed",
+                        schedule_action="not_attempted",
+                        idempotency_key=requirement.idempotency_key,
+                        details={"failed_policy_gates": failed_gates, "policy_gate_results": gate_results},
+                    )
+                if not dry_run:
+                    self.manager.upsert_connector(existing.connector)
                 schedule_action, schedule_details = self._ensure_schedule(
                     connector_id,
                     requirement=requirement,
@@ -265,6 +328,19 @@ class SourceProvisioningReconciler:
                 details={"reason": "connector candidate has no registered config and no built-in provider factory"},
             )
 
+        gate_results = self._policy_gate_results(plan.connector, requirement)
+        failed_gates = sorted(gate for gate, result in gate_results.items() if not result["passed"])
+        if failed_gates:
+            return SourceProvisioningAction(
+                persona_id=requirement.persona_id,
+                dataset=requirement.dataset,
+                connector_id=connector_id,
+                status="conflict",
+                connector_action="policy_gate_failed",
+                schedule_action="not_attempted",
+                idempotency_key=requirement.idempotency_key,
+                details={"failed_policy_gates": failed_gates, "policy_gate_results": gate_results},
+            )
         connector_action, connector_details = self._ensure_connector(plan, dry_run=dry_run)
         if connector_action == "conflict":
             return SourceProvisioningAction(
@@ -292,8 +368,35 @@ class SourceProvisioningReconciler:
                 "connector": connector_details,
                 "schedule": schedule_details,
                 "provider": plan.provider_name,
+                "policy_gate_results": gate_results,
             },
         )
+
+    def _policy_gate_results(
+        self,
+        connector: SourceConnector,
+        requirement: PersonaDataSourceRequirement,
+    ) -> dict[str, dict[str, Any]]:
+        results: dict[str, dict[str, Any]] = {}
+        for gate in requirement.policy_gates:
+            if gate == "require_connector_approved":
+                passed = connector.connector_id in self.provider_factories or bool(
+                    connector.metadata.get("approved") or connector.metadata.get("approval_status") == "approved"
+                )
+                results[gate] = {"passed": passed, "authority": "provider_allowlist_or_connector_approval"}
+            elif gate in {"require_schedule_active", "require_source_health_ok", "require_freshness_within_1d"}:
+                results[gate] = {"passed": True, "authority": "terminal_actual_readback"}
+            elif gate == "no_live_capital":
+                results[gate] = {
+                    "passed": connector.auth_type.value != "broker_ref",
+                    "authority": "connector_auth_policy",
+                }
+            elif gate == "public-source-only":
+                results[gate] = {
+                    "passed": connector.auth_type.value == "none" and not connector.secret_ref_id,
+                    "authority": "connector_auth_policy",
+                }
+        return results
 
     def _select_connector_id(self, requirement: PersonaDataSourceRequirement) -> str | None:
         candidates = list(requirement.connector_candidates) or self._default_candidates(requirement)
@@ -327,7 +430,7 @@ class SourceProvisioningReconciler:
         if factory is None:
             return None
         provider = factory(connector_id)
-        connector = provider.connector()
+        connector = self._connector_for_requirement(provider.connector(), requirement=requirement)
         fetch = dict(provider.fetch_config())
         fetch = self._fetch_for_requirement(fetch, connector_id=connector_id, requirement=requirement)
         return ProvisionedConnectorPlan(
@@ -344,12 +447,59 @@ class SourceProvisioningReconciler:
         requirement: PersonaDataSourceRequirement,
     ) -> dict[str, Any]:
         payload = dict(fetch)
+        request = dict(payload.get("request") or {})
+        if connector_id == TW_OFFICIAL_CONNECTOR_ID:
+            request["dataset"] = requirement.dataset
+        elif connector_id == "tw-finmind-datasets":
+            request["dataset"] = _FINMIND_DATASET_BY_NORMALIZED.get(requirement.dataset, requirement.dataset)
+        if request:
+            payload["request"] = request
         payload["allow_empty"] = True
         payload["empty_reason"] = (
             f"source provisioning verified {requirement.dataset}; live payload is supplied by scheduler fanout "
             "or provider-specific crawl workers"
         )
         return payload
+
+    def _connector_for_requirement(
+        self,
+        connector: SourceConnector,
+        *,
+        requirement: PersonaDataSourceRequirement,
+    ) -> SourceConnector:
+        """Attach controller ownership and desired-state provenance.
+
+        The marker is deliberately connector-scoped.  It gives later ticks a
+        safe ownership test for drift repair without allowing the reconciler
+        to overwrite an operator-managed/custom connector merely because the
+        connector id happens to match.
+        """
+
+        payload = connector.to_dict()
+        metadata = dict(payload.get("metadata") or {})
+        desired_state = {
+            "persona_id": requirement.persona_id,
+            "dataset": requirement.dataset,
+            "market": requirement.market,
+            "cadence": requirement.cadence,
+            "source_class": requirement.source_class,
+            "connector_candidates": list(requirement.connector_candidates),
+            "policy_gates": list(requirement.policy_gates),
+            "policy_gate_results": self._policy_gate_results(connector, requirement),
+        }
+        desired_json = json.dumps(
+            desired_state,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        metadata[RECONCILIATION_METADATA_KEY] = {
+            "managed_by": self.controller_name,
+            "desired_state": desired_state,
+            "desired_state_sha256": sha256(desired_json.encode("utf-8")).hexdigest(),
+        }
+        payload["metadata"] = metadata
+        return SourceConnector.from_dict(payload)
 
     def _ensure_connector(self, plan: ProvisionedConnectorPlan, *, dry_run: bool) -> tuple[str, dict[str, Any]]:
         connector_id = plan.connector.connector_id
@@ -362,15 +512,33 @@ class SourceProvisioningReconciler:
             self.manager.upsert_connector(stored.connector)
             return "created", {"connector_id": connector_id}
 
-        self.manager.upsert_connector(existing.connector)
+        if not dry_run:
+            self.manager.upsert_connector(existing.connector)
         connector_matches = existing.connector.to_dict() == plan.connector.to_dict()
         fetch_matches = dict(existing.fetch) == desired_fetch
         if connector_matches and fetch_matches:
             return "verified", {"connector_id": connector_id}
+        existing_owner = _reconciliation_owner(existing.connector)
+        legacy_adoptable = existing_owner is None and _without_reconciliation(existing.connector) == _without_reconciliation(
+            plan.connector
+        )
+        if existing_owner == self.controller_name or (legacy_adoptable and fetch_matches):
+            if dry_run:
+                return "would_repair", {
+                    "connector_id": connector_id,
+                    "reason": "controller_owned_drift" if existing_owner else "adopt_legacy_controller_config",
+                }
+            stored = self.connector_store.upsert_config(plan.connector, plan.fetch)
+            self.manager.upsert_connector(stored.connector)
+            return "repaired", {
+                "connector_id": connector_id,
+                "reason": "controller_owned_drift" if existing_owner else "adopted_legacy_controller_config",
+            }
         return "conflict", {
             "connector_id": connector_id,
             "connector_matches": connector_matches,
             "fetch_matches": fetch_matches,
+            "existing_owner": existing_owner,
         }
 
     def _ensure_schedule(
@@ -428,6 +596,22 @@ class SourceProvisioningReconciler:
         )
 
 
+def _reconciliation_owner(connector: SourceConnector) -> str | None:
+    marker = connector.metadata.get(RECONCILIATION_METADATA_KEY)
+    if not isinstance(marker, Mapping):
+        return None
+    owner = str(marker.get("managed_by") or "").strip()
+    return owner or None
+
+
+def _without_reconciliation(connector: SourceConnector) -> dict[str, Any]:
+    payload = connector.to_dict()
+    metadata = dict(payload.get("metadata") or {})
+    metadata.pop(RECONCILIATION_METADATA_KEY, None)
+    payload["metadata"] = metadata
+    return payload
+
+
 def _persona_id(persona: Mapping[str, Any] | Any) -> str:
     if isinstance(persona, Mapping):
         value = persona.get("persona_id")
@@ -441,17 +625,35 @@ def _persona_id(persona: Mapping[str, Any] | Any) -> str:
 
 def _requirements(persona: Mapping[str, Any] | Any) -> tuple[PersonaDataSourceRequirement, ...]:
     persona_id = _persona_id(persona)
-    raw_requirements = persona.get("required_data_sources", []) if isinstance(persona, Mapping) else getattr(
-        persona,
-        "required_data_sources",
-        [],
-    )
+    if isinstance(persona, Mapping):
+        if "required_data_sources" not in persona:
+            raise SourceEvidenceError("required_data_sources must be explicitly present for source provisioning")
+        raw_requirements = persona["required_data_sources"]
+    else:
+        if not hasattr(persona, "required_data_sources"):
+            raise SourceEvidenceError("required_data_sources must be explicitly present for source provisioning")
+        raw_requirements = getattr(persona, "required_data_sources")
+    if not isinstance(raw_requirements, (list, tuple)):
+        raise SourceEvidenceError("required_data_sources must be an array")
     return tuple(_requirement_from_raw(persona_id, item) for item in raw_requirements)
 
 
 def _requirement_from_raw(persona_id: str, raw: Mapping[str, Any] | _RequirementLike) -> PersonaDataSourceRequirement:
     def value(name: str, default: Any = "") -> Any:
         return raw.get(name, default) if isinstance(raw, Mapping) else getattr(raw, name, default)
+
+    if isinstance(raw, Mapping):
+        raw_payload = dict(raw)
+    else:
+        raw_payload = {
+            name: value(name, [] if name in {"connector_candidates", "policy_gates"} else "")
+            for name in ("dataset", "market", "cadence", "source_class", "connector_candidates", "policy_gates")
+        }
+    errors = sorted(REQUIRED_DATA_SOURCE_VALIDATOR.iter_errors(raw_payload), key=lambda item: list(item.path))
+    if errors:
+        first = errors[0]
+        location = ".".join(str(item) for item in first.path) or "required_data_sources"
+        raise SourceEvidenceError(f"invalid required data source at {location}: {first.message}")
 
     dataset = str(value("dataset")).strip()
     market = str(value("market")).strip().upper()
@@ -461,26 +663,33 @@ def _requirement_from_raw(persona_id: str, raw: Mapping[str, Any] | _Requirement
         raise SourceEvidenceError("required_data_sources.dataset is required")
     if not market:
         raise SourceEvidenceError("required_data_sources.market is required")
-    if not cadence:
-        raise SourceEvidenceError("required_data_sources.cadence is required")
-    if not source_class:
-        raise SourceEvidenceError("required_data_sources.source_class is required")
+    connector_candidates = _strict_string_list(value("connector_candidates", []), "connector_candidates")
+    policy_gates = _strict_string_list(value("policy_gates", []), "policy_gates")
+    unknown_policy_gates = sorted(set(policy_gates) - SUPPORTED_POLICY_GATES)
+    if unknown_policy_gates:
+        raise SourceEvidenceError(
+            "required_data_sources.policy_gates contains unsupported gate(s): "
+            + ", ".join(unknown_policy_gates)
+        )
     return PersonaDataSourceRequirement(
         persona_id=persona_id,
         dataset=dataset,
         market=market,
         cadence=cadence,
         source_class=source_class,
-        connector_candidates=tuple(_string_list(value("connector_candidates", []))),
-        policy_gates=tuple(_string_list(value("policy_gates", []))),
+        connector_candidates=tuple(connector_candidates),
+        policy_gates=tuple(policy_gates),
     )
 
 
-def _string_list(value: Any) -> list[str]:
-    if value in (None, ""):
-        return []
-    if isinstance(value, str):
-        return [value.strip()] if value.strip() else []
-    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
-        return [str(item).strip() for item in value if str(item).strip()]
-    return [str(value).strip()]
+def _strict_string_list(value: Any, field_name: str) -> list[str]:
+    if not isinstance(value, list):
+        raise SourceEvidenceError(f"required_data_sources.{field_name} must be an array")
+    normalized: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise SourceEvidenceError(f"required_data_sources.{field_name} must contain non-empty strings")
+        normalized.append(item.strip())
+    if len(set(normalized)) != len(normalized):
+        raise SourceEvidenceError(f"required_data_sources.{field_name} must not contain duplicates")
+    return normalized
