@@ -38,17 +38,38 @@ class AdapterCronRuntime:
     either transport interchangeably.
     """
 
-    def __init__(self, adapter_base_url: str, *, timeout_seconds: int = 30) -> None:
+    def __init__(
+        self,
+        adapter_base_url: str,
+        *,
+        timeout_seconds: int = 30,
+        service_token: str | None = None,
+    ) -> None:
         self._url = adapter_base_url.rstrip("/") + "/api/openclaw-adapter/gateway/cron"
         self._timeout = timeout_seconds
+        token = (
+            os.environ.get("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", "")
+            if service_token is None
+            else service_token
+        )
+        self._service_token = str(token or "").strip()
 
     def gateway_call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if not self._service_token:
+            raise RuntimeError(
+                "OpenClaw adapter cron service authentication is required, but "
+                "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN is not configured."
+            )
         body = json.dumps({"method": method, "params": params or {}}).encode("utf-8")
         req = urllib.request.Request(
             self._url,
             data=body,
             method="POST",
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "X-Pantheon-Service-Token": self._service_token,
+            },
         )
         with urllib.request.urlopen(req, timeout=self._timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
@@ -274,7 +295,11 @@ class PersonaCronRegistrar:
         runtime_id: str | None,
         runtime_binding_id: str | None,
     ) -> PersonaCronJobRecord:
-        request_id = f"persona-{workflow.workflow_id}-{uuid.uuid4()}"
+        # Stable owner correlation survives BFF/adapter response loss and
+        # process restart. Persona identity is already tenant-scoped and
+        # deterministic, so this token joins every retry to the same schedule
+        # intent without depending on an ephemeral mutation receipt.
+        request_id = f"persona-provisioning:{persona_id}:{workflow.workflow_id}"
         job_name = _job_name(workflow.workflow_id, persona_id)
         params = self._build_job_patch(
             workflow,
@@ -287,11 +312,61 @@ class PersonaCronRegistrar:
         )
         # OpenClaw's cron schema has no metadata property. Persona/runtime/
         # capital authority therefore travels in the systemEvent text.
-        response = runtime.gateway_call("cron.add", params)
-        job_id = str(response.get("id") or "")
-        if not job_id:
+        add_error: Exception | None = None
+        try:
+            response = runtime.gateway_call("cron.add", params)
+            job_id = str(response.get("id") or "").strip()
+            if not job_id:
+                raise RuntimeError(
+                    f"cron.add for {workflow.workflow_id} / {persona_id} returned no job id"
+                )
+        except Exception as exc:  # noqa: BLE001
+            # A transport error can happen after OpenClaw committed cron.add.
+            # Never retry the mutation blind: the unique request_id embedded in
+            # the systemEvent lets a fresh authoritative list distinguish this
+            # committed attempt from a pre-apply failure or concurrent writer.
+            add_error = exc
+            try:
+                owner_jobs = self._matching_workflow_jobs(
+                    self._list_jobs(runtime),
+                    persona_id,
+                    workflow.workflow_id,
+                )
+            except Exception as list_exc:  # noqa: BLE001
+                raise RuntimeError(
+                    f"cron.add outcome unknown for {workflow.workflow_id} / "
+                    f"{persona_id}: {exc}; authoritative cron.list failed: {list_exc}"
+                ) from list_exc
+
+            committed_jobs = [
+                job
+                for job in owner_jobs
+                if self._is_exact_workflow_job(
+                    job,
+                    workflow=workflow,
+                    persona_id=persona_id,
+                    request_id=request_id,
+                    runtime_id=runtime_id,
+                    runtime_binding_id=runtime_binding_id,
+                    capital_pool_id=capital_pool_id,
+                    persona_capital_binding_id=persona_capital_binding_id,
+                )
+            ]
+            if len(owner_jobs) != 1 or len(committed_jobs) != 1:
+                raise RuntimeError(
+                    f"cron.add outcome did not converge for {workflow.workflow_id} / "
+                    f"{persona_id}: authoritative cron.list found "
+                    f"{len(owner_jobs)} owner rows and {len(committed_jobs)} exact "
+                    f"rows for the attempted request; original error: {exc}"
+                ) from exc
+            job_id = str(committed_jobs[0].get("id") or "").strip()
+
+        if add_error is not None and not job_id:
+            # Defensive guard: _is_exact_workflow_job requires a non-empty id,
+            # so this path should be unreachable even for malformed gateways.
             raise RuntimeError(
-                f"cron.add for {workflow.workflow_id} / {persona_id} returned no job id"
+                f"cron.add reconciliation for {workflow.workflow_id} / "
+                f"{persona_id} returned no job id: {add_error}"
             )
         return PersonaCronJobRecord(
             workflow_id=workflow.workflow_id,
@@ -568,6 +643,88 @@ class PersonaCronRegistrar:
             persona_capital_binding_id=persona_capital_binding_id,
         )
 
+    def remove_first_evaluation_registration(
+        self,
+        persona_id: str,
+        *,
+        runtime: Any = None,
+    ) -> dict[str, Any]:
+        """Remove every first-evaluation row owned by *persona_id* and prove it.
+
+        This is the terminal-compensation boundary. A successful mutation
+        response is not proof, and a lost response is not automatically a
+        failure: only a fresh authoritative ``cron.list`` showing zero owner
+        rows permits ``registered=False`` to be returned. Any ambiguous owner
+        id or unavailable final readback raises so callers cannot record false
+        compensation completion.
+        """
+
+        clean_persona_id = str(persona_id or "").strip()
+        if not clean_persona_id:
+            raise ValueError("persona_id is required for cron registration removal")
+
+        resolved_runtime = runtime
+        if resolved_runtime is None and not self._dry_run:
+            resolved_runtime = self._get_runtime()
+        if resolved_runtime is None:
+            raise RuntimeError(
+                "authoritative cron runtime is unavailable for first-evaluation removal"
+            )
+
+        try:
+            owner_jobs = self._matching_first_evaluation_jobs(
+                self._list_jobs(resolved_runtime),
+                clean_persona_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"authoritative cron.list failed before first-evaluation removal: {exc}"
+            ) from exc
+
+        owner_ids = sorted(str(job.get("id") or "").strip() for job in owner_jobs)
+        if any(not job_id for job_id in owner_ids) or len(set(owner_ids)) != len(owner_ids):
+            raise RuntimeError(
+                "first-evaluation owner rows have missing or duplicate gateway ids; "
+                "refusing ambiguous removal"
+            )
+
+        mutation_errors: list[str] = []
+        for job_id in owner_ids:
+            try:
+                resolved_runtime.gateway_call("cron.remove", {"id": job_id})
+            except Exception as exc:  # noqa: BLE001
+                # The remove may have committed before its response was lost.
+                # Preserve the error for diagnostics, but let final readback
+                # decide whether compensation actually completed.
+                mutation_errors.append(f"cron.remove {job_id}: {exc}")
+
+        try:
+            remaining = self._matching_first_evaluation_jobs(
+                self._list_jobs(resolved_runtime),
+                clean_persona_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            details = "; ".join(mutation_errors)
+            suffix = f"; mutation errors: {details}" if details else ""
+            raise RuntimeError(
+                f"authoritative cron.list failed after first-evaluation removal: "
+                f"{exc}{suffix}"
+            ) from exc
+
+        if remaining:
+            remaining_ids = [str(job.get("id") or "") for job in remaining]
+            details = "; ".join(mutation_errors)
+            suffix = f"; mutation errors: {details}" if details else ""
+            raise RuntimeError(
+                "first-evaluation removal did not converge to registered=false; "
+                f"remaining owner rows: {remaining_ids}{suffix}"
+            )
+
+        return {
+            "registered": False,
+            "removed_ids": owner_ids,
+        }
+
     @staticmethod
     def _decode_job_event(job: dict[str, Any]) -> dict[str, Any] | None:
         payload = job.get("payload")
@@ -589,17 +746,92 @@ class PersonaCronRegistrar:
     ) -> list[dict[str, Any]]:
         """Return every row claiming this persona's first-evaluation owner key."""
         matches: list[dict[str, Any]] = []
+        expected_name = _job_name(PERSONA_FIRST_EVALUATION_WORKFLOW_ID, persona_id)
+        for job in jobs:
+            inner = self._decode_job_event(job)
+            payload_claims_owner = bool(
+                inner is not None
+                and inner.get("persona_id") == persona_id
+                and inner.get("workflow_id")
+                == PERSONA_FIRST_EVALUATION_WORKFLOW_ID
+            )
+            if job.get("name") == expected_name or payload_claims_owner:
+                matches.append(job)
+        return matches
+
+    def _matching_workflow_jobs(
+        self,
+        jobs: list[dict[str, Any]],
+        persona_id: str,
+        workflow_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return every gateway row claiming one persona/workflow owner key."""
+
+        matches: list[dict[str, Any]] = []
         for job in jobs:
             inner = self._decode_job_event(job)
             if inner is None:
                 continue
             if (
                 inner.get("persona_id") == persona_id
-                and inner.get("workflow_id")
-                == PERSONA_FIRST_EVALUATION_WORKFLOW_ID
+                and inner.get("workflow_id") == workflow_id
             ):
                 matches.append(job)
         return matches
+
+    def _is_exact_workflow_job(
+        self,
+        job: dict[str, Any],
+        *,
+        workflow: WorkflowDefinition,
+        persona_id: str,
+        request_id: str,
+        runtime_id: str | None,
+        runtime_binding_id: str | None,
+        capital_pool_id: str | None,
+        persona_capital_binding_id: str | None,
+    ) -> bool:
+        """Verify the authoritative row produced by one cron.add attempt."""
+
+        inner = self._decode_job_event(job)
+        schedule = job.get("schedule")
+        payload = job.get("payload")
+        if inner is None:
+            return False
+        if not (
+            isinstance(job.get("id"), str)
+            and bool(job["id"].strip())
+            and job.get("name") == _job_name(workflow.workflow_id, persona_id)
+            and job.get("enabled") is True
+            and job.get("deleteAfterRun") is False
+            and isinstance(schedule, dict)
+            and schedule.get("kind") == "cron"
+            and schedule.get("expr") == workflow.schedule
+            and job.get("sessionTarget") == (self._session_target or persona_id)
+            and job.get("wakeMode") == "next-heartbeat"
+            and job.get("delivery") == {"mode": self._delivery_mode}
+            and isinstance(payload, dict)
+            and payload.get("kind") == "systemEvent"
+            and inner.get("kind") == "pantheon.workflow.dispatch"
+            and inner.get("persona_id") == persona_id
+            and inner.get("request_id") == request_id
+            and inner.get("workflow_id") == workflow.workflow_id
+            and inner.get("policy_id") == workflow.policy_id
+            and inner.get("upstream_entrypoint") == workflow.upstream_entrypoint
+        ):
+            return False
+
+        if workflow.workflow_id != PERSONA_FIRST_EVALUATION_WORKFLOW_ID:
+            return True
+        return all(
+            key in inner and inner.get(key) == value
+            for key, value in {
+                "runtime_id": runtime_id,
+                "runtime_binding_id": runtime_binding_id,
+                "capital_pool_id": capital_pool_id,
+                "persona_capital_binding_id": persona_capital_binding_id,
+            }.items()
+        )
 
     def _is_exact_first_evaluation_job(
         self,
@@ -624,17 +856,25 @@ class PersonaCronRegistrar:
             "capital_pool_id": capital_pool_id,
             "persona_capital_binding_id": persona_capital_binding_id,
         }
+        expected_request_id = (
+            f"persona-provisioning:{persona_id}:{workflow.workflow_id}"
+        )
         return (
             isinstance(job.get("id"), str)
             and bool(job["id"].strip())
+            and job.get("name") == _job_name(workflow.workflow_id, persona_id)
             and job.get("enabled") is True
+            and job.get("deleteAfterRun") is False
             and isinstance(schedule, dict)
             and schedule.get("kind") == "cron"
             and schedule.get("expr") == workflow.schedule
             and job.get("sessionTarget") == (self._session_target or persona_id)
+            and job.get("wakeMode") == "next-heartbeat"
+            and job.get("delivery") == {"mode": self._delivery_mode}
             and isinstance(payload, dict)
             and payload.get("kind") == "systemEvent"
             and inner.get("kind") == "pantheon.workflow.dispatch"
+            and inner.get("request_id") == expected_request_id
             and all(
                 key in inner and inner.get(key) == value
                 for key, value in expected_identity.items()
@@ -695,12 +935,9 @@ class PersonaCronRegistrar:
             if not canonical_id:
                 mutation_errors.append("canonical owner row has no gateway id")
             else:
-                current_event = self._decode_job_event(canonical) or {}
-                request_id = current_event.get("request_id")
-                if not isinstance(request_id, str) or not request_id.strip():
-                    request_id = (
-                        f"persona-{workflow.workflow_id}-reconcile-{canonical_id}"
-                    )
+                request_id = (
+                    f"persona-provisioning:{persona_id}:{workflow.workflow_id}"
+                )
                 patch = self._build_job_patch(
                     workflow,
                     persona_id,
@@ -750,7 +987,11 @@ class PersonaCronRegistrar:
         """Return every raw gateway cron row without identity deduplication."""
         all_jobs: list[dict[str, Any]] = []
         offset = 0
+        seen_offsets: set[int] = set()
         while True:
+            if offset in seen_offsets:
+                raise RuntimeError("authoritative cron.list returned a pagination cycle")
+            seen_offsets.add(offset)
             listing = (
                 runtime.gateway_call(
                     "cron.list",
@@ -758,11 +999,18 @@ class PersonaCronRegistrar:
                 )
                 or {}
             )
-            jobs = listing.get("jobs") or []
+            if not isinstance(listing, dict):
+                raise RuntimeError("authoritative cron.list returned a non-object payload")
+            jobs = listing.get("jobs")
+            if not isinstance(jobs, list):
+                raise RuntimeError("authoritative cron.list returned a non-list jobs field")
             all_jobs.extend(job for job in jobs if isinstance(job, dict))
             if not listing.get("hasMore"):
                 break
-            offset = listing.get("nextOffset", offset + len(jobs))
+            next_offset = listing.get("nextOffset", offset + len(jobs))
+            if not isinstance(next_offset, int) or next_offset < 0:
+                raise RuntimeError("authoritative cron.list returned an invalid nextOffset")
+            offset = next_offset
         return all_jobs
 
     def _existing_registrations(self, runtime: Any) -> set[tuple[str, str]]:

@@ -15,6 +15,7 @@ from persona_provisioning import (
     ProvisioningConflict,
     ProvisioningLeaseLost,
     ProvisioningRecord,
+    make_persona_provisioning_store,
 )
 
 
@@ -23,6 +24,26 @@ IDEMPOTENCY_KEY = "persona-create-alpha"
 REQUEST_HASH = "sha256:request-alpha"
 NORMALIZED_NAME = "trader alpha"
 PERSONA_ID = "persona-alpha"
+
+
+@pytest.mark.parametrize("environment", ["prod", "production", "staging", "staging-live"])
+def test_deployed_environment_refuses_restart_unsafe_memory_store(
+    environment: str,
+) -> None:
+    with pytest.raises(ValueError, match="postgres is required"):
+        make_persona_provisioning_store(
+            {
+                "PANTHEON_ENV": environment,
+                "PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND": "memory",
+            }
+        )
+
+
+def test_postgres_store_refuses_empty_dsn() -> None:
+    with pytest.raises(ValueError, match="DSN or DATABASE_URL is required"):
+        make_persona_provisioning_store(
+            {"PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND": "postgres"}
+        )
 
 
 def _reserve(

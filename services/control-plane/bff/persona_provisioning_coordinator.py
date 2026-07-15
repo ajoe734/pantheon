@@ -353,6 +353,29 @@ class PersonaProvisioningCoordinator:
             lease_seconds=self.lease_seconds,
         )
 
+    def reconcile_failure_compensation(
+        self,
+        record: ProvisioningRecord,
+    ) -> ProvisioningRecord:
+        """Resume compensation only; never turn a terminal failure into retry.
+
+        ``coordinate`` deliberately permits safe early provisioning failures to
+        be retried by an explicit create replay.  A lifecycle readback worker
+        has a narrower mandate: it may finish fail-closed compensation, but it
+        must never restart forward provisioning.  Keep that distinction in a
+        dedicated public entrypoint so callers cannot accidentally select the
+        broader replay semantics.
+        """
+
+        existing = self.store.get(record.tenant_id, record.idempotency_key)
+        if existing is None:
+            raise PersonaProvisioningCoordinationError(
+                "Persona provisioning must be reserved before compensation"
+            )
+        if not self._needs_compensation_reconciliation(existing):
+            return existing
+        return self._resume_failure_compensation(existing)
+
     def _preview(self, record: ProvisioningRecord) -> ProvisioningRecord:
         preview = ProvisioningRecord.from_mapping(record.to_dict())
         ids = deterministic_provisioning_ids(preview)

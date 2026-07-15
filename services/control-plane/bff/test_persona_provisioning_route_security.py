@@ -29,6 +29,7 @@ def route_harness(tmp_path, monkeypatch: pytest.MonkeyPatch) -> _RouteHarness:
     transport = FakeOwnerTransport()
     store = MemoryPersonaProvisioningStore()
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_PERSONA_PROVISIONING_RECONCILER_ENABLED", "false")
     monkeypatch.setattr(bff_main, "read_store", read_store)
     monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", store)
     monkeypatch.setattr(bff_main, "_PersonaOwnerHttpTransport", lambda: transport)
@@ -148,3 +149,167 @@ def test_patch_cannot_bypass_server_managed_lifecycle(
     assert persona is not None
     assert persona["lifecycle_state"] == "provisioning"
     assert persona["metadata"]["owner"] == "operator-a"
+
+
+def test_persona_get_and_list_are_pure_reads(
+    route_harness: _RouteHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = route_harness.client.post(
+        "/bff/personas",
+        headers=_headers("operator-a", "persona-pure-read-create"),
+        json={"name": "Pure Read Persona", "risk": "low"},
+    )
+    assert created.status_code == 201, created.text
+    persona_id = created.json()["data"]["id"]
+    before = bff_main.read_store.get_persona(persona_id)
+
+    def forbidden_reconcile(*_args, **_kwargs):
+        raise AssertionError("read route must not reconcile or mutate Persona lifecycle")
+
+    monkeypatch.setattr(
+        bff_main,
+        "_evaluate_persona_provisioning_status",
+        forbidden_reconcile,
+    )
+    detail = route_harness.client.get(
+        f"/bff/personas/{persona_id}",
+        headers={"Authorization": "Bearer viewer-a:viewer"},
+    )
+    listed = route_harness.client.get(
+        "/bff/personas?page_size=1",
+        headers={"Authorization": "Bearer viewer-a:viewer"},
+    )
+
+    assert detail.status_code == 200, detail.text
+    assert listed.status_code == 200, listed.text
+    assert bff_main.read_store.get_persona(persona_id) == before
+
+
+def test_persona_list_projects_only_requested_page(
+    route_harness: _RouteHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for index in range(5):
+        bff_main.read_store.create_persona(
+            persona_id=f"persona-page-{index}",
+            name=f"Page Persona {index}",
+            actor_id="operator-a",
+            lifecycle_state="provisioning",
+            metadata={"tenant_id": "pantheon-dev", "archetype": "generalist"},
+        )
+    original = bff_main._project_persona_list_records
+    projected_sizes: list[int] = []
+
+    def capture(records):
+        projected_sizes.append(len(records))
+        return original(records)
+
+    monkeypatch.setattr(bff_main, "_project_persona_list_records", capture)
+    response = route_harness.client.get(
+        "/bff/personas?page_size=1",
+        headers={"Authorization": "Bearer viewer-a:viewer"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["data"]) == 1
+    assert projected_sizes == [1]
+
+
+def test_patch_cache_is_namespaced_after_tenant_authorization(
+    route_harness: _RouteHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        bff_main,
+        "_bff_me_tenant_payload",
+        lambda identity, requested_tenant=None: {
+            "id": "tenant-a" if identity.operator_id == "operator-a" else "tenant-b"
+        },
+    )
+    created = route_harness.client.post(
+        "/bff/personas",
+        headers=_headers("operator-a", "persona-tenant-cache-create"),
+        json={"name": "Tenant Cache Persona", "risk": "low"},
+    )
+    assert created.status_code == 201, created.text
+    persona_id = created.json()["data"]["id"]
+
+    first = route_harness.client.patch(
+        f"/bff/personas/{persona_id}",
+        headers=_headers("operator-a", "shared-patch-key"),
+        json={"successRate": 0.25},
+    )
+    foreign = route_harness.client.patch(
+        f"/bff/personas/{persona_id}",
+        headers=_headers("operator-b", "shared-patch-key"),
+        json={"successRate": 0.25},
+    )
+
+    assert first.status_code == 200, first.text
+    assert foreign.status_code == 404, foreign.text
+
+
+def test_patch_overlay_and_cached_replay_preserve_tenant_snapshot(
+    route_harness: _RouteHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        bff_main,
+        "_bff_me_tenant_payload",
+        lambda identity, requested_tenant=None: {"id": "tenant-a"},
+    )
+    created = route_harness.client.post(
+        "/bff/personas",
+        headers=_headers("operator-a", "persona-overlay-tenant-create"),
+        json={"name": "Overlay Tenant Persona", "risk": "low"},
+    )
+    persona_id = created.json()["data"]["id"]
+
+    first = route_harness.client.patch(
+        f"/bff/personas/{persona_id}",
+        headers=_headers("operator-a", "persona-overlay-tenant-patch"),
+        json={"successRate": 0.5},
+    )
+    first_body = first.json()
+    assert first_body["data"]["tenantId"] == "tenant-a"
+    assert bff_main._PERSONA_BFF_OVERLAY[persona_id]["tenantId"] == "tenant-a"
+
+    bff_main._PERSONA_BFF_OVERLAY[persona_id]["state"] = "failed"
+    replay = route_harness.client.patch(
+        f"/bff/personas/{persona_id}",
+        headers=_headers("operator-a", "persona-overlay-tenant-patch"),
+        json={"successRate": 0.5},
+    )
+
+    assert replay.status_code == 200, replay.text
+    assert replay.json() == first_body
+    assert replay.json()["data"]["state"] != "failed"
+
+
+def test_controller_isolates_one_malformed_persona_from_later_records(
+    route_harness: _RouteHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = [
+        {"persona_id": "persona-bad", "lifecycle_state": "provisioning"},
+        {"persona_id": "persona-good", "lifecycle_state": "provisioning"},
+    ]
+    evaluated: list[str] = []
+    monkeypatch.setattr(bff_main, "_list_persona_records", lambda: records)
+    monkeypatch.setattr(
+        bff_main,
+        "_persona_readback_snapshot",
+        lambda: ({}, None, []),
+    )
+
+    def evaluate(persona_id, *_args, **_kwargs):
+        evaluated.append(persona_id)
+        if persona_id == "persona-bad":
+            raise ValueError("malformed metadata")
+        return "provisioning"
+
+    monkeypatch.setattr(bff_main, "_evaluate_persona_provisioning_status", evaluate)
+
+    assert bff_main._reconcile_persona_provisioning_once() == 1
+    assert evaluated == ["persona-bad", "persona-good"]

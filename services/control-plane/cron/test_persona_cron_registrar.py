@@ -10,6 +10,7 @@ from collections.abc import Callable
 from unittest.mock import patch
 
 from persona_cron_registrar import (
+    AdapterCronRuntime,
     PersonaCronRegistrar,
     PersonaCronRegistrationResult,
     _job_name,
@@ -39,7 +40,7 @@ def _existing_job_fixture(
         "kind": "pantheon.workflow.dispatch",
         "persona_id": persona_id,
         "policy_id": workflow.policy_id,
-        "request_id": f"fixture-{job_id}",
+        "request_id": f"persona-provisioning:{persona_id}:{workflow_id}",
         "upstream_entrypoint": workflow.upstream_entrypoint,
         "workflow_id": workflow_id,
     }
@@ -56,12 +57,15 @@ def _existing_job_fixture(
         "id": job_id,
         "name": _job_name(workflow_id, persona_id),
         "enabled": True,
+        "deleteAfterRun": False,
         "schedule": {"kind": "cron", "expr": workflow.schedule},
         "sessionTarget": persona_id,
+        "wakeMode": "next-heartbeat",
         "payload": {
             "kind": "systemEvent",
             "text": json.dumps(event),
         },
+        "delivery": {"mode": "none"},
     }
 
 
@@ -138,7 +142,11 @@ class GatewayRuntimeSpy:
             workflow_id = "unknown"
         if workflow_id in self._fail_on:
             raise RuntimeError(f"Simulated failure for {workflow_id}")
-        return {"id": f"job-{workflow_id}-001"}
+        self._fail_before_apply("cron.add")
+        job_id = f"job-{workflow_id}-{len(self._existing_jobs) + 1:03d}"
+        self._existing_jobs.append({"id": job_id, **dict(params or {})})
+        self._lose_response_after_apply("cron.add")
+        return {"id": job_id}
 
     @property
     def add_calls(self) -> list[tuple[str, dict | None]]:
@@ -515,6 +523,167 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
             )
         )
 
+    def test_remove_first_evaluation_registration_removes_all_owner_rows(self):
+        persona_id = "persona-terminal-remove-001"
+        spy = GatewayRuntimeSpy(
+            existing_jobs=[
+                _existing_job_fixture(
+                    PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                    persona_id,
+                    job_id,
+                )
+                for job_id in ("job-terminal-remove-a", "job-terminal-remove-b")
+            ]
+        )
+        registrar = PersonaCronRegistrar(gateway_runtime=spy)
+
+        result = registrar.remove_first_evaluation_registration(persona_id)
+
+        self.assertEqual(
+            result,
+            {
+                "registered": False,
+                "removed_ids": [
+                    "job-terminal-remove-a",
+                    "job-terminal-remove-b",
+                ],
+            },
+        )
+        self.assertEqual(len(spy.remove_calls), 2)
+        self.assertFalse(
+            registrar.has_workflow_registration(
+                persona_id,
+                PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                runtime=spy,
+            )
+        )
+
+    def test_remove_first_evaluation_cleans_deterministic_malformed_row(self):
+        persona_id = "persona-terminal-malformed-001"
+        malformed = _existing_job_fixture(
+            PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+            persona_id,
+            "job-terminal-malformed",
+        )
+        malformed["payload"]["text"] = "not-json"
+        spy = GatewayRuntimeSpy(existing_jobs=[malformed])
+
+        result = PersonaCronRegistrar(
+            gateway_runtime=spy
+        ).remove_first_evaluation_registration(persona_id)
+
+        self.assertEqual(result["removed_ids"], ["job-terminal-malformed"])
+        self.assertFalse(result["registered"])
+        self.assertEqual(
+            spy.remove_calls,
+            [("cron.remove", {"id": "job-terminal-malformed"})],
+        )
+
+    def test_remove_first_evaluation_response_loss_uses_authoritative_list(self):
+        persona_id = "persona-terminal-response-loss-001"
+        spy = GatewayRuntimeSpy(
+            existing_jobs=[
+                _existing_job_fixture(
+                    PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                    persona_id,
+                    "job-terminal-response-loss",
+                )
+            ],
+            response_loss_after_apply={"cron.remove"},
+        )
+
+        result = PersonaCronRegistrar(
+            gateway_runtime=spy
+        ).remove_first_evaluation_registration(persona_id)
+
+        self.assertFalse(result["registered"])
+        self.assertEqual(result["removed_ids"], ["job-terminal-response-loss"])
+
+    def test_remove_first_evaluation_fails_when_row_remains(self):
+        persona_id = "persona-terminal-remove-failed-001"
+        spy = GatewayRuntimeSpy(
+            existing_jobs=[
+                _existing_job_fixture(
+                    PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                    persona_id,
+                    "job-terminal-remove-failed",
+                )
+            ],
+            mutation_fail_before_apply={"cron.remove"},
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "did not converge to registered=false",
+        ):
+            PersonaCronRegistrar(
+                gateway_runtime=spy
+            ).remove_first_evaluation_registration(persona_id)
+
+    def test_remove_first_evaluation_fails_when_final_readback_is_unknown(self):
+        persona_id = "persona-terminal-readback-unknown-001"
+
+        class FinalListFailureRuntime(GatewayRuntimeSpy):
+            def __init__(self):
+                super().__init__(
+                    existing_jobs=[
+                        _existing_job_fixture(
+                            PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                            persona_id,
+                            "job-terminal-readback-unknown",
+                        )
+                    ]
+                )
+                self._list_count = 0
+
+            def gateway_call(self, method, params=None):
+                if method == "cron.list":
+                    self._list_count += 1
+                    if self._list_count > 1:
+                        raise RuntimeError("simulated final cron.list failure")
+                return super().gateway_call(method, params)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "cron.list failed after first-evaluation removal",
+        ):
+            PersonaCronRegistrar(
+                gateway_runtime=FinalListFailureRuntime()
+            ).remove_first_evaluation_registration(persona_id)
+
+    def test_first_evaluation_add_response_loss_uses_authoritative_list(self):
+        persona_id = "persona-add-response-loss-001"
+        identity = {
+            "runtime_id": "runtime-add-response-loss-001",
+            "runtime_binding_id": "runtime-binding-add-response-loss-001",
+            "capital_pool_id": "pool-add-response-loss-001",
+            "persona_capital_binding_id": "pcb-add-response-loss-001",
+        }
+        spy = GatewayRuntimeSpy(response_loss_after_apply={"cron.add"})
+        registrar = PersonaCronRegistrar(gateway_runtime=spy)
+
+        result = registrar.register_for_persona(
+            persona_id,
+            workflow_ids=[PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+            **identity,
+        )
+
+        self.assertEqual(result.failed, [])
+        self.assertEqual(len(result.registered), 1)
+        self.assertEqual(len(spy.add_calls), 1)
+        owner_jobs = registrar._matching_first_evaluation_jobs(  # noqa: SLF001
+            registrar._list_jobs(spy),  # noqa: SLF001
+            persona_id,
+        )
+        self.assertEqual(len(owner_jobs), 1)
+        self.assertTrue(
+            registrar.has_first_evaluation_registration(
+                persona_id,
+                runtime=spy,
+                **identity,
+            )
+        )
+
     def test_first_evaluation_update_failure_is_not_assumed_successful(self):
         persona_id = "persona-update-not-applied-001"
         identity = {
@@ -669,7 +838,12 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
             job["payload"]["text"] = json.dumps(event)
 
         outer_cases: list[tuple[str, Callable[[dict], None]]] = [
+            ("name", lambda job: job.__setitem__("name", "pantheon-wrong-name")),
             ("enabled", lambda job: job.__setitem__("enabled", False)),
+            (
+                "delete after run",
+                lambda job: job.__setitem__("deleteAfterRun", True),
+            ),
             (
                 "schedule kind",
                 lambda job: job["schedule"].__setitem__("kind", "at"),
@@ -681,6 +855,14 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
             (
                 "session target",
                 lambda job: job.__setitem__("sessionTarget", "another-agent"),
+            ),
+            (
+                "wake mode",
+                lambda job: job.__setitem__("wakeMode", "now"),
+            ),
+            (
+                "delivery",
+                lambda job: job.__setitem__("delivery", {"mode": "announce"}),
             ),
             (
                 "payload kind",
@@ -705,6 +887,7 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
         event_cases = {
             "event kind": ("kind", "pantheon.workflow.other"),
             "persona id": ("persona_id", "persona-other"),
+            "request id": ("request_id", "arbitrary-request"),
             "runtime id": ("runtime_id", "runtime-other"),
             "runtime binding id": (
                 "runtime_binding_id",
@@ -853,6 +1036,24 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
         self.assertEqual(result.registered, [])
         self.assertTrue(result.failed)
 
+    def test_cron_list_pagination_cycle_fails_closed(self):
+        class CyclingRuntime(GatewayRuntimeSpy):
+            def gateway_call(self, method, params=None):
+                if method == "cron.list":
+                    self.calls.append((method, params))
+                    return {"jobs": [], "hasMore": True, "nextOffset": 0}
+                return super().gateway_call(method, params)
+
+        spy = CyclingRuntime()
+        result = PersonaCronRegistrar(gateway_runtime=spy).register_for_persona(
+            "persona-pagination-cycle"
+        )
+
+        self.assertEqual(spy.add_calls, [])
+        self.assertEqual(result.registered, [])
+        self.assertTrue(result.failed)
+        self.assertIn("pagination cycle", result.failed[0]["error"])
+
     def test_session_target_defaults_to_persona_own_agent(self):
         spy = GatewayRuntimeSpy()
         PersonaCronRegistrar(gateway_runtime=spy).register_for_persona("persona-crypto")
@@ -904,13 +1105,57 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
         self.assertEqual(remove_failed, [])
 
     def test_adapter_runtime_selected_when_adapter_url_set(self):
-        from persona_cron_registrar import AdapterCronRuntime
         with patch.dict(
             "os.environ",
             {"PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL": "http://openclaw-gateway-adapter:8104"},
         ):
             runtime = PersonaCronRegistrar()._get_runtime()
         self.assertIsInstance(runtime, AdapterCronRuntime)
+
+    def test_adapter_runtime_attaches_service_token(self):
+        captured: dict[str, object] = {}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return None
+
+            def read(self) -> bytes:
+                return b'{"status":"ok","data":{"jobs":[]}}'
+
+        def fake_urlopen(request, *, timeout):
+            captured["headers"] = {
+                key.lower(): value for key, value in request.header_items()
+            }
+            captured["timeout"] = timeout
+            return Response()
+
+        runtime = AdapterCronRuntime(
+            "http://openclaw-gateway-adapter:8104",
+            service_token="cron-service-secret",
+        )
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            result = runtime.gateway_call("cron.list", {"limit": 1})
+
+        self.assertEqual(result, {"jobs": []})
+        self.assertEqual(
+            captured["headers"]["x-pantheon-service-token"],
+            "cron-service-secret",
+        )
+
+    def test_adapter_runtime_fails_closed_without_service_token(self):
+        runtime = AdapterCronRuntime(
+            "http://openclaw-gateway-adapter:8104",
+            service_token="",
+        )
+        with (
+            patch("urllib.request.urlopen") as urlopen,
+            self.assertRaisesRegex(RuntimeError, "service authentication is required"),
+        ):
+            runtime.gateway_call("cron.list", {"limit": 1})
+        urlopen.assert_not_called()
 
     def test_gateway_failure_captured_in_failed_list(self):
         spy = GatewayRuntimeSpy(fail_on={"pantheon.deploy"})

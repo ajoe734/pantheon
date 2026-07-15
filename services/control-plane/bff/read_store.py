@@ -11545,7 +11545,8 @@ class ReadSurfaceStore:
         """
 
         available, raw_sessions = self._canonical.list_records(
-            "paper_runtime_monitoring_sessions"
+            "paper_runtime_monitoring_sessions",
+            include_snapshot_fallback=False,
         )
         if not available:
             return []

@@ -137,6 +137,8 @@ require_env "$CONTROL_JSON" operator-bff PANTHEON_BFF_CORS_ORIGINS https://panth
 require_env "$CONTROL_JSON" operator-bff PANTHEON_INTERNAL_API_URL http://10.140.0.5:28081
 require_env "$CONTROL_JSON" operator-bff PANTHEON_RUNTIME_MANAGER_URL http://10.140.0.5:28081
 require_env_nonempty "$CONTROL_JSON" operator-bff PANTHEON_RUNTIME_MANAGER_TOKEN
+require_env "$CONTROL_JSON" operator-bff PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL http://10.140.0.4:38104
+require_env_nonempty "$CONTROL_JSON" operator-bff PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN
 require_env "$CONTROL_JSON" operator-bff PANTHEON_GOVERNANCE_APPROVAL_API_URL http://governance:8082
 require_env "$CONTROL_JSON" operator-bff PANTHEON_DEPLOYMENT_API_URL http://deployment:8095
 require_env "$CONTROL_JSON" telemetry PANTHEON_RUNTIME_MANAGER_URL http://10.140.0.5:28081

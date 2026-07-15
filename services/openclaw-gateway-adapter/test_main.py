@@ -253,6 +253,264 @@ class TestAssistantServiceAuthentication(unittest.TestCase):
         self.assertTrue(resp.json()["reachable"])
 
 
+class TestCronServiceAuthentication(unittest.TestCase):
+    def _auth_config(self, *, token: str, required: bool = False):
+        return patch.multiple(
+            adapter_main,
+            _ASSISTANT_SERVICE_TOKEN=token,
+            _ASSISTANT_SERVICE_AUTH_REQUIRED=required,
+        )
+
+    def test_cron_proxy_rejects_missing_service_token(self):
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.list", "params": {"limit": 1}},
+            )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertEqual(response.json()["error_code"], "CRON_SERVICE_AUTH_DENIED")
+        gateway_call.assert_not_called()
+
+    def test_cron_proxy_rejects_wrong_service_token(self):
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.list", "params": {"limit": 1}},
+                headers={"X-Pantheon-Service-Token": "wrong-secret"},
+            )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertEqual(response.json()["error_code"], "CRON_SERVICE_AUTH_DENIED")
+        gateway_call.assert_not_called()
+
+    def test_cron_proxy_accepts_correct_service_token(self):
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                return_value={"jobs": []},
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.list", "params": {"limit": 1}},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"], {"jobs": []})
+        gateway_call.assert_called_once_with("cron.list", {"limit": 1})
+
+    def test_cron_proxy_fails_closed_when_token_is_not_configured(self):
+        with (
+            self._auth_config(token="", required=False),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.list", "params": {"limit": 1}},
+            )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(
+            response.json()["error_code"],
+            "CRON_SERVICE_AUTH_MISCONFIGURED",
+        )
+        gateway_call.assert_not_called()
+
+    @staticmethod
+    def _persona_job(*, name: str = "pantheon-pantheon-review-persona-1"):
+        return {
+            "id": "job-persona-1",
+            "name": name,
+            "enabled": True,
+            "deleteAfterRun": False,
+            "schedule": {"kind": "cron", "expr": "0 * * * *"},
+            "sessionTarget": "persona-1",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "systemEvent",
+                "text": json.dumps(
+                    {
+                        "kind": "pantheon.workflow.dispatch",
+                        "persona_id": "persona-1",
+                        "workflow_id": "pantheon.review",
+                        "request_id": "persona-provisioning:persona-1:pantheon.review",
+                        "policy_id": "policy-review",
+                        "upstream_entrypoint": "persona.review",
+                    }
+                ),
+            },
+            "delivery": {"mode": "none"},
+        }
+
+    def test_cron_add_rejects_non_persona_payload(self):
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.add", "params": {"name": "arbitrary"}},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        gateway_call.assert_not_called()
+
+    def test_cron_add_forwards_complete_persona_job(self):
+        params = self._persona_job()
+        params.pop("id")
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                return_value={"id": "job-persona-1"},
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.add", "params": params},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        gateway_call.assert_called_once_with("cron.add", params)
+
+    def test_cron_run_is_not_exposed_by_persona_proxy(self):
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.run", "params": {"id": "job-other"}},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        gateway_call.assert_not_called()
+
+    def test_cron_remove_is_fenced_to_persona_owned_namespace(self):
+        calls = []
+
+        def gateway_call(method, params):
+            calls.append((method, params))
+            if method == "cron.list":
+                return {"jobs": [self._persona_job(name="external-job")]}
+            raise AssertionError("destructive mutation must not be forwarded")
+
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                side_effect=gateway_call,
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.remove", "params": {"id": "job-persona-1"}},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(
+            response.json()["error_code"],
+            "OPENCLAW_CRON_TARGET_FORBIDDEN",
+        )
+        self.assertEqual([method for method, _ in calls], ["cron.list"])
+
+    def test_cron_remove_forwards_verified_persona_owned_job(self):
+        calls = []
+
+        def gateway_call(method, params):
+            calls.append((method, params))
+            if method == "cron.list":
+                return {"jobs": [self._persona_job()]}
+            if method == "cron.remove":
+                return {"removed": True}
+            raise AssertionError(method)
+
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                side_effect=gateway_call,
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.remove", "params": {"id": "job-persona-1"}},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"], {"removed": True})
+        self.assertEqual(
+            [method for method, _ in calls],
+            ["cron.list", "cron.remove"],
+        )
+
+    def test_cron_remove_allows_reserved_malformed_orphan_cleanup(self):
+        orphan = {
+            "id": "job-orphan-1",
+            "name": "pantheon-malformed-orphan",
+            "payload": {"kind": "systemEvent", "text": "not-json"},
+        }
+        calls = []
+
+        def gateway_call(method, params):
+            calls.append((method, params))
+            if method == "cron.list":
+                return {"jobs": [orphan]}
+            if method == "cron.remove":
+                return {"removed": True}
+            raise AssertionError(method)
+
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                side_effect=gateway_call,
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.remove", "params": {"id": "job-orphan-1"}},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([method for method, _ in calls], ["cron.list", "cron.remove"])
+
+
 # ---------------------------------------------------------------------------
 # Upstream status
 # ---------------------------------------------------------------------------

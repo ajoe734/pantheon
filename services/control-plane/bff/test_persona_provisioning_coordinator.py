@@ -667,6 +667,28 @@ def test_safe_early_failure_retries_without_replaying_committed_owner_writes() -
     assert len(baseline_posts) == 1
 
 
+def test_compensation_reconciler_never_restarts_safe_early_failure() -> None:
+    store, record = _record_and_store()
+    proposal_path = "/api/governance/approvals"
+    transport = FakeOwnerTransport(mutation_failure={proposal_path})
+
+    first = _coordinator(store, transport, lambda *_args: {}).coordinate(record)
+    mutations_after_failure = transport.mutations.copy()
+    transport.mutation_failure.remove(proposal_path)
+
+    reconciled = PersonaProvisioningCoordinator(
+        store=store,
+        transport=transport,
+        schedule_registrar=lambda *_args: {},
+        lease_owner="compensation-only-worker",
+    ).reconcile_failure_compensation(first)
+
+    assert reconciled.state == "failed"
+    assert reconciled.error["failed_step"] == "baseline_approval_proposed"
+    assert reconciled.attempt_count == 1
+    assert transport.mutations == mutations_after_failure
+
+
 def test_unclassified_failed_record_stays_terminal_without_forward_replay() -> None:
     store, record = _record_and_store()
     failed = store.acquire(

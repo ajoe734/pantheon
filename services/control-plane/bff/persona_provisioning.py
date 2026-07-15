@@ -538,12 +538,33 @@ def make_persona_provisioning_store(
 ) -> PersonaProvisioningStore:
     values = os.environ if env is None else env
     backend = values.get("PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND", "memory").lower()
+    environment = str(
+        values.get("PANTHEON_ENV")
+        or values.get("ENVIRONMENT")
+        or ""
+    ).strip().lower()
+    durable_required = environment in {
+        "prod",
+        "production",
+        "staging",
+        "staging-live",
+    }
     if backend == "memory":
+        if durable_required:
+            raise ValueError(
+                "PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND=postgres is required "
+                f"when PANTHEON_ENV={environment}; refusing restart-unsafe memory state"
+            )
         return MemoryPersonaProvisioningStore()
     if backend == "postgres":
         dsn = values.get("PANTHEON_PERSONA_PROVISIONING_STORE_DSN") or values.get("DATABASE_URL")
+        if not str(dsn or "").strip():
+            raise ValueError(
+                "PANTHEON_PERSONA_PROVISIONING_STORE_DSN or DATABASE_URL is required "
+                "for the postgres Persona provisioning store"
+            )
         return PostgresPersonaProvisioningStore(
-            dsn or "",
+            str(dsn),
             schema=values.get("PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA", "bff"),
         )
     raise ValueError("PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND must be memory or postgres")

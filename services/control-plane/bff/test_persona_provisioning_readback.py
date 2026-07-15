@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 import main as bff_main
+from read_store import ReadSurfaceStore
 
 
 PERSONA_ID = "persona-dynamic-alpha"
@@ -54,9 +55,11 @@ def _runtime_binding(**overrides: Any) -> dict[str, Any]:
         "binding_id": RUNTIME_BINDING_ID,
         "runtime_id": RUNTIME_ID,
         "plan_id": PLAN_ID,
+        "capital_pool_id": "pool-dynamic-alpha",
         "persona_capital_binding_id": PERSONA_CAPITAL_BINDING_ID,
+        "deployment_mode": "paper",
         "status": "active",
-        "metadata": {"persona_id": PERSONA_ID},
+        "metadata": {"persona_id": PERSONA_ID, "tenant_id": "tenant-alpha"},
     }
     binding.update(overrides)
     return binding
@@ -85,6 +88,7 @@ def _worker_session(**overrides: Any) -> dict[str, Any]:
         "session_id": "paper-worker-alpha-1",
         "runtime_id": RUNTIME_ID,
         "binding_id": RUNTIME_BINDING_ID,
+        "capital_pool_id": "pool-dynamic-alpha",
         "status": "running",
         "active": True,
         "last_heartbeat_at": _now(),
@@ -139,6 +143,8 @@ class _FakeReadStore:
 class _FakeProvisioningStore:
     acquired: list[tuple[str, str, str]] = field(default_factory=list)
     released: list[Any] = field(default_factory=list)
+    busy: bool = False
+    state: str = "provisioning"
 
     def acquire(
         self,
@@ -150,9 +156,11 @@ class _FakeProvisioningStore:
     ) -> Any:
         assert lease_seconds > 0
         self.acquired.append((tenant_id, idempotency_key, lease_owner))
+        if self.busy:
+            return None
         return SimpleNamespace(
             references={},
-            state="provisioning",
+            state=self.state,
             current_step="authoritative_readback",
             error=None,
         )
@@ -167,12 +175,19 @@ class _RuntimeClient:
     def __init__(self, *, error: Exception | None = None) -> None:
         self.error = error
         self.requested_binding_ids: list[str] = []
+        self.requested_plan_ids: list[str] = []
 
     def get(self, binding_id: str) -> dict[str, Any] | None:
         self.requested_binding_ids.append(binding_id)
         if self.error is not None:
             raise self.error
         return None
+
+    def list_by_plan(self, plan_id: str) -> list[dict[str, Any]]:
+        self.requested_plan_ids.append(plan_id)
+        if self.error is not None:
+            raise self.error
+        return []
 
 
 @dataclass
@@ -195,6 +210,16 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
     monkeypatch.setattr(bff_main, "_PERSONA_BFF_OVERLAY", {})
     monkeypatch.setattr(bff_main, "_get_json", lambda *_args, **_kwargs: deepcopy(projection))
     monkeypatch.setattr(bff_main, "_runtime_manager_client", lambda: runtime_client)
+    monkeypatch.setattr(
+        bff_main,
+        "_remove_persona_cron_required",
+        lambda persona_id: {"persona_id": persona_id, "registered": False, "removed_ids": []},
+    )
+    monkeypatch.setattr(
+        bff_main,
+        "_reconcile_persona_provisioning_compensation",
+        lambda _metadata: {"status": "completed"},
+    )
     monkeypatch.setenv("PANTHEON_PERSONA_HEARTBEAT_MAX_AGE_SECONDS", "90")
     monkeypatch.setenv("PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS", "600")
     return _Harness(read_store, provisioning_store, projection, runtime_client)
@@ -248,8 +273,8 @@ def test_conflicting_optional_worker_persona_identity_fails_closed(
         cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
     )
 
-    assert state == "provisioning"
-    assert harness.provisioning_store.released == []
+    assert state == "provisioning_failed"
+    assert harness.provisioning_store.released[-1].state == "failed"
 
 
 @pytest.mark.parametrize(
@@ -459,7 +484,7 @@ def test_runtime_manager_degraded_does_not_raise_or_fake_success(
     )
 
     assert state == "provisioning"
-    assert degraded_client.requested_binding_ids == [RUNTIME_BINDING_ID]
+    assert degraded_client.requested_plan_ids == [PLAN_ID]
     assert harness.provisioning_store.released == []
 
 
@@ -527,3 +552,235 @@ def test_runtime_identity_is_forwarded_to_exact_schedule_reconciliation(
             "runtime_binding_id": RUNTIME_BINDING_ID,
         }
     ]
+
+
+def test_embedded_projection_binding_is_not_runtime_manager_authority(
+    harness: _Harness,
+) -> None:
+    state, _ = _evaluate(
+        bindings={},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning"
+    assert harness.read_store.updates == []
+
+
+def test_multiple_active_bindings_for_plan_fail_closed(harness: _Harness) -> None:
+    duplicate = _runtime_binding(
+        binding_id="rb-authoritative-alpha-duplicate",
+        runtime_id="runtime-dynamic-alpha-duplicate",
+    )
+    state, raw = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding(), duplicate["binding_id"]: duplicate},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning_failed"
+    assert "runtime_binding_failed_or_mismatched" in raw["metadata"][
+        "provisioning_failure_reason"
+    ]
+
+
+@pytest.mark.parametrize(
+    "binding_update",
+    [
+        {"capital_pool_id": "pool-other"},
+        {"metadata": {"persona_id": PERSONA_ID, "tenant_id": "tenant-other"}},
+        {"deployment_mode": "live"},
+    ],
+    ids=["wrong-pool", "wrong-tenant", "wrong-mode"],
+)
+def test_runtime_binding_requires_exact_scope_identity(
+    harness: _Harness,
+    binding_update: dict[str, Any],
+) -> None:
+    binding = _runtime_binding(**binding_update)
+    state, raw = _evaluate(
+        bindings={RUNTIME_BINDING_ID: binding},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning_failed"
+    assert "runtime_binding_failed_or_mismatched" in raw["metadata"][
+        "provisioning_failure_reason"
+    ]
+
+
+@pytest.mark.parametrize(
+    "session_update",
+    [
+        {"status": "queued"},
+        {"status": ""},
+        {"session_id": "", "id": ""},
+        {"capital_pool_id": "pool-other"},
+    ],
+    ids=["queued", "missing-status", "missing-session-id", "wrong-pool"],
+)
+def test_worker_requires_exact_running_owner_record(
+    harness: _Harness,
+    session_update: dict[str, Any],
+) -> None:
+    harness.read_store.sessions = [_worker_session(**session_update)]
+    state, raw = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning_failed"
+    assert "paper_worker_failed_stale_or_duplicated" in raw["metadata"][
+        "provisioning_failure_reason"
+    ]
+
+
+def test_worker_staleness_marker_overrides_fresh_heartbeat(
+    harness: _Harness,
+) -> None:
+    harness.read_store.sessions = [
+        _worker_session(staleness={"status": "stale", "reason": "owner timeout"})
+    ]
+
+    state, raw = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning_failed"
+    assert "paper_worker_failed_stale_or_duplicated" in raw["metadata"][
+        "provisioning_failure_reason"
+    ]
+
+
+def test_running_worker_before_first_heartbeat_remains_pending(
+    harness: _Harness,
+) -> None:
+    harness.read_store.sessions = [_worker_session(last_heartbeat_at=None)]
+
+    state, raw = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning"
+    assert raw["lifecycle_state"] == "provisioning"
+    assert harness.provisioning_store.released == []
+
+
+def test_terminal_state_waits_for_durable_ledger_lease(harness: _Harness) -> None:
+    harness.provisioning_store.busy = True
+    state, raw = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning"
+    assert raw["lifecycle_state"] == "provisioning"
+    assert harness.read_store.updates == []
+
+    harness.provisioning_store.busy = False
+    state, raw = _evaluate(
+        raw=raw,
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+    assert state == "paper_running"
+    assert raw["lifecycle_state"] == "paper_running"
+
+
+@pytest.mark.parametrize(
+    "ledger_state",
+    [
+        "failed",
+        "compensated",
+    ],
+)
+def test_success_readback_cannot_reverse_failed_terminal_ledger(
+    harness: _Harness,
+    ledger_state: str,
+) -> None:
+    harness.provisioning_store.state = ledger_state
+
+    state, raw = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning_failed"
+    assert raw["lifecycle_state"] == "provisioning_failed"
+    assert harness.provisioning_store.released[-1].state == ledger_state
+    assert harness.provisioning_store.released[-1].references == {}
+
+
+def test_failure_readback_preserves_compensated_terminal_ledger(
+    harness: _Harness,
+) -> None:
+    harness.provisioning_store.state = "compensated"
+    harness.projection["deployment_saga_status"] = "failed"
+
+    state, _ = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning_failed"
+    assert harness.provisioning_store.released[-1].state == "compensated"
+    assert harness.provisioning_store.released[-1].references == {}
+
+
+def test_succeeded_terminal_ledger_replays_paper_running_after_crash(
+    harness: _Harness,
+) -> None:
+    harness.provisioning_store.state = "succeeded"
+    harness.projection["deployment_saga_status"] = "failed"
+
+    state, raw = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "paper_running"
+    assert raw["lifecycle_state"] == "paper_running"
+    assert harness.provisioning_store.released[-1].state == "succeeded"
+
+
+def test_stable_terminal_failure_reconciliation_does_not_write_churn(
+    harness: _Harness,
+) -> None:
+    raw = _raw_persona(
+        first_evaluation_schedule_cleanup={
+            "persona_id": PERSONA_ID,
+            "registered": False,
+            "removed_ids": [],
+        },
+        provisioning_compensation={"status": "completed"},
+    )
+    raw["lifecycle_state"] = "provisioning_failed"
+
+    state, _ = _evaluate(raw=raw)
+
+    assert state == "provisioning_failed"
+    assert harness.read_store.updates == []
+
+
+def test_authoritative_worker_read_never_enables_snapshot_fallback(tmp_path) -> None:
+    store = ReadSurfaceStore(
+        str(tmp_path / "read-surfaces.json"),
+        allow_local_snapshot_fallback=True,
+    )
+    calls: list[bool] = []
+
+    class Canonical:
+        def list_records(
+            self,
+            dataset: str,
+            *,
+            include_snapshot_fallback: bool = True,
+        ) -> tuple[bool, list[dict[str, Any]]]:
+            assert dataset == "paper_runtime_monitoring_sessions"
+            calls.append(include_snapshot_fallback)
+            return False, [{"session_id": "snapshot-must-not-pass"}]
+
+    store._canonical = Canonical()  # type: ignore[attr-defined]
+
+    assert store.list_authoritative_paper_runtime_monitoring_sessions() == []
+    assert calls == [False]
