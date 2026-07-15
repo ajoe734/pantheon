@@ -1,6 +1,7 @@
 """Tests for the openclaw-gateway-adapter boundary service."""
 from __future__ import annotations
 
+import copy
 import importlib
 import json
 import os
@@ -254,6 +255,34 @@ class TestAssistantServiceAuthentication(unittest.TestCase):
 
 
 class TestCronServiceAuthentication(unittest.TestCase):
+    _CRON_CONTRACTS = {
+        "pantheon.ingest": {
+            "schedule": "0 */6 * * *",
+            "policy_id": "oc002.cron.ingest",
+            "upstream_entrypoint": "research.ingest",
+        },
+        "pantheon.review": {
+            "schedule": "15 7 * * 1-5",
+            "policy_id": "oc002.cron.review",
+            "upstream_entrypoint": "governance.review",
+        },
+        "pantheon.retrain": {
+            "schedule": "0 2 * * 1-5",
+            "policy_id": "oc002.cron.retrain",
+            "upstream_entrypoint": "learning.retrain",
+        },
+        "pantheon.deploy": {
+            "schedule": "*/15 * * * *",
+            "policy_id": "oc002.cron.deploy",
+            "upstream_entrypoint": "deployment.plan",
+        },
+        "pantheon.persona.first-evaluation": {
+            "schedule": "*/15 * * * *",
+            "policy_id": "oc002.cron.persona-first-evaluation",
+            "upstream_entrypoint": "evaluation.persona.first",
+        },
+    }
+
     def _auth_config(self, *, token: str, required: bool = False):
         return patch.multiple(
             adapter_main,
@@ -335,31 +364,54 @@ class TestCronServiceAuthentication(unittest.TestCase):
         )
         gateway_call.assert_not_called()
 
-    @staticmethod
-    def _persona_job(*, name: str = "pantheon-pantheon-review-persona-1"):
+    @classmethod
+    def _persona_job(
+        cls,
+        *,
+        persona_id: str = "persona-1",
+        workflow_id: str = "pantheon.review",
+        name: str | None = None,
+    ):
+        contract = cls._CRON_CONTRACTS[workflow_id]
+        event = {
+            "kind": "pantheon.workflow.dispatch",
+            "persona_id": persona_id,
+            "workflow_id": workflow_id,
+            "request_id": f"persona-provisioning:{persona_id}:{workflow_id}",
+            "policy_id": contract["policy_id"],
+            "upstream_entrypoint": contract["upstream_entrypoint"],
+        }
+        if workflow_id == "pantheon.persona.first-evaluation":
+            event.update(
+                {
+                    "runtime_id": "runtime-1",
+                    "runtime_binding_id": "runtime-binding-1",
+                    "capital_pool_id": "pool-1",
+                    "persona_capital_binding_id": "capital-binding-1",
+                }
+            )
         return {
             "id": "job-persona-1",
-            "name": name,
+            "name": name
+            if name is not None
+            else adapter_main._canonical_persona_cron_job_name(workflow_id, persona_id),
             "enabled": True,
             "deleteAfterRun": False,
-            "schedule": {"kind": "cron", "expr": "0 * * * *"},
-            "sessionTarget": "persona-1",
+            "schedule": {"kind": "cron", "expr": contract["schedule"]},
+            "sessionTarget": persona_id,
             "wakeMode": "next-heartbeat",
             "payload": {
                 "kind": "systemEvent",
-                "text": json.dumps(
-                    {
-                        "kind": "pantheon.workflow.dispatch",
-                        "persona_id": "persona-1",
-                        "workflow_id": "pantheon.review",
-                        "request_id": "persona-provisioning:persona-1:pantheon.review",
-                        "policy_id": "policy-review",
-                        "upstream_entrypoint": "persona.review",
-                    }
-                ),
+                "text": json.dumps(event),
             },
             "delivery": {"mode": "none"},
         }
+
+    @staticmethod
+    def _replace_event(job, **changes):
+        event = json.loads(job["payload"]["text"])
+        event.update(changes)
+        job["payload"]["text"] = json.dumps(event)
 
     def test_cron_add_rejects_non_persona_payload(self):
         with (
@@ -397,6 +449,231 @@ class TestCronServiceAuthentication(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         gateway_call.assert_called_once_with("cron.add", params)
+
+    def test_cron_add_accepts_exact_five_workflow_catalog(self):
+        self.assertEqual(adapter_main._PERSONA_CRON_CATALOG, self._CRON_CONTRACTS)
+
+        for workflow_id in self._CRON_CONTRACTS:
+            with self.subTest(workflow_id=workflow_id):
+                params = self._persona_job(workflow_id=workflow_id)
+                params.pop("id")
+                self.assertTrue(adapter_main._is_well_formed_persona_cron_job(params))
+
+    def test_cron_add_rejects_noncanonical_persona_contract_fields(self):
+        invalid_jobs = {}
+
+        invalid_jobs["name"] = copy.deepcopy(self._persona_job())
+        invalid_jobs["name"]["name"] = "pantheon-pantheon-review-wrong-persona"
+
+        invalid_jobs["enabled"] = copy.deepcopy(self._persona_job())
+        invalid_jobs["enabled"]["enabled"] = False
+
+        invalid_jobs["delete_after_run"] = copy.deepcopy(self._persona_job())
+        invalid_jobs["delete_after_run"]["deleteAfterRun"] = True
+
+        invalid_jobs["schedule"] = copy.deepcopy(self._persona_job())
+        invalid_jobs["schedule"]["schedule"]["expr"] = "0 * * * *"
+
+        invalid_jobs["session_target"] = copy.deepcopy(self._persona_job())
+        invalid_jobs["session_target"]["sessionTarget"] = "main"
+
+        invalid_jobs["wake_mode"] = copy.deepcopy(self._persona_job())
+        invalid_jobs["wake_mode"]["wakeMode"] = "now"
+
+        invalid_jobs["delivery"] = copy.deepcopy(self._persona_job())
+        invalid_jobs["delivery"]["delivery"] = {"mode": "announce"}
+
+        invalid_jobs["request_id"] = copy.deepcopy(self._persona_job())
+        self._replace_event(invalid_jobs["request_id"], request_id="request-random")
+
+        invalid_jobs["policy_id"] = copy.deepcopy(self._persona_job())
+        self._replace_event(invalid_jobs["policy_id"], policy_id="policy-review")
+
+        invalid_jobs["upstream_entrypoint"] = copy.deepcopy(self._persona_job())
+        self._replace_event(
+            invalid_jobs["upstream_entrypoint"],
+            upstream_entrypoint="persona.review",
+        )
+
+        invalid_jobs["unknown_workflow"] = copy.deepcopy(self._persona_job())
+        self._replace_event(
+            invalid_jobs["unknown_workflow"],
+            workflow_id="pantheon.arbitrary",
+            request_id="persona-provisioning:persona-1:pantheon.arbitrary",
+        )
+        invalid_jobs["unknown_workflow"]["name"] = (
+            "pantheon-pantheon-arbitrary-persona-1"
+        )
+
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+            ) as gateway_call,
+        ):
+            for field, params in invalid_jobs.items():
+                with self.subTest(field=field):
+                    params.pop("id")
+                    response = client.post(
+                        "/api/openclaw-adapter/gateway/cron",
+                        json={"method": "cron.add", "params": params},
+                        headers={"X-Pantheon-Service-Token": "cron-secret"},
+                    )
+
+                    self.assertEqual(response.status_code, 403, response.text)
+
+        gateway_call.assert_not_called()
+
+    def test_cron_list_hides_external_jobs_and_preserves_reserved_malformed_rows(self):
+        valid = self._persona_job()
+        external = self._persona_job(name="external-job")
+        malformed_reserved = {
+            "id": "job-malformed-1",
+            "name": "pantheon-malformed-orphan",
+            "payload": {"kind": "systemEvent", "text": "not-json"},
+        }
+        upstream_result = {
+            "jobs": [external, malformed_reserved, valid],
+            "hasMore": False,
+            "nextOffset": 3,
+        }
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                return_value=upstream_result,
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.list", "params": {"limit": 200, "offset": 0}},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            response.json()["data"],
+            {
+                "jobs": [malformed_reserved, valid],
+                "hasMore": False,
+                "nextOffset": 3,
+            },
+        )
+        gateway_call.assert_called_once_with("cron.list", {"limit": 200, "offset": 0})
+
+    def test_cron_update_forwards_complete_canonical_patch(self):
+        current = self._persona_job()
+        patch_params = self._persona_job()
+        patch_params.pop("id")
+        calls = []
+
+        def gateway_call(method, params):
+            calls.append((method, params))
+            if method == "cron.list":
+                return {"jobs": [current]}
+            if method == "cron.update":
+                return {"updated": True}
+            raise AssertionError(method)
+
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                side_effect=gateway_call,
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={
+                    "method": "cron.update",
+                    "params": {"id": "job-persona-1", "patch": patch_params},
+                },
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"], {"updated": True})
+        self.assertEqual(
+            calls,
+            [
+                ("cron.list", {"limit": 200, "offset": 0}),
+                (
+                    "cron.update",
+                    {"id": "job-persona-1", "patch": patch_params},
+                ),
+            ],
+        )
+
+    def test_cron_update_rejects_noncanonical_patch(self):
+        current = self._persona_job()
+        patch_params = copy.deepcopy(current)
+        patch_params.pop("id")
+        patch_params["schedule"]["expr"] = "0 * * * *"
+        calls = []
+
+        def gateway_call(method, params):
+            calls.append((method, params))
+            if method == "cron.list":
+                return {"jobs": [current]}
+            raise AssertionError("noncanonical update must not be forwarded")
+
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                side_effect=gateway_call,
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={
+                    "method": "cron.update",
+                    "params": {"id": "job-persona-1", "patch": patch_params},
+                },
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual([method for method, _ in calls], ["cron.list"])
+
+    def test_cron_update_rejects_persona_or_workflow_owner_mutation(self):
+        for owner_change, patch_job in (
+            ("persona", self._persona_job(persona_id="persona-2")),
+            ("workflow", self._persona_job(workflow_id="pantheon.deploy")),
+        ):
+            patch_job.pop("id")
+            calls = []
+
+            def gateway_call(method, params):
+                calls.append((method, params))
+                if method == "cron.list":
+                    return {"jobs": [self._persona_job()]}
+                raise AssertionError("owner-changing update must not be forwarded")
+
+            with (
+                self.subTest(owner_change=owner_change),
+                self._auth_config(token="cron-secret"),
+                patch.object(
+                    adapter_main._OPENCLAW_AGENT_PROVIDER,
+                    "gateway_cron_call",
+                    side_effect=gateway_call,
+                ),
+            ):
+                response = client.post(
+                    "/api/openclaw-adapter/gateway/cron",
+                    json={
+                        "method": "cron.update",
+                        "params": {"id": "job-persona-1", "patch": patch_job},
+                    },
+                    headers={"X-Pantheon-Service-Token": "cron-secret"},
+                )
+
+            self.assertEqual(response.status_code, 403, response.text)
+            self.assertEqual([method for method, _ in calls], ["cron.list"])
 
     def test_cron_run_is_not_exposed_by_persona_proxy(self):
         with (

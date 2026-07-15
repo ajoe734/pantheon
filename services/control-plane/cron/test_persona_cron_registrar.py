@@ -410,6 +410,91 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
             )
         )
 
+    def test_first_evaluation_registration_refuses_malformed_same_name_without_mutation(self):
+        persona_id = "persona-ambiguous-name-001"
+        malformed = _existing_job_fixture(
+            PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+            persona_id,
+            "job-ambiguous-name",
+        )
+        malformed["payload"]["text"] = "not-json"
+        spy = GatewayRuntimeSpy(existing_jobs=[malformed])
+
+        result = PersonaCronRegistrar(gateway_runtime=spy).register_for_persona(
+            persona_id
+        )
+
+        self.assertEqual(result.registered, [])
+        self.assertEqual(result.skipped, [])
+        self.assertEqual(len(result.failed), 1)
+        self.assertIn("ambiguous deterministic", result.failed[0]["error"])
+        self.assertEqual(spy.add_calls, [])
+        self.assertEqual(spy.update_calls, [])
+        self.assertEqual(spy.remove_calls, [])
+
+    def test_first_evaluation_registration_refuses_same_name_owned_by_other_persona(self):
+        persona_id = "persona-name-collider-001"
+        collider = _existing_job_fixture(
+            PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+            "persona-real-owner-001",
+            "job-name-collider",
+        )
+        collider["name"] = _job_name(
+            PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+            persona_id,
+        )
+        spy = GatewayRuntimeSpy(existing_jobs=[collider])
+
+        result = PersonaCronRegistrar(gateway_runtime=spy).register_for_persona(
+            persona_id,
+            workflow_ids=[PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+        )
+
+        self.assertEqual(result.registered, [])
+        self.assertEqual(len(result.failed), 1)
+        self.assertIn("does not prove", result.failed[0]["error"])
+        self.assertEqual(spy.add_calls, [])
+        self.assertEqual(spy.update_calls, [])
+        self.assertEqual(spy.remove_calls, [])
+
+    def test_first_evaluation_readback_rejects_exact_owner_plus_ambiguous_same_name(self):
+        persona_id = "persona-readback-ambiguous-001"
+        identity = {
+            "runtime_id": "runtime-readback-ambiguous-001",
+            "runtime_binding_id": "runtime-binding-readback-ambiguous-001",
+            "capital_pool_id": "pool-readback-ambiguous-001",
+            "persona_capital_binding_id": "pcb-readback-ambiguous-001",
+        }
+        exact = _existing_job_fixture(
+            PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+            persona_id,
+            "job-readback-exact",
+            **identity,
+        )
+        ambiguous = _existing_job_fixture(
+            PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+            persona_id,
+            "job-readback-ambiguous",
+        )
+        ambiguous["payload"]["text"] = "not-json"
+        spy = GatewayRuntimeSpy(existing_jobs=[exact, ambiguous])
+        registrar = PersonaCronRegistrar(gateway_runtime=spy)
+
+        self.assertIsNone(
+            registrar.get_first_evaluation_registration(
+                persona_id,
+                runtime=spy,
+                **identity,
+            )
+        )
+        self.assertFalse(
+            registrar.has_first_evaluation_registration(
+                persona_id,
+                runtime=spy,
+                **identity,
+            )
+        )
+
     def test_first_evaluation_duplicate_owners_converge_stably(self):
         persona_id = "persona-reconcile-duplicates-001"
         identity = {
@@ -558,7 +643,7 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
             )
         )
 
-    def test_remove_first_evaluation_cleans_deterministic_malformed_row(self):
+    def test_remove_first_evaluation_refuses_deterministic_malformed_row(self):
         persona_id = "persona-terminal-malformed-001"
         malformed = _existing_job_fixture(
             PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
@@ -568,16 +653,12 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
         malformed["payload"]["text"] = "not-json"
         spy = GatewayRuntimeSpy(existing_jobs=[malformed])
 
-        result = PersonaCronRegistrar(
-            gateway_runtime=spy
-        ).remove_first_evaluation_registration(persona_id)
+        with self.assertRaisesRegex(RuntimeError, "ambiguous deterministic"):
+            PersonaCronRegistrar(
+                gateway_runtime=spy
+            ).remove_first_evaluation_registration(persona_id)
 
-        self.assertEqual(result["removed_ids"], ["job-terminal-malformed"])
-        self.assertFalse(result["registered"])
-        self.assertEqual(
-            spy.remove_calls,
-            [("cron.remove", {"id": "job-terminal-malformed"})],
-        )
+        self.assertEqual(spy.remove_calls, [])
 
     def test_remove_first_evaluation_response_loss_uses_authoritative_list(self):
         persona_id = "persona-terminal-response-loss-001"
@@ -1078,11 +1159,11 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
         self.assertEqual(remove_failed, [])
 
     def test_reconcile_personas_removes_orphans(self):
-        # Seed some existing jobs, including one valid job for persona-a and one orphan job for persona-orphan
+        # Seed one valid job, one payload-owned orphan, and one Pantheon job
+        # whose payload cannot prove an owner.
         existing = [
             _existing_job_fixture("pantheon.ingest", "persona-a", "job-valid-1"),
             _existing_job_fixture("pantheon.ingest", "persona-orphan", "job-orphan-1"),
-            # Also seed a job with no/invalid payload matching "pantheon-"
             {
                 "id": "job-orphan-2",
                 "name": "pantheon-invalid-job",
@@ -1098,11 +1179,59 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
         self.assertEqual(len(results[0].registered), len(WORKFLOW_CATALOG) - 1)
         self.assertEqual(results[0].skipped, ["pantheon-pantheon-ingest-persona-a"])
 
-        # Should remove 2 orphan jobs
-        self.assertEqual(len(removed), 2)
+        # Only the payload-owned orphan is safe to remove. The unowned row is
+        # retained and surfaced for governed cleanup.
+        self.assertEqual(len(removed), 1)
         removed_ids = {r["job_id"] for r in removed}
-        self.assertEqual(removed_ids, {"job-orphan-1", "job-orphan-2"})
-        self.assertEqual(remove_failed, [])
+        self.assertEqual(removed_ids, {"job-orphan-1"})
+        self.assertEqual(len(remove_failed), 1)
+        self.assertEqual(remove_failed[0]["job_id"], "job-orphan-2")
+        self.assertIn("governed cleanup", remove_failed[0]["error"])
+        self.assertIn(
+            "job-orphan-2",
+            {job.get("id") for job in spy._existing_jobs},
+        )
+
+    def test_reconcile_personas_reports_malformed_pantheon_rows_without_mutation(self):
+        malformed_payload = {
+            "id": "job-malformed-payload",
+            "name": "pantheon-malformed-payload",
+            "payload": {"text": "not-json"},
+        }
+        missing_id = {
+            "name": "pantheon-missing-id",
+            "payload": {
+                "text": json.dumps(
+                    {
+                        "persona_id": "persona-orphan",
+                        "workflow_id": "pantheon.ingest",
+                    }
+                )
+            },
+        }
+        unrelated = {
+            "id": "external-malformed",
+            "name": "external-malformed",
+            "payload": {},
+        }
+        spy = GatewayRuntimeSpy(
+            existing_jobs=[malformed_payload, missing_id, unrelated]
+        )
+
+        results, removed, remove_failed = PersonaCronRegistrar(
+            gateway_runtime=spy
+        ).reconcile_personas([])
+
+        self.assertEqual(results, [])
+        self.assertEqual(removed, [])
+        self.assertEqual(spy.remove_calls, [])
+        self.assertEqual(
+            {failure["job_name"] for failure in remove_failed},
+            {"pantheon-malformed-payload", "pantheon-missing-id"},
+        )
+        self.assertTrue(
+            all("governed cleanup" in failure["error"] for failure in remove_failed)
+        )
 
     def test_adapter_runtime_selected_when_adapter_url_set(self):
         with patch.dict(

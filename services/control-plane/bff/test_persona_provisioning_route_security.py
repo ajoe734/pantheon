@@ -287,6 +287,100 @@ def test_patch_overlay_and_cached_replay_preserve_tenant_snapshot(
     assert replay.json()["data"]["state"] != "failed"
 
 
+def test_patch_preserves_newer_canonical_lifecycle_over_stale_overlay(
+    route_harness: _RouteHarness,
+) -> None:
+    created = route_harness.client.post(
+        "/bff/personas",
+        headers=_headers("operator-a", "persona-stale-overlay-create"),
+        json={"name": "Stale Overlay Guard", "risk": "low"},
+    )
+    assert created.status_code == 201, created.text
+    persona_id = created.json()["data"]["id"]
+    bff_main.read_store.update_persona(
+        persona_id,
+        lifecycle_state="paper_running",
+        metadata={"paper_runtime_state": "running"},
+    )
+    bff_main._PERSONA_BFF_OVERLAY[persona_id]["state"] = "provisioning"
+
+    patched = route_harness.client.patch(
+        f"/bff/personas/{persona_id}",
+        headers=_headers("operator-a", "persona-stale-overlay-patch"),
+        json={"successRate": 0.75},
+    )
+
+    assert patched.status_code == 200, patched.text
+    canonical = bff_main.read_store.get_persona(persona_id)
+    assert canonical is not None
+    assert canonical["lifecycle_state"] == "paper_running"
+
+
+def test_reconcile_route_requires_operator_and_tenant_scope(
+    route_harness: _RouteHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        bff_main,
+        "_bff_me_tenant_payload",
+        lambda identity, requested_tenant=None: {
+            "id": "tenant-a" if identity.operator_id != "operator-b" else "tenant-b"
+        },
+    )
+    created = route_harness.client.post(
+        "/bff/personas",
+        headers=_headers("operator-a", "persona-reconcile-security-create"),
+        json={"name": "Reconcile Security", "risk": "low"},
+    )
+    assert created.status_code == 201, created.text
+    persona_id = created.json()["data"]["id"]
+
+    unauthenticated = route_harness.client.post(
+        f"/bff/personas/{persona_id}/provisioning/reconcile"
+    )
+    viewer = route_harness.client.post(
+        f"/bff/personas/{persona_id}/provisioning/reconcile",
+        headers={"Authorization": "Bearer viewer-a:viewer"},
+    )
+    foreign = route_harness.client.post(
+        f"/bff/personas/{persona_id}/provisioning/reconcile",
+        headers={"Authorization": "Bearer operator-b:operator"},
+    )
+
+    assert unauthenticated.status_code == 401
+    assert viewer.status_code == 403
+    assert foreign.status_code == 404
+
+
+def test_reconcile_route_reports_degraded_owner_dependency(
+    route_harness: _RouteHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = route_harness.client.post(
+        "/bff/personas",
+        headers=_headers("operator-a", "persona-reconcile-degraded-create"),
+        json={"name": "Reconcile Degraded", "risk": "low"},
+    )
+    assert created.status_code == 201, created.text
+    persona_id = created.json()["data"]["id"]
+    monkeypatch.setattr(
+        bff_main,
+        "_get_json",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("deployment unavailable")
+        ),
+    )
+
+    reconciled = route_harness.client.post(
+        f"/bff/personas/{persona_id}/provisioning/reconcile",
+        headers={"Authorization": "Bearer operator-a:operator"},
+    )
+
+    assert reconciled.status_code == 200, reconciled.text
+    assert reconciled.json()["meta"]["status"] == "degraded"
+    assert "deployment" in reconciled.json()["meta"]["degraded_dependencies"]
+
+
 def test_controller_isolates_one_malformed_persona_from_later_records(
     route_harness: _RouteHarness,
     monkeypatch: pytest.MonkeyPatch,

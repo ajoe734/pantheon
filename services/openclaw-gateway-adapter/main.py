@@ -44,6 +44,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -1576,6 +1577,47 @@ class GatewayCronCallRequest(BaseModel):
     params: Optional[Dict[str, Any]] = None
 
 
+_PERSONA_CRON_CATALOG: Dict[str, Dict[str, str]] = {
+    "pantheon.ingest": {
+        "schedule": "0 */6 * * *",
+        "policy_id": "oc002.cron.ingest",
+        "upstream_entrypoint": "research.ingest",
+    },
+    "pantheon.review": {
+        "schedule": "15 7 * * 1-5",
+        "policy_id": "oc002.cron.review",
+        "upstream_entrypoint": "governance.review",
+    },
+    "pantheon.retrain": {
+        "schedule": "0 2 * * 1-5",
+        "policy_id": "oc002.cron.retrain",
+        "upstream_entrypoint": "learning.retrain",
+    },
+    "pantheon.deploy": {
+        "schedule": "*/15 * * * *",
+        "policy_id": "oc002.cron.deploy",
+        "upstream_entrypoint": "deployment.plan",
+    },
+    "pantheon.persona.first-evaluation": {
+        "schedule": "*/15 * * * *",
+        "policy_id": "oc002.cron.persona-first-evaluation",
+        "upstream_entrypoint": "evaluation.persona.first",
+    },
+}
+
+
+def _canonical_persona_cron_job_name(workflow_id: str, persona_id: str) -> str:
+    workflow_slug = re.sub(r"[^a-z0-9]+", "-", workflow_id.lower()).strip("-")
+    persona_slug = re.sub(r"[^a-z0-9]+", "-", persona_id.lower()).strip("-")
+    prefix = f"pantheon-{workflow_slug}-"
+    budget = 60 - len(prefix)
+    if len(persona_slug) > budget:
+        digest = hashlib.sha1(persona_slug.encode("utf-8")).hexdigest()[:8]
+        keep = max(0, budget - len(digest) - 1)
+        persona_slug = f"{persona_slug[:keep]}-{digest}"
+    return f"{prefix}{persona_slug}"
+
+
 def _pantheon_persona_cron_owner(job: Dict[str, Any]) -> Optional[tuple[str, str]]:
     """Return a validated Pantheon persona/workflow owner key for a cron row."""
 
@@ -1616,26 +1658,27 @@ def _is_well_formed_persona_cron_job(job: Dict[str, Any]) -> bool:
         event = json.loads(str(payload.get("text") or ""))
     except (TypeError, ValueError):
         return False
+    if not isinstance(event, dict):
+        return False
+    persona_id, workflow_id = owner
+    contract = _PERSONA_CRON_CATALOG.get(workflow_id)
+    if contract is None:
+        return False
     return bool(
-        job.get("enabled") is True
+        job.get("name")
+        == _canonical_persona_cron_job_name(workflow_id, persona_id)
+        and job.get("enabled") is True
         and job.get("deleteAfterRun") is False
         and isinstance(schedule, dict)
         and schedule.get("kind") == "cron"
-        and isinstance(schedule.get("expr"), str)
-        and bool(schedule["expr"].strip())
-        and isinstance(job.get("sessionTarget"), str)
-        and bool(job["sessionTarget"].strip())
+        and schedule.get("expr") == contract["schedule"]
+        and job.get("sessionTarget") == persona_id
         and job.get("wakeMode") == "next-heartbeat"
-        and isinstance(delivery, dict)
-        and isinstance(delivery.get("mode"), str)
-        and bool(delivery["mode"].strip())
-        and isinstance(event, dict)
-        and isinstance(event.get("request_id"), str)
-        and bool(event["request_id"].strip())
-        and isinstance(event.get("policy_id"), str)
-        and bool(event["policy_id"].strip())
-        and isinstance(event.get("upstream_entrypoint"), str)
-        and bool(event["upstream_entrypoint"].strip())
+        and delivery == {"mode": "none"}
+        and event.get("request_id")
+        == f"persona-provisioning:{persona_id}:{workflow_id}"
+        and event.get("policy_id") == contract["policy_id"]
+        and event.get("upstream_entrypoint") == contract["upstream_entrypoint"]
     )
 
 
@@ -1756,6 +1799,19 @@ def gateway_cron_call(req: GatewayCronCallRequest) -> JSONResponse:
     try:
         _assert_persona_owned_cron_call(req.method, req.params)
         result = _OPENCLAW_AGENT_PROVIDER.gateway_cron_call(req.method, req.params)
+        if req.method == "cron.list" and isinstance(result, dict):
+            jobs = result.get("jobs")
+            if isinstance(jobs, list):
+                result = {
+                    **result,
+                    "jobs": [
+                        job
+                        for job in jobs
+                        if isinstance(job, dict)
+                        and isinstance(job.get("name"), str)
+                        and job["name"].startswith("pantheon-")
+                    ],
+                }
     except GatewayOpenClawProviderError as exc:
         return JSONResponse(
             status_code=exc.status_code if exc.status_code in (403, 503) else 200,

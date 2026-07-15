@@ -502,6 +502,38 @@ class PersonaCronRegistrar:
                 ],
             )
 
+        if any(
+            workflow.workflow_id == PERSONA_FIRST_EVALUATION_WORKFLOW_ID
+            for workflow in selected_workflows
+        ):
+            ambiguous_jobs = self._ambiguous_first_evaluation_name_jobs(
+                existing_jobs,
+                persona_id,
+            )
+            if ambiguous_jobs:
+                ambiguous_ids = sorted(
+                    str(job.get("id") or "<missing-id>")
+                    for job in ambiguous_jobs
+                )
+                return PersonaCronRegistrationResult(
+                    persona_id=persona_id,
+                    capital_pool_id=capital_pool_id,
+                    binding_id=effective_persona_capital_binding_id,
+                    mode=mode,
+                    failed=[
+                        {
+                            "workflow_id": PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                            "error": (
+                                "ambiguous deterministic first-evaluation job name "
+                                "does not prove the requested persona/workflow owner; "
+                                "refusing to mutate without governed cleanup: "
+                                f"{ambiguous_ids}"
+                            ),
+                            "persona_id": persona_id,
+                        }
+                    ],
+                )
+
         for workflow in selected_workflows:
             job_name = _job_name(workflow.workflow_id, persona_id)
             if workflow.workflow_id == PERSONA_FIRST_EVALUATION_WORKFLOW_ID:
@@ -608,6 +640,25 @@ class PersonaCronRegistrar:
         capital_pool_id: str | None = None,
         persona_capital_binding_id: str | None = None,
     ) -> bool:
+        return self.get_first_evaluation_registration(
+            persona_id,
+            runtime=runtime,
+            runtime_id=runtime_id,
+            runtime_binding_id=runtime_binding_id,
+            capital_pool_id=capital_pool_id,
+            persona_capital_binding_id=persona_capital_binding_id,
+        ) is not None
+
+    def get_first_evaluation_registration(
+        self,
+        persona_id: str,
+        *,
+        runtime: Any = None,
+        runtime_id: str | None = None,
+        runtime_binding_id: str | None = None,
+        capital_pool_id: str | None = None,
+        persona_capital_binding_id: str | None = None,
+    ) -> dict[str, Any] | None:
         """Authoritatively verify one exact first-evaluation cron record.
 
         Unlike generic workflow discovery, this required provisioning
@@ -624,24 +675,26 @@ class PersonaCronRegistrar:
         if resolved_runtime is None and not self._dry_run:
             resolved_runtime = self._get_runtime()
         if resolved_runtime is None:
-            return False
+            return None
 
-        candidates = self._matching_first_evaluation_jobs(
-            self._list_jobs(resolved_runtime),
-            clean_persona_id,
-        )
+        jobs = self._list_jobs(resolved_runtime)
+        if self._ambiguous_first_evaluation_name_jobs(jobs, clean_persona_id):
+            return None
+        candidates = self._matching_first_evaluation_jobs(jobs, clean_persona_id)
 
         if len(candidates) != 1:
-            return False
+            return None
 
-        return self._is_exact_first_evaluation_job(
+        if not self._is_exact_first_evaluation_job(
             candidates[0],
             persona_id=clean_persona_id,
             runtime_id=runtime_id,
             runtime_binding_id=runtime_binding_id,
             capital_pool_id=capital_pool_id,
             persona_capital_binding_id=persona_capital_binding_id,
-        )
+        ):
+            return None
+        return json.loads(json.dumps(candidates[0]))
 
     def remove_first_evaluation_registration(
         self,
@@ -672,14 +725,26 @@ class PersonaCronRegistrar:
             )
 
         try:
-            owner_jobs = self._matching_first_evaluation_jobs(
-                self._list_jobs(resolved_runtime),
-                clean_persona_id,
-            )
+            jobs = self._list_jobs(resolved_runtime)
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
                 f"authoritative cron.list failed before first-evaluation removal: {exc}"
             ) from exc
+
+        ambiguous_jobs = self._ambiguous_first_evaluation_name_jobs(
+            jobs,
+            clean_persona_id,
+        )
+        if ambiguous_jobs:
+            ambiguous_ids = sorted(
+                str(job.get("id") or "<missing-id>") for job in ambiguous_jobs
+            )
+            raise RuntimeError(
+                "ambiguous deterministic first-evaluation job name does not prove "
+                "the requested persona/workflow owner; refusing removal without "
+                f"governed cleanup: {ambiguous_ids}"
+            )
+        owner_jobs = self._matching_first_evaluation_jobs(jobs, clean_persona_id)
 
         owner_ids = sorted(str(job.get("id") or "").strip() for job in owner_jobs)
         if any(not job_id for job_id in owner_ids) or len(set(owner_ids)) != len(owner_ids):
@@ -699,10 +764,7 @@ class PersonaCronRegistrar:
                 mutation_errors.append(f"cron.remove {job_id}: {exc}")
 
         try:
-            remaining = self._matching_first_evaluation_jobs(
-                self._list_jobs(resolved_runtime),
-                clean_persona_id,
-            )
+            final_jobs = self._list_jobs(resolved_runtime)
         except Exception as exc:  # noqa: BLE001
             details = "; ".join(mutation_errors)
             suffix = f"; mutation errors: {details}" if details else ""
@@ -710,6 +772,27 @@ class PersonaCronRegistrar:
                 f"authoritative cron.list failed after first-evaluation removal: "
                 f"{exc}{suffix}"
             ) from exc
+
+        final_ambiguous_jobs = self._ambiguous_first_evaluation_name_jobs(
+            final_jobs,
+            clean_persona_id,
+        )
+        if final_ambiguous_jobs:
+            ambiguous_ids = sorted(
+                str(job.get("id") or "<missing-id>")
+                for job in final_ambiguous_jobs
+            )
+            details = "; ".join(mutation_errors)
+            suffix = f"; mutation errors: {details}" if details else ""
+            raise RuntimeError(
+                "authoritative readback found an ambiguous deterministic "
+                "first-evaluation job name after removal; governed cleanup is "
+                f"required: {ambiguous_ids}{suffix}"
+            )
+        remaining = self._matching_first_evaluation_jobs(
+            final_jobs,
+            clean_persona_id,
+        )
 
         if remaining:
             remaining_ids = [str(job.get("id") or "") for job in remaining]
@@ -744,9 +827,13 @@ class PersonaCronRegistrar:
         jobs: list[dict[str, Any]],
         persona_id: str,
     ) -> list[dict[str, Any]]:
-        """Return every row claiming this persona's first-evaluation owner key."""
+        """Return rows whose payload proves this persona/workflow owner key.
+
+        The deterministic job name is intentionally not an ownership token.
+        Its hash suffix can collide, and legacy or malformed rows can retain a
+        name after losing their authoritative payload identity.
+        """
         matches: list[dict[str, Any]] = []
-        expected_name = _job_name(PERSONA_FIRST_EVALUATION_WORKFLOW_ID, persona_id)
         for job in jobs:
             inner = self._decode_job_event(job)
             payload_claims_owner = bool(
@@ -755,9 +842,34 @@ class PersonaCronRegistrar:
                 and inner.get("workflow_id")
                 == PERSONA_FIRST_EVALUATION_WORKFLOW_ID
             )
-            if job.get("name") == expected_name or payload_claims_owner:
+            if payload_claims_owner:
                 matches.append(job)
         return matches
+
+    def _ambiguous_first_evaluation_name_jobs(
+        self,
+        jobs: list[dict[str, Any]],
+        persona_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return same-name rows that do not prove the requested owner key."""
+
+        expected_name = _job_name(
+            PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+            persona_id,
+        )
+        ambiguous: list[dict[str, Any]] = []
+        for job in jobs:
+            if job.get("name") != expected_name:
+                continue
+            inner = self._decode_job_event(job)
+            if not (
+                inner is not None
+                and inner.get("persona_id") == persona_id
+                and inner.get("workflow_id")
+                == PERSONA_FIRST_EVALUATION_WORKFLOW_ID
+            ):
+                ambiguous.append(job)
+        return ambiguous
 
     def _matching_workflow_jobs(
         self,
@@ -956,14 +1068,34 @@ class PersonaCronRegistrar:
                     mutation_errors.append(f"cron.update {canonical_id}: {exc}")
 
         try:
-            final_owner_jobs = self._matching_first_evaluation_jobs(
-                self._list_jobs(runtime),
-                persona_id,
-            )
+            final_jobs = self._list_jobs(runtime)
         except Exception as exc:  # noqa: BLE001
             details = "; ".join(mutation_errors)
             suffix = f"; mutation errors: {details}" if details else ""
             return False, f"authoritative cron.list failed: {exc}{suffix}"
+
+        final_ambiguous_jobs = self._ambiguous_first_evaluation_name_jobs(
+            final_jobs,
+            persona_id,
+        )
+        if final_ambiguous_jobs:
+            ambiguous_ids = sorted(
+                str(job.get("id") or "<missing-id>")
+                for job in final_ambiguous_jobs
+            )
+            details = "; ".join(mutation_errors)
+            suffix = f"; mutation errors: {details}" if details else ""
+            return (
+                False,
+                "authoritative cron.list found an ambiguous deterministic "
+                "first-evaluation job name; governed cleanup is required: "
+                f"{ambiguous_ids}{suffix}",
+            )
+
+        final_owner_jobs = self._matching_first_evaluation_jobs(
+            final_jobs,
+            persona_id,
+        )
 
         if len(final_owner_jobs) == 1 and self._is_exact_first_evaluation_job(
             final_owner_jobs[0],
@@ -1085,36 +1217,83 @@ class PersonaCronRegistrar:
                             continue
                         job_id = job.get("id")
                         job_name = job.get("name", "")
-                        if not job_id:
-                            continue
-                        
+
                         # Only touch jobs starting with "pantheon-"
-                        if not job_name.startswith("pantheon-"):
+                        if not (
+                            isinstance(job_name, str)
+                            and job_name.startswith("pantheon-")
+                        ):
                             continue
 
-                        text = (job.get("payload") or {}).get("text")
+                        if not isinstance(job_id, str) or not job_id.strip():
+                            remove_failures.append({
+                                "job_id": job_id,
+                                "job_name": job_name,
+                                "error": (
+                                    "Pantheon cron ownership is ambiguous; "
+                                    "governed cleanup is required"
+                                ),
+                                "reason": "missing gateway job id",
+                            })
+                            continue
+
+                        payload = job.get("payload")
+                        text = (
+                            payload.get("text")
+                            if isinstance(payload, dict)
+                            else None
+                        )
                         is_orphan = False
                         reason = ""
-                        if not text:
-                            is_orphan = True
+                        ownership_ambiguous = False
+                        if not isinstance(text, str) or not text.strip():
+                            ownership_ambiguous = True
                             reason = "missing payload text"
                         else:
                             try:
                                 inner = json.loads(text)
-                                pid = inner.get("persona_id")
-                                workflow_id = inner.get("workflow_id")
-                                if not pid or not workflow_id:
-                                    is_orphan = True
-                                    reason = "missing persona_id or workflow_id in payload"
-                                elif pid not in eligible_set:
-                                    is_orphan = True
-                                    reason = f"persona_id '{pid}' not in eligible set"
-                                elif workflow_id not in WORKFLOW_CATALOG:
-                                    is_orphan = True
-                                    reason = f"workflow_id '{workflow_id}' not in catalog"
+                                if not isinstance(inner, dict):
+                                    ownership_ambiguous = True
+                                    reason = "payload text is not a JSON object"
+                                else:
+                                    pid = inner.get("persona_id")
+                                    workflow_id = inner.get("workflow_id")
+                                    if not (
+                                        isinstance(pid, str)
+                                        and pid.strip()
+                                        and isinstance(workflow_id, str)
+                                        and workflow_id.strip()
+                                    ):
+                                        ownership_ambiguous = True
+                                        reason = (
+                                            "missing persona_id or workflow_id "
+                                            "in payload"
+                                        )
+                                    elif pid not in eligible_set:
+                                        is_orphan = True
+                                        reason = (
+                                            f"persona_id '{pid}' not in eligible set"
+                                        )
+                                    elif workflow_id not in WORKFLOW_CATALOG:
+                                        is_orphan = True
+                                        reason = (
+                                            f"workflow_id '{workflow_id}' not in catalog"
+                                        )
                             except (TypeError, ValueError) as exc:
-                                is_orphan = True
+                                ownership_ambiguous = True
                                 reason = f"malformed payload text: {exc}"
+
+                        if ownership_ambiguous:
+                            remove_failures.append({
+                                "job_id": job_id,
+                                "job_name": job_name,
+                                "error": (
+                                    "Pantheon cron ownership is ambiguous; "
+                                    "governed cleanup is required"
+                                ),
+                                "reason": reason,
+                            })
+                            continue
 
                         if is_orphan:
                             try:

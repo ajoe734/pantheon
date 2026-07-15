@@ -1,11 +1,10 @@
 """Fail-closed tests for Persona provisioning authoritative readback."""
 from __future__ import annotations
 
-import sys
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -97,6 +96,33 @@ def _worker_session(**overrides: Any) -> dict[str, Any]:
     return session
 
 
+def _schedule_readback(
+    persona_id: str = PERSONA_ID,
+    *,
+    runtime_id: str = RUNTIME_ID,
+    runtime_binding_id: str = RUNTIME_BINDING_ID,
+    capital_pool_id: str = "pool-dynamic-alpha",
+    persona_capital_binding_id: str = PERSONA_CAPITAL_BINDING_ID,
+) -> dict[str, Any]:
+    return {
+        "persona_id": persona_id,
+        "workflow_id": FIRST_EVALUATION_WORKFLOW_ID,
+        "runtime_id": runtime_id,
+        "runtime_binding_id": runtime_binding_id,
+        "capital_pool_id": capital_pool_id,
+        "persona_capital_binding_id": persona_capital_binding_id,
+        "registered": True,
+        "job_id": "job-persona-first-evaluation-alpha",
+        "job_name": "pantheon-pantheon-persona-first-evaluation-persona-dynamic-alpha",
+        "request_id": (
+            f"persona-provisioning:{persona_id}:{FIRST_EVALUATION_WORKFLOW_ID}"
+        ),
+        "schedule": {"kind": "cron", "expr": "*/15 * * * *"},
+        "session_target": persona_id,
+        "observed_at": _now(),
+    }
+
+
 @dataclass
 class _FakeReadStore:
     sessions: list[dict[str, Any]] = field(default_factory=list)
@@ -145,6 +171,24 @@ class _FakeProvisioningStore:
     released: list[Any] = field(default_factory=list)
     busy: bool = False
     state: str = "provisioning"
+    current_step: str = "authoritative_readback"
+    references: dict[str, Any] = field(default_factory=dict)
+    result: dict[str, Any] | None = None
+    error: dict[str, Any] | None = None
+
+    def _record(self) -> Any:
+        return SimpleNamespace(
+            references=deepcopy(self.references),
+            state=self.state,
+            current_step=self.current_step,
+            result=deepcopy(self.result),
+            error=deepcopy(self.error),
+        )
+
+    def get(self, tenant_id: str, idempotency_key: str) -> Any:
+        assert tenant_id == "tenant-alpha"
+        assert idempotency_key == "persona-create-alpha"
+        return self._record()
 
     def acquire(
         self,
@@ -158,16 +202,16 @@ class _FakeProvisioningStore:
         self.acquired.append((tenant_id, idempotency_key, lease_owner))
         if self.busy:
             return None
-        return SimpleNamespace(
-            references={},
-            state=self.state,
-            current_step="authoritative_readback",
-            error=None,
-        )
+        return self._record()
 
     def release(self, record: Any, *, lease_owner: str) -> Any:
         assert self.acquired[-1][2] == lease_owner
         self.released.append(deepcopy(record))
+        self.state = record.state
+        self.current_step = record.current_step
+        self.references = deepcopy(record.references)
+        self.result = deepcopy(record.result)
+        self.error = deepcopy(record.error)
         return record
 
 
@@ -210,6 +254,19 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
     monkeypatch.setattr(bff_main, "_PERSONA_BFF_OVERLAY", {})
     monkeypatch.setattr(bff_main, "_get_json", lambda *_args, **_kwargs: deepcopy(projection))
     monkeypatch.setattr(bff_main, "_runtime_manager_client", lambda: runtime_client)
+    monkeypatch.setattr(
+        bff_main,
+        "_register_persona_cron_required",
+        lambda persona_id, capital_pool_id, persona_capital_binding_id, **kwargs: {
+            "authoritative_readback": _schedule_readback(
+                persona_id,
+                runtime_id=str(kwargs.get("runtime_id") or ""),
+                runtime_binding_id=str(kwargs.get("runtime_binding_id") or ""),
+                capital_pool_id=capital_pool_id,
+                persona_capital_binding_id=persona_capital_binding_id,
+            )
+        },
+    )
     monkeypatch.setattr(
         bff_main,
         "_remove_persona_cron_required",
@@ -257,10 +314,18 @@ def test_exact_authoritative_identity_fresh_single_worker_and_first_eval_succeed
     assert raw["metadata"]["runtime_id"] == RUNTIME_ID
     assert harness.read_store.updates[-1]["lifecycle_state"] == "paper_running"
     assert harness.provisioning_store.released[-1].state == "succeeded"
-    assert harness.provisioning_store.released[-1].references == {
-        "runtime_binding_id": RUNTIME_BINDING_ID,
-        "runtime_id": RUNTIME_ID,
-    }
+    references = harness.provisioning_store.released[-1].references
+    assert references["runtime_binding_id"] == RUNTIME_BINDING_ID
+    assert references["runtime_id"] == RUNTIME_ID
+    proof = references["authoritative_readback"]
+    assert proof["runtime_binding"] == binding
+    assert proof["paper_worker"]["session_id"] == "paper-worker-alpha-1"
+    assert proof["first_evaluation_schedule"]["job_id"]
+    assert proof["first_evaluation_schedule"]["request_id"] == (
+        f"persona-provisioning:{PERSONA_ID}:{FIRST_EVALUATION_WORKFLOW_ID}"
+    )
+    assert harness.provisioning_store.released[-1].result["status"] == "paper_running"
+    assert harness.provisioning_store.released[-1].result["paper_running"] is True
 
 
 def test_conflicting_optional_worker_persona_identity_fails_closed(
@@ -435,7 +500,7 @@ def test_timeout_starts_at_durable_readback_checkpoint_not_persona_creation(
     assert "provisioning_timeout" in raw["metadata"]["provisioning_failure_reason"]
 
 
-@pytest.mark.parametrize("saga_state", ["failed", "compensated"])
+@pytest.mark.parametrize("saga_state", ["failed", "compensating", "compensated"])
 def test_terminal_saga_precedes_other_success_signals(
     harness: _Harness,
     saga_state: str,
@@ -450,6 +515,65 @@ def test_terminal_saga_precedes_other_success_signals(
     assert state == "provisioning_failed"
     assert "deployment_saga_failed" in raw["metadata"]["provisioning_failure_reason"]
     assert harness.provisioning_store.released[-1].state == "failed"
+
+
+@pytest.mark.parametrize(
+    ("saga_status", "progress_status"),
+    [
+        ("accepted", "pending"),
+        ("completed", "pending"),
+        ("running", "completed"),
+    ],
+)
+def test_incomplete_deployment_projection_remains_pending(
+    harness: _Harness,
+    saga_status: str,
+    progress_status: str,
+) -> None:
+    harness.projection["deployment_saga_status"] = saga_status
+    harness.projection["deployment_saga_progress"] = {
+        "progress_status": progress_status
+    }
+
+    state, _ = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning"
+    assert harness.provisioning_store.released == []
+
+
+def test_compensating_progress_is_terminal_even_before_saga_status_changes(
+    harness: _Harness,
+) -> None:
+    harness.projection["deployment_saga_status"] = "running"
+    harness.projection["deployment_saga_progress"] = {
+        "progress_status": "compensating"
+    }
+
+    state, raw = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning_failed"
+    assert "deployment_saga_failed" in raw["metadata"]["provisioning_failure_reason"]
+
+
+def test_projection_without_saga_identity_is_incomplete_not_mismatched(
+    harness: _Harness,
+) -> None:
+    harness.projection.pop("deployment_saga_id")
+
+    state, raw = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning"
+    assert raw["lifecycle_state"] == "provisioning"
+    assert harness.provisioning_store.released == []
 
 
 def test_deployment_degraded_cannot_reuse_local_ids_as_success(
@@ -492,14 +616,13 @@ def test_cron_degraded_does_not_raise_or_fake_success(
     harness: _Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    module = ModuleType("persona_cron_registrar")
-
-    class DegradedRegistrar:
-        def _get_runtime(self) -> Any:
-            raise RuntimeError("cron authority unavailable")
-
-    module.PersonaCronRegistrar = DegradedRegistrar  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "persona_cron_registrar", module)
+    monkeypatch.setattr(
+        bff_main,
+        "_register_persona_cron_required",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("cron authority unavailable")
+        ),
+    )
 
     state, _ = _evaluate(
         bindings={RUNTIME_BINDING_ID: _runtime_binding()},
@@ -533,7 +656,18 @@ def test_runtime_identity_is_forwarded_to_exact_schedule_reconciliation(
                 "runtime_binding_id": runtime_binding_id,
             }
         )
-        return {"authoritative_readback": {"registered": True, **calls[-1]}}
+        return {
+            "authoritative_readback": {
+                **_schedule_readback(
+                    persona_id,
+                    runtime_id=str(runtime_id or ""),
+                    runtime_binding_id=str(runtime_binding_id or ""),
+                    capital_pool_id=capital_pool_id,
+                    persona_capital_binding_id=persona_capital_binding_id,
+                ),
+                **calls[-1],
+            }
+        }
 
     monkeypatch.setattr(bff_main, "_register_persona_cron_required", reconcile)
 
@@ -610,12 +744,11 @@ def test_runtime_binding_requires_exact_scope_identity(
 @pytest.mark.parametrize(
     "session_update",
     [
-        {"status": "queued"},
         {"status": ""},
         {"session_id": "", "id": ""},
         {"capital_pool_id": "pool-other"},
     ],
-    ids=["queued", "missing-status", "missing-session-id", "wrong-pool"],
+    ids=["missing-status", "missing-session-id", "wrong-pool"],
 )
 def test_worker_requires_exact_running_owner_record(
     harness: _Harness,
@@ -631,6 +764,28 @@ def test_worker_requires_exact_running_owner_record(
     assert "paper_worker_failed_stale_or_duplicated" in raw["metadata"][
         "provisioning_failure_reason"
     ]
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["accepted", "initializing", "pending", "queued", "starting"],
+)
+def test_single_starting_worker_without_heartbeat_remains_pending(
+    harness: _Harness,
+    status: str,
+) -> None:
+    harness.read_store.sessions = [
+        _worker_session(status=status, last_heartbeat_at=None)
+    ]
+
+    state, raw = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning"
+    assert raw["lifecycle_state"] == "provisioning"
+    assert harness.provisioning_store.released == []
 
 
 def test_worker_staleness_marker_overrides_fresh_heartbeat(
@@ -708,7 +863,9 @@ def test_success_readback_cannot_reverse_failed_terminal_ledger(
     assert state == "provisioning_failed"
     assert raw["lifecycle_state"] == "provisioning_failed"
     assert harness.provisioning_store.released[-1].state == ledger_state
-    assert harness.provisioning_store.released[-1].references == {}
+    assert harness.provisioning_store.released[-1].references[
+        "first_evaluation_schedule_cleanup"
+    ]["registered"] is False
 
 
 def test_failure_readback_preserves_compensated_terminal_ledger(
@@ -724,13 +881,51 @@ def test_failure_readback_preserves_compensated_terminal_ledger(
 
     assert state == "provisioning_failed"
     assert harness.provisioning_store.released[-1].state == "compensated"
-    assert harness.provisioning_store.released[-1].references == {}
+    assert harness.provisioning_store.released[-1].references[
+        "first_evaluation_schedule_cleanup"
+    ]["registered"] is False
 
 
 def test_succeeded_terminal_ledger_replays_paper_running_after_crash(
     harness: _Harness,
 ) -> None:
+    durable_binding_id = "rb-durable-before-crash"
+    durable_runtime_id = "runtime-durable-before-crash"
+    durable_binding = _runtime_binding(
+        binding_id=durable_binding_id,
+        runtime_id=durable_runtime_id,
+    )
+    durable_worker = _worker_session(
+        binding_id=durable_binding_id,
+        runtime_id=durable_runtime_id,
+    )
+    durable_readback = {
+        "observed_at": _now(-5),
+        "deployment": {
+            "plan_id": PLAN_ID,
+            "saga_id": "saga-dynamic-alpha",
+            "saga_status": "completed",
+            "progress_status": "completed",
+        },
+        "runtime_binding": durable_binding,
+        "paper_worker": durable_worker,
+        "first_evaluation_schedule": _schedule_readback(
+            runtime_id=durable_runtime_id,
+            runtime_binding_id=durable_binding_id,
+        ),
+    }
     harness.provisioning_store.state = "succeeded"
+    harness.provisioning_store.references = {
+        "runtime_binding_id": durable_binding_id,
+        "runtime_id": durable_runtime_id,
+        "authoritative_readback": durable_readback,
+    }
+    harness.provisioning_store.result = {
+        "status": "paper_running",
+        "paper_running": True,
+        "authoritative_readback": durable_readback,
+        "recorded_at": _now(-5),
+    }
     harness.projection["deployment_saga_status"] = "failed"
 
     state, raw = _evaluate(
@@ -740,7 +935,64 @@ def test_succeeded_terminal_ledger_replays_paper_running_after_crash(
 
     assert state == "paper_running"
     assert raw["lifecycle_state"] == "paper_running"
+    assert raw["metadata"]["runtime_binding_id"] == durable_binding_id
+    assert raw["metadata"]["runtime_id"] == durable_runtime_id
+    assert raw["metadata"]["provisioning_authoritative_readback"] == durable_readback
     assert harness.provisioning_store.released[-1].state == "succeeded"
+
+
+def test_terminal_failure_ledger_materializes_before_owner_readback(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness.provisioning_store.state = "failed"
+    harness.provisioning_store.error = {
+        "terminal_reason": "dispatch_owner_failed"
+    }
+    monkeypatch.setattr(
+        bff_main,
+        "_get_json",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("terminal replay must precede Deployment readback")
+        ),
+    )
+
+    state, raw = _evaluate(bindings={}, cron_registrations=set())
+
+    assert state == "provisioning_failed"
+    assert raw["metadata"]["provisioning_failure_reason"] == "dispatch_owner_failed"
+
+
+def test_cleanup_outage_does_not_erase_new_terminal_failure(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness.projection["deployment_saga_status"] = "failed"
+    monkeypatch.setattr(
+        bff_main,
+        "_remove_persona_cron_required",
+        lambda _persona_id: (_ for _ in ()).throw(RuntimeError("cron unavailable")),
+    )
+    diagnostics: list[str] = []
+    raw = _raw_persona()
+
+    state = bff_main._evaluate_persona_provisioning_status(
+        PERSONA_ID,
+        raw,
+        all_bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        all_cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+        diagnostics=diagnostics,
+    )
+
+    assert state == "provisioning_failed"
+    assert harness.provisioning_store.state == "failed"
+    assert harness.provisioning_store.result["status"] == "provisioning_failed"
+    assert harness.provisioning_store.result["paper_running"] is False
+    assert raw["metadata"]["first_evaluation_schedule_cleanup"] == {
+        "status": "pending",
+        "registered": None,
+        "terminal_reason": "cron unavailable",
+    }
 
 
 def test_stable_terminal_failure_reconciliation_does_not_write_churn(

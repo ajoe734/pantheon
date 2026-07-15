@@ -27935,6 +27935,7 @@ def _checkpoint_persona_provisioning_readback(
     state: str,
     runtime_binding_id: str,
     runtime_id: str,
+    authoritative_readback: Optional[Mapping[str, Any]] = None,
     failure_reason: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Persist one terminal decision and return its durable replay outcome."""
@@ -27951,7 +27952,10 @@ def _checkpoint_persona_provisioning_readback(
             tenant_id,
             idempotency_key,
             lease_owner=lease_owner,
-            lease_seconds=30,
+            lease_seconds=max(
+                60,
+                int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+            ),
         )
         if record is None:
             return {"committed": False, "ledger_state": None}
@@ -27971,8 +27975,16 @@ def _checkpoint_persona_provisioning_readback(
             if record.state in {"failed", "compensated"}:
                 try:
                     schedule_cleanup = _remove_persona_cron_required(persona_id)
+                    record.references["first_evaluation_schedule_cleanup"] = deepcopy(
+                        schedule_cleanup
+                    )
                 except Exception as exc:
                     cleanup_error = str(exc) or exc.__class__.__name__
+                    record.references["first_evaluation_schedule_cleanup"] = {
+                        "status": "pending",
+                        "registered": None,
+                        "terminal_reason": cleanup_error,
+                    }
             # A terminal ledger release is atomic, so its references and
             # compensation already belong to that decision.  Preserve them
             # verbatim on replay; in particular, never turn a compensated
@@ -27989,24 +28001,51 @@ def _checkpoint_persona_provisioning_readback(
                 ),
                 "schedule_cleanup": deepcopy(schedule_cleanup),
                 "schedule_cleanup_error": cleanup_error,
+                "references": deepcopy(record.references),
+                "result": deepcopy(record.result),
             }
         if runtime_binding_id:
             record.references["runtime_binding_id"] = runtime_binding_id
         if runtime_id:
             record.references["runtime_id"] = runtime_id
+        if state == "paper_running":
+            if not isinstance(authoritative_readback, Mapping):
+                store.release(record, lease_owner=lease_owner)
+                return {"committed": False, "ledger_state": record.state}
+            record.references["authoritative_readback"] = deepcopy(
+                dict(authoritative_readback)
+            )
         schedule_cleanup = None
+        cleanup_error = None
         if state == "provisioning_failed":
             # Destructive cleanup happens while the terminal ledger lease is
             # held.  A concurrent success decision therefore cannot race with
-            # removal of the schedule it just proved authoritative.
-            schedule_cleanup = _remove_persona_cron_required(persona_id)
-            record.references["first_evaluation_schedule_cleanup"] = deepcopy(
-                schedule_cleanup
-            )
+            # removal of the schedule it just proved authoritative.  Cleanup
+            # unavailability must not erase the durable terminal decision:
+            # persist a retryable cleanup receipt and let later controller
+            # passes finish the fail-closed removal.
+            try:
+                schedule_cleanup = _remove_persona_cron_required(persona_id)
+                record.references["first_evaluation_schedule_cleanup"] = deepcopy(
+                    schedule_cleanup
+                )
+            except Exception as exc:
+                cleanup_error = str(exc) or exc.__class__.__name__
+                record.references["first_evaluation_schedule_cleanup"] = {
+                    "status": "pending",
+                    "registered": None,
+                    "terminal_reason": cleanup_error,
+                }
         if state == "paper_running":
             record.state = "succeeded"
             record.current_step = "authoritative_readback_complete"
             record.error = None
+            record.result = {
+                "status": "paper_running",
+                "paper_running": True,
+                "authoritative_readback": deepcopy(dict(authoritative_readback or {})),
+                "recorded_at": utc_now(),
+            }
         elif state == "provisioning_failed":
             record.state = "failed"
             record.current_step = "authoritative_readback_failed"
@@ -28019,6 +28058,12 @@ def _checkpoint_persona_provisioning_readback(
                 "failed_at": utc_now(),
                 "recorded_at": utc_now(),
             }
+            record.result = {
+                "status": "provisioning_failed",
+                "paper_running": False,
+                "failure_reason": failure_reason or "authoritative_readback_failed",
+                "recorded_at": utc_now(),
+            }
         released = store.release(record, lease_owner=lease_owner)
         committed = bool(
             released.state == record.state and released.current_step == record.current_step
@@ -28028,6 +28073,9 @@ def _checkpoint_persona_provisioning_readback(
             "ledger_state": released.state,
             "terminal_replay": False,
             "schedule_cleanup": deepcopy(schedule_cleanup),
+            "schedule_cleanup_error": cleanup_error,
+            "references": deepcopy(released.references),
+            "result": deepcopy(released.result),
         }
     except Exception as exc:
         # Owner lifecycle remains fail-closed; inability to persist the mirror
@@ -28044,6 +28092,153 @@ def _checkpoint_persona_provisioning_readback(
             "terminal_replay": False,
             "error": str(exc) or exc.__class__.__name__,
         }
+
+
+def _append_persona_reconcile_diagnostic(
+    diagnostics: Optional[List[str]],
+    dependency: str,
+) -> None:
+    if diagnostics is not None and dependency not in diagnostics:
+        diagnostics.append(dependency)
+
+
+def _materialize_terminal_persona_provisioning_ledger(
+    persona_id: str,
+    raw: Dict[str, Any],
+    *,
+    diagnostics: Optional[List[str]] = None,
+) -> Optional[str]:
+    """Replay a durable terminal decision before consulting mutable owners.
+
+    The ledger release and Persona projection are separate durable writes.  A
+    process crash between them must not leave the Persona in ``provisioning``
+    or allow newer owner observations to reverse the released decision.
+    ``None`` means the ledger is not terminal; a returned lifecycle is final
+    for this controller pass.
+    """
+
+    metadata = raw.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    tenant_id = str(metadata.get("tenant_id") or "").strip()
+    idempotency_key = str(metadata.get("provisioning_idempotency_key") or "").strip()
+    if not tenant_id or not idempotency_key:
+        return None
+    try:
+        record = _persona_provisioning_store().get(tenant_id, idempotency_key)
+    except Exception as exc:
+        log.warning("Failed to read Persona provisioning ledger for %s: %s", persona_id, exc)
+        _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
+        return None
+    if record is None or record.state not in {"succeeded", "failed", "compensated"}:
+        return None
+
+    references = record.references if isinstance(record.references, dict) else {}
+    desired_state = (
+        "paper_running" if record.state == "succeeded" else "provisioning_failed"
+    )
+    checkpoint = _checkpoint_persona_provisioning_readback(
+        persona_id=persona_id,
+        metadata=metadata,
+        state=desired_state,
+        runtime_binding_id=str(references.get("runtime_binding_id") or "").strip(),
+        runtime_id=str(references.get("runtime_id") or "").strip(),
+        authoritative_readback=(
+            references.get("authoritative_readback")
+            if isinstance(references.get("authoritative_readback"), Mapping)
+            else None
+        ),
+        failure_reason=str(
+            (record.error or {}).get("terminal_reason")
+            or (record.error or {}).get("reason")
+            or "durable_ledger_terminal_failure"
+        ),
+    )
+    if not checkpoint.get("committed"):
+        _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
+        return "provisioning"
+
+    ledger_state = str(checkpoint.get("ledger_state") or "")
+    durable_references = checkpoint.get("references")
+    durable_references = (
+        durable_references if isinstance(durable_references, Mapping) else {}
+    )
+    metadata_updates: Dict[str, Any] = {}
+    runtime_binding_id = str(
+        durable_references.get("runtime_binding_id") or ""
+    ).strip()
+    runtime_id = str(durable_references.get("runtime_id") or "").strip()
+
+    if ledger_state == "succeeded":
+        durable_readback = durable_references.get("authoritative_readback")
+        durable_result = checkpoint.get("result")
+        if (
+            not runtime_binding_id
+            or not runtime_id
+            or not isinstance(durable_readback, Mapping)
+            or not isinstance(durable_result, Mapping)
+            or durable_result.get("paper_running") is not True
+            or durable_result.get("status") != "paper_running"
+        ):
+            _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
+            return "provisioning"
+        new_state = "paper_running"
+        metadata_updates.update(
+            {
+                "paper_runtime_state": "running",
+                "runtime_binding_id": runtime_binding_id,
+                "runtime_id": runtime_id,
+                "provisioning_authoritative_readback": deepcopy(
+                    dict(durable_readback)
+                ),
+            }
+        )
+    elif ledger_state in {"failed", "compensated"}:
+        new_state = "provisioning_failed"
+        metadata_updates["provisioning_failure_reason"] = (
+            checkpoint.get("failure_reason") or "durable_ledger_terminal_failure"
+        )
+        schedule_cleanup = checkpoint.get("schedule_cleanup")
+        if isinstance(schedule_cleanup, Mapping):
+            metadata_updates["first_evaluation_schedule_cleanup"] = deepcopy(
+                dict(schedule_cleanup)
+            )
+        elif checkpoint.get("schedule_cleanup_error"):
+            _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
+            metadata_updates["first_evaluation_schedule_cleanup"] = {
+                "status": "pending",
+                "registered": None,
+                "terminal_reason": checkpoint["schedule_cleanup_error"],
+            }
+        compensation = _reconcile_persona_provisioning_compensation(
+            {**metadata, **metadata_updates}
+        )
+        if compensation is not None:
+            metadata_updates["provisioning_compensation"] = compensation
+            if compensation.get("status") in {"failed", "pending"}:
+                _append_persona_reconcile_diagnostic(
+                    diagnostics, "provisioning_compensation"
+                )
+    else:
+        _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
+        return "provisioning"
+
+    read_store.update_persona(
+        persona_id,
+        lifecycle_state=new_state,
+        metadata=metadata_updates,
+    )
+    if persona_id in _PERSONA_BFF_OVERLAY:
+        _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
+        _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
+        if runtime_binding_id:
+            _PERSONA_BFF_OVERLAY[persona_id]["runtimeBindingId"] = runtime_binding_id
+        if runtime_id:
+            _PERSONA_BFF_OVERLAY[persona_id]["runtimeId"] = runtime_id
+    raw["lifecycle_state"] = new_state
+    raw["status"] = new_state
+    raw.setdefault("metadata", {}).update(metadata_updates)
+    raw["metadata"]["lifecycle_state"] = new_state
+    return new_state
 
 
 def _reconcile_persona_provisioning_compensation(
@@ -28091,6 +28286,7 @@ def _evaluate_persona_provisioning_status(
     all_bindings: Optional[Dict[str, Dict[str, Any]]] = None,
     all_cron_registrations: Optional[Set[Tuple[str, str]]] = None,
     all_monitoring_sessions: Optional[List[Dict[str, Any]]] = None,
+    diagnostics: Optional[List[str]] = None,
 ) -> str:
     metadata = raw.get("metadata") or {}
     current_state = raw.get("lifecycle_state") or raw.get("state")
@@ -28110,6 +28306,7 @@ def _evaluate_persona_provisioning_status(
                 "registered": None,
                 "terminal_reason": str(exc) or exc.__class__.__name__,
             }
+            _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
         compensation = _reconcile_persona_provisioning_compensation(metadata)
         if compensation is not None:
             terminal_updates["provisioning_compensation"] = compensation
@@ -28132,6 +28329,14 @@ def _evaluate_persona_provisioning_status(
         return "paper_running"
     if current_state != "provisioning":
         return str(current_state or "")
+
+    terminal_replay = _materialize_terminal_persona_provisioning_ledger(
+        persona_id,
+        raw,
+        diagnostics=diagnostics,
+    )
+    if terminal_replay is not None:
+        return terminal_replay
 
     # Deployment owns admission and the runtime identity.  Never infer a
     # RuntimeBinding id from the distinct PersonaCapitalBinding id.
@@ -28158,19 +28363,28 @@ def _evaluate_persona_provisioning_status(
             projection = candidate if isinstance(candidate, dict) else {}
         except Exception as exc:
             log.warning("Failed to query Deployment projection %s for %s: %s", plan_id, persona_id, exc)
+            _append_persona_reconcile_diagnostic(diagnostics, "deployment")
 
     projection_saga = projection.get("deployment_saga")
     projection_saga = projection_saga if isinstance(projection_saga, dict) else {}
     projected_saga_id = str(
         projection.get("deployment_saga_id") or projection_saga.get("saga_id") or ""
     ).strip()
+    projected_plan_id = str(projection.get("plan_id") or "").strip()
     projection_observed = bool(
         projection
-        and str(projection.get("plan_id") or "") == plan_id
+        and projected_plan_id == plan_id
         and projected_saga_id
         and (not expected_saga_id or projected_saga_id == expected_saga_id)
     )
-    projection_identity_failed = bool(projection) and not projection_observed
+    projection_identity_failed = bool(projection) and bool(
+        (projected_plan_id and projected_plan_id != plan_id)
+        or (
+            projected_saga_id
+            and expected_saga_id
+            and projected_saga_id != expected_saga_id
+        )
+    )
 
     saga_status = str(
         projection.get("deployment_saga_status")
@@ -28180,9 +28394,18 @@ def _evaluate_persona_provisioning_status(
     saga_progress = projection.get("deployment_saga_progress")
     saga_progress = saga_progress if isinstance(saga_progress, dict) else {}
     progress_status = str(saga_progress.get("progress_status") or "").strip().lower()
-    projection_failed = saga_status in {"failed", "aborted", "compensated"} or progress_status in {
+    projection_complete = (
+        saga_status == "completed" and progress_status == "completed"
+    )
+    projection_failed = saga_status in {
+        "failed",
+        "aborted",
+        "compensating",
+        "compensated",
+    } or progress_status in {
         "failed",
         "blocked",
+        "compensating",
     }
 
     # Deployment projection proves saga admission, but Runtime Manager is the
@@ -28283,16 +28506,26 @@ def _evaluate_persona_provisioning_status(
                 persona_id,
                 exc,
             )
+            _append_persona_reconcile_diagnostic(diagnostics, "runtime_manager")
 
     # Require exactly one fresh, active worker joined on the complete identity.
     monitoring_sessions: List[Dict[str, Any]] = []
     worker_identity_conflict = False
     if binding_ok and runtime_id and binding_id:
-        owner_sessions = (
-            all_monitoring_sessions
-            if all_monitoring_sessions is not None
-            else read_store.list_authoritative_paper_runtime_monitoring_sessions()
-        )
+        try:
+            owner_sessions = (
+                all_monitoring_sessions
+                if all_monitoring_sessions is not None
+                else read_store.list_authoritative_paper_runtime_monitoring_sessions()
+            )
+        except Exception as exc:
+            log.warning(
+                "Failed to query paper worker sessions for %s: %s",
+                persona_id,
+                exc,
+            )
+            _append_persona_reconcile_diagnostic(diagnostics, "paper_runtime_manager")
+            owner_sessions = []
         for s in owner_sessions:
             # The paper-fleet reconciler owns worker sessions and joins them to
             # RuntimeBinding by runtime_id + binding_id.  It does not duplicate
@@ -28343,9 +28576,16 @@ def _evaluate_persona_provisioning_status(
         )
         if current_owner:
             current_owner_sessions.append(session)
+        startup_status = status in {
+            "accepted",
+            "initializing",
+            "pending",
+            "queued",
+            "starting",
+        }
         if (
             current_owner
-            and status == "running"
+            and (status == "running" or startup_status)
             and session.get("last_heartbeat_at") in (None, "")
         ):
             startup_sessions.append(session)
@@ -28374,15 +28614,16 @@ def _evaluate_persona_provisioning_status(
 
     # The schedule authority must contain the exact first-evaluation workflow.
     cron_ok = False
+    authoritative_schedule_readback: Optional[Dict[str, Any]] = None
     try:
-        if all_cron_registrations is not None:
-            cron_ok = (
+        schedule_discovered = all_cron_registrations is None or (
                 persona_id,
                 _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
             ) in all_cron_registrations
-        else:
+        if schedule_discovered:
             if (
                 projection_observed
+                and projection_complete
                 and binding_ok
                 and runtime_id
                 and binding_id
@@ -28400,11 +28641,27 @@ def _evaluate_persona_provisioning_status(
                 cron_ok = bool(
                     isinstance(authoritative, dict)
                     and authoritative.get("registered") is True
+                    and authoritative.get("persona_id") == persona_id
+                    and authoritative.get("workflow_id")
+                    == _PERSONA_FIRST_EVALUATION_WORKFLOW_ID
                     and authoritative.get("runtime_id") == runtime_id
                     and authoritative.get("runtime_binding_id") == binding_id
+                    and authoritative.get("capital_pool_id") == capital_pool_id
+                    and authoritative.get("persona_capital_binding_id")
+                    == persona_capital_binding_id
+                    and isinstance(authoritative.get("job_id"), str)
+                    and bool(authoritative["job_id"].strip())
+                    and authoritative.get("request_id")
+                    == (
+                        f"persona-provisioning:{persona_id}:"
+                        f"{_PERSONA_FIRST_EVALUATION_WORKFLOW_ID}"
+                    )
                 )
+                if cron_ok:
+                    authoritative_schedule_readback = deepcopy(authoritative)
     except Exception as exc:
         log.warning("Failed to query first-evaluation schedule for %s: %s", persona_id, exc)
+        _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
 
     # A timed-out attempt is terminal even if stale evidence happens to appear
     # later; recovery must be an explicit retry that acquires the durable lease.
@@ -28432,7 +28689,13 @@ def _evaluate_persona_provisioning_status(
         or is_timeout
     ):
         new_state = "provisioning_failed"
-    elif projection_observed and binding_ok and heartbeat_ok and cron_ok:
+    elif (
+        projection_observed
+        and projection_complete
+        and binding_ok
+        and heartbeat_ok
+        and cron_ok
+    ):
         new_state = "paper_running"
     else:
         new_state = "provisioning"
@@ -28463,12 +28726,35 @@ def _evaluate_persona_provisioning_status(
     # If its lease is busy or storage is unavailable, leave the Persona in
     # provisioning so a later controller pass can recover with RPO=0.
     if new_state in {"paper_running", "provisioning_failed"}:
+        authoritative_readback: Optional[Dict[str, Any]] = None
+        if new_state == "paper_running":
+            if (
+                not isinstance(binding, Mapping)
+                or len(live_sessions) != 1
+                or authoritative_schedule_readback is None
+            ):
+                return "provisioning"
+            authoritative_readback = {
+                "observed_at": utc_now(),
+                "deployment": {
+                    "plan_id": plan_id,
+                    "saga_id": projected_saga_id,
+                    "saga_status": saga_status,
+                    "progress_status": progress_status,
+                },
+                "runtime_binding": deepcopy(dict(binding)),
+                "paper_worker": deepcopy(live_sessions[0]),
+                "first_evaluation_schedule": deepcopy(
+                    authoritative_schedule_readback
+                ),
+            }
         terminal_checkpoint = _checkpoint_persona_provisioning_readback(
             persona_id=persona_id,
             metadata={**metadata, **metadata_updates},
             state=new_state,
             runtime_binding_id=binding_id,
             runtime_id=runtime_id,
+            authoritative_readback=authoritative_readback,
             failure_reason=metadata_updates.get("provisioning_failure_reason"),
         )
         ledger_state = terminal_checkpoint.get("ledger_state")
@@ -28478,8 +28764,36 @@ def _evaluate_persona_provisioning_status(
             # earlier terminal state, never remain stuck in provisioning or
             # reverse the decision from newer observations.
             if ledger_state == "succeeded":
+                durable_references = terminal_checkpoint.get("references")
+                durable_references = (
+                    durable_references
+                    if isinstance(durable_references, Mapping)
+                    else {}
+                )
+                durable_readback = durable_references.get("authoritative_readback")
+                durable_result = terminal_checkpoint.get("result")
+                if (
+                    not isinstance(durable_readback, Mapping)
+                    or not isinstance(durable_result, Mapping)
+                    or durable_result.get("paper_running") is not True
+                    or durable_result.get("status") != "paper_running"
+                ):
+                    return "provisioning"
+                binding_id = str(
+                    durable_references.get("runtime_binding_id") or ""
+                ).strip()
+                runtime_id = str(
+                    durable_references.get("runtime_id") or ""
+                ).strip()
+                if not binding_id or not runtime_id:
+                    return "provisioning"
                 new_state = "paper_running"
                 metadata_updates["paper_runtime_state"] = "running"
+                metadata_updates["runtime_binding_id"] = binding_id
+                metadata_updates["runtime_id"] = runtime_id
+                metadata_updates["provisioning_authoritative_readback"] = deepcopy(
+                    dict(durable_readback)
+                )
                 metadata_updates.pop("provisioning_failure_reason", None)
             elif ledger_state in {"failed", "compensated"}:
                 new_state = "provisioning_failed"
@@ -28489,12 +28803,25 @@ def _evaluate_persona_provisioning_status(
                 )
         elif not terminal_checkpoint.get("committed"):
             return "provisioning"
+        if new_state == "paper_running":
+            durable_references = terminal_checkpoint.get("references")
+            durable_readback = (
+                durable_references.get("authoritative_readback")
+                if isinstance(durable_references, Mapping)
+                else None
+            )
+            if not isinstance(durable_readback, Mapping):
+                return "provisioning"
+            metadata_updates["provisioning_authoritative_readback"] = deepcopy(
+                dict(durable_readback)
+            )
         schedule_cleanup = terminal_checkpoint.get("schedule_cleanup")
         if isinstance(schedule_cleanup, Mapping):
             metadata_updates["first_evaluation_schedule_cleanup"] = deepcopy(
                 dict(schedule_cleanup)
             )
         elif terminal_checkpoint.get("schedule_cleanup_error"):
+            _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
             metadata_updates["first_evaluation_schedule_cleanup"] = {
                 "status": "pending",
                 "registered": None,
@@ -28506,6 +28833,10 @@ def _evaluate_persona_provisioning_status(
             )
             if compensation is not None:
                 metadata_updates["provisioning_compensation"] = compensation
+                if compensation.get("status") in {"failed", "pending"}:
+                    _append_persona_reconcile_diagnostic(
+                        diagnostics, "provisioning_compensation"
+                    )
 
     if new_state != current_state or metadata_updates:
         read_store.update_persona(
@@ -44590,15 +44921,21 @@ def _register_persona_cron_required(
     if body.get("failed"):
         raise RuntimeError(f"cron registration failed: {body['failed']}")
     runtime = registrar._get_runtime()
-    if runtime is None or not registrar.has_first_evaluation_registration(
-        persona_id,
-        runtime=runtime,
-        runtime_id=runtime_id,
-        runtime_binding_id=runtime_binding_id,
-        capital_pool_id=capital_pool_id,
-        persona_capital_binding_id=binding_id,
-    ):
+    authoritative_job = (
+        registrar.get_first_evaluation_registration(
+            persona_id,
+            runtime=runtime,
+            runtime_id=runtime_id,
+            runtime_binding_id=runtime_binding_id,
+            capital_pool_id=capital_pool_id,
+            persona_capital_binding_id=binding_id,
+        )
+        if runtime is not None
+        else None
+    )
+    if authoritative_job is None:
         raise RuntimeError("first-evaluation schedule failed authoritative readback")
+    authoritative_event = registrar._decode_job_event(authoritative_job) or {}
     body["authoritative_readback"] = {
         "persona_id": persona_id,
         "workflow_id": _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
@@ -44607,6 +44944,12 @@ def _register_persona_cron_required(
         "capital_pool_id": capital_pool_id,
         "persona_capital_binding_id": binding_id,
         "registered": True,
+        "job_id": authoritative_job.get("id"),
+        "job_name": authoritative_job.get("name"),
+        "request_id": authoritative_event.get("request_id"),
+        "schedule": deepcopy(authoritative_job.get("schedule")),
+        "session_target": authoritative_job.get("sessionTarget"),
+        "observed_at": utc_now(),
     }
     return body
 
@@ -44663,6 +45006,7 @@ def _persona_readback_snapshot() -> Tuple[
             if binding_id:
                 all_bindings[str(binding_id)] = binding
     except Exception as exc:
+        all_bindings = {}
         log.warning("Failed to batch list runtime bindings: %s", exc)
 
     # A (persona_id, workflow_id) set discards duplicates and every schedule,
@@ -44821,10 +45165,12 @@ async def bff_reconcile_persona_provisioning(
             "Persona not found",
             f"Persona {persona_id} does not exist",
         )
+    diagnostics: List[str] = []
     state = await asyncio.to_thread(
         _evaluate_persona_provisioning_status,
         persona_id,
         raw,
+        diagnostics=diagnostics,
     )
     dto = _project_persona_dto(
         raw,
@@ -44838,6 +45184,8 @@ async def bff_reconcile_persona_provisioning(
             "snapshot_at": utc_now(),
             "reconciled_by": "persona_provisioning_controller",
             "lifecycle_state": state,
+            "status": "degraded" if diagnostics else "ok",
+            "degraded_dependencies": sorted(set(diagnostics)),
         },
     }
 
@@ -45182,7 +45530,10 @@ def _persona_record_for_provisioning(
             raise ProvisioningConflict(
                 "stable Persona identity is already occupied by different tenant/name semantics"
             )
-        if str(existing.get("lifecycle_state") or "") == "paper_running":
+        if (
+            record.state == "succeeded"
+            and str(existing.get("lifecycle_state") or "") == "paper_running"
+        ):
             lifecycle_state = "paper_running"
         persona = read_store.update_persona(
             record.persona_id,
@@ -45714,6 +46065,11 @@ async def bff_patch_persona(
     base["id"] = persona_id
     base["tenantId"] = caller_tenant
     existing_metadata = dict(raw.get("metadata") if isinstance(raw, dict) and isinstance(raw.get("metadata"), dict) else {})
+    canonical_lifecycle = str(
+        (raw or {}).get("lifecycle_state")
+        or (raw or {}).get("state")
+        or "draft"
+    )
     update_metadata: Dict[str, Any] = {
         "success_rate": float(base.get("successRate") or 0.0),
     }
@@ -45724,7 +46080,7 @@ async def bff_patch_persona(
             "name": str(base.get("name") or persona_id),
             "mandate": str(base.get("archetype") or existing_metadata.get("archetype") or "generalist"),
             "strategy_family": str(base.get("archetype") or existing_metadata.get("archetype") or "generalist"),
-            "lifecycle_state": str(base.get("state") or "draft"),
+            "lifecycle_state": canonical_lifecycle,
             "metadata": {
                 **existing_metadata,
                 **update_metadata,
@@ -45741,7 +46097,10 @@ async def bff_patch_persona(
         actor_id=str(existing_metadata.get("owner") or identity.operator_id),
         updated_at=snapshot_at,
         archetype=str(base.get("archetype") or "generalist"),
-        lifecycle_state=str(base.get("state") or "draft"),
+        # Lifecycle is controller-owned.  Omitting it makes update_persona
+        # re-read and preserve the latest canonical value, avoiding a stale
+        # overlay racing paper_running/provisioning_failed reconciliation.
+        lifecycle_state=None,
         risk_level=str(base.get("risk") or "low"),
         metadata=update_metadata,
     )
