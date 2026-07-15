@@ -5,6 +5,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "deploy_nonprod_vm.sh"
+DEPLOY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 
 
 def test_nonprod_deploy_defaults_to_strict_bff_auth() -> None:
@@ -19,6 +20,22 @@ def test_nonprod_deploy_defaults_to_strict_bff_auth() -> None:
     assert 'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"' in script
     assert 'DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-true}"' not in script
     assert 'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-permissive}"' not in script
+
+
+def test_nonprod_workflow_has_bounded_dev_permissive_stub_profile() -> None:
+    """Manual proof runs may deploy an older exact SHA, so the workflow must
+    pass an atomic auth pair into that SHA's deploy script instead of relying
+    on either the script's historical defaults or the remote .env file."""
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "dev_auth_profile:" in workflow
+    assert "default: strict" in workflow
+    assert "- permissive-stub" in workflow
+    assert "export DEV_BFF_AUTH_STUB=false" in workflow
+    assert "export DEV_BFF_AUTH_MODE=strict" in workflow
+    assert "export DEV_BFF_AUTH_STUB=true" in workflow
+    assert "export DEV_BFF_AUTH_MODE=permissive" in workflow
+    assert "Auth profile permissive-stub is valid only for dev deployments." in workflow
 
 
 def _run_deploy_script(extra_env: dict) -> subprocess.CompletedProcess:
