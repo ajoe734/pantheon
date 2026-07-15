@@ -26,11 +26,15 @@ Planning authority delivery:
   zero-write dry-run, loop coverage, and the full dispatcher suite, and issued
   an `APPROVE` verdict.
 - Verified catalog digest:
-  `5e18e95f619c171c2717208784558552356d24584bcfdaba128e6e1018518e9c`;
+  `04f94c0c4b2fc9773083624d7fd100f6c3ea2f617dcee2068def61927ffe1644`;
   verified dispatcher result: `172 passed`.
 - This approval closes planning authority only. Product delivery remains
   blocked on the external runtime bootstrap and every downstream fleet task's
   own evidence, review, deployment, and product-level acceptance gates.
+
+## Addendum Gating & Batching Rationale
+
+The remaining 10 addendum tasks (ATTEST, AUTH-BOOT, AUTH-OPS, BROWSER-AUTH, CLOSE-002, DELIVERY, FE-BUILD, FE-EVID, FLEET, SIGNOFF) are deliberately gated and cannot be dispatched (applied) onto the live board until the prerequisite bootstrap task `LOOP-PROD-RUNTIME-BOOT-001` transitions to `done`. This strict dependency ensures that all subsequent productization tasks run with the proper runtime task audit lock protocol in place, failing closed otherwise to preserve system integrity.
 
 ## Product contract
 
@@ -226,6 +230,7 @@ state or the archive at live dispatch time:
 - `AG-GAP-013`
 - `AG-GAP-014`
 - `EVOCHAIN-011`
+- `EVOLOOP-011`
 - `MGMT-SSE-001`
 - `OPENCLAW-CRON-WRITE-SCOPE`
 - `OPENCLAW-PERSONA-CRON-BACKFILL`

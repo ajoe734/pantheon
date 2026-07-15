@@ -1,0 +1,29 @@
+{
+  "captured_at": "2026-07-15T00:11:25Z",
+  "duration_ms": 23.709,
+  "label": "positive-duplicate-inbox-consume",
+  "request": {
+    "body": {
+      "consumer_name": "deployment-outbox-consumer"
+    },
+    "headers": {},
+    "method": "POST",
+    "started_at": "2026-07-15T00:11:25Z",
+    "url": "http://127.0.0.1:18095/api/deployment/outbox/deployment-saga-plan-loop-prod-dep-20260715001015-evt-0001/consume"
+  },
+  "response": {
+    "payload": {
+      "aggregate_id": "deployment-saga-plan-loop-prod-dep-20260715001015",
+      "aggregate_type": "deployment_saga",
+      "consumer_name": "deployment-outbox-consumer",
+      "event_id": "deployment-saga-plan-loop-prod-dep-20260715001015-evt-0001",
+      "idempotency_key": "deployment-saga-plan-loop-prod-dep-20260715001015:1:runtime.binding.requested",
+      "notes": "Duplicate delivery skipped by event_id / idempotency_key.",
+      "processed_at": "2026-07-15T00:11:25Z",
+      "sequence_no": 1,
+      "status": "duplicate",
+      "trace_id": "dae4254c-7edb-44d5-bb15-022f1ac5e89a"
+    },
+    "status": 200
+  }
+}

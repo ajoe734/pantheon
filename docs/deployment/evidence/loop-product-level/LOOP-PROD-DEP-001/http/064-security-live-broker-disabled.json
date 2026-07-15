@@ -1,0 +1,22 @@
+{
+  "captured_at": "2026-07-15T00:11:38Z",
+  "duration_ms": 3.79,
+  "label": "security-live-broker-disabled",
+  "request": {
+    "body": {},
+    "headers": {},
+    "method": "POST",
+    "started_at": "2026-07-15T00:11:38Z",
+    "url": "http://127.0.0.1:18106/api/broker/live/orders"
+  },
+  "response": {
+    "payload": {
+      "deployment_stage": "paper",
+      "error_code": "LIVE_ADAPTER_DISABLED",
+      "live_enabled": false,
+      "message": "Live broker execution is disabled. Live orders are not accepted in this deployment.",
+      "status": "broker_error"
+    },
+    "status": 403
+  }
+}
