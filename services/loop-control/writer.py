@@ -192,6 +192,7 @@ class LoopControllerWriter:
         summary: Optional[str] = None,
         backlog: Optional[int] = None,
         lag: Optional[int] = None,
+        dlq_count: Optional[int] = None,
         evidence_refs: Optional[List[str]] = None,
         payload: Optional[Dict[str, Any]] = None,
     ) -> None:
@@ -207,6 +208,7 @@ class LoopControllerWriter:
             last_success_at=now,
             backlog=backlog,
             lag=lag,
+            dlq_count=dlq_count,
             evidence_refs=evidence_refs,
             payload=extra_payload,
         )

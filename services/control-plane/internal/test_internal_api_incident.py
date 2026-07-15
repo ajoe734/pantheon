@@ -450,7 +450,7 @@ class TestProtectedInternalAPIRuntimeManagerBoundary(unittest.TestCase):
         self.assertTrue(payload["degraded_mode"])
         self.assertEqual(self.fake_client.calls, [("get", "missing-binding")])
 
-    def test_rollback_route_uses_runtime_manager_client(self):
+    def test_rollback_route_requires_canonical_runtime_manager_endpoint(self):
         binding_id = "binding-rollback-001"
         self.fake_client.seed(binding_id, status=RuntimeBindingStatus.ACTIVE.value)
 
@@ -466,19 +466,12 @@ class TestProtectedInternalAPIRuntimeManagerBoundary(unittest.TestCase):
         )
 
         payload = response.get_json()
-        self.assertEqual(response.status_code, 202)
-        self.assertEqual(payload["status_after"], RuntimeBindingStatus.RETIRED.value)
-        self.assertEqual(self.fake_client.calls[0], ("get", binding_id))
-        self.assertEqual(
-            self.fake_client.calls[1:3],
-            [
-                ("transition", binding_id, RuntimeBindingStatus.PENDING_PAUSE.value),
-                ("transition", binding_id, RuntimeBindingStatus.PAUSED.value),
-            ],
-        )
-        self.assertEqual(self.fake_client.calls[3][0:2], ("retire", binding_id))
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(payload["error"]["code"], "CANONICAL_ROLLBACK_REQUIRED")
+        self.assertEqual(payload["error"]["canonical_endpoint"], "/api/rollback")
+        self.assertEqual(self.fake_client.calls, [])
 
-    def test_rollback_route_is_idempotent(self):
+    def test_legacy_rollback_rejection_is_idempotently_non_mutating(self):
         binding_id = "binding-rollback-idempotent"
         self.fake_client.seed(binding_id, status=RuntimeBindingStatus.ACTIVE.value)
 
@@ -494,9 +487,9 @@ class TestProtectedInternalAPIRuntimeManagerBoundary(unittest.TestCase):
                 "rollback_action_type": RollbackActionType.PAUSE_THEN_REPLACE.value,
             },
         )
-        self.assertEqual(response1.status_code, 202)
+        self.assertEqual(response1.status_code, 409)
         payload1 = response1.get_json()
-        command_id1 = payload1["command_id"]
+        self.assertEqual(payload1["error"]["code"], "CANONICAL_ROLLBACK_REQUIRED")
 
         # Clear fake client calls to verify we don't repeat side effects
         self.fake_client.calls.clear()
@@ -513,12 +506,11 @@ class TestProtectedInternalAPIRuntimeManagerBoundary(unittest.TestCase):
                 "rollback_action_type": RollbackActionType.PAUSE_THEN_REPLACE.value,
             },
         )
-        self.assertEqual(response2.status_code, 202)
+        self.assertEqual(response2.status_code, 409)
         payload2 = response2.get_json()
 
-        # It must return the exact same command_id and cached result
-        self.assertEqual(payload2["command_id"], command_id1)
-        # And the fake client must NOT have been called again (idempotent side effects)
+        self.assertEqual(payload2, payload1)
+        # Rejection never reaches the legacy mutation facade.
         self.assertEqual(len(self.fake_client.calls), 0)
 
 

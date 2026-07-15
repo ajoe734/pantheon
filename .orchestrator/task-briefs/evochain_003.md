@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Postmortem publisher on incident resolution
 - Status: in_progress
-- Owner: Codex
+- Owner: Codex2
 - Reviewer: Claude
-- Next: Durable delivery remediation is implemented and awaiting task PR review.
+- Next: Codex2 closed the recovered rollout deadlock and adversarial Postgres evidence gaps at 780e4741c; final latest-dev validation is 134 focused, 555 broad, 5 real-Postgres, and 1 HTTP chain. Publish the follow-up PR and hand off to Claude for re-review; bridge remains unchanged.
 
 ## Summary
 補上 postmortem 事件鏈缺的呼叫端：incident resolve/close 時產生 postmortem record，經 services/evolution/postmortem_bridge.on_postmortem_published 轉成 proposal，並經 POST /api/evolution/proposals 入庫。bridge 本身保持純函式不動。

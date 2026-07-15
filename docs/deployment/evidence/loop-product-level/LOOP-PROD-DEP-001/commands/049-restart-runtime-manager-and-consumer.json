@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-07-15T00:11:36Z",
+  "command": [
+    "docker",
+    "compose",
+    "-p",
+    "pantheon",
+    "-f",
+    "/home/lupin/pantheon-ci-deploy/dev-root/docker-compose.yml",
+    "restart",
+    "runtime-manager",
+    "deployment-outbox-consumer"
+  ],
+  "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+  "duration_ms": 11212.899,
+  "label": "restart-runtime-manager-and-consumer",
+  "returncode": 0,
+  "started_at": "2026-07-15T00:11:25Z",
+  "stderr": " Container pantheon-deployment-outbox-consumer-1  Restarting\n Container pantheon-runtime-manager-1  Restarting\n Container pantheon-runtime-manager-1  Started\n Container pantheon-deployment-outbox-consumer-1  Started\n",
+  "stdout": ""
+}

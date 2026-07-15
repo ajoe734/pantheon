@@ -1,0 +1,590 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "LOOP-PROD-MAI-001 requires a redacted, append-only, checksummed product-evidence manifest and an independent reviewer must bind its verdict to that manifest.",
+    "note": "This first evidence cut is intentionally fail-closed. It records branch-local implementation anchors and one hosted preflight observation, but does not promote local contracts, a permissive/stub runtime, or a synthetic/queued receipt to product-level success.",
+    "status": "formalized_blocked_evidence_cut"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "After this evidence anchor is published, existing record_log entries and source epochs are immutable. A later hosted strict-auth run, PR/check/merge record, or reviewer verdict must be appended as a new record and integrity epoch; it must not rewrite this blocked preflight observation.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-15T06:42:00Z",
+    "evidence_cut_semantics": "Capture-time evidence only. The hosted portion consists of exactly one unauthenticated GET /bff/version made by the verifier preflight between 2026-07-15T06:27:49Z and 2026-07-15T06:28:15Z. It observed permissive/stub auth and stopped before loading credentials or running mutations. The implementation portion is branch-local through b0e28afa538f8376cc476bfd070651756bbfea5a; no PR, required-check result, merge SHA, task-candidate deployment, strict-auth lifecycle, security-negative matrix, or hosted restart proof exists in this cut.",
+    "id": "LOOP-PROD-MAI-001",
+    "overall_admission": "blocked_strict_auth_posture_and_hosted_proof_not_available",
+    "owner": "Codex",
+    "phase": "Loop Product-Level Remediation / Wave 2",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "dev",
+    "target_maturity": "product-level",
+    "task_branch": "task/LOOP-PROD-MAI-001",
+    "title": "Hosted Management AI repair and dev-bridge backend proof"
+  },
+  "authorities": {
+    "actual_state": [
+      "GET /bff/version hosted config posture and deployment identity",
+      "POST /bff/assistant/repair-worktrees/prepare canonical worktree metadata",
+      "POST /bff/management/nl/ask OpenClaw conversation and sentinel readback",
+      "POST /bff/assistant/dev-docs/generate and GET /bff/assistant/dev-docs/{packetId}",
+      "POST /bff/assistant/dev-bridge/task-packet",
+      ".orchestrator/assistant-dev-packets processing receipt and ai-task-archive archive readback",
+      "GET /bff/assistant/mode mode audit"
+    ],
+    "desired_state": [
+      "authorized kernel_debug and kernel_repair control mode",
+      "declared repo-relative narrow scope, expected branch, remote, merge target, and clean task worktree",
+      "SA/SD generation request correlated to the repair lifecycle",
+      "strict-auth hosted dev runtime with governed identities and adapter service authentication"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-MAI-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex owns the Pantheon BFF, OpenClaw gateway-adapter, dev-bridge durability, deployment wiring, verifier, runbook, and task evidence changes on task/LOOP-PROD-MAI-001; human ops owns secret provisioning and the admitted dev deployment; Claude owns independent review.",
+    "composes_with": [
+      "LOOP-PROD-AUTH-001 strict-auth deployment and governed identity posture",
+      "LOOP-PROD-001 and LOOP-PROD-002 product-level evidence authorities",
+      "Pantheon nonprod deployment controller and human-managed GitHub/environment secrets",
+      "Claude independent review and task closeout"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      ".github/workflows/nonprod-deploy.yml",
+      "docker-compose.yml",
+      "scripts/ai_status.py",
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py",
+      "services/control-plane/bff/assistant/command_idempotency.py",
+      "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/dev_bridge_signer.py",
+      "services/control-plane/bff/assistant/repair_receipts.py",
+      "services/control-plane/bff/assistant/routes.py",
+      "services/control-plane/bff/assistant/tests/test_command_idempotency.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/openclaw_ops_client.py",
+      "services/control-plane/bff/tests/test_assistant_dev_compose_flags.py",
+      "services/control-plane/bff/tests/test_assistant_dev_docs_routes.py",
+      "services/control-plane/bff/tests/test_assistant_security.py",
+      "services/control-plane/bff/tests/test_management_ai_dev_kernel_env.py",
+      "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+      "services/control-plane/bff/tests/test_openclaw_ops_service_auth.py",
+      "services/control-plane/bff/tests/test_repair_receipts.py",
+      "services/openclaw-gateway-adapter/assistant_codex_provider.py",
+      "services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
+      "services/openclaw-gateway-adapter/assistant_repair_workflow.py",
+      "services/openclaw-gateway-adapter/main.py",
+      "services/openclaw-gateway-adapter/test_compose_activation.py",
+      "services/openclaw-gateway-adapter/test_main.py",
+      "services/openclaw-gateway-adapter/tests/test_assistant_codex_provider.py",
+      "services/openclaw-gateway-adapter/tests/test_assistant_repair_workflow.py"
+    ],
+    "not_changing": "No live-capital or broker side effect; no fabrication or rotation of human-managed credentials; no claim that the observed hosted runtime contains this branch; no shared live-checkout repair; no frontend implementation.",
+    "owned_layer": "Pantheon Management AI backend repair authorization and receipts, scoped OpenClaw execution, durable assistant command and dev-bridge replay, RPO=0 recovery contracts, adapter service authentication, nonprod deployment wiring, hosted verifier, operations runbook, and product evidence."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "973ef8e80fcf7f10762765352ea62469e8c3df57",
+        "subject": "LOOP-PROD-MAI-001: anchor repair target guards",
+        "delivery_state": "pushed_task_branch_unreviewed",
+        "hosted_cut_inclusion": false,
+        "note": "Local contract anchor only; the hosted runtime observed by this cut reports a different source SHA."
+      },
+      {
+        "sha": "e2b73d1a622bf3d6c886fd7d623bae524037e78f",
+        "subject": "LOOP-PROD-MAI-001: anchor prepared repair receipts",
+        "delivery_state": "pushed_task_branch_unreviewed",
+        "hosted_cut_inclusion": false
+      },
+      {
+        "sha": "a4e8ebed0400962f541a58279a83a2288d796b05",
+        "subject": "LOOP-PROD-MAI-001: anchor provider execution boundary",
+        "delivery_state": "pushed_task_branch_unreviewed",
+        "hosted_cut_inclusion": false
+      },
+      {
+        "sha": "7668c543abbee30a6e8affff5976154bb1e0cb87",
+        "subject": "LOOP-PROD-MAI-001: anchor adapter service auth",
+        "delivery_state": "pushed_task_branch_unreviewed",
+        "hosted_cut_inclusion": false
+      },
+      {
+        "sha": "8b29025b767f7281fd6f0c30f5aa528217198548",
+        "subject": "LOOP-PROD-MAI-001: anchor dev bridge durability",
+        "delivery_state": "pushed_task_branch_unreviewed",
+        "hosted_cut_inclusion": false
+      },
+      {
+        "sha": "28b4b73dc7bb170d8a14ba5c9bc03e53c5dec1ff",
+        "subject": "LOOP-PROD-MAI-001: anchor management repair recovery",
+        "delivery_state": "pushed_task_branch_unreviewed",
+        "hosted_cut_inclusion": false
+      },
+      {
+        "sha": "9fa4ea9b80a1b2c23c763102c520fe30a1f57d5c",
+        "subject": "LOOP-PROD-MAI-001: persist dev bridge directories",
+        "delivery_state": "pushed_task_branch_unreviewed",
+        "hosted_cut_inclusion": false
+      },
+      {
+        "sha": "da0317e9bd3ac524b9918f474d6c4464b83bca33",
+        "subject": "LOOP-PROD-MAI-001: anchor adapter service auth wiring",
+        "delivery_state": "pushed_task_branch_unreviewed",
+        "hosted_cut_inclusion": false
+      },
+      {
+        "sha": "d35850d789c0863bf85fcb6c9ac28fcc237732dd",
+        "subject": "LOOP-PROD-MAI-001: anchor inbox replay recovery",
+        "delivery_state": "pushed_task_branch_unreviewed",
+        "hosted_cut_inclusion": false
+      },
+      {
+        "sha": "aef780df3b94603b6246c1b950301220e2cc6992",
+        "subject": "LOOP-PROD-MAI-001: anchor assistant command idempotency",
+        "delivery_state": "pushed_task_branch_unreviewed",
+        "hosted_cut_inclusion": false
+      },
+      {
+        "sha": "e768b221539698f1be9ac4f37cb9c96e4f47a1a8",
+        "subject": "LOOP-PROD-MAI-001: anchor strict assistant replay posture",
+        "delivery_state": "pushed_task_branch_unreviewed",
+        "hosted_cut_inclusion": false
+      },
+      {
+        "sha": "b0e28afa538f8376cc476bfd070651756bbfea5a",
+        "subject": "LOOP-PROD-MAI-001: anchor hosted command replay defaults",
+        "delivery_state": "pushed_task_branch_unreviewed",
+        "hosted_cut_inclusion": false,
+        "note": "Evidence implementation cut. No PR, required checks, merge, reviewer verdict, or task-candidate deploy existed at evidence_cut_at."
+      }
+    ],
+    "required_checks": []
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "git log --format='%H%n%B' dfb6628a307e66a6cb3e9e69290e32e5a10c2e97..b0e28afa538f8376cc476bfd070651756bbfea5a",
+        "conclusion": "Twelve task anchors record commit-scoped local validation: 70 repair-target/BFF security tests; repair receipt/security/kernel-repair tests; 100 provider/route plus 41 repair-workflow tests with 4 live tests skipped; 104 adapter tests; repeated 49 dev-bridge tests; 59 ai-status tests with 1 unrelated baseline test deselected; 8 Management NL tests; 24 service-auth/deploy/compose plus 14 client and 2 repair-client tests with syntax checks; 61 assistant idempotency tests with 2 known dev-doc fixture tests deselected; 11 strict replay tests; and 2 compose contract tests. These are commit-trailer attestations of local runs, not hosted proof or an independent rerun by this evidence writer.",
+        "result": "pass_commit_trailer_provenance_only"
+      },
+      {
+        "command": "python3 -m jsonschema -i docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/evidence.json schemas/product-evidence.schema.json",
+        "conclusion": "schema validation completed successfully for this manifest cut",
+        "result": "pass"
+      },
+      {
+        "command": "cd docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/preflight-20260715T062741Z && sha256sum -c artifact-index.sha256",
+        "conclusion": "artifact-index.json: OK",
+        "result": "pass"
+      },
+      {
+        "command": "cd docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001 && sha256sum -c evidence.sha256",
+        "conclusion": "evidence.json, preflight-20260715T062741Z/artifact-index.json, and preflight-20260715T062741Z/artifact-index.sha256: OK",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-15T06:42:00Z",
+    "validated_base_sha": "dfb6628a307e66a6cb3e9e69290e32e5a10c2e97",
+    "validated_head_sha": "b0e28afa538f8376cc476bfd070651756bbfea5a"
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "dev",
+    "public_bff_base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "publish_cut": {
+      "conclusion": "not_run_for_task_candidate",
+      "reason": "The implementation exists only as pushed task-branch anchors through b0e28afa538f8376cc476bfd070651756bbfea5a. No PR, merge SHA, or accepted publish cut exists in this evidence epoch."
+    },
+    "canonical_root_deploy": {
+      "conclusion": "blocked",
+      "reason": "The strict nonprod deployment requires human-managed JWT/OIDC and OpenClaw adapter service credentials. They were not loaded or fabricated by this verifier cut, and the branch has not passed PR/merge gates."
+    },
+    "identity_admission": {
+      "admission_boundary": "The hosted observation is admitted only as authoritative proof of the pre-existing blocking runtime posture. It is not admitted as evidence that any task anchor is deployed or that the repair lifecycle works live.",
+      "capture_time_runtime_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "task_candidate_head_sha": "b0e28afa538f8376cc476bfd070651756bbfea5a",
+      "task_candidate_is_capture_time_runtime": false,
+      "observed_image_digest": "unknown",
+      "observed_build_time": "unknown",
+      "observed_environment": "dev",
+      "observed_config_posture": {
+        "assistant_kernel_enabled": true,
+        "auth_mode": "permissive",
+        "auth_stub": true,
+        "dev_login_enabled": false,
+        "mfa_required": false
+      },
+      "strict_auth_admitted": false,
+      "violations": [
+        "auth_stub must be false",
+        "auth_mode must be strict",
+        "dev_login_enabled must be true"
+      ]
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "run_id": "preflight-20260715T062741Z",
+      "phase": "preflight-strict-posture",
+      "started_at": "2026-07-15T06:27:49Z",
+      "recorded_at": "2026-07-15T06:28:15Z",
+      "request_count": 1,
+      "request": {
+        "method": "GET",
+        "path": "/bff/version",
+        "authenticated": false,
+        "request_headers_recorded": {}
+      },
+      "response_status": 200,
+      "source_commit_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "environment": "dev",
+      "image_digest": "unknown",
+      "build_time": "unknown",
+      "config_posture": {
+        "assistant_kernel_enabled": true,
+        "auth_mode": "permissive",
+        "auth_stub": true,
+        "dev_login_enabled": false,
+        "mfa_required": false
+      },
+      "verifier_result": {
+        "status": "blocked",
+        "code": "STRICT_AUTH_POSTURE_BLOCKED",
+        "message": "Hosted BFF is not admitted for strict-auth Management AI verification"
+      },
+      "credentials_loaded": false,
+      "mutations_run": false,
+      "restart_commands_run": false,
+      "terminal_admission": false,
+      "artifact_refs": [
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/preflight-20260715T062741Z/001-phase-preflight-strict-posture.json",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/preflight-20260715T062741Z/http/002-preflight-bff-version.json",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/preflight-20260715T062741Z/003-blocker.json",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/preflight-20260715T062741Z/artifact-index.json",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/preflight-20260715T062741Z/artifact-index.sha256"
+      ]
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "local_contract_only_hosted_pending",
+      "proof": [
+        "Anchor commits 8b29025b767f7281fd6f0c30f5aa528217198548, d35850d789c0863bf85fcb6c9ac28fcc237732dd, aef780df3b94603b6246c1b950301220e2cc6992, e768b221539698f1be9ac4f37cb9c96e4f47a1a8, and b0e28afa538f8376cc476bfd070651756bbfea5a record local duplicate/replay validation.",
+        "The hosted duplicate request/receipt/downstream readback matrix did not run because strict-auth preflight blocked."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "preflight_fail_closed_only_full_matrix_blocked",
+      "proof": [
+        "The verifier made one unauthenticated read, detected permissive/stub posture, emitted STRICT_AUTH_POSTURE_BLOCKED, and stopped before credential loading or mutations.",
+        "Wrong role, tenant, MFA, scope, repo, branch, duplicate, and post-deactivation hosted negatives remain unexecuted."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "blocked_not_run_hosted",
+      "proof": [
+        "No hosted activate, prepare, conversation, sentinel readback, SA/SD, pending packet, processing receipt, archive, or deactivate request was admitted in this cut.",
+        "Branch-local receipt and dev-bridge contracts are not terminal downstream evidence."
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "local_contract_only_hosted_rpo0_pending",
+      "proof": [
+        "Local anchor validation records durability and replay/recovery coverage for Management NL, assistant commands, and the dev bridge.",
+        "BFF, adapter, and supervisor were not restarted against admitted hosted work, so bounded recovery and admitted-command RPO=0 are not proven live."
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pending_no_task_candidate_deployment",
+      "proof": [
+        "No task-candidate deployment or hosted mutation occurred, so no rollback/compensation drill was run.",
+        "A later admitted deployment epoch must record the actual rollback or compensation result rather than infer it from source control."
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "blocked_hosted_posture",
+      "reason": "The endpoint identified environment=dev, but auth_mode=permissive and auth_stub=true fail the required strict environment boundary."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable_backend_task",
+      "reason": "This task does not change or claim hosted frontend behavior."
+    },
+    "mfa": {
+      "status": "blocked_hosted_matrix_not_run",
+      "reason": "The hosted version posture reported mfa_required=false and no authenticated MFA negative was attempted."
+    },
+    "no_live_capital": {
+      "status": "pass_no_side_effect_attempted",
+      "reason": "The verifier stopped after one read-only version request; credentials were not loaded, mutations were not run, and the task does not authorize broker or capital actions."
+    },
+    "rbac": {
+      "status": "local_contract_only_hosted_pending",
+      "reason": "Local focused security tests are recorded by anchors, but wrong-role and post-deactivation hosted writes did not run."
+    },
+    "tenant_isolation": {
+      "status": "local_contract_only_hosted_pending",
+      "reason": "Local tenant-bound receipt and idempotency tests are recorded by anchors, but the wrong-tenant hosted negative did not run."
+    },
+    "two_person_approval": {
+      "status": "pending_not_exercised",
+      "reason": "No two-person approval was bypassed or exercised in this backend repair preflight. Any later governed action that requires it must retain and prove the boundary."
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "behavioral_proof.failure_and_degraded_behavior",
+        "security_and_safety.rbac",
+        "residual_risks.RISK-LOOP-PROD-MAI-001-HOSTED-LIFECYCLE"
+      ],
+      "id": "AC-01",
+      "statement": "kernel_debug provider work is read-only and repair requires active authorized kernel_repair",
+      "status": "blocked_hosted_not_run"
+    },
+    {
+      "evidence_refs": [
+        "implementation_delivery.anchor_commits",
+        "behavioral_proof.request_receipt_downstream_correlation",
+        "residual_risks.RISK-LOOP-PROD-MAI-001-HOSTED-LIFECYCLE"
+      ],
+      "id": "AC-02",
+      "statement": "prepare returns a clean narrow task worktree and exact metadata is forwarded to the conversation",
+      "status": "blocked_local_contract_only"
+    },
+    {
+      "evidence_refs": [
+        "behavioral_proof.request_receipt_downstream_correlation",
+        "hosted_readback.pre_deploy"
+      ],
+      "id": "AC-03",
+      "statement": "harmless in-scope sentinel write/readback, SA/SD generation, pending packet, supervisor processing receipt, and archive all correlate",
+      "status": "blocked_hosted_chain_not_run"
+    },
+    {
+      "evidence_refs": [
+        "behavioral_proof.failure_and_degraded_behavior",
+        "security_and_safety",
+        "hosted_readback.pre_deploy"
+      ],
+      "id": "AC-04",
+      "statement": "dot scope, shared checkout, wrong repo, branch, role, tenant, MFA, duplicate, and post-deactivation writes fail closed",
+      "status": "blocked_hosted_negative_matrix_not_run"
+    },
+    {
+      "evidence_refs": [
+        "behavioral_proof.restart_and_recovery",
+        "residual_risks.RISK-LOOP-PROD-MAI-001-RESTART-RPO0"
+      ],
+      "id": "AC-05",
+      "statement": "BFF, adapter, and supervisor restart preserves admitted work with RPO=0 and bounded recovery",
+      "status": "blocked_hosted_restart_proof_not_run"
+    },
+    {
+      "evidence_refs": [
+        "implementation_delivery",
+        "record_log",
+        "residual_risks.RISK-LOOP-PROD-MAI-001-DELIVERY-REVIEW"
+      ],
+      "id": "AC-06",
+      "statement": "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+      "status": "pending_pr_checks_merge_and_independent_review"
+    },
+    {
+      "evidence_refs": [
+        "hosted_readback.pre_deploy",
+        "behavioral_proof.request_receipt_downstream_correlation"
+      ],
+      "id": "AC-07",
+      "statement": "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+      "status": "blocked_authoritative_terminal_readback_absent"
+    },
+    {
+      "evidence_refs": [
+        "behavioral_proof",
+        "residual_risks.RISK-LOOP-PROD-MAI-001-RESTART-RPO0"
+      ],
+      "id": "AC-08",
+      "statement": "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+      "status": "blocked_hosted_rpo0_and_rollback_proof_absent"
+    },
+    {
+      "evidence_refs": [
+        "deployment.identity_admission",
+        "hosted_readback.pre_deploy",
+        "residual_risks.RISK-LOOP-PROD-MAI-001-DEPLOYMENT-IDENTITY"
+      ],
+      "id": "AC-09",
+      "statement": "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+      "status": "blocked_task_candidate_not_deployed"
+    },
+    {
+      "evidence_refs": [
+        "security_and_safety",
+        "hosted_readback.pre_deploy"
+      ],
+      "id": "AC-10",
+      "statement": "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+      "status": "blocked_hosted_security_matrix_incomplete"
+    },
+    {
+      "evidence_refs": [
+        "evidence_policy",
+        "integrity",
+        "record_log"
+      ],
+      "id": "AC-11",
+      "statement": "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "RISK-LOOP-PROD-MAI-001-STRICT-SECRETS-DEPLOY": {
+      "blocking_for_this_task": true,
+      "containment": "The hosted verifier stops after a single read-only posture request whenever strict auth is not admitted. It does not read identity credentials, issue repair mutations, fabricate secrets, or weaken adapter service authentication.",
+      "description": "The hosted BFF was observed with auth_stub=true, auth_mode=permissive, dev_login_enabled=false, mfa_required=false. Human-managed DEV_BFF_JWT_SECRET, DEV_BFF_OIDC_CLIENT_ID, DEV_BFF_OIDC_CLIENT_SECRET, DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN, and any governed persona credentials required by the verifier must be provisioned outside the repository before an admitted strict deployment can run.",
+      "expiry": "2026-07-22T00:00:00Z",
+      "owner": "human ops (GitHub/environment secret custodian and nonprod deploy approver)",
+      "recheck_trigger": "After secrets are provisioned and a nonprod deployment containing the merged task candidate succeeds, rerun the verifier preflight and require /bff/version to report auth_stub=false, auth_mode=strict, dev_login_enabled=true, mfa_required=true, assistant_kernel_enabled=true before any credential is loaded.",
+      "severity": "critical"
+    },
+    "RISK-LOOP-PROD-MAI-001-HOSTED-LIFECYCLE": {
+      "blocking_for_this_task": true,
+      "containment": "Treat all branch-local route, receipt, scope, service-auth, idempotency, and dev-bridge tests as implementation readiness only. Do not assign product maturity or terminal success until the complete hosted lifecycle and negative matrix are captured with authoritative readback.",
+      "description": "No authenticated hosted Management AI debug/repair lifecycle ran in this cut because strict-auth preflight blocked. The sentinel, SA/SD, bridge, supervisor receipt/archive, deactivation, and security-negative correlations are absent.",
+      "expiry": "2026-07-23T00:00:00Z",
+      "owner": "Codex after human ops admits the strict deployment",
+      "recheck_trigger": "Run scripts/verify_management_ai_repair.py against the exact deployed merge identity with governed credentials and hooks, then append its checksummed artifact index and canonical request/receipt/downstream correlations.",
+      "severity": "critical"
+    },
+    "RISK-LOOP-PROD-MAI-001-RESTART-RPO0": {
+      "blocking_for_this_task": true,
+      "containment": "Local durability tests remain the only recovery evidence and are explicitly classified as non-terminal. No hosted admitted command may be claimed RPO=0 until restart receipts and downstream readback are recorded.",
+      "description": "BFF, OpenClaw adapter, and supervisor restart/recovery were not exercised against admitted hosted work; bounded recovery, duplicate suppression after restart, and RPO=0 remain unproven live.",
+      "expiry": "2026-07-23T00:00:00Z",
+      "owner": "Codex after strict hosted lifecycle admission",
+      "recheck_trigger": "During the admitted verifier run, restart each BFF/adapter/supervisor boundary at the prescribed points, replay the same stable idempotency key, and capture terminal downstream readback plus bounded recovery timing.",
+      "severity": "high"
+    },
+    "RISK-LOOP-PROD-MAI-001-DELIVERY-REVIEW": {
+      "blocking_for_this_task": true,
+      "containment": "Keep overall admission blocked and task status out of done. Anchors are durable implementation checkpoints, not closeout.",
+      "description": "At evidence_cut_at the task has no PR record, required-check result bound to a current PR head, merge SHA, or independent Claude verdict bound to this review_file and companion checksum.",
+      "expiry": "2026-07-17T00:00:00Z",
+      "owner": "Codex for PR/check/merge preparation; Claude for independent review",
+      "recheck_trigger": "Open the task PR to dev, record current-head required checks and merge SHA when available, and append Claude's verdict explicitly bound to this review_file and its current evidence.sha256.",
+      "severity": "high"
+    },
+    "RISK-LOOP-PROD-MAI-001-DEPLOYMENT-IDENTITY": {
+      "blocking_for_this_task": true,
+      "containment": "The observed a10f752b3 runtime is recorded as a blocking pre-task-candidate runtime only. It is not equated with branch head b0e28afa5, and unknown build_time/image_digest are not treated as exact identity.",
+      "description": "The task candidate is not deployed. The only hosted identity observed is source SHA a10f752b3ea4420f271535e255f2d4e7d3d498b2 with image_digest=unknown and build_time=unknown, so exact candidate deployment and controller truth are absent.",
+      "expiry": "2026-07-23T00:00:00Z",
+      "owner": "human ops deployment controller owner with Codex evidence capture",
+      "recheck_trigger": "After merge and nonprod deploy, capture the controller run, merge SHA, source_commit_sha, image digest, build time, environment, and safe config posture from the same admitted deployment epoch before running lifecycle mutations.",
+      "severity": "high"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "evidence.json",
+      "preflight-20260715T062741Z/artifact-index.json",
+      "preflight-20260715T062741Z/artifact-index.sha256"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/evidence.sha256",
+    "hosted_semantic_sha256": {
+      "canonical_bff_version_payload": "6dc6d45c4a1374450ff67c676dc77637de932b90bdfeb82681c5c70da6a369b1",
+      "canonical_blocker_observed_posture": "af3e7b836a382968573024eb347119f43692edee31a65d4833c8adf68ad1ad29"
+    },
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/evidence.json",
+    "normalized_hosted_readback": {
+      "artifact_recompute": "jq -S -c '.response.payload' preflight-20260715T062741Z/http/002-preflight-bff-version.json | sha256sum; jq -S -c '.error.details.observed' preflight-20260715T062741Z/003-blocker.json | sha256sum",
+      "independent_read_receipts": 1,
+      "provenance_limit": "This is a single point-in-time unauthenticated posture read. It proves the blocking preflight state only and cannot establish task-candidate deployment or lifecycle behavior.",
+      "raw_response_bodies_retained": true,
+      "redacted": true
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion evidence.sha256 hashes this manifest and the nested preflight index/checksum files. The manifest does not embed its own digest to avoid a recursive self-hash.",
+    "source_artifact_sha256_by_epoch": {
+      "implementation_anchor_cut": {
+        "base_sha": "dfb6628a307e66a6cb3e9e69290e32e5a10c2e97",
+        "git_sha": "b0e28afa538f8376cc476bfd070651756bbfea5a",
+        "git_tree": "d6e5e1758670e5782705d24d33fd2be5f143de81",
+        "delivery_state": "pushed_task_branch_unreviewed_not_deployed"
+      },
+      "preflight-20260715T062741Z": {
+        "captured_at": "2026-07-15T06:28:15Z",
+        "artifact_index_sha256": "ad8f275a611d5173af64fd87c6131aca02b72908c3e9b4b0bcad0d77f40fc08d",
+        "artifact_index_checksum_file_sha256": "b6b5d95d0843fe42f5ad3ec635faa7b2297f1d964506668f452098366c1b0509",
+        "artifact_index_checksum_validation": "pass",
+        "indexed_artifacts": {
+          "001-phase-preflight-strict-posture.json": "a3194c9ace1332bcba8a8380fc910429d5ab7ee0d907d7df583c69a8bf67d84b",
+          "003-blocker.json": "405579c65ab7bea08bb1648b975e680a0344f07e59d3986baeea16ba96b4f485",
+          "http/002-preflight-bff-version.json": "37f3f6141b5a2b78f1f97906ea481e3ca91ae33dc654aecd60d51b1c2ff9cfb2"
+        }
+      }
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex",
+      "kind": "implementation_anchor_cut",
+      "recorded_at": "2026-07-15T06:26:00Z",
+      "reference": "task/LOOP-PROD-MAI-001",
+      "sequence": 1,
+      "sha": "b0e28afa538f8376cc476bfd070651756bbfea5a",
+      "status": "local_readiness_only",
+      "note": "Twelve task anchors through b0e28afa5 are pushed. No PR/check/merge/review/deploy claim is attached to this record."
+    },
+    {
+      "actor": "Codex verifier",
+      "kind": "hosted_strict_posture_preflight",
+      "recorded_at": "2026-07-15T06:28:15Z",
+      "reference": "preflight-20260715T062741Z/artifact-index.json",
+      "sequence": 2,
+      "sha": "ad8f275a611d5173af64fd87c6131aca02b72908c3e9b4b0bcad0d77f40fc08d",
+      "status": "blocked",
+      "note": "Exactly one unauthenticated GET /bff/version observed auth_stub=true, auth_mode=permissive, dev_login_enabled=false, mfa_required=false at runtime SHA a10f752b3. The verifier stopped before credentials, mutations, or restarts."
+    },
+    {
+      "actor": "Codex",
+      "kind": "formal_evidence_manifest_created",
+      "recorded_at": "2026-07-15T06:42:00Z",
+      "reference": "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/evidence.json",
+      "sequence": 3,
+      "status": "blocked_manifest_schema_valid",
+      "note": "The manifest and nested preflight provenance are checksummed. AC-11 passes; all lifecycle, hosted security, restart, deployment, delivery, and review requirements remain blocked or pending."
+    },
+    {
+      "kind": "independent_review_pending",
+      "recorded_at": "2026-07-15T06:42:00Z",
+      "reference": "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/evidence.json",
+      "reviewer": "Claude",
+      "review_binding_rule": "The reviewer must bind any verdict to this review_file and the then-current companion evidence.sha256, verify no blocked AC was promoted from local or permissive/stub evidence, and require a new append-only hosted epoch after strict deployment.",
+      "sequence": 4,
+      "status": "pending"
+    }
+  ]
+}

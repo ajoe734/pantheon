@@ -14,7 +14,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from ..dev_bridge_models import (
     BridgeActor,
@@ -28,10 +28,12 @@ from ..dev_bridge_models import (
 from ..dev_bridge_signer import (
     has_seen_packet,
     mark_packet_seen,
+    packet_digest,
     sign_packet,
     verify_packet,
 )
 from ..dev_bridge_dispatcher import dispatch_task_packet
+from .dev_bridge_test_support import write_materializing_ai_status
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +202,10 @@ class TestReplayProtection(unittest.TestCase):
         mark_packet_seen("pkt_yyy", repo_root=self.repo_root)
         mark_packet_seen("pkt_yyy", repo_root=self.repo_root)
         self.assertTrue(has_seen_packet("pkt_yyy", repo_root=self.repo_root))
+        replay_rows = Path(
+            self.repo_root, ".orchestrator", "dev-bridge-seen-packets.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(replay_rows), 1)
 
     def test_different_ids_independent(self):
         mark_packet_seen("pkt_a", repo_root=self.repo_root)
@@ -215,11 +221,7 @@ class TestDispatcher(unittest.TestCase):
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
         self.repo_root = self._tmpdir.name
-        Path(self.repo_root, "ai-status.json").write_text("{}", encoding="utf-8")
-        # Create a mock scripts/ai_status.py
-        scripts_dir = Path(self.repo_root, "scripts")
-        scripts_dir.mkdir()
-        (scripts_dir / "ai_status.py").write_text("import sys; sys.exit(0)\n", encoding="utf-8")
+        write_materializing_ai_status(Path(self.repo_root))
 
     def tearDown(self):
         self._tmpdir.cleanup()
@@ -258,7 +260,9 @@ class TestDispatcher(unittest.TestCase):
         req2 = self._signed_request(packet_id="pkt_replay001")
         result = dispatch_task_packet(req2, key_store=_TEST_KEY_STORE)
         self.assertTrue(result.replay_rejected)
-        self.assertEqual(len(result.task_records), 0)
+        self.assertEqual(len(result.task_records), 1)
+        self.assertEqual(result.task_records[0].status, "already_dispatched")
+        self.assertEqual(result.audit_refs["packetDigest"], packet_digest(req.packet))
 
     def test_invalid_signature_raises(self):
         pkt = _make_packet(packet_id="pkt_badsig")
@@ -278,6 +282,20 @@ class TestDispatcher(unittest.TestCase):
         signed = sign_packet(pkt, key_store=_TEST_KEY_STORE)
         req = BridgeDispatchRequest(packet=signed, repoRoot=self.repo_root)
         with self.assertRaises(ValueError, msg="noDirectShellFromWeb"):
+            dispatch_task_packet(req, key_store=_TEST_KEY_STORE)
+
+    def test_requires_branch_pr_merge_false_raises(self):
+        pkt = _make_packet(packet_id="pkt_no_pr_merge")
+        pkt = pkt.model_copy(update={
+            "constraints": BridgeConstraints(
+                allowedRepos=["pantheon"],
+                requiresBranchPrMerge=False,
+                noDirectShellFromWeb=True,
+            )
+        })
+        signed = sign_packet(pkt, key_store=_TEST_KEY_STORE)
+        req = BridgeDispatchRequest(packet=signed, repoRoot=self.repo_root)
+        with self.assertRaisesRegex(ValueError, "requiresBranchPrMerge"):
             dispatch_task_packet(req, key_store=_TEST_KEY_STORE)
 
     def test_audit_refs_contain_expected_fields(self):
@@ -319,6 +337,45 @@ class TestDispatcher(unittest.TestCase):
         req = BridgeDispatchRequest(packet=signed, repoRoot=self.repo_root)
         with self.assertRaises(ValueError, msg="allowedRepos"):
             dispatch_task_packet(req, key_store=_TEST_KEY_STORE)
+
+    def test_unconfigured_allowed_repo_raises(self):
+        pkt = _make_packet(packet_id="pkt_unconfigured_repo")
+        pkt = pkt.model_copy(update={
+            "constraints": BridgeConstraints(
+                allowedRepos=["pantheon", "execute-plans"],
+                requiresBranchPrMerge=True,
+                noDirectShellFromWeb=True,
+            )
+        })
+        signed = sign_packet(pkt, key_store=_TEST_KEY_STORE)
+        req = BridgeDispatchRequest(packet=signed, repoRoot=self.repo_root)
+        with patch.dict(
+            "os.environ",
+            {"PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS": "pantheon"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ValueError, "unconfigured repositories"):
+                dispatch_task_packet(req, key_store=_TEST_KEY_STORE)
+
+    def test_configured_allowed_repos_pass(self):
+        pkt = _make_packet(packet_id="pkt_configured_repo")
+        pkt = pkt.model_copy(update={
+            "constraints": BridgeConstraints(
+                allowedRepos=["pantheon", "execute-plans"],
+                requiresBranchPrMerge=True,
+                noDirectShellFromWeb=True,
+            )
+        })
+        signed = sign_packet(pkt, key_store=_TEST_KEY_STORE)
+        req = BridgeDispatchRequest(packet=signed, repoRoot=self.repo_root, dryRun=True)
+        with patch.dict(
+            "os.environ",
+            {"PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS": "pantheon,execute-plans"},
+            clear=False,
+        ):
+            result = dispatch_task_packet(req, key_store=_TEST_KEY_STORE)
+        self.assertFalse(result.replay_rejected)
+        self.assertEqual(result.task_records[0].status, "dry_run")
 
 
 if __name__ == "__main__":

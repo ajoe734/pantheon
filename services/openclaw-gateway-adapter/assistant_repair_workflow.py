@@ -23,8 +23,10 @@ DEFAULT_REPAIR_WORKTREE_ROOT = "/srv/pantheon-assistant/worktrees"
 DEFAULT_REMOTE = "origin"
 DEFAULT_MERGE_TARGET = "dev"
 DEFAULT_TASK_BRANCH_PREFIX = "task/"
+DEFAULT_ALLOWED_REPO_KEYS = ("pantheon", "execute-plans")
 DEFAULT_GIT_USER_EMAIL = "pantheon-assistant@pantheon.local"
 DEFAULT_GIT_USER_NAME = "Pantheon Assistant"
+TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 
 GitRunner = Callable[[Sequence[str], Path], subprocess.CompletedProcess[str]]
 PullRequestLookup = Callable[[Path, str], Mapping[str, Any] | None]
@@ -242,32 +244,69 @@ class AssistantRepairWorkflow:
                 "Repair worktree preparation requires task_id.",
                 details={"required": ["task_id"]},
             )
+        _validate_task_id(task_id)
         repo_key = _repo_key(metadata, self._environ)
+        _validate_repo_key(repo_key, self._environ)
         root = _resolve_path(
             self._environ.get("PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT", DEFAULT_REPAIR_WORKTREE_ROOT)
         )
+        canonical_worktree = root / _safe_worktree_leaf(repo_key) / _safe_worktree_leaf(task_id)
         worktree_raw = str(metadata.get("task_worktree") or metadata.get("taskWorktree") or "").strip()
         if worktree_raw:
             worktree = _resolve_path(worktree_raw, base=root)
+            if worktree != canonical_worktree:
+                raise AssistantRepairWorkflowError(
+                    "REPAIR_WORKTREE_OVERRIDE_FORBIDDEN",
+                    "Repair worktree preparation uses the task-scoped path selected by the adapter.",
+                    details={
+                        "worktree": worktree.as_posix(),
+                        "required_worktree": canonical_worktree.as_posix(),
+                    },
+                )
         else:
-            worktree = root / _safe_worktree_leaf(repo_key) / _safe_worktree_leaf(task_id)
+            worktree = canonical_worktree
+
+        expected_branch = _configured_expected_branch(task_id, self._environ)
+        requested_branch = str(
+            metadata.get("expected_branch") or metadata.get("expectedBranch") or expected_branch
+        ).strip()
+        if requested_branch != expected_branch:
+            raise AssistantRepairWorkflowError(
+                "REPAIR_EXPECTED_BRANCH_FORBIDDEN",
+                "Repair worktree preparation requires the canonical task branch.",
+                details={"expected_branch": requested_branch, "required_branch": expected_branch},
+            )
+
+        configured_remote = _configured_remote(repo_key, self._environ)
+        requested_remote = str(metadata.get("remote") or configured_remote).strip()
+        if requested_remote != configured_remote:
+            raise AssistantRepairWorkflowError(
+                "REPAIR_REMOTE_FORBIDDEN",
+                "Repair worktree preparation requires the configured git remote.",
+                details={"remote": requested_remote, "required_remote": configured_remote},
+            )
+
+        configured_merge_target = _configured_merge_target(repo_key, self._environ)
+        requested_merge_target = str(
+            metadata.get("merge_target") or metadata.get("mergeTarget") or configured_merge_target
+        ).strip()
+        if requested_merge_target != configured_merge_target:
+            raise AssistantRepairWorkflowError(
+                "REPAIR_MERGE_TARGET_FORBIDDEN",
+                "Repair worktree preparation requires the configured integration branch.",
+                details={
+                    "merge_target": requested_merge_target,
+                    "required_merge_target": configured_merge_target,
+                },
+            )
 
         prepared = dict(metadata)
         prepared["task_id"] = task_id
         prepared["repo_key"] = repo_key
         prepared["task_worktree"] = worktree.as_posix()
-        prepared.setdefault(
-            "expected_branch",
-            f"{self._environ.get('PANTHEON_ASSISTANT_TASK_BRANCH_PREFIX', DEFAULT_TASK_BRANCH_PREFIX)}{task_id}",
-        )
-        prepared.setdefault(
-            "remote",
-            self._environ.get("PANTHEON_ASSISTANT_REPAIR_REMOTE") or DEFAULT_REMOTE,
-        )
-        prepared.setdefault(
-            "merge_target",
-            self._environ.get("PANTHEON_ASSISTANT_REPAIR_MERGE_TARGET") or DEFAULT_MERGE_TARGET,
-        )
+        prepared["expected_branch"] = expected_branch
+        prepared["remote"] = configured_remote
+        prepared["merge_target"] = configured_merge_target
         prepared["require_clean"] = True
         return prepared
 
@@ -286,6 +325,9 @@ class AssistantRepairWorkflow:
                 "kernel_repair requires task_id and task_worktree metadata.",
                 details={"required": ["task_id", "task_worktree"]},
             )
+        _validate_task_id(task_id)
+        repo_key = _repo_key(metadata, self._environ)
+        _validate_repo_key(repo_key, self._environ)
 
         root = _resolve_path(
             self._environ.get("PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT", DEFAULT_REPAIR_WORKTREE_ROOT)
@@ -315,21 +357,19 @@ class AssistantRepairWorkflow:
                 details={"required": ["declared_scope"]},
             )
 
+        required_branch = _configured_expected_branch(task_id, self._environ)
         expected_branch = str(
             metadata.get("expected_branch")
             or metadata.get("expectedBranch")
-            or f"{self._environ.get('PANTHEON_ASSISTANT_TASK_BRANCH_PREFIX', DEFAULT_TASK_BRANCH_PREFIX)}{task_id}"
+            or required_branch
         ).strip()
-        remote = str(
-            metadata.get("remote")
-            or self._environ.get("PANTHEON_ASSISTANT_REPAIR_REMOTE")
-            or DEFAULT_REMOTE
-        ).strip()
+        required_remote = _configured_remote(repo_key, self._environ)
+        remote = str(metadata.get("remote") or required_remote).strip()
+        required_merge_target = _configured_merge_target(repo_key, self._environ)
         merge_target = str(
             metadata.get("merge_target")
             or metadata.get("mergeTarget")
-            or self._environ.get("PANTHEON_ASSISTANT_REPAIR_MERGE_TARGET")
-            or DEFAULT_MERGE_TARGET
+            or required_merge_target
         ).strip()
         if not expected_branch or not remote or not merge_target:
             raise AssistantRepairWorkflowError(
@@ -339,6 +379,27 @@ class AssistantRepairWorkflow:
                     "expected_branch": expected_branch,
                     "remote": remote,
                     "merge_target": merge_target,
+                },
+            )
+        if expected_branch != required_branch:
+            raise AssistantRepairWorkflowError(
+                "REPAIR_EXPECTED_BRANCH_FORBIDDEN",
+                "kernel_repair requires the canonical task branch.",
+                details={"expected_branch": expected_branch, "required_branch": required_branch},
+            )
+        if remote != required_remote:
+            raise AssistantRepairWorkflowError(
+                "REPAIR_REMOTE_FORBIDDEN",
+                "kernel_repair requires the configured git remote.",
+                details={"remote": remote, "required_remote": required_remote},
+            )
+        if merge_target != required_merge_target:
+            raise AssistantRepairWorkflowError(
+                "REPAIR_MERGE_TARGET_FORBIDDEN",
+                "kernel_repair requires the configured integration branch.",
+                details={
+                    "merge_target": merge_target,
+                    "required_merge_target": required_merge_target,
                 },
             )
 
@@ -579,6 +640,15 @@ def _safe_worktree_leaf(task_id: str) -> str:
     return clean
 
 
+def _validate_task_id(task_id: str) -> None:
+    if not TASK_ID_PATTERN.fullmatch(task_id):
+        raise AssistantRepairWorkflowError(
+            "REPAIR_TASK_ID_INVALID",
+            "Repair task_id must be a branch-safe task identifier.",
+            details={"task_id": task_id},
+        )
+
+
 def _repo_key(metadata: Mapping[str, Any], environ: Mapping[str, str]) -> str:
     raw = str(
         metadata.get("repo_key")
@@ -595,6 +665,46 @@ def _repo_key(metadata: Mapping[str, Any], environ: Mapping[str, str]) -> str:
             details={"repo_key": raw},
         )
     return clean
+
+
+def _validate_repo_key(repo_key: str, environ: Mapping[str, str]) -> None:
+    configured = str(environ.get("PANTHEON_ASSISTANT_REPAIR_ALLOWED_REPO_KEYS") or "").strip()
+    if configured:
+        allowed = {
+            re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip()).strip(".-").lower()
+            for value in configured.split(",")
+            if value.strip()
+        }
+    else:
+        allowed = set(DEFAULT_ALLOWED_REPO_KEYS)
+    if repo_key not in allowed:
+        raise AssistantRepairWorkflowError(
+            "REPAIR_REPO_KEY_FORBIDDEN",
+            "Repair repository is not in the configured allowlist.",
+            status_code=403,
+            details={"repo_key": repo_key, "allowed_repo_keys": sorted(allowed)},
+        )
+
+
+def _configured_expected_branch(task_id: str, environ: Mapping[str, str]) -> str:
+    prefix = str(environ.get("PANTHEON_ASSISTANT_TASK_BRANCH_PREFIX") or DEFAULT_TASK_BRANCH_PREFIX).strip()
+    return f"{prefix}{task_id}"
+
+
+def _configured_remote(repo_key: str, environ: Mapping[str, str]) -> str:
+    return str(
+        environ.get(_repo_env_name("PANTHEON_ASSISTANT_REPAIR_REMOTE", repo_key))
+        or environ.get("PANTHEON_ASSISTANT_REPAIR_REMOTE")
+        or DEFAULT_REMOTE
+    ).strip()
+
+
+def _configured_merge_target(repo_key: str, environ: Mapping[str, str]) -> str:
+    return str(
+        environ.get(_repo_env_name("PANTHEON_ASSISTANT_REPAIR_MERGE_TARGET", repo_key))
+        or environ.get("PANTHEON_ASSISTANT_REPAIR_MERGE_TARGET")
+        or DEFAULT_MERGE_TARGET
+    ).strip()
 
 
 def _repo_env_name(prefix: str, repo_key: str) -> str:
@@ -674,14 +784,11 @@ def _normalize_scope(values: Sequence[str], *, worktree: Path) -> tuple[str, ...
     for raw in values:
         candidate = Path(raw)
         if candidate.is_absolute():
-            try:
-                candidate = candidate.resolve().relative_to(worktree)
-            except ValueError as exc:
-                raise AssistantRepairWorkflowError(
-                    "REPAIR_SCOPE_OUTSIDE_WORKTREE",
-                    "kernel_repair declared_scope entries must be inside the task worktree.",
-                    details={"scope": str(raw), "worktree": worktree.as_posix()},
-                ) from exc
+            raise AssistantRepairWorkflowError(
+                "REPAIR_SCOPE_INVALID",
+                "kernel_repair declared_scope entries must be repo-relative paths.",
+                details={"scope": str(raw)},
+            )
         entry = PurePosixPath(candidate.as_posix())
         parts = entry.parts
         if not parts or entry.as_posix() in {"", "."} or ".." in parts or ".git" in parts:

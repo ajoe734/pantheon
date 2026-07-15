@@ -30,6 +30,8 @@ from .models import (
     TranscriptEvent,
     GateHandoffStatus,
     utc_now,
+    AuthorType,
+    ParticipantType,
 )
 from .store import build_consultation_store
 
@@ -401,6 +403,85 @@ def get_memo(memo_id: str) -> ConsultMemo:
     return memo
 
 
+def _validate_qualified_consultation(request_id: str, memo: ConsultMemo) -> None:
+    # Get participants
+    participants = store.list_participants_for_request(request_id)
+    if not participants:
+        raise HTTPException(
+            status_code=400,
+            detail="No participants assigned to the consult request."
+        )
+
+    # 1. Verify Memo is authored by an assigned real participant (not system)
+    if memo.author_type == AuthorType.SYSTEM:
+        raise HTTPException(
+            status_code=400,
+            detail="Memo is not qualified: author type cannot be system."
+        )
+    memo_author_qualified = False
+    for p in participants:
+        mapped_ptype = "human" if p.participant_type == ParticipantType.HUMAN_REVIEWER else p.participant_type.value
+        if p.participant_ref == memo.author_ref and mapped_ptype == memo.author_type.value:
+            memo_author_qualified = True
+            break
+    if not memo_author_qualified:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Memo author {memo.author_ref} ({memo.author_type}) is not an assigned participant."
+        )
+
+    # 2. Verify Transcript contains at least one event from a real assigned participant
+    transcript = store.get_transcript(request_id)
+    has_real_event = False
+    if transcript and transcript.events:
+        for event in transcript.events:
+            actor_type = event.actor.actor_type
+            actor_id = event.actor.actor_id
+            if actor_type in {"service", "system"}:
+                continue
+            for p in participants:
+                mapped_ptype = "human" if p.participant_type == ParticipantType.HUMAN_REVIEWER else p.participant_type.value
+                if p.participant_ref == actor_id and mapped_ptype == actor_type:
+                    has_real_event = True
+                    break
+            if has_real_event:
+                break
+    if not has_real_event:
+        raise HTTPException(
+            status_code=400,
+            detail="Transcript is not qualified: must contain at least one event from an assigned real participant/provider."
+        )
+
+    # 3. Verify Review Evidence is present and qualified (no service/system attachments, attached by assigned participant)
+    attachments = store.list_evidence_for_request(request_id)
+    request = store.get_request(request_id)
+    total_ev = len(request.evidence_refs) + len(attachments) if request else len(attachments)
+    if total_ev == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Review evidence is missing: request must have evidence refs or attachments."
+        )
+    for att in attachments:
+        actor_type = att.attached_by.actor_type
+        actor_id = att.attached_by.actor_id
+        if actor_type in {"service", "system"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Evidence attachment {att.attachment_id} has invalid author type: {actor_type}."
+            )
+        att_qualified = False
+        for p in participants:
+            mapped_ptype = "human" if p.participant_type == ParticipantType.HUMAN_REVIEWER else p.participant_type.value
+            if p.participant_ref == actor_id and mapped_ptype == actor_type:
+                att_qualified = True
+                break
+        if not att_qualified:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Evidence attachment {att.attachment_id} was not attached by an assigned participant."
+            )
+
+
 @app.post("/api/consult/memos/{memo_id}/publish", response_model=ConsultMemo)
 def publish_memo(memo_id: str) -> ConsultMemo:
     memo = store.get_memo(memo_id)
@@ -410,6 +491,8 @@ def publish_memo(memo_id: str) -> ConsultMemo:
         return memo
 
     request = _get_request_or_404(memo.request_id)
+    _validate_qualified_consultation(memo.request_id, memo)
+
     memo.status = MemoStatus.PUBLISHED
     memo.published_at = utc_now()
     store.put_memo(memo)
@@ -466,6 +549,7 @@ def create_handoff(req: CreateGateHandoffRequest) -> ConsultGateHandoff:
             raise HTTPException(status_code=400, detail=f"ConsultMemo {memo_id} belongs to another request")
         if memo.status != MemoStatus.PUBLISHED:
             raise HTTPException(status_code=400, detail=f"ConsultMemo {memo_id} is not published")
+        _validate_qualified_consultation(req.request_id, memo)
 
     attached_evidence_refs = [
         attachment.evidence_ref.id
