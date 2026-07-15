@@ -2,7 +2,7 @@
 
 Status: **blocked; not ready for `review` or `done`**
 
-Evidence captured through `2026-07-15T05:54:53Z`. The machine-readable
+Evidence captured through `2026-07-15T06:21:22Z`. The machine-readable
 companion is `PPL-ALLOC-009-RESCUE-RECHECK-2026-07-15.json`.
 
 ## Decision
@@ -107,9 +107,19 @@ Execute Plans then advanced to
 only `e2e/evochain009.spec.ts`, has `cf3578d3...` as an ancestor, and retains
 the exact same `package-lock.json`. Push deployment run `29392291433`
 succeeded and is the current hosted FE release. Integration run `29392291419`
-has completed lint, tests, build, contract, authenticated smoke, dry-run write,
-browser, and route-load steps and is still running hosted acceptance at this
-evidence cutoff.
+also completed successfully with stable FE `79e0f8f3...` / BFF `a10f752b...`
+identity. Its unit suite passed 154 files / 1427 tests; Playwright reported 170
+passed, 62 skipped, zero unexpected failures, and zero flaky tests.
+
+That gate is useful but scoped. It ran with the workflow's default
+`PANTHEON_RELEASE_GATE_AUTH_MODE=permissive` against a BFF reporting
+`auth_stub=true`. Its browser probe used a local FE from the same source SHA at
+`127.0.0.1:4173` proxying to the hosted BFF, not the hosted FE origin. The PINT
+governed-proposal smoke and PINT desktop/mobile write proof were skipped. The
+aggregate artifact reports `overall=warn`, including uncovered create dry-run
+routes, allowed skipped performance/F10 specs, and source-scan receipt
+warnings. It therefore does not clear strict auth, B1, or the governed B3
+desktop/mobile journey despite the workflow conclusion `success`.
 
 ### Pantheon BFF and deployment safety
 
@@ -186,6 +196,10 @@ Execute Plans:
   pre/post drift, rollback, external switch, invalid predecessor, and lock
   contention cases;
 - production audit: zero findings; full graph findings remain as scoped above.
+- current dev integration gate `29392291419`: workflow success with stable
+  exact release identity; 170 Playwright tests passed and 62 were skipped. Its
+  permissive/stub auth context and skipped PINT write proofs prevent it from
+  serving as strict-auth or joined-capital evidence.
 
 ## Blocking Residual Risks
 
