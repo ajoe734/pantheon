@@ -43599,7 +43599,7 @@ async def bff_create_persona(
         "data": overlay,
         "meta": {
             "snapshot_at": snapshot_at,
-            "create_flow": "one_shot_paper_running",
+            "create_flow": "one_shot_provisioning",
             "capital_mode": "paper",
             "paper_ledger_id": refs["paper_ledger_id"],
             "legacy_paper_capital_pool_id": refs["capital_pool_id"],

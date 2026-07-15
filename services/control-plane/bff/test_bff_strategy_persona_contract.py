@@ -297,7 +297,7 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
             assert "capitalPoolId" not in created
             assert created["runtimeId"].startswith("runtime-")
             assert created["runtimeBindingId"].endswith("-paper")
-            assert create_body["meta"]["create_flow"] == "one_shot_paper_running"
+            assert create_body["meta"]["create_flow"] == "one_shot_provisioning"
             assert create_body["meta"]["paper_ledger_id"] == created["paperLedgerId"]
             assert create_body["meta"]["live_capital_side_effects"] is False
             assert create_body["meta"]["human_review_required_for_live"] is True
