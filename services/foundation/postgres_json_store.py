@@ -108,8 +108,11 @@ class PostgresJsonOwnerStore:
         with self._connect() as conn:
             conn.execute(
                 f"""
-                INSERT INTO {self.table} (record_id, payload)
-                VALUES (%s, %s::jsonb)
+                INSERT INTO {self.table} (record_id, payload, updated_at)
+                VALUES (%s, %s::jsonb, now())
+                ON CONFLICT (record_id) DO UPDATE SET
+                    payload = EXCLUDED.payload,
+                    updated_at = EXCLUDED.updated_at
                 """,
                 (record_id, json.dumps(payload, ensure_ascii=True, sort_keys=True)),
             )

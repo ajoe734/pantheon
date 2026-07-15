@@ -554,18 +554,32 @@ class IncidentStore:
         new_status: str,
         *,
         resolved_at: Optional[str] = None,
+        expected_snapshot: Optional[Mapping[str, Any]] = None,
     ) -> IncidentCase:
         """Transition an incident to a new status."""
         self._refresh_from_disk()
         inc = self.require_incident(incident_id)
+        if expected_snapshot is not None and inc.to_dict() != dict(expected_snapshot):
+            raise IncidentError(
+                f"IncidentCase changed concurrently before status transition: {incident_id}"
+            )
         try:
             IncidentStatus(new_status)
         except ValueError:
             raise IncidentError(f"Invalid status: {new_status!r}")
 
+        # Enforce no regression from terminal statuses
+        if inc.status == IncidentStatus.CLOSED.value and new_status != IncidentStatus.CLOSED.value:
+            raise IncidentError(f"Incident is closed and cannot transition to {new_status}")
+        if inc.status == IncidentStatus.RESOLVED.value and new_status not in {
+            IncidentStatus.RESOLVED.value,
+            IncidentStatus.CLOSED.value,
+        }:
+            raise IncidentError(f"Incident is resolved and cannot regress to {new_status}")
+
         updates: Dict[str, Any] = {"status": new_status}
         if new_status in {IncidentStatus.RESOLVED.value, IncidentStatus.CLOSED.value}:
-            updates["resolved_at"] = resolved_at or _utc_now()
+            updates["resolved_at"] = inc.resolved_at or resolved_at or _utc_now()
 
         updated = IncidentCase(**{**inc.to_dict(), **updates})
         errors = validate_incident_case(updated)

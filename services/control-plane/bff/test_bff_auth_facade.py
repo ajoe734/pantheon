@@ -361,6 +361,23 @@ class TestExtractIdentityDispatch:
                 _extract_identity("Bearer op-admin:admin:mfa")
         assert exc_info.value.status_code == 401
 
+    @pytest.mark.parametrize("bad_mode", ["strcit", "", "disabled", "strict-ish", "PERMISIVE"])
+    def test_malformed_auth_mode_with_stub_true_still_routes_to_jwt(self, bad_mode):
+        # A typo'd/unrecognized PANTHEON_BFF_AUTH_MODE combined with
+        # PANTHEON_BFF_AUTH_STUB=true must not silently enable the dev stub —
+        # unrecognized modes fail closed to strict.
+        from fastapi import HTTPException
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_BFF_AUTH_STUB": "true", "PANTHEON_BFF_AUTH_MODE": bad_mode},
+            clear=False,
+        ):
+            assert bff_main._bff_auth_mode() == "strict"
+            assert bff_main._bff_auth_stub_enabled() is False
+            with pytest.raises(HTTPException) as exc_info:
+                _extract_identity("Bearer op-admin:admin:mfa")
+        assert exc_info.value.status_code == 401
+
 
 # ---------------------------------------------------------------------------
 # Integration tests: HTTP layer (settings routes)

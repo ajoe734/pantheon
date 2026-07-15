@@ -262,6 +262,35 @@ services:
       registry:
         condition: service_healthy
 
+  alpha-replication-worker:
+    build:
+      context: .
+      dockerfile: services/research/Dockerfile
+    command: ["python", "-m", "services.research.alpha_replication.replication_controller"]
+    restart: unless-stopped
+    environment:
+      ALPHA_REPLICATION_CONTROLLER_INTERVAL_SECONDS: ${ALPHA_REPLICATION_CONTROLLER_INTERVAL_SECONDS:-60}
+      ALPHA_REPLICATION_CONTROLLER_MAX_TICKS: ${ALPHA_REPLICATION_CONTROLLER_MAX_TICKS:-0}
+      ALPHA_REPLICATION_DATA_DIR: /data/research-orchestrator/alpha-replication
+      ALPHA_REPLICATION_CONTROLLER_STATE_PATH: /data/research-orchestrator/alpha-replication/controller_state.json
+      STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
+      PANTHEON_REGISTRY_URL: http://registry:8087
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_LOOP_ID: alpha_replication
+      PANTHEON_CONTROLLER_NAME: alpha-replication-controller
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      GIT_SHA: ${GIT_SHA:-local-dev}
+      PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE: ${PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE:-handoff_only}
+    volumes:
+      - research-orchestrator-data:/data/research-orchestrator
+      - source-ingest-data:/data/source-ingest
+    depends_on:
+      research-orchestrator-svc:
+        condition: service_healthy
+      registry:
+        condition: service_healthy
+
   search-svc:
     build:
       context: .
@@ -829,6 +858,7 @@ services:
       dockerfile: services/control-plane/bff/Dockerfile
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
     restart: unless-stopped
     environment:
       BFF_DATA_DIR: /data/bff
