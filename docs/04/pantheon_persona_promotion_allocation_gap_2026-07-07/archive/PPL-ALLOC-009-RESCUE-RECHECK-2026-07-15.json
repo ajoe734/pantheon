@@ -1,0 +1,290 @@
+{
+  "schema_version": "ppl_alloc_009_rescue_recheck.v1",
+  "task_id": "PPL-ALLOC-009",
+  "captured_at": "2026-07-15T05:54:53Z",
+  "environment": "dev",
+  "status": "blocked",
+  "ready_for_review": false,
+  "prior_evidence_corrections": {
+    "quarterly_ranking": {
+      "historical_endpoint": "/bff/management/persona-league/rankings?period=quarter&criteria=overall",
+      "historical_surface": "rolling",
+      "historical_period": "short_cycle",
+      "canonical_endpoint": "/bff/management/quarterly-ranking?quarter=2026-Q3",
+      "historical_hosted_result_valid_as_quarterly": false,
+      "current_governed_canonical_response_archived": false,
+      "diagnostic_recheck": {
+        "anonymous_http_status": 401,
+        "fixed_stub_viewer_me_http_status": 200,
+        "canonical_ranking_timeout_seconds": 20,
+        "rolling_ranking_timeout_seconds": 20,
+        "governed_acceptance_evidence": false
+      }
+    }
+  },
+  "delivery": {
+    "execute_plans": {
+      "rescue_pr": 353,
+      "rescue_merge_commit": "cf3578d3bd3f64fc07ccefe4ae7338608bc49c66",
+      "merged_at": "2026-07-15T05:14:14Z",
+      "base_branch": "dev",
+      "current_hosted_commit": "79e0f8f3083c8546ec2c139afbc339322dcbe755",
+      "rescue_merge_is_ancestor_of_hosted": true,
+      "changes_after_rescue_merge": [
+        "e2e/evochain009.spec.ts"
+      ],
+      "branch_checks": {
+        "commit_trailers": "success",
+        "generated_files_guard": "success",
+        "smoke_acceptance": "success"
+      },
+      "pr_integration_gate": {
+        "run_id": 29390879310,
+        "conclusion": "failure",
+        "failure": "four HTTP 502 responses from /bff/version during a concurrent root deploy"
+      },
+      "rescue_merge_deploy": {
+        "run_id": 29390934575,
+        "commit": "cf3578d3bd3f64fc07ccefe4ae7338608bc49c66",
+        "conclusion": "success"
+      },
+      "current_hosted_deploy": {
+        "run_id": 29392291433,
+        "commit": "79e0f8f3083c8546ec2c139afbc339322dcbe755",
+        "conclusion": "success"
+      },
+      "current_integration_gate": {
+        "run_id": 29392291419,
+        "commit": "79e0f8f3083c8546ec2c139afbc339322dcbe755",
+        "status_at_capture": "in_progress",
+        "in_progress_step_at_capture": "Management hosted production acceptance",
+        "completed_steps_at_capture": [
+          "lint",
+          "unit and integration tests",
+          "build",
+          "contract drift",
+          "authenticated BFF smoke",
+          "live dry-run write probe",
+          "management live deep validation",
+          "frontend browser BFF probe",
+          "management route-load baseline"
+        ]
+      }
+    },
+    "pantheon": {
+      "deployment_run": {
+        "run_id": 29390952944,
+        "conclusion": "success",
+        "run_head_sha": "1fef00eb7f23da05fd964087db85426863331540",
+        "requested_ref": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+        "actual_deployed_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+        "target": "dev/root",
+        "source_sha_verified": true,
+        "openclaw_smoke": "passed",
+        "public_health_and_cors": "passed",
+        "agora_restart_persistence": "passed",
+        "introduced_auth_posture_regression": true
+      },
+      "workflow_guard_anchor": {
+        "commit": "20fd88f91b6b813471272e4297f45f999f114e62",
+        "prevents_historical_ref_strict_auth_bypass": true,
+        "repairs_current_live_auth": false
+      }
+    }
+  },
+  "deployment_identity": {
+    "frontend": {
+      "commit": "79e0f8f3083c8546ec2c139afbc339322dcbe755",
+      "source_ref": "79e0f8f3083c8546ec2c139afbc339322dcbe755",
+      "source_branch": "dev",
+      "deployed_at": "20260715T054747Z"
+    },
+    "manifest_bff": {
+      "commit": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "evidence": true,
+      "source": "bff_version"
+    },
+    "runtime_bff": {
+      "source_commit_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "source_commit_known": true,
+      "ready_http_status": 200,
+      "dependencies_healthy": [
+        "runtime_manager",
+        "governance",
+        "deployment"
+      ],
+      "config_posture": {
+        "auth_stub": true,
+        "auth_mode": "permissive",
+        "dev_login_enabled": false,
+        "assistant_kernel_enabled": true
+      }
+    },
+    "cross_surface": {
+      "exact_sha_match": true,
+      "runtime_identity_known": true,
+      "strict_auth_posture": false,
+      "overall_safe_for_acceptance": false
+    },
+    "safe_frontend_defaults": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_FALLBACK": "strict",
+      "VITE_BFF_REAL_WRITES": "false",
+      "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+      "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+    },
+    "stale_repository_variable_removed": "PANTHEON_BFF_SHA"
+  },
+  "auth_repair_blocker": {
+    "missing_github_secrets": [
+      "DEV_BFF_JWT_SECRET",
+      "DEV_BFF_OIDC_CLIENT_ID",
+      "DEV_BFF_OIDC_CLIENT_SECRET"
+    ],
+    "requires_human_provisioning": true,
+    "credentials_generated_or_rotated_by_worker": false
+  },
+  "dependency_security": {
+    "deployed_lock_sha256": "2d796e302699e72c9b0e731f4bab23b07eefbc007cfbe795dcfc43cd1ff778ad",
+    "production_graph": {
+      "command": "npm audit --omit=dev --json",
+      "critical": 0,
+      "high": 0,
+      "moderate": 0,
+      "low": 0,
+      "total": 0
+    },
+    "full_graph": {
+      "command": "npm audit --json",
+      "critical": 1,
+      "high": 5,
+      "moderate": 3,
+      "low": 0,
+      "total": 9,
+      "production_scope": false
+    },
+    "scope_verdict": "production_graph_cleared_dev_toolchain_findings_remain"
+  },
+  "validation": {
+    "pantheon_focused_bff_tests": {
+      "passed": 105,
+      "warnings": 22,
+      "duration_seconds": 149.18
+    },
+    "pantheon_strict_auth_deploy_contract": {
+      "passed": 6,
+      "duration_seconds": 6.27
+    },
+    "execute_plans_full_vitest": {
+      "files_passed": 154,
+      "tests_passed": 1427
+    },
+    "execute_plans_chart_focus": {
+      "tests_passed": 22,
+      "series": [
+        "graph",
+        "sankey",
+        "candlestick",
+        "gauge",
+        "heatmap",
+        "scatter"
+      ],
+      "actual_echarts_ssr_svg": true
+    },
+    "execute_plans_build": "passed",
+    "execute_plans_deploy_harness": "passed",
+    "execute_plans_release_identity_tests": "passed",
+    "yaml_parse": "passed",
+    "git_diff_check": "passed"
+  },
+  "acceptance": {
+    "passed_legs": [
+      "create persona -> paper_running bundle",
+      "paper ranking -> promotion review -> human decision",
+      "independent governed proposal -> approval -> apply -> authoritative Capital receipt/readback",
+      "emergency breach -> containment without promotion or increase side effect",
+      "runtime-derived FE/BFF SHA binding with rollback-safe frontend switch",
+      "deployed production dependency graph has zero audit findings"
+    ],
+    "blocking_leg": "one governed canonical quarterly identity -> Runtime/Telemetry -> target -> proposal -> distinct approval/apply -> authoritative Capital readback",
+    "independent_legs_may_be_joined": false
+  },
+  "blocking_residual_risks": [
+    {
+      "id": "B1",
+      "severity": "S2",
+      "status": "open",
+      "blocking": true,
+      "owner": "Persona + Runtime/Telemetry + Capital/BFF owners",
+      "gap": "No one governed identity joins a canonical quarterly ranking row through target calculation, proposal, distinct approval/apply, and authoritative Capital readback.",
+      "depends_on": [],
+      "recheck_condition": "archive one response-correlated chain using a safe governance-produced fixture",
+      "scope_limit": null
+    },
+    {
+      "id": "B2",
+      "severity": "S2",
+      "status": "open",
+      "blocking": true,
+      "owner": "Human platform operator",
+      "gap": "Exact FE/BFF identity passes, but hosted BFF auth regressed to permissive/stub and the governed strict-auth GitHub secrets are absent.",
+      "depends_on": [],
+      "recheck_condition": "provision the three governed secrets, deploy a strict-contract ref, verify strict runtime posture, and republish FE if the BFF SHA changes",
+      "scope_limit": null
+    },
+    {
+      "id": "B3",
+      "severity": "S2",
+      "status": "open",
+      "blocking": true,
+      "owner": "Frontend QA",
+      "gap": "No current desktop and mobile authenticated hosted journey proves the joined B1 path.",
+      "depends_on": [
+        "B1",
+        "B2"
+      ],
+      "recheck_condition": "archive governed identity, route, request/response, console, desktop, and mobile evidence",
+      "scope_limit": null
+    },
+    {
+      "id": "B4",
+      "severity": "S2",
+      "status": "cleared",
+      "blocking": false,
+      "owner": "Frontend Platform + Security",
+      "gap": null,
+      "depends_on": [],
+      "recheck_condition": "keep production audit zero or record a new explicit risk decision",
+      "scope_limit": "deployed production dependency graph only"
+    },
+    {
+      "id": "B5",
+      "severity": "S2",
+      "status": "open",
+      "blocking": true,
+      "owner": "Claude",
+      "gap": "Canonical-center IA supersedes the original primary-workbench page contract without a PPL-ALLOC-009 reviewer decision.",
+      "depends_on": [],
+      "recheck_condition": "explicitly accept the supersession or reopen the original workbench target",
+      "scope_limit": null
+    }
+  ],
+  "safety_boundary": {
+    "live_or_canary_persona_seeded_or_promoted": false,
+    "capital_affecting_mutation_performed": false,
+    "approval_or_second_operator_fabricated": false,
+    "fixed_stub_use": "viewer-only read diagnosis excluded from acceptance",
+    "credentials_printed_generated_rotated_recovered_or_copied": false
+  },
+  "decision": {
+    "verdict": "blocked",
+    "do_not_claim": [
+      "the historical rolling response as quarterly ranking evidence",
+      "one correlated real-ranking-to-Capital-apply path",
+      "strict hosted BFF auth posture",
+      "current desktop/mobile joined-flow acceptance",
+      "a vulnerability-free full npm graph",
+      "reviewer acceptance of the IA supersession"
+    ]
+  }
+}
