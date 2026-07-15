@@ -360,6 +360,13 @@ def test_receipt_persistence_failure_leaves_processing_for_safe_retry(tmp_path: 
     retry = drain_task_packet_inbox(repo_root=str(repo_root))
 
     assert retry["processedCount"] == 1
-    assert retry["packets"][0]["status"] == "replay_rejected"
+    recovered = retry["packets"][0]
+    assert recovered["status"] == "processed"
+    assert recovered["recoveredFromReplay"] is True
+    assert recovered["result"]["replayRejected"] is True
     assert receipt.exists()
+    persisted = json.loads(receipt.read_text(encoding="utf-8"))
+    assert persisted["status"] == "processed"
+    assert persisted["recoveredFromReplay"] is True
+    assert persisted["result"]["replayRejected"] is True
     assert not processing.exists()

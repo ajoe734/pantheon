@@ -336,7 +336,15 @@ def drain_task_packet_inbox(
                     BridgeDispatchRequest(packet=packet, repoRoot=str(root), dryRun=dry_run)
                 )
                 receipt["result"] = result.model_dump(mode="json", by_alias=True)
-                if result.replay_rejected:
+                if result.replay_rejected and not dry_run:
+                    # The packet was already durably admitted by a previous
+                    # dispatch, but this processing item still needs its local
+                    # receipt/archive commit (for example after receipt fsync
+                    # failed). Preserve replay evidence while closing the
+                    # admitted inbox work as successfully processed.
+                    receipt["status"] = "processed"
+                    receipt["recoveredFromReplay"] = True
+                elif result.replay_rejected:
                     receipt["status"] = "replay_rejected"
                 elif result.errors:
                     receipt["status"] = "failed"
