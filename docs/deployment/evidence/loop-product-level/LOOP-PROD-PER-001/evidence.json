@@ -9,6 +9,7 @@
   "evidence_policy": {
     "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.sha256",
     "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Raw run artifacts are immutable. The manifest record_log may only append independently observed review, check, deployment, and merge facts.",
     "recording_mode": "logical_append_only",
     "redacted": true,
     "self_hashing": false
@@ -67,12 +68,15 @@
   },
   "implementation_delivery": {
     "anchor_commits": [
-      "f76edde689bae9ce2f1b5e1676fe01097bf42869"
+      {
+        "sha": "70f1addee4a1114141f12118e971129f306d511e",
+        "subject": "LOOP-PROD-PER-001: request service for persona subresources"
+      }
     ],
     "pull_request": {
       "number": 3671,
       "url": "https://github.com/ajoe734/pantheon/pull/3671",
-      "head_sha": "f76edde689bae9ce2f1b5e1676fe01097bf42869",
+      "head_sha": "70f1addee4a1114141f12118e971129f306d511e",
       "base": "dev",
       "merged_at": "",
       "merge_sha": ""
@@ -92,7 +96,9 @@
         "conclusion": "pass"
       }
     ],
-    "validated_at": "2026-07-15T04:40:00Z"
+    "validated_at": "2026-07-15T06:10:00Z",
+    "validated_base_sha": "c6bb48fcb8627ca76577e96aedd9afbb00d349d6",
+    "validated_head_sha": "70f1addee4a1114141f12118e971129f306d511e"
   },
   "deployment": {
     "applicable": true,
