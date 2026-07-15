@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -68,7 +69,41 @@ _LOCK_RANKS = {
 _STABLE_LOCK_LOCAL = local()
 
 
+def _reset_stable_lock_state_after_fork() -> None:
+    """Drop inherited lock handles without unlocking the parent's file description."""
+
+    held = getattr(_STABLE_LOCK_LOCAL, "held", None)
+    if isinstance(held, dict):
+        closed: set[int] = set()
+        for entry in held.values():
+            handle = entry.get("handle") if isinstance(entry, dict) else None
+            if handle is None or id(handle) in closed:
+                continue
+            closed.add(id(handle))
+            try:
+                # The child inherited the same open-file description.  Closing
+                # its duplicate leaves the parent's descriptor (and flock)
+                # intact; LOCK_UN here would incorrectly release the parent.
+                handle.close()
+            except OSError:
+                pass
+    _STABLE_LOCK_LOCAL.held = {}
+    _STABLE_LOCK_LOCAL.stack = []
+    _STABLE_LOCK_LOCAL.pid = os.getpid()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_stable_lock_state_after_fork)
+
+
 def _stable_lock_state() -> tuple[dict[str, dict[str, Any]], list[str]]:
+    current_pid = os.getpid()
+    inherited_pid = getattr(_STABLE_LOCK_LOCAL, "pid", current_pid)
+    if inherited_pid != current_pid:
+        # Defense in depth for runtimes where the at-fork callback was not
+        # installed or a process image inherited state before registration.
+        _reset_stable_lock_state_after_fork()
+    _STABLE_LOCK_LOCAL.pid = current_pid
     held = getattr(_STABLE_LOCK_LOCAL, "held", None)
     if held is None:
         held = {}
@@ -78,6 +113,21 @@ def _stable_lock_state() -> tuple[dict[str, dict[str, Any]], list[str]]:
         stack = []
         _STABLE_LOCK_LOCAL.stack = stack
     return held, stack
+
+
+def _assert_stable_lock_identity(lock_path: Path, descriptor: int) -> None:
+    descriptor_stat = os.fstat(descriptor)
+    if not stat.S_ISREG(descriptor_stat.st_mode):
+        raise RuntimeError(
+            f"stable lock sidecar must be a regular file: {lock_path}"
+        )
+    path_stat = lock_path.lstat()
+    if (
+        stat.S_ISLNK(path_stat.st_mode)
+        or path_stat.st_dev != descriptor_stat.st_dev
+        or path_stat.st_ino != descriptor_stat.st_ino
+    ):
+        raise RuntimeError(f"stable lock sidecar changed while opening: {lock_path}")
 
 
 def _trace_stable_lock(action: str, plane: str, path: Path) -> None:
@@ -119,8 +169,14 @@ def stable_sidecar_lock(
 
     if plane not in _LOCK_RANKS:
         raise ValueError(f"unknown canonical lock plane: {plane}")
-    lock_path = Path(path).expanduser().resolve()
+    requested_path = Path(path).expanduser()
+    # Resolve the directory, not the lock leaf.  Resolving the complete path
+    # would silently follow a sidecar symlink and let a retargeted link move
+    # future contenders to a different inode.
+    lock_path = requested_path.parent.resolve() / requested_path.name
     lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if lock_path.is_symlink():
+        raise RuntimeError(f"stable lock sidecar cannot be a symlink: {lock_path}")
     key = str(lock_path)
     held, stack = _stable_lock_state()
     existing = held.get(key)
@@ -147,13 +203,28 @@ def stable_sidecar_lock(
             f"cannot acquire {plane} after {','.join(active_planes)}"
         )
 
-    handle = lock_path.open("a+", encoding="utf-8")
+    flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(lock_path, flags, 0o600)
+    try:
+        _assert_stable_lock_identity(lock_path, descriptor)
+        handle = os.fdopen(descriptor, "a+", encoding="utf-8")
+    except BaseException:
+        os.close(descriptor)
+        raise
     operation = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
     if nonblocking:
         operation |= fcntl.LOCK_NB
     _trace_stable_lock("request", plane, lock_path)
     try:
         fcntl.flock(handle.fileno(), operation)
+        # A pathname swap between open(2) and flock(2) would otherwise leave
+        # this process holding an orphaned inode while the next contender opens
+        # the replacement.  Verify the pathname still names our locked FD.
+        _assert_stable_lock_identity(lock_path, handle.fileno())
     except BaseException:
         handle.close()
         raise
@@ -178,8 +249,21 @@ def stable_sidecar_lock(
             entry["handle"].close()
 
 
+def _canonical_data_parent(data_file: str | Path, *, plane: str) -> Path:
+    data_path = Path(data_file).expanduser()
+    if data_path.is_symlink():
+        raise RuntimeError(
+            f"canonical {plane} data file cannot be a symlink: {data_path}"
+        )
+    # Atomic replacement changes the data-file inode.  Deriving the sidecar
+    # from the resolved data leaf would therefore be unsafe when that leaf is
+    # a symlink: replacing it changes where the next caller resolves the lock.
+    # Resolve only the stable parent directory.
+    return data_path.parent.resolve()
+
+
 def canonical_task_state_lock_path(status_file: str | Path) -> Path:
-    root = Path(status_file).expanduser().resolve().parent
+    root = _canonical_data_parent(status_file, plane="task-state")
     return root / ".orchestrator" / "task-state.lock"
 
 
@@ -200,7 +284,7 @@ def canonical_task_state_lock_file(
 
 
 def activity_audit_lock_path(activity_file: str | Path) -> Path:
-    root = Path(activity_file).expanduser().resolve().parent
+    root = _canonical_data_parent(activity_file, plane="activity-audit")
     return root / ".orchestrator" / "activity-audit.lock"
 
 
