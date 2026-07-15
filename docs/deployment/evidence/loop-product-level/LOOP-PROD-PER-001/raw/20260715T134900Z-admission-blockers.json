@@ -1,0 +1,47 @@
+{
+  "schema_version": "loop_product_raw_evidence.v1",
+  "captured_at": "2026-07-15T13:49:00Z",
+  "source": "GitHub PR, environment, secret-name, deployment-run, and failed-log APIs via gh CLI",
+  "environment_lease": {
+    "pull_request": 3558,
+    "url": "https://github.com/ajoe734/pantheon/pull/3558",
+    "title": "OPS-DEV-ENV-LEASE-001: guard dev deployment workflow",
+    "head_sha": "0e218fab4d0d3b230c996c6215372a7cf65fb957",
+    "state": "OPEN",
+    "is_draft": true,
+    "merged_at": null,
+    "blocking": true
+  },
+  "credential_inventory": {
+    "github_environment": "dev",
+    "environment_secret_names": [],
+    "repository_secret_names": [
+      "COORDINATION_REPO_TOKEN",
+      "FRED_API_KEY"
+    ],
+    "required_but_absent_names": [
+      "DEV_BFF_JWT_SECRET",
+      "DEV_BFF_OIDC_CLIENT_ID",
+      "DEV_BFF_OIDC_CLIENT_SECRET",
+      "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN"
+    ],
+    "values_recorded": false,
+    "blocking": true
+  },
+  "latest_relevant_failed_deploy": {
+    "workflow": "Pantheon Nonprod Deploy",
+    "run_id": 29418966102,
+    "url": "https://github.com/ajoe734/pantheon/actions/runs/29418966102",
+    "workflow_head_sha": "def6f17b7184ff1699bf43a6231eb266e487bcfd",
+    "requested_target_sha": "4c96fe9edc93954afe6be0427b2cfe5f7d2491c5",
+    "auth_profile": "permissive-stub",
+    "failed_step": "Deploy requested VM stack",
+    "conclusion": "failure",
+    "terminal_reason": "strict OpenClaw adapter service auth requires a human-provisioned DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN; empty or fabricated service credential refused",
+    "blocking": true
+  },
+  "limitations": [
+    "Only secret names and absence are recorded; no secret values were read or written.",
+    "The failed deployment did not target the LOOP-PROD-PER-001 merge SHA and is evidence of the current environment blocker, not a deployment attempt for this task."
+  ]
+}

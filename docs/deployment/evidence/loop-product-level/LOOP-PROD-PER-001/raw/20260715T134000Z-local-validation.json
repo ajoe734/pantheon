@@ -1,0 +1,61 @@
+{
+  "schema_version": "loop_product_raw_evidence.v1",
+  "captured_at": "2026-07-15T13:46:00Z",
+  "source": "Codex2 task worktree command results",
+  "repository": "ajoe734/pantheon",
+  "validated_head_sha": "34a37f514219a4739153faff6b7c185e2e243bb2",
+  "results": [
+    {
+      "scope": "BFF authoritative readback, route security, and task-composed provisioning",
+      "command": "python3 -m pytest -q services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/test_persona_provisioning_route_security.py services/control-plane/bff/test_loop_prod_per_001_provisioning.py",
+      "conclusion": "pass",
+      "result": "74 passed"
+    },
+    {
+      "scope": "Persona cron registrar and OpenClaw adapter boundary",
+      "command": "python3 -m pytest -q services/control-plane/cron/test_persona_cron_registrar.py services/openclaw-gateway-adapter/test_main.py",
+      "conclusion": "pass",
+      "result": "154 passed, 38 subtests passed"
+    },
+    {
+      "scope": "Expanded task-touched BFF contracts, store, coordinator, and projections",
+      "command": "task-touched BFF pytest suites split across three parallel invocations",
+      "conclusion": "pass",
+      "result": "19 passed + 39 passed + 104 passed"
+    },
+    {
+      "scope": "Deploy, compose, and cron service contracts",
+      "command": "python3 -m pytest -q scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_persona_provisioning_compose_contract.py services/control-plane/cron/test_cron.py services/control-plane/cron/test_persona_cron_registrar.py",
+      "conclusion": "pass",
+      "result": "93 passed, 20 subtests passed"
+    },
+    {
+      "scope": "OpenClaw adapter and provider contracts",
+      "command": "python3 -m pytest -q services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
+      "conclusion": "pass",
+      "result": "118 passed, 4 skipped, 18 subtests passed"
+    },
+    {
+      "scope": "Real PostgreSQL lease/checkpoint integration",
+      "command": "PANTHEON_TEST_POSTGRES_DSN=postgresql://REDACTED@127.0.0.1:15432/pantheon python3 -m pytest -q services/control-plane/bff/test_persona_provisioning_postgres_integration.py",
+      "conclusion": "pass",
+      "result": "1 passed"
+    },
+    {
+      "scope": "Dev single-VM and staging dual-VM topology",
+      "command": "bash scripts/validate_split_topology.sh",
+      "conclusion": "pass",
+      "result": "ok"
+    },
+    {
+      "scope": "Post-conflict merge regression",
+      "command": "focused BFF, deploy/compose, split-topology, py_compile, and diff checks",
+      "conclusion": "pass",
+      "result": "74 passed; 23 passed; topology ok; compile and diff checks clean"
+    }
+  ],
+  "limitations": [
+    "Local tests prove implementation and failure semantics, not a hosted dynamic Persona terminal readback chain.",
+    "The adapter provider suite contains four intentional skips; they are not counted as hosted acceptance."
+  ]
+}
