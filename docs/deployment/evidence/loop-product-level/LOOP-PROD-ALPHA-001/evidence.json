@@ -84,7 +84,7 @@
     "commands": [
       {
         "command": "python3 -m pytest services/research/alpha_replication",
-        "conclusion": "49 passed in 6.34s",
+        "conclusion": "50 passed in 4.59s",
         "result": "pass"
       },
       {
@@ -93,7 +93,7 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-14T14:39:00Z",
+    "validated_at": "2026-07-15T04:14:32Z",
     "validated_base_sha": "65a5de905e1ae71ce1b2e6635d702f35150eaa39",
     "validated_head_sha": "65a5de905e1ae71ce1b2e6635d702f35150eaa39"
   },
@@ -207,7 +207,7 @@
       "id": "AC-02",
       "statement": "scheduled revalidation worker runs non-stub evaluation and writes ExperimentRun",
       "status": "pass",
-      "proof": "Revalidation worker executes ReplicationGate checks and outputs completed ExperimentRun records."
+      "proof": "Revalidation worker executes ReplicationGate checks and outputs ExperimentRun records; runs are tagged with input_source, gating completed status on registry-source success while registry-fetch misses are marked failed."
     },
     {
       "id": "AC-03",

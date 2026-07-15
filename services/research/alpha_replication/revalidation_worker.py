@@ -242,6 +242,11 @@ class AlphaRevalidationWorker:
         # If not stub mode, perform non-stub revalidation using ReplicationGate
         if self._dispatch_mode != "stub":
             spec = self._fetch_spec_from_registry(strategy_id, spec_version)
+            
+            input_source = "registry" if spec is not None else "synthetic"
+            run_record["metadata"] = dict(run_record.get("metadata") or {})
+            run_record["metadata"]["input_source"] = input_source
+            
             if spec is None:
                 # fallback mock strategy spec compliant with strategy_spec.schema.json
                 spec = {
@@ -314,7 +319,7 @@ class AlphaRevalidationWorker:
             gate = ReplicationGate()
             gate_response = gate.evaluate_candidate(request)
 
-            if gate_response.passed:
+            if gate_response.passed and input_source == "registry":
                 run_record["status"] = "completed"
                 run_record["started_at"] = tick_at
                 run_record["finished_at"] = _utc_now()
@@ -324,7 +329,10 @@ class AlphaRevalidationWorker:
                 run_record["status"] = "failed"
                 run_record["started_at"] = tick_at
                 run_record["finished_at"] = _utc_now()
-                run_record["failure_reason"] = gate_response.summary
+                if not gate_response.passed:
+                    run_record["failure_reason"] = gate_response.summary
+                else:
+                    run_record["failure_reason"] = "Registry fetch failed, using synthetic fallback spec"
 
         # Validate run record against the ExperimentRun domain model schema
         ALLOWED_KEYS = {
