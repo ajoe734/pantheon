@@ -186,6 +186,33 @@ def test_concurrent_exact_first_hop_is_claimed_instead_of_false_rejected(monkeyp
     assert len(store.list_postmortems()) == 1
 
 
+def test_first_hop_divergent_exact_identity_replay_fails_closed():
+    incident = _seed_incident()
+    store._incidents[incident.incident_id] = replace(
+        incident,
+        status="resolved",
+        resolved_at="2026-07-15T00:00:00Z",
+    )
+    event = _resolved_incident_event()
+    accepted = client.post(
+        "/api/postmortems/consume-resolved-incident",
+        json={"incident_id": incident.incident_id, "event": event.to_dict()},
+    )
+    divergent = replace(
+        event,
+        payload={"incident_id": incident.incident_id, "terminal_status": "closed"},
+    )
+    rejected = client.post(
+        "/api/postmortems/consume-resolved-incident",
+        json={"incident_id": incident.incident_id, "event": divergent.to_dict()},
+    )
+
+    assert accepted.status_code == 201, accepted.text
+    assert rejected.status_code == 409, rejected.text
+    assert "divergent" in rejected.json()["detail"]
+    assert len(store.list_postmortems()) == 1
+
+
 def test_receipt_cas_contention_returns_retryable_first_hop(monkeypatch):
     incident = _seed_incident()
     store._incidents[incident.incident_id] = replace(

@@ -80,6 +80,7 @@ import asyncio
 from services.foundation import (
     EventEnvelope,
     OutboxRecord,
+    OutboxRecordStatus,
     TraceContext,
     EnvironmentScope,
     EnvironmentName,
@@ -129,6 +130,7 @@ try:
     from .consumer import (
         DriftReportIncidentConsumer,
         IncidentConsumerError,
+        IncidentConsumerRetryableError,
         ThresholdTelemetryIncidentConsumer,
     )
 except ImportError:
@@ -141,6 +143,7 @@ except ImportError:
     from consumer import (  # type: ignore
         DriftReportIncidentConsumer,
         IncidentConsumerError,
+        IncidentConsumerRetryableError,
         ThresholdTelemetryIncidentConsumer,
     )
 
@@ -350,6 +353,8 @@ def consume_drift_report_incident(
         result = consumer.consume(body)
     except CanonicalReferenceError as exc:
         raise HTTPException(status_code=422, detail={"reference_errors": exc.errors})
+    except IncidentConsumerRetryableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     except IncidentConsumerError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -454,6 +459,61 @@ def _delivery_environment(deployment_stage: str | None) -> EnvironmentName:
             return EnvironmentName.DEV
 
 
+def _is_legacy_direct_close_intent(
+    existing: ReliableOutboxRecord,
+    *,
+    incoming_record: OutboxRecord,
+    transition: Dict[str, Any],
+) -> bool:
+    """Recognize the inert direct-close intent emitted before normalization.
+
+    PR #3682 used the same terminal-boundary IDs but copied the requested
+    direct-close status into the event payload. A crash or losing domain CAS
+    could leave that exact intent prepared while the Incident stayed open.
+    Adopt only that historical shape; every other divergent identity still
+    fails closed through ``ReliableOutboxStore.prepare``.
+    """
+
+    expected_payload = {
+        "incident_id": incoming_record.event.aggregate_id,
+        "terminal_status": "closed",
+    }
+    incoming_payload = {
+        "incident_id": incoming_record.event.aggregate_id,
+        "terminal_status": "resolved",
+    }
+    stable_event_fields = (
+        "event_id",
+        "event_type",
+        "aggregate_type",
+        "aggregate_id",
+        "sequence_no",
+        "idempotency_key",
+        "causal_parent_id",
+        "producer_service",
+        "schema_ref",
+        "schema_version",
+    )
+    return (
+        existing.status == OutboxRecordStatus.PENDING
+        and not existing.delivery_ready
+        and existing.claim_token is None
+        and existing.delivery_attempts == 0
+        and existing.last_error is None
+        and existing.next_attempt_at is None
+        and existing.redrive_count == 0
+        and existing.owner_service == incoming_record.owner_service
+        and existing.record.schema_version == incoming_record.schema_version
+        and dict(existing.transition or {}) == transition
+        and dict(existing.event.payload) == expected_payload
+        and dict(incoming_record.event.payload) == incoming_payload
+        and all(
+            getattr(existing.event, field) == getattr(incoming_record.event, field)
+            for field in stable_event_fields
+        )
+    )
+
+
 def _prepare_postmortem_delivery(incident_id: str) -> ReliableOutboxRecord:
     incident = store.get_incident(incident_id)
     if incident is None:
@@ -484,14 +544,27 @@ def _prepare_postmortem_delivery(incident_id: str) -> ReliableOutboxRecord:
         owner_service="incident-svc",
         event=event,
     )
-    prepared = outbox_store.prepare(
-        record=record,
-        transition={
-            "aggregate_type": "incident",
-            "aggregate_id": incident_id,
-            "expected_statuses": sorted(_TERMINAL_INCIDENT_STATUSES),
-        },
-    )
+    transition = {
+        "aggregate_type": "incident",
+        "aggregate_id": incident_id,
+        "expected_statuses": sorted(_TERMINAL_INCIDENT_STATUSES),
+    }
+    try:
+        prepared = outbox_store.prepare(record=record, transition=transition)
+    except ValueError:
+        existing = outbox_store.get(outbox_id)
+        if existing is None or not _is_legacy_direct_close_intent(
+            existing,
+            incoming_record=record,
+            transition=transition,
+        ):
+            raise
+        prepared = existing
+        log.warning(
+            "AUDIT: Adopted legacy prepared direct-close intent %s for incident %s",
+            outbox_id,
+            incident_id,
+        )
     log.info("AUDIT: Prepared resolved incident %s in outbox %s", incident_id, outbox_id)
     return prepared
 

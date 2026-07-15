@@ -10,7 +10,15 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fastapi.testclient import TestClient
+from services.foundation import (
+    EnvironmentName,
+    EnvironmentScope,
+    EventEnvelope,
+    OutboxRecord,
+    TraceContext,
+)
 from services.incident.incident import IncidentCase, IncidentStatus
+from services.incidents import main as incidents_main
 from services.incidents.main import (
     app,
     outbox_store,
@@ -301,6 +309,53 @@ def test_incident_status_cas_validation(monkeypatch):
     records = outbox_store.list_pending_and_failed()
     assert len(records) == 1
     assert records[0].event.payload["terminal_status"] == "resolved"
+
+
+def test_legacy_prepared_direct_close_intent_is_adopted_after_upgrade():
+    incident = _seed_incident()
+    event_id, idempotency_key, outbox_id = incidents_main._incident_delivery_ids(
+        incident.incident_id
+    )
+    event = EventEnvelope(
+        event_id=event_id,
+        event_type="incident.resolved",
+        aggregate_type="incident",
+        aggregate_id=incident.incident_id,
+        sequence_no=1,
+        trace=TraceContext.new(
+            environment=EnvironmentScope(name=EnvironmentName.LIVE),
+            source_system="incident-svc",
+            idempotency_key=idempotency_key,
+        ),
+        payload={"incident_id": incident.incident_id, "terminal_status": "closed"},
+        idempotency_key=idempotency_key,
+        producer_service="incident-svc",
+    )
+    legacy = outbox_store.prepare(
+        record=OutboxRecord(
+            outbox_id=outbox_id,
+            owner_service="incident-svc",
+            event=event,
+        ),
+        transition={
+            "aggregate_type": "incident",
+            "aggregate_id": incident.incident_id,
+            "expected_statuses": ["closed", "resolved"],
+        },
+    )
+    assert legacy.delivery_ready is False
+
+    resolved = client.post(
+        f"/api/incidents/{incident.incident_id}/status",
+        json={"status": "resolved"},
+    )
+
+    assert resolved.status_code == 200, resolved.text
+    canonical = outbox_store.get(outbox_id)
+    assert canonical is not None
+    assert canonical.delivery_ready is True
+    assert canonical.event.payload["terminal_status"] == "closed"
+    assert len(outbox_store.list_pending_and_failed()) == 1
 
 
 def test_conflict_repair_does_not_clear_a_live_delivery_claim():
