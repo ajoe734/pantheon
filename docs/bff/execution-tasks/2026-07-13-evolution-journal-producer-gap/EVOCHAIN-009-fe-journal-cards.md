@@ -151,7 +151,7 @@ After resolving typescript-eslint explicit `any` errors, hosted flakiness (empty
   headline, focus banner, and target field (see "Handoff / history
   reconciliation" below).
 - `execute-plans` E2E deterministic & type-safety follow-up PR: [#349](https://github.com/ajoe734/execute-plans/pull/349) — merged with merge commit `79e0f8f3083c8546ec2c139afbc339322dcbe755` (mergedAt 2026-07-15) — resolves `any` type errors and adds bounded request retries and validation to fix mobile-chromium integration gate timeout failures.
-- `execute-plans` final fixes PR: [#354](https://github.com/ajoe734/execute-plans/pull/354) — merged with merge commit `PENDING_FE_MERGE` (mergedAt 2026-07-15) — resolves E2E fallback persona selection flakiness, adds bounded retries and 60s budget to navigation, preserves mobile viewport, and fixes NaN metric rendering.
+- `execute-plans` final fixes PR: [#354](https://github.com/ajoe734/execute-plans/pull/354) — merged with merge commit `404411d203f3b8a7f17b83e2f4e9a3b14bec45d5` (mergedAt 2026-07-15) — resolves E2E fallback fallback persona selection flakiness, adds bounded retries and 60s budget to navigation, preserves mobile viewport, and fixes NaN metric rendering.
 - `pantheon` initial PR: [#3527](https://github.com/ajoe734/pantheon/pull/3527), merged.
 - `pantheon` doc-reconcile PR: [#3616](https://github.com/ajoe734/pantheon/pull/3616), merged
   (merge commit `c30bf618249f9f43604edd058b4e2ca34c892e07`, mergedAt
