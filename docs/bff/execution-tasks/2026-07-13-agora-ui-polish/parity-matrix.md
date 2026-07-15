@@ -4,7 +4,7 @@ Task: `AG-UIPOL-005`
 
 Audit date: `2026-07-13`
 
-Hosted frontend pin: `execute-plans@cb139ca8a4e4a1236033b2ccbdd917907de592cc`
+Hosted frontend pin: `execute-plans@79e0f8f3083c8546ec2c139afbc339322dcbe755`
 
 ## Outcome
 

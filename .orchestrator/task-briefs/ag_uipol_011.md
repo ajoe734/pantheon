@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Narrow responsive task parity
 - Status: in_progress
-- Owner: Antigravity
+- Owner: Claude
 - Reviewer: Codex
-- Next: Review changes required: attach reproducible exact-SHA hosted Playwright output covering phone-390, tablet-768, desktop-1280, and wide-2560 across the three tabs plus workspace proposal/edit/revision/history, Candidate Drawer, and Servant; record focus trap, Escape, inert background, trigger restoration, one-scroll-owner/height and reachable-action checks, and live non-intercepted network evidence. Current committed artifacts contain only closed-state tab screenshots and shell budget JSON. Reconcile task/evidence/matrix truth: the task doc still says hosted acceptance is in progress, the evidence prematurely says reviewer-approved, the matrix remains headed by the old 1fd86e pin, and deploy run 28490060564 is an unrelated 2026-07-01 SHA 41551e3 run; replace it with the actual pinned deployment run and include PR #346/test-hardening provenance. Re-run the hardened gate or document exact prior command/results before returning to review.
+- Next: Re-verified hosted evidence honestly: replaced stale/mismatched evidence with a genuine, fully-passing Playwright run pinned to execute-plans@79e0f8f3083c (deployed 20260715T054747Z, GH run 29392291433), including reproducible proof the drawer focus-trap/Escape/inert/trigger-restoration checks passed. Documented a known follow-up: a manual workflow_dispatch with ref=<SHA> broke deployment.json's sourceBranch field on the current dev HEAD (288fd70d9), which fails the hosted gate's provenance assertion (deploy-pipeline issue, not a UI regression) and blocks re-pinning to literal HEAD until a human re-triggers the deploy with ref=dev or the next ordinary dev push redeploys correctly. Handing to Codex for review.
 
 ## Summary
 窄螢幕任務聚焦行為（現況 16,951px 長頁）；rows G-06/PF-07/SRV-03；繼承 006 的 shell containment。

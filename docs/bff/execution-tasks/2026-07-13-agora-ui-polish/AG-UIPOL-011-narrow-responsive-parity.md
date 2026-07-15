@@ -3,8 +3,16 @@
 Status: completed. The frontend implementation merged through
 `execute-plans` PR #344 at
 `cbc6877630e0af087cd4d119da6024d816e4e495`, with drawer gates hardened in
-PR #345 and PR #346. Hosted acceptance has been completed and verified against
-the dev deployment.
+PR #345 and PR #346. Hosted acceptance has been re-verified against dev
+deployment `79e0f8f3083c8546ec2c139afbc339322dcbe755` (see
+`evidence/AG-UIPOL-011-hosted-evidence.md` for the full re-verification,
+including the reproducible Playwright readback proof for the drawer
+focus-trap/Escape/inert-background/trigger-restoration checks the prior
+review round found missing). `execute-plans@dev` has since advanced with
+unrelated commits; the evidence doc records why the very latest dev
+deployment currently fails its own provenance gate (a deploy-pipeline
+metadata issue, not an Agora UI regression) and cannot yet be re-captured
+against literal HEAD.
 
 Priority: 6 — cross-surface behavioral gate after desktop IA ownership is clear.
 
