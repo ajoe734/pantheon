@@ -1,7 +1,7 @@
 {
   "schema_version": "ppl_alloc_009_rescue_recheck.v1",
   "task_id": "PPL-ALLOC-009",
-  "captured_at": "2026-07-15T06:21:22Z",
+  "captured_at": "2026-07-15T06:33:21Z",
   "environment": "dev",
   "status": "blocked",
   "ready_for_review": false,
@@ -131,6 +131,13 @@
         "explicit_bounded_permissive_stub_profile_supported": true,
         "permissive_stub_profile_is_strict_acceptance_evidence": false,
         "repairs_current_live_auth": false
+      },
+      "create_paper_test_isolation": {
+        "commit": "7bd90adffc0adf9644a29c0c740192cc6c26fd65",
+        "composes_with": "LOOP-PROD-PER-001 PR #3671 canonical service requests",
+        "test_only": true,
+        "production_provisioning_changed": false,
+        "focused_ppl_suite_restored": true
       }
     }
   },
@@ -211,7 +218,8 @@
     "pantheon_focused_bff_tests": {
       "passed": 105,
       "warnings": 22,
-      "duration_seconds": 149.18
+      "duration_seconds": 71.37,
+      "post_merge_base": true
     },
     "pantheon_strict_auth_deploy_contract": {
       "passed": 6,

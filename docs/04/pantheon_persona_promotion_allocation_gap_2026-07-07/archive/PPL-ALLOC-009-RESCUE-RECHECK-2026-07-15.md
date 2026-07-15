@@ -2,7 +2,7 @@
 
 Status: **blocked; not ready for `review` or `done`**
 
-Evidence captured through `2026-07-15T06:21:22Z`. The machine-readable
+Evidence captured through `2026-07-15T06:33:21Z`. The machine-readable
 companion is `PPL-ALLOC-009-RESCUE-RECHECK-2026-07-15.json`.
 
 ## Decision
@@ -150,6 +150,14 @@ select `permissive-stub` for a bounded governed proof run; that profile is not
 strict acceptance evidence. The guard cannot repair the already-running
 permissive service without governed credentials.
 
+Merging the latest `dev` also brought LOOP-PROD-PER-001's canonical
+Capital/Deployment/Runtime requests into Persona creation. That correctly
+caused the older PPL create-paper test to fail when no service client was
+configured. Anchor `7bd90adffc0adf9644a29c0c740192cc6c26fd65` isolates only
+that contract test with controlled service doubles; production provisioning
+and service failure behavior are unchanged. The full focused PPL suite then
+returned to 105/105 passing on the merged base.
+
 ## Hosted Deployment Identity At Cutoff
 
 | Evidence | Current value | Verdict |
@@ -185,7 +193,8 @@ This document does not claim the full npm graph is vulnerability-free.
 Pantheon:
 
 - focused create-paper, promotion review, allocation policy, rebalance, and
-  containment suite: `105 passed, 22 warnings in 149.18s`;
+  containment suite on the final merged base:
+  `105 passed, 22 warnings in 71.37s`;
 - strict-auth and adjacent deploy-workflow contracts after composing the
   historical-ref guard with the explicit bounded profile:
   `17 passed in 20.07s`;
