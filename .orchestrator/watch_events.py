@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import re
+import stat
 import sys
 import time
 from pathlib import Path
@@ -30,7 +33,6 @@ from common import (
 )
 from runtime_state import (
     canonical_task_state_lock_file,
-    enqueue_event,
     load_runtime_state,
     runtime_state_lock,
     save_runtime_state,
@@ -60,6 +62,67 @@ def handoff_key(handoff: dict[str, Any]) -> str:
 
 def enqueue_runtime_events_enabled(config: dict[str, Any]) -> bool:
     return bool(config.get("events", {}).get("enqueue_runtime_events", False))
+
+
+def _assert_regular_queue_leaf(path: Path, descriptor: int) -> None:
+    descriptor_stat = os.fstat(descriptor)
+    path_stat = path.lstat()
+    if (
+        not stat.S_ISREG(descriptor_stat.st_mode)
+        or stat.S_ISLNK(path_stat.st_mode)
+        or path_stat.st_dev != descriptor_stat.st_dev
+        or path_stat.st_ino != descriptor_stat.st_ino
+    ):
+        raise RuntimeError(f"runtime event queue data leaf changed during append: {path}")
+
+
+def _pread_exact(descriptor: int, size: int, offset: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining:
+        chunk = os.pread(descriptor, remaining, offset)
+        if not chunk:
+            break
+        chunk = chunk[:remaining]
+        chunks.append(chunk)
+        offset += len(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _append_runtime_event_locked(config: dict[str, Any], event: dict[str, Any]) -> None:
+    """Durably append one queue event while the runtime sidecar is held."""
+
+    path = config_path(config, "event_queue")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise RuntimeError(f"runtime event queue data leaf cannot be a symlink: {path}")
+    payload = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
+    flags = os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        _assert_regular_queue_leaf(path, descriptor)
+        offset = os.lseek(descriptor, 0, os.SEEK_END)
+        if offset and os.pread(descriptor, 1, offset - 1) != b"\n":
+            raise RuntimeError(f"runtime event queue is not newline terminated: {path}")
+        view = memoryview(payload)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError("runtime event queue append made no progress")
+            view = view[written:]
+        os.fsync(descriptor)
+        _assert_regular_queue_leaf(path, descriptor)
+        if _pread_exact(descriptor, len(payload), offset) != payload:
+            raise RuntimeError(f"runtime event queue readback mismatch: {path}")
+        _assert_regular_queue_leaf(path, descriptor)
+    finally:
+        os.close(descriptor)
+    directory_descriptor = os.open(path.parent, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
 
 
 def build_snapshot(config: dict[str, Any], status: dict[str, Any]) -> dict[str, Any]:
@@ -323,7 +386,7 @@ def _queue_delivery_event_locked(config: dict[str, Any], event: dict[str, Any]) 
         "target_files": event.get("task", {}).get("artifacts") or [],
         "metadata": {"handoff": event.get("handoff"), "task": event.get("task", {})},
     }
-    enqueue_event(config, queue_payload)
+    _append_runtime_event_locked(config, queue_payload)
     write_activity_log(
         config,
         {

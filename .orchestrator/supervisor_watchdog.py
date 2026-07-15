@@ -6,6 +6,7 @@ import errno
 import fcntl
 import json
 import os
+import stat
 import subprocess
 import sys
 import time
@@ -18,7 +19,7 @@ ROOT = THIS_DIR.parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from common import append_jsonl, config_path, load_config, load_json, repo_root_for_config, utc_now, write_activity_log, write_json
+from common import config_path, durable_write_bytes, load_config, repo_root_for_config, utc_now, write_activity_log
 from runtime_state import runtime_state_lock, save_runtime_state
 
 
@@ -125,6 +126,101 @@ def watchdog_state_path(config: dict[str, Any], settings: dict[str, Any] | None 
 def watchdog_metrics_path(config: dict[str, Any], settings: dict[str, Any] | None = None) -> Path:
     settings = settings or watchdog_settings(config)
     return resolve_repo_path(settings.get("metrics_file"), ".orchestrator/metrics/supervisor-watchdog.jsonl")
+
+
+def _assert_regular_watchdog_leaf(path: Path, descriptor: int, *, label: str) -> None:
+    descriptor_stat = os.fstat(descriptor)
+    path_stat = path.lstat()
+    if (
+        not stat.S_ISREG(descriptor_stat.st_mode)
+        or stat.S_ISLNK(path_stat.st_mode)
+        or path_stat.st_dev != descriptor_stat.st_dev
+        or path_stat.st_ino != descriptor_stat.st_ino
+    ):
+        raise RuntimeError(f"{label} data leaf changed during I/O: {path}")
+
+
+def _read_watchdog_bytes(path: Path, *, label: str) -> bytes | None:
+    if path.is_symlink():
+        raise RuntimeError(f"{label} data leaf cannot be a symlink: {path}")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except FileNotFoundError:
+        return None
+    try:
+        _assert_regular_watchdog_leaf(path, descriptor, label=label)
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        _assert_regular_watchdog_leaf(path, descriptor, label=label)
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _pread_exact(descriptor: int, size: int, offset: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining:
+        chunk = os.pread(descriptor, remaining, offset)
+        if not chunk:
+            break
+        chunk = chunk[:remaining]
+        chunks.append(chunk)
+        offset += len(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _write_watchdog_json_locked(path: Path, payload: dict[str, Any], *, label: str) -> None:
+    try:
+        existing_stat = path.lstat()
+    except FileNotFoundError:
+        existing_stat = None
+    if existing_stat is not None and stat.S_ISLNK(existing_stat.st_mode):
+        raise RuntimeError(f"{label} data leaf cannot be a symlink: {path}")
+    if existing_stat is not None and not stat.S_ISREG(existing_stat.st_mode):
+        raise RuntimeError(f"{label} data leaf must be a regular file: {path}")
+    serialized = (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    durable_write_bytes(path, serialized)
+    if _read_watchdog_bytes(path, label=label) != serialized:
+        raise RuntimeError(f"{label} readback mismatch: {path}")
+
+
+def _append_watchdog_jsonl_locked(path: Path, payload: dict[str, Any], *, label: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise RuntimeError(f"{label} data leaf cannot be a symlink: {path}")
+    serialized = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+    flags = os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        _assert_regular_watchdog_leaf(path, descriptor, label=label)
+        offset = os.lseek(descriptor, 0, os.SEEK_END)
+        if offset and os.pread(descriptor, 1, offset - 1) != b"\n":
+            raise RuntimeError(f"{label} is not newline terminated: {path}")
+        view = memoryview(serialized)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError(f"{label} append made no progress")
+            view = view[written:]
+        os.fsync(descriptor)
+        _assert_regular_watchdog_leaf(path, descriptor, label=label)
+        if _pread_exact(descriptor, len(serialized), offset) != serialized:
+            raise RuntimeError(f"{label} readback mismatch: {path}")
+        _assert_regular_watchdog_leaf(path, descriptor, label=label)
+    finally:
+        os.close(descriptor)
+    directory_descriptor = os.open(path.parent, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
 
 
 def read_pid_file(path: Path) -> int | None:
@@ -240,31 +336,38 @@ def scan_live_worker_runner_identities(
 
 
 def load_watchdog_state(config: dict[str, Any], settings: dict[str, Any] | None = None) -> dict[str, Any]:
-    path = watchdog_state_path(config, settings)
-    raw = load_json(path, default={})
-    state = raw if isinstance(raw, dict) else {}
-    state.setdefault("version", 1)
-    state.setdefault("updated_at", None)
-    state.setdefault("restart_attempts", [])
-    state.setdefault("circuit", {"open": False, "reason": None, "opened_at": None, "until": None})
-    state.setdefault("last_decision", None)
-    return state
+    with runtime_state_lock(config, shared=True, nonblocking=False):
+        raw_bytes = _read_watchdog_bytes(watchdog_state_path(config, settings), label="watchdog state")
+        raw = json.loads(raw_bytes) if raw_bytes and raw_bytes.strip() else {}
+        state = raw if isinstance(raw, dict) else {}
+        state.setdefault("version", 1)
+        state.setdefault("updated_at", None)
+        state.setdefault("restart_attempts", [])
+        state.setdefault("circuit", {"open": False, "reason": None, "opened_at": None, "until": None})
+        state.setdefault("last_decision", None)
+        return state
 
 
 def save_watchdog_state(config: dict[str, Any], state: dict[str, Any], settings: dict[str, Any] | None = None) -> None:
-    state["version"] = 1
-    state["updated_at"] = utc_now()
-    write_json(watchdog_state_path(config, settings), state)
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        state["version"] = 1
+        state["updated_at"] = utc_now()
+        _write_watchdog_json_locked(watchdog_state_path(config, settings), state, label="watchdog state")
 
 
 def append_watchdog_metric(config: dict[str, Any], payload: dict[str, Any], settings: dict[str, Any] | None = None) -> None:
-    event = {
-        "version": 1,
-        "event_id": f"watchdog-{int(time.time() * 1000)}-{os.getpid()}",
-        "at": utc_now(),
-        **payload,
-    }
-    append_jsonl(watchdog_metrics_path(config, settings), event)
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        event = {
+            "version": 1,
+            "event_id": f"watchdog-{int(time.time() * 1000)}-{os.getpid()}",
+            "at": utc_now(),
+            **payload,
+        }
+        _append_watchdog_jsonl_locked(
+            watchdog_metrics_path(config, settings),
+            event,
+            label="watchdog metrics",
+        )
 
 
 def load_runtime_state_file(config: dict[str, Any]) -> tuple[dict[str, Any], str | None]:

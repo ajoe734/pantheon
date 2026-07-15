@@ -581,6 +581,232 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                     "failed admission mutated a canonical runtime source",
                 )
 
+    def test_runtime_source_leaf_symlinks_fail_closed_without_reading_targets(self) -> None:
+        source_paths = {
+            "runtime_state": self.state_path,
+            "event_queue": self.event_queue_path,
+            "approval_queue": self.approval_queue_path,
+        }
+        for source_id, path in source_paths.items():
+            with self.subTest(source_id=source_id):
+                self._write_valid_sources()
+                external = self.root / f"external-{source_id}.data"
+                external_body = (
+                    f"must-not-be-read-or-written:{source_id}\n".encode()
+                )
+                external.write_bytes(external_body)
+                path.unlink()
+                path.symlink_to(external)
+
+                with runtime_state.tasks_runtime_admission_guard(
+                    self.config,
+                    ["TASK-A"],
+                    strict=True,
+                    shared=False,
+                    nonblocking=True,
+                ) as decision:
+                    self.assertFalse(decision["allowed"])
+                    self.assertEqual(decision["reason_id"], "runtime_source_invalid")
+                    self.assertEqual(decision["conflicts"], [])
+                    self.assertEqual(
+                        decision["source_sha256"][source_id],
+                        hashlib.sha256(b"").hexdigest(),
+                    )
+
+                self.assertEqual(external.read_bytes(), external_body)
+                self.assertTrue(path.is_symlink())
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    rf"canonical {source_id} data leaf cannot be a symlink",
+                ):
+                    with runtime_state.runtime_state_lock(
+                        self.config,
+                        shared=False,
+                        nonblocking=True,
+                    ):
+                        self.fail(
+                            "ordinary runtime writer followed a data-leaf symlink"
+                        )
+                path.unlink()
+
+    def test_nonregular_runtime_source_leaves_fail_closed(self) -> None:
+        source_paths = {
+            "runtime_state": self.state_path,
+            "event_queue": self.event_queue_path,
+            "approval_queue": self.approval_queue_path,
+        }
+        for source_id, path in source_paths.items():
+            with self.subTest(source_id=source_id):
+                self._write_valid_sources()
+                path.unlink()
+                path.mkdir()
+
+                with runtime_state.tasks_runtime_admission_guard(
+                    self.config,
+                    ["TASK-A"],
+                    strict=True,
+                    shared=False,
+                    nonblocking=True,
+                ) as decision:
+                    self.assertFalse(decision["allowed"])
+                    self.assertEqual(decision["reason_id"], "runtime_source_invalid")
+                    self.assertEqual(decision["conflicts"], [])
+
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    rf"canonical {source_id} data leaf must be a regular file",
+                ):
+                    runtime_state.runtime_admission_lock_path(self.config)
+                path.rmdir()
+
+    def test_runtime_sources_and_all_lock_planes_share_canonical_status_root(
+        self,
+    ) -> None:
+        status_root = self.root / "canonical-status"
+        runtime_root = status_root / ".orchestrator"
+        runtime_root.mkdir(parents=True)
+        status_path = status_root / "ai-status.json"
+        activity_path = status_root / "ai-activity-log.jsonl"
+        config = {
+            "paths": {
+                "status_file": str(status_path),
+                "activity_log": str(activity_path),
+                "state_file": str(runtime_root / "state.json"),
+                "event_queue": str(runtime_root / "event-queue.jsonl"),
+                "approval_queue": str(runtime_root / "approval-queue.json"),
+            }
+        }
+
+        self.assertEqual(
+            runtime_state.runtime_admission_lock_path(config),
+            runtime_root / "runtime-admission.lock",
+        )
+        self.assertEqual(
+            common.canonical_task_state_lock_path(status_path),
+            runtime_root / "task-state.lock",
+        )
+        self.assertEqual(
+            common.activity_audit_lock_path(activity_path),
+            runtime_root / "activity-audit.lock",
+        )
+
+    def test_split_runtime_or_status_roots_are_rejected_before_lock_creation(
+        self,
+    ) -> None:
+        self._write_valid_sources()
+        canonical_status_root = self.root / "canonical-status"
+        canonical_status_root.mkdir()
+        split_root = self.root / "split-runtime"
+        split_root.mkdir()
+        cases = {
+            "runtime-sources": {
+                "paths": {
+                    **self.config["paths"],
+                    "event_queue": str(split_root / "event-queue.jsonl"),
+                }
+            },
+            "status-vs-runtime": {
+                "paths": {
+                    **self.config["paths"],
+                    "status_file": str(canonical_status_root / "ai-status.json"),
+                }
+            },
+            "activity-vs-status": {
+                "paths": {
+                    **self.config["paths"],
+                    "status_file": str(self.root / "ai-status.json"),
+                    "activity_log": str(split_root / "ai-activity-log.jsonl"),
+                }
+            },
+        }
+        for label, config in cases.items():
+            with self.subTest(layout=label):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "split roots|does not belong to the status root|does not match the status root",
+                ):
+                    with runtime_state.runtime_state_lock(
+                        config,
+                        shared=False,
+                        nonblocking=True,
+                    ):
+                        self.fail("split-root runtime configuration acquired a lock")
+        self.assertFalse(
+            (
+                canonical_status_root
+                / ".orchestrator"
+                / "runtime-admission.lock"
+            ).exists()
+        )
+        self.assertFalse((split_root / ".orchestrator").exists())
+
+    def test_runtime_lock_root_symlink_is_rejected_without_following_target(
+        self,
+    ) -> None:
+        self._write_valid_sources()
+        external = self.root / "external-lock-root"
+        external.mkdir()
+        lock_root = self.root / ".orchestrator"
+        lock_root.symlink_to(external, target_is_directory=True)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "canonical runtime lock root cannot be a symlink",
+        ):
+            with runtime_state.runtime_state_lock(
+                self.config,
+                shared=False,
+                nonblocking=True,
+            ):
+                self.fail("runtime lock followed an external lock-root symlink")
+
+        self.assertEqual(list(external.iterdir()), [])
+
+    def test_runtime_whole_file_writers_fail_on_readback_mismatch(self) -> None:
+        cases = (
+            (
+                "runtime_state",
+                lambda: runtime_state.save_runtime_state(
+                    self.config,
+                    {"version": 2, "workers": {}, "queue": {"events": {}}},
+                ),
+            ),
+            (
+                "event_queue",
+                lambda: runtime_state.replace_event_queue(self.config, []),
+            ),
+            (
+                "approval_queue",
+                lambda: runtime_state.save_approval_state(
+                    self.config,
+                    {"version": 2, "pending": [], "history": []},
+                ),
+            ),
+        )
+        for source_id, writer in cases:
+            with self.subTest(source_id=source_id), mock.patch.object(
+                runtime_state,
+                "_read_canonical_runtime_source",
+                return_value=b"corrupt",
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    rf"canonical {source_id} readback mismatch",
+                ):
+                    writer()
+
+    def test_runtime_event_append_requires_exact_readback(self) -> None:
+        self._write_valid_sources()
+        with mock.patch.object(runtime_state, "_pread_exact", return_value=b"corrupt"):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "canonical event_queue append readback mismatch",
+            ):
+                runtime_state.enqueue_event(
+                    self.config,
+                    {"event_id": "evt-new", "task_id": "TASK-A"},
+                )
+
     def test_input_and_strict_reason_ids_are_stable(self) -> None:
         self._write_valid_sources()
         cases = (

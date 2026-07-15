@@ -8,7 +8,6 @@ import json
 import os
 import stat
 import subprocess
-import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
@@ -19,11 +18,11 @@ from common import (
     RUNTIME_TASK_AUDIT_LOCK_ORDER as _LOCK_ORDER,
     RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_VERSION as _LOCK_PROTOCOL_VERSION,
     activity_audit_lock_file,
-    append_jsonl,
     approval_tool_input_preview,
     approval_tool_input_signature,
     canonical_task_state_lock_file,
     config_path,
+    durable_write_bytes,
     load_json,
     load_jsonl,
     stable_sidecar_lock,
@@ -352,28 +351,174 @@ def prune_worker_records(state: dict[str, Any], tasks_by_id: dict[str, str] | No
         keep[run_id] = worker
     state["workers"] = keep
 
+
+def _assert_canonical_runtime_data_leaf(path: Path, *, source_id: str) -> None:
+    """Reject an existing runtime data leaf without following a symlink.
+
+    Missing leaves remain valid for the ordinary initialization helpers; the
+    strict admission snapshot rejects them as ``runtime_source_invalid``.  An
+    existing leaf, however, must already be a regular file before the stable
+    sidecar is acquired.  ``lstat`` is deliberate: checking ``exists`` or
+    resolving the complete path would follow an attacker-controlled target.
+    """
+
+    try:
+        leaf_stat = os.lstat(path)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise RuntimeError(
+            f"canonical {source_id} data leaf cannot be inspected: {path}"
+        ) from exc
+    if stat.S_ISLNK(leaf_stat.st_mode):
+        raise RuntimeError(
+            f"canonical {source_id} data leaf cannot be a symlink: {path}"
+        )
+    if not stat.S_ISREG(leaf_stat.st_mode):
+        raise RuntimeError(
+            f"canonical {source_id} data leaf must be a regular file: {path}"
+        )
+
+
+def _runtime_source_layout(
+    config: dict[str, Any],
+    *,
+    validate_data_leaves: bool = True,
+) -> tuple[dict[str, Path], Path, Path]:
+    """Return canonical source paths, status root, and shared lock directory.
+
+    The three runtime sources may live directly in a status root (kept for
+    small isolated deployments/tests) or in its canonical ``.orchestrator``
+    child.  They may never be split across different resolved parents.  When
+    a status file is configured it pins that root; otherwise a common source
+    parent named ``.orchestrator`` pins its parent as the status root.
+    """
+
+    configured = (
+        config.get("paths") if isinstance(config.get("paths"), dict) else {}
+    )
+    key_by_source = {
+        "runtime_state": "state_file",
+        "event_queue": "event_queue",
+        "approval_queue": "approval_queue",
+    }
+    source_paths: dict[str, Path] = {}
+    source_roots: dict[str, Path] = {}
+    for source_id in RUNTIME_ADMISSION_SOURCE_IDS:
+        key = key_by_source[source_id]
+        if not configured.get(key):
+            continue
+        requested = config_path(config, key).expanduser()
+        if validate_data_leaves:
+            _assert_canonical_runtime_data_leaf(requested, source_id=source_id)
+        try:
+            source_root = requested.parent.resolve(strict=True)
+        except (FileNotFoundError, NotADirectoryError, OSError) as exc:
+            raise RuntimeError(
+                f"canonical {source_id} parent is invalid: {requested.parent}"
+            ) from exc
+        if not source_root.is_dir():
+            raise RuntimeError(
+                f"canonical {source_id} parent is not a directory: {source_root}"
+            )
+        source_paths[source_id] = source_root / requested.name
+        source_roots[source_id] = source_root
+
+    distinct_source_roots = set(source_roots.values())
+    if len(distinct_source_roots) > 1:
+        details = ", ".join(
+            f"{source_id}={source_roots[source_id]}"
+            for source_id in RUNTIME_ADMISSION_SOURCE_IDS
+            if source_id in source_roots
+        )
+        raise RuntimeError(f"canonical runtime sources use split roots: {details}")
+
+    status_path: Path | None = None
+    status_root: Path | None = None
+    if configured.get("status_file"):
+        status_path = config_path(config, "status_file").expanduser()
+        try:
+            status_root = status_path.parent.resolve(strict=True)
+        except (FileNotFoundError, NotADirectoryError, OSError) as exc:
+            raise RuntimeError(
+                f"canonical status root is invalid: {status_path.parent}"
+            ) from exc
+        if not status_root.is_dir():
+            raise RuntimeError(
+                f"canonical status root is not a directory: {status_root}"
+            )
+
+    source_root = next(iter(distinct_source_roots), None)
+    if status_root is not None and source_root is not None:
+        allowed_source_roots = {status_root, status_root / ".orchestrator"}
+        if source_root not in allowed_source_roots:
+            raise RuntimeError(
+                "canonical runtime source root does not belong to the status "
+                f"root: source_root={source_root}, status_root={status_root}"
+            )
+    elif status_root is None and source_root is not None:
+        status_root = (
+            source_root.parent
+            if source_root.name == ".orchestrator"
+            else source_root
+        )
+
+    if status_root is None:
+        raise KeyError(
+            "Missing canonical runtime/status path for runtime admission lock"
+        )
+    if configured.get("activity_log"):
+        activity_path = config_path(config, "activity_log").expanduser()
+        try:
+            activity_root = activity_path.parent.resolve(strict=True)
+        except (FileNotFoundError, NotADirectoryError, OSError) as exc:
+            raise RuntimeError(
+                f"canonical activity audit root is invalid: {activity_path.parent}"
+            ) from exc
+        if activity_root != status_root:
+            raise RuntimeError(
+                "canonical activity audit root does not match the status root: "
+                f"activity_root={activity_root}, status_root={status_root}"
+            )
+    lock_root = status_root / ".orchestrator"
+    try:
+        lock_root_stat = os.lstat(lock_root)
+    except FileNotFoundError:
+        lock_root_stat = None
+    except OSError as exc:
+        raise RuntimeError(
+            f"canonical runtime lock root cannot be inspected: {lock_root}"
+        ) from exc
+    if lock_root_stat is not None and stat.S_ISLNK(lock_root_stat.st_mode):
+        raise RuntimeError(
+            f"canonical runtime lock root cannot be a symlink: {lock_root}"
+        )
+    if lock_root_stat is not None and not stat.S_ISDIR(lock_root_stat.st_mode):
+        raise RuntimeError(
+            f"canonical runtime lock root must be a directory: {lock_root}"
+        )
+    return source_paths, status_root, lock_root
+
+
 def runtime_admission_lock_path(config: dict[str, Any]) -> Path:
-    paths = config.get("paths") if isinstance(config.get("paths"), dict) else {}
-    for source_key in ("state_file", "event_queue", "approval_queue"):
-        if paths.get(source_key):
-            return config_path(config, source_key).parent / "runtime-admission.lock"
-    if paths.get("status_file"):
-        status_path = config_path(config, "status_file")
-        return status_path.parent / ".orchestrator" / "runtime-admission.lock"
-    raise KeyError("Missing canonical runtime/status path for runtime admission lock")
+    _source_paths, _status_root, lock_root = _runtime_source_layout(config)
+    return lock_root / "runtime-admission.lock"
 
 
 @contextmanager
-def runtime_state_lock(
+def _runtime_state_sidecar_lock(
     config: dict[str, Any],
     *,
     shared: bool = False,
     nonblocking: bool = False,
+    validate_data_leaves: bool,
 ):
-    """Serialize runtime state, event queue, and approval queue as one plane."""
-
     try:
-        lock_path = runtime_admission_lock_path(config)
+        _source_paths, _status_root, lock_root = _runtime_source_layout(
+            config,
+            validate_data_leaves=validate_data_leaves,
+        )
+        lock_path = lock_root / "runtime-admission.lock"
     except KeyError:
         # Pure unit tests replace every runtime I/O function and intentionally
         # pass no paths. A real configuration with a paths section remains
@@ -387,6 +532,30 @@ def runtime_state_lock(
         plane="runtime_admission",
         shared=shared,
         nonblocking=nonblocking,
+    ) as handle:
+        # Revalidate after acquiring the stable inode so a pre-acquisition
+        # pathname swap cannot move a source outside the shared status root.
+        _runtime_source_layout(
+            config,
+            validate_data_leaves=validate_data_leaves,
+        )
+        yield handle
+
+
+@contextmanager
+def runtime_state_lock(
+    config: dict[str, Any],
+    *,
+    shared: bool = False,
+    nonblocking: bool = False,
+):
+    """Serialize runtime state, event queue, and approval queue as one plane."""
+
+    with _runtime_state_sidecar_lock(
+        config,
+        shared=shared,
+        nonblocking=nonblocking,
+        validate_data_leaves=True,
     ) as handle:
         yield handle
 
@@ -433,7 +602,11 @@ def _load_runtime_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _save_runtime_state_unlocked(config: dict[str, Any], state: dict[str, Any]) -> None:
-    write_json(config_path(config, "state_file"), migrate_state(state))
+    _write_runtime_json_unlocked(
+        config_path(config, "state_file"),
+        migrate_state(state),
+        source_id="runtime_state",
+    )
 
 
 def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
@@ -463,7 +636,11 @@ def load_event_queue(config: dict[str, Any]) -> list[dict[str, Any]]:
 
 def enqueue_event(config: dict[str, Any], event: dict[str, Any]) -> None:
     with runtime_state_lock(config, shared=False):
-        append_jsonl(config_path(config, "event_queue"), event)
+        _append_runtime_jsonl_unlocked(
+            config_path(config, "event_queue"),
+            event,
+            source_id="event_queue",
+        )
 
 
 def replace_event_queue(config: dict[str, Any], events: list[dict[str, Any]]) -> None:
@@ -471,28 +648,14 @@ def replace_event_queue(config: dict[str, Any], events: list[dict[str, Any]]) ->
 
     with runtime_state_lock(config, shared=False):
         path = config_path(config, "event_queue")
-        path.parent.mkdir(parents=True, exist_ok=True)
         serialized = "".join(
             json.dumps(event, ensure_ascii=False) + "\n" for event in events
+        ).encode("utf-8")
+        _write_runtime_bytes_unlocked(
+            path,
+            serialized,
+            source_id="event_queue",
         )
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=path.parent,
-            delete=False,
-        ) as handle:
-            handle.write(serialized)
-            handle.flush()
-            os.fsync(handle.fileno())
-            temp_path = Path(handle.name)
-        os.replace(temp_path, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-        if path.read_text(encoding="utf-8") != serialized:
-            raise RuntimeError("event queue readback mismatch")
 
 
 def queue_event_record(state: dict[str, Any], event_id: str) -> dict[str, Any]:
@@ -565,7 +728,11 @@ def save_approval_state(config: dict[str, Any], state: dict[str, Any]) -> None:
         payload["history"] = [_normalize_approval_item(item) for item in payload.get("history", []) if isinstance(item, dict)]
         payload["version"] = 2
         payload["updated_at"] = utc_now()
-        write_json(config_path(config, "approval_queue"), payload)
+        _write_runtime_json_unlocked(
+            config_path(config, "approval_queue"),
+            payload,
+            source_id="approval_queue",
+        )
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
@@ -599,6 +766,150 @@ def _strict_json_object(raw: bytes, *, source: str) -> dict[str, Any]:
     return value
 
 
+def _read_canonical_runtime_source(path: Path, *, source_id: str) -> bytes:
+    """Read one regular runtime leaf without ever following a leaf symlink."""
+
+    _assert_canonical_runtime_data_leaf(path, source_id=source_id)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        path_stat = os.lstat(path)
+        if (
+            not stat.S_ISREG(descriptor_stat.st_mode)
+            or stat.S_ISLNK(path_stat.st_mode)
+            or path_stat.st_dev != descriptor_stat.st_dev
+            or path_stat.st_ino != descriptor_stat.st_ino
+        ):
+            raise RuntimeError(
+                f"canonical {source_id} data leaf changed during read: {path}"
+            )
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after_stat = os.lstat(path)
+        if (
+            stat.S_ISLNK(after_stat.st_mode)
+            or after_stat.st_dev != descriptor_stat.st_dev
+            or after_stat.st_ino != descriptor_stat.st_ino
+        ):
+            raise RuntimeError(
+                f"canonical {source_id} data leaf changed during read: {path}"
+            )
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _write_runtime_bytes_unlocked(
+    path: Path,
+    payload: bytes,
+    *,
+    source_id: str,
+) -> None:
+    _assert_canonical_runtime_data_leaf(path, source_id=source_id)
+    durable_write_bytes(path, payload)
+    if _read_canonical_runtime_source(path, source_id=source_id) != payload:
+        raise RuntimeError(f"canonical {source_id} readback mismatch: {path}")
+
+
+def _write_runtime_json_unlocked(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    source_id: str,
+) -> None:
+    serialized = (
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    ).encode("utf-8")
+    _write_runtime_bytes_unlocked(path, serialized, source_id=source_id)
+
+
+def _pread_exact(descriptor: int, size: int, offset: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining:
+        chunk = os.pread(descriptor, remaining, offset)
+        if not chunk:
+            break
+        chunk = chunk[:remaining]
+        chunks.append(chunk)
+        offset += len(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _append_runtime_jsonl_unlocked(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    source_id: str,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _assert_canonical_runtime_data_leaf(path, source_id=source_id)
+    serialized = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+    flags = (
+        os.O_RDWR
+        | os.O_APPEND
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        path_stat = os.lstat(path)
+        if (
+            not stat.S_ISREG(descriptor_stat.st_mode)
+            or stat.S_ISLNK(path_stat.st_mode)
+            or (path_stat.st_dev, path_stat.st_ino)
+            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        ):
+            raise RuntimeError(
+                f"canonical {source_id} data leaf changed during append: {path}"
+            )
+        offset = os.lseek(descriptor, 0, os.SEEK_END)
+        if offset and os.pread(descriptor, 1, offset - 1) != b"\n":
+            raise RuntimeError(
+                f"canonical {source_id} is not newline terminated: {path}"
+            )
+        view = memoryview(serialized)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError(f"canonical {source_id} append made no progress")
+            view = view[written:]
+        os.fsync(descriptor)
+        after_stat = os.lstat(path)
+        if (
+            stat.S_ISLNK(after_stat.st_mode)
+            or (after_stat.st_dev, after_stat.st_ino)
+            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+            or _pread_exact(descriptor, len(serialized), offset) != serialized
+        ):
+            raise RuntimeError(
+                f"canonical {source_id} append readback mismatch: {path}"
+            )
+    finally:
+        os.close(descriptor)
+    directory_fd = os.open(
+        path.parent,
+        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def _strict_runtime_sources(
     config: dict[str, Any],
 ) -> tuple[
@@ -609,10 +920,14 @@ def _strict_runtime_sources(
     dict[str, Any] | None,
     str | None,
 ]:
+    key_by_source = {
+        "runtime_state": "state_file",
+        "event_queue": "event_queue",
+        "approval_queue": "approval_queue",
+    }
     paths = {
-        "runtime_state": config_path(config, "state_file"),
-        "event_queue": config_path(config, "event_queue"),
-        "approval_queue": config_path(config, "approval_queue"),
+        source_id: config_path(config, key_by_source[source_id])
+        for source_id in RUNTIME_ADMISSION_SOURCE_IDS
     }
     bodies: dict[str, bytes] = {}
     source_sha256: dict[str, str] = {}
@@ -620,8 +935,14 @@ def _strict_runtime_sources(
     for source_id in RUNTIME_ADMISSION_SOURCE_IDS:
         path = paths[source_id]
         try:
-            body = path.read_bytes()
-        except (FileNotFoundError, IsADirectoryError, PermissionError, OSError):
+            body = _read_canonical_runtime_source(path, source_id=source_id)
+        except (
+            FileNotFoundError,
+            IsADirectoryError,
+            PermissionError,
+            OSError,
+            RuntimeError,
+        ):
             body = b""
             source_error = source_error or "runtime_source_invalid"
         bodies[source_id] = body
@@ -803,10 +1124,15 @@ def tasks_runtime_admission_guard(
     """Hold one strict runtime snapshot while a nested task transaction acts."""
 
     ordered_ids, input_error = _ordered_task_ids(task_ids)
-    with runtime_state_lock(
+    # Source leaves are parsed through O_NOFOLLOW below.  Deferring their
+    # content/leaf verdict until after the stable sidecar is held preserves the
+    # admission decision contract (``runtime_source_invalid``) while ordinary
+    # runtime writers continue to reject such leaves before entering.
+    with _runtime_state_sidecar_lock(
         config,
         shared=shared,
         nonblocking=nonblocking,
+        validate_data_leaves=False,
     ):
         (
             _bodies,

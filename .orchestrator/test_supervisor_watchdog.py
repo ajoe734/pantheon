@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -62,6 +63,81 @@ class SupervisorWatchdogTests(unittest.TestCase):
             "active_worker_count": 0,
             "state_parent_writable": True,
         }
+
+    def test_public_watchdog_state_save_holds_runtime_sidecar_and_reads_back(self) -> None:
+        real_write = supervisor_watchdog._write_watchdog_json_locked
+        lock_path = self.root / ".orchestrator" / "runtime-admission.lock"
+
+        def assert_locked_write(path: Path, payload: dict, *, label: str) -> None:
+            probe = os.open(lock_path, os.O_RDWR)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(probe)
+            real_write(path, payload, label=label)
+
+        state = {"restart_attempts": [], "circuit": {"open": False}}
+        with mock.patch.object(
+            supervisor_watchdog,
+            "_write_watchdog_json_locked",
+            side_effect=assert_locked_write,
+        ):
+            supervisor_watchdog.save_watchdog_state(self.config, state)
+
+        saved = json.loads((self.root / "watchdog-state.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved, state)
+        self.assertEqual(saved["version"], 1)
+        self.assertIsNotNone(saved["updated_at"])
+
+    def test_public_watchdog_metric_append_holds_runtime_sidecar(self) -> None:
+        real_append = supervisor_watchdog._append_watchdog_jsonl_locked
+        lock_path = self.root / ".orchestrator" / "runtime-admission.lock"
+
+        def assert_locked_append(path: Path, payload: dict, *, label: str) -> None:
+            probe = os.open(lock_path, os.O_RDWR)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(probe)
+            real_append(path, payload, label=label)
+
+        with mock.patch.object(
+            supervisor_watchdog,
+            "_append_watchdog_jsonl_locked",
+            side_effect=assert_locked_append,
+        ):
+            supervisor_watchdog.append_watchdog_metric(self.config, {"event_type": "probe"})
+
+        row = json.loads((self.root / "metrics.jsonl").read_text(encoding="utf-8"))
+        self.assertEqual(row["event_type"], "probe")
+        self.assertEqual(row["version"], 1)
+
+    def test_watchdog_state_rejects_symlink_leaf_without_touching_target(self) -> None:
+        target = self.root / "outside-state.json"
+        target.write_text('{"operator": true}\n', encoding="utf-8")
+        (self.root / "watchdog-state.json").symlink_to(target)
+
+        with self.assertRaisesRegex(RuntimeError, "data leaf cannot be a symlink"):
+            supervisor_watchdog.save_watchdog_state(self.config, {"restart_attempts": []})
+
+        self.assertEqual(target.read_text(encoding="utf-8"), '{"operator": true}\n')
+
+    def test_watchdog_metrics_rejects_symlink_leaf_without_touching_target(self) -> None:
+        target = self.root / "outside-metrics.jsonl"
+        target.write_text('{"operator": true}\n', encoding="utf-8")
+        (self.root / "metrics.jsonl").symlink_to(target)
+
+        with self.assertRaisesRegex(RuntimeError, "data leaf cannot be a symlink"):
+            supervisor_watchdog.append_watchdog_metric(self.config, {"event_type": "probe"})
+
+        self.assertEqual(target.read_text(encoding="utf-8"), '{"operator": true}\n')
+
+    def test_watchdog_state_save_fails_closed_on_readback_mismatch(self) -> None:
+        with mock.patch.object(supervisor_watchdog, "_read_watchdog_bytes", return_value=b"corrupt"):
+            with self.assertRaisesRegex(RuntimeError, "readback mismatch"):
+                supervisor_watchdog.save_watchdog_state(self.config, {"restart_attempts": []})
 
     def test_healthy_supervisor_observes_only(self) -> None:
         now = datetime.now(timezone.utc)

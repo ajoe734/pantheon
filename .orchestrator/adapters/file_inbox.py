@@ -1,11 +1,68 @@
 from __future__ import annotations
 
+import os
+import stat
 import subprocess
 from pathlib import Path
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
-from common import agent_config_for, command_exists, delivery_workspace_root, ensure_parent, new_runtime_id, normalize_agent_id, relpath
+from common import (
+    agent_config_for,
+    command_exists,
+    delivery_workspace_root,
+    durable_write_bytes,
+    ensure_parent,
+    new_runtime_id,
+    normalize_agent_id,
+    relpath,
+)
 from runtime_state import runtime_state_lock
+
+
+def _read_regular_file(path: Path) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        path_stat = path.lstat()
+        if (
+            not stat.S_ISREG(descriptor_stat.st_mode)
+            or stat.S_ISLNK(path_stat.st_mode)
+            or path_stat.st_dev != descriptor_stat.st_dev
+            or path_stat.st_ino != descriptor_stat.st_ino
+        ):
+            raise RuntimeError(f"file inbox data leaf changed during readback: {path}")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after_stat = path.lstat()
+        if (
+            stat.S_ISLNK(after_stat.st_mode)
+            or after_stat.st_dev != descriptor_stat.st_dev
+            or after_stat.st_ino != descriptor_stat.st_ino
+        ):
+            raise RuntimeError(f"file inbox data leaf changed during readback: {path}")
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _write_inbox_locked(path: Path, body: str) -> None:
+    try:
+        existing_stat = path.lstat()
+    except FileNotFoundError:
+        existing_stat = None
+    if existing_stat is not None and stat.S_ISLNK(existing_stat.st_mode):
+        raise RuntimeError(f"file inbox data leaf cannot be a symlink: {path}")
+    if existing_stat is not None and not stat.S_ISREG(existing_stat.st_mode):
+        raise RuntimeError(f"file inbox data leaf must be a regular file: {path}")
+    payload = body.encode("utf-8")
+    durable_write_bytes(path, payload)
+    if _read_regular_file(path) != payload:
+        raise RuntimeError(f"file inbox readback mismatch: {path}")
 
 
 class FileInboxAdapter(BaseAdapter):
@@ -50,7 +107,7 @@ class FileInboxAdapter(BaseAdapter):
                 *(f"- `{path}`" for path in request.context_files),
             ]
         ).rstrip() + "\n"
-        inbox_path.write_text(body, encoding="utf-8")
+        _write_inbox_locked(inbox_path, body)
 
         command: list[str] = []
         if inbox_settings.get("open_in_vscode", False) and command_exists("code"):
