@@ -7,8 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from .. import command_idempotency as command_idempotency_module
 from ..command_idempotency import (
     CommandIdempotencyHeaderConflict,
+    CommandIdempotencyInProgress,
     CommandIdempotencyKeyRequired,
     CommandIdempotencyPayloadConflict,
     CommandIdempotencyRecoveryRequired,
@@ -182,6 +184,55 @@ def test_uncertain_operation_fails_closed_until_exact_explicit_recovery(tmp_path
         request_payload=request,
     ) as transaction:
         transaction.complete({"data": {"recovered": True}})
+
+
+def test_uncertain_recovery_cannot_bypass_bounded_delay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [1000.0]
+    monkeypatch.setattr(command_idempotency_module.time, "time", lambda: now[0])
+    store = CommandIdempotencyStore(
+        str(tmp_path / "idempotency.json"),
+        recovery_seconds=30,
+    )
+    request = {"scope": ["services/control-plane/bff"]}
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        with store.transaction(
+            actor_id="operator",
+            route="/repair",
+            idempotency_key="bounded-recovery-key",
+            request_payload=request,
+        ):
+            raise RuntimeError("simulated crash")
+
+    with pytest.raises(CommandIdempotencyInProgress):
+        store.recover_uncertain(
+            actor_id="operator",
+            route="/repair",
+            idempotency_key="bounded-recovery-key",
+            request_payload=request,
+            recovery_id="incident-too-early",
+        )
+
+    now[0] = 1031.0
+    store.recover_uncertain(
+        actor_id="operator",
+        route="/repair",
+        idempotency_key="bounded-recovery-key",
+        request_payload=request,
+        recovery_id="incident-after-delay",
+    )
+    with store.transaction(
+        actor_id="operator",
+        route="/repair",
+        idempotency_key="bounded-recovery-key",
+        request_payload=request,
+    ) as transaction:
+        transaction.complete({"data": {"recovered": True}})
+
+    persisted = (tmp_path / "idempotency.json").read_text(encoding="utf-8")
+    assert "incident-after-delay" not in persisted
 
 
 def test_corrupt_store_fails_closed(tmp_path: Path) -> None:

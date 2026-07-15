@@ -206,7 +206,9 @@ class CommandIdempotencyStore:
             status = str(record.get("status") or "")
             if status == "complete":
                 return
-            if status == "in_progress" and now < float(record.get("recovery_after") or 0):
+            if status in {"in_progress", "uncertain"} and now < float(
+                record.get("recovery_after") or 0
+            ):
                 raise CommandIdempotencyInProgress()
             if status not in {"in_progress", "uncertain"}:
                 raise CommandIdempotencyRecoveryRequired()
@@ -407,12 +409,16 @@ class CommandIdempotencyTransaction:
             raise CommandIdempotencyStorageError(
                 "Assistant command response exceeds the idempotency replay storage limit"
             )
-        self._document["records"][self.storage_key] = {
+        previous = self._document["records"].get(self.storage_key)
+        completed_record: Dict[str, Any] = {
             "status": "complete",
             "request_hash": self.request_hash,
             "completed_at": time.time(),
             "response": copied,
         }
+        if isinstance(previous, dict) and isinstance(previous.get("recovery"), dict):
+            completed_record["recovery"] = copy.deepcopy(previous["recovery"])
+        self._document["records"][self.storage_key] = completed_record
         self.store._write_store(self._document)
         self._completed = True
 

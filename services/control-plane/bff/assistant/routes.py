@@ -375,6 +375,9 @@ def create_assistant_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_recovery_id: Optional[str] = Header(
+            default=None, alias="X-Idempotency-Recovery-Id"
+        ),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> dict[str, Any]:
@@ -423,10 +426,34 @@ def create_assistant_router(
             payload={"payload": payload, "tenant_id": tenant_id},
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
+            recovery_id=idempotency_recovery_id,
             bff_error=bff_error,
         ) as transaction:
             if transaction is not None and transaction.replayed:
-                return transaction.response or {}
+                replayed = transaction.response or {}
+                replayed_data = replayed.get("data") if isinstance(replayed, dict) else {}
+                replayed_data = replayed_data if isinstance(replayed_data, dict) else {}
+                current = _control_mode_store.status_for_actor(
+                    identity.operator_id,
+                    management_session_id=payload.get("managementSessionId")
+                    or payload.get("management_session_id"),
+                )
+                replayed_activation_id = replayed_data.get("activationId") or replayed_data.get(
+                    "activation_id"
+                )
+                current_activation_id = current.get("activationId") or current.get("activation_id")
+                if not current.get("active") or current_activation_id != replayed_activation_id:
+                    _raise_error(
+                        bff_error,
+                        409,
+                        ErrorCode.RESOURCE_CONFLICT,
+                        "Cached control-mode activation is no longer active",
+                        "A BFF restart, expiry, or deactivation invalidated the cached activation. "
+                        "Activate again with a new Idempotency-Key.",
+                        field="idempotency_key",
+                        reason="idempotency_replay_state_stale",
+                    )
+                return replayed
             try:
                 activation = _control_mode_store.activate(
                     actor_id=identity.operator_id,
@@ -452,6 +479,9 @@ def create_assistant_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_recovery_id: Optional[str] = Header(
+            default=None, alias="X-Idempotency-Recovery-Id"
+        ),
     ) -> dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
@@ -464,6 +494,7 @@ def create_assistant_router(
             payload=payload,
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
+            recovery_id=idempotency_recovery_id,
             bff_error=bff_error,
         ) as transaction:
             if transaction is not None and transaction.replayed:
@@ -585,6 +616,9 @@ def create_assistant_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_recovery_id: Optional[str] = Header(
+            default=None, alias="X-Idempotency-Recovery-Id"
+        ),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> dict[str, Any]:
@@ -641,6 +675,7 @@ def create_assistant_router(
             },
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
+            recovery_id=idempotency_recovery_id,
             bff_error=bff_error,
         ) as transaction:
             if transaction is not None and transaction.replayed:
@@ -858,6 +893,9 @@ def create_assistant_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_recovery_id: Optional[str] = Header(
+            default=None, alias="X-Idempotency-Recovery-Id"
+        ),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> dict[str, Any]:
@@ -899,6 +937,7 @@ def create_assistant_router(
             },
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
+            recovery_id=idempotency_recovery_id,
             bff_error=bff_error,
         ) as transaction:
             if transaction is not None and transaction.replayed:
@@ -1005,6 +1044,9 @@ def create_assistant_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_recovery_id: Optional[str] = Header(
+            default=None, alias="X-Idempotency-Recovery-Id"
+        ),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> dict[str, Any]:
@@ -1043,6 +1085,7 @@ def create_assistant_router(
             },
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
+            recovery_id=idempotency_recovery_id,
             bff_error=bff_error,
         ) as transaction:
             if transaction is not None and transaction.replayed:
@@ -1315,6 +1358,7 @@ def _assistant_command_idempotency(
     payload: Any,
     idempotency_key: Optional[str],
     x_idempotency_key: Optional[str],
+    recovery_id: Optional[str],
     bff_error: Optional[BffErrorFactory],
 ) -> Iterator[Optional[CommandIdempotencyTransaction]]:
     try:
@@ -1322,6 +1366,14 @@ def _assistant_command_idempotency(
         if resolved_key is None:
             yield None
             return
+        if str(recovery_id or "").strip():
+            store.recover_uncertain(
+                actor_id=actor_id,
+                route=route,
+                idempotency_key=resolved_key,
+                request_payload=payload,
+                recovery_id=str(recovery_id),
+            )
         with store.transaction(
             actor_id=actor_id,
             route=route,

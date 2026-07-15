@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import sys
 from datetime import timedelta
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -16,6 +19,7 @@ import main as bff_main  # noqa: E402
 from read_store import ReadSurfaceStore  # noqa: E402
 import assistant.control_mode as control_mode_module  # noqa: E402
 from assistant.control_mode import ControlModeStore  # noqa: E402
+from assistant.command_idempotency import CommandIdempotencyStore  # noqa: E402
 from assistant.routes import create_assistant_router  # noqa: E402
 from assistant.tool_contracts import (  # noqa: E402
     ASSISTANT_TOOL_ALLOWLIST,
@@ -334,6 +338,29 @@ def test_control_mode_commands_replay_stably_and_validate_aliases_and_tenant(
     assert replay.json() == first.json()
     assert replay.json()["data"]["activationId"] == first.json()["data"]["activationId"]
 
+    restarted_store = ControlModeStore(
+        storage_path="off",
+        initial_passphrase="control phrase ok",
+    )
+    restarted_client = _control_mode_client(
+        restarted_store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.debug"],
+        mfa_verified=True,
+        tenant_ids=["tenant-alpha"],
+    )
+    stale_replay = restarted_client.post(
+        "/bff/assistant/control-mode/activate",
+        json=payload,
+        headers=headers,
+    )
+    assert stale_replay.status_code == 409
+    assert (
+        stale_replay.json()["error"]["details"]["reason"]
+        == "idempotency_replay_state_stale"
+    )
+    assert restarted_store.status_for_actor("op-security")["active"] is False
+
     conflict = client.post(
         "/bff/assistant/control-mode/activate",
         json={**payload, "reason": "different payload"},
@@ -375,6 +402,76 @@ def test_control_mode_commands_replay_stably_and_validate_aliases_and_tenant(
     )
     assert deactivate.status_code == deactivate_replay.status_code == 202
     assert deactivate_replay.json() == deactivate.json()
+
+
+def test_control_mode_uncertain_activation_requires_explicit_recovery_header(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_REQUIRED", "true")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS", "0")
+    path = tmp_path / "assistant-command-idempotency.json"
+    monkeypatch.setenv(
+        "PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH",
+        str(path),
+    )
+    payload = {
+        "mode": "kernel_debug",
+        "passphrase": "control phrase ok",
+        "reason": "recover uncertain activation",
+    }
+    fingerprint = {"payload": payload, "tenant_id": "tenant-alpha"}
+    store = CommandIdempotencyStore(str(path), recovery_seconds=0)
+    with pytest.raises(RuntimeError, match="injected crash"):
+        with store.transaction(
+            actor_id="op-security",
+            route="/bff/assistant/control-mode/activate",
+            idempotency_key="activate-uncertain",
+            request_payload=fingerprint,
+        ):
+            raise RuntimeError("injected crash")
+
+    control_store = ControlModeStore(
+        storage_path="off",
+        initial_passphrase="control phrase ok",
+    )
+    client = _control_mode_client(
+        control_store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.debug"],
+        mfa_verified=True,
+        tenant_ids=["tenant-alpha"],
+    )
+    headers = {
+        **OPERATOR_TOOL_HEADERS,
+        "Idempotency-Key": "activate-uncertain",
+        "X-Tenant-Id": "tenant-alpha",
+    }
+    blocked = client.post(
+        "/bff/assistant/control-mode/activate",
+        json=payload,
+        headers=headers,
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["error"]["details"]["reason"] == "idempotency_recovery_required"
+
+    recovered = client.post(
+        "/bff/assistant/control-mode/activate",
+        json=payload,
+        headers={
+            **headers,
+            "X-Idempotency-Recovery-Id": "incident-LOOP-PROD-MAI-001-001",
+        },
+    )
+    assert recovered.status_code == 202, recovered.text
+    assert recovered.json()["data"]["active"] is True
+    persisted = path.read_text(encoding="utf-8")
+    assert "incident-LOOP-PROD-MAI-001-001" not in persisted
+    recovery = next(iter(json.loads(persisted)["records"].values()))["recovery"]
+    assert recovery["recovery_id_hash"] == hashlib.sha256(
+        b"incident-LOOP-PROD-MAI-001-001"
+    ).hexdigest()
 
 
 def test_control_mode_activation_rejects_invalid_ttl_and_idle_timeout(monkeypatch) -> None:
