@@ -23,10 +23,16 @@ class TrackingStore(MemoryPersonaProvisioningStore):
     def __init__(self) -> None:
         super().__init__()
         self.checkpoints: list[str] = []
+        self.checkpoint_lease_seconds: list[int] = []
 
-    def checkpoint(self, record, *, lease_owner):
+    def checkpoint(self, record, *, lease_owner, lease_seconds=60):
         self.checkpoints.append(record.current_step)
-        return super().checkpoint(record, lease_owner=lease_owner)
+        self.checkpoint_lease_seconds.append(lease_seconds)
+        return super().checkpoint(
+            record,
+            lease_owner=lease_owner,
+            lease_seconds=lease_seconds,
+        )
 
 
 class FakeOwnerTransport:
@@ -178,7 +184,7 @@ class FakeOwnerTransport:
                 "runtime_action": "deploy_new_binding",
                 "status": body["status"],
                 "created_at": "2026-07-15T00:00:00Z",
-                "binding_id": body["binding_id"],
+                "binding_id": body.get("binding_id"),
                 "rollback": body["rollback"],
                 "metadata": body["metadata"],
             }
@@ -196,6 +202,25 @@ class FakeOwnerTransport:
             }
             self._put(owner, f"/api/deployment/sagas/{body['saga_id']}", saga)
             return {"deployment_saga": {"saga": deepcopy(saga)}, "replayed": False}
+
+        if owner == "deployment" and path.endswith("/failure"):
+            target = path.removesuffix("/failure")
+            saga = self.objects[(owner, target)]
+            decision = {
+                "command_type": "abort_plan",
+                "owner_service": "deployment-orchestrator",
+                "plan_status": "aborted",
+                "binding_status": "none",
+                "write_scope": "deployment_plan",
+                "reason": body["reason"],
+            }
+            saga.update(
+                status="compensating",
+                current_step="compensation_requested",
+                failure_reason=body["reason"],
+                compensation=decision,
+            )
+            return decision
 
         raise AssertionError(f"unexpected mutation: {owner} {path}")
 
@@ -237,12 +262,19 @@ def _schedule_receipt(persona_id: str, pool_id: str, binding_id: str) -> dict[st
     }
 
 
-def _coordinator(store, transport, registrar) -> PersonaProvisioningCoordinator:
+def _coordinator(
+    store,
+    transport,
+    registrar,
+    *,
+    lease_seconds: int = 60,
+) -> PersonaProvisioningCoordinator:
     return PersonaProvisioningCoordinator(
         store=store,
         transport=transport,
         schedule_registrar=registrar,
         lease_owner="test-worker",
+        lease_seconds=lease_seconds,
     )
 
 
@@ -270,7 +302,12 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
         schedule_calls.append((persona_id, pool_id, binding_id))
         return _schedule_receipt(persona_id, pool_id, binding_id)
 
-    result = _coordinator(store, transport, registrar).coordinate(record)
+    result = _coordinator(
+        store,
+        transport,
+        registrar,
+        lease_seconds=137,
+    ).coordinate(record)
     ids = deterministic_provisioning_ids(record)
 
     assert result.state == "provisioning"
@@ -278,6 +315,8 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
     assert result.result["status"] == "dispatch_admitted"
     assert result.result["paper_running"] is False
     assert "runtime_binding_id" not in result.result
+    assert result.references["provisioning_readback_started_at"].endswith("Z")
+    assert set(store.checkpoint_lease_seconds) == {137}
     assert schedule_calls == [
         (record.persona_id, ids.capital_pool_id, ids.persona_capital_binding_id)
     ]
@@ -377,6 +416,10 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
     assert binding["allowed_deployment_scope"] == "paper"
 
     plan = _post_payload(transport, "/api/deployment/plans")
+    assert "binding_id" not in plan
+    assert plan["metadata"]["persona_capital_binding_id"] == (
+        ids.persona_capital_binding_id
+    )
     assert plan["registry_entry"]["artifact_state"] == "approved"
     assert plan["approval_decision"]["decision"] == "approved"
     assert plan["rollback"]["target_artifact_id"] == ids.baseline_registry_id
@@ -506,6 +549,7 @@ def test_mutation_payloads_parse_with_authoritative_owner_wire_models() -> None:
     assert plan.rollback is not None
     assert plan.rollback.target_artifact_id == ids.baseline_registry_id
     assert plan.rollback.target_version == ids.baseline_version
+    assert plan.binding_id is None
     assert dispatch.saga_id == ids.deployment_saga_id
 
     governance_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "governance"))
@@ -560,6 +604,7 @@ def test_response_loss_restart_and_duplicate_converge_without_duplicate_mutation
         return _schedule_receipt(persona_id, pool_id, binding_id)
 
     first = _coordinator(store, transport, registrar).coordinate(record)
+    readback_started_at = first.references["provisioning_readback_started_at"]
     first_mutations = transport.mutations.copy()
     restarted = PersonaProvisioningCoordinator(
         store=store,
@@ -571,6 +616,7 @@ def test_response_loss_restart_and_duplicate_converge_without_duplicate_mutation
 
     assert first.state == second.state == "provisioning"
     assert first.result == second.result
+    assert second.references["provisioning_readback_started_at"] == readback_started_at
     assert schedule_calls == [
         (record.persona_id, ids.capital_pool_id, ids.persona_capital_binding_id)
     ]
@@ -578,12 +624,148 @@ def test_response_loss_restart_and_duplicate_converge_without_duplicate_mutation
     assert transport.mutations[("deployment", dispatch_path)] == 1
 
 
+def test_safe_early_failure_retries_without_replaying_committed_owner_writes() -> None:
+    store, record = _record_and_store()
+    ids = deterministic_provisioning_ids(record)
+    proposal_path = "/api/governance/approvals"
+    transport = FakeOwnerTransport(mutation_failure={proposal_path})
+    schedule_calls = 0
+
+    def registrar(persona_id: str, pool_id: str, binding_id: str):
+        nonlocal schedule_calls
+        schedule_calls += 1
+        return _schedule_receipt(persona_id, pool_id, binding_id)
+
+    first = _coordinator(store, transport, registrar).coordinate(record)
+
+    assert first.state == "failed"
+    assert first.error["failed_step"] == "baseline_approval_proposed"
+    assert first.compensation is None
+    assert "persona_capital_binding_created" not in first.references
+    assert "deployment_plan" not in first.references
+
+    transport.mutation_failure.remove(proposal_path)
+    second = PersonaProvisioningCoordinator(
+        store=store,
+        transport=transport,
+        schedule_registrar=registrar,
+        lease_owner="safe-retry-worker",
+    ).coordinate(store.get(record.tenant_id, record.idempotency_key))
+
+    assert second.state == "provisioning"
+    assert second.current_step == "schedule_registered"
+    assert second.attempt_count == 2
+    assert schedule_calls == 1
+    assert transport.mutations[("capital", "/api/capital-pools")] == 1
+    baseline_posts = [
+        call
+        for call in transport.calls
+        if call[0] == "POST"
+        and call[2] == "/api/registry/strategy-specs"
+        and call[3]["registry_id"] == ids.baseline_registry_id
+    ]
+    assert len(baseline_posts) == 1
+
+
+def test_unclassified_failed_record_stays_terminal_without_forward_replay() -> None:
+    store, record = _record_and_store()
+    failed = store.acquire(
+        record.tenant_id,
+        record.idempotency_key,
+        lease_owner="failed-record-writer",
+        lease_seconds=60,
+    )
+    assert failed is not None
+    failed.state = "failed"
+    failed.current_step = "unclassified_failure"
+    failed.error = {"failed_step": "unknown", "terminal_reason": "ambiguous state"}
+    failed = store.checkpoint(
+        failed,
+        lease_owner="failed-record-writer",
+        lease_seconds=60,
+    )
+    store.release(
+        failed,
+        lease_owner="failed-record-writer",
+        lease_seconds=60,
+    )
+    transport = FakeOwnerTransport()
+    schedule_called = False
+
+    def registrar(*_args):
+        nonlocal schedule_called
+        schedule_called = True
+        raise AssertionError("unclassified terminal failure must not replay")
+
+    replay = _coordinator(store, transport, registrar).coordinate(record)
+
+    assert replay.state == "failed"
+    assert replay.attempt_count == 1
+    assert transport.calls == []
+    assert schedule_called is False
+
+
+def test_compensation_response_loss_and_restart_converge_from_saga_readback() -> None:
+    store, record = _record_and_store()
+    ids = deterministic_provisioning_ids(record)
+    saga_path = f"/api/deployment/sagas/{ids.deployment_saga_id}"
+    failure_path = f"{saga_path}/failure"
+    transport = FakeOwnerTransport(response_loss={failure_path})
+    schedule_calls = 0
+
+    def registrar(*_args):
+        nonlocal schedule_calls
+        schedule_calls += 1
+        raise ConnectionError("cron unavailable after dispatch")
+
+    first = _coordinator(store, transport, registrar).coordinate(record)
+    mutations_after_first = transport.mutations.copy()
+
+    assert first.state == "failed"
+    assert first.compensation["status"] == "pending"
+    assert first.compensation["deployment"]["status"] == "requested"
+    assert transport.mutations[("deployment", failure_path)] == 1
+
+    restarted = PersonaProvisioningCoordinator(
+        store=store,
+        transport=transport,
+        schedule_registrar=registrar,
+        lease_owner="compensation-restart-worker",
+    ).coordinate(store.get(record.tenant_id, record.idempotency_key))
+
+    assert restarted.state == "failed"
+    assert restarted.compensation["status"] == "pending"
+    assert transport.mutations == mutations_after_first
+    assert schedule_calls == 1
+
+    saga = transport.objects[("deployment", saga_path)]
+    saga.update(status="failed", current_step="compensated")
+    terminal = PersonaProvisioningCoordinator(
+        store=store,
+        transport=transport,
+        schedule_registrar=registrar,
+        lease_owner="compensation-terminal-worker",
+    ).coordinate(store.get(record.tenant_id, record.idempotency_key))
+
+    assert terminal.state == "compensated"
+    assert terminal.compensation["status"] == "completed"
+    assert terminal.compensation["deployment"]["status"] == "completed"
+    assert terminal.references["deployment_compensation_readback"]["current_step"] == (
+        "compensated"
+    )
+    assert transport.mutations == mutations_after_first
+    assert schedule_calls == 1
+
+
 @pytest.mark.parametrize("failure_mode", ["dry_run", "unavailable"])
 def test_schedule_failure_is_terminal_and_suspends_partial_admission(failure_mode: str) -> None:
     store, record = _record_and_store()
     transport = FakeOwnerTransport()
+    schedule_calls = 0
 
     def registrar(persona_id: str, pool_id: str, binding_id: str):
+        nonlocal schedule_calls
+        schedule_calls += 1
         if failure_mode == "unavailable":
             raise ConnectionError("cron gateway unavailable")
         return {
@@ -599,14 +781,31 @@ def test_schedule_failure_is_terminal_and_suspends_partial_admission(failure_mod
     ids = deterministic_provisioning_ids(record)
     binding_path = f"/api/bindings/{ids.persona_capital_binding_id}"
 
-    assert result.state == "compensated"
+    assert result.state == "failed"
     assert result.error["failed_step"] == "schedule_registration"
     assert result.error["terminal_reason"]
-    assert result.compensation["status"] == "completed"
+    assert result.compensation["status"] == "pending"
     assert result.compensation["action"] == "suspend_persona_capital_binding"
+    assert result.compensation["deployment"]["status"] == "requested"
+    assert result.references["deployment_compensation_readback"]["status"] == (
+        "compensating"
+    )
     assert result.references["persona_capital_binding_suspended"]["status"] == "suspended"
     assert transport.objects[("capital", binding_path)]["status"] == "suspended"
     assert transport.mutations[("capital", f"{binding_path}/status")] == 1
+
+    mutations_after_failure = transport.mutations.copy()
+    replay = PersonaProvisioningCoordinator(
+        store=store,
+        transport=transport,
+        schedule_registrar=registrar,
+        lease_owner="terminal-replay-worker",
+    ).coordinate(store.get(record.tenant_id, record.idempotency_key))
+
+    assert replay.state == "failed"
+    assert replay.compensation["status"] == "pending"
+    assert schedule_calls == 1
+    assert transport.mutations == mutations_after_failure
 
 
 def test_dry_run_is_pure_and_does_not_touch_store_transport_or_registrar() -> None:

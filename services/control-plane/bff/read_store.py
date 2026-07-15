@@ -11534,6 +11534,31 @@ class ReadSurfaceStore:
             reverse=True,
         )
 
+    def list_authoritative_paper_runtime_monitoring_sessions(self) -> List[Dict[str, Any]]:
+        """Return only paper-fleet owner records, never local/snapshot substitutes.
+
+        Persona provisioning is a safety-relevant lifecycle gate.  Local BFF
+        overlays and bundled snapshots remain useful for operator read views,
+        but they cannot prove that the canonical paper worker has joined its
+        RuntimeBinding.  An unavailable owner therefore reads back as no
+        authoritative evidence and leaves provisioning pending.
+        """
+
+        available, raw_sessions = self._canonical.list_records(
+            "paper_runtime_monitoring_sessions"
+        )
+        if not available:
+            return []
+        return sorted(
+            [
+                json.loads(json.dumps(session))
+                for session in raw_sessions
+                if isinstance(session, dict)
+            ],
+            key=self._paper_runtime_monitoring_sort_key,
+            reverse=True,
+        )
+
     def get_paper_runtime_monitoring_session(
         self,
         *,

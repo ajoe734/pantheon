@@ -33,8 +33,11 @@ def _raw_persona(**metadata_overrides: Any) -> dict[str, Any]:
         "persona_capital_binding_id": PERSONA_CAPITAL_BINDING_ID,
         "binding_id": PERSONA_CAPITAL_BINDING_ID,
         "deployment_plan_id": PLAN_ID,
+        "deployment_saga_id": "saga-dynamic-alpha",
+        "internal_paper_capital_pool_id": "pool-dynamic-alpha",
         "runtime_binding_id": RUNTIME_BINDING_ID,
         "runtime_id": RUNTIME_ID,
+        "provisioning_readback_started_at": _now(),
     }
     metadata.update(metadata_overrides)
     return {
@@ -95,8 +98,11 @@ class _FakeReadStore:
     sessions: list[dict[str, Any]] = field(default_factory=list)
     updates: list[dict[str, Any]] = field(default_factory=list)
 
-    def list_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
+    def list_authoritative_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
         return deepcopy(self.sessions)
+
+    def list_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
+        raise AssertionError("local/snapshot monitoring sessions are not lifecycle evidence")
 
     @staticmethod
     def _paper_runtime_monitoring_session_active(session: dict[str, Any]) -> bool:
@@ -345,6 +351,65 @@ def test_duplicate_live_workers_fail_closed(harness: _Harness) -> None:
     ]
 
 
+def test_one_fresh_replacement_ignores_historical_ended_worker(harness: _Harness) -> None:
+    harness.read_store.sessions = [
+        _worker_session(session_id="paper-worker-alpha-current"),
+        _worker_session(
+            session_id="paper-worker-alpha-old",
+            status="ended",
+            active=False,
+            ended_at=_now(-30),
+            last_heartbeat_at=_now(-120),
+        ),
+    ]
+
+    state, _ = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "paper_running"
+
+
+def test_projection_requires_exact_durable_saga_identity(harness: _Harness) -> None:
+    harness.projection["deployment_saga_id"] = "saga-other"
+
+    state, raw = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning_failed"
+    assert "deployment_projection_identity_mismatched" in raw["metadata"][
+        "provisioning_failure_reason"
+    ]
+
+
+def test_timeout_starts_at_durable_readback_checkpoint_not_persona_creation(
+    harness: _Harness,
+) -> None:
+    old_persona = _raw_persona()
+    old_persona["created_at"] = _now(-3600)
+    old_persona["metadata"]["provisioning_readback_started_at"] = _now()
+
+    state, _ = _evaluate(
+        raw=old_persona,
+        bindings={},
+        cron_registrations=set(),
+    )
+
+    assert state == "provisioning"
+
+    old_persona["metadata"]["provisioning_readback_started_at"] = _now(-601)
+    state, raw = _evaluate(
+        raw=old_persona,
+        bindings={},
+        cron_registrations=set(),
+    )
+    assert state == "provisioning_failed"
+    assert "provisioning_timeout" in raw["metadata"]["provisioning_failure_reason"]
+
+
 @pytest.mark.parametrize("saga_state", ["failed", "compensated"])
 def test_terminal_saga_precedes_other_success_signals(
     harness: _Harness,
@@ -418,3 +483,47 @@ def test_cron_degraded_does_not_raise_or_fake_success(
 
     assert state == "provisioning"
     assert harness.provisioning_store.released == []
+
+
+def test_runtime_identity_is_forwarded_to_exact_schedule_reconciliation(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def reconcile(
+        persona_id: str,
+        capital_pool_id: str,
+        persona_capital_binding_id: str,
+        *,
+        runtime_id: str | None = None,
+        runtime_binding_id: str | None = None,
+    ) -> dict[str, Any]:
+        calls.append(
+            {
+                "persona_id": persona_id,
+                "capital_pool_id": capital_pool_id,
+                "persona_capital_binding_id": persona_capital_binding_id,
+                "runtime_id": runtime_id,
+                "runtime_binding_id": runtime_binding_id,
+            }
+        )
+        return {"authoritative_readback": {"registered": True, **calls[-1]}}
+
+    monkeypatch.setattr(bff_main, "_register_persona_cron_required", reconcile)
+
+    state, _ = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding()},
+        cron_registrations=None,
+    )
+
+    assert state == "paper_running"
+    assert calls == [
+        {
+            "persona_id": PERSONA_ID,
+            "capital_pool_id": "pool-dynamic-alpha",
+            "persona_capital_binding_id": PERSONA_CAPITAL_BINDING_ID,
+            "runtime_id": RUNTIME_ID,
+            "runtime_binding_id": RUNTIME_BINDING_ID,
+        }
+    ]

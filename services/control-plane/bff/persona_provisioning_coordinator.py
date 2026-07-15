@@ -147,6 +147,58 @@ class PersonaProvisioningCoordinator:
         self.lease_seconds = lease_seconds
         self.actor_id = actor_id
 
+    def _checkpoint(self, record: ProvisioningRecord) -> ProvisioningRecord:
+        """Persist a receipt while renewing this coordinator's lease."""
+
+        return self.store.checkpoint(
+            record,
+            lease_owner=self.lease_owner,
+            lease_seconds=self.lease_seconds,
+        )
+
+    @staticmethod
+    def _is_safe_early_failure(record: ProvisioningRecord) -> bool:
+        """Allow replay only before binding or deployment ownership can exist."""
+
+        if record.state != "failed" or record.compensation is not None:
+            return False
+        failed_step = str((record.error or {}).get("failed_step") or "")
+        safe_steps = {
+            "capital_pool",
+            "baseline_strategy_spec_candidate",
+            "baseline_approval_proposed",
+            "baseline_approval_reviewed",
+            "baseline_approval_decided",
+            "baseline_strategy_spec_approved",
+            "strategy_spec_candidate",
+            "approval_proposed",
+            "approval_reviewed",
+            "approval_decided",
+            "strategy_spec_approved",
+        }
+        if failed_step not in safe_steps:
+            return False
+        return not any(
+            str(key).startswith(("persona_capital_binding", "deployment"))
+            for key in record.references
+        )
+
+    @staticmethod
+    def _needs_compensation_reconciliation(record: ProvisioningRecord) -> bool:
+        compensation = record.compensation or {}
+        failed_step = str((record.error or {}).get("failed_step") or "")
+        may_have_unsafe_side_effect = bool(compensation) or failed_step.startswith(
+            ("persona_capital_binding", "deployment", "schedule")
+        ) or any(
+            str(key).startswith(("persona_capital_binding", "deployment"))
+            for key in record.references
+        )
+        return (
+            record.state == "failed"
+            and compensation.get("status") != "completed"
+            and may_have_unsafe_side_effect
+        )
+
     def coordinate(
         self,
         record: ProvisioningRecord,
@@ -169,7 +221,10 @@ class PersonaProvisioningCoordinator:
             raise PersonaProvisioningCoordinationError(
                 "Persona provisioning must be reserved before coordination"
             )
-        if existing.state in TERMINAL_STATES:
+        safe_early_retry = self._is_safe_early_failure(existing)
+        if existing.state in TERMINAL_STATES and not safe_early_retry:
+            if self._needs_compensation_reconciliation(existing):
+                return self._resume_failure_compensation(existing)
             return existing
 
         active = self.store.acquire(
@@ -182,6 +237,14 @@ class PersonaProvisioningCoordinator:
             raise PersonaProvisioningCoordinationError(
                 "Persona provisioning record is leased by another coordinator"
             )
+
+        if safe_early_retry:
+            active.state = "provisioning"
+            active.current_step = "safe_early_failure_retry_started"
+            active.error = None
+            active.compensation = None
+            active.result = None
+            active = self._checkpoint(active)
 
         failed_step = "capital_pool"
         ids = deterministic_provisioning_ids(active)
@@ -252,10 +315,43 @@ class PersonaProvisioningCoordinator:
                 "deployment_saga_id": ids.deployment_saga_id,
                 "first_evaluation_workflow_id": FIRST_EVALUATION_WORKFLOW_ID,
             }
-            active = self.store.checkpoint(active, lease_owner=self.lease_owner)
+            active = self._checkpoint(active)
         except Exception as exc:  # noqa: BLE001 - downstream boundaries are injected
             active = self._record_failure(active, ids, failed_step=failed_step, error=exc)
-        return self.store.release(active, lease_owner=self.lease_owner)
+        return self.store.release(
+            active,
+            lease_owner=self.lease_owner,
+            lease_seconds=self.lease_seconds,
+        )
+
+    def _resume_failure_compensation(
+        self,
+        record: ProvisioningRecord,
+    ) -> ProvisioningRecord:
+        """Resume only fail-closed work; never replay unsafe forward steps."""
+
+        active = self.store.acquire(
+            record.tenant_id,
+            record.idempotency_key,
+            lease_owner=self.lease_owner,
+            lease_seconds=self.lease_seconds,
+        )
+        if active is None:
+            raise PersonaProvisioningCoordinationError(
+                "Persona provisioning failure is leased by another coordinator"
+            )
+        active.state = "failed"
+        failed_step = str((active.error or {}).get("failed_step") or "unknown")
+        active = self._compensate_failure(
+            active,
+            deterministic_provisioning_ids(active),
+            failed_step=failed_step,
+        )
+        return self.store.release(
+            active,
+            lease_owner=self.lease_owner,
+            lease_seconds=self.lease_seconds,
+        )
 
     def _preview(self, record: ProvisioningRecord) -> ProvisioningRecord:
         preview = ProvisioningRecord.from_mapping(record.to_dict())
@@ -298,7 +394,7 @@ class PersonaProvisioningCoordinator:
     ) -> ProvisioningRecord:
         record.current_step = step
         record.references[key] = deepcopy(dict(receipt))
-        return self.store.checkpoint(record, lease_owner=self.lease_owner)
+        return self._checkpoint(record)
 
     @staticmethod
     def _requested_by(record: ProvisioningRecord) -> str | None:
@@ -968,7 +1064,6 @@ class PersonaProvisioningCoordinator:
             "approval_decision": approval_receipt,
             "created_by": self.actor_id,
             "sponsor_persona_id": record.persona_id,
-            "binding_id": ids.persona_capital_binding_id,
             "scale": {"capital_scale_pct": 0.0, "gross_scale_pct": 100.0},
             "rollback": {
                 "target_artifact_id": baseline_entry["registry_id"],
@@ -1002,6 +1097,8 @@ class PersonaProvisioningCoordinator:
         def validate(receipt: Mapping[str, Any]) -> None:
             rollback = receipt.get("rollback")
             rollback = rollback if isinstance(rollback, Mapping) else {}
+            metadata = receipt.get("metadata")
+            metadata = metadata if isinstance(metadata, Mapping) else {}
             if (
                 receipt.get("plan_id") != ids.deployment_plan_id
                 or receipt.get("approval_decision_id") != ids.approval_decision_id
@@ -1011,7 +1108,11 @@ class PersonaProvisioningCoordinator:
                 or receipt.get("capital_pool_id") != ids.capital_pool_id
                 or receipt.get("target_stage") != "paper"
                 or receipt.get("status") not in {"approved", "executing", "executed"}
-                or receipt.get("binding_id") != ids.persona_capital_binding_id
+                # DeploymentPlan.binding_id is reserved for the canonical
+                # RuntimeBinding and must never alias PersonaCapitalBinding.
+                or receipt.get("binding_id") == ids.persona_capital_binding_id
+                or metadata.get("persona_capital_binding_id")
+                != ids.persona_capital_binding_id
                 or rollback.get("target_artifact_id") != ids.baseline_registry_id
                 or rollback.get("target_version") != ids.baseline_version
             ):
@@ -1162,6 +1263,8 @@ class PersonaProvisioningCoordinator:
             )
             receipt = _mapping(value, label="first-evaluation schedule registrar")
             self._validate_schedule_receipt(receipt, record, ids)
+        if "provisioning_readback_started_at" not in record.references:
+            record.references["provisioning_readback_started_at"] = utc_now()
         return self._checkpoint_receipt(
             record,
             step="schedule_registered_readback",
@@ -1186,79 +1289,270 @@ class PersonaProvisioningCoordinator:
         record.result = None
         record.state = "failed"
         record.current_step = f"{failed_step}_failed"
-        record = self.store.checkpoint(record, lease_owner=self.lease_owner)
+        record = self._checkpoint(record)
+        return self._compensate_failure(record, ids, failed_step=failed_step)
+
+    def _request_deployment_compensation(
+        self,
+        record: ProvisioningRecord,
+        ids: ProvisioningIds,
+        *,
+        failed_step: str,
+        require_saga: bool,
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """Hand failure to Deployment and prove the committed saga state."""
+
+        saga_path = f"/api/deployment/sagas/{_path_id(ids.deployment_saga_id)}"
+        saga = self._owner_get("deployment", saga_path)
+        if saga is None:
+            if require_saga:
+                raise PersonaProvisioningCoordinationError(
+                    "checkpointed deployment dispatch has no authoritative saga readback"
+                )
+            return None, True
+
+        def validate_identity(value: Mapping[str, Any]) -> None:
+            if (
+                value.get("saga_id") != ids.deployment_saga_id
+                or value.get("plan_id") != ids.deployment_plan_id
+            ):
+                raise PersonaProvisioningCoordinationError(
+                    "deployment compensation readback has the wrong saga identity"
+                )
+
+        validate_identity(saga)
+        status = str(saga.get("status") or "")
+        mutation_error: Exception | None = None
+        if status not in {"compensating", "failed", "aborted"}:
+            try:
+                self.transport.post(
+                    "deployment",
+                    f"{saga_path}/failure",
+                    {
+                        "reason": (
+                            f"Persona provisioning {failed_step} failed: "
+                            f"{(record.error or {}).get('terminal_reason') or 'unknown error'}"
+                        )
+                    },
+                )
+            except Exception as exc:  # response loss is reconciled by GET
+                mutation_error = exc
+            saga = self._owner_get("deployment", saga_path)
+            if saga is None:
+                detail = f": {mutation_error}" if mutation_error else ""
+                raise PersonaProvisioningCoordinationError(
+                    f"deployment compensation request has no saga readback{detail}"
+                )
+            validate_identity(saga)
+            status = str(saga.get("status") or "")
+
+        decision = saga.get("compensation")
+        if not isinstance(decision, Mapping):
+            detail = f" after mutation error: {mutation_error}" if mutation_error else ""
+            raise PersonaProvisioningCoordinationError(
+                f"deployment compensation readback has no durable decision{detail}"
+            )
+        current_step = str(saga.get("current_step") or "")
+        if status == "compensating" and current_step == "compensation_requested":
+            return saga, False
+        if status in {"failed", "aborted"} and current_step == "compensated":
+            return saga, True
+        raise PersonaProvisioningCoordinationError(
+            "deployment compensation did not reach a recognized authoritative state "
+            f"(status={status!r}, current_step={current_step!r})"
+        )
+
+    def _compensate_failure(
+        self,
+        record: ProvisioningRecord,
+        ids: ProvisioningIds,
+        *,
+        failed_step: str,
+    ) -> ProvisioningRecord:
+        """Reconcile Deployment handoff and fail-close the capital binding."""
+
+        deployment_receipt: dict[str, Any] | None = None
+        deployment_complete = True
+        deployment_error: Exception | None = None
+        may_have_dispatched = (
+            "deployment_dispatch" in record.references
+            or failed_step in {"deployment_dispatch", "schedule_registration"}
+        )
+        if may_have_dispatched:
+            try:
+                deployment_receipt, deployment_complete = (
+                    self._request_deployment_compensation(
+                        record,
+                        ids,
+                        failed_step=failed_step,
+                        require_saga=(
+                            "deployment_dispatch" in record.references
+                            or failed_step == "schedule_registration"
+                        ),
+                    )
+                )
+                if deployment_receipt is not None:
+                    record.references["deployment_compensation_readback"] = deepcopy(
+                        deployment_receipt
+                    )
+                    record.compensation = {
+                        "status": "in_progress" if deployment_complete else "pending",
+                        "deployment": {
+                            "saga_id": ids.deployment_saga_id,
+                            "status": (
+                                "completed" if deployment_complete else "requested"
+                            ),
+                            "receipt": deepcopy(deployment_receipt),
+                        },
+                    }
+                    record.current_step = (
+                        "deployment_compensation_terminal_readback"
+                        if deployment_complete
+                        else "deployment_compensation_requested_readback"
+                    )
+                    record = self._checkpoint(record)
+            except Exception as exc:  # noqa: BLE001 - fail closed below
+                deployment_complete = False
+                deployment_error = exc
 
         binding_path = f"/api/bindings/{_path_id(ids.persona_capital_binding_id)}"
         attempted_action = "inspect_persona_capital_binding_for_fail_closed_compensation"
         attempted_target_status: str | None = None
+        binding: dict[str, Any] | None = None
+        binding_error: Exception | None = None
+        binding_complete = False
+        action: str | None = None
+        target_status: str | None = None
         try:
             binding = self._owner_get("capital", binding_path)
-            if binding is None:
-                return record
-            # Never compensate an ID collision or receipt belonging to a
-            # different tenant/persona.  Identity is proven before mutation.
-            self._validate_binding_identity(binding, record, ids)
-            current_status = str(binding.get("status") or "")
-            if current_status == "active":
-                target_status = "suspended"
-                action = "suspend_persona_capital_binding"
-            elif current_status == "pending":
-                target_status = "revoked"
-                action = "revoke_pending_persona_capital_binding"
-            elif current_status in {"suspended", "revoked", "expired"}:
-                target_status = current_status
-                action = "persona_capital_binding_already_fail_closed"
-            else:
-                raise PersonaProvisioningCoordinationError(
-                    f"binding compensation cannot classify status {current_status!r}"
-                )
-            attempted_action = action
-            attempted_target_status = target_status
-            if current_status != target_status:
-                mutation_error: Exception | None = None
-                try:
-                    self.transport.patch(
-                        "capital",
-                        f"{binding_path}/status",
-                        {
-                            "actor_id": self.actor_id,
-                            "actor_role": "persona.admin",
-                            "status": target_status,
-                        },
-                    )
-                except Exception as exc:  # response loss is reconciled by GET
-                    mutation_error = exc
-                binding = self._owner_get("capital", binding_path)
-                if binding is None or binding.get("status") != target_status:
-                    detail = f": {mutation_error}" if mutation_error else ""
+            if binding is not None:
+                # Never compensate an ID collision or receipt belonging to a
+                # different tenant/persona.  Identity is proven before mutation.
+                self._validate_binding_identity(binding, record, ids)
+                current_status = str(binding.get("status") or "")
+                if current_status == "active":
+                    target_status = "suspended"
+                    action = "suspend_persona_capital_binding"
+                elif current_status == "pending":
+                    target_status = "revoked"
+                    action = "revoke_pending_persona_capital_binding"
+                elif current_status in {"suspended", "revoked", "expired"}:
+                    target_status = current_status
+                    action = "persona_capital_binding_already_fail_closed"
+                else:
                     raise PersonaProvisioningCoordinationError(
-                        f"binding fail-closed transition has no authoritative receipt{detail}"
+                        f"binding compensation cannot classify status {current_status!r}"
                     )
-            self._validate_binding_identity(binding, record, ids)
-            receipt_key = f"persona_capital_binding_{target_status}"
-            record.references[receipt_key] = deepcopy(binding)
+                attempted_action = action
+                attempted_target_status = target_status
+                if current_status != target_status:
+                    mutation_error: Exception | None = None
+                    try:
+                        self.transport.patch(
+                            "capital",
+                            f"{binding_path}/status",
+                            {
+                                "actor_id": self.actor_id,
+                                "actor_role": "persona.admin",
+                                "status": target_status,
+                            },
+                        )
+                    except Exception as exc:  # response loss is reconciled by GET
+                        mutation_error = exc
+                    binding = self._owner_get("capital", binding_path)
+                    if binding is None or binding.get("status") != target_status:
+                        detail = f": {mutation_error}" if mutation_error else ""
+                        raise PersonaProvisioningCoordinationError(
+                            "binding fail-closed transition has no authoritative receipt"
+                            f"{detail}"
+                        )
+                self._validate_binding_identity(binding, record, ids)
+                record.references[f"persona_capital_binding_{target_status}"] = deepcopy(
+                    binding
+                )
+                binding_complete = True
+        except Exception as exc:  # noqa: BLE001 - aggregate both owner failures
+            binding_error = exc
+
+        # A genuinely early failure has no binding or deployment side effect.
+        # Leave it as a retryable failed record rather than claiming compensation.
+        if binding is None and not may_have_dispatched and binding_error is None:
+            record.state = "failed"
+            record.current_step = f"{failed_step}_failed"
+            record.compensation = None
+            return self._checkpoint(record)
+        if binding is None and binding_error is None:
+            binding_error = PersonaProvisioningCoordinationError(
+                "unsafe provisioning failure has no authoritative PersonaCapitalBinding "
+                "readback to prove fail-closed state"
+            )
+
+        deployment_summary: dict[str, Any] | None = None
+        if deployment_receipt is not None:
+            deployment_summary = {
+                "saga_id": ids.deployment_saga_id,
+                "status": "completed" if deployment_complete else "requested",
+                "receipt": deepcopy(deployment_receipt),
+            }
+        elif deployment_error is not None:
+            deployment_summary = {
+                "saga_id": ids.deployment_saga_id,
+                "status": "failed",
+                "terminal_reason": str(deployment_error)
+                or deployment_error.__class__.__name__,
+            }
+
+        record.error = record.error or {"failed_step": failed_step}
+        record.error.pop("compensation_error", None)
+        if binding_complete and deployment_complete and deployment_error is None:
+            record.state = "compensated"
+            record.current_step = (
+                "deployment_and_binding_compensation_readback"
+                if deployment_receipt is not None
+                else f"binding_{target_status}_compensation_readback"
+            )
             record.compensation = {
                 "status": "completed",
                 "action": action,
                 "binding_id": ids.persona_capital_binding_id,
                 "resulting_status": target_status,
                 "receipt": deepcopy(binding),
+                "deployment": deployment_summary,
                 "compensated_at": utc_now(),
             }
-            record.state = "compensated"
-            record.current_step = f"binding_{target_status}_compensation_readback"
-            return self.store.checkpoint(record, lease_owner=self.lease_owner)
-        except Exception as compensation_error:  # noqa: BLE001
+        else:
+            errors = [
+                str(value) or value.__class__.__name__
+                for value in (deployment_error, binding_error)
+                if value is not None
+            ]
+            pending = (
+                binding_complete
+                and deployment_receipt is not None
+                and not deployment_complete
+                and not errors
+            )
             record.state = "failed"
-            record.current_step = "compensation_failed"
+            record.current_step = (
+                "deployment_compensation_requested_readback"
+                if pending
+                else "compensation_failed"
+            )
             record.compensation = {
-                "status": "failed",
-                "action": attempted_action,
+                "status": "pending" if pending else "failed",
+                "action": action or attempted_action,
                 "binding_id": ids.persona_capital_binding_id,
-                "target_status": attempted_target_status,
-                "terminal_reason": str(compensation_error)
-                or compensation_error.__class__.__name__,
-                "failed_at": utc_now(),
+                "target_status": target_status or attempted_target_status,
+                "resulting_status": target_status if binding_complete else None,
+                "receipt": deepcopy(binding) if binding_complete else None,
+                "deployment": deployment_summary,
+                (
+                    "requested_at" if pending else "failed_at"
+                ): utc_now(),
             }
-            record.error["compensation_error"] = record.compensation["terminal_reason"]
-            return self.store.checkpoint(record, lease_owner=self.lease_owner)
+            if errors:
+                record.compensation["terminal_reason"] = "; ".join(errors)
+                record.error["compensation_error"] = record.compensation[
+                    "terminal_reason"
+                ]
+        return self._checkpoint(record)

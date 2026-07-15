@@ -183,7 +183,7 @@ def test_memory_store_concurrent_lease_has_exactly_one_winner() -> None:
     assert persisted.lease_owner == winners[0].lease_owner
 
 
-def test_memory_store_failed_attempt_can_be_released_and_reacquired() -> None:
+def test_memory_store_terminal_failure_stays_terminal_when_reacquired() -> None:
     store = MemoryPersonaProvisioningStore()
     _reserve(store)
     first = store.acquire(
@@ -208,11 +208,37 @@ def test_memory_store_failed_attempt_can_be_released_and_reacquired() -> None:
         lease_seconds=60,
     )
     assert retry is not None
-    assert retry.state == "provisioning"
+    assert retry.state == "failed"
     assert retry.attempt_count == 2
     assert retry.current_step == "runtime_binding_failed"
     assert retry.references == {"runtime_binding_id": "rb-failed"}
     assert retry.error == {"code": "runtime_binding_failed", "retryable": True}
+
+
+def test_memory_store_checkpoint_renews_the_current_lease() -> None:
+    store = MemoryPersonaProvisioningStore()
+    _reserve(store)
+    record = store.acquire(
+        TENANT,
+        IDEMPOTENCY_KEY,
+        lease_owner="worker-renewing",
+        lease_seconds=5,
+    )
+    assert record is not None
+    original_expiry = datetime.fromisoformat(record.lease_expires_at.replace("Z", "+00:00"))
+
+    record.current_step = "long_owner_round_trip_readback"
+    renewed = store.checkpoint(
+        record,
+        lease_owner="worker-renewing",
+        lease_seconds=120,
+    )
+    renewed_expiry = datetime.fromisoformat(
+        renewed.lease_expires_at.replace("Z", "+00:00")
+    )
+
+    assert renewed_expiry > original_expiry
+    assert renewed.current_step == "long_owner_round_trip_readback"
 
 
 def test_memory_store_checkpoint_and_release_require_current_owner() -> None:
@@ -390,9 +416,15 @@ def test_postgres_lease_sql_is_atomic_and_checkpoint_is_expiry_guarded() -> None
     connect.rows.append(
         _postgres_row(current_step="runtime_binding_received", lease_owner="worker-postgres")
     )
-    saved = store.checkpoint(acquired, lease_owner="worker-postgres")
+    saved = store.checkpoint(
+        acquired,
+        lease_owner="worker-postgres",
+        lease_seconds=45,
+    )
     assert saved.current_step == "runtime_binding_received"
     checkpoint_sql, checkpoint_params = connect.executions[-1]
     assert "lease_owner=%s" in checkpoint_sql
     assert "lease_expires_at > now()" in checkpoint_sql
+    assert "lease_expires_at=now() + (%s * interval '1 second')" in checkpoint_sql
+    assert checkpoint_params[-4] == 45
     assert checkpoint_params[-3:] == (TENANT, IDEMPOTENCY_KEY, "worker-postgres")

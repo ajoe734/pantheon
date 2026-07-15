@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from collections.abc import Callable
 from unittest.mock import patch
 
 from persona_cron_registrar import (
@@ -16,7 +17,16 @@ from persona_cron_registrar import (
 from workflows import PERSONA_FIRST_EVALUATION_WORKFLOW_ID, WORKFLOW_CATALOG
 
 
-def _existing_job_fixture(workflow_id: str, persona_id: str, job_id: str) -> dict:
+def _existing_job_fixture(
+    workflow_id: str,
+    persona_id: str,
+    job_id: str,
+    *,
+    runtime_id: str | None = None,
+    runtime_binding_id: str | None = None,
+    capital_pool_id: str | None = None,
+    persona_capital_binding_id: str | None = None,
+) -> dict:
     """Build a fixture cron-list entry shaped like a real registered job.
 
     Existence is now matched on the payload's ``persona_id``/``workflow_id``
@@ -24,12 +34,33 @@ def _existing_job_fixture(workflow_id: str, persona_id: str, job_id: str) -> dic
     field, so fixtures must carry a real payload to be recognized as already
     registered.
     """
+    workflow = WORKFLOW_CATALOG[workflow_id]
+    event = {
+        "kind": "pantheon.workflow.dispatch",
+        "persona_id": persona_id,
+        "policy_id": workflow.policy_id,
+        "request_id": f"fixture-{job_id}",
+        "upstream_entrypoint": workflow.upstream_entrypoint,
+        "workflow_id": workflow_id,
+    }
+    if workflow_id == PERSONA_FIRST_EVALUATION_WORKFLOW_ID:
+        event.update(
+            {
+                "runtime_id": runtime_id,
+                "runtime_binding_id": runtime_binding_id,
+                "capital_pool_id": capital_pool_id,
+                "persona_capital_binding_id": persona_capital_binding_id,
+            }
+        )
     return {
         "id": job_id,
         "name": _job_name(workflow_id, persona_id),
+        "enabled": True,
+        "schedule": {"kind": "cron", "expr": workflow.schedule},
+        "sessionTarget": persona_id,
         "payload": {
             "kind": "systemEvent",
-            "text": json.dumps({"persona_id": persona_id, "workflow_id": workflow_id}),
+            "text": json.dumps(event),
         },
     }
 
@@ -43,12 +74,26 @@ class GatewayRuntimeSpy:
         existing_jobs: list[dict] | None = None,
         cron_list_page_size: int | None = None,
         cron_list_raises: bool = False,
+        response_loss_after_apply: set[str] | None = None,
+        mutation_fail_before_apply: set[str] | None = None,
     ):
         self.calls: list[tuple[str, dict | None]] = []
         self._fail_on = fail_on or set()
         self._existing_jobs = existing_jobs or []
         self._cron_list_page_size = cron_list_page_size
         self._cron_list_raises = cron_list_raises
+        self._response_loss_after_apply = set(response_loss_after_apply or set())
+        self._mutation_fail_before_apply = set(mutation_fail_before_apply or set())
+
+    def _fail_before_apply(self, method: str) -> None:
+        if method in self._mutation_fail_before_apply:
+            self._mutation_fail_before_apply.remove(method)
+            raise RuntimeError(f"simulated {method} failure before apply")
+
+    def _lose_response_after_apply(self, method: str) -> None:
+        if method in self._response_loss_after_apply:
+            self._response_loss_after_apply.remove(method)
+            raise RuntimeError(f"simulated {method} response loss after apply")
 
     def gateway_call(self, method: str, params: dict | None = None) -> dict:
         self.calls.append((method, params))
@@ -66,9 +111,23 @@ class GatewayRuntimeSpy:
                 "nextOffset": next_offset,
             }
         if method == "cron.remove":
+            self._fail_before_apply(method)
             job_id = (params or {}).get("id")
             self._existing_jobs = [j for j in self._existing_jobs if j.get("id") != job_id]
+            self._lose_response_after_apply(method)
             return {"status": "ok"}
+        if method == "cron.update":
+            self._fail_before_apply(method)
+            job_id = (params or {}).get("id")
+            patch_body = (params or {}).get("patch")
+            if not isinstance(patch_body, dict):
+                raise RuntimeError("cron.update requires a patch")
+            matching_jobs = [job for job in self._existing_jobs if job.get("id") == job_id]
+            if len(matching_jobs) != 1:
+                raise RuntimeError(f"cron.update could not find unique job {job_id}")
+            matching_jobs[0].update(patch_body)
+            self._lose_response_after_apply(method)
+            return {"id": job_id}
         # OpenClaw's cron.add schema has no "metadata" property; workflow_id
         # is only recoverable from the systemEvent payload text, same as in
         # production (see persona_cron_registrar._build_system_event_text).
@@ -84,6 +143,14 @@ class GatewayRuntimeSpy:
     @property
     def add_calls(self) -> list[tuple[str, dict | None]]:
         return [c for c in self.calls if c[0] == "cron.add"]
+
+    @property
+    def update_calls(self) -> list[tuple[str, dict | None]]:
+        return [c for c in self.calls if c[0] == "cron.update"]
+
+    @property
+    def remove_calls(self) -> list[tuple[str, dict | None]]:
+        return [c for c in self.calls if c[0] == "cron.remove"]
 
 
 class TestJobName(unittest.TestCase):
@@ -150,6 +217,19 @@ class TestPersonaCronRegistrarDryRun(unittest.TestCase):
         self.assertIn("persona-serial-001", serialized)
         self.assertIn("dry_run", serialized)
 
+    def test_dry_run_respects_explicit_workflow_selection(self):
+        registrar = PersonaCronRegistrar(dry_run=True)
+
+        result = registrar.register_for_persona(
+            "persona-selected-dry-run",
+            workflow_ids=[PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+        )
+
+        self.assertEqual(
+            [record.workflow_id for record in result.registered],
+            [PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+        )
+
 
 class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
     def test_registers_all_workflows_via_gateway(self):
@@ -168,6 +248,40 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
         add_methods = [method for method, _ in spy.add_calls]
         self.assertEqual(len(add_methods), len(WORKFLOW_CATALOG))
         self.assertTrue(all(m == "cron.add" for m in add_methods))
+
+    def test_explicit_workflow_ids_register_only_selected_workflow(self):
+        spy = GatewayRuntimeSpy()
+
+        result = PersonaCronRegistrar(gateway_runtime=spy).register_for_persona(
+            "persona-selected-001",
+            capital_pool_id="pool-selected-001",
+            workflow_ids=[PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+            runtime_id="runtime-selected-001",
+            runtime_binding_id="runtime-binding-selected-001",
+            persona_capital_binding_id="persona-capital-binding-selected-001",
+        )
+
+        self.assertEqual(result.failed, [])
+        self.assertEqual(
+            [record.workflow_id for record in result.registered],
+            [PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+        )
+        self.assertEqual(len(spy.add_calls), 1)
+
+    def test_selected_first_evaluation_is_not_failed_by_unrelated_workflows(self):
+        unrelated_workflows = set(WORKFLOW_CATALOG) - {
+            PERSONA_FIRST_EVALUATION_WORKFLOW_ID
+        }
+        spy = GatewayRuntimeSpy(fail_on=unrelated_workflows)
+
+        result = PersonaCronRegistrar(gateway_runtime=spy).register_for_persona(
+            "persona-required-first-eval-001",
+            workflow_ids=[PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+        )
+
+        self.assertEqual(result.failed, [])
+        self.assertEqual(len(result.registered), 1)
+        self.assertEqual(len(spy.add_calls), 1)
 
     def test_registered_jobs_have_expected_fields(self):
         spy = GatewayRuntimeSpy()
@@ -208,7 +322,12 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
     def test_registers_stable_persona_first_evaluation_workflow(self):
         spy = GatewayRuntimeSpy()
         result = PersonaCronRegistrar(gateway_runtime=spy).register_for_persona(
-            "persona-first-eval-001"
+            "persona-first-eval-001",
+            capital_pool_id="pool-first-eval-001",
+            workflow_ids=[PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+            runtime_id="runtime-first-eval-001",
+            runtime_binding_id="runtime-binding-first-eval-001",
+            persona_capital_binding_id="persona-capital-binding-first-eval-001",
         )
 
         matching_records = [
@@ -225,9 +344,248 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
         self.assertEqual(len(matching_calls), 1)
         params, payload = matching_calls[0]
         self.assertEqual(payload["persona_id"], "persona-first-eval-001")
+        self.assertEqual(payload["runtime_id"], "runtime-first-eval-001")
+        self.assertEqual(
+            payload["runtime_binding_id"], "runtime-binding-first-eval-001"
+        )
+        self.assertEqual(payload["capital_pool_id"], "pool-first-eval-001")
+        self.assertEqual(
+            payload["persona_capital_binding_id"],
+            "persona-capital-binding-first-eval-001",
+        )
         self.assertEqual(
             (params or {}).get("schedule", {}).get("expr"),
             WORKFLOW_CATALOG[PERSONA_FIRST_EVALUATION_WORKFLOW_ID].schedule,
+        )
+
+    def test_first_evaluation_reconciles_null_runtime_identity_via_update(self):
+        persona_id = "persona-reconcile-null-001"
+        identity = {
+            "runtime_id": "runtime-reconcile-001",
+            "runtime_binding_id": "runtime-binding-reconcile-001",
+            "capital_pool_id": "pool-reconcile-001",
+            "persona_capital_binding_id": "persona-capital-binding-reconcile-001",
+        }
+        existing = [
+            _existing_job_fixture(
+                PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                persona_id,
+                "job-first-eval-reconcile",
+            )
+        ]
+        spy = GatewayRuntimeSpy(existing_jobs=existing)
+        registrar = PersonaCronRegistrar(gateway_runtime=spy)
+
+        result = registrar.register_for_persona(
+            persona_id,
+            workflow_ids=[PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+            **identity,
+        )
+
+        self.assertEqual(result.failed, [])
+        self.assertEqual(result.registered, [])
+        self.assertEqual(result.skipped, [_job_name(PERSONA_FIRST_EVALUATION_WORKFLOW_ID, persona_id)])
+        self.assertEqual(spy.add_calls, [])
+        self.assertEqual(len(spy.update_calls), 1)
+        _, update_params = spy.update_calls[0]
+        self.assertEqual((update_params or {}).get("id"), "job-first-eval-reconcile")
+        updated_event = json.loads(
+            (update_params or {}).get("patch", {}).get("payload", {}).get("text", "{}")
+        )
+        for key, value in identity.items():
+            self.assertEqual(updated_event.get(key), value)
+        self.assertTrue(
+            registrar.has_first_evaluation_registration(
+                persona_id,
+                runtime=spy,
+                **identity,
+            )
+        )
+
+    def test_first_evaluation_duplicate_owners_converge_stably(self):
+        persona_id = "persona-reconcile-duplicates-001"
+        identity = {
+            "runtime_id": "runtime-duplicates-001",
+            "runtime_binding_id": "runtime-binding-duplicates-001",
+            "capital_pool_id": "pool-duplicates-001",
+            "persona_capital_binding_id": "persona-capital-binding-duplicates-001",
+        }
+        existing = [
+            _existing_job_fixture(
+                PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                persona_id,
+                job_id,
+            )
+            for job_id in ("job-first-eval-z", "job-first-eval-a")
+        ]
+        spy = GatewayRuntimeSpy(existing_jobs=existing)
+        registrar = PersonaCronRegistrar(gateway_runtime=spy)
+
+        result = registrar.register_for_persona(
+            persona_id,
+            workflow_ids=[PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+            **identity,
+        )
+
+        self.assertEqual(result.failed, [])
+        self.assertEqual(len(spy.remove_calls), 1)
+        self.assertEqual((spy.remove_calls[0][1] or {}).get("id"), "job-first-eval-z")
+        self.assertEqual(len(spy.update_calls), 1)
+        self.assertEqual((spy.update_calls[0][1] or {}).get("id"), "job-first-eval-a")
+        self.assertEqual([job.get("id") for job in spy._existing_jobs], ["job-first-eval-a"])
+        self.assertTrue(
+            registrar.has_first_evaluation_registration(
+                persona_id,
+                runtime=spy,
+                **identity,
+            )
+        )
+
+    def test_first_evaluation_update_response_loss_uses_authoritative_list(self):
+        persona_id = "persona-update-response-loss-001"
+        identity = {
+            "runtime_id": "runtime-update-response-loss-001",
+            "runtime_binding_id": "runtime-binding-update-response-loss-001",
+            "capital_pool_id": "pool-update-response-loss-001",
+            "persona_capital_binding_id": "pcb-update-response-loss-001",
+        }
+        spy = GatewayRuntimeSpy(
+            existing_jobs=[
+                _existing_job_fixture(
+                    PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                    persona_id,
+                    "job-update-response-loss",
+                )
+            ],
+            response_loss_after_apply={"cron.update"},
+        )
+        registrar = PersonaCronRegistrar(gateway_runtime=spy)
+
+        result = registrar.register_for_persona(
+            persona_id,
+            workflow_ids=[PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+            **identity,
+        )
+
+        self.assertEqual(result.failed, [])
+        self.assertEqual(len(spy.update_calls), 1)
+        self.assertTrue(
+            registrar.has_first_evaluation_registration(
+                persona_id,
+                runtime=spy,
+                **identity,
+            )
+        )
+
+    def test_first_evaluation_remove_response_loss_uses_authoritative_list(self):
+        persona_id = "persona-remove-response-loss-001"
+        identity = {
+            "runtime_id": "runtime-remove-response-loss-001",
+            "runtime_binding_id": "runtime-binding-remove-response-loss-001",
+            "capital_pool_id": "pool-remove-response-loss-001",
+            "persona_capital_binding_id": "pcb-remove-response-loss-001",
+        }
+        spy = GatewayRuntimeSpy(
+            existing_jobs=[
+                _existing_job_fixture(
+                    PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                    persona_id,
+                    job_id,
+                )
+                for job_id in ("job-remove-response-loss-a", "job-remove-response-loss-b")
+            ],
+            response_loss_after_apply={"cron.remove"},
+        )
+        registrar = PersonaCronRegistrar(gateway_runtime=spy)
+
+        result = registrar.register_for_persona(
+            persona_id,
+            workflow_ids=[PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+            **identity,
+        )
+
+        self.assertEqual(result.failed, [])
+        self.assertEqual(len(spy.remove_calls), 1)
+        self.assertEqual(len(spy.update_calls), 1)
+        self.assertTrue(
+            registrar.has_first_evaluation_registration(
+                persona_id,
+                runtime=spy,
+                **identity,
+            )
+        )
+
+    def test_first_evaluation_update_failure_is_not_assumed_successful(self):
+        persona_id = "persona-update-not-applied-001"
+        identity = {
+            "runtime_id": "runtime-update-not-applied-001",
+            "runtime_binding_id": "runtime-binding-update-not-applied-001",
+            "capital_pool_id": "pool-update-not-applied-001",
+            "persona_capital_binding_id": "pcb-update-not-applied-001",
+        }
+        spy = GatewayRuntimeSpy(
+            existing_jobs=[
+                _existing_job_fixture(
+                    PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                    persona_id,
+                    "job-update-not-applied",
+                )
+            ],
+            mutation_fail_before_apply={"cron.update"},
+        )
+        registrar = PersonaCronRegistrar(gateway_runtime=spy)
+
+        result = registrar.register_for_persona(
+            persona_id,
+            workflow_ids=[PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+            **identity,
+        )
+
+        self.assertEqual(len(result.failed), 1)
+        self.assertEqual(result.skipped, [])
+        self.assertFalse(
+            registrar.has_first_evaluation_registration(
+                persona_id,
+                runtime=spy,
+                **identity,
+            )
+        )
+
+    def test_first_evaluation_remove_failure_is_not_assumed_successful(self):
+        persona_id = "persona-remove-not-applied-001"
+        identity = {
+            "runtime_id": "runtime-remove-not-applied-001",
+            "runtime_binding_id": "runtime-binding-remove-not-applied-001",
+            "capital_pool_id": "pool-remove-not-applied-001",
+            "persona_capital_binding_id": "pcb-remove-not-applied-001",
+        }
+        spy = GatewayRuntimeSpy(
+            existing_jobs=[
+                _existing_job_fixture(
+                    PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                    persona_id,
+                    job_id,
+                )
+                for job_id in ("job-remove-not-applied-a", "job-remove-not-applied-b")
+            ],
+            mutation_fail_before_apply={"cron.remove"},
+        )
+        registrar = PersonaCronRegistrar(gateway_runtime=spy)
+
+        result = registrar.register_for_persona(
+            persona_id,
+            workflow_ids=[PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+            **identity,
+        )
+
+        self.assertEqual(len(result.failed), 1)
+        self.assertEqual(result.skipped, [])
+        self.assertFalse(
+            registrar.has_first_evaluation_registration(
+                persona_id,
+                runtime=spy,
+                **identity,
+            )
         )
 
     def test_first_evaluation_readback_rejects_other_workflow_for_same_persona(self):
@@ -263,11 +621,18 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
         )
 
     def test_first_evaluation_readback_accepts_exact_identity(self):
+        identity = {
+            "runtime_id": "runtime-readback-001",
+            "runtime_binding_id": "runtime-binding-readback-001",
+            "capital_pool_id": "pool-readback-001",
+            "persona_capital_binding_id": "persona-capital-binding-readback-001",
+        }
         existing = [
             _existing_job_fixture(
                 PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
                 "persona-readback-001",
                 "job-first-eval",
+                **identity,
             )
         ]
         spy = GatewayRuntimeSpy(existing_jobs=existing)
@@ -277,6 +642,142 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
             registrar.has_first_evaluation_registration(
                 "persona-readback-001",
                 runtime=spy,
+                **identity,
+            )
+        )
+
+    def test_first_evaluation_readback_rejects_every_wrong_contract_field(self):
+        persona_id = "persona-strict-readback-001"
+        identity = {
+            "runtime_id": "runtime-strict-001",
+            "runtime_binding_id": "runtime-binding-strict-001",
+            "capital_pool_id": "pool-strict-001",
+            "persona_capital_binding_id": "persona-capital-binding-strict-001",
+        }
+
+        def fixture() -> dict:
+            return _existing_job_fixture(
+                PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                persona_id,
+                "job-first-eval-strict",
+                **identity,
+            )
+
+        def change_event(job: dict, key: str, value: object) -> None:
+            event = json.loads(job["payload"]["text"])
+            event[key] = value
+            job["payload"]["text"] = json.dumps(event)
+
+        outer_cases: list[tuple[str, Callable[[dict], None]]] = [
+            ("enabled", lambda job: job.__setitem__("enabled", False)),
+            (
+                "schedule kind",
+                lambda job: job["schedule"].__setitem__("kind", "at"),
+            ),
+            (
+                "schedule expression",
+                lambda job: job["schedule"].__setitem__("expr", "0 0 * * *"),
+            ),
+            (
+                "session target",
+                lambda job: job.__setitem__("sessionTarget", "another-agent"),
+            ),
+            (
+                "payload kind",
+                lambda job: job["payload"].__setitem__("kind", "agentTurn"),
+            ),
+        ]
+        for label, mutate in outer_cases:
+            with self.subTest(field=label):
+                job = fixture()
+                mutate(job)
+                spy = GatewayRuntimeSpy(existing_jobs=[job])
+                self.assertFalse(
+                    PersonaCronRegistrar(
+                        gateway_runtime=spy
+                    ).has_first_evaluation_registration(
+                        persona_id,
+                        runtime=spy,
+                        **identity,
+                    )
+                )
+
+        event_cases = {
+            "event kind": ("kind", "pantheon.workflow.other"),
+            "persona id": ("persona_id", "persona-other"),
+            "runtime id": ("runtime_id", "runtime-other"),
+            "runtime binding id": (
+                "runtime_binding_id",
+                "runtime-binding-other",
+            ),
+            "capital pool id": ("capital_pool_id", "pool-other"),
+            "persona capital binding id": (
+                "persona_capital_binding_id",
+                "persona-capital-binding-other",
+            ),
+            "workflow id": ("workflow_id", "pantheon.ingest"),
+            "policy id": ("policy_id", "policy-other"),
+            "upstream entrypoint": (
+                "upstream_entrypoint",
+                "evaluation.persona.other",
+            ),
+        }
+        for label, (key, value) in event_cases.items():
+            with self.subTest(field=label):
+                job = fixture()
+                change_event(job, key, value)
+                spy = GatewayRuntimeSpy(existing_jobs=[job])
+                self.assertFalse(
+                    PersonaCronRegistrar(
+                        gateway_runtime=spy
+                    ).has_first_evaluation_registration(
+                        persona_id,
+                        runtime=spy,
+                        **identity,
+                    )
+                )
+
+        with self.subTest(field="missing explicit identity field"):
+            job = fixture()
+            event = json.loads(job["payload"]["text"])
+            del event["runtime_id"]
+            job["payload"]["text"] = json.dumps(event)
+            spy = GatewayRuntimeSpy(existing_jobs=[job])
+            self.assertFalse(
+                PersonaCronRegistrar(
+                    gateway_runtime=spy
+                ).has_first_evaluation_registration(
+                    persona_id,
+                    runtime=spy,
+                    **identity,
+                )
+            )
+
+    def test_first_evaluation_readback_rejects_duplicate_identity_records(self):
+        identity = {
+            "runtime_id": "runtime-duplicate-001",
+            "runtime_binding_id": "runtime-binding-duplicate-001",
+            "capital_pool_id": "pool-duplicate-001",
+            "persona_capital_binding_id": "persona-capital-binding-duplicate-001",
+        }
+        existing = [
+            _existing_job_fixture(
+                PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                "persona-duplicate-001",
+                job_id,
+                **identity,
+            )
+            for job_id in ("job-first-eval-a", "job-first-eval-b")
+        ]
+        spy = GatewayRuntimeSpy(existing_jobs=existing)
+
+        self.assertFalse(
+            PersonaCronRegistrar(
+                gateway_runtime=spy
+            ).has_first_evaluation_registration(
+                "persona-duplicate-001",
+                runtime=spy,
+                **identity,
             )
         )
 
@@ -299,6 +800,10 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
         self.assertEqual(len(result.registered), len(WORKFLOW_CATALOG) - 2)
         # cron.add must NOT be called for the pre-existing jobs.
         self.assertEqual(len(spy.add_calls), len(WORKFLOW_CATALOG) - 2)
+        # General workflows retain legacy pair-skip behavior; only the owned
+        # first-evaluation workflow participates in identity reconciliation.
+        self.assertEqual(spy.update_calls, [])
+        self.assertEqual(spy.remove_calls, [])
 
     def test_skip_matches_by_payload_identity_not_job_name(self):
         # Regression: two personas whose ids share a long common prefix (e.g.

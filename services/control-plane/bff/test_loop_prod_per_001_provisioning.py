@@ -14,7 +14,9 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
+from persona_provisioning import MemoryPersonaProvisioningStore
 from read_store import ReadSurfaceStore
+from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {
@@ -25,6 +27,10 @@ HEADERS = {
 
 @pytest.fixture(autouse=True)
 def mock_external_services(monkeypatch):
+    transport = FakeOwnerTransport()
+    monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())
+    monkeypatch.setattr(bff_main, "_PersonaOwnerHttpTransport", lambda: transport)
+    monkeypatch.setattr(bff_main, "_register_persona_cron_required", _schedule_receipt)
     # Mock create_capital_binding
     monkeypatch.setattr(bff_main, "create_capital_binding", lambda payload: {"status": "created"})
     
@@ -84,6 +90,53 @@ def _fresh_client(td: str) -> TestClient:
     return TestClient(bff_main.app)
 
 
+def _install_authoritative_readback(
+    *,
+    persona_id: str,
+    plan_id: str,
+    saga_id: str,
+    persona_capital_binding_id: str,
+    binding_state: str = "active",
+) -> tuple[str, str]:
+    runtime_binding_id = f"rb-{persona_id[-12:]}"
+    runtime_id = f"runtime-{persona_id[-12:]}"
+    projection = {
+        "plan_id": plan_id,
+        "deployment_saga_id": saga_id,
+        "deployment_saga_status": "completed",
+        "deployment_saga_progress": {"progress_status": "completed"},
+        "runtime_binding_id": runtime_binding_id,
+        "runtime_id": runtime_id,
+        "runtime_binding": {
+            "binding_id": runtime_binding_id,
+            "runtime_id": runtime_id,
+            "plan_id": plan_id,
+            "persona_capital_binding_id": persona_capital_binding_id,
+            "status": binding_state,
+            "metadata": {"persona_id": persona_id},
+        },
+    }
+    bff_main._get_json = lambda *_args, **_kwargs: projection
+    bff_main.read_store.list_authoritative_paper_runtime_monitoring_sessions = lambda: [
+        {
+            "session_id": f"session-{persona_id}",
+            "runtime_id": runtime_id,
+            "binding_id": runtime_binding_id,
+            "status": "running",
+            "active": True,
+            "last_heartbeat_at": bff_main.utc_now(),
+        }
+    ]
+    bff_main._register_persona_cron_required = lambda *_args, **_kwargs: {
+        "authoritative_readback": {
+            "registered": True,
+            "runtime_id": runtime_id,
+            "runtime_binding_id": runtime_binding_id,
+        }
+    }
+    return runtime_binding_id, runtime_id
+
+
 def test_persona_creation_initial_state_is_provisioning() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
@@ -120,46 +173,19 @@ def test_persona_provisioning_completes_upon_readback_success() -> None:
                 json={"name": "Trader B"},
                 headers={**HEADERS, "Idempotency-Key": "create-trader-b"},
             )
+            assert resp.status_code == 201, resp.text
             data = resp.json()["data"]
             persona_id = data["id"]
-            binding_id = data["runtimeBindingId"]
-            runtime_id = data["runtimeId"]
-
-            # Mock RuntimeBinding to be active/running
-            bff_main.read_store.create_runtime_binding(
-                runtime_id=runtime_id,
-                name="Trader B paper runtime",
+            assert "runtimeBindingId" not in data
+            assert "runtimeId" not in data
+            _install_authoritative_readback(
                 persona_id=persona_id,
-                binding_id=binding_id,
-                deployment_plan_id=data["deploymentPlanId"],
-                runtime_kind="paper",
-                actor_id="test",
-                created_at=bff_main.utc_now(),
-                params={},
-                state="running",  # active/running state
+                plan_id=data["deploymentPlanId"],
+                saga_id=resp.json()["meta"]["deployment_saga_id"],
+                persona_capital_binding_id=resp.json()["meta"][
+                    "persona_capital_binding_id"
+                ],
             )
-
-            # Mock monitoring session with heartbeat
-            bff_main.read_store._ensure_local_overlay_records("paper_runtime_monitoring_sessions")[
-                f"{runtime_id}:{binding_id}"
-            ] = {
-                "session_id": "session-1",
-                "runtime_id": runtime_id,
-                "binding_id": binding_id,
-                "active": True,
-                "last_heartbeat_at": bff_main.utc_now(),
-            }
-
-            # Mock evaluation schedule (cron job) - PersonaCronRegistrar readback mock
-            from unittest.mock import MagicMock
-            mock_registrar_instance = MagicMock()
-            mock_registrar_instance._get_runtime.return_value = "dummy-runtime"
-            mock_registrar_instance._existing_registrations.return_value = [(persona_id, "workflow-1")]
-            
-            class DummyModule:
-                PersonaCronRegistrar = MagicMock(return_value=mock_registrar_instance)
-                
-            sys.modules["persona_cron_registrar"] = DummyModule
 
             # Query the persona -> should transition to paper_running
             get_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
@@ -183,23 +209,17 @@ def test_persona_provisioning_fails_on_downstream_failure() -> None:
                 json={"name": "Trader C"},
                 headers={**HEADERS, "Idempotency-Key": "create-trader-c"},
             )
+            assert resp.status_code == 201, resp.text
             data = resp.json()["data"]
             persona_id = data["id"]
-            binding_id = data["runtimeBindingId"]
-            runtime_id = data["runtimeId"]
-
-            # 1. Mock RuntimeBinding state to be failed
-            bff_main.read_store.create_runtime_binding(
-                runtime_id=runtime_id,
-                name="Trader C paper runtime",
+            _install_authoritative_readback(
                 persona_id=persona_id,
-                binding_id=binding_id,
-                deployment_plan_id=data["deploymentPlanId"],
-                runtime_kind="paper",
-                actor_id="test",
-                created_at=bff_main.utc_now(),
-                params={},
-                state="failed",  # failed state
+                plan_id=data["deploymentPlanId"],
+                saga_id=resp.json()["meta"]["deployment_saga_id"],
+                persona_capital_binding_id=resp.json()["meta"][
+                    "persona_capital_binding_id"
+                ],
+                binding_state="failed",
             )
 
             # Query the persona -> should transition to failed
@@ -227,14 +247,14 @@ def test_persona_provisioning_fails_on_timeout() -> None:
             data = resp.json()["data"]
             persona_id = data["id"]
 
-            # Mock creation date to be 200 seconds ago
+            # Timeout starts at the durable post-schedule readback checkpoint,
+            # not at the Persona's original creation timestamp.
             persona = bff_main.read_store.get_persona(persona_id)
-            persona["created_at"] = "2026-07-15T00:00:00Z"
-            bff_main.read_store.update_persona(persona_id, updated_at="2026-07-15T00:00:00Z")
-            # Force update raw dict field in the local mock too
-            raw_personas = bff_main.read_store._ensure_local_overlay_records("personas")
-            raw_personas[persona_id]["created_at"] = "2026-07-15T00:00:00Z"
-            bff_main.read_store._save()
+            assert persona is not None
+            bff_main.read_store.update_persona(
+                persona_id,
+                metadata={"provisioning_readback_started_at": "2026-07-15T00:00:00Z"},
+            )
 
             # Query the persona -> should transition to failed due to timeout
             get_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
@@ -256,9 +276,9 @@ def test_persona_duplicate_create_converges() -> None:
                 json={"name": "Trader Unique"},
                 headers={**HEADERS, "Idempotency-Key": "create-trader-unique-1"},
             )
+            assert resp1.status_code == 201, resp1.text
             data1 = resp1.json()["data"]
             persona_id_1 = data1["id"]
-            binding_id_1 = data1["runtimeBindingId"]
 
             # Create second time with a different idempotency key but same name
             resp2 = client.post(
@@ -266,13 +286,21 @@ def test_persona_duplicate_create_converges() -> None:
                 json={"name": "Trader Unique"},
                 headers={**HEADERS, "Idempotency-Key": "create-trader-unique-2"},
             )
+            assert resp2.status_code == 201, resp2.text
             data2 = resp2.json()["data"]
             persona_id_2 = data2["id"]
-            binding_id_2 = data2["runtimeBindingId"]
 
-            # They must converge to the same persona and binding
+            # They converge to one dynamic Persona and one deterministic owner
+            # identity set; RuntimeBinding remains absent until Deployment owns it.
             assert persona_id_1 == persona_id_2
-            assert binding_id_1 == binding_id_2
+            assert "runtimeBindingId" not in data1
+            assert "runtimeBindingId" not in data2
+            assert resp1.json()["meta"]["persona_capital_binding_id"] == resp2.json()[
+                "meta"
+            ]["persona_capital_binding_id"]
+            assert resp1.json()["meta"]["deployment_saga_id"] == resp2.json()["meta"][
+                "deployment_saga_id"
+            ]
         finally:
             bff_main.read_store = original
 
@@ -289,20 +317,18 @@ def test_persona_duplicate_create_does_not_clobber_or_reset_timeout() -> None:
                 json={"name": "Trader Safety"},
                 headers={**HEADERS, "Idempotency-Key": "create-safety-1"},
             )
+            assert resp1.status_code == 201, resp1.text
             data1 = resp1.json()["data"]
             persona_id = data1["id"]
-            
-            # 2. Advance the state and manually update runtime binding's created_at to old time
-            old_created_at = "2026-07-15T04:00:00Z"
-            
+            before = bff_main.read_store.get_persona(persona_id)
+            assert before is not None
+            original_created_at = before["created_at"]
+            original_readback_started_at = before["metadata"][
+                "provisioning_readback_started_at"
+            ]
+
+            # 2. Simulate a later authoritative lifecycle transition.
             bff_main.read_store.update_persona(persona_id, lifecycle_state="paper_running")
-            
-            # update runtime binding
-            rb = bff_main.read_store.get_runtime_binding(data1["runtimeBindingId"])
-            rb["created_at"] = old_created_at
-            rb["state"] = "running"
-            bff_main.read_store._ensure_local_overlay_records("runtime_bindings")[data1["runtimeBindingId"]] = rb
-            bff_main.read_store._save()
 
             # 3. Request creation again with same name but new idempotency key
             resp2 = client.post(
@@ -310,15 +336,16 @@ def test_persona_duplicate_create_does_not_clobber_or_reset_timeout() -> None:
                 json={"name": "Trader Safety"},
                 headers={**HEADERS, "Idempotency-Key": "create-safety-2"},
             )
+            assert resp2.status_code == 201, resp2.text
             
             # 4. Check that state was not clobbered (is still paper_running in read_store)
             persisted_persona = bff_main.read_store.get_persona(persona_id)
+            assert persisted_persona is not None
             assert persisted_persona["lifecycle_state"] == "paper_running"
-            
-            # 5. Check that runtime binding state and created_at were not clobbered/reset
-            persisted_rb = bff_main.read_store.get_runtime_binding(data1["runtimeBindingId"])
-            assert persisted_rb["created_at"] == old_created_at
-            assert persisted_rb["state"] == "running"
+            assert persisted_persona["created_at"] == original_created_at
+            assert persisted_persona["metadata"][
+                "provisioning_readback_started_at"
+            ] == original_readback_started_at
             
         finally:
             bff_main.read_store = original

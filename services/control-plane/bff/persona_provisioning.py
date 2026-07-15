@@ -118,9 +118,21 @@ class PersonaProvisioningStore(Protocol):
         lease_seconds: int,
     ) -> ProvisioningRecord | None: ...
 
-    def checkpoint(self, record: ProvisioningRecord, *, lease_owner: str) -> ProvisioningRecord: ...
+    def checkpoint(
+        self,
+        record: ProvisioningRecord,
+        *,
+        lease_owner: str,
+        lease_seconds: int = 60,
+    ) -> ProvisioningRecord: ...
 
-    def release(self, record: ProvisioningRecord, *, lease_owner: str) -> ProvisioningRecord: ...
+    def release(
+        self,
+        record: ProvisioningRecord,
+        *,
+        lease_owner: str,
+        lease_seconds: int = 60,
+    ) -> ProvisioningRecord: ...
 
 
 class MemoryPersonaProvisioningStore:
@@ -207,32 +219,51 @@ class MemoryPersonaProvisioningStore:
                 microsecond=0
             ).isoformat().replace("+00:00", "Z")
             record.attempt_count += 1
-            if record.state != "succeeded":
+            if record.state not in TERMINAL_STATES:
                 record.state = "provisioning"
             record.updated_at = utc_now()
             return self._copy(record)
 
-    def checkpoint(self, record: ProvisioningRecord, *, lease_owner: str) -> ProvisioningRecord:
+    def checkpoint(
+        self,
+        record: ProvisioningRecord,
+        *,
+        lease_owner: str,
+        lease_seconds: int = 60,
+    ) -> ProvisioningRecord:
         key = (record.tenant_id, record.idempotency_key)
         with self._lock:
             current = self._records.get(key)
+            now = datetime.now(timezone.utc)
             lease_expiry = _parse_time(current.lease_expires_at) if current is not None else None
             if (
                 current is None
                 or current.lease_owner != lease_owner
                 or lease_expiry is None
-                or lease_expiry <= datetime.now(timezone.utc)
+                or lease_expiry <= now
             ):
                 raise ProvisioningLeaseLost("Persona provisioning lease is missing or expired")
             saved = self._copy(record)
             saved.lease_owner = current.lease_owner
-            saved.lease_expires_at = current.lease_expires_at
+            saved.lease_expires_at = (now + timedelta(seconds=lease_seconds)).replace(
+                microsecond=0
+            ).isoformat().replace("+00:00", "Z")
             saved.updated_at = utc_now()
             self._records[key] = saved
             return self._copy(saved)
 
-    def release(self, record: ProvisioningRecord, *, lease_owner: str) -> ProvisioningRecord:
-        saved = self.checkpoint(record, lease_owner=lease_owner)
+    def release(
+        self,
+        record: ProvisioningRecord,
+        *,
+        lease_owner: str,
+        lease_seconds: int = 60,
+    ) -> ProvisioningRecord:
+        saved = self.checkpoint(
+            record,
+            lease_owner=lease_owner,
+            lease_seconds=lease_seconds,
+        )
         key = (saved.tenant_id, saved.idempotency_key)
         with self._lock:
             current = self._records[key]
@@ -407,7 +438,8 @@ class PostgresPersonaProvisioningStore:
                     SET lease_owner=%s,
                         lease_expires_at=now() + (%s * interval '1 second'),
                         attempt_count=attempt_count+1,
-                        state=CASE WHEN state='succeeded' THEN state ELSE 'provisioning' END,
+                        state=CASE WHEN state IN ('succeeded','failed','compensated')
+                                   THEN state ELSE 'provisioning' END,
                         updated_at=now()
                     WHERE tenant_id=%s AND idempotency_key=%s
                       AND (lease_owner IS NULL OR lease_owner=%s OR lease_expires_at <= now())
@@ -417,12 +449,20 @@ class PostgresPersonaProvisioningStore:
             row = cur.fetchone()
             return self._record(row) if row is not None else None
 
-    def checkpoint(self, record: ProvisioningRecord, *, lease_owner: str) -> ProvisioningRecord:
+    def checkpoint(
+        self,
+        record: ProvisioningRecord,
+        *,
+        lease_owner: str,
+        lease_seconds: int = 60,
+    ) -> ProvisioningRecord:
         with self._connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(
                 f"""UPDATE {self.table}
                     SET state=%s,current_step=%s,references=%s::jsonb,result=%s::jsonb,
-                        error=%s::jsonb,compensation=%s::jsonb,updated_at=now()
+                        error=%s::jsonb,compensation=%s::jsonb,
+                        lease_expires_at=now() + (%s * interval '1 second'),
+                        updated_at=now()
                     WHERE tenant_id=%s AND idempotency_key=%s AND lease_owner=%s
                       AND lease_expires_at > now()
                     RETURNING {self._COLUMNS}""",
@@ -437,6 +477,7 @@ class PostgresPersonaProvisioningStore:
                         if record.compensation is not None
                         else None
                     ),
+                    lease_seconds,
                     record.tenant_id,
                     record.idempotency_key,
                     lease_owner,
@@ -447,8 +488,18 @@ class PostgresPersonaProvisioningStore:
                 raise ProvisioningLeaseLost("Persona provisioning lease is missing or expired")
             return self._record(row)
 
-    def release(self, record: ProvisioningRecord, *, lease_owner: str) -> ProvisioningRecord:
-        saved = self.checkpoint(record, lease_owner=lease_owner)
+    def release(
+        self,
+        record: ProvisioningRecord,
+        *,
+        lease_owner: str,
+        lease_seconds: int = 60,
+    ) -> ProvisioningRecord:
+        saved = self.checkpoint(
+            record,
+            lease_owner=lease_owner,
+            lease_seconds=lease_seconds,
+        )
         with self._connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(
                 f"""UPDATE {self.table}

@@ -27975,6 +27975,7 @@ def _evaluate_persona_provisioning_status(
         metadata.get("persona_capital_binding_id") or metadata.get("binding_id") or ""
     ).strip()
     plan_id = str(metadata.get("deployment_plan_id") or "").strip()
+    expected_saga_id = str(metadata.get("deployment_saga_id") or "").strip()
     binding_id = str(metadata.get("runtime_binding_id") or "").strip()
     runtime_id = str(metadata.get("runtime_id") or "").strip()
     projection: Dict[str, Any] = {}
@@ -27990,11 +27991,16 @@ def _evaluate_persona_provisioning_status(
 
     projection_saga = projection.get("deployment_saga")
     projection_saga = projection_saga if isinstance(projection_saga, dict) else {}
+    projected_saga_id = str(
+        projection.get("deployment_saga_id") or projection_saga.get("saga_id") or ""
+    ).strip()
     projection_observed = bool(
         projection
         and str(projection.get("plan_id") or "") == plan_id
-        and str(projection.get("deployment_saga_id") or projection_saga.get("saga_id") or "")
+        and projected_saga_id
+        and (not expected_saga_id or projected_saga_id == expected_saga_id)
     )
+    projection_identity_failed = bool(projection) and not projection_observed
 
     saga_status = str(
         projection.get("deployment_saga_status")
@@ -28056,7 +28062,7 @@ def _evaluate_persona_provisioning_status(
     # Require exactly one fresh, active worker joined on the complete identity.
     monitoring_sessions: List[Dict[str, Any]] = []
     if runtime_id and binding_id:
-        for s in read_store.list_paper_runtime_monitoring_sessions():
+        for s in read_store.list_authoritative_paper_runtime_monitoring_sessions():
             # The paper-fleet reconciler owns worker sessions and joins them to
             # RuntimeBinding by runtime_id + binding_id.  It does not duplicate
             # Persona identity into the session.  Persona identity is instead
@@ -28079,7 +28085,6 @@ def _evaluate_persona_provisioning_status(
     )
     now_dt = datetime.now(timezone.utc)
     live_sessions: List[Dict[str, Any]] = []
-    heartbeat_failed = False
     for session in monitoring_sessions:
         status = str(session.get("status") or "").strip().lower()
         active = read_store._paper_runtime_monitoring_session_active(session)
@@ -28090,13 +28095,11 @@ def _evaluate_persona_provisioning_status(
         )
         if active and fresh and status not in {"failed", "ended", "error", "stale"}:
             live_sessions.append(session)
-        elif status in {"failed", "ended", "error", "stale"} or not active:
-            heartbeat_failed = True
-        elif heartbeat_at is not None and not fresh:
-            heartbeat_failed = True
     heartbeat_ok = len(live_sessions) == 1
-    if len(live_sessions) > 1:
-        heartbeat_failed = True
+    # Historical ended/stale sessions are expected after worker replacement.
+    # They cannot poison one unique fresh owner session.  No fresh successor
+    # or multiple live workers is fail-closed once an owner record exists.
+    heartbeat_failed = bool(monitoring_sessions) and not heartbeat_ok
 
     # The schedule authority must contain the exact first-evaluation workflow.
     cron_ok = False
@@ -28107,27 +28110,32 @@ def _evaluate_persona_provisioning_status(
                 _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
             ) in all_cron_registrations
         else:
-            if "persona_cron_registrar" not in sys.modules:
-                _saved_modules = {
-                    name: sys.modules.pop(name)
-                    for name in ("models", "workflows")
-                    if name in sys.modules
-                }
-                sys.path.insert(0, _CRON_SERVICE_DIR)
-                try:
-                    import persona_cron_registrar  # noqa: F401
-                finally:
-                    sys.path.remove(_CRON_SERVICE_DIR)
-                    for name in ("models", "workflows"):
-                        sys.modules.pop(name, None)
-                    sys.modules.update(_saved_modules)
-            from persona_cron_registrar import PersonaCronRegistrar
-            registrar = PersonaCronRegistrar()
-            runtime = registrar._get_runtime()
-            if runtime is not None:
-                cron_ok = registrar.has_first_evaluation_registration(
+            capital_pool_id = str(
+                metadata.get("internal_paper_capital_pool_id")
+                or metadata.get("legacy_paper_capital_pool_id")
+                or ""
+            ).strip()
+            if (
+                projection_observed
+                and binding_ok
+                and runtime_id
+                and binding_id
+                and capital_pool_id
+                and persona_capital_binding_id
+            ):
+                schedule_receipt = _register_persona_cron_required(
                     persona_id,
-                    runtime=runtime,
+                    capital_pool_id,
+                    persona_capital_binding_id,
+                    runtime_id=runtime_id,
+                    runtime_binding_id=binding_id,
+                )
+                authoritative = schedule_receipt.get("authoritative_readback")
+                cron_ok = bool(
+                    isinstance(authoritative, dict)
+                    and authoritative.get("registered") is True
+                    and authoritative.get("runtime_id") == runtime_id
+                    and authoritative.get("runtime_binding_id") == binding_id
                 )
     except Exception as exc:
         log.warning("Failed to query first-evaluation schedule for %s: %s", persona_id, exc)
@@ -28135,22 +28143,28 @@ def _evaluate_persona_provisioning_status(
     # A timed-out attempt is terminal even if stale evidence happens to appear
     # later; recovery must be an explicit retry that acquires the durable lease.
     is_timeout = False
-    created_at_str = raw.get("created_at") or metadata.get("created_at")
-    if created_at_str:
+    readback_started_at = metadata.get("provisioning_readback_started_at")
+    if readback_started_at:
         try:
-            created_at_dt = _parse_rfc3339(created_at_str)
+            started_at_dt = _parse_rfc3339(readback_started_at)
             timeout_seconds = max(
                 1,
                 int(os.getenv("PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS", "600")),
             )
             is_timeout = bool(
-                created_at_dt is not None
-                and (now_dt - created_at_dt).total_seconds() > timeout_seconds
+                started_at_dt is not None
+                and (now_dt - started_at_dt).total_seconds() > timeout_seconds
             )
         except (TypeError, ValueError):
             is_timeout = False
 
-    if projection_failed or binding_failed or heartbeat_failed or is_timeout:
+    if (
+        projection_failed
+        or projection_identity_failed
+        or binding_failed
+        or heartbeat_failed
+        or is_timeout
+    ):
         new_state = "provisioning_failed"
     elif projection_observed and binding_ok and heartbeat_ok and cron_ok:
         new_state = "paper_running"
@@ -28166,6 +28180,8 @@ def _evaluate_persona_provisioning_status(
         failure_reasons = []
         if projection_failed:
             failure_reasons.append("deployment_saga_failed")
+        if projection_identity_failed:
+            failure_reasons.append("deployment_projection_identity_mismatched")
         if binding_failed:
             failure_reasons.append("runtime_binding_failed_or_mismatched")
         if heartbeat_failed:
@@ -43752,6 +43768,9 @@ def _register_persona_cron_required(
     persona_id: str,
     capital_pool_id: str,
     binding_id: str,
+    *,
+    runtime_id: Optional[str] = None,
+    runtime_binding_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Register and authoritatively read back the required evaluation schedule."""
     if "persona_cron_registrar" not in sys.modules:
@@ -43774,7 +43793,10 @@ def _register_persona_cron_required(
     result = registrar.register_for_persona(
         persona_id,
         capital_pool_id=capital_pool_id,
-        binding_id=binding_id,
+        workflow_ids=[_PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+        runtime_id=runtime_id,
+        runtime_binding_id=runtime_binding_id,
+        persona_capital_binding_id=binding_id,
     )
     body = result.to_dict()
     if body.get("mode") != "gateway_rpc":
@@ -43785,11 +43807,19 @@ def _register_persona_cron_required(
     if runtime is None or not registrar.has_first_evaluation_registration(
         persona_id,
         runtime=runtime,
+        runtime_id=runtime_id,
+        runtime_binding_id=runtime_binding_id,
+        capital_pool_id=capital_pool_id,
+        persona_capital_binding_id=binding_id,
     ):
         raise RuntimeError("first-evaluation schedule failed authoritative readback")
     body["authoritative_readback"] = {
         "persona_id": persona_id,
         "workflow_id": _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+        "runtime_id": runtime_id,
+        "runtime_binding_id": runtime_binding_id,
+        "capital_pool_id": capital_pool_id,
+        "persona_capital_binding_id": binding_id,
         "registered": True,
     }
     return body
@@ -43809,7 +43839,10 @@ def _try_bootstrap_persona_ooda_packet(persona_id: str) -> Optional[Dict[str, An
 
 # ---------------- /bff/personas routes ----------------
 
-def _persona_readback_snapshot() -> Tuple[Dict[str, Dict[str, Any]], Set[Tuple[str, str]]]:
+def _persona_readback_snapshot() -> Tuple[
+    Dict[str, Dict[str, Any]],
+    Optional[Set[Tuple[str, str]]],
+]:
     """Fetch owner readbacks off the async event loop for Persona projections."""
     all_bindings: Dict[str, Dict[str, Any]] = {}
     try:
@@ -43821,31 +43854,11 @@ def _persona_readback_snapshot() -> Tuple[Dict[str, Dict[str, Any]], Set[Tuple[s
     except Exception as exc:
         log.warning("Failed to batch list runtime bindings: %s", exc)
 
-    all_cron_registrations: Set[Tuple[str, str]] = set()
-    try:
-        if "persona_cron_registrar" not in sys.modules:
-            saved_modules = {
-                name: sys.modules.pop(name)
-                for name in ("models", "workflows")
-                if name in sys.modules
-            }
-            sys.path.insert(0, _CRON_SERVICE_DIR)
-            try:
-                import persona_cron_registrar  # noqa: F401
-            finally:
-                sys.path.remove(_CRON_SERVICE_DIR)
-                for name in ("models", "workflows"):
-                    sys.modules.pop(name, None)
-                sys.modules.update(saved_modules)
-        from persona_cron_registrar import PersonaCronRegistrar
-
-        registrar = PersonaCronRegistrar()
-        runtime = registrar._get_runtime()
-        if runtime is not None:
-            all_cron_registrations = registrar._existing_registrations(runtime)
-    except Exception as exc:
-        log.warning("Failed to batch list cron registrations: %s", exc)
-    return all_bindings, all_cron_registrations
+    # A (persona_id, workflow_id) set discards duplicates and every schedule,
+    # payload, target, and authority identity field.  It is therefore never a
+    # lifecycle proof.  Each provisioning projection performs the registrar's
+    # strict owner readback instead.
+    return all_bindings, None
 
 
 def _project_persona_list_records(raw_personas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -43946,6 +43959,26 @@ def _persona_create_validate_paper_only(payload: Dict[str, Any]) -> str:
             precondition_failed="capital_mode",
             suggestion="Create the Persona in paper mode, then request promotion review after evidence is ready.",
         )
+    risk_profile = payload.get("riskProfile") or payload.get("risk_profile")
+    risk_profile = risk_profile if isinstance(risk_profile, Mapping) else {}
+    requested_risk = _normalize_risk_level(
+        payload.get("risk")
+        or payload.get("risk_level")
+        or risk_profile.get("risk_level")
+        or "low"
+    )
+    if requested_risk != "low":
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Automatic Persona provisioning requires low risk",
+            (
+                "Medium/high/critical Persona admission requires a governed "
+                "Human Inbox review and cannot use the automatic paper-create path."
+            ),
+            precondition_failed="risk_level",
+            suggestion="Create a low-risk paper Persona or use the governed review workflow.",
+        )
     return "paper"
 
 
@@ -43965,12 +43998,26 @@ def _persona_create_canonical_payload(
     *,
     name: str,
     tenant_id: str,
+    requested_by: str,
 ) -> Dict[str, Any]:
     canonical = json.loads(json.dumps(dict(payload)))
     canonical["name"] = name
     canonical["tenant_id"] = tenant_id
     canonical.pop("tenantId", None)
-    canonical.pop("owner", None)
+    # Caller attribution is derived only from the authenticated identity.  It
+    # participates in the durable request hash, so another operator cannot
+    # replay the key and silently take ownership of an in-flight Persona.
+    for field in (
+        "owner",
+        "actor_id",
+        "actorId",
+        "created_by",
+        "createdBy",
+        "requested_by",
+        "requestedBy",
+    ):
+        canonical.pop(field, None)
+    canonical["requested_by"] = requested_by
     if "budget" not in canonical:
         canonical["budget"] = canonical.get("paperBudget") or canonical.get("paper_budget")
     if "risk_policy_ref" not in canonical:
@@ -44096,6 +44143,9 @@ def _persona_provisioning_metadata(
             f"evidence://persona-create/{record.persona_id}/deployment-saga",
         ],
     }
+    readback_started_at = record.references.get("provisioning_readback_started_at")
+    if isinstance(readback_started_at, str) and readback_started_at.strip():
+        metadata["provisioning_readback_started_at"] = readback_started_at.strip()
     if runtime_binding_id:
         metadata["runtime_binding_id"] = runtime_binding_id
     if runtime_id:
@@ -44142,6 +44192,7 @@ def _persona_record_for_provisioning(
     payload: Mapping[str, Any],
     owner: str,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    canonical_owner = str(record.request_payload.get("requested_by") or owner).strip()
     ids = deterministic_provisioning_ids(record)
     archetype = str(payload.get("archetype") or "generalist")
     risk = _normalize_risk_level(payload.get("risk") or "low")
@@ -44172,7 +44223,7 @@ def _persona_record_for_provisioning(
         record,
         ids=ids,
         payload=payload,
-        owner=owner,
+        owner=canonical_owner,
         archetype=archetype,
         risk=risk,
         mandate=mandate,
@@ -44185,7 +44236,7 @@ def _persona_record_for_provisioning(
         persona = read_store.create_persona(
             persona_id=record.persona_id,
             name=str(payload.get("name") or record.normalized_name),
-            actor_id=owner,
+            actor_id=canonical_owner,
             created_at=record.created_at,
             archetype=archetype,
             lifecycle_state=lifecycle_state,
@@ -44385,6 +44436,7 @@ async def bff_create_persona(
         payload,
         name=name,
         tenant_id=tenant_id,
+        requested_by=identity.operator_id,
     )
     request_hash = _stable_json_hash(
         {
@@ -44638,6 +44690,31 @@ async def bff_get_persona(
     }
 
 
+_PERSONA_PATCH_SERVER_MANAGED_FIELDS = frozenset({
+    "owner",
+    "state",
+    "status",
+    "lifecycle_state",
+    "lifecycleState",
+    "lifecycleStatus",
+    "paper_runtime_state",
+    "paperRuntimeState",
+    "runtime_id",
+    "runtimeId",
+    "runtime_binding_id",
+    "runtimeBindingId",
+    "capital_mode",
+    "capitalMode",
+    "deployment_stage",
+    "deploymentStage",
+    "created_by",
+    "createdBy",
+    "actor_id",
+    "actorId",
+    "availableActions",
+})
+
+
 @app.patch("/bff/personas/{persona_id}")
 async def bff_patch_persona(
     persona_id: str,
@@ -44650,6 +44727,16 @@ async def bff_patch_persona(
     identity = _extract_identity(authorization)
     _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
+    managed_fields = sorted(_PERSONA_PATCH_SERVER_MANAGED_FIELDS.intersection(payload))
+    if managed_fields:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Persona lifecycle and ownership fields are server-managed",
+            f"Client PATCH cannot mutate: {', '.join(managed_fields)}",
+            precondition_failed=managed_fields[0],
+            suggestion="Use the governed Persona action or promotion workflow.",
+        )
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = _stable_json_hash(
         {"route": "PATCH /bff/personas/{persona_id}", "id": persona_id, "payload": payload}
@@ -44659,6 +44746,12 @@ async def bff_patch_persona(
         return cached
     raw = read_store.get_persona(persona_id)
     overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
+    caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+    if raw and _persona_record_tenant_id(raw) not in {"", caller_tenant}:
+        raw = None
+        overlay = None
+    if overlay and str(overlay.get("tenantId") or caller_tenant) != caller_tenant:
+        overlay = None
     if not raw and not overlay:
         raise _bff_error(
             404, ErrorCode.RESOURCE_NOT_FOUND,
@@ -44671,14 +44764,11 @@ async def bff_patch_persona(
         routed = _routed_strategies_for_persona(persona_id)
         base = _project_persona_dto(raw or {"persona_id": persona_id}, routed_strategies=routed)
     for field in (
-        "name", "owner", "state", "risk",
+        "name", "risk",
         "archetype", "routedStrategies", "successRate",
-        "availableActions",
     ):
         if field in payload:
             base[field] = payload[field]
-    if "state" in payload:
-        base["state"] = _normalize_lifecycle_state(payload["state"])
     if "risk" in payload:
         base["risk"] = _normalize_risk_level(payload["risk"])
     base["updatedAt"] = snapshot_at
@@ -44698,7 +44788,7 @@ async def bff_patch_persona(
             "metadata": {
                 **existing_metadata,
                 **update_metadata,
-                "owner": str(base.get("owner") or identity.operator_id),
+                "owner": str(existing_metadata.get("owner") or identity.operator_id),
                 "archetype": str(base.get("archetype") or "generalist"),
                 "risk_level": str(base.get("risk") or "low"),
             },
@@ -44708,7 +44798,7 @@ async def bff_patch_persona(
     persona_record = read_store.update_persona(
         persona_id,
         name=str(base.get("name") or persona_id),
-        actor_id=str(base.get("owner") or identity.operator_id),
+        actor_id=str(existing_metadata.get("owner") or identity.operator_id),
         updated_at=snapshot_at,
         archetype=str(base.get("archetype") or "generalist"),
         lifecycle_state=str(base.get("state") or "draft"),

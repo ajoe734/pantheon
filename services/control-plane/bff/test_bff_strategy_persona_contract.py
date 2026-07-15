@@ -26,7 +26,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 import main as bff_main
 from action_catalog import get_catalog_entry
 from models import CommandType
+from persona_provisioning import MemoryPersonaProvisioningStore
 from read_store import ReadSurfaceStore
+from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
@@ -34,6 +36,10 @@ HEADERS = {"Authorization": OPERATOR_TOKEN}
 
 @pytest.fixture(autouse=True)
 def mock_external_services(monkeypatch):
+    transport = FakeOwnerTransport()
+    monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())
+    monkeypatch.setattr(bff_main, "_PersonaOwnerHttpTransport", lambda: transport)
+    monkeypatch.setattr(bff_main, "_register_persona_cron_required", _schedule_receipt)
     # Mock create_capital_binding
     monkeypatch.setattr(bff_main, "create_capital_binding", lambda payload: {"status": "created"})
     
@@ -344,9 +350,9 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
             assert created["deploymentStage"] == "paper"
             assert created["paperLedgerId"].startswith("paper-ledger-")
             assert "capitalPoolId" not in created
-            assert created["runtimeId"].startswith("runtime-")
-            assert created["runtimeBindingId"].endswith("-paper")
-            assert create_body["meta"]["create_flow"] == "one_shot_provisioning"
+            assert "runtimeId" not in created
+            assert "runtimeBindingId" not in created
+            assert create_body["meta"]["create_flow"] == "durable_owner_coordinated_provisioning"
             assert create_body["meta"]["paper_ledger_id"] == created["paperLedgerId"]
             assert create_body["meta"]["live_capital_side_effects"] is False
             assert create_body["meta"]["human_review_required_for_live"] is True
@@ -356,8 +362,9 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
                 os.path.join(td, "read_surfaces.json"),
                 allow_local_snapshot_fallback=False,
             )
-            binding_id = created["runtimeBindingId"]
-            runtime_id = created["runtimeId"]
+            binding_id = "rb-macro-macro-authoritative"
+            runtime_id = "runtime-macro-macro-authoritative"
+            persona_capital_binding_id = create_body["meta"]["persona_capital_binding_id"]
             bff_main.read_store.create_runtime_binding(
                 runtime_id=runtime_id,
                 name="Macro Macro paper runtime",
@@ -367,36 +374,50 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
                 runtime_kind="paper",
                 actor_id="test",
                 created_at=bff_main.utc_now(),
-                params={},
+                params={"persona_capital_binding_id": persona_capital_binding_id},
                 state="running",
             )
-            bff_main.read_store._ensure_local_overlay_records("paper_runtime_monitoring_sessions")[
-                f"{runtime_id}:{binding_id}"
-            ] = {
+            worker_session = {
                 "session_id": "session-1",
                 "runtime_id": runtime_id,
                 "binding_id": binding_id,
                 "active": True,
                 "last_heartbeat_at": bff_main.utc_now(),
             }
-            # Mock evaluation schedule (cron job) - PersonaCronRegistrar readback mock
-            import sys
-            from unittest.mock import MagicMock
-            mock_registrar_instance = MagicMock()
-            mock_registrar_instance._get_runtime.return_value = "dummy-runtime"
-            mock_registrar_instance._existing_registrations.return_value = [(persona_id, "workflow-1")]
-            
-            class DummyModule:
-                PersonaCronRegistrar = MagicMock(return_value=mock_registrar_instance)
-                
-            sys.modules["persona_cron_registrar"] = DummyModule
+            bff_main.read_store.list_authoritative_paper_runtime_monitoring_sessions = (
+                lambda: [worker_session]
+            )
+            projection = {
+                "plan_id": created["deploymentPlanId"],
+                "deployment_saga_id": create_body["meta"]["deployment_saga_id"],
+                "deployment_saga_status": "completed",
+                "deployment_saga_progress": {"progress_status": "completed"},
+                "runtime_binding_id": binding_id,
+                "runtime_id": runtime_id,
+                "runtime_binding": {
+                    "binding_id": binding_id,
+                    "runtime_id": runtime_id,
+                    "plan_id": created["deploymentPlanId"],
+                    "persona_capital_binding_id": persona_capital_binding_id,
+                    "status": "active",
+                    "metadata": {"persona_id": persona_id},
+                },
+            }
+            bff_main._get_json = lambda *_args, **_kwargs: projection
+            bff_main._register_persona_cron_required = lambda *_args, **_kwargs: {
+                "authoritative_readback": {
+                    "registered": True,
+                    "runtime_id": runtime_id,
+                    "runtime_binding_id": binding_id,
+                }
+            }
 
             detail = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
             assert detail.status_code == 200, detail.text
             assert detail.json()["data"]["id"] == persona_id
             assert detail.json()["data"]["state"] == "paper_running"
             assert detail.json()["data"]["capitalMode"] == "paper"
-            assert detail.json()["data"]["runtimeId"] == created["runtimeId"]
+            assert detail.json()["data"]["runtimeId"] == runtime_id
 
             fleet = client.get(f"/bff/management/persona-fleet?persona={persona_id}", headers=HEADERS)
             assert fleet.status_code == 200, fleet.text
@@ -407,8 +428,8 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
             assert row["paper_ledger_id"] == created["paperLedgerId"]
             assert row["paper_ledger"]["is_isolated"] is True
             assert row["capital_pool_id"] is None
-            assert row["runtime_id"] == created["runtimeId"]
-            assert row["runtime_binding_id"] == created["runtimeBindingId"]
+            assert row["runtime_id"] == runtime_id
+            assert row["runtime_binding_id"] == binding_id
             assert row["runtime_binding"]["state"] == "running"
             assert row["deployment_stage"] == "paper"
 
