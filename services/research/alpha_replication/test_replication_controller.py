@@ -104,14 +104,14 @@ def test_run_controller_tick_success(temp_dir):
         }
     }
 
-    # Mock _get_registry_entry helper
+    # Mock _get_approved_specs_for_strategy helper
     with mock.patch(
-        "services.research.alpha_replication.replication_controller._get_registry_entry"
+        "services.research.alpha_replication.replication_controller._get_approved_specs_for_strategy"
     ) as mock_get:
-        def side_effect(registry_url, registry_id):
-            if registry_id == "reg-strategy-spec-strat-001":
-                return mock_entry_view1
-            return None  # strat-002 not approved or missing
+        def side_effect(registry_url, strategy_id):
+            if strategy_id == "strat-001":
+                return [mock_entry_view1["entry"]]
+            return []  # strat-002 not approved or missing
         
         mock_get.side_effect = side_effect
 
@@ -166,9 +166,9 @@ def test_run_controller_tick_registry_failure(temp_dir):
         seed_store_path=temp_dir / "non-existent-seeds.jsonl",
     )
 
-    # Mock _get_registry_entry to raise exception
+    # Mock _get_approved_specs_for_strategy to raise exception
     with mock.patch(
-        "services.research.alpha_replication.replication_controller._get_registry_entry",
+        "services.research.alpha_replication.replication_controller._get_approved_specs_for_strategy",
         side_effect=RuntimeError("Registry internal error")
     ):
         mock_writer = mock.MagicMock()
@@ -182,3 +182,52 @@ def test_run_controller_tick_registry_failure(temp_dir):
         )
         assert res["total_successes"] == 1
         assert res["desired_state"]["approved_spec_count"] == 0
+
+
+def test_run_controller_tick_registry_failure_fails_closed(temp_dir):
+    # 1. Create a seeds file
+    seed_store_path = temp_dir / "distill_seeds.jsonl"
+    seed_store_path.write_text(json.dumps({"source_id": "strat-001"}) + "\n")
+
+    state_path = temp_dir / "state.json"
+    state = ControllerState(
+        controller_id="test-controller",
+        controller_name="test-replication-controller",
+        environment="test",
+        tenant_id="default",
+        deployment={"git_sha": "test-sha"},
+    )
+    store = ControllerStateStore(state_path)
+    store.save(state)
+
+    config = ReplicationControllerConfig(
+        database_url=None,
+        registry_url="http://mock-registry:8087",
+        interval_seconds=10,
+        max_ticks=1,
+        state_path=state_path,
+        data_dir=temp_dir,
+        seed_store_path=seed_store_path,
+    )
+
+    # Mock _get_approved_specs_for_strategy to raise exception
+    with mock.patch(
+        "services.research.alpha_replication.replication_controller._get_approved_specs_for_strategy",
+        side_effect=RuntimeError("Registry internal error")
+    ):
+        mock_writer = mock.MagicMock()
+        
+        # In this test, with seeds present, registry error must propagate and fail the tick
+        with pytest.raises(RuntimeError, match="Registry lookup failed"):
+            run_controller_tick(
+                config=config,
+                state=state,
+                store=store,
+                writer=mock_writer,
+            )
+        
+        # Reload state to check that it recorded a failure
+        updated_state = store.load()
+        assert updated_state.total_failures == 1
+        assert updated_state.consecutive_failures == 1
+        assert "Registry lookup failed" in updated_state.last_failure_reason

@@ -119,57 +119,77 @@ class AlphaRevalidationWorker:
                 f"mode; production adapters are fail-closed. Allowed: {sorted(SAFE_DISPATCH_MODES)}"
             )
         self._dispatch_mode = raw_mode
+        self._max_retries = int(os.getenv("PANTHEON_ALPHA_REVALIDATION_MAX_RETRIES", "3"))
         self._metrics = self._load_metrics()
 
     # ------------------------------------------------------------------ #
     # Public API                                                           #
     # ------------------------------------------------------------------ #
 
-    def run_once(self) -> dict[str, Any]:
-        """Process all pending queue entries in one tick.
+    def run_once(self, tenant_id: str | None = None) -> dict[str, Any]:
+        """Process pending queue entries in one tick by atomically claiming them.
 
         Returns a summary dict with run_count, created_run_ids, errors.
-        Duplicate ticks for already-revalidated specs are silently skipped.
         """
-        pending = self._queue.list_pending()
+        # Determine unique tenants to process
+        if tenant_id:
+            tenants = [tenant_id]
+        else:
+            # Check all pending entries to find unique tenants
+            with self._queue._lock_context():
+                entries = self._queue._read()
+            tenants = sorted(list({e.get("tenant_id", "default") for e in entries if e.get("status") == "pending"}))
+            if not tenants:
+                tenants = ["default"]
+
         created_run_ids: list[str] = []
         errors: list[dict[str, Any]] = []
         skipped_run_ids: list[str] = []
         tick_at = _utc_now()
+        processed_count = 0
+        attempted = set()
 
         with self._lock:
-            for entry in pending:
-                try:
-                    # Enforce queue entry timeout (default: 3600 seconds)
-                    enqueued_dt = parse_utc(entry.get("enqueued_at"))
-                    if enqueued_dt:
-                        entry_timeout = int(os.getenv("PANTHEON_QUEUE_ENTRY_TIMEOUT_SECONDS", "3600"))
-                        if (datetime.now(timezone.utc) - enqueued_dt).total_seconds() > entry_timeout:
-                            raise TimeoutError(f"Queue entry enqueued at {entry.get('enqueued_at')} has timed out (limit: {entry_timeout}s)")
+            for t in tenants:
+                while True:
+                    entry = self._queue.claim_next_pending(t, claimant=self._worker_id, ignore_keys=attempted)
+                    if not entry:
+                        break
+                    key = (entry["strategy_id"], entry["spec_version"])
+                    attempted.add(key)
+                    processed_count += 1
+                    try:
+                        # Enforce queue entry timeout (default: 3600 seconds)
+                        enqueued_dt = parse_utc(entry.get("enqueued_at"))
+                        if enqueued_dt:
+                            entry_timeout = int(os.getenv("PANTHEON_QUEUE_ENTRY_TIMEOUT_SECONDS", "3600"))
+                            if (datetime.now(timezone.utc) - enqueued_dt).total_seconds() > entry_timeout:
+                                raise TimeoutError(f"Queue entry enqueued at {entry.get('enqueued_at')} has timed out (limit: {entry_timeout}s)")
 
-                    run_record = self._process_entry(entry, tick_at=tick_at)
-                    is_new = run_record.get("created_at") == tick_at
-                    
-                    if not is_new:
-                        skipped_run_ids.append(run_record["run_id"])
-                    elif run_record.get("status") == "failed":
-                        raise ValueError(run_record.get("failure_reason") or "Revalidation failed")
-                    else:
-                        created_run_ids.append(run_record["run_id"])
-                except Exception as exc:  # noqa: BLE001
-                    err_msg = str(exc)
-                    errors.append(
-                        {
-                            "strategy_id": entry.get("strategy_id"),
-                            "spec_version": entry.get("spec_version"),
-                            "error": err_msg,
-                        }
-                    )
-                    self._queue.mark_failed(
-                        entry["strategy_id"],
-                        entry["spec_version"],
-                        error=err_msg,
-                    )
+                        run_record = self._process_entry(entry, tick_at=tick_at)
+                        is_new = run_record.get("created_at") == tick_at
+                        
+                        if not is_new:
+                            skipped_run_ids.append(run_record["run_id"])
+                        elif run_record.get("status") == "failed":
+                            raise ValueError(run_record.get("failure_reason") or "Revalidation failed")
+                        else:
+                            created_run_ids.append(run_record["run_id"])
+                    except Exception as exc:  # noqa: BLE001
+                        err_msg = str(exc)
+                        errors.append(
+                            {
+                                "strategy_id": entry.get("strategy_id"),
+                                "spec_version": entry.get("spec_version"),
+                                "error": err_msg,
+                            }
+                        )
+                        self._queue.mark_failed(
+                            entry["strategy_id"],
+                            entry["spec_version"],
+                            error=err_msg,
+                            max_retries=self._max_retries,
+                        )
 
         if created_run_ids:
             self._metrics.run_count += len(created_run_ids)
@@ -186,12 +206,16 @@ class AlphaRevalidationWorker:
 
         return {
             "tick_at": tick_at,
-            "processed": len(pending),
+            "processed": processed_count,
             "created_run_ids": created_run_ids,
             "skipped_run_ids": skipped_run_ids,
             "errors": errors,
             "dispatch_mode": self._dispatch_mode,
         }
+
+    def replay_dlq(self, strategy_id: str, spec_version: str) -> bool:
+        """Reset a DLQ/failed entry back to pending for replay."""
+        return self._queue.replay_dlq(strategy_id, spec_version)
 
     def get_metrics(self) -> dict[str, Any]:
         """Return observable worker health metrics."""
@@ -301,9 +325,25 @@ class AlphaRevalidationWorker:
                 method="POST"
             )
             with urllib.request.urlopen(req, timeout=5) as response:
-                pass
+                resp_data = json.loads(response.read().decode("utf-8"))
+                created_entry = resp_data.get("entry", {})
+                created_id = created_entry.get("registry_id")
+                if not created_id:
+                    raise ValueError("Registry response did not contain registry_id")
+            
+            # Authoritative readback verification
+            readback_url = f"{registry_url}/api/registry/entries/{created_id}"
+            readback_req = urllib.request.Request(readback_url, method="GET")
+            with urllib.request.urlopen(readback_req, timeout=5) as rb_response:
+                rb_data = json.loads(rb_response.read().decode("utf-8"))
+                rb_entry = rb_data.get("entry", {})
+                if rb_entry.get("producer_run_id") != run_id:
+                    raise ValueError(
+                        f"Readback verification failed: expected producer_run_id={run_id!r}, "
+                        f"got {rb_entry.get('producer_run_id')!r}"
+                    )
         except Exception as exc:
-            print(f"Warning: failed to writeback lineage to registry: {exc}", file=sys.stderr)
+            raise RuntimeError(f"Lineage writeback or readback verification failed: {exc}") from exc
 
     def _process_entry(
         self, entry: dict[str, Any], *, tick_at: str
@@ -472,9 +512,19 @@ class AlphaRevalidationWorker:
         return records
 
     def _append_run(self, record: dict[str, Any]) -> None:
-        with self._runs_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=True, sort_keys=True))
-            fh.write("\n")
+        try:
+            with self._runs_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=True, sort_keys=True))
+                fh.write("\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            
+            # Authoritative readback check
+            runs = self._read_runs()
+            if not any(r.get("run_id") == record["run_id"] for r in runs):
+                raise ValueError("Appended run was not found in readback verification")
+        except Exception as exc:
+            raise RuntimeError(f"Experiment run append or readback verification failed: {exc}") from exc
 
     def _load_metrics(self) -> RevalidationWorkerMetrics:
         if not self._metrics_path.exists():
