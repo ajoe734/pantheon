@@ -40,8 +40,9 @@ GET  /api/openclaw-adapter/broker/audit              — paper intent/result aud
 
 from __future__ import annotations
 
-import json
 import hashlib
+import hmac
+import json
 import os
 import urllib.error
 import urllib.request
@@ -49,7 +50,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional
 
 import httpx
-from fastapi import FastAPI, Header
+from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -109,6 +110,12 @@ from services.foundation.health import (
 OPENCLAW_GATEWAY_URL = os.getenv("OPENCLAW_GATEWAY_URL", "")
 _UPSTREAM_TIMEOUT = int(os.getenv("OPENCLAW_UPSTREAM_TIMEOUT", "3"))
 _UPSTREAM_RETRIES = int(os.getenv("OPENCLAW_UPSTREAM_RETRIES", "1"))
+_ASSISTANT_API_PREFIX = "/api/openclaw-adapter/assistant"
+_ASSISTANT_SERVICE_TOKEN = os.getenv("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", "")
+_ASSISTANT_SERVICE_AUTH_REQUIRED = os.getenv(
+    "PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED",
+    "",
+).strip().lower() in {"1", "true", "yes", "on"}
 
 # Explicit deferral guards: these env vars must be absent or falsy in all compose configs.
 # Production adapter activation is intentionally deferred (no EP5 human gate completed).
@@ -255,6 +262,32 @@ def _probe_upstream() -> Dict[str, Any]:
 def _upstream_health_dep() -> Dict[str, Any]:
     probe = _probe_upstream()
     return {"status": "ok" if probe.get("reachable") else "degraded", **probe}
+
+
+def _assistant_service_auth_health_dep() -> Dict[str, Any]:
+    configured = bool(_ASSISTANT_SERVICE_TOKEN)
+    if _ASSISTANT_SERVICE_AUTH_REQUIRED and not configured:
+        return {
+            "status": "error",
+            "configured": False,
+            "required": True,
+            "reason": "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN is required but not configured.",
+        }
+    return {
+        "status": "ok",
+        "configured": configured,
+        "required": _ASSISTANT_SERVICE_AUTH_REQUIRED,
+    }
+
+
+def _assistant_service_token_matches(presented_token: Optional[str]) -> bool:
+    """Compare fixed-size token digests without exposing the configured secret."""
+
+    if not _ASSISTANT_SERVICE_TOKEN:
+        return False
+    expected_digest = hashlib.sha256(_ASSISTANT_SERVICE_TOKEN.encode("utf-8")).digest()
+    presented_digest = hashlib.sha256((presented_token or "").encode("utf-8")).digest()
+    return hmac.compare_digest(presented_digest, expected_digest)
 
 
 @dataclass
@@ -599,10 +632,50 @@ app = FastAPI(
     ),
 )
 
+
+@app.middleware("http")
+async def require_assistant_service_token(request: Request, call_next):
+    """Authenticate BFF-to-adapter calls at the shared assistant boundary."""
+
+    path = request.url.path.rstrip("/")
+    if path != _ASSISTANT_API_PREFIX and not path.startswith(f"{_ASSISTANT_API_PREFIX}/"):
+        return await call_next(request)
+
+    if not _ASSISTANT_SERVICE_TOKEN:
+        if _ASSISTANT_SERVICE_AUTH_REQUIRED:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "service_auth_error",
+                    "error_code": "ASSISTANT_SERVICE_AUTH_MISCONFIGURED",
+                    "message": (
+                        "Assistant service authentication is required, but the adapter service token "
+                        "is not configured."
+                    ),
+                },
+            )
+        return await call_next(request)
+
+    presented_token = request.headers.get("X-Pantheon-Service-Token")
+    if not _assistant_service_token_matches(presented_token):
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "service_auth_error",
+                "error_code": "ASSISTANT_SERVICE_AUTH_DENIED",
+                "message": "A valid X-Pantheon-Service-Token header is required.",
+            },
+        )
+    return await call_next(request)
+
+
 register_fastapi_health_routes(
     app,
     "openclaw-gateway-adapter",
-    dependencies=lambda: {"openclaw_gateway": _upstream_health_dep()},
+    dependencies=lambda: {
+        "openclaw_gateway": _upstream_health_dep(),
+        "assistant_service_auth": _assistant_service_auth_health_dep(),
+    },
     details=lambda: {
         "gateway_url": OPENCLAW_GATEWAY_URL or "not_configured",
         "production_broker_enabled": _PRODUCTION_BROKER_ENABLED,
@@ -620,7 +693,10 @@ register_fastapi_health_routes(
 def health_compat() -> Dict[str, Any]:
     return health_payload(
         "openclaw-gateway-adapter",
-        dependencies={"openclaw_gateway": _upstream_health_dep()},
+        dependencies={
+            "openclaw_gateway": _upstream_health_dep(),
+            "assistant_service_auth": _assistant_service_auth_health_dep(),
+        },
     )
 
 

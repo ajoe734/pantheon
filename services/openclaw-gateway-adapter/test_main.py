@@ -155,6 +155,105 @@ class TestHealthEndpoints(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# BFF-to-adapter assistant service authentication
+# ---------------------------------------------------------------------------
+
+
+class TestAssistantServiceAuthentication(unittest.TestCase):
+    def _auth_config(self, *, token: str, required: bool):
+        return patch.multiple(
+            adapter_main,
+            _ASSISTANT_SERVICE_TOKEN=token,
+            _ASSISTANT_SERVICE_AUTH_REQUIRED=required,
+        )
+
+    def test_configured_token_protects_provider_invoke_and_repair_prepare(self):
+        with (
+            self._auth_config(token="adapter-secret", required=True),
+            patch.object(adapter_main._CODEX_RUNTIME, "invoke") as codex_invoke,
+            patch.object(adapter_main._REPAIR_WORKFLOW, "prepare") as repair_prepare,
+        ):
+            provider_resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/invoke",
+                json={"mode": "kernel_debug", "prompt": "inspect"},
+                headers={"X-Operator-Id": "op-1"},
+            )
+            repair_resp = client.post(
+                "/api/openclaw-adapter/assistant/repair-worktrees/prepare",
+                json={
+                    "repo_key": "pantheon",
+                    "task_id": "SERVICE-AUTH-1",
+                    "declared_scope": ["services/openclaw-gateway-adapter"],
+                },
+                headers={"X-Operator-Id": "op-1"},
+            )
+
+        for response in (provider_resp, repair_resp):
+            self.assertEqual(response.status_code, 401, response.text)
+            self.assertEqual(response.json()["error_code"], "ASSISTANT_SERVICE_AUTH_DENIED")
+        codex_invoke.assert_not_called()
+        repair_prepare.assert_not_called()
+
+    def test_service_token_uses_constant_time_digest_comparison(self):
+        compare_digest = adapter_main.hmac.compare_digest
+        with (
+            self._auth_config(token="adapter-secret", required=True),
+            patch.object(adapter_main.hmac, "compare_digest", wraps=compare_digest) as compared,
+        ):
+            wrong_resp = client.get(
+                "/api/openclaw-adapter/assistant/credentials",
+                headers={"X-Pantheon-Service-Token": "wrong-secret"},
+            )
+            valid_resp = client.get(
+                "/api/openclaw-adapter/assistant/credentials",
+                headers={"X-Pantheon-Service-Token": "adapter-secret"},
+            )
+
+        self.assertEqual(wrong_resp.status_code, 401, wrong_resp.text)
+        self.assertEqual(valid_resp.status_code, 200, valid_resp.text)
+        self.assertEqual(compared.call_count, 2)
+        for compared_call in compared.call_args_list:
+            presented_digest, expected_digest = compared_call.args
+            self.assertIsInstance(presented_digest, bytes)
+            self.assertIsInstance(expected_digest, bytes)
+            self.assertEqual(len(presented_digest), 32)
+            self.assertEqual(len(expected_digest), 32)
+
+    def test_required_auth_without_token_fails_closed_and_degrades_readiness(self):
+        with (
+            self._auth_config(token="", required=True),
+            patch.object(adapter_main, "_probe_upstream", return_value={"reachable": True}),
+        ):
+            assistant_resp = client.get("/api/openclaw-adapter/assistant/credentials")
+            readiness_resp = client.get("/readyz")
+
+        self.assertEqual(assistant_resp.status_code, 503, assistant_resp.text)
+        self.assertEqual(
+            assistant_resp.json()["error_code"],
+            "ASSISTANT_SERVICE_AUTH_MISCONFIGURED",
+        )
+        self.assertEqual(readiness_resp.status_code, 503, readiness_resp.text)
+        self.assertEqual(
+            readiness_resp.json()["dependencies"]["assistant_service_auth"]["status"],
+            "error",
+        )
+
+    def test_service_token_does_not_guard_non_assistant_adapter_routes(self):
+        with (
+            self._auth_config(token="adapter-secret", required=True),
+            patch.object(
+                adapter_main,
+                "_probe_upstream",
+                return_value={"reachable": True, "http_status": 200},
+            ),
+        ):
+            resp = client.get("/api/openclaw-adapter/upstream/status")
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertTrue(resp.json()["reachable"])
+
+
+# ---------------------------------------------------------------------------
 # Upstream status
 # ---------------------------------------------------------------------------
 
