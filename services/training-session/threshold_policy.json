@@ -1,11 +1,21 @@
 {
-  "max_staleness_days": 10,
+  "policy_id": "persona-teaching-evaluation",
+  "policy_version": "2.0.0",
+  "status": "active",
+  "approval_decision_ref": "LOOP-PROD-TEACH-001-threshold-policy-v2",
+  "effective_from": "2026-07-15T00:00:00Z",
+  "effective_until": "2026-10-15T00:00:00Z",
+  "required_backend": "vectorbt_portfolio",
+  "proof_ttl_seconds": 900,
+  "max_future_skew_seconds": 60,
+  "max_staleness_days": 2,
   "min_bars_per_instrument": 30,
   "min_instruments": 2,
   "required_instruments": [
-    "BTCUSD",
-    "ETHUSD"
+    "BTC.CRYPTO",
+    "ETH.CRYPTO"
   ],
-  "min_sharpe_ratio": -1.0,
-  "min_total_return": -0.5
+  "min_sharpe_ratio": -0.5,
+  "min_total_return": -0.2,
+  "max_drawdown": 0.25
 }

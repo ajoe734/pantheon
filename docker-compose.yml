@@ -372,12 +372,32 @@ services:
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       TRAINING_SESSION_EVENT_STORE_BACKEND: ${TRAINING_SESSION_EVENT_STORE_BACKEND:-jsonl}
       TRAINING_SESSION_EVENT_STORE_DSN: ${TRAINING_SESSION_EVENT_STORE_DSN:-}
+      PANTHEON_VECTORBT_BACKEND: ${PANTHEON_VECTORBT_BACKEND:-real}
+      TRAINING_SESSION_RUNTIME_EVIDENCE_PATH: ${TRAINING_SESSION_RUNTIME_EVIDENCE_PATH:-/data/training-session/runtime-evidence.jsonl}
+      TRAINING_SESSION_THRESHOLD_POLICY_PATH: /workspace/services/training-session/threshold_policy.json
+      TRAINING_SESSION_DATASET_AUTHORITY_OUTPUT_ROOT: /data/training-session/dataset-authority
+      TRAINING_SESSION_SOURCE_VOLUME_ROOT: /data/source-ingest
+      TRAINING_SESSION_SOURCE_AUTHORITY_TIMEOUT_SECONDS: ${TRAINING_SESSION_SOURCE_AUTHORITY_TIMEOUT_SECONDS:-30}
+      SOURCE_INGEST_API_URL: ${SOURCE_INGEST_API_URL:-http://source-ingest:8097}
+      TRAINING_SESSION_SOURCE_CONNECTOR_ID: ${TRAINING_SESSION_SOURCE_CONNECTOR_ID:-crypto-coingecko-spot}
+      TRAINING_SESSION_SOURCE_DATASET_ID: ${TRAINING_SESSION_SOURCE_DATASET_ID:-ds-coingecko-crypto-spot}
+      TRAINING_SESSION_PREVIEW_JOB_MAX_ATTEMPTS: ${TRAINING_SESSION_PREVIEW_JOB_MAX_ATTEMPTS:-3}
+      TRAINING_SESSION_PREVIEW_JOB_LEASE_SECONDS: ${TRAINING_SESSION_PREVIEW_JOB_LEASE_SECONDS:-120}
+      TRAINING_SESSION_PERSONA_AUTHORITY_TIMEOUT_SECONDS: ${TRAINING_SESSION_PERSONA_AUTHORITY_TIMEOUT_SECONDS:-5}
+      TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN: ${TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN:-}
+      TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE:-}
+      TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE:-}
+      TRAINING_SESSION_PERSONA_TARGET_WRITE_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_TARGET_WRITE_URL_TEMPLATE:-}
+      TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE:-}
     volumes:
       - training-session-data:/data/training-session
+      - source-ingest-data:/data/source-ingest:ro
     ports:
       - "${TRAINING_SESSION_PORT:-18099}:8099"
     depends_on:
       postgres:
+        condition: service_healthy
+      source-ingest:
         condition: service_healthy
     healthcheck:
       test:
@@ -401,10 +421,23 @@ services:
       TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS: ${TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS:-30}
       TRAINING_SESSION_PREVIEW_WORKER_MAX_TICKS: ${TRAINING_SESSION_PREVIEW_WORKER_MAX_TICKS:-0}
       TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT: ${TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT:-10}
-      TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH: ${TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH:-}
+      TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS: ${TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS:-30}
+      TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH: ${TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH:-/data/training-session/preview-worker-alive}
+    volumes:
+      - training-session-data:/data/training-session
     depends_on:
       training-session-svc:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os,time; path=os.environ['TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH']; max_age=max(90, 3*int(os.environ.get('TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS','30'))); age=time.time()-os.path.getmtime(path); assert age <= max_age, f'alive marker is {age:.1f}s old'\"",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   policy-learning-svc:
     build:
@@ -1020,7 +1053,6 @@ services:
       PANTHEON_RESEARCH_ORCHESTRATOR_API_URL: http://research-orchestrator-svc:8101
       PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL: http://research-worker-gateway-svc:8103
       PANTHEON_MEMORY_API_URL: http://memory:8086
-      PANTHEON_REGISTRY_API_URL: ${PANTHEON_REGISTRY_API_URL:-http://registry:8087}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
@@ -1056,8 +1088,6 @@ services:
       research-worker-gateway-svc:
         condition: service_healthy
       memory:
-        condition: service_healthy
-      registry:
         condition: service_healthy
       openclaw-gateway-adapter:
         condition: service_healthy
