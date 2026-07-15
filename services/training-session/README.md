@@ -60,15 +60,36 @@ Trainer preview can run through a durable async job queue:
 
 - `POST /api/training/sessions/{session_id}/preview-jobs` records a queued
   preview evaluation and appends a `preview_requested` `TeachingEvent`.
-- `GET /api/training/preview-jobs?status=queued` exposes queued work to the
-  supervised worker.
+- `GET /api/training/preview-jobs?status=claimable` exposes queued, retryable,
+  and expired-lease work to the supervised worker.
 - `POST /api/training/preview-jobs/{job_id}/run` executes the existing vectorbt
   preview path, stores the completed preview bundle, and appends a
-  `preview_result` event with an `evaluation_proof_ref`.
+  `preview_result` event with an `evaluation_proof_ref`. The response reports
+  whether the attempt reclaimed an expired lease and whether a failed attempt
+  remains retryable.
 
-`services/training-session/preview_eval_worker.py` polls queued jobs over HTTP.
-It is wired in Docker Compose behind the `training-session-preview-worker`
-profile with `restart: unless-stopped`.
+`services/training-session/preview_eval_worker.py` polls claimable jobs over HTTP.
+Docker Compose starts it by default with `restart: unless-stopped`, mounts the
+durable `training-session-data` volume, and health-checks a recent worker alive
+marker. The service, rather than the worker request, owns the trusted evaluation
+clock used by freshness admission.
+
+## Authoritative Evaluation Data
+
+The default Compose path evaluates with the pinned upstream vectorbt backend
+(`PANTHEON_VECTORBT_BACKEND=real`). Dataset authority comes from
+`source-ingest` using `SOURCE_INGEST_API_URL`,
+`TRAINING_SESSION_SOURCE_CONNECTOR_ID`, and
+`TRAINING_SESSION_SOURCE_DATASET_ID`; the source-ingest data volume is also
+mounted read-only for authoritative local readback. Missing, stale, invalid,
+insufficient, or provenance-mismatched data fails closed and cannot produce a
+passing commit gate.
+
+Runtime evaluation and decision records are written under
+`TRAINING_SESSION_RUNTIME_EVIDENCE_PATH` on the durable training-session data
+volume. This runtime JSONL is separate from the task-scoped product evidence
+manifest under `docs/deployment/evidence/` so tests and service execution do
+not mutate a tracked closeout artifact.
 
 ## Replay Decisions
 
