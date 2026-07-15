@@ -5,6 +5,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "deploy_nonprod_vm.sh"
+DEPLOY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 
 
 def test_nonprod_deploy_defaults_to_strict_bff_auth() -> None:
@@ -19,6 +20,35 @@ def test_nonprod_deploy_defaults_to_strict_bff_auth() -> None:
     assert 'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"' in script
     assert 'DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-true}"' not in script
     assert 'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-permissive}"' not in script
+
+
+def test_workflow_rejects_refs_that_predate_the_strict_auth_contract() -> None:
+    """The workflow definition comes from the dispatch ref, but checkout can
+    replace the workspace with an older target ref before the deploy script is
+    executed. Keep a workflow-level guard ahead of the remote deploy so an old
+    script cannot silently restore permissive/stub auth."""
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    gate = workflow.index("- name: Enforce dev strict-auth deployment floor")
+    deploy = workflow.index("- name: Deploy requested VM stack")
+    assert gate < deploy
+
+    for secret in (
+        "secrets.DEV_BFF_JWT_SECRET",
+        "secrets.DEV_BFF_OIDC_CLIENT_ID",
+        "secrets.DEV_BFF_OIDC_CLIENT_SECRET",
+    ):
+        assert secret in workflow[gate:deploy]
+
+    for marker in (
+        'DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"',
+        'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"',
+        "no governed verifier/dev-login credentials",
+        "assert_bff_auth_gate",
+    ):
+        assert marker in workflow[gate:deploy]
+
+    assert "refusing to run any target ref before strict auth can be verified" in workflow[gate:deploy]
 
 
 def _run_deploy_script(extra_env: dict) -> subprocess.CompletedProcess:

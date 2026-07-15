@@ -87,6 +87,34 @@ jobs:
         id: sha
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Enforce dev strict-auth deployment floor
+        if: ${{ env.TARGET_ENV == 'dev' && (env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') }}
+        env:
+          DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${DEV_BFF_JWT_SECRET}" || -z "${DEV_BFF_OIDC_CLIENT_ID}" || -z "${DEV_BFF_OIDC_CLIENT_SECRET}" ]]; then
+            echo "::error::Dev BFF deploy credentials are not provisioned; refusing to run any target ref before strict auth can be verified."
+            exit 1
+          fi
+
+          deploy_script="scripts/deploy_nonprod_vm.sh"
+          required_markers=(
+            'DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"'
+            'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"'
+            'no governed verifier/dev-login credentials'
+            'assert_bff_auth_gate'
+          )
+          for marker in "${required_markers[@]}"; do
+            if ! grep -Fq -- "${marker}" "${deploy_script}"; then
+              echo "::error::Requested ref lacks the dev strict-auth deployment contract: ${marker}"
+              exit 1
+            fi
+          done
+
       - name: Validate target and compose contract
         run: |
           case "${TARGET_ENV}:${TARGET_COMPONENT}" in
