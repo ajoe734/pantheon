@@ -246,6 +246,33 @@ def test_control_mode_activation_requires_kernel_capability(monkeypatch) -> None
     assert store.status_for_actor("op-security")["active"] is False
 
 
+def test_control_mode_activation_requires_exact_requested_mode_capability(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.debug"],
+        mfa_verified=True,
+    )
+
+    response = client.post(
+        "/bff/assistant/control-mode/activate",
+        json={
+            "mode": "kernel_repair",
+            "passphrase": "control phrase ok",
+            "reason": "wrong capability negative",
+        },
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+
+    assert response.status_code == 403
+    details = response.json()["error"]["details"]
+    assert details["reason"] == "mode_capability_missing"
+    assert details["required_capability"] == "assistant.kernel.repair"
+    assert store.status_for_actor("op-security")["active"] is False
+
+
 def test_control_mode_activation_rejects_invalid_ttl_and_idle_timeout(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
     store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
@@ -401,6 +428,7 @@ def test_repair_worktree_prepare_requires_active_kernel_repair(monkeypatch) -> N
 
 def test_repair_worktree_prepare_delegates_to_openclaw_adapter(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_REPAIR_RECEIPT_KEY", "repair-receipt-test-secret")
     calls = []
 
     def prepare(payload, operator_id, trace_id):
@@ -415,6 +443,7 @@ def test_repair_worktree_prepare_delegates_to_openclaw_adapter(monkeypatch) -> N
                     "expected_branch": payload["expected_branch"],
                     "remote": "origin",
                     "merge_target": "dev",
+                    "repo_key": payload["repo_key"],
                     "require_clean": True,
                 }
             },
@@ -465,6 +494,7 @@ def test_repair_worktree_prepare_delegates_to_openclaw_adapter(monkeypatch) -> N
     assert payload["expected_branch"] == "task/MGMT-AI-REPAIR-TEST"
     assert payload["control_mode"]["mode"] == "kernel_repair"
     assert resp.json()["data"]["repair"]["task_id"] == "MGMT-AI-REPAIR-TEST"
+    assert resp.json()["data"]["repair"]["receipt"].count(".") == 1
     assert resp.json()["meta"]["openclawAdapterStatus"] == "ok"
 
 

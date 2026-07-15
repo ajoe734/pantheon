@@ -49,6 +49,7 @@ from .models import (
 )
 from .orchestrator_status import read_orchestrator_status
 from .redaction import RedactionError, redact_assistant_payload
+from .repair_receipts import RepairReceiptError, issue_repair_receipt
 from .tool_contracts import (
     ASSISTANT_TOOL_ALLOWLIST,
     ToolNotAllowedError,
@@ -385,6 +386,7 @@ def create_assistant_router(
                 str(exc),
                 field=exc.field,
             )
+        _require_mode_capability(identity, mode, bff_error=bff_error)
 
         ttl_seconds = _positive_int(payload.get("ttlSeconds", payload.get("ttl_seconds")), DEFAULT_KERNEL_TTL_SECONDS)
         idle_ttl_seconds = _positive_int(
@@ -413,6 +415,7 @@ def create_assistant_router(
     ) -> dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
+        _require_control_mode_actor(identity, bff_error=bff_error)
         return {
             "data": _control_mode_store.deactivate(
                 identity.operator_id,
@@ -525,6 +528,8 @@ def create_assistant_router(
     async def prepare_assistant_repair_worktree(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> dict[str, Any]:
         """Prepare the clean task worktree required by kernel_repair.
 
@@ -560,8 +565,44 @@ def create_assistant_router(
         actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
         prepared = prepare_repair_worktree(request_payload, actor_id, trace_id)
         if isinstance(prepared, dict) and isinstance(prepared.get("data"), dict):
+            prepared_data = dict(prepared["data"])
+            raw_repair = prepared_data.get("repair")
+            if not isinstance(raw_repair, dict):
+                _raise_error(
+                    bff_error,
+                    502,
+                    ErrorCode.PRECONDITION_FAILED,
+                    "OpenClaw adapter did not return prepared repair metadata",
+                    "The repair-worktree response cannot be authorized without canonical repair metadata.",
+                    field="openclaw_adapter",
+                    reason="repair_metadata_missing",
+                )
+            repair = dict(raw_repair)
+            tenant_id = _resolve_identity_tenant(
+                identity,
+                requested_tenant=str(x_tenant_id or x_pantheon_tenant or "").strip() or None,
+                bff_error=bff_error,
+            )
+            try:
+                repair["receipt"] = issue_repair_receipt(
+                    repair,
+                    actor_id=actor_id,
+                    tenant_id=tenant_id,
+                    control_status=control_status,
+                )
+            except RepairReceiptError as exc:
+                _raise_error(
+                    bff_error,
+                    503,
+                    ErrorCode.PRECONDITION_FAILED,
+                    "Assistant repair receipt could not be issued",
+                    str(exc),
+                    field="repair_receipt",
+                    reason=exc.reason,
+                )
+            prepared_data["repair"] = repair
             return {
-                "data": prepared["data"],
+                "data": prepared_data,
                 "meta": {
                     "openclawAdapterStatus": prepared.get("status"),
                     "openclaw_adapter_status": prepared.get("status"),
@@ -1872,6 +1913,86 @@ def _require_control_mode_actor(
             field="capabilities",
             required_capability_prefix=CONTROL_MODE_CAPABILITY_PREFIX,
         )
+
+
+def _require_mode_capability(
+    identity: Any,
+    mode: AssistantMode,
+    *,
+    bff_error: Optional[BffErrorFactory],
+) -> None:
+    required = f"assistant.{mode.value.replace('_', '.')}"
+    capabilities = set(actor_capabilities(identity))
+    if required in capabilities:
+        return
+    _raise_error(
+        bff_error,
+        403,
+        ErrorCode.FORBIDDEN,
+        f"Control mode {mode.value} requires {required} capability",
+        "The authenticated actor does not hold the exact capability required for the requested mode.",
+        field="capabilities",
+        reason="mode_capability_missing",
+        required_capability=required,
+    )
+
+
+def _identity_tenant_values(identity: Any) -> List[str]:
+    claims = getattr(identity, "claims", {}) if identity is not None else {}
+    if not isinstance(claims, dict):
+        claims = {}
+    raw_values: List[Any] = []
+    for key in ("tenant_id", "tenantId", "tenant_ids", "tenantIds", "tid"):
+        value = claims.get(key)
+        if isinstance(value, (list, tuple, set)):
+            raw_values.extend(value)
+        elif value not in (None, ""):
+            raw_values.append(value)
+    result: List[str] = []
+    seen = set()
+    for value in raw_values:
+        clean = str(value or "").strip()
+        if clean and clean not in seen:
+            seen.add(clean)
+            result.append(clean)
+    return result
+
+
+def _resolve_identity_tenant(
+    identity: Any,
+    *,
+    requested_tenant: Optional[str],
+    bff_error: Optional[BffErrorFactory],
+) -> str:
+    allowed = _identity_tenant_values(identity)
+    requested = str(requested_tenant or "").strip()
+    if requested:
+        if allowed and "*" not in allowed and requested not in allowed:
+            _raise_error(
+                bff_error,
+                403,
+                ErrorCode.FORBIDDEN,
+                "Requested tenant is outside the authenticated identity scope",
+                "Repair receipts are bound to the authenticated tenant and cannot cross tenant boundaries.",
+                field="tenant_id",
+                reason="tenant_mismatch",
+                requested_tenant=requested,
+            )
+        return requested
+    concrete = [value for value in allowed if value != "*"]
+    if len(concrete) == 1:
+        return concrete[0]
+    if len(concrete) > 1:
+        _raise_error(
+            bff_error,
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Repair worktree preparation requires an explicit tenant",
+            "Send X-Tenant-Id when the authenticated identity is scoped to more than one tenant.",
+            field="tenant_id",
+            reason="tenant_required",
+        )
+    return "pantheon-dev"
 
 
 def _raise_control_mode_error(

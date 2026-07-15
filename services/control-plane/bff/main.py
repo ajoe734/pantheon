@@ -39012,6 +39012,27 @@ def _mgmt_nl_raise_control_mode_actor_error(identity: OperatorIdentity) -> None:
         )
 
 
+def _mgmt_nl_require_mode_capability(identity: OperatorIdentity, mode: Any) -> None:
+    from assistant.control_mode import actor_capabilities
+
+    mode_value = str(getattr(mode, "value", mode) or "").strip()
+    required = f"assistant.{mode_value.replace('_', '.')}"
+    if required in set(actor_capabilities(identity)):
+        return
+    raise _bff_error(
+        403,
+        ErrorCode.FORBIDDEN,
+        f"Control mode {mode_value} requires {required} capability",
+        "The authenticated actor does not hold the exact capability required for the requested mode.",
+        precondition_failed="control_mode_capability",
+        details_extra={
+            "field": "capabilities",
+            "reason": "mode_capability_missing",
+            "required_capability": required,
+        },
+    )
+
+
 def _mgmt_nl_raise_control_mode_error(exc: Exception) -> None:
     status_code = int(getattr(exc, "status_code", 422) or 422)
     if status_code == 403:
@@ -39210,6 +39231,7 @@ def _mgmt_nl_handle_control_command(
                 precondition_failed="control_mode_kernel_policy",
                 details_extra={"field": exc.field},
             )
+        _mgmt_nl_require_mode_capability(identity, mode)
         ttl_seconds = _mgmt_nl_positive_int(
             options.get("ttlSeconds", options.get("ttl_seconds")),
             DEFAULT_KERNEL_TTL_SECONDS,
@@ -39232,6 +39254,7 @@ def _mgmt_nl_handle_control_command(
         except ControlModeError as exc:
             _mgmt_nl_raise_control_mode_error(exc)
     elif command_kind == "deactivate":
+        _mgmt_nl_raise_control_mode_actor_error(identity)
         control_mode = store.deactivate(identity.operator_id, reason="management_nl_chat_control_command")
     elif command_kind == "status":
         control_mode = _assistant_control_mode_for_identity(
@@ -40493,7 +40516,85 @@ def _mgmt_nl_openclaw_repair_metadata(payload: Dict[str, Any]) -> Dict[str, Any]
     )
     if isinstance(pull_request, dict):
         metadata["pull_request"] = pull_request
+    receipt = repair.get("receipt")
+    if isinstance(receipt, str) and receipt.strip():
+        metadata["receipt"] = receipt.strip()
     return metadata
+
+
+def _mgmt_nl_authorize_openclaw_repair_metadata(
+    payload: Dict[str, Any],
+    *,
+    identity: OperatorIdentity,
+    caller_tenant_id: str,
+    control_mode: Dict[str, Any],
+) -> Dict[str, Any]:
+    from assistant.repair_receipts import RepairReceiptError, verify_repair_receipt
+
+    supplied = _mgmt_nl_openclaw_repair_metadata(payload)
+    mode = str(control_mode.get("mode") or "") if control_mode.get("active") else "user"
+    if mode != "kernel_repair":
+        if supplied:
+            raise _bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "Prepared repair metadata requires active kernel_repair control mode",
+                "Activate kernel_repair with the same authenticated operator before forwarding a prepare receipt.",
+                precondition_failed="control_mode",
+                details_extra={"reason": "kernel_repair_required", "mode": mode},
+            )
+        return {}
+
+    _mgmt_nl_raise_control_mode_actor_error(identity)
+    _mgmt_nl_require_mode_capability(identity, "kernel_repair")
+    activation_capabilities = {
+        str(value or "").strip() for value in (control_mode.get("capabilities") or [])
+    }
+    if "assistant.kernel.repair" not in activation_capabilities:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Active control mode is not authorized for repair writes",
+            "The active control-mode activation does not include assistant.kernel.repair.",
+            precondition_failed="control_mode_capability",
+            details_extra={
+                "reason": "activation_capability_missing",
+                "required_capability": "assistant.kernel.repair",
+            },
+        )
+
+    receipt = str(supplied.pop("receipt", "") or "").strip()
+    if not receipt:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Kernel repair requires a BFF-issued prepare receipt",
+            "Call /bff/assistant/repair-worktrees/prepare and forward its exact repair object.",
+            precondition_failed="repair_receipt",
+            details_extra={"reason": "repair_receipt_missing"},
+        )
+    try:
+        signed_repair = verify_repair_receipt(
+            receipt,
+            actor_id=identity.operator_id,
+            tenant_id=caller_tenant_id,
+            control_status=control_mode,
+            supplied_repair=supplied,
+        )
+    except RepairReceiptError as exc:
+        status_code = 503 if exc.reason == "receipt_key_unconfigured" else 403
+        code = ErrorCode.PRECONDITION_FAILED if status_code == 503 else ErrorCode.FORBIDDEN
+        raise _bff_error(
+            status_code,
+            code,
+            "Assistant repair prepare receipt is invalid",
+            str(exc),
+            precondition_failed="repair_receipt",
+            details_extra={"reason": exc.reason},
+        ) from exc
+    # The signed canonical object, not browser-supplied fields, crosses the BFF
+    # provider boundary. The receipt itself stays inside the BFF.
+    return signed_repair
 
 
 def _mgmt_nl_provider_mode_prompt_lines(provider_mode: str) -> List[str]:
@@ -40752,7 +40853,7 @@ def _mgmt_nl_maybe_provider_answer(
     }
     if provider_mode == "kernel_repair" and openclaw_repair_metadata:
         metadata.update(openclaw_repair_metadata)
-        metadata["repair_metadata_source"] = "management_nl_openclaw_payload"
+        metadata["repair_metadata_source"] = "bff_prepared_repair_receipt"
 
     def _provider_failure(error: OpenClawOpsClientError) -> Tuple[None, Dict[str, Any], List[Dict[str, Any]]]:
         duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
@@ -41199,6 +41300,12 @@ async def bff_management_nl_ask(
         management_session_id=session_id,
         touch=True,
     )
+    openclaw_repair_metadata = _mgmt_nl_authorize_openclaw_repair_metadata(
+        payload,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        control_mode=control_mode,
+    )
     _management_ai_ensure_session(
         session_id=session_id,
         identity=identity,
@@ -41353,8 +41460,6 @@ async def bff_management_nl_ask(
             "audit_ref": audit_ref,
         }
     )
-    openclaw_repair_metadata = _mgmt_nl_openclaw_repair_metadata(payload)
-
     # _mgmt_nl_maybe_provider_answer issues a synchronous, blocking HTTP call to
     # the OpenClaw adapter (OpenClawOpsClient.invoke_assistant_provider), which
     # drives the Claude/Codex CLI agent and can take 30s+. The BFF runs a single
