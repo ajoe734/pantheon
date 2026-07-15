@@ -115,8 +115,11 @@ The daily sweep is also called twice. The first response may be `created` or
 
 The exact proposal readback must link the incident, artifact/version, threshold
 window, incident evidence ref, and producer telemetry evidence ref. The journal
-assertion requires one exact `entry_type=mutation_review`, exact `source_id`,
-and `origin=live`; substring matches and decision-only rows do not pass.
+assertion requires one exact non-seed `entry_type=mutation_review` and exact
+`source_id`; substring matches and decision-only rows do not pass. Journal
+provenance is fail-closed, so a canonical live service record without an
+explicit origin marker may report `origin=unknown`. The preceding exact
+telemetry, incident, and proposal assertions prove the live producer lineage.
 Persona Fleet must expose `last_mutation_kind=formal_mutation`, formal
 confidence, both decision IDs, and an `evolution_href` whose `persona` and
 `mutation_review` query values match exactly.

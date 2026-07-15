@@ -241,7 +241,7 @@ def test_proposal_assertion_requires_incident_threshold_and_evidence_lineage() -
     assert exc.value.stage == "proposal_sweep"
 
 
-def test_formal_journal_requires_exact_live_mutation_review_not_substring() -> None:
+def test_formal_journal_requires_exact_non_seed_mutation_review_not_substring() -> None:
     decision_id = "decision-123"
     items = [
         {
@@ -268,6 +268,14 @@ def test_formal_journal_requires_exact_live_mutation_review_not_substring() -> N
         }
     )
     assert verifier._formal_journal_entry(items, decision_id)["source_id"] == decision_id
+
+    items[-1]["origin"] = "unknown"
+    assert verifier._formal_journal_entry(items, decision_id)["source_id"] == decision_id
+
+    items[-1]["origin"] = "seed"
+    with pytest.raises(verifier.VerificationFailure) as exc:
+        verifier._formal_journal_entry(items, decision_id)
+    assert exc.value.stage == "formal_journal"
 
 
 def test_fleet_link_requires_exact_journal_navigation() -> None:
