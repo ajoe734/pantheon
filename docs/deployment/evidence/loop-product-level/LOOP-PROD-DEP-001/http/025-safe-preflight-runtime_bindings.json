@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-07-15T00:10:15Z",
+  "duration_ms": 2.864,
+  "label": "safe-preflight-runtime_bindings",
+  "request": {
+    "body": null,
+    "headers": {
+      "Authorization": "Bearer <redacted>"
+    },
+    "method": "GET",
+    "started_at": "2026-07-15T00:10:15Z",
+    "url": "http://127.0.0.1:18081/api/runtime-bindings?pool_id=pool-rescue-0260531-6f175c5c"
+  },
+  "response": {
+    "payload": {
+      "bindings": [],
+      "count": 0
+    },
+    "status": 200
+  }
+}

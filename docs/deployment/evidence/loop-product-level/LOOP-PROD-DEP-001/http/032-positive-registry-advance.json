@@ -1,0 +1,166 @@
+{
+  "captured_at": "2026-07-15T00:10:26Z",
+  "duration_ms": 7.377,
+  "label": "positive-registry-advance",
+  "request": {
+    "body": {
+      "approval_decision_id": "approval-loop-prod-dep-20260715001015",
+      "approver": "loop-prod-dep-001-risk-owner",
+      "target_state": "approved"
+    },
+    "headers": {},
+    "method": "POST",
+    "started_at": "2026-07-15T00:10:26Z",
+    "url": "http://127.0.0.1:18087/api/registry/strategy-artifacts/artifact-loop-prod-dep-20260715001015/advance"
+  },
+  "response": {
+    "payload": {
+      "deployment_stage": "none",
+      "entry": {
+        "approval_decision_id": "approval-loop-prod-dep-20260715001015",
+        "approved_at": "2026-07-15T00:10:26Z",
+        "approver": "loop-prod-dep-001-risk-owner",
+        "artifact_state": "approved",
+        "artifact_type": "execution_bundle",
+        "checksum": "sha256:93785cda87b79560ff9a503825db071983f5b34ee0ba3557466ea867bbecce89",
+        "created_at": "2026-07-15T00:10:26Z",
+        "deployment_summary": null,
+        "evaluation_summary": {
+          "mutable_parameter_count": 2,
+          "strategy_artifact_schema_version": "1.0"
+        },
+        "lineage": {
+          "parent_registry_ids": [
+            "artifact-tw-session-momentum-v1"
+          ],
+          "source_dataset_refs": [
+            "source-ingest:normalized/taiwanstockprice/finmind-daily"
+          ],
+          "source_run_ids": [
+            "LOOP-PROD-DEP-001",
+            "LOOP-PROD-DEP-001-positive"
+          ],
+          "source_strategy_spec_id": null
+        },
+        "metadata": {
+          "strategy_artifact": {
+            "algorithm_ref": {
+              "commit": "5ad0249432459c119f26718007e083808ef7995d",
+              "engine": "lean",
+              "entrypoint": "pantheon_algo.base:PantheonAlgoBase",
+              "logic_interpreter": "services.registry.strategy_artifact:evaluate_strategy_action",
+              "path": "Algorithm.Python/pantheon_algo/base.py",
+              "repository": "ajoe734/pantheon-lean",
+              "signal_interface": "services.execution.lean_runtime.paper_signal_producer:Strategy",
+              "signal_schema_version": "1.0"
+            },
+            "artifact_id": "artifact-loop-prod-dep-20260715001015",
+            "artifact_schema_version": "1.0",
+            "binding_intent": {
+              "evidence_ref": "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-binding-intent-readback.json",
+              "observed_at": "2026-07-14T05:06:07Z",
+              "observed_binding_status": "active",
+              "observed_capital_pool_id": "pool-tw-equity-paper",
+              "observed_deployment_mode": "paper",
+              "observed_deployment_plan_id": "plan-tw-equity-paper",
+              "observed_effective_at": "2026-07-11T10:50:25Z",
+              "observed_placeholder_artifact_id": "artifact-tw-equity-session-v1",
+              "observed_placeholder_artifact_version": "1.0.0",
+              "observed_runtime_binding_id": "rb-abb82fd3538b4014bb7e7d3186a58c58",
+              "observed_runtime_id": "runtime-tw-equity-paper",
+              "persona_capital_binding_id": "binding-tw-equity-paper",
+              "persona_id": "persona-tw-equity",
+              "persona_name": "Taiwan Equity Persona",
+              "replacement_task_id": "EVOLOOP-006"
+            },
+            "lineage": {
+              "parent_registry_ids": [
+                "artifact-tw-session-momentum-v1"
+              ],
+              "source_dataset_refs": [
+                "source-ingest:normalized/taiwanstockprice/finmind-daily"
+              ],
+              "source_run_ids": [
+                "LOOP-PROD-DEP-001",
+                "LOOP-PROD-DEP-001-positive"
+              ]
+            },
+            "mutation_surface": {
+              "controls": [
+                {
+                  "allowed_range": {
+                    "max": 60,
+                    "min": 2
+                  },
+                  "current_value": 2,
+                  "parameter_key": "lookback_bars",
+                  "step": 1,
+                  "value_type": "integer"
+                },
+                {
+                  "allowed_range": {
+                    "max": 0.05,
+                    "min": 0.0
+                  },
+                  "current_value": 0.01,
+                  "parameter_key": "momentum_threshold",
+                  "step": 0.001,
+                  "value_type": "number"
+                }
+              ],
+              "immutable_parameters": [
+                "symbols",
+                "bar_frequency",
+                "data_source",
+                "order_quantity",
+                "quantity_type",
+                "zero_momentum_action"
+              ]
+            },
+            "parameters": {
+              "bar_frequency": "1d",
+              "data_source": "source-ingest:normalized/taiwanstockprice/finmind-daily",
+              "lookback_bars": 2,
+              "momentum_threshold": 0.01,
+              "order_quantity": 1,
+              "quantity_type": "SHARES",
+              "symbols": [
+                "2330.TW",
+                "2317.TW",
+                "2454.TW"
+              ],
+              "zero_momentum_action": "SELL"
+            },
+            "provenance_refs": [
+              "host-file:/home/lupin/paper-loop/tw_signal_producer.py#sha256=b9f43954395b1b98f3b253ad9e27f7955b37dbee0553bb79a88abe3b99ff2396",
+              "docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/EVOLUTION_GENERATIVE_LOOP_GAP.md",
+              "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-binding-intent-readback.json",
+              "docs/deployment/evidence/mgmt-ops-003-gap/gap-002/20260711T151356Z/reconciliation-snapshot.json"
+            ],
+            "strategy_id": "tw_session_momentum",
+            "strategy_logic": {
+              "kind": "close_to_close_momentum",
+              "lookback_parameter": "lookback_bars",
+              "non_positive_action": "SELL",
+              "positive_action": "BUY",
+              "threshold_parameter": "momentum_threshold"
+            },
+            "version": "1.14.1015"
+          },
+          "strategy_artifact_registration_checksum": "sha256:7b77d1d9eb46e5e685e4b26f70fd7e1160e4ace8152c4791f52a2f5d7eccea30"
+        },
+        "producer_run_id": "LOOP-PROD-DEP-001-positive",
+        "registry_id": "artifact-loop-prod-dep-20260715001015",
+        "rollback_target": null,
+        "storage_ref": {
+          "backend": "inline",
+          "path": "$.entry.metadata.strategy_artifact"
+        },
+        "strategy_id": "tw_session_momentum",
+        "updated_at": "2026-07-15T00:10:26Z",
+        "version": "1.14.1015"
+      }
+    },
+    "status": 200
+  }
+}

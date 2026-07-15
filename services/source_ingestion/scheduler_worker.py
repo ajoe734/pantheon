@@ -22,12 +22,27 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def run_tick(*, api_url: str, max_concurrency: int, timeout_seconds: float = 30.0) -> dict[str, Any]:
-    payload = json.dumps({"max_concurrency": max_concurrency}).encode("utf-8")
+def run_tick(
+    *,
+    api_url: str,
+    max_concurrency: int,
+    timeout_seconds: float = 30.0,
+    force_connector_ids: list[str] | None = None,
+    controller_token: str | None = None,
+) -> dict[str, Any]:
+    payload = json.dumps(
+        {
+            "max_concurrency": max_concurrency,
+            "force_connector_ids": sorted(set(force_connector_ids or [])),
+        }
+    ).encode("utf-8")
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if controller_token:
+        headers["Authorization"] = f"Bearer {controller_token}"
     request = urllib.request.Request(
         api_url.rstrip("/") + "/api/source-ingest/run-scheduled",
         data=payload,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
@@ -138,6 +153,10 @@ def main() -> int:
     max_ticks = _env_int("SOURCE_INGEST_SCHEDULER_MAX_TICKS", 0, minimum=0)
     state_path = os.getenv("SOURCE_INGEST_SCHEDULER_STATE_PATH", "")
     alive_path = os.getenv("SOURCE_INGEST_SCHEDULER_ALIVE_PATH", "")
+    controller_token = str(os.getenv("SOURCE_INGEST_CONTROLLER_TOKEN") or "").strip() or None
+    controller_token_file = str(os.getenv("SOURCE_INGEST_CONTROLLER_TOKEN_FILE") or "").strip()
+    if controller_token_file:
+        controller_token = Path(controller_token_file).read_text(encoding="utf-8").strip() or None
 
     state = SchedulerState(state_path or None)
 
@@ -158,7 +177,11 @@ def main() -> int:
     while True:
         tick += 1
         try:
-            result = run_tick(api_url=api_url, max_concurrency=max_concurrency)
+            result = run_tick(
+                api_url=api_url,
+                max_concurrency=max_concurrency,
+                controller_token=controller_token,
+            )
             state.record_success()
             print(json.dumps({"tick": tick, "result": result, **state.to_dict()}, sort_keys=True), flush=True)
         except Exception as exc:

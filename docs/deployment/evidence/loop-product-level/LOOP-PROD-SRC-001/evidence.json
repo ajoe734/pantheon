@@ -1,0 +1,605 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Loop product-level remediation evidence contract",
+    "note": "This task uses the repository product-evidence schema and a companion checksum; reviewer and merge facts remain intentionally pending.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Raw run artifacts are immutable. The manifest record_log may only append independently observed review, check, deployment, and merge facts.",
+    "recording_mode": "logical_append_only_record_log_with_immutable_raw_runs",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-14T11:06:35Z",
+    "evidence_cut_semantics": "Owner implementation, immutable behavioral proof, latest-dev rebase validation, isolated post-rebase terminal identity capture, and successful post-rebase PR checks; independent review, merge, and shared hosted-dev admission are not asserted.",
+    "id": "LOOP-PROD-SRC-001",
+    "overall_admission": "review_required_evidence_only",
+    "owner": "Codex2",
+    "phase": "Loop Product-Level Remediation / Wave 1",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/evidence.json",
+    "reviewer": "Codex",
+    "target_environment": "isolated-target-dev",
+    "target_maturity": "product-level",
+    "task_branch": "task/LOOP-PROD-SRC-001",
+    "title": "Source requirement reconciler and default scheduler"
+  },
+  "authorities": {
+    "actual_state": [
+      "GET /api/source-ingest/controller/readback",
+      "source requirement snapshot JSONL",
+      "source connector and schedule stores",
+      "normalized SourceRecord and SourceHealth stores",
+      "crawl frontier and dead-letter readback",
+      "loop_controller_records",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T105934Z-289424f/proof.json#sha256=8210841868be3e0d5770e4e7ed8fd3ec37d4daceacff33d6eaabc63fa8f1c35a",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T103735Z-ea352c7/proof.json#sha256=ae02ed0e16dc9769adcdb35111c4077cd2ec49c6c99cdb6631b6d60e92ed58b2",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T093025Z-521465f/proof.json#sha256=f3bf1b9fa2578d7debe7c898d109bf17f6e43c4aa8c3dd2894dd30140987a586 (superseded immutable audit epoch)"
+    ],
+    "desired_state": [
+      "persona source requirements",
+      "services/control-plane/persona/required_data_sources.schema.json",
+      "connector and cadence policy",
+      "deployment://source-ingest/default-public-market-requirement"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-SRC-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex2 for source requirement admission, supervised reconciliation, scheduling truth, and evidence capture",
+    "composes_with": [
+      "LOOP-PROD-001",
+      "LOOP-PROD-002",
+      "LOOP-PROD-REC-001",
+      "LOOP-PROD-AUTH-001"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/evidence.sha256",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T093025Z-521465f/proof.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T103735Z-ea352c7/proof.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T105934Z-289424f/proof.json"
+    ],
+    "implementation_changed_files": [
+      ".orchestrator/task-briefs/loop_prod_src_001.md",
+      "docker-compose.yml",
+      "services/foundation/dead_letter.py",
+      "services/foundation/replay.py",
+      "services/foundation/tests/test_event_replay_primitives.py",
+      "services/loop-control/writer.py",
+      "services/source_ingestion/configured.py",
+      "services/source_ingestion/controller_auth.py",
+      "services/source_ingestion/controller_healthcheck.py",
+      "services/source_ingestion/controller_state.py",
+      "services/source_ingestion/controller_worker.py",
+      "services/source_ingestion/default_desired_state.json",
+      "services/source_ingestion/main.py",
+      "services/source_ingestion/persona_source_reconciler.py",
+      "services/source_ingestion/registry/jsonl_store.py",
+      "services/source_ingestion/requirement_state.py",
+      "services/source_ingestion/requirements.txt",
+      "services/source_ingestion/scheduler.py",
+      "services/source_ingestion/scheduler_worker.py",
+      "services/source_ingestion/source_health.py",
+      "services/source_ingestion/test_compose_activation.py",
+      "services/source_ingestion/tests/test_controller_worker.py",
+      "services/source_ingestion/tests/test_persona_source_reconciler.py",
+      "services/source_ingestion/tests/test_requirement_state.py",
+      "services/source_ingestion/tests/test_scheduled_connector.py"
+    ],
+    "not_changing": "Frontend code, live broker or capital authority, shared hosted-dev state, unrelated loop workers, or staging overlay topology",
+    "owned_layer": "Persona requirement-to-source reconciliation, default supervised source controller, durable scheduling state, authoritative readback, and root Compose activation"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "fb3340f1374ce38f756117d446a5019e37b733cf",
+        "subject": "LOOP-PROD-SRC-001: anchor controller worker substrate"
+      },
+      {
+        "sha": "87af8a1d79b4a7ea77ad726f139cb445c41d268b",
+        "subject": "LOOP-PROD-SRC-001: anchor source controller runtime"
+      },
+      {
+        "sha": "8cdca06c7eb849c13301ef4ee45795d83877a211",
+        "subject": "LOOP-PROD-SRC-001: anchor isolated proof evidence"
+      },
+      {
+        "sha": "79ff827eca1b405e8d08eae52fd406654b33f610",
+        "subject": "LOOP-PROD-SRC-001: anchor fail-closed recovery audit"
+      },
+      {
+        "sha": "c20fc3aeb3916a255403c49bb46592ab4e0e01a3",
+        "subject": "LOOP-PROD-SRC-001: anchor ownership and replay correlation"
+      },
+      {
+        "sha": "289424f17bcc30c7ebc1001d0a7e5db82ea9aeda",
+        "subject": "LOOP-PROD-SRC-001: anchor immutable recovery evidence"
+      }
+    ],
+    "pull_request": {
+      "number": 3648,
+      "url": "https://github.com/ajoe734/pantheon/pull/3648",
+      "head_sha": "81da86dafc80b7519f4e7e6b643d84f0a9fa9ab5",
+      "base": "dev"
+    },
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "event": "push",
+        "run_id": 29327672476,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29327672476",
+        "head_sha": "81da86dafc80b7519f4e7e6b643d84f0a9fa9ab5",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "run_id": 29327675822,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29327675822",
+        "head_sha": "81da86dafc80b7519f4e7e6b643d84f0a9fa9ab5",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "conclusion": "success"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 -m pytest -q services/source_ingestion",
+        "conclusion": "700 passed, 1 skipped in 139.15s",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m pytest -q services/foundation/tests/test_event_replay_primitives.py",
+        "conclusion": "6 passed in 0.86s",
+        "result": "pass"
+      },
+      {
+        "command": "DATABASE_URL=postgresql://pantheon_app:[redacted]@127.0.0.1:15432/pantheon python3 -m pytest -q services/loop-control/test_loop_control.py",
+        "conclusion": "7 passed in 2.89s",
+        "result": "pass"
+      },
+      {
+        "command": "docker compose config --quiet",
+        "conclusion": "default Compose configuration rendered successfully",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m py_compile services/foundation/dead_letter.py services/foundation/replay.py services/loop-control/writer.py services/source_ingestion/configured.py services/source_ingestion/controller_auth.py services/source_ingestion/controller_worker.py services/source_ingestion/main.py services/source_ingestion/persona_source_reconciler.py services/source_ingestion/requirement_state.py services/source_ingestion/scheduler.py services/source_ingestion/scheduler_worker.py services/source_ingestion/source_health.py",
+        "conclusion": "scoped runtime modules compiled",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "no whitespace errors",
+        "result": "pass"
+      },
+      {
+        "command": "docker compose -p loop-prod-src-001-rebase-proof up -d --build source-ingest-scheduler",
+        "conclusion": "PostgreSQL healthy, 9 migrations completed, source-ingest healthy, controller healthy, post-rebase terminal identity proof captured, project and volumes removed",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-14T11:00:55Z",
+    "validated_base_sha": "5c7ac28ddcded581740364315d4092e9ef9f7e35",
+    "validated_head_sha": "289424f17bcc30c7ebc1001d0a7e5db82ea9aeda"
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "isolated-target-dev",
+    "public_bff_base_url": "not_applicable_internal_source_service",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "This owner cut proves the default root Compose capability in an isolated project and does not claim shared hosted-dev publication."
+    },
+    "canonical_root_deploy": {
+      "conclusion": "pass",
+      "compose_project": "loop-prod-src-001-proof",
+      "migration_count": 9,
+      "postgres_health": "healthy",
+      "source_ingest_health": "healthy",
+      "controller_health": "healthy",
+      "proof": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T105934Z-289424f/proof.json#sha256=8210841868be3e0d5770e4e7ed8fd3ec37d4daceacff33d6eaabc63fa8f1c35a"
+    },
+    "capture_time_root_deploy": {
+      "observed_at": "2026-07-14T11:00:55Z"
+    },
+    "identity_admission": {
+      "status": "pass",
+      "git_sha": "289424f17bcc30c7ebc1001d0a7e5db82ea9aeda",
+      "application_digest": "application-sha256:10bdb5362e4d6f033f24945d549d8108ef51176df55456cb0d15336d2cc3c618",
+      "docker_image_id": "sha256:f3e07acbad75f0302609e02622699826ac248e0fe4aca0013bde0265d4638012",
+      "source_api_image_id": "sha256:56a366ffc303644463caf7ef5898c1976d530df340a4522148c49db3c31c5699",
+      "deployment_id": "container:f3fb3929bed4",
+      "runtime_instance_id": "f3fb3929bed4",
+      "controller_id": "source-ingestion-f3fb3929bed4:afa11c207c81",
+      "build_time": "2026-07-14T10:59:34Z",
+      "identity_complete": true
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "not_applicable",
+      "reason": "Shared hosted-dev deployment is not claimed by this pre-review owner cut."
+    },
+    "isolated_target_dev": {
+      "status": "pass",
+      "captured_at": "2026-07-14T11:00:35Z",
+      "route": "GET http://127.0.0.1:28098/api/source-ingest/controller/readback",
+      "controller_id": "source-ingestion-f3fb3929bed4:afa11c207c81",
+      "controller_sequence": 3,
+      "requirement_snapshot_sequence": 1,
+      "desired_state_sha256": "b9bb0be16f919d19d765781096c2c80e629cd7342afe3fc44218529d87176306",
+      "connector_id": "tw-twse-tpex-official-market",
+      "latest_ingest_run_id": "ingest-634ea666e063",
+      "normalized_count": 100,
+      "source_record_count": 100,
+      "source_health": "ok",
+      "freshness": "fresh",
+      "frontier_backlog": 0,
+      "dlq_count": 0,
+      "pending_dlq_count": 0,
+      "unresolved_dlq_count": 0,
+      "replayed_dlq_count": 0,
+      "controller_truth_level": "reconciled_live_proof",
+      "proof": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T105934Z-289424f/proof.json#sha256=8210841868be3e0d5770e4e7ed8fd3ec37d4daceacff33d6eaabc63fa8f1c35a"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "37 steady-state controller ticks retained requirement snapshot sequence 1, one binding, zero frontier backlog, and 100 deterministic normalized SourceRecord identities",
+        "Repeating authoritative empty snapshot sequence 2 did not append a snapshot and returned already_disabled_controller_owned",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T103735Z-ea352c7/proof.json#sha256=ae02ed0e16dc9769adcdb35111c4077cd2ec49c6c99cdb6631b6d60e92ed58b2:duplicate_safety",
+        "post-rebase terminal identity: docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T105934Z-289424f/proof.json#sha256=8210841868be3e0d5770e4e7ed8fd3ec37d4daceacff33d6eaabc63fa8f1c35a"
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "ingest-03d169921a4f failed with zero normalized records; frontier-a97734c7ca43 entered retry, SourceHealth became failed, and one DLQ remained unresolved",
+        "seven restarted-controller ticks rejected the unresolved DLQ at actual_readback instead of publishing false success",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T103735Z-ea352c7/proof.json#sha256=ae02ed0e16dc9769adcdb35111c4077cd2ec49c6c99cdb6631b6d60e92ed58b2:failure_injection"
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "requirement digest b9bb0be1... -> snapshot sequence 3 -> connector tw-twse-tpex-official-market -> schedule -> failed run/DLQ/frontier -> durable recovery audit -> ingest-aef729a7c28b -> normalized provenance -> SourceHealth -> loop_controller_records",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T103735Z-ea352c7/proof.json#sha256=ae02ed0e16dc9769adcdb35111c4077cd2ec49c6c99cdb6631b6d60e92ed58b2:terminal_readback",
+        "post-rebase head 289424f17... -> snapshot sequence 1 -> ingest-634ea666e063 -> 100 normalized records -> SourceHealth ok -> loop_controller_records: docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T105934Z-289424f/proof.json#sha256=8210841868be3e0d5770e4e7ed8fd3ec37d4daceacff33d6eaabc63fa8f1c35a"
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "controller generation 9b0c5cbb7717 was replaced by 4106f81980ec; 128 missed ticks were detected; durable retry attempt 2 completed ingest-aef729a7c28b with 100 normalized records",
+        "Recovery audit audit-source-recovery-0c2c15d3... was persisted before dlq-52e2506d... moved from pending to replayed; terminal pending=0 and unresolved=0",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T103735Z-ea352c7/proof.json#sha256=ae02ed0e16dc9769adcdb35111c4077cd2ec49c6c99cdb6631b6d60e92ed58b2:restart_and_recovery"
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pass",
+      "proof": [
+        "authoritative empty snapshot sequence 2 durably disabled the owned connector and schedule; its duplicate did not append; restart restored desired snapshot sequence 3, enabled both, and completed ingest-5d7249b08364",
+        "admitted-command RPO=0",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T103735Z-ea352c7/proof.json#sha256=ae02ed0e16dc9769adcdb35111c4077cd2ec49c6c99cdb6631b6d60e92ed58b2:rollback_and_compensation"
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Isolated Compose project, dedicated ports and volumes, proof-dev environment, and no mutation of the shared Pantheon project."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "reason": "No frontend artifact or browser route changes."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "reason": "The new authoritative route is controller service-to-service authentication and exposes no human privileged action surface."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "Public official market-data reads only; connector auth_type=none; no live broker or capital side effect."
+    },
+    "rbac": {
+      "status": "pass",
+      "proof": "Authoritative destructive reconcile returned 401 without a bearer and 403 with an incorrect bearer; malformed authoritative commands returned 400; anonymous dry-run remained non-mutating; managed schedule and scheduled execution returned 401 without the controller bearer; token material was not recorded."
+    },
+    "tenant_isolation": {
+      "status": "pass",
+      "proof": "Controller and loop_controller_records were scoped to tenant loop-prod-src-001-proof and environment proof-dev."
+    },
+    "two_person_approval": {
+      "status": "not_applicable",
+      "reason": "No approval-gated capital or broker mutation occurs; independent code/evidence review remains explicitly pending in AC-05."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC-01",
+      "statement": "new and changed requirements idempotently create or update canonical connectors and schedules",
+      "status": "pass",
+      "evidence_refs": [
+        "behavioral_proof.duplicate_safety",
+        "behavioral_proof.rollback_or_compensation"
+      ]
+    },
+    {
+      "id": "AC-02",
+      "statement": "default deployment produces a real normalized record with source provenance and freshness",
+      "status": "pass",
+      "evidence_refs": [
+        "hosted_readback.isolated_target_dev",
+        "proof.json:baseline_live_source",
+        "proof.json:terminal_readback"
+      ]
+    },
+    {
+      "id": "AC-03",
+      "statement": "missed tick, connector failure, drift, duplicate, and restart paths repair or fail explicitly",
+      "status": "pass",
+      "evidence_refs": [
+        "behavioral_proof.failure_and_degraded_behavior",
+        "behavioral_proof.restart_and_recovery",
+        "behavioral_proof.duplicate_safety"
+      ]
+    },
+    {
+      "id": "AC-04",
+      "statement": "loop health exposes heartbeat, lag, success/failure, deployment identity, and authoritative readback",
+      "status": "pass",
+      "evidence_refs": [
+        "hosted_readback.isolated_target_dev",
+        "deployment.identity_admission",
+        "proof.json:terminal_readback"
+      ]
+    },
+    {
+      "id": "AC-05",
+      "statement": "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+      "status": "pending_independent_review_and_merge",
+      "blocking_until": "Reviewer Codex approves this exact checksummed cut and PR #3648 is merged to dev; the post-rebase required checks are already observed as successful",
+      "evidence_refs": [
+        "implementation_delivery",
+        "record_log",
+        "residual_risks"
+      ]
+    },
+    {
+      "id": "AC-06",
+      "statement": "authoritative pre/post readback is required and non-terminal receipts cannot become success",
+      "status": "pass",
+      "evidence_refs": [
+        "behavioral_proof.request_receipt_downstream_correlation",
+        "proof.json:failure_injection",
+        "proof.json:terminal_readback"
+      ]
+    },
+    {
+      "id": "AC-07",
+      "statement": "duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation have admitted-command RPO=0",
+      "status": "pass",
+      "evidence_refs": [
+        "behavioral_proof",
+        "proof.json:rollback_and_compensation"
+      ]
+    },
+    {
+      "id": "AC-08",
+      "statement": "exact deployment identity and controller truth are recorded without registry-only maturity promotion",
+      "status": "pass",
+      "evidence_refs": [
+        "deployment.identity_admission",
+        "hosted_readback.isolated_target_dev"
+      ]
+    },
+    {
+      "id": "AC-09",
+      "statement": "RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries are preserved wherever applicable",
+      "status": "pass",
+      "evidence_refs": [
+        "security_and_safety"
+      ]
+    },
+    {
+      "id": "AC-10",
+      "statement": "redacted logical-append-only checksummed evidence fails closed when proof is missing or contradicted",
+      "status": "pass",
+      "evidence_refs": [
+        "evidence_policy",
+        "integrity",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/evidence.sha256"
+      ]
+    }
+  ],
+  "residual_risks": {
+    "RISK-SHARED-HOSTED-DEV-NOT-EXECUTED": {
+      "blocking_for_this_task": false,
+      "containment": "The manifest claims only isolated target-dev admission and binds exact container/application identity; shared rollout must re-run terminal readback after merge.",
+      "description": "This owner cut does not deploy or mutate the shared hosted-dev stack.",
+      "expiry": "2026-07-31T00:00:00Z",
+      "owner": "Pantheon dev deployment owner",
+      "recheck_trigger": "Post-merge shared dev rollout of source-ingestion controller",
+      "severity": "medium"
+    },
+    "RISK-STAGING-OVERLAY-CONTROLLER-ACTIVATION": {
+      "blocking_for_this_task": false,
+      "containment": "Root Compose is the declared artifact and its default controller/migration path is proven; staging-full users must not assume this task changed their overlay.",
+      "description": "The staging-full overlay and deployment script do not yet explicitly activate or gate the new controller and migration services.",
+      "expiry": "2026-08-15T00:00:00Z",
+      "owner": "Pantheon deployment topology owner",
+      "recheck_trigger": "Next staging-full deployment topology change",
+      "severity": "medium"
+    },
+    "RISK-DOWNSTREAM-SERVICE-AUTH-HANDOFF": {
+      "blocking_for_this_task": false,
+      "containment": "All controller-owned source mutations and scheduled execution are bearer-fenced in this service; existing direct operator frontier/DLQ routes remain under the BFF-governed action contract until downstream credential and idempotency propagation composes.",
+      "description": "Full BFF-to-source-ingestion service credential and idempotency propagation is a cross-layer contract and is not implemented by this source-service owner cut.",
+      "expiry": "2026-07-21T00:00:00Z",
+      "owner": "LOOP-PROD-AUTH-001 / Pantheon BFF auth owner",
+      "recheck_trigger": "Management BFF source-ingestion mutation routes are enabled or LOOP-PROD-AUTH-001 closes",
+      "severity": "medium"
+    },
+    "RISK-OPERATOR-REPLAY-CRASH-WINDOW": {
+      "blocking_for_this_task": false,
+      "containment": "Automated frontier recovery is source-execution locked, correlation-validated, durably audited before DLQ status publication, and terminal truth fails on every unresolved status; operator replay remains governed and must use stable entry IDs.",
+      "description": "A non-frontier operator replay can apply before its audit append, and its process-local replay ledger does not eliminate a duplicate window across process crash.",
+      "expiry": "2026-07-31T00:00:00Z",
+      "owner": "Source ingestion recovery owner",
+      "recheck_trigger": "The next operator replay durability hardening or any replay incident",
+      "severity": "medium"
+    },
+    "RISK-SINGLETON-CONNECTOR-BINDING": {
+      "blocking_for_this_task": false,
+      "containment": "The reconciler fails closed with an explicit conflict before mutation when distinct persona requirements attempt incompatible bindings to one singleton connector.",
+      "description": "A singleton connector cannot currently carry multiple distinct persona requirement bindings.",
+      "expiry": "2026-08-31T00:00:00Z",
+      "owner": "Source requirement model owner",
+      "recheck_trigger": "A persona catalog introduces multiple distinct requirements for the same singleton connector",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/evidence.sha256",
+    "hosted_semantic_sha256": {
+      "isolated_target_dev_proof": "8210841868be3e0d5770e4e7ed8fd3ec37d4daceacff33d6eaabc63fa8f1c35a"
+    },
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/evidence.json",
+    "normalized_hosted_readback": {
+      "isolated_target_dev": {
+        "captured_at": "2026-07-14T11:00:35Z",
+        "controller_id": "source-ingestion-f3fb3929bed4:afa11c207c81",
+        "controller_sequence": 3,
+        "desired_state_sha256": "b9bb0be16f919d19d765781096c2c80e629cd7342afe3fc44218529d87176306",
+        "git_sha": "289424f17bcc30c7ebc1001d0a7e5db82ea9aeda",
+        "source_health": "ok",
+        "truth_level": "reconciled_live_proof"
+      }
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion file hashes evidence.json to avoid a recursive self-hash.",
+    "source_artifact_sha256_by_epoch": {
+      "isolated_target_dev_capture": {
+        "artifacts": {
+          "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T093025Z-521465f/proof.json": "f3bf1b9fa2578d7debe7c898d109bf17f6e43c4aa8c3dd2894dd30140987a586"
+        },
+        "git_sha": "521465f594b2928efe9a4836e0d831d17a48b98d"
+      },
+      "isolated_target_dev_capture_ea352c7": {
+        "artifacts": {
+          "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T103735Z-ea352c7/proof.json": "ae02ed0e16dc9769adcdb35111c4077cd2ec49c6c99cdb6631b6d60e92ed58b2"
+        },
+        "git_sha": "ea352c7377ff5995fd6ac4e0d5652ca8b022bfc4"
+      },
+      "isolated_target_dev_post_rebase_capture_289424f": {
+        "artifacts": {
+          "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T105934Z-289424f/proof.json": "8210841868be3e0d5770e4e7ed8fd3ec37d4daceacff33d6eaabc63fa8f1c35a"
+        },
+        "git_sha": "289424f17bcc30c7ebc1001d0a7e5db82ea9aeda"
+      }
+    }
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-14T09:41:27Z",
+      "kind": "owner_live_source_and_recovery_capture",
+      "status": "pass",
+      "actor": "Codex2",
+      "reference": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T093025Z-521465f/proof.json#sha256=f3bf1b9fa2578d7debe7c898d109bf17f6e43c4aa8c3dd2894dd30140987a586",
+      "note": "No independent reviewer verdict, PR check completion, shared hosted-dev admission, or merge completion is asserted by this owner event."
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-07-14T09:41:27Z",
+      "kind": "evidence_ready_for_independent_review",
+      "status": "pending_independent_review",
+      "actor": "Codex2",
+      "reference": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/evidence.json",
+      "reviewer": "Codex"
+    },
+    {
+      "sequence": 3,
+      "recorded_at": "2026-07-14T10:49:58Z",
+      "kind": "owner_superseding_live_source_and_recovery_capture",
+      "status": "pass",
+      "actor": "Codex2",
+      "reference": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T103735Z-ea352c7/proof.json#sha256=ae02ed0e16dc9769adcdb35111c4077cd2ec49c6c99cdb6631b6d60e92ed58b2",
+      "sha": "ea352c7377ff5995fd6ac4e0d5652ca8b022bfc4",
+      "note": "The immutable prior capture is retained; this epoch supersedes its terminal DLQ semantics and adds fail-closed ownership/recovery correlation proof."
+    },
+    {
+      "sequence": 4,
+      "recorded_at": "2026-07-14T10:50:00Z",
+      "kind": "pre_sync_required_checks_observed",
+      "status": "pass",
+      "actor": "Codex2",
+      "reference": "https://github.com/ajoe734/pantheon/pull/3648",
+      "sha": "ea352c7377ff5995fd6ac4e0d5652ca8b022bfc4",
+      "note": "Push and pull_request Branch CI Gate runs passed all three required jobs; strict-base synchronization and rerun remain pending."
+    },
+    {
+      "sequence": 5,
+      "recorded_at": "2026-07-14T11:00:55Z",
+      "kind": "post_rebase_terminal_identity_capture",
+      "status": "pass",
+      "actor": "Codex2",
+      "reference": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/runs/src-20260714T105934Z-289424f/proof.json#sha256=8210841868be3e0d5770e4e7ed8fd3ec37d4daceacff33d6eaabc63fa8f1c35a",
+      "sha": "289424f17bcc30c7ebc1001d0a7e5db82ea9aeda",
+      "note": "No-conflict rebase onto dev 5c7ac28d; exact post-rebase container identity, terminal SourceRecord/SourceHealth, and loop truth captured before cleanup."
+    },
+    {
+      "sequence": 6,
+      "recorded_at": "2026-07-14T11:03:00Z",
+      "kind": "latest_dev_local_validation",
+      "status": "pass",
+      "actor": "Codex2",
+      "sha": "289424f17bcc30c7ebc1001d0a7e5db82ea9aeda",
+      "reference": "validation",
+      "note": "700 source-ingestion tests passed with 1 skipped; foundation replay 6 passed; loop-control 7 passed; Compose config, py_compile, and diff check passed."
+    },
+    {
+      "sequence": 7,
+      "recorded_at": "2026-07-14T11:06:35Z",
+      "kind": "post_rebase_required_checks_observed",
+      "status": "pass",
+      "actor": "Codex2",
+      "reference": "https://github.com/ajoe734/pantheon/pull/3648",
+      "sha": "81da86dafc80b7519f4e7e6b643d84f0a9fa9ab5",
+      "note": "Push and pull_request Branch CI Gate runs passed Commit trailers, Runtime mirror guard, and Smoke acceptance on the post-rebase evidence head."
+    },
+    {
+      "sequence": 8,
+      "recorded_at": "2026-07-14T11:06:35Z",
+      "kind": "superseding_evidence_ready_for_independent_review",
+      "status": "pending_independent_review",
+      "actor": "Codex2",
+      "reference": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/evidence.json",
+      "reviewer": "Codex"
+    }
+  ]
+}

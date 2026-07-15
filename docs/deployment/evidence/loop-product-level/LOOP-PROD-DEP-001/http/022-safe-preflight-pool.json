@@ -1,0 +1,35 @@
+{
+  "captured_at": "2026-07-15T00:10:15Z",
+  "duration_ms": 3.871,
+  "label": "safe-preflight-pool",
+  "request": {
+    "body": null,
+    "headers": {},
+    "method": "GET",
+    "started_at": "2026-07-15T00:10:15Z",
+    "url": "http://127.0.0.1:18092/api/capital-pools/pool-rescue-0260531-6f175c5c"
+  },
+  "response": {
+    "payload": {
+      "budget": 10000.0,
+      "created_at": "2026-06-03T08:15:33Z",
+      "currency": "USD",
+      "description": null,
+      "idempotent_replay": false,
+      "metadata": {
+        "persona_id": "persona-20260531-6f175c5c",
+        "purpose": "restore_dev_management_surfaces",
+        "source": "20260603-live-rescue"
+      },
+      "name": "Dev Paper Pool 01",
+      "owner_id": "codex-live-rescue",
+      "owner_type": "operator",
+      "pool_id": "pool-rescue-0260531-6f175c5c",
+      "risk_policy_ref": null,
+      "single_runtime_enforced": true,
+      "status": "active",
+      "updated_at": null
+    },
+    "status": 200
+  }
+}

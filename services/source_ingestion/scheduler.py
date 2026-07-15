@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -227,13 +228,13 @@ class JsonlIngestScheduleStore:
                 raise SourceEvidenceError(f"Unsupported ingest schedule record: {record_type or '<missing>'}")
 
     def upsert_run(self, run: IngestRun) -> IngestRun:
-        self._runs[run.ingest_run_id] = run
         self._append("ingest_run", run.ingest_run_id, run.to_dict())
+        self._runs[run.ingest_run_id] = run
         return run
 
     def update_watermark(self, watermark: SourceWatermark) -> SourceWatermark:
-        self._watermarks[watermark.connector_id] = watermark
         self._append("source_watermark", watermark.connector_id, watermark.to_dict())
+        self._watermarks[watermark.connector_id] = watermark
         return watermark
 
     def get_run(self, ingest_run_id: str) -> IngestRun | None:
@@ -270,8 +271,8 @@ class JsonlIngestScheduleStore:
             available_at=available_at,
             job_parameters=job_parameters,
         )
-        self._frontier[item.frontier_id] = item
         self._append("crawl_frontier_item", item.frontier_id, item.to_dict())
+        self._frontier[item.frontier_id] = item
         return item
 
     def list_frontier(self, status: str | None = None) -> list[CrawlFrontierItem]:
@@ -315,8 +316,8 @@ class JsonlIngestScheduleStore:
                 "updated_at": _utc_now(),
             }
         )
-        self._frontier[item.frontier_id] = claimed_item
         self._append("crawl_frontier_item", claimed_item.frontier_id, claimed_item.to_dict())
+        self._frontier[item.frontier_id] = claimed_item
         return claimed_item
 
     def complete_frontier(self, frontier_id: str, *, ingest_run_id: str) -> CrawlFrontierItem:
@@ -331,8 +332,8 @@ class JsonlIngestScheduleStore:
                 "updated_at": _utc_now(),
             }
         )
-        self._frontier[frontier_id] = updated
         self._append("crawl_frontier_item", frontier_id, updated.to_dict())
+        self._frontier[frontier_id] = updated
         return updated
 
     def replay_frontier(
@@ -358,8 +359,8 @@ class JsonlIngestScheduleStore:
                 "updated_at": _utc_now(),
             }
         )
-        self._frontier[frontier_id] = updated
         self._append("crawl_frontier_item", frontier_id, updated.to_dict())
+        self._frontier[frontier_id] = updated
         return updated
 
     def fail_frontier(
@@ -382,9 +383,40 @@ class JsonlIngestScheduleStore:
                 "updated_at": _utc_now(),
             }
         )
-        self._frontier[frontier_id] = updated
         self._append("crawl_frontier_item", frontier_id, updated.to_dict())
+        self._frontier[frontier_id] = updated
         return updated
+
+    def recover_stale_running(
+        self,
+        *,
+        timeout_seconds: int,
+        now: str | None = None,
+    ) -> list[CrawlFrontierItem]:
+        """Durably fence crash-stranded running work before scheduling again."""
+
+        if timeout_seconds < 1:
+            raise SourceEvidenceError("frontier running timeout must be >= 1")
+        now_value = now or _utc_now()
+        now_dt = _parse_utc(now_value)
+        recovered: list[CrawlFrontierItem] = []
+        for item in self.list_frontier(status="running"):
+            if (now_dt - _parse_utc(item.updated_at)).total_seconds() < timeout_seconds:
+                continue
+            terminal = item.attempts >= item.max_attempts
+            updated = CrawlFrontierItem(
+                **{
+                    **item.to_dict(),
+                    "status": "failed" if terminal else "retry",
+                    "available_at": None if terminal else now_value,
+                    "last_error": "stale running frontier recovered after worker restart",
+                    "updated_at": now_value,
+                }
+            )
+            self._append("crawl_frontier_item", item.frontier_id, updated.to_dict())
+            self._frontier[item.frontier_id] = updated
+            recovered.append(updated)
+        return recovered
 
     def _require_frontier(self, frontier_id: str) -> CrawlFrontierItem:
         item = self._frontier.get(frontier_id)
@@ -394,6 +426,7 @@ class JsonlIngestScheduleStore:
 
     def _append(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        file_preexisted = self.path.exists()
         entry = {
             "schema_version": "ingest_schedule_store.v1",
             "record_type": record_type,
@@ -402,6 +435,14 @@ class JsonlIngestScheduleStore:
         }
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if not file_preexisted:
+            directory_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
 
 
 def _utc_now() -> str:
