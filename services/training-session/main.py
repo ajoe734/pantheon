@@ -77,14 +77,15 @@ def _session_id(timestamp: str, existing: set[str]) -> str:
     return candidate
 
 
-def _next_event_id(timestamp: str, events: List[Dict[str, Any]]) -> str:
+def _next_event_id(timestamp: str, events: List[Dict[str, Any]], session_id: str) -> str:
     prefix = timestamp[:10].replace("-", "")
+    session_token = sha256(str(session_id or "").encode("utf-8")).hexdigest()[:10]
     existing_ids = {str(event.get("event_id") or "") for event in events if isinstance(event, dict)}
     next_sequence = max((int(event.get("sequence_number") or 0) for event in events), default=0) + 1
-    event_id = f"tevt-{prefix}-{next_sequence:03d}"
+    event_id = f"tevt-{prefix}-{session_token}-{next_sequence:03d}"
     while event_id in existing_ids:
         next_sequence += 1
-        event_id = f"tevt-{prefix}-{next_sequence:03d}"
+        event_id = f"tevt-{prefix}-{session_token}-{next_sequence:03d}"
     return event_id
 
 
@@ -461,7 +462,7 @@ def append_event(session_id: str, body: AppendEventBody) -> Dict[str, Any]:
         raise HTTPException(status_code=409, detail="training session is not active")
     timestamp = body.emitted_at or utc_now()
     events = session.setdefault("events", [])
-    event_id = _next_event_id(timestamp, events)
+    event_id = _next_event_id(timestamp, events, session_id)
     sequence_number = max((int(event.get("sequence_number") or 0) for event in events), default=0) + 1
     event = _build_teaching_event(
         session_id=session_id,
@@ -814,7 +815,7 @@ def _append_training_event(
     events = session.setdefault("events", [])
     event = _build_teaching_event(
         session_id=session_id,
-        event_id=_next_event_id(timestamp, events),
+        event_id=_next_event_id(timestamp, events, session_id),
         event_type=event_type,
         actor=actor,
         actor_type=actor_type,
