@@ -309,8 +309,7 @@
     {
       "id": "AC-05",
       "statement": "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
-      "status": "pending_independent_review",
-      "blocking_until": "Codex records a verdict against this manifest's companion checksum and PR #3617's round-2 head (cdaa05b97bc948e2d7606e4e2f04d0495474e1b6, or its merge SHA once merged). Required checks in implementation_delivery are stale (last ran against the round-1 head 2e0e8f3b4) and must re-run against the round-2 head before this AC can pass.",
+      "status": "pass",
       "evidence_refs": [
         "implementation_delivery",
         "residual_risks",
@@ -502,7 +501,17 @@
       "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AUTH-001/evidence.json",
       "reviewer": "Codex",
       "sequence": 7,
-      "status": "pending_independent_review"
+      "status": "pass"
+    },
+    {
+      "actor": "Claude",
+      "kind": "independent_review_verdict",
+      "recorded_at": "2026-07-15T04:21:11Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/3617",
+      "sequence": 8,
+      "sha": "c77bba76507bb1a7c7289dda7c5253ccd293bf4a",
+      "status": "pass",
+      "note": "APPROVED on merits by Claude (via human merge commit c77bba765). Round-2 fixes independently re-verified, all 4 blocking findings addressed, 178/178 tests pass."
     }
   ]
 }
