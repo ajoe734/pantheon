@@ -23,6 +23,7 @@ VERIFIERS=(
   "verify_e2e_auth_boundary.py:R17 auth boundary"
   "verify_e2e_runtime_state_coherence.py:R18 runtime-state coherence"
   "verify_e2e_telemetry_coverage.py:R19 telemetry coverage"
+  "verify_e2e_producer_chain.py:producer-chain live verifier"
 )
 
 pass=0; fail=0; missing=0

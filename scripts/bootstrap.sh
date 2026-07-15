@@ -187,12 +187,43 @@ else
   fi
 
   "${APP_PSQL_RUNNER[@]}" <<'SQL'
+CREATE SEQUENCE IF NOT EXISTS telemetry_events_ingested_seq_seq AS BIGINT;
+
 CREATE TABLE IF NOT EXISTS telemetry_events (
-    event_id   TEXT        PRIMARY KEY,
-    event_type TEXT        NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    payload    JSONB       NOT NULL
+    event_id     TEXT        PRIMARY KEY,
+    event_type   TEXT        NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL,
+    payload      JSONB       NOT NULL,
+    ingested_seq BIGINT      NOT NULL DEFAULT nextval('telemetry_events_ingested_seq_seq'),
+    ingested_at  TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
+
+ALTER TABLE telemetry_events
+    ADD COLUMN IF NOT EXISTS ingested_seq BIGINT;
+ALTER TABLE telemetry_events
+    ADD COLUMN IF NOT EXISTS ingested_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp();
+ALTER TABLE telemetry_events
+    ALTER COLUMN ingested_seq SET DEFAULT nextval('telemetry_events_ingested_seq_seq');
+UPDATE telemetry_events
+    SET ingested_seq = nextval('telemetry_events_ingested_seq_seq')
+    WHERE ingested_seq IS NULL;
+ALTER TABLE telemetry_events
+    ALTER COLUMN ingested_seq SET NOT NULL;
+ALTER TABLE telemetry_events
+    ALTER COLUMN ingested_at SET DEFAULT clock_timestamp();
+UPDATE telemetry_events
+    SET ingested_at = clock_timestamp()
+    WHERE ingested_at IS NULL;
+ALTER TABLE telemetry_events
+    ALTER COLUMN ingested_at SET NOT NULL;
+ALTER SEQUENCE telemetry_events_ingested_seq_seq
+    OWNED BY telemetry_events.ingested_seq;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_telemetry_events_ingested_seq
+    ON telemetry_events (ingested_seq);
+
+CREATE INDEX IF NOT EXISTS idx_telemetry_events_ingested_at
+    ON telemetry_events (ingested_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_telemetry_events_created_at
     ON telemetry_events (created_at DESC);

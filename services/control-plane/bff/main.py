@@ -7211,6 +7211,46 @@ def _surface_status() -> Dict[str, Any]:
     return {"status": "ok"}
 
 
+_LEGACY_LOOP_RUN_SOURCE = "legacy_incident_backfill"
+_LOOP_RUN_PROJECTION_SCHEMA = "pantheon.loop-run-projection.v1"
+
+
+def _loop_run_truth_source(available: bool) -> tuple[str, str]:
+    """Resolve loop-run provenance without letting incidents shadow truth."""
+    canonical_source = read_store.dataset_source("loop_runs")
+    if canonical_source != "missing":
+        return "loop_runs", canonical_source
+    incident_source = read_store.dataset_source("incidents")
+    if available and incident_source != "missing":
+        return "incidents", _LEGACY_LOOP_RUN_SOURCE
+    return "loop_runs", "missing"
+
+
+def _loop_run_projection_metadata() -> Dict[str, Any]:
+    getter = getattr(read_store, "loop_run_projection_metadata", None)
+    if not callable(getter):
+        return {}
+    try:
+        metadata = getter()
+    except (OSError, TypeError, ValueError):
+        return {}
+    return dict(metadata) if isinstance(metadata, Mapping) else {}
+
+
+def _loop_run_controller_is_formal(metadata: Mapping[str, Any]) -> bool:
+    if str(metadata.get("schema_version") or "") != _LOOP_RUN_PROJECTION_SCHEMA:
+        return False
+    controller = metadata.get("controller")
+    if not isinstance(controller, Mapping):
+        return False
+    return (
+        controller.get("accepted_live") is True
+        and str(controller.get("status") or "").strip().lower() == "ready"
+        and str(controller.get("mode") or "").strip().lower() == "live"
+        and str(controller.get("truth_level") or "").strip().lower() == "canonical_live"
+    )
+
+
 def _dataset_surface_status(
     dataset: str,
     *,
@@ -7231,6 +7271,18 @@ def _dataset_surface_status(
             "served_from": "local_snapshot",
             "last_known_at": snapshot_at or utc_now(),
         }
+    elif source == _LEGACY_LOOP_RUN_SOURCE:
+        surface["status"] = "degraded"
+        surface["note"] = (
+            "Incident-derived loop reconstruction is a legacy backfill view; "
+            "it is not canonical lifecycle-projector or live controller truth."
+        )
+        surface["projection_mode"] = "backfill"
+        surface["accepted_live"] = False
+        surface["staleness"] = {
+            "served_from": _LEGACY_LOOP_RUN_SOURCE,
+            "last_known_at": snapshot_at or utc_now(),
+        }
     elif source == "missing":
         surface["status"] = "unavailable"
         surface.setdefault(
@@ -7249,6 +7301,51 @@ def _dataset_surface_status(
         )
 
     return surface
+
+
+def _loop_run_surface_status(
+    available: bool,
+    *,
+    snapshot_at: Optional[str] = None,
+) -> tuple[str, str, Dict[str, Any]]:
+    dataset, source = _loop_run_truth_source(available)
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        source=source,
+    )
+    if dataset != "loop_runs" or source == "missing":
+        return dataset, source, surface
+
+    metadata = _loop_run_projection_metadata()
+    controller = metadata.get("controller")
+    controller = dict(controller) if isinstance(controller, Mapping) else {}
+    controller_formal = _loop_run_controller_is_formal(metadata)
+    surface.update(
+        {
+            "projection_schema_version": metadata.get("schema_version"),
+            "projection_generation": metadata.get("generation"),
+            "controller": controller,
+            "accepted_live": controller.get("accepted_live"),
+            "projection_mode": controller.get("mode"),
+            "truth_level": controller.get("truth_level"),
+            "truth_status": "formal" if controller_formal and surface.get("status") == "ok" else "degraded",
+        }
+    )
+    if not controller_formal or surface.get("status") != "ok":
+        surface["status"] = "degraded"
+        surface["controller_note"] = (
+            "Canonical loop-run records remain conclusive, but formal truth requires "
+            "accepted_live=true, status=ready, mode=live, and truth_level=canonical_live."
+        )
+        surface.setdefault(
+            "staleness",
+            {
+                "served_from": source,
+                "last_known_at": snapshot_at or utc_now(),
+            },
+        )
+    return dataset, source, surface
 
 
 def _dataset_source_after_read(dataset: str) -> str:
@@ -32143,15 +32240,9 @@ def _management_loop_throughput_response(
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
     available, raw_records = read_store.list_loop_runs()
-    source_dataset = (
-        "loop_runs"
-        if available and read_store.dataset_source("incidents") == "missing"
-        else "incidents"
-    )
-    loop_surface = _dataset_surface_status(
-        source_dataset,
+    source_dataset, source, loop_surface = _loop_run_surface_status(
+        available,
         snapshot_at=snapshot_at,
-        source=None if available else "missing",
     )
 
     status_filter = {item.lower() for item in (_split_csv_query(status) or [])}
@@ -59651,9 +59742,14 @@ async def bff_list_loop_runs(
     if status:
         requested = {s.strip().lower() for s in status.split(",") if s.strip()}
         records = [r for r in records if str(r.get("status") or "").lower() in requested]
-    src_dataset = "loop_runs" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
-    source = None if available else "missing"
-    return _sem_final_list_response(records, dataset=src_dataset, surface_key="loop_runs", source=source)
+    src_dataset, source, surface = _loop_run_surface_status(available)
+    return _sem_final_list_response(
+        records,
+        dataset=src_dataset,
+        surface_key="loop_runs",
+        source=source,
+        surface=surface,
+    )
 
 
 @app.get("/bff/v5/loop-runs/{loop_run_id}")
@@ -59666,15 +59762,16 @@ async def bff_get_loop_run(
     _require_read_role(identity)
     clean_id = loop_run_id.strip()
     available, record = read_store.get_loop_run(clean_id)
-    lr_src_dataset = "loop_runs" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
+    lr_src_dataset, source, surface = _loop_run_surface_status(available)
     return _sem_final_read_model_detail(
         record,
         entity_id=clean_id,
         label="Loop run",
         dataset=lr_src_dataset,
         surface_key="loop_run_detail",
-        source=None if available else "missing",
+        source=source,
         source_available=None if available else False,
+        surface=surface,
     )
 
 
@@ -60401,12 +60498,13 @@ def _sem_final_list_response(
     dataset: str,
     surface_key: str,
     source: Optional[str] = None,
+    surface: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
     if source == "bff_local_registry":
         meta = _sem_final_registry_meta(surface_key, snapshot_at=snapshot_at, total=len(items))
     else:
-        surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at, source=source)
+        surface = surface or _dataset_surface_status(dataset, snapshot_at=snapshot_at, source=source)
         meta = {
             "snapshot_at": snapshot_at,
             "surfaces": {surface_key: surface},
@@ -60470,9 +60568,10 @@ def _sem_final_read_model_detail(
     surface_key: str,
     source: Optional[str] = None,
     source_available: Optional[bool] = None,
+    surface: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
-    surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at, source=source)
+    surface = surface or _dataset_surface_status(dataset, snapshot_at=snapshot_at, source=source)
     if record:
         return {
             "data": record,
@@ -63290,9 +63389,14 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
         )
     if path == "/bff/v5/loop-runs":
         available, records = read_store.list_loop_runs()
-        src_dataset = "loop_runs" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
-        source = None if available else "missing"
-        return _sem_final_list_response(records, dataset=src_dataset, surface_key="loop_runs", source=source)
+        src_dataset, source, surface = _loop_run_surface_status(available)
+        return _sem_final_list_response(
+            records,
+            dataset=src_dataset,
+            surface_key="loop_runs",
+            source=source,
+            surface=surface,
+        )
     if path == "/bff/v5/sentinel/findings":
         available, records = read_store.list_sentinel_findings()
         src_dataset = "sentinel_findings" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
@@ -63305,6 +63409,8 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
         incidents_source = read_store.dataset_source("incidents")
 
         def _control_room_child_surface(dataset: str, available: bool) -> Dict[str, Any]:
+            if dataset == "loop_runs":
+                return _loop_run_surface_status(available, snapshot_at=snapshot_at)[2]
             if incidents_source != "missing":
                 return _dataset_surface_status("incidents", snapshot_at=snapshot_at)
             return _dataset_surface_status(
@@ -63473,15 +63579,16 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
         )
     if path.startswith("/bff/v5/loop-runs/"):
         available, record = read_store.get_loop_run(entity_id)
-        lr_src_dataset = "loop_runs" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
+        lr_src_dataset, source, surface = _loop_run_surface_status(available)
         return _sem_final_read_model_detail(
             record,
             entity_id=entity_id,
             label="Loop run",
             dataset=lr_src_dataset,
             surface_key="loop_run_detail",
-            source=None if available else "missing",
+            source=source,
             source_available=None if available else False,
+            surface=surface,
         )
     if path.startswith("/bff/v5/sentinel/findings/"):
         available, record = read_store.get_sentinel_finding(entity_id)
@@ -63717,6 +63824,8 @@ async def bff_v5_control_room(
     incidents_source = read_store.dataset_source("incidents")
 
     def _cr_child_surface(dataset: str, available: bool) -> Dict[str, Any]:
+        if dataset == "loop_runs":
+            return _loop_run_surface_status(available, snapshot_at=snapshot_at)[2]
         if incidents_source != "missing":
             return _dataset_surface_status("incidents", snapshot_at=snapshot_at)
         return _dataset_surface_status(

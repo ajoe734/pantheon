@@ -1,0 +1,214 @@
+{
+  "schema_version": "1.0",
+  "task_id": "EVOLOOP-009",
+  "captured_at": "2026-07-15T13:25:00Z",
+  "outcome": "blocked_pre_closeout",
+  "safe_read_policy": {
+    "hosted_methods": [
+      "GET"
+    ],
+    "mutating_full_cycle_verifier_run": false,
+    "reason": "Existing hosted state was sufficient to inspect the chain; no new capital, broker, or runtime write was authorized by the evidence capture."
+  },
+  "source_identities": {
+    "pantheon_dev_candidate": {
+      "sha": "4c96fe9edc93954afe6be0427b2cfe5f7d2491c5",
+      "branch_ci_run": "https://github.com/ajoe734/pantheon/actions/runs/29417978057",
+      "contains_all_final_evoloop_merges": true
+    },
+    "hosted_bff": {
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+      "sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "auth_stub": true,
+      "auth_mode": "permissive",
+      "dev_login_enabled": false,
+      "mfa_required": false,
+      "health_http_status": 200,
+      "healthz_ready": true
+    },
+    "hosted_frontend": {
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+      "sha": "b352faa087e6e1bd6087c619d6e9d99a35fbca41",
+      "manifest_bff_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "vite_bff_mode": "live",
+      "vite_bff_fallback": "strict",
+      "real_writes": false,
+      "dev_stub_writes": false,
+      "embedded_bearer_token": false,
+      "accepted_candidate_proven": false
+    },
+    "execute_plans_dev": {
+      "sha": "b8167c47a7f33fa7daf5a42f19f623e006520e8b",
+      "integration_gate_run": "https://github.com/ajoe734/execute-plans/actions/runs/29416149529",
+      "integration_gate_conclusion": "failure"
+    }
+  },
+  "deployment_attempt": {
+    "run": "https://github.com/ajoe734/pantheon/actions/runs/29418966102",
+    "target_sha": "4c96fe9edc93954afe6be0427b2cfe5f7d2491c5",
+    "environment": "dev",
+    "component": "root",
+    "allow_dirty": false,
+    "allow_example_env": false,
+    "auth_profile": "permissive-stub",
+    "conclusion": "failure",
+    "failed_step": "Deploy requested VM stack",
+    "failure_reason": "strict OpenClaw adapter service auth requires a human-provisioned DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN",
+    "remote_mutation_started": false,
+    "workflow_state_restored": "disabled_manually"
+  },
+  "full_cycle_sample": {
+    "persona_id": "persona-20260528-597cbad2",
+    "persona_name": "US-Macro-Hedger",
+    "incident_id": "inc-threshold-e179c81b1c30",
+    "postmortem_id": "pm-inc-threshold-e179c81b1c30",
+    "decision_id": "evo-pm-candidate_artifact-paper-artifact-persona-20260528-597cbad2-v2-v2-incident_cluster-inc-threshold",
+    "decision_state": "executed",
+    "approval_decision_id": "apv-evoloop008-1784119062",
+    "reviewed_by": "reviewer-e2e-008",
+    "approved_by": "approver-e2e-008",
+    "executed_by": "evolution-dispatch-worker",
+    "executed_at": "2026-07-15T12:37:58Z",
+    "execution_plane": "research",
+    "execution_status": "submitted",
+    "execution_ref_id": "dispatch-evo-pm-candidate_artifact-paper-artifact-persona-20260528-597cbad2-v2-v2-incident_cluster-inc-threshold",
+    "artifact_id": "paper-artifact-persona-20260528-597cbad2-v2-v2",
+    "artifact_version": "1.2.0",
+    "runtime_id": "rt-9566ba8a",
+    "runtime_binding_id": "rb-63a0108368eb4bee8e547122ca9f3c02",
+    "deployment_plan_id": "plan-redeploy-evoloop008-1784078455",
+    "deployment_saga_id": "deployment-saga-plan-redeploy-evoloop008-1784078455",
+    "deployment_outbox_event_id": "deployment-saga-plan-redeploy-evoloop008-1784078455-evt-0001",
+    "runtime_state": "active",
+    "persona_fleet": {
+      "last_mutation_kind": "formal_mutation",
+      "mutation_confidence": "formal",
+      "mutation_entry_id": "evo-pm-candidate_artifact-paper-artifact-persona-20260528-597cbad2-v2-v2-incident_cluster-inc-threshold",
+      "evolution_entry_id": "evo-pm-candidate_artifact-paper-artifact-persona-20260528-597cbad2-v2-v2-incident_cluster-inc-threshold",
+      "mutation_diagnostics": [],
+      "evolution_href": "/management/evolution-journal?persona=persona-20260528-597cbad2&mutation_review=evo-pm-candidate_artifact-paper-artifact-persona-20260528-597cbad2-v2-v2-incident_cluster-inc-threshold"
+    }
+  },
+  "hosted_checks": [
+    {
+      "name": "bff_healthz",
+      "method": "GET",
+      "path": "/healthz",
+      "http_status": 200,
+      "result": "pass"
+    },
+    {
+      "name": "evolution_journal_filtered",
+      "method": "GET",
+      "path": "/bff/management/evolution-journal?mutation_review=evo-pm-candidate_artifact-paper-artifact-persona-20260528-597cbad2-v2-v2-incident_cluster-inc-threshold",
+      "http_status": 200,
+      "result": "pass",
+      "observed_entries": [
+        "mutation_review:executed",
+        "evolution_decision:executed"
+      ]
+    },
+    {
+      "name": "evolution_decision_detail",
+      "method": "GET",
+      "path": "/api/v1/evolution-decisions/evo-pm-candidate_artifact-paper-artifact-persona-20260528-597cbad2-v2-v2-incident_cluster-inc-threshold",
+      "http_status": 200,
+      "result": "pass"
+    },
+    {
+      "name": "mutation_review_detail",
+      "method": "GET",
+      "path": "/api/v1/operator/mutation-review/evo-pm-candidate_artifact-paper-artifact-persona-20260528-597cbad2-v2-v2-incident_cluster-inc-threshold",
+      "http_status": 503,
+      "result": "fail",
+      "error_code": "DEPENDENCY_UNAVAILABLE",
+      "reason": "MUTATION_REVIEW_UNAVAILABLE"
+    },
+    {
+      "name": "persona_fleet_formal_mutation",
+      "method": "GET",
+      "path": "/bff/management/persona-fleet",
+      "http_status": 200,
+      "result": "pass"
+    },
+    {
+      "name": "active_v2_runtime",
+      "method": "GET",
+      "path": "/bff/runtimes/rt-9566ba8a",
+      "http_status": 200,
+      "result": "pass"
+    },
+    {
+      "name": "active_v2_runtime_telemetry",
+      "method": "GET",
+      "path": "/api/v1/telemetry/rt-9566ba8a/summary",
+      "http_status": 200,
+      "result": "fail",
+      "missing_fields": [
+        "pnl",
+        "pnl_at",
+        "drawdown",
+        "drawdown_at"
+      ]
+    },
+    {
+      "name": "hosted_persona_fleet_browser",
+      "method": "GET via Chromium",
+      "path": "/management/persona-fleet?persona=persona-20260528-597cbad2",
+      "result": "fail",
+      "failure": "STRICT TYPED ERROR strict: Failed to fetch; focused persona row not found",
+      "screenshot": "EVOLOOP-009-persona-fleet-browser-failure.png"
+    }
+  ],
+  "acceptance": {
+    "all_packet_prs_merged": "pass",
+    "dev_root_redeployed_with_all_packet_prs": "fail",
+    "all_loop_services_running_at_current_dev_sha": "not_proven",
+    "journal_executed_cycle_visible_via_api": "pass",
+    "persona_fleet_formal_mutation_link_visible_via_api": "pass",
+    "promoted_binding_artifact_v2_visible_via_api": "pass",
+    "governed_hosted_browser_proof": "fail",
+    "promoted_binding_artifact_v2_visible_in_ui": "fail",
+    "numeric_moving_pnl_and_drawdown": "fail",
+    "rolling_pnl_floor_governed_activation": "not_proven",
+    "task_closeable": false
+  },
+  "blockers": [
+    {
+      "id": "EVOLOOP-009-B1",
+      "owner": "Human/Ops",
+      "expiry": "2026-07-16T12:00:00Z",
+      "summary": "Provision governed dev OpenClaw adapter service token."
+    },
+    {
+      "id": "EVOLOOP-009-B3",
+      "owner": "Human/Ops + Codex",
+      "expiry": "2026-07-16T12:00:00Z",
+      "summary": "Replace old permissive hosted BFF with exact current-dev strict deployment."
+    },
+    {
+      "id": "EVOLOOP-009-B4",
+      "owner": "Gemini + Codex + Codex2",
+      "expiry": "2026-07-17T12:00:00Z",
+      "summary": "Repair execute-plans integration gates and deploy the accepted exact-SHA candidate."
+    },
+    {
+      "id": "EVOLOOP-009-B5",
+      "owner": "Codex",
+      "expiry": "2026-07-17T12:00:00Z",
+      "summary": "Restore governed browser session and active binding artifact/version visibility."
+    },
+    {
+      "id": "EVOLOOP-009-B6",
+      "owner": "Antigravity",
+      "expiry": "2026-07-17T12:00:00Z",
+      "summary": "Prove paired numeric PnL/drawdown and governed rolling_pnl_floor activation."
+    },
+    {
+      "id": "EVOLOOP-009-B7",
+      "owner": "Codex",
+      "expiry": "2026-07-17T12:00:00Z",
+      "summary": "Restore mutation-review detail availability."
+    }
+  ]
+}
