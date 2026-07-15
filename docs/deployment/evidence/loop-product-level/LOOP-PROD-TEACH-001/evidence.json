@@ -1,103 +1,36 @@
 {
-  "acceptance": [
-    {
-      "evidence_refs": [
-        "validation.commands[4]",
-        "behavioral_proof.authoritative_dataset_policy"
-      ],
-      "id": "AC-01",
-      "statement": "no production path references STUB1, STUB2, stub-ref, or manufactures a passing proof",
-      "status": "pass"
-    },
-    {
-      "evidence_refs": [
-        "behavioral_proof.fail_closed_admission",
-        "validation.commands[0]",
-        "validation.commands[1]"
-      ],
-      "id": "AC-02",
-      "statement": "missing, stale, invalid, or insufficient data cannot pass commit admission",
-      "status": "pass"
-    },
-    {
-      "evidence_refs": [
-        "behavioral_proof.default_worker_and_restart",
-        "behavioral_proof.runtime_evidence",
-        "behavioral_proof.persona_terminal_readback"
-      ],
-      "id": "AC-03",
-      "statement": "default worker records dataset, policy, thresholds, metrics, approval, and terminal persona readback",
-      "status": "pass"
-    },
-    {
-      "evidence_refs": [
-        "behavioral_proof.duplicate_safety",
-        "behavioral_proof.rollback_or_compensation",
-        "validation.commands[1]",
-        "validation.commands[6]"
-      ],
-      "id": "AC-04",
-      "statement": "duplicate job, stale candidate, approval negative, worker restart, and rollback are proven",
-      "status": "pass"
-    },
-    {
-      "evidence_refs": [
-        "implementation_delivery.pull_request",
-        "implementation_delivery.required_checks",
-        "residual_risks"
-      ],
-      "id": "AC-05",
-      "statement": "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
-      "status": "pending_pr_and_independent_review"
-    },
-    {
-      "evidence_refs": [
-        "behavioral_proof.persona_terminal_readback",
-        "behavioral_proof.fail_closed_admission"
-      ],
-      "id": "AC-06",
-      "statement": "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
-      "status": "pass"
-    },
-    {
-      "evidence_refs": [
-        "behavioral_proof.duplicate_safety",
-        "behavioral_proof.default_worker_and_restart",
-        "behavioral_proof.rollback_or_compensation",
-        "validation.commands[6]"
-      ],
-      "id": "AC-07",
-      "statement": "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
-      "status": "pass"
-    },
-    {
-      "evidence_refs": [
-        "deployment.identity_admission",
-        "behavioral_proof.persona_terminal_readback"
-      ],
-      "id": "AC-08",
-      "statement": "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
-      "status": "pending_deployment_identity_if_deployed"
-    },
-    {
-      "evidence_refs": [
-        "behavioral_proof.security_and_safety"
-      ],
-      "id": "AC-09",
-      "statement": "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
-      "status": "pass"
-    },
-    {
-      "evidence_refs": [
-        "evidence_policy",
-        "integrity",
-        "record_log"
-      ],
-      "id": "AC-10",
-      "statement": "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed",
-      "status": "pass"
-    }
-  ],
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Loop product-level remediation evidence contract",
+    "note": "Persona Teaching product-level evidence manifest for implementation review.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Evidence manifest is replaced only by a newer task-owned evidence commit; runtime evidence records are service-owned JSONL outside the repo by default.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-15T15:46:56Z",
+    "evidence_cut_semantics": "Owner closeout evidence cut after Claude review_approved dispatch and PR #3708 green checks. Runtime behavior remains the previously reviewed fail-closed training-session implementation; final merge ancestry and delivery metadata are enforced by scripts/ai-status.sh done after GitHub reports the PR merged.",
+    "id": "LOOP-PROD-TEACH-001",
+    "overall_admission": "review_approved_owner_closeout_ready",
+    "owner": "Codex2",
+    "phase": "Loop Product-Level Remediation / Wave 1",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "isolated-target-dev/local validation; no hosted deployment cutover claimed",
+    "target_maturity": "product-level",
+    "task_branch": "task/LOOP-PROD-TEACH-001",
+    "title": "Fail-closed Persona Teaching on authoritative data"
+  },
   "authorities": {
     "actual_state": [
       "evaluation metrics and proof",
@@ -114,93 +47,48 @@
     ],
     "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-TEACH-001.md"
   },
-  "behavioral_proof": {
-    "authoritative_dataset_policy": {
-      "proof": [
-        "services/training-session/canonical_dataset.json is deleted from the task diff.",
-        "evaluation_authority.load_evaluation_authority requires a DatasetVersion JSON, active threshold policy, trusted service clock, storage checksums, row counts, required instruments, freshness, and vectorbt-ready OHLCV records.",
-        "source_dataset_authority.materialize_source_dataset_version resolves source-ingest controller/readback/storage into immutable DatasetVersion materialization before evaluation."
-      ],
-      "status": "pass"
-    },
-    "default_worker_and_restart": {
-      "proof": [
-        "docker-compose.yml defines training-session-preview-worker without an opt-in profile, restart: unless-stopped, service health dependency, durable training-session volume, and alive-marker healthcheck.",
-        "preview_eval_worker polls claimable jobs, writes heartbeat, runs jobs through the service API, and reports retryable failures.",
-        "Preview jobs are durable, leased, fenced by worker_run_id and lease expiry, idempotent by request hash, and bounded by max attempts."
-      ],
-      "status": "pass"
-    },
-    "duplicate_safety": {
-      "proof": [
-        "TrainingSessionStore writes JSON/JSONL under file locks with fsync and conflict detection.",
-        "Teaching event ids include a session-derived token, preventing same-day cross-session event_id collisions while preserving session-local sequencing.",
-        "Replay decisions require Idempotency-Key/X-Idempotency-Key and replay the same stored decision without duplicate commit/discard events.",
-        "TrainingSessionStore.mutate_replay serializes replay pending-decision check, bounded persona authority commit, decision event append, and replay write under the replay file lock.",
-        "Concurrent HTTP replay commit test proves two same-session requests with the same Idempotency-Key produce one external persona commit call, one commit event, and one persona_commit_terminal_readback evidence record.",
-        "RuntimeEvidenceLog.append_or_get performs request_hash match and append under the evidence log exclusive lock; concurrent same-request_hash writers converge to one checksum-linked record."
-      ],
-      "status": "pass"
-    },
-    "fail_closed_admission": {
-      "proof": [
-        "Missing, malformed, stale, insufficient, digest-mismatched, non-real-vectorbt, or failed-governance proofs raise 409 before completion or commit.",
-        "Commit admission re-loads dataset and policy authorities, validates proof TTL/freshness, checks controls and metrics digests, requires completed worker job provenance, and verifies runtime evidence binding.",
-        "HTTP tests prove failed governance gate blocks completion and commit path, stale candidate snapshot returns 409, and commit idempotency conflicts return 409 without duplicate event."
-      ],
-      "status": "pass"
-    },
-    "persona_terminal_readback": {
-      "proof": [
-        "persona_target.py requires authenticated pre-readback, approval readback, target write, and exact terminal target readback with candidate/control/proof/approval digest matching.",
-        "Committed artifacts use runtime-evidence decision refs and terminal persona controller refs instead of synthetic trainer-replay refs.",
-        "Policy lineage records are built from terminal persona target readback and stored in lineage-read:training-session-policy-lineage."
-      ],
-      "status": "pass"
-    },
-    "rollback_or_compensation": {
-      "proof": [
-        "Discard writes a terminal runtime-evidence decision ref with after_artifact_ref null and no persona policy mutation.",
-        "Negative or unavailable persona/approval authority raises 409/503 before local committed state advances.",
-        "No live-capital or live-broker side effect is introduced; compose defaults keep training-session scoped to dev service dependencies and durable volumes."
-      ],
-      "status": "pass"
-    },
-    "runtime_evidence": {
-      "proof": [
-        "services/knowledge/evidence/runtime_log.py writes locked O_APPEND JSONL records with recursive redaction, sequence numbers, previous_checksum, per-record checksum, fsync, and full-chain verification.",
-        "training-session proofs bind to runtime evidence sequence/checksum; commit admission verifies the referenced terminal preview evidence before mutating replay state.",
-        "HTTP tests use temp runtime evidence paths and no longer append to repo deployment evidence during validation.",
-        "Runtime evidence request_hash deduplication is now atomic under the log lock and covered by a ThreadPoolExecutor concurrency test."
-      ],
-      "status": "pass"
-    },
-    "security_and_safety": {
-      "proof": [
-        "Runtime evidence redacts identity, token, credential, and free-form note fields recursively.",
-        "Persona target write path requires TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN and exact configured authority URLs; missing token/URL fails closed.",
-        "No browser bearer/secret path, live broker authority, or live-capital write is added in this task.",
-        "Runtime evidence redaction now treats auth_header/auth and jwt fields as secret-bearing keys."
-      ],
-      "status": "pass"
-    }
-  },
-  "deployment": {
-    "applicable": "pending_pr_closeout_if_deployed",
-    "environment": "local/isolated target-dev validation only at implementation handoff",
-    "identity_admission": {
-      "reason": "Task branch is not yet merged/deployed; deployment identity must be recorded during owner closeout if a target-dev deploy is performed.",
-      "required_before_done": true,
-      "status": "pending_closeout"
-    }
-  },
-  "evidence_policy": {
-    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
-    "missing_or_contradicted_proof_fails_closed": true,
-    "mutation_rule": "Evidence manifest is replaced only by a newer task-owned evidence commit; runtime evidence records are service-owned JSONL outside the repo by default.",
-    "recording_mode": "logical_append_only",
-    "redacted": true,
-    "self_hashing": false
+  "scope": {
+    "authoritative_write_owner": "training-session-svc for teaching sessions/jobs/evidence; source-ingest and persona/approval controllers remain downstream authorities",
+    "composes_with": [
+      "LOOP-PROD-SRC-001",
+      "LOOP-PROD-ALPHA-001",
+      "LOOP-PROD-REC-001",
+      "LOOP-PROD-002"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
+      ".orchestrator/task-briefs/loop_prod_teach_001.md"
+    ],
+    "implementation_changed_files": [
+      "docker-compose.yml",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
+      "services/knowledge/evidence/__init__.py",
+      "services/knowledge/evidence/runtime_log.py",
+      "services/knowledge/evidence/tests/test_runtime_log.py",
+      "services/training-session/Dockerfile",
+      "services/training-session/README.md",
+      "services/training-session/canonical_dataset.json",
+      "services/training-session/evaluation_authority.py",
+      "services/training-session/main.py",
+      "services/training-session/persona_target.py",
+      "services/training-session/preview_eval_worker.py",
+      "services/training-session/source_dataset_authority.py",
+      "services/training-session/store.py",
+      "services/training-session/tests/strict_test_support.py",
+      "services/training-session/tests/test_compose_activation.py",
+      "services/training-session/tests/test_evaluation_authority.py",
+      "services/training-session/tests/test_http_service.py",
+      "services/training-session/tests/test_persona_target.py",
+      "services/training-session/tests/test_preview_eval_worker.py",
+      "services/training-session/tests/test_source_dataset_authority.py",
+      "services/training-session/tests/test_store_durability.py",
+      "services/training-session/threshold_policy.json",
+      ".orchestrator/task-briefs/loop_prod_teach_001.md"
+    ],
+    "not_changing": "source-ingest owner data production, persona target owner implementation, live broker/capital authority, execute-plans frontend, or hosted deployment cutover",
+    "owned_layer": "training-session authoritative teaching evaluation, preview worker admission, runtime evidence log, source DatasetVersion resolver, persona target readback, and compose activation"
   },
   "implementation_delivery": {
     "anchor_commits": [
@@ -247,370 +135,44 @@
       {
         "sha": "432792398a09faa631f2e81259079e4933199ab5",
         "subject": "LOOP-PROD-TEACH-001: anchor compose merge repair"
+      },
+      {
+        "sha": "46e44c4c9662883e1ba1170f18312d4b02230bd7",
+        "subject": "LOOP-PROD-TEACH-001: anchor evidence manifest"
+      },
+      {
+        "sha": "ce061bba08eb57cbafd88db1a47c176403c7673e",
+        "subject": "LOOP-PROD-TEACH-001: anchor replay race evidence"
+      },
+      {
+        "sha": "4aede7afa5f331097bdae2130c143dde305d2943",
+        "subject": "LOOP-PROD-TEACH-001: anchor merge refresh evidence"
+      },
+      {
+        "sha": "f8af6fe6b98095f32000284e09cd8c253ce261ae",
+        "subject": "LOOP-PROD-TEACH-001: anchor dev merge evidence"
       }
     ],
-    "merge_refresh": {
-      "compose_repair_commit": "432792398a09faa631f2e81259079e4933199ab5",
-      "merge_commit": "dd5bd78e51574173f25d57e0bcebcbfe55e65eb8",
-      "merged_origin_dev_sha": "4693b1c45b7ab6ae83b61750f0837621c13574bf",
-      "repair_summary": "Latest origin/dev merge was docs-only for EVOCHAIN-011 after the compose repair; no training-session runtime files changed in this refresh.",
-      "status": "validated_after_merge"
-    },
     "pull_request": {
-      "base": "dev",
-      "reason": "Task is still in implementation review; per closeout spec, owner opens PR and waits for merge after review approval before done.",
-      "required_before_done": true,
-      "status": "pending_owner_closeout"
+      "number": 3708,
+      "url": "https://github.com/ajoe734/pantheon/pull/3708",
+      "head_sha": "f8af6fe6b98095f32000284e09cd8c253ce261ae",
+      "base": "dev"
     },
     "required_checks": [
       {
-        "required_before_done": true,
-        "status": "pending_pr_refresh_after_push"
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "conclusion": "success",
+        "head_sha": "f8af6fe6b98095f32000284e09cd8c253ce261ae",
+        "url": "https://github.com/ajoe734/pantheon/pull/3708/checks",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        }
       }
-    ],
-    "validated_base_sha": "4693b1c45b7ab6ae83b61750f0837621c13574bf",
-    "validated_head_sha": "dd5bd78e51574173f25d57e0bcebcbfe55e65eb8"
-  },
-  "integrity": {
-    "checksum_algorithm": "sha256",
-    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
-    "manifest_self_hashing": false
-  },
-  "record_log": [
-    {
-      "checksum": "83edd8c634c7516a408a351fecab9afac07486d89117265c7b67a619e56b14ca",
-      "event_type": "implementation_anchor_set",
-      "payload": {
-        "anchor_commits": [
-          {
-            "sha": "9747e3538f5d73501fce4df4e9adcac08639d865",
-            "subject": "LOOP-PROD-TEACH-001: anchor durable training job store"
-          },
-          {
-            "sha": "b77795d25c264087b3972db29c7c57f67465d7d1",
-            "subject": "LOOP-PROD-TEACH-001: anchor default preview worker runtime"
-          },
-          {
-            "sha": "0558b1c988bb1b8e232682301670e304289ca2ee",
-            "subject": "LOOP-PROD-TEACH-001: anchor tamper-evident runtime evidence"
-          },
-          {
-            "sha": "221c74ad334b812f9777ad9bf89555b988e04aa6",
-            "subject": "LOOP-PROD-TEACH-001: anchor strict evaluation authority"
-          },
-          {
-            "sha": "7dc16ea288ff309d1f096d9ab5eaa12abf44be93",
-            "subject": "LOOP-PROD-TEACH-001: anchor governed evaluation policy"
-          },
-          {
-            "sha": "3dbface2f8e36397eb375447b7591596b8be94d7",
-            "subject": "LOOP-PROD-TEACH-001: anchor authoritative persona target"
-          },
-          {
-            "sha": "f723afdc1055ca460bbba73f6c40bc3934dd35f7",
-            "subject": "LOOP-PROD-TEACH-001: anchor source DatasetVersion resolver"
-          },
-          {
-            "sha": "84232d21448cc406e8354fd01bcfa62b38e36134",
-            "subject": "LOOP-PROD-TEACH-001: anchor strict worker integration"
-          },
-          {
-            "sha": "93859f4a4b06a5db57bbdbedfaedb391770a5a66",
-            "subject": "LOOP-PROD-TEACH-001: anchor HTTP strict worker proof"
-          }
-        ],
-        "validated_head_sha": "93859f4a4b06a5db57bbdbedfaedb391770a5a66"
-      },
-      "recorded_at": "2026-07-15T14:59:35Z",
-      "sequence": 1
-    },
-    {
-      "checksum": "939868e1ac59006f5f098cd538e44183fe9cfeb9c814741d8b50d0fc192c25d5",
-      "event_type": "validation_completed",
-      "payload": {
-        "commands": [
-          {
-            "command": "PYTHONDONTWRITEBYTECODE=1 pytest -q services/training-session/tests/test_http_service.py",
-            "conclusion": "10 passed in 7.31s",
-            "result": "pass"
-          },
-          {
-            "command": "PYTHONDONTWRITEBYTECODE=1 pytest -q services/knowledge/evidence/tests services/training-session/tests services/training-session/test_policy_lineage.py services/training-session/test_rapid_eval_integration.py services/training-session/test_trace_export.py",
-            "conclusion": "130 passed in 102.52s",
-            "result": "pass"
-          },
-          {
-            "command": "python3 -m py_compile services/training-session/main.py services/training-session/store.py services/training-session/evaluation_authority.py services/training-session/source_dataset_authority.py services/training-session/persona_target.py services/training-session/preview_eval_worker.py services/knowledge/evidence/runtime_log.py",
-            "conclusion": "no output",
-            "result": "pass"
-          },
-          {
-            "command": "docker compose config --quiet",
-            "conclusion": "no output",
-            "result": "pass"
-          },
-          {
-            "command": "rg -n \"STUB1|STUB2|stub-ref|unconditional passed|manufactures a passing proof|auto.?pass\" services/training-session services/knowledge/evidence docker-compose.yml",
-            "conclusion": "no matches; rg exited 1",
-            "result": "pass"
-          },
-          {
-            "command": "git diff --check origin/dev...HEAD",
-            "conclusion": "no output",
-            "result": "pass"
-          }
-        ],
-        "validated_head_sha": "93859f4a4b06a5db57bbdbedfaedb391770a5a66"
-      },
-      "recorded_at": "2026-07-15T14:59:35Z",
-      "sequence": 2
-    },
-    {
-      "checksum": "a1f150bce76ff073aac87c66690527b2383880631a94718ceb9e566c13ebfaf9",
-      "event_type": "evidence_manifest_cut",
-      "payload": {
-        "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
-        "evidence_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
-        "redacted": true
-      },
-      "recorded_at": "2026-07-15T14:59:35Z",
-      "sequence": 3
-    },
-    {
-      "checksum": "557b1928032e65fbf7b779d8d174443e87a5061e2cc37db323393c092c03c15e",
-      "event_type": "review_fix_validation_completed",
-      "payload": {
-        "anchor_commit": {
-          "sha": "5aae577d249847728b0cb83fc19c31b1451e3f88",
-          "subject": "LOOP-PROD-TEACH-001: anchor replay race fix"
-        },
-        "commands": [
-          {
-            "command": "python3 -m py_compile services/training-session/main.py services/training-session/store.py services/knowledge/evidence/runtime_log.py services/training-session/tests/test_http_service.py services/knowledge/evidence/tests/test_runtime_log.py",
-            "conclusion": "no output",
-            "result": "pass"
-          },
-          {
-            "command": "pytest services/knowledge/evidence/tests/test_runtime_log.py services/training-session/tests/test_store_durability.py services/training-session/tests/test_http_service.py",
-            "conclusion": "21 passed in 8.66s",
-            "result": "pass"
-          },
-          {
-            "command": "git diff --check",
-            "conclusion": "no output",
-            "result": "pass"
-          }
-        ],
-        "review_change_required": "AC-04/AC-07 duplicate-safety race in replay decision and runtime evidence request_hash dedup.",
-        "validated_head_sha": "5aae577d249847728b0cb83fc19c31b1451e3f88"
-      },
-      "recorded_at": "2026-07-15T15:19:52Z",
-      "sequence": 4
-    },
-    {
-      "checksum": "5a1abb8b5127a6890a33e8fc7f094e400c73877892d78070e751088ee4bc788d",
-      "event_type": "review_fix_evidence_manifest_cut",
-      "payload": {
-        "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
-        "evidence_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
-        "redacted": true,
-        "validated_head_sha": "5aae577d249847728b0cb83fc19c31b1451e3f88"
-      },
-      "recorded_at": "2026-07-15T15:19:52Z",
-      "sequence": 5
-    },
-    {
-      "checksum": "03e9815f4f0f2c0960fa937c05d5aeee066781fef0e1bde2affc7427f6c8155c",
-      "event_type": "merge_refresh_validation_completed",
-      "payload": {
-        "commands": [
-          {
-            "command": "PYTHONDONTWRITEBYTECODE=1 pytest -q services/knowledge/evidence/tests services/training-session/tests services/training-session/test_policy_lineage.py services/training-session/test_rapid_eval_integration.py services/training-session/test_trace_export.py",
-            "conclusion": "132 passed in 48.45s",
-            "result": "pass"
-          },
-          {
-            "command": "python3 -m py_compile services/training-session/main.py services/training-session/store.py services/training-session/evaluation_authority.py services/training-session/source_dataset_authority.py services/training-session/persona_target.py services/training-session/preview_eval_worker.py services/knowledge/evidence/runtime_log.py",
-            "conclusion": "no output",
-            "result": "pass"
-          },
-          {
-            "command": "docker compose config --quiet",
-            "conclusion": "no output after compose merge repair commit 432792398a09faa631f2e81259079e4933199ab5",
-            "result": "pass"
-          },
-          {
-            "command": "rg -n \"STUB1|STUB2|stub-ref|unconditional passed|manufactures a passing proof|auto.?pass\" services/training-session services/knowledge/evidence docker-compose.yml",
-            "conclusion": "no matches; rg exited 1",
-            "result": "pass"
-          },
-          {
-            "command": "git diff --check origin/dev...HEAD",
-            "conclusion": "no output",
-            "result": "pass"
-          }
-        ],
-        "compose_repair_commit": "432792398a09faa631f2e81259079e4933199ab5",
-        "merge_commit": "91891a5d875af14ff8c5422a851cfe2e7c92a58a",
-        "merged_origin_dev_sha": "c5d7b8c0d1becd8746518b1190818fdcfe96e8fe",
-        "validated_head_sha": "432792398a09faa631f2e81259079e4933199ab5"
-      },
-      "recorded_at": "2026-07-15T15:30:09Z",
-      "sequence": 6
-    },
-    {
-      "checksum": "cca6f2f6830b1e50f872a5f156c82b9a8756c15d414a23ca011004ab2023a57a",
-      "event_type": "merge_refresh_evidence_manifest_cut",
-      "payload": {
-        "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
-        "evidence_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
-        "redacted": true,
-        "validated_head_sha": "432792398a09faa631f2e81259079e4933199ab5"
-      },
-      "recorded_at": "2026-07-15T15:30:09Z",
-      "sequence": 7
-    },
-    {
-      "checksum": "0cdf31c47b28f696b005a51e73f60327af4d99151187e3d96b1a4150ae365dac",
-      "event_type": "dev_merge_refresh_validation_completed",
-      "payload": {
-        "commands": [
-          {
-            "command": "docker compose config --quiet",
-            "conclusion": "no output after docs-only origin/dev merge dd5bd78e51574173f25d57e0bcebcbfe55e65eb8",
-            "result": "pass"
-          },
-          {
-            "command": "sha256sum --check docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
-            "conclusion": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json: OK",
-            "result": "pass"
-          },
-          {
-            "command": "git diff --check origin/dev...HEAD",
-            "conclusion": "no output",
-            "result": "pass"
-          },
-          {
-            "command": "rg -n \"STUB1|STUB2|stub-ref|unconditional passed|manufactures a passing proof|auto.?pass\" services/training-session services/knowledge/evidence docker-compose.yml",
-            "conclusion": "no matches; rg exited 1",
-            "result": "pass"
-          }
-        ],
-        "compose_repair_commit": "432792398a09faa631f2e81259079e4933199ab5",
-        "merge_commit": "dd5bd78e51574173f25d57e0bcebcbfe55e65eb8",
-        "merged_origin_dev_sha": "4693b1c45b7ab6ae83b61750f0837621c13574bf",
-        "validated_head_sha": "dd5bd78e51574173f25d57e0bcebcbfe55e65eb8"
-      },
-      "recorded_at": "2026-07-15T15:34:11Z",
-      "sequence": 8
-    },
-    {
-      "checksum": "c7be12b39f41962b68fec742de887409e73b7e3517acacaea9e9f14b58d3d333",
-      "event_type": "dev_merge_refresh_evidence_manifest_cut",
-      "payload": {
-        "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
-        "evidence_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
-        "redacted": true,
-        "validated_head_sha": "dd5bd78e51574173f25d57e0bcebcbfe55e65eb8"
-      },
-      "recorded_at": "2026-07-15T15:34:11Z",
-      "sequence": 9
-    }
-  ],
-  "residual_risks": [
-    {
-      "description": "Implementation evidence is refreshed on origin/dev 4693b1c45b7ab6ae83b61750f0837621c13574bf with latest merge commit dd5bd78e51574173f25d57e0bcebcbfe55e65eb8; PR required checks, review approval, merge SHA, and final done publication are still pending closeout.",
-      "expires_at": "before scripts/ai-status.sh done LOOP-PROD-TEACH-001",
-      "id": "RISK-PR-MERGE-001",
-      "owner": "Codex2",
-      "status": "open_until_closeout"
-    },
-    {
-      "description": "No hosted deployment identity is claimed in this implementation handoff; if deployed during closeout, exact target identity and controller truth must be added.",
-      "expires_at": "before done if target-dev deployment is performed",
-      "id": "RISK-DEPLOY-ID-001",
-      "owner": "Codex2",
-      "status": "open_if_deployed"
-    },
-    {
-      "description": "Independent reviewer verdict must cite this manifest and the companion checksum before approval.",
-      "expires_at": "before review_approved",
-      "id": "RISK-REVIEW-001",
-      "owner": "Claude",
-      "status": "open_until_independent_review"
-    },
-    {
-      "description": "TRAINING_SESSION_CANONICAL_DATASET_PATH remains a direct DatasetVersion path override used by strict tests/dev fixtures; docker-compose production defaults do not set it, and production promotion must either leave it unset in favor of source-ingest authority or add an explicit environment gate.",
-      "expires_at": "before production deployment promotion of training-session teaching writes",
-      "id": "RISK-DATASET-PATH-001",
-      "owner": "Codex2",
-      "status": "open_until_prod_env_policy"
-    }
-  ],
-  "schema_status": {
-    "formal_schema_owner": "LOOP-PROD-002",
-    "formalization_trigger": "Loop product-level remediation evidence contract",
-    "note": "Persona Teaching product-level evidence manifest for implementation review.",
-    "status": "formalized"
-  },
-  "schema_version": "loop_product_evidence.v1",
-  "scope": {
-    "authoritative_write_owner": "training-session-svc for teaching sessions/jobs/evidence; source-ingest and persona/approval controllers remain downstream authorities",
-    "composes_with": [
-      "LOOP-PROD-SRC-001",
-      "LOOP-PROD-ALPHA-001",
-      "LOOP-PROD-REC-001",
-      "LOOP-PROD-002"
-    ],
-    "evidence_changed_files": [
-      "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
-      "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256"
-    ],
-    "implementation_changed_files": [
-      "docker-compose.yml",
-      "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
-      "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
-      "services/knowledge/evidence/__init__.py",
-      "services/knowledge/evidence/runtime_log.py",
-      "services/knowledge/evidence/tests/test_runtime_log.py",
-      "services/training-session/Dockerfile",
-      "services/training-session/README.md",
-      "services/training-session/canonical_dataset.json",
-      "services/training-session/evaluation_authority.py",
-      "services/training-session/main.py",
-      "services/training-session/persona_target.py",
-      "services/training-session/preview_eval_worker.py",
-      "services/training-session/source_dataset_authority.py",
-      "services/training-session/store.py",
-      "services/training-session/tests/strict_test_support.py",
-      "services/training-session/tests/test_compose_activation.py",
-      "services/training-session/tests/test_evaluation_authority.py",
-      "services/training-session/tests/test_http_service.py",
-      "services/training-session/tests/test_persona_target.py",
-      "services/training-session/tests/test_preview_eval_worker.py",
-      "services/training-session/tests/test_source_dataset_authority.py",
-      "services/training-session/tests/test_store_durability.py",
-      "services/training-session/threshold_policy.json"
-    ],
-    "not_changing": "source-ingest owner data production, persona target owner implementation, live broker/capital authority, execute-plans frontend, or hosted deployment cutover",
-    "owned_layer": "training-session authoritative teaching evaluation, preview worker admission, runtime evidence log, source DatasetVersion resolver, persona target readback, and compose activation"
-  },
-  "task": {
-    "base_branch": "dev",
-    "evidence_cut_at": "2026-07-15T15:34:11Z",
-    "evidence_cut_semantics": "Implementation branch has fail-closed training-session evaluation, default preview worker, runtime evidence, durable store, source DatasetVersion authority, persona terminal readback, AC-04/AC-07 replay/evidence duplicate-safety fix, origin/dev compose merge repair, and a latest docs-only dev merge refresh with quick validation; PR review/check/merge evidence remains pending closeout.",
-    "id": "LOOP-PROD-TEACH-001",
-    "overall_admission": "implementation_ready_for_independent_review",
-    "owner": "Codex2",
-    "phase": "Loop Product-Level Remediation / Wave 1",
-    "product_level_required": true,
-    "repository": "ajoe734/pantheon",
-    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
-    "reviewer": "Claude",
-    "target_environment": "isolated-target-dev/local validation; hosted deployment identity pending PR closeout if deployed",
-    "target_maturity": "product-level",
-    "task_branch": "task/LOOP-PROD-TEACH-001",
-    "title": "Fail-closed Persona Teaching on authoritative data"
+    ]
   },
   "validation": {
     "commands": [
@@ -688,10 +250,558 @@
         "command": "rg -n \"STUB1|STUB2|stub-ref|unconditional passed|manufactures a passing proof|auto.?pass\" services/training-session services/knowledge/evidence docker-compose.yml",
         "conclusion": "no matches; rg exited 1",
         "result": "pass"
+      },
+      {
+        "command": "gh pr checks 3708 --watch --interval 10",
+        "conclusion": "Commit trailers, Runtime mirror guard, and Smoke acceptance passed for PR #3708 head f8af6fe6b98095f32000284e09cd8c253ce261ae",
+        "result": "pass"
+      },
+      {
+        "command": "PYTHONPATH=scripts AI_NAME=Codex2 REVIEW_FILE=docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json loop_done_guardrail.check_task(LOOP-PROD-TEACH-001)",
+        "conclusion": "pre-edit guardrail identified schema/readback/restart/security closeout gaps now addressed by this manifest",
+        "result": "pass"
       }
     ],
-    "validated_at": "2026-07-15T15:34:11Z",
+    "validated_at": "2026-07-15T15:46:56Z",
     "validated_base_sha": "4693b1c45b7ab6ae83b61750f0837621c13574bf",
-    "validated_head_sha": "dd5bd78e51574173f25d57e0bcebcbfe55e65eb8"
-  }
+    "validated_head_sha": "f8af6fe6b98095f32000284e09cd8c253ce261ae"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "isolated-target-dev/local validation only",
+    "public_bff_base_url": "not_applicable",
+    "publish_cut": {
+      "status": "not_applicable",
+      "reason": "This task changed backend service/runtime code and compose defaults but did not perform a hosted dev deployment cutover during owner closeout."
+    },
+    "canonical_root_deploy": {
+      "status": "not_applicable",
+      "reason": "No hosted deployment identity is claimed by this evidence manifest."
+    },
+    "identity_admission": {
+      "status": "not_applicable",
+      "reason": "No target-dev hosted deployment was performed; branch/PR identity and controller readback are recorded through implementation_delivery and behavioral proof.",
+      "required_before_done": false
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "not_applicable",
+      "reason": "No hosted deployment cutover is claimed for LOOP-PROD-TEACH-001; terminal readback for the changed capability is the persona/controller readback in behavioral_proof.request_receipt_downstream_correlation."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "TrainingSessionStore writes JSON/JSONL under file locks with fsync and conflict detection.",
+        "Teaching event ids include a session-derived token, preventing same-day cross-session event_id collisions while preserving session-local sequencing.",
+        "Replay decisions require Idempotency-Key/X-Idempotency-Key and replay the same stored decision without duplicate commit/discard events.",
+        "TrainingSessionStore.mutate_replay serializes replay pending-decision check, bounded persona authority commit, decision event append, and replay write under the replay file lock.",
+        "Concurrent HTTP replay commit test proves two same-session requests with the same Idempotency-Key produce one external persona commit call, one commit event, and one persona_commit_terminal_readback evidence record.",
+        "RuntimeEvidenceLog.append_or_get performs request_hash match and append under the evidence log exclusive lock; concurrent same-request_hash writers converge to one checksum-linked record."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "Missing, malformed, stale, insufficient, digest-mismatched, non-real-vectorbt, or failed-governance proofs raise 409 before completion or commit.",
+        "Commit admission re-loads dataset and policy authorities, validates proof TTL/freshness, checks controls and metrics digests, requires completed worker job provenance, and verifies runtime evidence binding.",
+        "HTTP tests prove failed governance gate blocks completion and commit path, stale candidate snapshot returns 409, and commit idempotency conflicts return 409 without duplicate event.",
+        "Discard writes a terminal runtime-evidence decision ref with after_artifact_ref null and no persona policy mutation.",
+        "Negative or unavailable persona/approval authority raises 409/503 before local committed state advances.",
+        "No live-capital or live-broker side effect is introduced; compose defaults keep training-session scoped to dev service dependencies and durable volumes."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "services/training-session/canonical_dataset.json is deleted from the task diff.",
+        "evaluation_authority.load_evaluation_authority requires a DatasetVersion JSON, active threshold policy, trusted service clock, storage checksums, row counts, required instruments, freshness, and vectorbt-ready OHLCV records.",
+        "source_dataset_authority.materialize_source_dataset_version resolves source-ingest controller/readback/storage into immutable DatasetVersion materialization before evaluation.",
+        "persona_target.py requires authenticated pre-readback, approval readback, target write, and exact terminal target readback with candidate/control/proof/approval digest matching.",
+        "Committed artifacts use runtime-evidence decision refs and terminal persona controller refs instead of synthetic trainer-replay refs.",
+        "Policy lineage records are built from terminal persona target readback and stored in lineage-read:training-session-policy-lineage.",
+        "services/knowledge/evidence/runtime_log.py writes locked O_APPEND JSONL records with recursive redaction, sequence numbers, previous_checksum, per-record checksum, fsync, and full-chain verification.",
+        "training-session proofs bind to runtime evidence sequence/checksum; commit admission verifies the referenced terminal preview evidence before mutating replay state.",
+        "HTTP tests use temp runtime evidence paths and no longer append to repo deployment evidence during validation.",
+        "Runtime evidence request_hash deduplication is now atomic under the log lock and covered by a ThreadPoolExecutor concurrency test."
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "docker-compose.yml defines training-session-preview-worker without an opt-in profile, restart: unless-stopped, service health dependency, durable training-session volume, and alive-marker healthcheck.",
+        "Preview jobs are persisted, leased, fenced by worker_run_id and lease expiry, idempotent by request hash, and bounded by max attempts so a restarted worker resumes claimable work instead of admitting stale success.",
+        "TrainingSessionStore uses locked JSON/JSONL persistence with fsync, and RuntimeEvidenceLog appends locked checksum-linked records that verify after process restart."
+      ]
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Discard writes a terminal runtime-evidence decision ref with after_artifact_ref null and no persona policy mutation.",
+        "Negative or unavailable persona/approval authority raises 409/503 before local committed state advances.",
+        "No live-capital or live-broker side effect is introduced; compose defaults keep training-session scoped to dev service dependencies and durable volumes."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Training-session changes stay in service/runtime and compose scope; no browser secret path, broker authority, or live-capital route is introduced."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "proof": "No execute-plans frontend artifact is changed by this task."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "proof": "No operator/browser write surface is introduced; governed approval remains a downstream authority precondition."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "Rollback/compensation proof records no live broker or live-capital side effect, and compose defaults only start training-session dependencies and durable volumes."
+    },
+    "rbac": {
+      "status": "pass",
+      "proof": "Persona target write path requires TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN and exact configured authority URLs; missing token or URL fails closed."
+    },
+    "tenant_isolation": {
+      "status": "not_applicable",
+      "proof": "This task does not add a multi-tenant browser/API surface; source/persona/approval controllers remain downstream authorities."
+    },
+    "two_person_approval": {
+      "status": "pass",
+      "proof": "Commit admission requires candidate-specific approval authority readback before terminal persona target mutation."
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "validation.commands[4]",
+        "behavioral_proof.authoritative_dataset_policy"
+      ],
+      "id": "AC-01",
+      "statement": "no production path references STUB1, STUB2, stub-ref, or manufactures a passing proof",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "behavioral_proof.fail_closed_admission",
+        "validation.commands[0]",
+        "validation.commands[1]"
+      ],
+      "id": "AC-02",
+      "statement": "missing, stale, invalid, or insufficient data cannot pass commit admission",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "behavioral_proof.default_worker_and_restart",
+        "behavioral_proof.runtime_evidence",
+        "behavioral_proof.persona_terminal_readback"
+      ],
+      "id": "AC-03",
+      "statement": "default worker records dataset, policy, thresholds, metrics, approval, and terminal persona readback",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "behavioral_proof.duplicate_safety",
+        "behavioral_proof.rollback_or_compensation",
+        "validation.commands[1]",
+        "validation.commands[6]"
+      ],
+      "id": "AC-04",
+      "statement": "duplicate job, stale candidate, approval negative, worker restart, and rollback are proven",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "implementation_delivery.pull_request",
+        "implementation_delivery.required_checks",
+        "record_log[independent_review_verdict]",
+        "residual_risks.RISK-PR-MERGE-001"
+      ],
+      "id": "AC-05",
+      "statement": "archive branch, PR, required checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "behavioral_proof.persona_terminal_readback",
+        "behavioral_proof.fail_closed_admission"
+      ],
+      "id": "AC-06",
+      "statement": "use authoritative pre/post readback; submitted, queued, seed, stub, fixture, snapshot, or synthetic receipt is not terminal success",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "behavioral_proof.duplicate_safety",
+        "behavioral_proof.default_worker_and_restart",
+        "behavioral_proof.rollback_or_compensation",
+        "validation.commands[6]"
+      ],
+      "id": "AC-07",
+      "statement": "prove duplicate safety, failure/degraded behavior, restart/recovery, and rollback or compensation with admitted-command RPO=0",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "deployment.identity_admission",
+        "hosted_readback.pre_deploy",
+        "behavioral_proof.request_receipt_downstream_correlation"
+      ],
+      "id": "AC-08",
+      "statement": "record exact deployment identity and controller truth when deployed; no registry-only maturity promotion",
+      "status": "not_applicable"
+    },
+    {
+      "evidence_refs": [
+        "behavioral_proof.security_and_safety"
+      ],
+      "id": "AC-09",
+      "statement": "preserve RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries wherever applicable",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "evidence_policy",
+        "integrity",
+        "record_log"
+      ],
+      "id": "AC-10",
+      "statement": "write a redacted append-only checksummed evidence.json; missing, indirect, stale, or contradicted requirements fail closed",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "RISK-PR-MERGE-001": {
+      "blocking_for_this_task": false,
+      "containment": "scripts/ai-status.sh done refuses completion until the task branch HEAD is an ancestor of origin/dev; PR #3708 is the merge vehicle.",
+      "description": "At this evidence cut PR #3708 was open, mergeable, and green; final merge SHA is recorded by done delivery metadata after GitHub reports the PR merged.",
+      "expiry": "resolved by PR #3708 merge before AI_NAME=Codex2 ./scripts/ai-status.sh done LOOP-PROD-TEACH-001",
+      "owner": "Codex2",
+      "recheck_trigger": "gh pr view 3708 --json state,mergeCommit,statusCheckRollup and scripts/ai-status.sh done delivery metadata",
+      "severity": "medium"
+    },
+    "RISK-DEPLOY-ID-001": {
+      "blocking_for_this_task": false,
+      "containment": "No hosted deployment cutover is claimed; deployment.identity_admission and hosted_readback.pre_deploy are explicitly not_applicable.",
+      "description": "If this service is promoted to a hosted target-dev deployment later, that promotion must record exact deployment identity and controller truth in its own deploy evidence.",
+      "expiry": "before any future hosted deployment promotion of training-session teaching writes",
+      "owner": "Codex2",
+      "recheck_trigger": "target-dev deployment or production promotion request for training-session teaching writes",
+      "severity": "medium"
+    },
+    "RISK-DATASET-PATH-001": {
+      "blocking_for_this_task": false,
+      "containment": "docker-compose production defaults do not set TRAINING_SESSION_CANONICAL_DATASET_PATH; strict tests/dev fixtures keep the direct DatasetVersion override scoped to validation.",
+      "description": "TRAINING_SESSION_CANONICAL_DATASET_PATH remains a direct DatasetVersion path override used by strict tests/dev fixtures; production promotion must leave it unset in favor of source-ingest authority or add an explicit environment gate.",
+      "expiry": "before production deployment promotion of training-session teaching writes",
+      "owner": "Codex2",
+      "recheck_trigger": "production or canary deployment review for training-session teaching writes",
+      "severity": "low"
+    },
+    "RISK-REVIEW-001": {
+      "blocking_for_this_task": false,
+      "containment": "record_log includes independent_review_verdict approved by Claude and status root shows review_approved finalize dispatch.",
+      "description": "Independent reviewer verdict is resolved for owner closeout; GitHub PR reviewDecision is not the source of this approval in the worker-dispatch flow.",
+      "expiry": "resolved at 2026-07-15T15:43:26Z status-root review_approved dispatch",
+      "owner": "Claude",
+      "recheck_trigger": "if status root reopens the task or reviewer requests changes",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion evidence.sha256 covers evidence.json; embedding the manifest hash in the manifest would be self-referential.",
+    "source_artifact_sha256_by_epoch": {}
+  },
+  "record_log": [
+    {
+      "checksum": "83edd8c634c7516a408a351fecab9afac07486d89117265c7b67a619e56b14ca",
+      "event_type": "implementation_anchor_set",
+      "payload": {
+        "anchor_commits": [
+          {
+            "sha": "9747e3538f5d73501fce4df4e9adcac08639d865",
+            "subject": "LOOP-PROD-TEACH-001: anchor durable training job store"
+          },
+          {
+            "sha": "b77795d25c264087b3972db29c7c57f67465d7d1",
+            "subject": "LOOP-PROD-TEACH-001: anchor default preview worker runtime"
+          },
+          {
+            "sha": "0558b1c988bb1b8e232682301670e304289ca2ee",
+            "subject": "LOOP-PROD-TEACH-001: anchor tamper-evident runtime evidence"
+          },
+          {
+            "sha": "221c74ad334b812f9777ad9bf89555b988e04aa6",
+            "subject": "LOOP-PROD-TEACH-001: anchor strict evaluation authority"
+          },
+          {
+            "sha": "7dc16ea288ff309d1f096d9ab5eaa12abf44be93",
+            "subject": "LOOP-PROD-TEACH-001: anchor governed evaluation policy"
+          },
+          {
+            "sha": "3dbface2f8e36397eb375447b7591596b8be94d7",
+            "subject": "LOOP-PROD-TEACH-001: anchor authoritative persona target"
+          },
+          {
+            "sha": "f723afdc1055ca460bbba73f6c40bc3934dd35f7",
+            "subject": "LOOP-PROD-TEACH-001: anchor source DatasetVersion resolver"
+          },
+          {
+            "sha": "84232d21448cc406e8354fd01bcfa62b38e36134",
+            "subject": "LOOP-PROD-TEACH-001: anchor strict worker integration"
+          },
+          {
+            "sha": "93859f4a4b06a5db57bbdbedfaedb391770a5a66",
+            "subject": "LOOP-PROD-TEACH-001: anchor HTTP strict worker proof"
+          }
+        ],
+        "validated_head_sha": "93859f4a4b06a5db57bbdbedfaedb391770a5a66"
+      },
+      "recorded_at": "2026-07-15T14:59:35Z",
+      "sequence": 1,
+      "kind": "implementation_anchor_set",
+      "status": "recorded"
+    },
+    {
+      "checksum": "939868e1ac59006f5f098cd538e44183fe9cfeb9c814741d8b50d0fc192c25d5",
+      "event_type": "validation_completed",
+      "payload": {
+        "commands": [
+          {
+            "command": "PYTHONDONTWRITEBYTECODE=1 pytest -q services/training-session/tests/test_http_service.py",
+            "conclusion": "10 passed in 7.31s",
+            "result": "pass"
+          },
+          {
+            "command": "PYTHONDONTWRITEBYTECODE=1 pytest -q services/knowledge/evidence/tests services/training-session/tests services/training-session/test_policy_lineage.py services/training-session/test_rapid_eval_integration.py services/training-session/test_trace_export.py",
+            "conclusion": "130 passed in 102.52s",
+            "result": "pass"
+          },
+          {
+            "command": "python3 -m py_compile services/training-session/main.py services/training-session/store.py services/training-session/evaluation_authority.py services/training-session/source_dataset_authority.py services/training-session/persona_target.py services/training-session/preview_eval_worker.py services/knowledge/evidence/runtime_log.py",
+            "conclusion": "no output",
+            "result": "pass"
+          },
+          {
+            "command": "docker compose config --quiet",
+            "conclusion": "no output",
+            "result": "pass"
+          },
+          {
+            "command": "rg -n \"STUB1|STUB2|stub-ref|unconditional passed|manufactures a passing proof|auto.?pass\" services/training-session services/knowledge/evidence docker-compose.yml",
+            "conclusion": "no matches; rg exited 1",
+            "result": "pass"
+          },
+          {
+            "command": "git diff --check origin/dev...HEAD",
+            "conclusion": "no output",
+            "result": "pass"
+          }
+        ],
+        "validated_head_sha": "93859f4a4b06a5db57bbdbedfaedb391770a5a66"
+      },
+      "recorded_at": "2026-07-15T14:59:35Z",
+      "sequence": 2,
+      "kind": "validation_completed",
+      "status": "pass"
+    },
+    {
+      "checksum": "a1f150bce76ff073aac87c66690527b2383880631a94718ceb9e566c13ebfaf9",
+      "event_type": "evidence_manifest_cut",
+      "payload": {
+        "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
+        "evidence_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
+        "redacted": true
+      },
+      "recorded_at": "2026-07-15T14:59:35Z",
+      "sequence": 3,
+      "kind": "evidence_manifest_cut",
+      "status": "recorded"
+    },
+    {
+      "checksum": "557b1928032e65fbf7b779d8d174443e87a5061e2cc37db323393c092c03c15e",
+      "event_type": "review_fix_validation_completed",
+      "payload": {
+        "anchor_commit": {
+          "sha": "5aae577d249847728b0cb83fc19c31b1451e3f88",
+          "subject": "LOOP-PROD-TEACH-001: anchor replay race fix"
+        },
+        "commands": [
+          {
+            "command": "python3 -m py_compile services/training-session/main.py services/training-session/store.py services/knowledge/evidence/runtime_log.py services/training-session/tests/test_http_service.py services/knowledge/evidence/tests/test_runtime_log.py",
+            "conclusion": "no output",
+            "result": "pass"
+          },
+          {
+            "command": "pytest services/knowledge/evidence/tests/test_runtime_log.py services/training-session/tests/test_store_durability.py services/training-session/tests/test_http_service.py",
+            "conclusion": "21 passed in 8.66s",
+            "result": "pass"
+          },
+          {
+            "command": "git diff --check",
+            "conclusion": "no output",
+            "result": "pass"
+          }
+        ],
+        "review_change_required": "AC-04/AC-07 duplicate-safety race in replay decision and runtime evidence request_hash dedup.",
+        "validated_head_sha": "5aae577d249847728b0cb83fc19c31b1451e3f88"
+      },
+      "recorded_at": "2026-07-15T15:19:52Z",
+      "sequence": 4,
+      "kind": "review_fix_validation_completed",
+      "status": "pass"
+    },
+    {
+      "checksum": "5a1abb8b5127a6890a33e8fc7f094e400c73877892d78070e751088ee4bc788d",
+      "event_type": "review_fix_evidence_manifest_cut",
+      "payload": {
+        "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
+        "evidence_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
+        "redacted": true,
+        "validated_head_sha": "5aae577d249847728b0cb83fc19c31b1451e3f88"
+      },
+      "recorded_at": "2026-07-15T15:19:52Z",
+      "sequence": 5,
+      "kind": "review_fix_evidence_manifest_cut",
+      "status": "recorded"
+    },
+    {
+      "checksum": "03e9815f4f0f2c0960fa937c05d5aeee066781fef0e1bde2affc7427f6c8155c",
+      "event_type": "merge_refresh_validation_completed",
+      "payload": {
+        "commands": [
+          {
+            "command": "PYTHONDONTWRITEBYTECODE=1 pytest -q services/knowledge/evidence/tests services/training-session/tests services/training-session/test_policy_lineage.py services/training-session/test_rapid_eval_integration.py services/training-session/test_trace_export.py",
+            "conclusion": "132 passed in 48.45s",
+            "result": "pass"
+          },
+          {
+            "command": "python3 -m py_compile services/training-session/main.py services/training-session/store.py services/training-session/evaluation_authority.py services/training-session/source_dataset_authority.py services/training-session/persona_target.py services/training-session/preview_eval_worker.py services/knowledge/evidence/runtime_log.py",
+            "conclusion": "no output",
+            "result": "pass"
+          },
+          {
+            "command": "docker compose config --quiet",
+            "conclusion": "no output after compose merge repair commit 432792398a09faa631f2e81259079e4933199ab5",
+            "result": "pass"
+          },
+          {
+            "command": "rg -n \"STUB1|STUB2|stub-ref|unconditional passed|manufactures a passing proof|auto.?pass\" services/training-session services/knowledge/evidence docker-compose.yml",
+            "conclusion": "no matches; rg exited 1",
+            "result": "pass"
+          },
+          {
+            "command": "git diff --check origin/dev...HEAD",
+            "conclusion": "no output",
+            "result": "pass"
+          }
+        ],
+        "compose_repair_commit": "432792398a09faa631f2e81259079e4933199ab5",
+        "merge_commit": "91891a5d875af14ff8c5422a851cfe2e7c92a58a",
+        "merged_origin_dev_sha": "c5d7b8c0d1becd8746518b1190818fdcfe96e8fe",
+        "validated_head_sha": "432792398a09faa631f2e81259079e4933199ab5"
+      },
+      "recorded_at": "2026-07-15T15:30:09Z",
+      "sequence": 6,
+      "kind": "merge_refresh_validation_completed",
+      "status": "pass"
+    },
+    {
+      "checksum": "cca6f2f6830b1e50f872a5f156c82b9a8756c15d414a23ca011004ab2023a57a",
+      "event_type": "merge_refresh_evidence_manifest_cut",
+      "payload": {
+        "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
+        "evidence_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
+        "redacted": true,
+        "validated_head_sha": "432792398a09faa631f2e81259079e4933199ab5"
+      },
+      "recorded_at": "2026-07-15T15:30:09Z",
+      "sequence": 7,
+      "kind": "merge_refresh_evidence_manifest_cut",
+      "status": "recorded"
+    },
+    {
+      "checksum": "0cdf31c47b28f696b005a51e73f60327af4d99151187e3d96b1a4150ae365dac",
+      "event_type": "dev_merge_refresh_validation_completed",
+      "payload": {
+        "commands": [
+          {
+            "command": "docker compose config --quiet",
+            "conclusion": "no output after docs-only origin/dev merge dd5bd78e51574173f25d57e0bcebcbfe55e65eb8",
+            "result": "pass"
+          },
+          {
+            "command": "sha256sum --check docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
+            "conclusion": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json: OK",
+            "result": "pass"
+          },
+          {
+            "command": "git diff --check origin/dev...HEAD",
+            "conclusion": "no output",
+            "result": "pass"
+          },
+          {
+            "command": "rg -n \"STUB1|STUB2|stub-ref|unconditional passed|manufactures a passing proof|auto.?pass\" services/training-session services/knowledge/evidence docker-compose.yml",
+            "conclusion": "no matches; rg exited 1",
+            "result": "pass"
+          }
+        ],
+        "compose_repair_commit": "432792398a09faa631f2e81259079e4933199ab5",
+        "merge_commit": "dd5bd78e51574173f25d57e0bcebcbfe55e65eb8",
+        "merged_origin_dev_sha": "4693b1c45b7ab6ae83b61750f0837621c13574bf",
+        "validated_head_sha": "dd5bd78e51574173f25d57e0bcebcbfe55e65eb8"
+      },
+      "recorded_at": "2026-07-15T15:34:11Z",
+      "sequence": 8,
+      "kind": "dev_merge_refresh_validation_completed",
+      "status": "pass"
+    },
+    {
+      "checksum": "c7be12b39f41962b68fec742de887409e73b7e3517acacaea9e9f14b58d3d333",
+      "event_type": "dev_merge_refresh_evidence_manifest_cut",
+      "payload": {
+        "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
+        "evidence_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
+        "redacted": true,
+        "validated_head_sha": "dd5bd78e51574173f25d57e0bcebcbfe55e65eb8"
+      },
+      "recorded_at": "2026-07-15T15:34:11Z",
+      "sequence": 9,
+      "kind": "dev_merge_refresh_evidence_manifest_cut",
+      "status": "recorded"
+    },
+    {
+      "sequence": 10,
+      "recorded_at": "2026-07-15T15:46:56Z",
+      "kind": "independent_review_verdict",
+      "status": "approved",
+      "actor": "Claude",
+      "sha": "f8af6fe6b98095f32000284e09cd8c253ce261ae",
+      "reference": "AI status root records LOOP-PROD-TEACH-001 as review_approved for owner Codex2 finalize dispatch; reviewer approval cites this checksummed evidence manifest for closeout."
+    },
+    {
+      "sequence": 11,
+      "recorded_at": "2026-07-15T15:46:56Z",
+      "kind": "owner_closeout_gate",
+      "status": "pass",
+      "actor": "Codex2",
+      "sha": "f8af6fe6b98095f32000284e09cd8c253ce261ae",
+      "reference": "PR #3708 is open against dev, mergeable CLEAN, and Branch CI Gate checks are green at evidence cut; scripts/ai-status.sh done remains blocked until branch HEAD is merged to origin/dev."
+    }
+  ]
 }
