@@ -81,6 +81,13 @@ def mock_external_services(monkeypatch):
             
         def list_all(self):
             return list((bff_main.read_store._ensure_local_overlay_records("runtime_bindings") or {}).values())
+
+        def list_by_plan(self, plan_id):
+            return [
+                binding
+                for binding in self.list_all()
+                if binding.get("plan_id") == plan_id
+            ]
             
     mock_client = MockRuntimeManagerClient()
     monkeypatch.setattr(bff_main, "_runtime_manager_client", lambda: mock_client)
@@ -365,6 +372,10 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
             binding_id = "rb-macro-macro-authoritative"
             runtime_id = "runtime-macro-macro-authoritative"
             persona_capital_binding_id = create_body["meta"]["persona_capital_binding_id"]
+            persisted = bff_main.read_store.get_persona(persona_id)
+            assert persisted is not None
+            capital_pool_id = persisted["metadata"]["internal_paper_capital_pool_id"]
+            tenant_id = persisted["metadata"]["tenant_id"]
             bff_main.read_store.create_runtime_binding(
                 runtime_id=runtime_id,
                 name="Macro Macro paper runtime",
@@ -374,13 +385,52 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
                 runtime_kind="paper",
                 actor_id="test",
                 created_at=bff_main.utc_now(),
-                params={"persona_capital_binding_id": persona_capital_binding_id},
+                params={
+                    "persona_capital_binding_id": persona_capital_binding_id,
+                    "capital_pool_id": capital_pool_id,
+                },
                 state="running",
             )
+            authoritative_binding = {
+                "binding_id": binding_id,
+                "runtime_id": runtime_id,
+                "plan_id": created["deploymentPlanId"],
+                "persona_capital_binding_id": persona_capital_binding_id,
+                "capital_pool_id": capital_pool_id,
+                "deployment_mode": "paper",
+                "state": "running",
+                "status": "running",
+                "metadata": {
+                    "persona_id": persona_id,
+                    "tenant_id": tenant_id,
+                },
+            }
+
+            class ExactRuntimeManagerClient:
+                def get(self, requested_binding_id):
+                    return (
+                        authoritative_binding
+                        if requested_binding_id == binding_id
+                        else None
+                    )
+
+                def list_all(self):
+                    return [authoritative_binding]
+
+                def list_by_plan(self, requested_plan_id):
+                    return (
+                        [authoritative_binding]
+                        if requested_plan_id == created["deploymentPlanId"]
+                        else []
+                    )
+
+            bff_main._runtime_manager_client = lambda: ExactRuntimeManagerClient()
             worker_session = {
                 "session_id": "session-1",
                 "runtime_id": runtime_id,
                 "binding_id": binding_id,
+                "capital_pool_id": capital_pool_id,
+                "status": "running",
                 "active": True,
                 "last_heartbeat_at": bff_main.utc_now(),
             }
@@ -394,27 +444,40 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
                 "deployment_saga_progress": {"progress_status": "completed"},
                 "runtime_binding_id": binding_id,
                 "runtime_id": runtime_id,
-                "runtime_binding": {
-                    "binding_id": binding_id,
-                    "runtime_id": runtime_id,
-                    "plan_id": created["deploymentPlanId"],
-                    "persona_capital_binding_id": persona_capital_binding_id,
-                    "status": "active",
-                    "metadata": {"persona_id": persona_id},
-                },
+                "runtime_binding": authoritative_binding,
             }
             bff_main._get_json = lambda *_args, **_kwargs: projection
             bff_main._register_persona_cron_required = lambda *_args, **_kwargs: {
                 "authoritative_readback": {
+                    "persona_id": persona_id,
+                    "workflow_id": "pantheon.persona.first-evaluation",
                     "registered": True,
                     "runtime_id": runtime_id,
                     "runtime_binding_id": binding_id,
+                    "capital_pool_id": capital_pool_id,
+                    "persona_capital_binding_id": persona_capital_binding_id,
+                    "job_id": f"job-{persona_id}",
+                    "job_name": f"pantheon-first-evaluation-{persona_id}",
+                    "request_id": (
+                        f"persona-provisioning:{persona_id}:"
+                        "pantheon.persona.first-evaluation"
+                    ),
+                    "schedule": {"kind": "cron", "expr": "*/15 * * * *"},
+                    "session_target": persona_id,
+                    "observed_at": bff_main.utc_now(),
                 }
             }
 
             detail = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
             assert detail.status_code == 200, detail.text
             assert detail.json()["data"]["id"] == persona_id
+            assert detail.json()["data"]["state"] == "provisioning"
+            reconciled = client.post(
+                f"/bff/personas/{persona_id}/provisioning/reconcile",
+                headers=HEADERS,
+            )
+            assert reconciled.status_code == 200, reconciled.text
+            detail = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
             assert detail.json()["data"]["state"] == "paper_running"
             assert detail.json()["data"]["capitalMode"] == "paper"
             assert detail.json()["data"]["runtimeId"] == runtime_id
