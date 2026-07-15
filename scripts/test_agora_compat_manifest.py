@@ -30,24 +30,24 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_write_manifest_records_current_v1_5_hashes(tmp_path: Path) -> None:
+def test_write_manifest_records_current_v1_8_hashes(tmp_path: Path) -> None:
     output = tmp_path / "dev-compatibility-manifest.json"
 
     result = _run("write", "--output", str(output))
 
     assert result.returncode == 0, result.stderr
     manifest = json.loads(output.read_text(encoding="utf-8"))
-    assert manifest["contract_family"] == "agora.v1.5"
+    assert manifest["contract_family"] == "agora.v1.8"
     assert manifest["environment"] == "dev"
     assert manifest["generated"] is True
     assert manifest["backend"]["base_bundle_index_sha256"] == _sha256(
         ROOT / "services/control-plane/specs/agora/bundle_index.json"
     )
     assert manifest["backend"]["extension_bundle_index_sha256"] == _sha256(
-        ROOT / "services/control-plane/specs/agora/bundle_index.v1_5.json"
+        ROOT / "services/control-plane/specs/agora/bundle_index.v1_8.json"
     )
     assert manifest["backend"]["openapi_sha256"] == _sha256(
-        ROOT / "services/control-plane/openapi/agora_v1_5.openapi.yaml"
+        ROOT / "services/control-plane/openapi/agora_v1_8.openapi.yaml"
     )
     assert manifest["hash_policy"] == {
         "file_hash": "sha256-exact-git-bytes-v1",
@@ -61,9 +61,14 @@ def test_write_manifest_records_current_v1_5_hashes(tmp_path: Path) -> None:
         "version": "1.0",
         "required": True,
     } in manifest["required_capabilities"]
+    assert {
+        "name": "agora.workshop.live_operations.v1",
+        "version": "1.0",
+        "required": True,
+    } in manifest["required_capabilities"]
     assert manifest["frontend"]["generated_types_sha256"] == "0" * 64
     assert manifest["compatibility_status"] == "pending"
-    assert "frontend-generated-types-not-agora-v1.5" not in manifest["blocking_reasons"]
+    assert "frontend-generated-types-not-agora-v1.8" not in manifest["blocking_reasons"]
     assert "frontend-generated-contract-commit-placeholder" in manifest["blocking_reasons"]
     assert "frontend-generated-types-missing" in manifest["blocking_reasons"]
     assert "frontend-runtime-commit-placeholder" in manifest["blocking_reasons"]

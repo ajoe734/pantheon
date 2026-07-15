@@ -1,9 +1,11 @@
-"""Agora workshop persistence — three Postgres tables.
+"""Agora workshop persistence and durable governed-command receipts.
 
 Tables (owned by this module):
   strategy_workshop_session      — workshop lifecycle and subject reference
   strategy_workshop_event        — append-only event log; private content NEVER stored here
   strategy_completeness_snapshot — completeness/next-question snapshot
+  strategy_workshop_version_link — link to immutable StrategySpec registry rows
+  strategy_workshop_command_receipt — admitted/completed/failed command ledger
 
 Privacy rule: workshop events store only ``private_content_ref`` (pointer to
 the encrypted store) and ``redacted_summary``.  The raw private content must
@@ -19,8 +21,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import uuid
+from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -30,6 +35,21 @@ BACKEND_ENV = "AGORA_WORKSHOP_STORE_BACKEND"
 DSN_ENV = "AGORA_WORKSHOP_STORE_DSN"
 SCHEMA_ENV = "AGORA_WORKSHOP_STORE_SCHEMA"
 DEFAULT_SCHEMA = "agora"
+IDEMPOTENCY_AGGREGATE_TYPE = "strategy_workshop"
+WORKSHOP_STATUSES = ("open", "in_review", "concluded", "archived")
+TERMINAL_WORKSHOP_STATUSES = frozenset({"concluded", "archived"})
+COMMAND_STATUSES = ("admitted", "completed", "failed")
+
+
+@dataclass(frozen=True)
+class StrategyWorkshopTableNames:
+    """Historical deep-closure owner table names used by schema validation."""
+
+    session: str
+    event: str
+    version_link: str
+    completeness_snapshot: str
+    private_content_object: str
 
 
 # --------------------------------------------------------------------------- #
@@ -76,6 +96,240 @@ def _row_to_dict(row: Any, cols: List[str]) -> Dict[str, Any]:
     return {c: getattr(row, c, None) for c in cols}
 
 
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SENSITIVE_COMMAND_KEYS = frozenset({
+    "authorization", "conclusion_summary", "content", "cookie", "initial_message",
+    "message", "mfa_token", "parameters", "password", "patch", "private_content",
+    "reason", "research_context", "secret", "subject", "summary", "token",
+})
+
+
+def _clean_schema(schema: Optional[str]) -> str:
+    value = str(schema or "").strip()
+    if value and not _IDENTIFIER_RE.fullmatch(value):
+        raise ValueError(f"Unsafe Postgres schema identifier: {value!r}")
+    return value
+
+
+def _quote_identifier(value: str) -> str:
+    """Quote a trusted identifier after strict validation.
+
+    This deliberately accepts identifiers, not arbitrary SQL fragments.  It is
+    used for schema/table/index names; command data always remains parameterized.
+    """
+
+    parts = value.split(".")
+    if not parts or any(not _IDENTIFIER_RE.fullmatch(part) for part in parts):
+        raise ValueError(f"Unsafe Postgres identifier: {value!r}")
+    return ".".join(f'"{part}"' for part in parts)
+
+
+def _qualified(schema: Optional[str], name: str) -> str:
+    clean_schema = _clean_schema(schema)
+    return f"{clean_schema}.{name}" if clean_schema else name
+
+
+def _quoted(schema: Optional[str], name: str) -> str:
+    return _quote_identifier(_qualified(schema, name))
+
+
+def _deep_copy_dict(value: Dict[str, Any]) -> Dict[str, Any]:
+    return deepcopy(value)
+
+
+def _redact_command_payload(value: Any) -> Any:
+    """Defensively redact obvious credential/private-content fields.
+
+    Callers should already pass a redacted structured payload.  This second
+    boundary prevents common auth material from being persisted accidentally.
+    """
+
+    if isinstance(value, dict):
+        result: Dict[str, Any] = {}
+        for key, item in value.items():
+            normalized = str(key).strip().lower().replace("-", "_")
+            if normalized in _SENSITIVE_COMMAND_KEYS or normalized.endswith("_token"):
+                result[str(key)] = "[REDACTED]"
+            else:
+                result[str(key)] = _redact_command_payload(item)
+        return result
+    if isinstance(value, list):
+        return [_redact_command_payload(item) for item in value]
+    return value
+
+
+def _deep_closure_tables(schema: Optional[str] = None) -> StrategyWorkshopTableNames:
+    return StrategyWorkshopTableNames(
+        session=_quoted(schema, "strategy_workshop_session"),
+        event=_quoted(schema, "strategy_workshop_event"),
+        version_link=_quoted(schema, "strategy_workshop_version_link"),
+        completeness_snapshot=_quoted(schema, "strategy_completeness_snapshot"),
+        private_content_object=_quoted(schema, "agora_private_content_object"),
+    )
+
+
+def build_strategy_workshop_table_ddl(schema: Optional[str] = None) -> List[str]:
+    """Return the five AG-BE-SW deep-closure owner-table statements.
+
+    The active BFF store has additional additive tables below.  Keeping this
+    historical contract builder restores executable validation of the frozen
+    persistence design without taking ownership of private-content runtime IO.
+    """
+
+    tables = _deep_closure_tables(schema)
+    return [
+        f"""
+        CREATE TABLE IF NOT EXISTS {tables.session} (
+            workshop_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            servant_persona_id TEXT NOT NULL,
+            openclaw_session_id TEXT NULL,
+            strategy_id TEXT NULL,
+            active_strategy_spec_registry_id TEXT NULL,
+            active_workshop_version_id TEXT NULL,
+            final_strategy_spec_registry_id TEXT NULL,
+            final_workshop_version_id TEXT NULL,
+            status TEXT NOT NULL,
+            lock_version BIGINT NOT NULL DEFAULT 1,
+            title TEXT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL,
+            concluded_at TIMESTAMPTZ NULL,
+            archived_at TIMESTAMPTZ NULL,
+            CONSTRAINT ck_strategy_workshop_session_status
+                CHECK (status IN ('open','in_review','concluded','archived'))
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {tables.event} (
+            event_id TEXT PRIMARY KEY,
+            workshop_id TEXT NOT NULL REFERENCES {tables.session}(workshop_id),
+            sequence_no BIGINT NOT NULL,
+            actor_type TEXT NOT NULL,
+            actor_ref TEXT NULL,
+            event_type TEXT NOT NULL,
+            private_content_ref TEXT NULL,
+            redacted_summary TEXT NULL,
+            redaction_policy_version TEXT NULL,
+            payload_refs_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+            trace_id TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            CONSTRAINT ux_workshop_event_sequence UNIQUE (workshop_id, sequence_no),
+            CONSTRAINT ck_strategy_workshop_event_message_redaction CHECK (
+                event_type <> 'message'
+                OR (
+                    private_content_ref IS NOT NULL
+                    AND redacted_summary IS NOT NULL
+                    AND redaction_policy_version IS NOT NULL
+                )
+            )
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {tables.version_link} (
+            workshop_version_id TEXT PRIMARY KEY,
+            workshop_id TEXT NOT NULL REFERENCES {tables.session}(workshop_id),
+            strategy_id TEXT NOT NULL,
+            strategy_spec_registry_id TEXT NOT NULL,
+            parent_workshop_version_id TEXT NULL,
+            source_event_id TEXT NULL,
+            sequence_no BIGINT NOT NULL,
+            created_by TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            CONSTRAINT ux_workshop_version_sequence UNIQUE (workshop_id, sequence_no),
+            CONSTRAINT ux_workshop_registry_version UNIQUE (workshop_id, strategy_spec_registry_id)
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {tables.completeness_snapshot} (
+            snapshot_id TEXT PRIMARY KEY,
+            workshop_id TEXT NOT NULL REFERENCES {tables.session}(workshop_id),
+            workshop_version_id TEXT NULL,
+            assessment_version BIGINT NOT NULL,
+            state_map_json JSONB NOT NULL,
+            blocking_items_json JSONB NOT NULL,
+            next_question_json JSONB NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            CONSTRAINT ux_workshop_completeness_version UNIQUE (workshop_id, assessment_version)
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {tables.private_content_object} (
+            private_content_ref TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL,
+            owner_user_id TEXT NOT NULL,
+            workshop_id TEXT NOT NULL,
+            event_id TEXT NULL,
+            object_uri TEXT NOT NULL,
+            ciphertext_sha256 CHAR(64) NOT NULL,
+            encrypted_dek BYTEA NOT NULL,
+            kek_key_version TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            retention_class TEXT NOT NULL,
+            expires_at TIMESTAMPTZ NULL,
+            state TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            deleted_at TIMESTAMPTZ NULL
+        )
+        """,
+    ]
+
+
+def build_strategy_workshop_index_ddl(schema: Optional[str] = None) -> List[str]:
+    tables = _deep_closure_tables(schema)
+
+    def index_name(name: str) -> str:
+        return _quoted(schema, name)
+
+    return [
+        f"CREATE INDEX IF NOT EXISTS {index_name('ix_workshop_user_status_updated')} "
+        f"ON {tables.session} (tenant_id, user_id, status, updated_at DESC)",
+        f"CREATE INDEX IF NOT EXISTS {index_name('ix_workshop_servant_status_updated')} "
+        f"ON {tables.session} (servant_persona_id, status, updated_at DESC)",
+        f"CREATE INDEX IF NOT EXISTS {index_name('ix_workshop_strategy_updated')} "
+        f"ON {tables.session} (strategy_id, updated_at DESC) WHERE strategy_id IS NOT NULL",
+        f"CREATE INDEX IF NOT EXISTS {index_name('ix_workshop_active_registry_ref')} "
+        f"ON {tables.session} (active_strategy_spec_registry_id) "
+        "WHERE active_strategy_spec_registry_id IS NOT NULL",
+        f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name('ux_workshop_openclaw_session')} "
+        f"ON {tables.session} (openclaw_session_id) WHERE openclaw_session_id IS NOT NULL",
+        f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name('ux_workshop_event_sequence')} "
+        f"ON {tables.event} (workshop_id, sequence_no)",
+        f"CREATE INDEX IF NOT EXISTS {index_name('ix_workshop_event_created')} "
+        f"ON {tables.event} (workshop_id, created_at, sequence_no)",
+        f"CREATE INDEX IF NOT EXISTS {index_name('ix_workshop_event_trace')} "
+        f"ON {tables.event} (trace_id)",
+        f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name('ux_workshop_event_private_ref')} "
+        f"ON {tables.event} (private_content_ref) WHERE private_content_ref IS NOT NULL",
+        f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name('ux_workshop_version_sequence')} "
+        f"ON {tables.version_link} (workshop_id, sequence_no)",
+        f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name('ux_workshop_registry_version')} "
+        f"ON {tables.version_link} (workshop_id, strategy_spec_registry_id)",
+        f"CREATE INDEX IF NOT EXISTS {index_name('ix_workshop_version_strategy')} "
+        f"ON {tables.version_link} (strategy_id, created_at DESC)",
+        f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name('ux_workshop_completeness_version')} "
+        f"ON {tables.completeness_snapshot} (workshop_id, assessment_version)",
+        f"CREATE INDEX IF NOT EXISTS {index_name('ix_workshop_completeness_latest')} "
+        f"ON {tables.completeness_snapshot} (workshop_id, created_at DESC)",
+        f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name('ux_private_content_object_uri')} "
+        f"ON {tables.private_content_object} (object_uri)",
+        f"CREATE INDEX IF NOT EXISTS {index_name('ix_private_content_owner_expiry')} "
+        f"ON {tables.private_content_object} (tenant_id, owner_user_id, expires_at) "
+        "WHERE state = 'active'",
+        f"CREATE INDEX IF NOT EXISTS {index_name('ix_private_content_workshop_created')} "
+        f"ON {tables.private_content_object} (workshop_id, created_at DESC)",
+        f"CREATE INDEX IF NOT EXISTS {index_name('ix_private_content_expiry_gc')} "
+        f"ON {tables.private_content_object} (expires_at) "
+        "WHERE state = 'active' AND expires_at IS NOT NULL",
+    ]
+
+
+def build_strategy_workshop_bootstrap_ddl(schema: Optional[str] = None) -> List[str]:
+    return build_strategy_workshop_table_ddl(schema) + build_strategy_workshop_index_ddl(schema)
+
+
 # --------------------------------------------------------------------------- #
 # MemoryWorkshopStore — thread-safe in-memory backend for dev / tests
 # --------------------------------------------------------------------------- #
@@ -83,7 +337,9 @@ def _row_to_dict(row: Any, cols: List[str]) -> Dict[str, Any]:
 _SESSION_COLS = [
     "workshop_id", "tenant_id", "user_id", "servant_persona_id",
     "openclaw_session_id", "strategy_id", "active_strategy_spec_registry_id",
-    "selected_version_id", "status", "lock_version", "created_at", "updated_at",
+    "selected_version_id", "active_workshop_version_id",
+    "final_strategy_spec_registry_id", "final_workshop_version_id",
+    "status", "lock_version", "created_at", "updated_at", "concluded_at",
 ]
 _EVENT_COLS = [
     "event_id", "workshop_id", "sequence_no", "actor_type", "event_type",
@@ -104,6 +360,52 @@ _CARD_COLS = [
     "strategy_spec_registry_id", "evidence_refs_json", "allowed_actions_json",
     "created_at", "updated_at",
 ]
+_VERSION_LINK_COLS = [
+    "workshop_version_id", "workshop_id", "strategy_id",
+    "strategy_spec_registry_id", "parent_workshop_version_id",
+    "source_event_id", "sequence_no", "created_by", "created_at",
+]
+_COMMAND_RECEIPT_COLS = [
+    "command_id", "tenant_id", "user_id", "workshop_id", "operation",
+    "idempotency_key", "request_hash", "request_payload_json", "request_id",
+    "trace_id", "status", "expected_lock_version", "admitted_lock_version",
+    "resulting_lock_version", "result_json",
+    "canonical_refs_json", "failure_json", "compensation_json", "admitted_at",
+    "completed_at", "failed_at", "updated_at",
+]
+_SESSION_UPDATE_ALLOWLIST = frozenset({
+    "strategy_id",
+    "active_strategy_spec_registry_id",
+    "selected_version_id",
+    "active_workshop_version_id",
+    "final_strategy_spec_registry_id",
+    "final_workshop_version_id",
+    "status",
+    "concluded_at",
+})
+
+
+def _decode_command_receipt_row(row: Any) -> Dict[str, Any]:
+    record = _row_to_dict(row, _COMMAND_RECEIPT_COLS)
+    public: Dict[str, Any] = {}
+    aliases = {
+        "request_payload_json": "request_payload",
+        "result_json": "result",
+        "canonical_refs_json": "canonical_refs",
+        "failure_json": "failure",
+        "compensation_json": "compensation",
+    }
+    for key, value in record.items():
+        public_key = aliases.get(key, key)
+        if key.endswith("_json"):
+            public[public_key] = _decode_json(value)
+        else:
+            public[public_key] = value
+    if public.get("request_payload") is None:
+        public["request_payload"] = {}
+    if public.get("canonical_refs") is None:
+        public["canonical_refs"] = []
+    return public
 
 
 class MemoryWorkshopStore:
@@ -115,6 +417,8 @@ class MemoryWorkshopStore:
         self._snapshots: Dict[str, List[Dict[str, Any]]] = {}
         self._readiness: Dict[str, List[Dict[str, Any]]] = {}
         self._cards: Dict[str, List[Dict[str, Any]]] = {}
+        self._version_links: Dict[str, List[Dict[str, Any]]] = {}
+        self._command_receipts: Dict[Tuple[str, str, str, str, str], Dict[str, Any]] = {}
         self._idempotency_keys: Dict[str, bool] = {}
         self._lock = threading.Lock()
 
@@ -132,10 +436,18 @@ class MemoryWorkshopStore:
                 "strategy_id": session.get("strategy_id"),
                 "active_strategy_spec_registry_id": session.get("active_strategy_spec_registry_id"),
                 "selected_version_id": session.get("selected_version_id"),
+                "active_workshop_version_id": session.get(
+                    "active_workshop_version_id", session.get("selected_version_id")
+                ),
+                "final_strategy_spec_registry_id": session.get(
+                    "final_strategy_spec_registry_id"
+                ),
+                "final_workshop_version_id": session.get("final_workshop_version_id"),
                 "status": session.get("status", "open"),
                 "lock_version": 1,
                 "created_at": session.get("created_at", now),
                 "updated_at": session.get("updated_at", now),
+                "concluded_at": session.get("concluded_at"),
             }
             self._sessions[row["workshop_id"]] = row
             return dict(row)
@@ -145,6 +457,13 @@ class MemoryWorkshopStore:
         """Remove every trace of a failed create-workshop attempt."""
         with self._lock:
             self._events.pop(workshop_id, None)
+            self._version_links.pop(workshop_id, None)
+            for composite in [
+                composite
+                for composite in self._command_receipts
+                if composite[2] == workshop_id
+            ]:
+                self._command_receipts.pop(composite, None)
             self._sessions.pop(workshop_id, None)
             self._idempotency_keys.pop(f"{idempotency_scope}:{idempotency_key}", None)
 
@@ -241,6 +560,377 @@ class MemoryWorkshopStore:
             page = [dict(r) for r in rows[:limit]]
             next_cursor = page[-1]["workshop_id"] if len(rows) > limit else None
             return page, next_cursor
+
+    # --- immutable StrategySpec version links ---
+
+    def list_version_links(self, workshop_id: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            return [
+                _deep_copy_dict(row)
+                for row in sorted(
+                    self._version_links.get(workshop_id, []),
+                    key=lambda item: int(item["sequence_no"]),
+                )
+            ]
+
+    def get_version_link(
+        self,
+        workshop_id: str,
+        workshop_version_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = next(
+                (
+                    item
+                    for item in self._version_links.get(workshop_id, [])
+                    if item["workshop_version_id"] == workshop_version_id
+                ),
+                None,
+            )
+            return _deep_copy_dict(row) if row is not None else None
+
+    # --- durable governed-command ledger ---
+
+    @staticmethod
+    def _command_key(
+        tenant_id: str,
+        user_id: str,
+        workshop_id: str,
+        operation: str,
+        idempotency_key: str,
+    ) -> Tuple[str, str, str, str, str]:
+        return (tenant_id, user_id, workshop_id, operation, idempotency_key)
+
+    def admit_command(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        request_hash: str,
+        expected_lock_version: int,
+        request_payload: Optional[Dict[str, Any]] = None,
+        request_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Durably admit a command before any downstream side effect.
+
+        Exact replay is resolved before ETag and lifecycle checks.  Therefore a
+        client can recover a completed, failed, or in-flight receipt after a
+        timeout even when the workshop lock has advanced.
+        """
+
+        if not operation or not idempotency_key or not request_hash:
+            raise ValueError("operation, idempotency_key, and request_hash are required")
+        composite = self._command_key(
+            tenant_id, user_id, workshop_id, operation, idempotency_key
+        )
+        with self._lock:
+            existing = self._command_receipts.get(composite)
+            if existing is not None:
+                outcome = (
+                    "replay"
+                    if existing["request_hash"] == request_hash
+                    else "idempotency_conflict"
+                )
+                return {
+                    "outcome": outcome,
+                    "receipt": _deep_copy_dict(existing),
+                    "current_lock_version": self._sessions.get(workshop_id, {}).get(
+                        "lock_version"
+                    ),
+                }
+
+            session = self._sessions.get(workshop_id)
+            if session is None:
+                return {"outcome": "not_found", "receipt": None}
+            if session["tenant_id"] != tenant_id or session["user_id"] != user_id:
+                return {"outcome": "scope_mismatch", "receipt": None}
+            current_lock_version = int(session.get("lock_version", 1))
+            if session.get("status") in TERMINAL_WORKSHOP_STATUSES:
+                return {
+                    "outcome": "terminal",
+                    "receipt": None,
+                    "workshop_status": session["status"],
+                    "current_lock_version": current_lock_version,
+                }
+            if current_lock_version != int(expected_lock_version):
+                return {
+                    "outcome": "stale",
+                    "receipt": None,
+                    "current_lock_version": current_lock_version,
+                }
+
+            now = _utc_now()
+            new_lock_version = current_lock_version + 1
+            receipt: Dict[str, Any] = {
+                "command_id": _new_id(),
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "workshop_id": workshop_id,
+                "operation": operation,
+                "idempotency_key": idempotency_key,
+                "request_hash": request_hash,
+                "request_payload": _redact_command_payload(request_payload or {}),
+                "request_id": request_id,
+                "trace_id": trace_id,
+                "status": "admitted",
+                "expected_lock_version": current_lock_version,
+                "admitted_lock_version": new_lock_version,
+                "resulting_lock_version": new_lock_version,
+                "result": None,
+                "canonical_refs": [],
+                "failure": None,
+                "compensation": None,
+                "admitted_at": now,
+                "completed_at": None,
+                "failed_at": None,
+                "updated_at": now,
+            }
+            # The receipt write and lock advance are one critical section: an
+            # admitted command cannot become externally visible without both.
+            self._command_receipts[composite] = receipt
+            session["lock_version"] = new_lock_version
+            session["updated_at"] = now
+            return {
+                "outcome": "admitted",
+                "receipt": _deep_copy_dict(receipt),
+                "current_lock_version": new_lock_version,
+            }
+
+    def get_command_receipt(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        composite = self._command_key(
+            tenant_id, user_id, workshop_id, operation, idempotency_key
+        )
+        with self._lock:
+            receipt = self._command_receipts.get(composite)
+            return _deep_copy_dict(receipt) if receipt is not None else None
+
+    def complete_command(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        request_hash: str,
+        result: Dict[str, Any],
+        canonical_refs: Optional[Any] = None,
+        version_link: Optional[Dict[str, Any]] = None,
+        session_updates: Optional[Dict[str, Any]] = None,
+        event: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Complete an admitted command and its authoritative readback atomically."""
+
+        composite = self._command_key(
+            tenant_id, user_id, workshop_id, operation, idempotency_key
+        )
+        with self._lock:
+            receipt = self._command_receipts.get(composite)
+            if receipt is None:
+                return {"outcome": "not_found", "receipt": None}
+            if receipt["request_hash"] != request_hash:
+                return {
+                    "outcome": "idempotency_conflict",
+                    "receipt": _deep_copy_dict(receipt),
+                }
+            if receipt["status"] == "completed":
+                return {"outcome": "replay", "receipt": _deep_copy_dict(receipt)}
+            if receipt["status"] != "admitted":
+                return {
+                    "outcome": "invalid_state",
+                    "receipt": _deep_copy_dict(receipt),
+                }
+
+            session = self._sessions.get(workshop_id)
+            if session is None:
+                return {"outcome": "not_found", "receipt": None}
+
+            updates = dict(session_updates or {})
+            unknown_updates = set(updates) - _SESSION_UPDATE_ALLOWLIST
+            if unknown_updates:
+                raise ValueError(
+                    f"Unsupported session update fields: {sorted(unknown_updates)!r}"
+                )
+            if "status" in updates and updates["status"] not in WORKSHOP_STATUSES:
+                raise ValueError(f"Unsupported workshop status: {updates['status']!r}")
+            if "active_workshop_version_id" in updates:
+                updates.setdefault(
+                    "selected_version_id", updates["active_workshop_version_id"]
+                )
+            elif "selected_version_id" in updates:
+                updates["active_workshop_version_id"] = updates["selected_version_id"]
+
+            prepared_link: Optional[Dict[str, Any]] = None
+            links = self._version_links.setdefault(workshop_id, [])
+            if version_link is not None:
+                required = {
+                    "workshop_version_id", "strategy_id",
+                    "strategy_spec_registry_id", "created_by",
+                }
+                missing = required - set(version_link)
+                if missing:
+                    raise ValueError(f"Missing version link fields: {sorted(missing)!r}")
+                prepared_link = {
+                    "workshop_version_id": version_link["workshop_version_id"],
+                    "workshop_id": workshop_id,
+                    "strategy_id": version_link["strategy_id"],
+                    "strategy_spec_registry_id": version_link[
+                        "strategy_spec_registry_id"
+                    ],
+                    "parent_workshop_version_id": version_link.get(
+                        "parent_workshop_version_id"
+                    ),
+                    "source_event_id": version_link.get("source_event_id"),
+                    "sequence_no": int(version_link.get("sequence_no") or (len(links) + 1)),
+                    "created_by": version_link["created_by"],
+                    "created_at": version_link.get("created_at") or _utc_now(),
+                }
+                duplicate = next(
+                    (
+                        row
+                        for row in links
+                        if row["workshop_version_id"]
+                        == prepared_link["workshop_version_id"]
+                        or row["strategy_spec_registry_id"]
+                        == prepared_link["strategy_spec_registry_id"]
+                        or int(row["sequence_no"]) == prepared_link["sequence_no"]
+                    ),
+                    None,
+                )
+                if duplicate is not None and duplicate != prepared_link:
+                    return {
+                        "outcome": "version_conflict",
+                        "receipt": _deep_copy_dict(receipt),
+                    }
+                if duplicate is not None:
+                    prepared_link = None
+
+            prepared_event: Optional[Dict[str, Any]] = None
+            if event is not None:
+                bucket = self._events.setdefault(workshop_id, [])
+                prepared_event = {
+                    "event_id": event.get("event_id") or _new_id(),
+                    "workshop_id": workshop_id,
+                    "sequence_no": len(bucket) + 1,
+                    "actor_type": event["actor_type"],
+                    "event_type": event["event_type"],
+                    "private_content_ref": event.get("private_content_ref"),
+                    "redacted_summary": event.get("redacted_summary"),
+                    "payload_refs_json": event.get("payload_refs_json"),
+                    "trace_id": event.get("trace_id") or receipt.get("trace_id"),
+                    "created_at": event.get("created_at") or _utc_now(),
+                }
+
+            now = _utc_now()
+            if prepared_link is not None:
+                links.append(prepared_link)
+            for field, value in updates.items():
+                session[field] = value
+            session["updated_at"] = now
+            if prepared_event is not None:
+                self._events.setdefault(workshop_id, []).append(prepared_event)
+            receipt.update(
+                {
+                    "status": "completed",
+                    "result": deepcopy(result),
+                    "canonical_refs": deepcopy(canonical_refs or []),
+                    "completed_at": now,
+                    "updated_at": now,
+                }
+            )
+            return {
+                "outcome": "completed",
+                "receipt": _deep_copy_dict(receipt),
+                "version_link": (
+                    _deep_copy_dict(prepared_link)
+                    if prepared_link is not None
+                    else None
+                ),
+                "event": _deep_copy_dict(prepared_event) if prepared_event else None,
+                "current_lock_version": session["lock_version"],
+            }
+
+    def fail_command(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        request_hash: str,
+        failure: Dict[str, Any],
+        compensation: Optional[Dict[str, Any]] = None,
+        event: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Persist failure/compensation without rolling the workshop lock back."""
+
+        composite = self._command_key(
+            tenant_id, user_id, workshop_id, operation, idempotency_key
+        )
+        with self._lock:
+            receipt = self._command_receipts.get(composite)
+            if receipt is None:
+                return {"outcome": "not_found", "receipt": None}
+            if receipt["request_hash"] != request_hash:
+                return {
+                    "outcome": "idempotency_conflict",
+                    "receipt": _deep_copy_dict(receipt),
+                }
+            if receipt["status"] == "failed":
+                return {"outcome": "replay", "receipt": _deep_copy_dict(receipt)}
+            if receipt["status"] != "admitted":
+                return {
+                    "outcome": "invalid_state",
+                    "receipt": _deep_copy_dict(receipt),
+                }
+
+            now = _utc_now()
+            receipt.update(
+                {
+                    "status": "failed",
+                    "failure": deepcopy(failure),
+                    "compensation": deepcopy(compensation),
+                    "failed_at": now,
+                    "updated_at": now,
+                }
+            )
+            prepared_event: Optional[Dict[str, Any]] = None
+            if event is not None:
+                bucket = self._events.setdefault(workshop_id, [])
+                prepared_event = {
+                    "event_id": event.get("event_id") or _new_id(),
+                    "workshop_id": workshop_id,
+                    "sequence_no": len(bucket) + 1,
+                    "actor_type": event["actor_type"],
+                    "event_type": event["event_type"],
+                    "private_content_ref": event.get("private_content_ref"),
+                    "redacted_summary": event.get("redacted_summary"),
+                    "payload_refs_json": event.get("payload_refs_json"),
+                    "trace_id": event.get("trace_id") or receipt.get("trace_id"),
+                    "created_at": event.get("created_at") or now,
+                }
+                bucket.append(prepared_event)
+            return {
+                "outcome": "failed",
+                "receipt": _deep_copy_dict(receipt),
+                "event": _deep_copy_dict(prepared_event) if prepared_event else None,
+                "current_lock_version": self._sessions.get(workshop_id, {}).get(
+                    "lock_version"
+                ),
+            }
 
     # --- event ---
 
@@ -398,6 +1088,48 @@ class MemoryWorkshopStore:
 
 
 # --------------------------------------------------------------------------- #
+# Frozen deep-closure bootstrap wrapper (kept for contract validation)
+# --------------------------------------------------------------------------- #
+
+class PostgresStrategyWorkshopStore:
+    """Bootstrap wrapper for the frozen five-table deep-closure contract.
+
+    Runtime callers should use :class:`PostgresWorkshopStore`, which includes
+    additive readiness/card/idempotency/command-receipt tables and migrations.
+    """
+
+    def __init__(
+        self,
+        *,
+        dsn: str,
+        schema: Optional[str] = None,
+        bootstrap: bool = True,
+    ) -> None:
+        if not dsn:
+            raise ValueError("Postgres DSN is required")
+        self.dsn = dsn
+        self.schema = _clean_schema(schema)
+        if bootstrap:
+            self.bootstrap()
+
+    def _connect(self) -> Any:
+        try:
+            import psycopg  # type: ignore[import]
+        except ImportError as exc:
+            raise RuntimeError(
+                "psycopg is required for PostgresStrategyWorkshopStore"
+            ) from exc
+        return psycopg.connect(self.dsn)
+
+    def bootstrap(self) -> None:
+        with self._connect() as conn:
+            if self.schema:
+                conn.execute(f"CREATE SCHEMA IF NOT EXISTS {_quote_identifier(self.schema)}")
+            for statement in build_strategy_workshop_bootstrap_ddl(self.schema):
+                conn.execute(statement)
+
+
+# --------------------------------------------------------------------------- #
 # PostgresWorkshopStore — production Postgres backend
 # --------------------------------------------------------------------------- #
 
@@ -413,10 +1145,14 @@ class PostgresWorkshopStore:
         if not dsn:
             raise ValueError("Postgres DSN is required for PostgresWorkshopStore")
         self.dsn = dsn
-        self.schema = schema
-        q = f'"{schema}"'
+        self.schema = _clean_schema(schema)
+        if not self.schema:
+            raise ValueError("Postgres schema is required for PostgresWorkshopStore")
+        q = _quote_identifier(self.schema)
         self._st = f'{q}."strategy_workshop_session"'
         self._et = f'{q}."strategy_workshop_event"'
+        self._vlt = f'{q}."strategy_workshop_version_link"'
+        self._crt = f'{q}."strategy_workshop_command_receipt"'
         self._cst = f'{q}."strategy_completeness_snapshot"'
         self._rat = f'{q}."strategy_readiness_assessment"'
         self._wct = f'{q}."strategy_workshop_card"'
@@ -438,7 +1174,9 @@ class PostgresWorkshopStore:
         with self._connect() as conn:
             # Create schema — tolerate restricted-role 42501
             try:
-                conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{self.schema}"')
+                conn.execute(
+                    f"CREATE SCHEMA IF NOT EXISTS {_quote_identifier(self.schema)}"
+                )
             except Exception as exc:
                 if getattr(exc, "sqlstate", "") != "42501":
                     raise
@@ -461,11 +1199,53 @@ class PostgresWorkshopStore:
                     strategy_id                      TEXT,
                     active_strategy_spec_registry_id TEXT,
                     selected_version_id              TEXT,
+                    active_workshop_version_id       TEXT,
+                    final_strategy_spec_registry_id  TEXT,
+                    final_workshop_version_id        TEXT,
                     status                           TEXT NOT NULL DEFAULT 'open',
-                    lock_version                     INTEGER NOT NULL DEFAULT 1,
+                    lock_version                     BIGINT NOT NULL DEFAULT 1,
                     created_at                       TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    updated_at                       TIMESTAMPTZ NOT NULL DEFAULT now()
+                    updated_at                       TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    concluded_at                     TIMESTAMPTZ,
+                    CONSTRAINT ck_strategy_workshop_session_status
+                        CHECK (status IN ('open','in_review','concluded','archived'))
                 )
+            """)
+            # Additive migration for databases bootstrapped by the earlier BFF
+            # implementation.  NOT VALID preserves deployability if legacy data
+            # needs repair while still enforcing the status boundary for writes.
+            conn.execute(f"""
+                ALTER TABLE {self._st}
+                    ADD COLUMN IF NOT EXISTS active_workshop_version_id TEXT,
+                    ADD COLUMN IF NOT EXISTS final_strategy_spec_registry_id TEXT,
+                    ADD COLUMN IF NOT EXISTS final_workshop_version_id TEXT,
+                    ADD COLUMN IF NOT EXISTS concluded_at TIMESTAMPTZ
+            """)
+            conn.execute(f"""
+                ALTER TABLE {self._st}
+                    ALTER COLUMN lock_version TYPE BIGINT
+            """)
+            conn.execute(f"""
+                UPDATE {self._st}
+                   SET active_workshop_version_id = selected_version_id
+                 WHERE active_workshop_version_id IS NULL
+                   AND selected_version_id IS NOT NULL
+            """)
+            conn.execute(f"""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                          FROM pg_constraint
+                         WHERE conname = 'ck_strategy_workshop_session_status'
+                           AND conrelid = '"{self.schema}"."strategy_workshop_session"'::regclass
+                    ) THEN
+                        ALTER TABLE {self._st}
+                            ADD CONSTRAINT ck_strategy_workshop_session_status
+                            CHECK (status IN ('open','in_review','concluded','archived'))
+                            NOT VALID;
+                    END IF;
+                END $$
             """)
             conn.execute(f"""
                 CREATE INDEX IF NOT EXISTS idx_ws_session_user_tenant
@@ -492,19 +1272,50 @@ class PostgresWorkshopStore:
                 CREATE INDEX IF NOT EXISTS idx_ws_event_workshop_created
                     ON {self._et} (workshop_id, created_at)
             """)
-            # Add FK for existing tables that were created before this constraint was added.
-            try:
-                conn.execute(f"""
-                    ALTER TABLE {self._et}
-                        ADD CONSTRAINT fk_ws_event_session
-                        FOREIGN KEY (workshop_id)
-                        REFERENCES {self._st}(workshop_id)
-                """)
-            except Exception as exc:
-                if getattr(exc, "sqlstate", "") not in ("42710", "42P16"):
-                    raise
-                if hasattr(conn, "rollback"):
-                    conn.rollback()
+            # Add named FKs for legacy tables without forcing a transaction
+            # rollback on every restart when the constraint already exists.
+            conn.execute(f"""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                         WHERE conname = 'fk_ws_event_session'
+                           AND conrelid = '"{self.schema}"."strategy_workshop_event"'::regclass
+                    ) THEN
+                        ALTER TABLE {self._et}
+                            ADD CONSTRAINT fk_ws_event_session
+                            FOREIGN KEY (workshop_id)
+                            REFERENCES {self._st}(workshop_id);
+                    END IF;
+                END $$
+            """)
+
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self._vlt} (
+                    workshop_version_id          TEXT PRIMARY KEY,
+                    workshop_id                  TEXT NOT NULL
+                        REFERENCES {self._st}(workshop_id),
+                    strategy_id                  TEXT NOT NULL,
+                    strategy_spec_registry_id    TEXT NOT NULL,
+                    parent_workshop_version_id   TEXT,
+                    source_event_id              TEXT,
+                    sequence_no                  BIGINT NOT NULL,
+                    created_by                   TEXT NOT NULL,
+                    created_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    CONSTRAINT uq_ws_version_sequence
+                        UNIQUE (workshop_id, sequence_no),
+                    CONSTRAINT uq_ws_registry_version
+                        UNIQUE (workshop_id, strategy_spec_registry_id)
+                )
+            """)
+            conn.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_ws_version_workshop_sequence
+                    ON {self._vlt} (workshop_id, sequence_no)
+            """)
+            conn.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_ws_version_strategy_created
+                    ON {self._vlt} (strategy_id, created_at DESC)
+            """)
 
             conn.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self._cst} (
@@ -522,19 +1333,21 @@ class PostgresWorkshopStore:
                 CREATE INDEX IF NOT EXISTS idx_ws_snapshot_workshop_created
                     ON {self._cst} (workshop_id, created_at)
             """)
-            # Add FK for existing tables that were created before this constraint was added.
-            try:
-                conn.execute(f"""
-                    ALTER TABLE {self._cst}
-                        ADD CONSTRAINT fk_ws_snapshot_session
-                        FOREIGN KEY (workshop_id)
-                        REFERENCES {self._st}(workshop_id)
-                """)
-            except Exception as exc:
-                if getattr(exc, "sqlstate", "") not in ("42710", "42P16"):
-                    raise
-                if hasattr(conn, "rollback"):
-                    conn.rollback()
+            conn.execute(f"""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                         WHERE conname = 'fk_ws_snapshot_session'
+                           AND conrelid = '"{self.schema}"."strategy_completeness_snapshot"'::regclass
+                    ) THEN
+                        ALTER TABLE {self._cst}
+                            ADD CONSTRAINT fk_ws_snapshot_session
+                            FOREIGN KEY (workshop_id)
+                            REFERENCES {self._st}(workshop_id);
+                    END IF;
+                END $$
+            """)
 
             conn.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self._rat} (
@@ -590,6 +1403,46 @@ class PostgresWorkshopStore:
                     CONSTRAINT pk_ws_idempotency_key PRIMARY KEY (scope, idempotency_key)
                 )
             """)
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self._crt} (
+                    command_id               TEXT PRIMARY KEY,
+                    tenant_id                TEXT NOT NULL,
+                    user_id                  TEXT NOT NULL,
+                    workshop_id              TEXT NOT NULL
+                        REFERENCES {self._st}(workshop_id),
+                    operation                TEXT NOT NULL,
+                    idempotency_key          TEXT NOT NULL,
+                    request_hash             TEXT NOT NULL,
+                    request_payload_json     JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                    request_id               TEXT,
+                    trace_id                 TEXT,
+                    status                   TEXT NOT NULL,
+                    expected_lock_version    BIGINT NOT NULL,
+                    admitted_lock_version    BIGINT NOT NULL,
+                    resulting_lock_version   BIGINT NOT NULL,
+                    result_json              JSONB,
+                    canonical_refs_json      JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    failure_json             JSONB,
+                    compensation_json        JSONB,
+                    admitted_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    completed_at             TIMESTAMPTZ,
+                    failed_at                TIMESTAMPTZ,
+                    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    CONSTRAINT uq_ws_command_idempotency UNIQUE
+                        (tenant_id, user_id, workshop_id, operation, idempotency_key),
+                    CONSTRAINT ck_ws_command_status
+                        CHECK (status IN ('admitted','completed','failed'))
+                )
+            """)
+            conn.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_ws_command_workshop_admitted
+                    ON {self._crt} (tenant_id, user_id, workshop_id, admitted_at DESC)
+            """)
+            conn.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_ws_command_recovery
+                    ON {self._crt} (status, admitted_at)
+                    WHERE status = 'admitted'
+            """)
 
     # --- session ---
 
@@ -604,10 +1457,18 @@ class PostgresWorkshopStore:
             "strategy_id": session.get("strategy_id"),
             "active_strategy_spec_registry_id": session.get("active_strategy_spec_registry_id"),
             "selected_version_id": session.get("selected_version_id"),
+            "active_workshop_version_id": session.get(
+                "active_workshop_version_id", session.get("selected_version_id")
+            ),
+            "final_strategy_spec_registry_id": session.get(
+                "final_strategy_spec_registry_id"
+            ),
+            "final_workshop_version_id": session.get("final_workshop_version_id"),
             "status": session.get("status", "open"),
             "lock_version": 1,
             "created_at": now,
             "updated_at": now,
+            "concluded_at": session.get("concluded_at"),
         }
         with self._connect() as conn:
             conn.execute(
@@ -616,15 +1477,20 @@ class PostgresWorkshopStore:
                     (workshop_id, tenant_id, user_id, servant_persona_id,
                      openclaw_session_id, strategy_id,
                      active_strategy_spec_registry_id, selected_version_id,
-                     status, lock_version, created_at, updated_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     active_workshop_version_id, final_strategy_spec_registry_id,
+                     final_workshop_version_id, status, lock_version, created_at,
+                     updated_at, concluded_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
                 (
                     row["workshop_id"], row["tenant_id"], row["user_id"],
                     row["servant_persona_id"], row["openclaw_session_id"],
                     row["strategy_id"], row["active_strategy_spec_registry_id"],
-                    row["selected_version_id"], row["status"], row["lock_version"],
-                    row["created_at"], row["updated_at"],
+                    row["selected_version_id"], row["active_workshop_version_id"],
+                    row["final_strategy_spec_registry_id"],
+                    row["final_workshop_version_id"], row["status"],
+                    row["lock_version"], row["created_at"], row["updated_at"],
+                    row["concluded_at"],
                 ),
             )
         return row
@@ -633,6 +1499,8 @@ class PostgresWorkshopStore:
                                 idempotency_key: str) -> None:
         """Compensate a create that failed before its initial event committed."""
         with self._connect() as conn:
+            conn.execute(f"DELETE FROM {self._crt} WHERE workshop_id = %s", (workshop_id,))
+            conn.execute(f"DELETE FROM {self._vlt} WHERE workshop_id = %s", (workshop_id,))
             conn.execute(f"DELETE FROM {self._et} WHERE workshop_id = %s", (workshop_id,))
             conn.execute(f"DELETE FROM {self._st} WHERE workshop_id = %s", (workshop_id,))
             conn.execute(
@@ -647,8 +1515,10 @@ class PostgresWorkshopStore:
                 SELECT workshop_id, tenant_id, user_id, servant_persona_id,
                        openclaw_session_id, strategy_id,
                        active_strategy_spec_registry_id, selected_version_id,
-                       status, lock_version,
-                       created_at::text, updated_at::text
+                       active_workshop_version_id,
+                       final_strategy_spec_registry_id, final_workshop_version_id,
+                       status, lock_version, created_at::text, updated_at::text,
+                       concluded_at::text
                 FROM {self._st} WHERE workshop_id = %s
                 """,
                 (workshop_id,),
@@ -795,8 +1665,10 @@ class PostgresWorkshopStore:
                 SELECT workshop_id, tenant_id, user_id, servant_persona_id,
                        openclaw_session_id, strategy_id,
                        active_strategy_spec_registry_id, selected_version_id,
-                       status, lock_version,
-                       created_at::text, updated_at::text
+                       active_workshop_version_id,
+                       final_strategy_spec_registry_id, final_workshop_version_id,
+                       status, lock_version, created_at::text, updated_at::text,
+                       concluded_at::text
                 FROM {self._st}
                 WHERE {where}
                 ORDER BY created_at ASC
@@ -812,6 +1684,559 @@ class PostgresWorkshopStore:
         else:
             next_cursor = None
         return sessions, next_cursor
+
+    # --- immutable StrategySpec version links ---
+
+    def list_version_links(self, workshop_id: str) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT workshop_version_id, workshop_id, strategy_id,
+                       strategy_spec_registry_id, parent_workshop_version_id,
+                       source_event_id, sequence_no, created_by, created_at::text
+                  FROM {self._vlt}
+                 WHERE workshop_id = %s
+                 ORDER BY sequence_no ASC
+                """,
+                (workshop_id,),
+            )
+            rows = cur.fetchall()
+        return [_row_to_dict(row, _VERSION_LINK_COLS) for row in rows]
+
+    def get_version_link(
+        self,
+        workshop_id: str,
+        workshop_version_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT workshop_version_id, workshop_id, strategy_id,
+                       strategy_spec_registry_id, parent_workshop_version_id,
+                       source_event_id, sequence_no, created_by, created_at::text
+                  FROM {self._vlt}
+                 WHERE workshop_id = %s AND workshop_version_id = %s
+                """,
+                (workshop_id, workshop_version_id),
+            )
+            row = cur.fetchone()
+        return _row_to_dict(row, _VERSION_LINK_COLS) if row is not None else None
+
+    # --- durable governed-command ledger ---
+
+    def _fetch_command_receipt(
+        self,
+        conn: Any,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        for_update: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        lock_clause = " FOR UPDATE" if for_update else ""
+        cur = conn.execute(
+            f"""
+            SELECT command_id, tenant_id, user_id, workshop_id, operation,
+                   idempotency_key, request_hash, request_payload_json::text,
+                   request_id, trace_id, status, expected_lock_version,
+                   admitted_lock_version, resulting_lock_version,
+                   result_json::text, canonical_refs_json::text,
+                   failure_json::text, compensation_json::text,
+                   admitted_at::text, completed_at::text, failed_at::text,
+                   updated_at::text
+              FROM {self._crt}
+             WHERE tenant_id = %s AND user_id = %s AND workshop_id = %s
+               AND operation = %s AND idempotency_key = %s{lock_clause}
+            """,
+            (tenant_id, user_id, workshop_id, operation, idempotency_key),
+        )
+        row = cur.fetchone()
+        return _decode_command_receipt_row(row) if row is not None else None
+
+    def admit_command(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        request_hash: str,
+        expected_lock_version: int,
+        request_payload: Optional[Dict[str, Any]] = None,
+        request_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not operation or not idempotency_key or not request_hash:
+            raise ValueError("operation, idempotency_key, and request_hash are required")
+        with self._connect() as conn:
+            # Fast replay read avoids requiring workshop existence after a
+            # completed receipt has been retained for audit.
+            existing = self._fetch_command_receipt(
+                conn,
+                workshop_id=workshop_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+            )
+            if existing is not None:
+                current_row = conn.execute(
+                    f"SELECT lock_version FROM {self._st} WHERE workshop_id = %s",
+                    (workshop_id,),
+                ).fetchone()
+                return {
+                    "outcome": (
+                        "replay"
+                        if existing["request_hash"] == request_hash
+                        else "idempotency_conflict"
+                    ),
+                    "receipt": existing,
+                    "current_lock_version": current_row[0] if current_row else None,
+                }
+
+            session_row = conn.execute(
+                f"""
+                SELECT tenant_id, user_id, status, lock_version
+                  FROM {self._st}
+                 WHERE workshop_id = %s
+                   FOR UPDATE
+                """,
+                (workshop_id,),
+            ).fetchone()
+            if session_row is None:
+                return {"outcome": "not_found", "receipt": None}
+
+            # A competing request may have inserted while this transaction was
+            # waiting on the workshop row lock.  Re-read before any ETag check.
+            existing = self._fetch_command_receipt(
+                conn,
+                workshop_id=workshop_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+            )
+            if existing is not None:
+                return {
+                    "outcome": (
+                        "replay"
+                        if existing["request_hash"] == request_hash
+                        else "idempotency_conflict"
+                    ),
+                    "receipt": existing,
+                    "current_lock_version": session_row[3],
+                }
+
+            if session_row[0] != tenant_id or session_row[1] != user_id:
+                return {"outcome": "scope_mismatch", "receipt": None}
+            current_lock_version = int(session_row[3])
+            if session_row[2] in TERMINAL_WORKSHOP_STATUSES:
+                return {
+                    "outcome": "terminal",
+                    "receipt": None,
+                    "workshop_status": session_row[2],
+                    "current_lock_version": current_lock_version,
+                }
+            if current_lock_version != int(expected_lock_version):
+                return {
+                    "outcome": "stale",
+                    "receipt": None,
+                    "current_lock_version": current_lock_version,
+                }
+
+            command_id = _new_id()
+            now = _utc_now()
+            new_lock_version = current_lock_version + 1
+            conn.execute(
+                f"""
+                INSERT INTO {self._crt}
+                    (command_id, tenant_id, user_id, workshop_id, operation,
+                     idempotency_key, request_hash, request_payload_json,
+                     request_id, trace_id, status, expected_lock_version,
+                     admitted_lock_version, resulting_lock_version,
+                     canonical_refs_json, admitted_at, updated_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,'admitted',%s,%s,%s,
+                        '[]'::jsonb,%s,%s)
+                """,
+                (
+                    command_id, tenant_id, user_id, workshop_id, operation,
+                    idempotency_key, request_hash,
+                    _json_dumps(_redact_command_payload(request_payload or {})),
+                    request_id, trace_id, current_lock_version,
+                    new_lock_version, new_lock_version, now, now,
+                ),
+            )
+            conn.execute(
+                f"""
+                UPDATE {self._st}
+                   SET lock_version = %s, updated_at = %s
+                 WHERE workshop_id = %s
+                """,
+                (new_lock_version, now, workshop_id),
+            )
+            receipt = self._fetch_command_receipt(
+                conn,
+                workshop_id=workshop_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+            )
+            return {
+                "outcome": "admitted",
+                "receipt": receipt,
+                "current_lock_version": new_lock_version,
+            }
+
+    def get_command_receipt(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            return self._fetch_command_receipt(
+                conn,
+                workshop_id=workshop_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+            )
+
+    @staticmethod
+    def _validate_session_updates(
+        session_updates: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        updates = dict(session_updates or {})
+        unknown_updates = set(updates) - _SESSION_UPDATE_ALLOWLIST
+        if unknown_updates:
+            raise ValueError(
+                f"Unsupported session update fields: {sorted(unknown_updates)!r}"
+            )
+        if "status" in updates and updates["status"] not in WORKSHOP_STATUSES:
+            raise ValueError(f"Unsupported workshop status: {updates['status']!r}")
+        # selected_version_id is the compatibility alias for the active link.
+        if "active_workshop_version_id" in updates:
+            updates.setdefault("selected_version_id", updates["active_workshop_version_id"])
+        elif "selected_version_id" in updates:
+            updates["active_workshop_version_id"] = updates["selected_version_id"]
+        return updates
+
+    def complete_command(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        request_hash: str,
+        result: Dict[str, Any],
+        canonical_refs: Optional[Any] = None,
+        version_link: Optional[Dict[str, Any]] = None,
+        session_updates: Optional[Dict[str, Any]] = None,
+        event: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        updates = self._validate_session_updates(session_updates)
+        with self._connect() as conn:
+            receipt = self._fetch_command_receipt(
+                conn,
+                workshop_id=workshop_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+                for_update=True,
+            )
+            if receipt is None:
+                return {"outcome": "not_found", "receipt": None}
+            if receipt["request_hash"] != request_hash:
+                return {"outcome": "idempotency_conflict", "receipt": receipt}
+            if receipt["status"] == "completed":
+                return {"outcome": "replay", "receipt": receipt}
+            if receipt["status"] != "admitted":
+                return {"outcome": "invalid_state", "receipt": receipt}
+
+            session_row = conn.execute(
+                f"SELECT lock_version FROM {self._st} WHERE workshop_id = %s FOR UPDATE",
+                (workshop_id,),
+            ).fetchone()
+            if session_row is None:
+                return {"outcome": "not_found", "receipt": None}
+
+            stored_link: Optional[Dict[str, Any]] = None
+            if version_link is not None:
+                required = {
+                    "workshop_version_id", "strategy_id",
+                    "strategy_spec_registry_id", "created_by",
+                }
+                missing = required - set(version_link)
+                if missing:
+                    raise ValueError(f"Missing version link fields: {sorted(missing)!r}")
+                sequence_row = conn.execute(
+                    f"""
+                    SELECT COALESCE(MAX(sequence_no), 0) + 1
+                      FROM {self._vlt}
+                     WHERE workshop_id = %s
+                    """,
+                    (workshop_id,),
+                ).fetchone()
+                sequence_no = int(
+                    version_link.get("sequence_no")
+                    or (sequence_row[0] if sequence_row else 1)
+                )
+                created_at = version_link.get("created_at") or _utc_now()
+                inserted = conn.execute(
+                    f"""
+                    INSERT INTO {self._vlt}
+                        (workshop_version_id, workshop_id, strategy_id,
+                         strategy_spec_registry_id, parent_workshop_version_id,
+                         source_event_id, sequence_no, created_by, created_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT DO NOTHING
+                    RETURNING workshop_version_id
+                    """,
+                    (
+                        version_link["workshop_version_id"], workshop_id,
+                        version_link["strategy_id"],
+                        version_link["strategy_spec_registry_id"],
+                        version_link.get("parent_workshop_version_id"),
+                        version_link.get("source_event_id"), sequence_no,
+                        version_link["created_by"], created_at,
+                    ),
+                ).fetchone()
+                candidate = conn.execute(
+                    f"""
+                    SELECT workshop_version_id, workshop_id, strategy_id,
+                           strategy_spec_registry_id, parent_workshop_version_id,
+                           source_event_id, sequence_no, created_by, created_at::text
+                      FROM {self._vlt}
+                     WHERE workshop_id = %s
+                       AND (
+                            workshop_version_id = %s
+                            OR strategy_spec_registry_id = %s
+                            OR sequence_no = %s
+                       )
+                     ORDER BY CASE WHEN workshop_version_id = %s THEN 0 ELSE 1 END
+                     LIMIT 1
+                    """,
+                    (
+                        workshop_id, version_link["workshop_version_id"],
+                        version_link["strategy_spec_registry_id"], sequence_no,
+                        version_link["workshop_version_id"],
+                    ),
+                ).fetchone()
+                if candidate is None:
+                    raise RuntimeError("completed workshop version link disappeared")
+                stored_link = _row_to_dict(candidate, _VERSION_LINK_COLS)
+                comparable = {
+                    "workshop_version_id": version_link["workshop_version_id"],
+                    "workshop_id": workshop_id,
+                    "strategy_id": version_link["strategy_id"],
+                    "strategy_spec_registry_id": version_link[
+                        "strategy_spec_registry_id"
+                    ],
+                    "parent_workshop_version_id": version_link.get(
+                        "parent_workshop_version_id"
+                    ),
+                    "source_event_id": version_link.get("source_event_id"),
+                    "sequence_no": sequence_no,
+                    "created_by": version_link["created_by"],
+                }
+                if any(stored_link.get(key) != value for key, value in comparable.items()):
+                    if inserted is not None:
+                        raise RuntimeError("inserted workshop version link changed unexpectedly")
+                    return {"outcome": "version_conflict", "receipt": receipt}
+
+            if updates:
+                assignments = [f"{column} = %s" for column in updates]
+                params: List[Any] = list(updates.values())
+                assignments.append("updated_at = now()")
+                params.append(workshop_id)
+                conn.execute(
+                    f"UPDATE {self._st} SET {', '.join(assignments)} WHERE workshop_id = %s",
+                    params,
+                )
+            else:
+                conn.execute(
+                    f"UPDATE {self._st} SET updated_at = now() WHERE workshop_id = %s",
+                    (workshop_id,),
+                )
+
+            stored_event: Optional[Dict[str, Any]] = None
+            if event is not None:
+                event_id = event.get("event_id") or _new_id()
+                created_at = event.get("created_at") or _utc_now()
+                event_row = conn.execute(
+                    f"""
+                    INSERT INTO {self._et}
+                        (event_id, workshop_id, sequence_no, actor_type, event_type,
+                         private_content_ref, redacted_summary, payload_refs_json,
+                         trace_id, created_at)
+                    SELECT %s, %s,
+                           COALESCE((SELECT MAX(sequence_no) FROM {self._et}
+                                      WHERE workshop_id = %s), 0) + 1,
+                           %s,%s,%s,%s,%s::jsonb,%s,%s
+                    RETURNING sequence_no
+                    """,
+                    (
+                        event_id, workshop_id, workshop_id, event["actor_type"],
+                        event["event_type"], event.get("private_content_ref"),
+                        event.get("redacted_summary"),
+                        _json_dumps(event.get("payload_refs_json")),
+                        event.get("trace_id") or receipt.get("trace_id"), created_at,
+                    ),
+                ).fetchone()
+                stored_event = {
+                    "event_id": event_id,
+                    "workshop_id": workshop_id,
+                    "sequence_no": event_row[0] if event_row else 1,
+                    "actor_type": event["actor_type"],
+                    "event_type": event["event_type"],
+                    "private_content_ref": event.get("private_content_ref"),
+                    "redacted_summary": event.get("redacted_summary"),
+                    "payload_refs_json": event.get("payload_refs_json"),
+                    "trace_id": event.get("trace_id") or receipt.get("trace_id"),
+                    "created_at": created_at,
+                }
+
+            now = _utc_now()
+            conn.execute(
+                f"""
+                UPDATE {self._crt}
+                   SET status = 'completed', result_json = %s::jsonb,
+                       canonical_refs_json = %s::jsonb, completed_at = %s,
+                       updated_at = %s
+                 WHERE command_id = %s AND status = 'admitted'
+                """,
+                (
+                    _json_dumps(result), _json_dumps(canonical_refs or []),
+                    now, now, receipt["command_id"],
+                ),
+            )
+            completed = self._fetch_command_receipt(
+                conn,
+                workshop_id=workshop_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+            )
+            return {
+                "outcome": "completed",
+                "receipt": completed,
+                "version_link": stored_link,
+                "event": stored_event,
+                "current_lock_version": session_row[0],
+            }
+
+    def fail_command(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        request_hash: str,
+        failure: Dict[str, Any],
+        compensation: Optional[Dict[str, Any]] = None,
+        event: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        with self._connect() as conn:
+            receipt = self._fetch_command_receipt(
+                conn,
+                workshop_id=workshop_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+                for_update=True,
+            )
+            if receipt is None:
+                return {"outcome": "not_found", "receipt": None}
+            if receipt["request_hash"] != request_hash:
+                return {"outcome": "idempotency_conflict", "receipt": receipt}
+            if receipt["status"] == "failed":
+                return {"outcome": "replay", "receipt": receipt}
+            if receipt["status"] != "admitted":
+                return {"outcome": "invalid_state", "receipt": receipt}
+
+            lock_row = conn.execute(
+                f"SELECT lock_version FROM {self._st} WHERE workshop_id = %s FOR UPDATE",
+                (workshop_id,),
+            ).fetchone()
+            stored_event: Optional[Dict[str, Any]] = None
+            if event is not None:
+                event_id = event.get("event_id") or _new_id()
+                created_at = event.get("created_at") or _utc_now()
+                event_row = conn.execute(
+                    f"""
+                    INSERT INTO {self._et}
+                        (event_id, workshop_id, sequence_no, actor_type, event_type,
+                         private_content_ref, redacted_summary, payload_refs_json,
+                         trace_id, created_at)
+                    SELECT %s, %s,
+                           COALESCE((SELECT MAX(sequence_no) FROM {self._et}
+                                      WHERE workshop_id = %s), 0) + 1,
+                           %s,%s,%s,%s,%s::jsonb,%s,%s
+                    RETURNING sequence_no
+                    """,
+                    (
+                        event_id, workshop_id, workshop_id, event["actor_type"],
+                        event["event_type"], event.get("private_content_ref"),
+                        event.get("redacted_summary"),
+                        _json_dumps(event.get("payload_refs_json")),
+                        event.get("trace_id") or receipt.get("trace_id"), created_at,
+                    ),
+                ).fetchone()
+                stored_event = {
+                    "event_id": event_id,
+                    "workshop_id": workshop_id,
+                    "sequence_no": event_row[0] if event_row else 1,
+                    "actor_type": event["actor_type"],
+                    "event_type": event["event_type"],
+                    "private_content_ref": event.get("private_content_ref"),
+                    "redacted_summary": event.get("redacted_summary"),
+                    "payload_refs_json": event.get("payload_refs_json"),
+                    "trace_id": event.get("trace_id") or receipt.get("trace_id"),
+                    "created_at": created_at,
+                }
+            now = _utc_now()
+            conn.execute(
+                f"""
+                UPDATE {self._crt}
+                   SET status = 'failed', failure_json = %s::jsonb,
+                       compensation_json = %s::jsonb, failed_at = %s,
+                       updated_at = %s
+                 WHERE command_id = %s AND status = 'admitted'
+                """,
+                (
+                    _json_dumps(failure), _json_dumps(compensation), now, now,
+                    receipt["command_id"],
+                ),
+            )
+            failed = self._fetch_command_receipt(
+                conn,
+                workshop_id=workshop_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+            )
+            return {
+                "outcome": "failed",
+                "receipt": failed,
+                "event": stored_event,
+                "current_lock_version": lock_row[0] if lock_row else None,
+            }
 
     # --- event ---
 

@@ -171,6 +171,18 @@ scripts/run_e2e_verifiers.sh
 Without `ALLOW_MUTATING_E2E=1`, the aggregate suite reports the producer-chain
 entry as an explicit opt-in skip and continues with the read-only verifiers.
 
+## Closeout Evidence
+
+- Implementation merged to `dev` by PR #3716, merge commit
+  `20d4a61a0`.
+- Reviewer gate passed with task status `review_approved`; Codex2 closeout
+  re-checked the approved artifacts on 2026-07-15.
+- Focused regression: `python3 -m pytest -q scripts/test_verify_e2e_producer_chain.py`
+  passed, 11 tests.
+- Aggregate runner wiring was inspected in `scripts/run_e2e_verifiers.sh`;
+  the producer-chain verifier remains opt-in gated by `ALLOW_MUTATING_E2E=1`
+  and `EVOCHAIN_VERIFY_RUNTIME_ID`.
+
 ## References
 
 - [Verifier](../../../../scripts/verify_e2e_producer_chain.py)

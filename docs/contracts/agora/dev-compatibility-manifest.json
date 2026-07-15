@@ -1,29 +1,29 @@
 {
   "manifest_version": "1.0",
-  "contract_family": "agora.v1.5",
+  "contract_family": "agora.v1.8",
   "environment": "dev",
   "generated": true,
   "backend": {
     "repo": "ajoe734/pantheon",
-    "runtime_commit": "4167684bea3102cf6039a4798cf2b210581e9870",
-    "contract_commit": "4167684bea3102cf6039a4798cf2b210581e9870",
+    "runtime_commit": "102d354742fa616caa5fdb67f0ef5d0ab24145c8",
+    "contract_commit": "102d354742fa616caa5fdb67f0ef5d0ab24145c8",
     "base_bundle_index_sha256": "286891c6bb900d6b5e9f9037d357c2016f8ecac33927056556a848f95fb4bd0b",
-    "extension_bundle_index_sha256": "f88662a3ba1d2e07d5711f88e35d6374b7d737ed654b1963dc07281e2c3fe5f9",
-    "openapi_sha256": "bb61d901a4ff3778630390b8fbe3db0a38e45278d7ab6fbd199dc39b8b005a1e"
+    "extension_bundle_index_sha256": "8bedd60c2d0be4edf9d1c2c76d77e4771d6116cffb4e059092441a9b30dfe653",
+    "openapi_sha256": "e0b7108922e76f51900f631477a5f87874f7aaf94630640b5d57d32e7f3feea3"
   },
   "frontend": {
     "repo": "ajoe734/execute-plans",
     "runtime_commit": "0000000000000000000000000000000000000000",
     "generated_from_contract_commit": "0000000000000000000000000000000000000000",
     "base_bundle_index_sha256": "286891c6bb900d6b5e9f9037d357c2016f8ecac33927056556a848f95fb4bd0b",
-    "extension_bundle_index_sha256": "f88662a3ba1d2e07d5711f88e35d6374b7d737ed654b1963dc07281e2c3fe5f9",
-    "openapi_sha256": "bb61d901a4ff3778630390b8fbe3db0a38e45278d7ab6fbd199dc39b8b005a1e",
+    "extension_bundle_index_sha256": "8bedd60c2d0be4edf9d1c2c76d77e4771d6116cffb4e059092441a9b30dfe653",
+    "openapi_sha256": "e0b7108922e76f51900f631477a5f87874f7aaf94630640b5d57d32e7f3feea3",
     "generated_types_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
   },
   "contract_bundle": {
     "base_path": "services/control-plane/specs/agora/bundle_index.json",
-    "extension_path": "services/control-plane/specs/agora/bundle_index.v1_5.json",
-    "openapi_path": "services/control-plane/openapi/agora_v1_5.openapi.yaml"
+    "extension_path": "services/control-plane/specs/agora/bundle_index.v1_8.json",
+    "openapi_path": "services/control-plane/openapi/agora_v1_8.openapi.yaml"
   },
   "required_capabilities": [
     {
@@ -37,7 +37,27 @@
       "required": true
     },
     {
+      "name": "agora.governance.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
       "name": "agora.identity.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.persona.governed_action_authority.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.persona.interaction.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.persona.opinion_consultation.v1",
       "version": "1.0",
       "required": true
     },
@@ -87,8 +107,23 @@
       "required": true
     },
     {
+      "name": "agora.winner_branch.completeness.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
+      "name": "agora.workshop.live_operations.v1",
+      "version": "1.0",
+      "required": true
+    },
+    {
       "name": "agora.workshop.v1",
       "version": "1.3",
+      "required": true
+    },
+    {
+      "name": "pantheon.ooda.readback.v1",
+      "version": "1.0",
       "required": true
     }
   ],
@@ -102,5 +137,5 @@
     "frontend-generated-types-missing",
     "frontend-runtime-commit-placeholder"
   ],
-  "generated_at": "2026-07-12T21:36:48+08:00"
+  "generated_at": "2026-07-15T14:12:53Z"
 }

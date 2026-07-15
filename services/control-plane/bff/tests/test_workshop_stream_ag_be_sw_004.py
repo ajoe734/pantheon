@@ -545,8 +545,8 @@ class TestWorkshopStreamEndpointRegistration:
                 )
                 break
 
-    def test_deferred_stub_routes_still_return_501(self, monkeypatch):
-        """Verify deferred stubs still return 501 (stream replaced, others unchanged)."""
+    def test_former_deferred_routes_are_live_and_fail_closed(self, monkeypatch):
+        """The live routes must never regress to a 501 stub response."""
         monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
         monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
         from fastapi.testclient import TestClient
@@ -566,15 +566,20 @@ class TestWorkshopStreamEndpointRegistration:
         assert create_resp.status_code == 201, create_resp.text
         wid = create_resp.json()["data"]["workshop_id"]
 
-        for path in [
+        versions = client.get(
             f"/bff/agora/workshops/{wid}/versions",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        assert versions.status_code == 200, versions.text
+
+        for path in (
             f"/bff/agora/workshops/{wid}/research-runs",
             f"/bff/agora/workshops/{wid}/consultations",
-        ]:
-            resp = client.get(path, headers={"Authorization": _OPERATOR_AUTH}) \
-                if "/versions" in path else \
-                client.post(path, headers={
-                    "Authorization": _OPERATOR_AUTH,
-                    "Content-Type": "application/json",
-                }, json={})
-            assert resp.status_code == 501, f"{path} should still be 501, got {resp.status_code}"
+        ):
+            resp = client.post(
+                path,
+                headers={"Authorization": _OPERATOR_AUTH},
+                json={},
+            )
+            assert resp.status_code != 501, f"{path} regressed to a stub"
+            assert resp.status_code in {401, 422}, resp.text
