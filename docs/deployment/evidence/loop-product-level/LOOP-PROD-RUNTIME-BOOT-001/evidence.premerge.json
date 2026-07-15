@@ -16,16 +16,16 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-14T10:40:12Z",
-    "evidence_cut_semantics": "Owner exact-head implementation checks, exhaustive source inventory, and frozen nine-writer registry are complete; independent review/signature, merge, protected installation, restart identity, and zero-write dry-run remain pending.",
+    "evidence_cut_at": "2026-07-15T12:39:08Z",
+    "evidence_cut_semantics": "Owner exact-source implementation checks, exhaustive source inventory, and frozen nine-writer registry are complete after composing current dev; independent review/signature, merge, protected installation, restart identity, and zero-write dry-run remain pending.",
     "id": "LOOP-PROD-RUNTIME-BOOT-001",
     "overall_admission": "blocked_pending_exact_head_review_merge_protected_install_and_dry_run",
-    "owner": "Codex2",
+    "owner": "Codex",
     "phase": "Loop Product-Level Remediation / Wave -1 bootstrap",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001/evidence.premerge.json",
-    "reviewer": "Codex",
+    "reviewer": "Codex2",
     "target_environment": "canonical Pantheon supervisor status root",
     "target_maturity": "product-level runtime prerequisite",
     "task_branch": "task/LOOP-PROD-RUNTIME-BOOT-001",
@@ -50,7 +50,7 @@
     "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-RUNTIME-BOOT-001.md"
   },
   "scope": {
-    "authoritative_write_owner": "Codex2 for implementation and premerge owner evidence; Codex for independent verdict; root-controlled ops for protected policy and ledger",
+    "authoritative_write_owner": "Codex for implementation and premerge owner evidence; Codex2 for independent verdict; root-controlled ops for protected policy and ledger",
     "composes_with": [
       "loop-product-level-remediation-2026-07-13 dispatcher prerequisite",
       "Pantheon supervisor runtime/event/approval writers",
@@ -73,14 +73,18 @@
       ".orchestrator/supervisor_watchdog.py",
       ".orchestrator/task_archive.py",
       ".orchestrator/test_common.py",
+      ".orchestrator/test_file_inbox.py",
       ".orchestrator/test_runtime_state.py",
       ".orchestrator/test_supervisor.py",
+      ".orchestrator/test_supervisor_watchdog.py",
       ".orchestrator/test_task_archive_index_legacy_id.py",
+      ".orchestrator/test_watch_events.py",
       ".orchestrator/watch_events.py",
       "scripts/ai_status.py",
       "scripts/canonical_writer_guard.py",
       "scripts/dashboard_server.py",
       "scripts/dispatch_loop_product_level_remediation_2026-07-13.py",
+      "scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py",
       "scripts/git/worker_commit.py",
       "scripts/orchestrator_bundle.py",
       "scripts/orchestrator_queue_triage.py",
@@ -94,68 +98,103 @@
   "implementation_delivery": {
     "anchor_commits": [
       {
-        "sha": "cb3399ba44656d3160a172b0e39c0fa7a6517c4c",
+        "sha": "43988b6239a805fcb6cfe89634c9091263aaf592",
         "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor stable lock core",
         "delivery_state": "local_task_branch_premerge",
         "hosted_cut_inclusion": false,
-        "note": "Rebased owner anchor; not review or merge authority."
+        "note": "Original stable sidecar and protocol implementation anchor."
       },
       {
-        "sha": "86b5e2d78fa935d2206a2ef98e830368499e104c",
+        "sha": "97b69934de662cc18041d4bdfaf65f3a23aa2184",
         "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor process and recovery proof",
         "delivery_state": "local_task_branch_premerge",
         "hosted_cut_inclusion": false,
-        "note": "Rebased owner anchor; not review or merge authority."
+        "note": "Original process/crash recovery proof anchor."
       },
       {
-        "sha": "555fb3ea589ea6ea41f966ecce6294f933081971",
+        "sha": "98c0157991bdf4873a49fcd37b291a0bcb96f939",
         "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor exhaustive writers and crash recovery",
         "delivery_state": "local_task_branch_premerge",
         "hosted_cut_inclusion": false,
-        "note": "Frozen registered source bytes descend from this owner anchor."
+        "note": "Historical-writer boundary and crash recovery anchor."
       },
       {
-        "sha": "9a82e847623b206119bb030a91f64d5275058218",
+        "sha": "00a3f9a24662829fca776e4da5cefddaf655923e",
         "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor recovery runbook",
         "delivery_state": "local_task_branch_premerge",
         "hosted_cut_inclusion": false,
-        "note": "Exact-head validation base before generated JSON evidence artifacts."
+        "note": "Initial protected recovery ceremony documentation."
+      },
+      {
+        "sha": "0b208ee632d3d7ba373100ec289ee2b343797b71",
+        "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor stable sidecar identity",
+        "delivery_state": "local_task_branch_premerge",
+        "hosted_cut_inclusion": false,
+        "note": "No-follow sidecar/data identity and fork-safe lock state."
+      },
+      {
+        "sha": "00fbfed82c3046ef5299dfd54cc6022b5a6fdeae",
+        "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor three-plane process matrix",
+        "delivery_state": "local_task_branch_premerge",
+        "hosted_cut_inclusion": false,
+        "note": "Shared/exclusive/SIGKILL process evidence across all planes."
+      },
+      {
+        "sha": "8b94ca115d3d48a830cb96fb0190c8a049a79a91",
+        "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor catalog graph binding",
+        "delivery_state": "local_task_branch_premerge",
+        "hosted_cut_inclusion": false,
+        "note": "Review-blocker closure for catalog graph, archive, audit, and outbox identity."
+      },
+      {
+        "sha": "9cb12845e4a0686bbe9c452e536de7c9a278092b",
+        "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor canonical writer transactions",
+        "delivery_state": "local_task_branch_premerge",
+        "hosted_cut_inclusion": false,
+        "note": "Single-root no-follow runtime and writer durability anchor."
+      },
+      {
+        "sha": "507c00fb78955484478bdefb25e629db90c7adbf",
+        "subject": "LOOP-PROD-RUNTIME-BOOT-001: anchor review closure regressions",
+        "delivery_state": "local_task_branch_premerge",
+        "hosted_cut_inclusion": false,
+        "note": "Strict source/conflict matrix and current recovery runbook anchor."
       }
     ],
     "required_checks": [
-      "runtime/process: 75 passed and 17 subtests passed",
-      "supervisor protocol surface: 270 passed and 4 documented upstream configuration-drift tests deselected",
-      "ai-status protocol surface: 70 passed, 8 subtests passed, and 1 documented mixed-repo fallback test deselected",
-      "loop-product dispatcher: 173 passed",
+      "runtime/process: 110 passed and 60 subtests passed",
+      "supervisor protocol surface: 271 passed and 4 documented upstream configuration-drift tests deselected",
+      "ai-status protocol surface: 71 passed and 8 subtests passed",
+      "loop-product dispatcher: 187 passed",
       "auxiliary planning/bundle/queue/worker/dashboard/archive surface: 44 passed",
-      "source inventory: 381 tracked Python/shell files, zero unregistered direct writers"
+      "source inventory: 391 tracked Python/shell files, zero unregistered direct writers"
     ]
   },
   "validation": {
     "commands": [
       {
-        "command": "PYTHONPATH=.orchestrator:scripts pytest -q .orchestrator/test_runtime_state.py .orchestrator/test_common.py .orchestrator/test_task_archive_index_legacy_id.py .orchestrator/test_approval_queue.py .orchestrator/test_watch_events.py .orchestrator/test_supervisor_watchdog.py",
-        "result": "75 passed, 17 subtests passed in 13.90s",
+        "command": "PYTHONPATH=.orchestrator:scripts pytest -q .orchestrator/test_runtime_state.py .orchestrator/test_common.py .orchestrator/test_file_inbox.py .orchestrator/test_watch_events.py .orchestrator/test_supervisor_watchdog.py .orchestrator/test_approval_queue.py .orchestrator/test_task_archive_index_legacy_id.py",
+        "result": "110 passed, 60 subtests passed in 67.49s",
         "conclusion": "passed_owner_exact_head"
       },
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q .orchestrator/test_supervisor.py with four named upstream configuration-drift tests deselected",
-        "result": "270 passed, 4 deselected in 32.63s; the content-identical unfiltered source run was 270 passed and the same 4 documented baseline failures",
+        "result": "271 passed, 4 deselected in 105.92s; the content-identical unfiltered source run was 271 passed with the same 4 documented configuration-policy failures",
         "conclusion": "passed_owner_exact_head"
       },
       {
-        "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_ai_status.py with the existing mixed-repo fallback baseline test deselected",
-        "result": "70 passed, 1 deselected, 8 subtests passed in 13.84s; the unfiltered run was 70 passed in 14.90s with only that documented baseline failure",
+        "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_ai_status.py",
+        "result": "71 passed, 8 subtests passed in 61.20s",
         "conclusion": "passed_owner_exact_head"
       },
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py",
-        "result": "173 passed in 227.05s",
+        "result": "187 passed in 562.03s",
         "conclusion": "passed_owner_exact_head"
       },
       {
         "command": "PYTHONPATH=.orchestrator:scripts pytest -q scripts/test_planning_state.py scripts/test_orchestrator_bundle.py scripts/test_orchestrator_queue_triage.py scripts/git/test_index_safety.py scripts/test_dashboard_server.py .orchestrator/test_task_archive_index_legacy_id.py",
-        "result": "44 passed in 14.86s",
+        "result": "44 passed in 52.58s",
         "conclusion": "passed_owner_exact_head"
       },
       {
@@ -165,19 +204,19 @@
       },
       {
         "command": "tracked static inventory rejecting unregistered direct runtime/task/audit writes",
-        "result": "381 files; inventory sha256 d911c5a82095a60b3cad534f9e795f517170e16a1420f3e5a3792a5f680f462e; zero violations",
+        "result": "391 files; inventory sha256 19de5886318c66f04bf90011aa4875bad2a6628dfb9c624bd552c53261deef3e; zero violations",
         "conclusion": "passed_owner_exact_head"
       },
       {
-        "command": "AI_NAME=Codex2 PANTHEON_STATUS_ROOT=<canonical-root> PANTHEON_RUNTIME_LOCK_VERIFIER_POLICY=<protected-absolute-path> python3 scripts/dispatch_loop_product_level_remediation_2026-07-13.py --dry-run",
+        "command": "AI_NAME=Codex PANTHEON_STATUS_ROOT=<canonical-root> PANTHEON_RUNTIME_LOCK_VERIFIER_POLICY=<protected-absolute-path> python3 scripts/dispatch_loop_product_level_remediation_2026-07-13.py --dry-run",
         "result": "pending_postmerge_done_and_protected_install",
         "conclusion": "not_admissible_yet"
       }
     ],
-    "validated_at": "2026-07-14T10:40:12Z",
-    "validated_base_sha": "5c7ac28ddcded581740364315d4092e9ef9f7e35",
-    "validated_head_sha": "9a82e847623b206119bb030a91f64d5275058218",
-    "validated_head_semantics": "The validated source head is the final code/runbook anchor. Later commits contain only generated owner evidence whose self-reference cannot be embedded in its own commit identity."
+    "validated_at": "2026-07-15T12:39:08Z",
+    "validated_base_sha": "fd75ee2f77495964031a84c3cd6aac3dac966e51",
+    "validated_head_sha": "0f8a92d1c3d35dfaa4506ba1eacdb0fcfdb78886",
+    "validated_head_semantics": "The validated source head composes the task anchors with current origin/dev. Later commits contain only generated registry/check/evidence artifacts whose self-reference cannot be embedded in their own commit identity."
   },
   "deployment": {
     "applicable": true,
@@ -268,7 +307,7 @@
     },
     "two_person_approval": {
       "status": "pending",
-      "required_proof": "Codex2 owner and Codex reviewer are distinct admitted runtime identities; reviewer signature and protected operator ledger remain absent."
+      "required_proof": "Codex owner and Codex2 reviewer are distinct admitted runtime identities; reviewer signature and protected operator ledger remain absent."
     }
   },
   "acceptance": [
@@ -323,7 +362,7 @@
       "id": "AC-05",
       "statement": "writer registry is exhaustive and tests reject every unregistered direct canonical write",
       "status": "passed_owner_exact_head",
-      "proof": "381 tracked Python/shell sources inventoried; all historical direct writers are guarded immediately before their sink and cannot target a canonical Git worktree; zero unregistered direct writers remain."
+      "proof": "391 tracked Python/shell sources inventoried; all historical direct writers are guarded immediately before their sink and cannot target a canonical Git worktree; zero unregistered direct writers remain."
     },
     {
       "evidence_refs": [
@@ -359,6 +398,15 @@
     }
   ],
   "residual_risks": {
+    "RISK-CANONICAL-AUDIT-ARCHIVE-CORRUPTION": {
+      "blocking_for_this_task": true,
+      "containment": "Keep status/activity recovery fail-closed; do not rewrite immutable audit history or bypass the signed supervisor recovery policy.",
+      "description": "The canonical immutable archive archive/logs/ai-activity-log.jsonl-2026-07-07T1503Z.gz contains a pre-existing malformed record at line 8004, so governed status handoff cannot drain the pending activity outbox until an authorized recovery is recorded.",
+      "expiry": "after_supervisor_signed_archive_recovery",
+      "owner": "protected runtime operator",
+      "recheck_trigger": "canonical Codex status handoff or protected recovery ceremony",
+      "severity": "critical"
+    },
     "RISK-UNREGISTERED-HISTORICAL-WRITERS": {
       "blocking_for_this_task": false,
       "containment": "Retain the canonical-target guard immediately before every historical sink and bind the exhaustive tracked source inventory into checks.json and capability verification.",
@@ -373,7 +421,7 @@
       "containment": "No capability manifest installation or dispatcher apply; omit final completion.json until the distinct reviewer creates the real signature.",
       "description": "Reviewer signature, exact merge identity, root-controlled external policy, revocation decision, accepted ledger entry, and protected verifier decision do not exist at premerge scaffold time.",
       "expiry": "before_postmerge_dry_run",
-      "owner": "Codex reviewer and protected runtime operator",
+      "owner": "Codex2 reviewer and protected runtime operator",
       "recheck_trigger": "primary PR merge and protected installation ceremony",
       "severity": "critical"
     },
@@ -398,9 +446,9 @@
     "self_hash_reason": "This mutable premerge scaffold is intentionally not checksummed and cannot be admitted as final evidence.",
     "source_artifact_sha256_by_epoch": {
       "owner_exact_head": {
-        "checks.json": "050d199d7fd84be04330b60c5a137aba268f1f5ae1259dbf172662ae0ff112da",
-        "runtime-task-audit-writer-registry.json": "a4815204180314cf8e861d2ffef8dc066bc6c9f2358dad51715b7f207c320522",
-        "source_inventory": "d911c5a82095a60b3cad534f9e795f517170e16a1420f3e5a3792a5f680f462e"
+        "checks.json": "75d07a6cb4fc10f93ce2d9c27084847a3006758bc8747994f5e6251bf89c0fc8",
+        "runtime-task-audit-writer-registry.json": "26f37add9ec6d6dbcb758ca83429249ec719983a64f3564271e29fa32d64d65e",
+        "source_inventory": "19de5886318c66f04bf90011aa4875bad2a6628dfb9c624bd552c53261deef3e"
       }
     }
   },
@@ -420,6 +468,15 @@
       "actor": "Codex2",
       "checks_sha256": "050d199d7fd84be04330b60c5a137aba268f1f5ae1259dbf172662ae0ff112da",
       "writer_registry_sha256": "a4815204180314cf8e861d2ffef8dc066bc6c9f2358dad51715b7f207c320522"
+    },
+    {
+      "sequence": 3,
+      "recorded_at": "2026-07-15T12:39:08Z",
+      "kind": "owner_exact_source_candidate_refrozen_after_dev_compose",
+      "status": "blocked_pending_distinct_review_merge_protected_install_and_dry_run",
+      "actor": "Codex",
+      "checks_sha256": "75d07a6cb4fc10f93ce2d9c27084847a3006758bc8747994f5e6251bf89c0fc8",
+      "writer_registry_sha256": "26f37add9ec6d6dbcb758ca83429249ec719983a64f3564271e29fa32d64d65e"
     }
   ]
 }

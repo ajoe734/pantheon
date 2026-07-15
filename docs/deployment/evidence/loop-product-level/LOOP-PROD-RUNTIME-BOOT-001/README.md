@@ -114,8 +114,8 @@ scanned without trusting mtimes; missing or duplicate binding proof fails
 closed.
 
 That technical boundary is necessary but not completion authority. The owner
-exact-head checks and nine writer digests must be refrozen after the current
-source/test updates. This packet remains blocked until the distinct `Codex2`
+exact-source checks and nine writer digests are frozen for the current
+source/test cut. This packet remains blocked until the distinct `Codex2`
 reviewer creates the signed `completion.json`, the primary PR merges, and a
 root-controlled operator installs the external verifier policy/ledger. The
 post-closeout strict live dry-run and evidence-only follow-up remain separate
