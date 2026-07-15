@@ -243,8 +243,19 @@
       {
         "sha": "5aae577d249847728b0cb83fc19c31b1451e3f88",
         "subject": "LOOP-PROD-TEACH-001: anchor replay race fix"
+      },
+      {
+        "sha": "432792398a09faa631f2e81259079e4933199ab5",
+        "subject": "LOOP-PROD-TEACH-001: anchor compose merge repair"
       }
     ],
+    "merge_refresh": {
+      "compose_repair_commit": "432792398a09faa631f2e81259079e4933199ab5",
+      "merge_commit": "91891a5d875af14ff8c5422a851cfe2e7c92a58a",
+      "merged_origin_dev_sha": "c5d7b8c0d1becd8746518b1190818fdcfe96e8fe",
+      "repair_summary": "Removed duplicate operator-bff PANTHEON_REGISTRY_API_URL and depends_on.registry keys after origin/dev integration so docker compose config remains admissible.",
+      "status": "validated_after_merge"
+    },
     "pull_request": {
       "base": "dev",
       "reason": "Task is still in implementation review; per closeout spec, owner opens PR and waits for merge after review approval before done.",
@@ -254,11 +265,11 @@
     "required_checks": [
       {
         "required_before_done": true,
-        "status": "pending_pr"
+        "status": "pending_pr_refresh_after_push"
       }
     ],
-    "validated_base_sha": "e4c3ce68bc4df389288d428bbd5fb1d3869a2112",
-    "validated_head_sha": "5aae577d249847728b0cb83fc19c31b1451e3f88"
+    "validated_base_sha": "c5d7b8c0d1becd8746518b1190818fdcfe96e8fe",
+    "validated_head_sha": "432792398a09faa631f2e81259079e4933199ab5"
   },
   "integrity": {
     "checksum_algorithm": "sha256",
@@ -407,11 +418,62 @@
       },
       "recorded_at": "2026-07-15T15:19:52Z",
       "sequence": 5
+    },
+    {
+      "checksum": "03e9815f4f0f2c0960fa937c05d5aeee066781fef0e1bde2affc7427f6c8155c",
+      "event_type": "merge_refresh_validation_completed",
+      "payload": {
+        "commands": [
+          {
+            "command": "PYTHONDONTWRITEBYTECODE=1 pytest -q services/knowledge/evidence/tests services/training-session/tests services/training-session/test_policy_lineage.py services/training-session/test_rapid_eval_integration.py services/training-session/test_trace_export.py",
+            "conclusion": "132 passed in 48.45s",
+            "result": "pass"
+          },
+          {
+            "command": "python3 -m py_compile services/training-session/main.py services/training-session/store.py services/training-session/evaluation_authority.py services/training-session/source_dataset_authority.py services/training-session/persona_target.py services/training-session/preview_eval_worker.py services/knowledge/evidence/runtime_log.py",
+            "conclusion": "no output",
+            "result": "pass"
+          },
+          {
+            "command": "docker compose config --quiet",
+            "conclusion": "no output after compose merge repair commit 432792398a09faa631f2e81259079e4933199ab5",
+            "result": "pass"
+          },
+          {
+            "command": "rg -n \"STUB1|STUB2|stub-ref|unconditional passed|manufactures a passing proof|auto.?pass\" services/training-session services/knowledge/evidence docker-compose.yml",
+            "conclusion": "no matches; rg exited 1",
+            "result": "pass"
+          },
+          {
+            "command": "git diff --check origin/dev...HEAD",
+            "conclusion": "no output",
+            "result": "pass"
+          }
+        ],
+        "compose_repair_commit": "432792398a09faa631f2e81259079e4933199ab5",
+        "merge_commit": "91891a5d875af14ff8c5422a851cfe2e7c92a58a",
+        "merged_origin_dev_sha": "c5d7b8c0d1becd8746518b1190818fdcfe96e8fe",
+        "validated_head_sha": "432792398a09faa631f2e81259079e4933199ab5"
+      },
+      "recorded_at": "2026-07-15T15:30:09Z",
+      "sequence": 6
+    },
+    {
+      "checksum": "cca6f2f6830b1e50f872a5f156c82b9a8756c15d414a23ca011004ab2023a57a",
+      "event_type": "merge_refresh_evidence_manifest_cut",
+      "payload": {
+        "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.sha256",
+        "evidence_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
+        "redacted": true,
+        "validated_head_sha": "432792398a09faa631f2e81259079e4933199ab5"
+      },
+      "recorded_at": "2026-07-15T15:30:09Z",
+      "sequence": 7
     }
   ],
   "residual_risks": [
     {
-      "description": "Implementation evidence is ready for review, but PR number, required checks, merge SHA, and final done publication are pending the review_approved closeout flow.",
+      "description": "Implementation evidence is refreshed on origin/dev c5d7b8c0d1becd8746518b1190818fdcfe96e8fe with compose repair commit 432792398a09faa631f2e81259079e4933199ab5, but PR required checks, review approval, merge SHA, and final done publication are still pending closeout.",
       "expires_at": "before scripts/ai-status.sh done LOOP-PROD-TEACH-001",
       "id": "RISK-PR-MERGE-001",
       "owner": "Codex2",
@@ -489,8 +551,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-15T15:19:52Z",
-    "evidence_cut_semantics": "Implementation branch has fail-closed training-session evaluation, default preview worker, runtime evidence, durable store, source DatasetVersion authority, persona terminal readback, and the AC-04/AC-07 replay/evidence duplicate-safety review fix with focused validation; PR/check/merge evidence remains pending closeout.",
+    "evidence_cut_at": "2026-07-15T15:30:09Z",
+    "evidence_cut_semantics": "Implementation branch has fail-closed training-session evaluation, default preview worker, runtime evidence, durable store, source DatasetVersion authority, persona terminal readback, AC-04/AC-07 replay/evidence duplicate-safety fix, and an origin/dev merge-refresh compose repair with focused validation; PR review/check/merge evidence remains pending closeout.",
     "id": "LOOP-PROD-TEACH-001",
     "overall_admission": "implementation_ready_for_independent_review",
     "owner": "Codex2",
@@ -550,10 +612,20 @@
         "command": "git diff --check",
         "conclusion": "no output",
         "result": "pass"
+      },
+      {
+        "command": "PYTHONDONTWRITEBYTECODE=1 pytest -q services/knowledge/evidence/tests services/training-session/tests services/training-session/test_policy_lineage.py services/training-session/test_rapid_eval_integration.py services/training-session/test_trace_export.py",
+        "conclusion": "132 passed in 48.45s",
+        "result": "pass"
+      },
+      {
+        "command": "docker compose config --quiet",
+        "conclusion": "no output after compose merge repair commit 432792398a09faa631f2e81259079e4933199ab5",
+        "result": "pass"
       }
     ],
-    "validated_at": "2026-07-15T15:19:52Z",
-    "validated_base_sha": "e4c3ce68bc4df389288d428bbd5fb1d3869a2112",
-    "validated_head_sha": "5aae577d249847728b0cb83fc19c31b1451e3f88"
+    "validated_at": "2026-07-15T15:30:09Z",
+    "validated_base_sha": "c5d7b8c0d1becd8746518b1190818fdcfe96e8fe",
+    "validated_head_sha": "432792398a09faa631f2e81259079e4933199ab5"
   }
 }
