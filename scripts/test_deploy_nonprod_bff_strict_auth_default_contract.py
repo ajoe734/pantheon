@@ -21,8 +21,15 @@ def test_nonprod_deploy_defaults_to_strict_bff_auth() -> None:
     assert 'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-permissive}"' not in script
 
 
-def _run_deploy_script(extra_env: dict) -> subprocess.CompletedProcess:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("DEV_BFF_")}
+def _run_deploy_script(
+    extra_env: dict,
+    *extra_args: str,
+) -> subprocess.CompletedProcess:
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("DEV_BFF_") and not k.startswith("DEV_OPENCLAW_ADAPTER_")
+    }
     env.update(extra_env)
     return subprocess.run(
         [
@@ -34,6 +41,7 @@ def _run_deploy_script(extra_env: dict) -> subprocess.CompletedProcess:
             "0" * 40,
             "--project-id",
             "test-project",
+            *extra_args,
         ],
         cwd=REPO_ROOT,
         env=env,
@@ -62,6 +70,7 @@ def test_strict_cutover_proceeds_past_credential_preflight_when_configured() -> 
             "DEV_BFF_JWT_SECRET": "test-secret",
             "DEV_BFF_OIDC_CLIENT_ID": "test-client",
             "DEV_BFF_OIDC_CLIENT_SECRET": "test-client-secret",
+            "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN": "test-service-token",
         }
     )
     assert result.returncode != 0, result.stdout + result.stderr
@@ -74,11 +83,55 @@ def test_strict_cutover_proceeds_past_credential_preflight_when_configured() -> 
 
 
 def test_permissive_opt_out_does_not_require_verifier_credentials() -> None:
-    result = _run_deploy_script({"DEV_BFF_AUTH_MODE": "permissive"})
+    result = _run_deploy_script(
+        {
+            "DEV_BFF_AUTH_MODE": "permissive",
+            "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED": "false",
+        }
+    )
     assert result.returncode != 0, result.stdout + result.stderr
     assert "strict auth cutover requested" not in result.stderr
     assert "no governed verifier/dev-login credentials" not in result.stderr
     assert "gcloud" in result.stderr.lower()
+
+
+def test_service_auth_refuses_deploy_without_human_provisioned_token() -> None:
+    result = _run_deploy_script(
+        {
+            "DEV_BFF_JWT_SECRET": "test-secret",
+            "DEV_BFF_OIDC_CLIENT_ID": "test-client",
+            "DEV_BFF_OIDC_CLIENT_SECRET": "test-client-secret",
+        }
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "human-provisioned DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN" in result.stderr
+    assert "empty or fabricated service credential" in result.stderr
+    assert "gcloud is required" not in result.stderr
+
+
+def test_service_auth_has_no_fabricated_deploy_default() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN="${DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"' in script
+    assert (
+        'DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}"'
+        in script
+    )
+    assert "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN:-pantheon" not in script
+
+
+def test_service_token_is_redacted_from_dry_run_output() -> None:
+    secret = "must-not-appear-in-deploy-output"
+    result = _run_deploy_script(
+        {"DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN": secret},
+        "--dry-run",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert secret not in result.stdout
+    assert secret not in result.stderr
+    assert "dev_openclaw_adapter_service_token_configured=true" in result.stdout
 
 
 def test_auth_gate_checks_hosted_posture_and_fixed_bearer_negative() -> None:

@@ -126,6 +126,10 @@ jobs:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
           DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
           DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          # Human-provisioned BFF-to-adapter credential. The deploy preflight
+          # rejects an empty value while service auth is required.
+          DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
+          DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
           DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}
@@ -213,13 +217,24 @@ jobs:
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/code/pantheon' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}
+          DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
         run: |
-          gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
+          set -euo pipefail
+          # Prepend a curl wrapper through stdin so the secret is never placed
+          # in the remote command line or written to the deployed checkout.
+          {
+            printf 'PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=%q\n' "${DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN}"
+            cat <<'SERVICE_AUTH_WRAPPER'
+          curl() {
+            command curl -H "X-Pantheon-Service-Token: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" "$@"
+          }
+          SERVICE_AUTH_WRAPPER
+            cat scripts/openclaw-assistant-openclaw-live-smoke.sh
+          } | gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
             --zone "${DEV_ZONE}" \
             --project "${GCP_DEPLOY_PROJECT_ID}" \
             --ssh-flag=-T \
-            --command "OPENCLAW_GATEWAY_ADAPTER_URL=http://127.0.0.1:18104 bash -s" \
-            < scripts/openclaw-assistant-openclaw-live-smoke.sh
+            --command "OPENCLAW_GATEWAY_ADAPTER_URL=http://127.0.0.1:18104 bash -s"
 
       - name: Public BFF smoke
         env:

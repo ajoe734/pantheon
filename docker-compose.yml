@@ -613,6 +613,11 @@ services:
       PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS: ${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}
       PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS: ${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}
       PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE: ${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
+      # BFF-to-adapter assistant routes are an authenticated service boundary.
+      # The token has no compose default and must be provisioned by the deploy
+      # environment; strict auth is the dev-stack default.
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
     volumes:
       - ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
       - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
@@ -624,7 +629,7 @@ services:
       # See docs/runbooks/openclaw-adapter-device-pairing.md.
       - openclaw-adapter-data:/root/.openclaw
     ports:
-      - "${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"
+      - "127.0.0.1:${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"
     healthcheck:
       test:
         [
@@ -1004,6 +1009,8 @@ services:
       PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL: http://research-worker-gateway-svc:8103
       PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - bff-data:/data/bff
