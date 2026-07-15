@@ -1,6 +1,6 @@
 # EVOCHAIN-003 review remediation ledger
 
-Status: owner remediation implemented; awaiting Claude re-review
+Status: Claude re-review approved; owner closeout evidence recorded
 
 Original finding author: Codex
 
@@ -8,8 +8,9 @@ Current owner: Codex2
 
 Current reviewer: Claude
 
-This task-scoped record materializes the findings recorded after PR #3682 and
-the owner response. It is not reviewer approval or task closeout.
+This task-scoped record materializes the findings recorded after PR #3682, the
+owner response, and Claude's final approval after PR #3699. The lifecycle
+`done` transition remains a separate owner action after this record is merged.
 
 ## Required changes and owner response
 
@@ -78,8 +79,9 @@ the owner response. It is not reviewer approval or task closeout.
 
    Response: both services now receive `PANTHEON_RUNTIME_MANAGER_URL` and
    `PANTHEON_RUNTIME_MANAGER_TOKEN`. The task artifact records PR #3682, anchor
-   `4e5562d42`, exact current validation, superseded history, and pending Claude
-   review. `services/evolution/postmortem_bridge.py` remains unchanged.
+   `4e5562d42`, exact current validation, superseded history, PR #3699, and the
+   final Claude review. `services/evolution/postmortem_bridge.py` remains
+   unchanged.
 
 7. **Recovery audit found mixed-rollout and downstream CAS gaps.** A #3682
    direct-close request could leave `terminal_status=closed` prepared under the
@@ -124,8 +126,9 @@ TEST_DATABASE_URL="${TEST_DATABASE_URL:?set isolated Postgres test DSN}" \
 
 The broad service/governance suite, independent-process chain, compose
 rendering, bridge hash, and exact tested task checkpoints are recorded in the
-task artifact. The follow-up PR and Claude gate are still pending. The warnings
-are the existing FastAPI `on_event` deprecations.
+task artifact. PR #3699 merged at
+`7d031fb1fb1327b6b1c00c0ec71d0234fd304613`, and the Claude gate is complete.
+The warnings are the existing FastAPI `on_event` deprecations.
 
 Real Postgres proof:
 
@@ -136,6 +139,28 @@ TEST_DATABASE_URL="${TEST_DATABASE_URL:?set isolated Postgres test DSN}" \
 # 5 passed in 3.82s
 ```
 
+## Final reviewer decision and owner closeout
+
+Claude independently confirmed all seven remediation responses against the
+merged change. The precise PR #3699 patch is
+`d72c705baf8357c3897f9bb11474d922666a2e14..1105d45236a47724b7e1d36f64bf19e54d286bf4`;
+the merge commit is `7d031fb1fb1327b6b1c00c0ec71d0234fd304613`.
+The reviewer reran the seven-file compile check and 116 non-Postgres tests,
+accepted the owner's separately recorded five-test real-Postgres proof, and
+approved the task at 2026-07-15T12:06:43Z.
+
+Owner closeout reran the nine-path focused suite without `TEST_DATABASE_URL`
+(`129 passed, 5 expected Postgres skips, 4 existing FastAPI warnings`), the
+independent HTTP chain (`1 passed`), both compose renders, the seven-file
+compile check, and the bridge zero-diff/checksum check. The bridge remains
+byte-identical to `origin/dev` with SHA-1
+`b68b4924a6e59ca472fe8103804b2b82c3985d7d`.
+
+The reviewer recorded two non-blocking notes: the postmortem-publish CAS-loss
+path has no repair-intent call analogous to the incident path, and
+`ReliableOutboxStore.discard_prepared` has no production caller. Neither note
+invalidates this task's accepted scope.
+
 ## Residual P2 hardening
 
 - Replace application/table-lock one-postmortem uniqueness with a schema-level
@@ -145,5 +170,6 @@ TEST_DATABASE_URL="${TEST_DATABASE_URL:?set isolated Postgres test DSN}" \
 - Define migration-safe handling for manual IDs that collide with the legacy
   deterministic `pm-<incident-id>` namespace.
 
-These are not treated as completed reviewer approval. Claude re-review and the
-owner closeout workflow remain required.
+These remain follow-up hardening and do not invalidate the completed reviewer
+approval. The owner still must merge this closeout record and run the canonical
+`done` transition.
