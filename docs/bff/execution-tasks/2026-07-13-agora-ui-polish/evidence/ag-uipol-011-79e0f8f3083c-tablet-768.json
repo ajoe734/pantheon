@@ -41,20 +41,22 @@
     }
   },
   "captures": [
-    "/tmp/ag-uipol-011/ag-uipol-011-b6a5bc931194-tablet-768-trading-room.png",
-    "/tmp/ag-uipol-011/ag-uipol-011-b6a5bc931194-tablet-768-strategy-workshop.png",
-    "/tmp/ag-uipol-011/ag-uipol-011-b6a5bc931194-tablet-768-strategy-performance.png"
+    "/tmp/ag-uipol-011/ag-uipol-011-79e0f8f3083c-tablet-768-trading-room.png",
+    "/tmp/ag-uipol-011/ag-uipol-011-79e0f8f3083c-tablet-768-strategy-workshop.png",
+    "/tmp/ag-uipol-011/ag-uipol-011-79e0f8f3083c-tablet-768-strategy-performance.png"
   ],
   "deployment": {
     "app": "execute-plans",
     "environment": "pantheon-dev-fe",
-    "deployedAt": "20260714T075837Z",
-    "commit": "b6a5bc9311941cf7333c5f738526868715533101",
-    "sourceRef": "b6a5bc9311941cf7333c5f738526868715533101",
+    "deployedAt": "20260715T054747Z",
+    "commit": "79e0f8f3083c8546ec2c139afbc339322dcbe755",
+    "sourceRef": "79e0f8f3083c8546ec2c139afbc339322dcbe755",
     "sourceBranch": "dev",
     "feHost": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
     "bffHost": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
-    "bffCommit": "9d393816acfe322a12ba1b295218f829db36ac28",
+    "bffCommit": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+    "bffCommitEvidence": true,
+    "bffCommitSource": "bff_version",
     "buildMode": {
       "VITE_BFF_MODE": "live",
       "VITE_BFF_FALLBACK": "strict",
@@ -63,7 +65,7 @@
       "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
     }
   },
-  "expectedFeSha": "b6a5bc9311941cf7333c5f738526868715533101",
+  "expectedFeSha": "79e0f8f3083c8546ec2c139afbc339322dcbe755",
   "viewport": {
     "height": 1024,
     "name": "tablet-768",

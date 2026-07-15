@@ -5,6 +5,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "deploy_nonprod_vm.sh"
+DEPLOY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 
 
 def test_nonprod_deploy_defaults_to_strict_bff_auth() -> None:
@@ -21,8 +22,61 @@ def test_nonprod_deploy_defaults_to_strict_bff_auth() -> None:
     assert 'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-permissive}"' not in script
 
 
-def _run_deploy_script(extra_env: dict) -> subprocess.CompletedProcess:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("DEV_BFF_")}
+def test_workflow_rejects_refs_that_predate_the_strict_auth_contract() -> None:
+    """The workflow definition comes from the dispatch ref, but checkout can
+    replace the workspace with an older target ref before the deploy script is
+    executed. Keep a workflow-level guard ahead of the remote deploy so an old
+    script cannot silently restore permissive/stub auth."""
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    gate = workflow.index("- name: Enforce dev auth deployment floor")
+    deploy = workflow.index("- name: Deploy requested VM stack")
+    assert gate < deploy
+
+    for secret in (
+        "secrets.DEV_BFF_JWT_SECRET",
+        "secrets.DEV_BFF_OIDC_CLIENT_ID",
+        "secrets.DEV_BFF_OIDC_CLIENT_SECRET",
+    ):
+        assert secret in workflow[gate:deploy]
+
+    for marker in (
+        'case "${DEV_AUTH_PROFILE}" in',
+        'DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"',
+        'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"',
+        "no governed verifier/dev-login credentials",
+        "assert_bff_auth_gate",
+    ):
+        assert marker in workflow[gate:deploy]
+
+    assert "refusing to run any target ref before strict auth can be verified" in workflow[gate:deploy]
+
+
+def test_nonprod_workflow_has_bounded_dev_permissive_stub_profile() -> None:
+    """Manual proof runs may deploy an older exact SHA, so the workflow must
+    pass an atomic auth pair into that SHA's deploy script instead of relying
+    on either the script's historical defaults or the remote .env file."""
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "dev_auth_profile:" in workflow
+    assert "default: strict" in workflow
+    assert "- permissive-stub" in workflow
+    assert "export DEV_BFF_AUTH_STUB=false" in workflow
+    assert "export DEV_BFF_AUTH_MODE=strict" in workflow
+    assert "export DEV_BFF_AUTH_STUB=true" in workflow
+    assert "export DEV_BFF_AUTH_MODE=permissive" in workflow
+    assert "Auth profile permissive-stub is valid only for dev deployments." in workflow
+
+
+def _run_deploy_script(
+    extra_env: dict,
+    *extra_args: str,
+) -> subprocess.CompletedProcess:
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("DEV_BFF_") and not k.startswith("DEV_OPENCLAW_ADAPTER_")
+    }
     env.update(extra_env)
     return subprocess.run(
         [
@@ -34,6 +88,7 @@ def _run_deploy_script(extra_env: dict) -> subprocess.CompletedProcess:
             "0" * 40,
             "--project-id",
             "test-project",
+            *extra_args,
         ],
         cwd=REPO_ROOT,
         env=env,
@@ -62,6 +117,7 @@ def test_strict_cutover_proceeds_past_credential_preflight_when_configured() -> 
             "DEV_BFF_JWT_SECRET": "test-secret",
             "DEV_BFF_OIDC_CLIENT_ID": "test-client",
             "DEV_BFF_OIDC_CLIENT_SECRET": "test-client-secret",
+            "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN": "test-service-token",
         }
     )
     assert result.returncode != 0, result.stdout + result.stderr
@@ -74,11 +130,55 @@ def test_strict_cutover_proceeds_past_credential_preflight_when_configured() -> 
 
 
 def test_permissive_opt_out_does_not_require_verifier_credentials() -> None:
-    result = _run_deploy_script({"DEV_BFF_AUTH_MODE": "permissive"})
+    result = _run_deploy_script(
+        {
+            "DEV_BFF_AUTH_MODE": "permissive",
+            "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED": "false",
+        }
+    )
     assert result.returncode != 0, result.stdout + result.stderr
     assert "strict auth cutover requested" not in result.stderr
     assert "no governed verifier/dev-login credentials" not in result.stderr
     assert "gcloud" in result.stderr.lower()
+
+
+def test_service_auth_refuses_deploy_without_human_provisioned_token() -> None:
+    result = _run_deploy_script(
+        {
+            "DEV_BFF_JWT_SECRET": "test-secret",
+            "DEV_BFF_OIDC_CLIENT_ID": "test-client",
+            "DEV_BFF_OIDC_CLIENT_SECRET": "test-client-secret",
+        }
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "human-provisioned DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN" in result.stderr
+    assert "empty or fabricated service credential" in result.stderr
+    assert "gcloud is required" not in result.stderr
+
+
+def test_service_auth_has_no_fabricated_deploy_default() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN="${DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"' in script
+    assert (
+        'DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}"'
+        in script
+    )
+    assert "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN:-pantheon" not in script
+
+
+def test_service_token_is_redacted_from_dry_run_output() -> None:
+    secret = "must-not-appear-in-deploy-output"
+    result = _run_deploy_script(
+        {"DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN": secret},
+        "--dry-run",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert secret not in result.stdout
+    assert secret not in result.stderr
+    assert "dev_openclaw_adapter_service_token_configured=true" in result.stdout
 
 
 def test_auth_gate_checks_hosted_posture_and_fixed_bearer_negative() -> None:

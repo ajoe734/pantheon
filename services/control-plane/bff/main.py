@@ -17,9 +17,9 @@ from collections import deque
 from concurrent.futures import Executor, ThreadPoolExecutor
 from contextvars import ContextVar, copy_context
 from datetime import datetime, timedelta, timezone
-from functools import partial
+from functools import partial, wraps
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 from urllib.parse import quote, urlencode
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -148,6 +148,9 @@ from command_executor import (
     create_capital_pool,
     create_capital_rebalance_proposal,
     execute_command_with_status,
+    _runtime_manager_client,
+    _post_json,
+    _get_json,
 )
 from persona_allocation_policy import (
     build_pm12_allocation_policy_input,
@@ -157,6 +160,15 @@ from persona_allocation_policy import (
 from emergency_containment_policy import validate_emergency_containment
 from session_lifecycle_store import SessionLifecycleStore
 from management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
+from management_nl_command_idempotency import (
+    DEFAULT_STORAGE_PATH as DEFAULT_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_PATH,
+    ManagementNlCommandIdempotencyStore,
+    ManagementNlCommandPayloadConflict,
+    ManagementNlCommandRecoveryRequired,
+    ManagementNlCommandReservation,
+    ManagementNlCommandScope,
+    ManagementNlCommandStorageError,
+)
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from source_search_ops_client import (
     SearchIndexCommandClient,
@@ -26774,6 +26786,8 @@ _STRATEGY_BFF_LIFECYCLE_MAP = {
     "rollback_required": "rollback_required",
     "stopped": "stopped",
     "failed": "failed",
+    "provisioning": "provisioning",
+    "provisioning_failed": "failed",
 }
 
 _PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({
@@ -27810,14 +27824,169 @@ def _project_strategy_dto(
     return dto
 
 
+def _deployment_url(path: str) -> str:
+    base = os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip().rstrip("/")
+    if not base:
+        base = "http://deployment:8095"
+    return f"{base}{path}"
+
+
+def _evaluate_persona_provisioning_status(
+    persona_id: str,
+    raw: Dict[str, Any],
+    *,
+    all_bindings: Optional[Dict[str, Dict[str, Any]]] = None,
+    all_cron_registrations: Optional[Set[Tuple[str, str]]] = None,
+) -> str:
+    metadata = raw.get("metadata") or {}
+    current_state = raw.get("lifecycle_state") or raw.get("state")
+    if current_state not in ("provisioning", "draft", "paper_running"):
+        return str(current_state or "")
+
+    if current_state in ("provisioning_failed", "failed"):
+        return str(current_state or "")
+
+    if current_state == "paper_running":
+        return "paper_running"
+
+    if current_state != "provisioning":
+        return str(current_state or "")
+
+    # 1. Check RuntimeBinding
+    binding_id = metadata.get("runtime_binding_id") or metadata.get("binding_id")
+    binding = None
+    binding_ok = False
+    binding_failed = False
+    if binding_id:
+        try:
+            if all_bindings is not None:
+                binding = all_bindings.get(binding_id)
+            else:
+                client = _runtime_manager_client()
+                binding = client.get(binding_id)
+            if binding:
+                binding_state = str(binding.get("state") or binding.get("status") or "").lower()
+                if binding_state in ("running", "active", "ok"):
+                    binding_ok = True
+                elif binding_state in ("failed", "stopped", "error"):
+                    binding_failed = True
+        except Exception as exc:
+            logger.warning(f"Failed to query RuntimeBinding {binding_id} for {persona_id}: {exc}")
+
+    # 2. Check Paper Worker Heartbeat
+    runtime_id = metadata.get("runtime_id")
+    monitoring_session = None
+    telemetry_summary = None
+    if runtime_id and binding_id:
+        # Exact join on persona_id, runtime_id, and binding_id
+        for s in read_store.list_paper_runtime_monitoring_sessions():
+            s_pid = str(s.get("persona_id") or "").strip()
+            s_rtid = str(s.get("runtime_id") or "").strip()
+            s_bid = str(s.get("binding_id") or s.get("runtime_binding_id") or "").strip()
+            if s_rtid == runtime_id and s_bid == binding_id and (not s_pid or s_pid == persona_id):
+                monitoring_session = s
+                break
+    if runtime_id:
+        telemetry_summary = read_store.get_telemetry_summary(runtime_id)
+
+    heartbeat_ok = False
+    heartbeat_failed = False
+
+    last_hb = None
+    if monitoring_session:
+        last_hb = monitoring_session.get("last_heartbeat_at")
+        session_status = str(monitoring_session.get("status") or "").lower()
+        if session_status in ("failed", "ended", "error") or monitoring_session.get("active") is False:
+            heartbeat_failed = True
+    if not last_hb and telemetry_summary:
+        last_hb = telemetry_summary.get("last_heartbeat_at")
+
+    if last_hb:
+        heartbeat_ok = True
+
+    # 3. Check First Evaluation Schedule
+    cron_ok = False
+    try:
+        if all_cron_registrations is not None:
+            cron_ok = any(pid == persona_id for (pid, wfid) in all_cron_registrations)
+        else:
+            if "persona_cron_registrar" not in sys.modules:
+                _saved_modules = {
+                    name: sys.modules.pop(name)
+                    for name in ("models", "workflows")
+                    if name in sys.modules
+                }
+                sys.path.insert(0, _CRON_SERVICE_DIR)
+                try:
+                    import persona_cron_registrar  # noqa: F401
+                finally:
+                    sys.path.remove(_CRON_SERVICE_DIR)
+                    for name in ("models", "workflows"):
+                        sys.modules.pop(name, None)
+                    sys.modules.update(_saved_modules)
+            from persona_cron_registrar import PersonaCronRegistrar
+            registrar = PersonaCronRegistrar()
+            runtime = registrar._get_runtime()
+            if runtime is not None:
+                existing = registrar._existing_registrations(runtime)
+                cron_ok = any(pid == persona_id for (pid, wfid) in existing)
+    except Exception as exc:
+        logger.warning(f"Failed to query cron registrations for {persona_id}: {exc}")
+
+    # Timeout check (120 seconds)
+    is_timeout = False
+    created_at_str = raw.get("created_at") or metadata.get("created_at")
+    if created_at_str:
+        try:
+            if "T" in created_at_str:
+                clean_str = created_at_str.replace("Z", "+00:00")
+                created_at_dt = datetime.fromisoformat(clean_str)
+            else:
+                created_at_dt = datetime.fromisoformat(created_at_str)
+            now_dt = datetime.fromisoformat(utc_now().replace("Z", "+00:00"))
+            delta = (now_dt - created_at_dt).total_seconds()
+            if delta > 120:
+                is_timeout = True
+        except Exception:
+            pass
+
+    if binding_ok and heartbeat_ok and cron_ok:
+        new_state = "paper_running"
+    elif binding_failed or heartbeat_failed or is_timeout:
+        new_state = "provisioning_failed"
+    else:
+        new_state = "provisioning"
+
+    if new_state != current_state:
+        read_store.update_persona(persona_id, lifecycle_state=new_state)
+        if persona_id in _PERSONA_BFF_OVERLAY:
+            _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
+            _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
+        raw["lifecycle_state"] = new_state
+        raw["status"] = new_state
+        if "metadata" in raw:
+            raw["metadata"]["lifecycle_state"] = new_state
+
+    return new_state
+
+
 def _project_persona_dto(
     raw: Dict[str, Any],
     *,
     overlay: Optional[Dict[str, Any]] = None,
     routed_strategies: Optional[int] = None,
+    all_bindings: Optional[Dict[str, Dict[str, Any]]] = None,
+    all_cron_registrations: Optional[Set[Tuple[str, str]]] = None,
 ) -> Dict[str, Any]:
     """Project canonical persona data into execute-plans Persona DTO."""
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
+    if persona_id:
+        _evaluate_persona_provisioning_status(
+            persona_id,
+            raw,
+            all_bindings=all_bindings,
+            all_cron_registrations=all_cron_registrations,
+        )
     metadata = dict(raw.get("metadata") or {}) if isinstance(raw.get("metadata"), dict) else {}
     archetype = str(
         metadata.get("archetype")
@@ -36168,6 +36337,29 @@ def _management_intervention_stream_response(
     }
 
 
+_EVOLUTION_JOURNAL_REGISTERED_SEED_EXACT_IDS = {
+    "87c655c3e3c9", "inc-87c655c3e3c9", "rb-001", "fo-001", "btc-drift",
+    "inc-20260410-001", "inc-20260409-002", "pm-20260409-002",
+    "plan-f-042", "artifact-042", "runtime-042", "binding-042",
+}
+# "evo-vslice-" and "ev-seed-" are registered seed *families* (see
+# services/evolution/seed_data.py ev-seed-001..005) — any id in a family is
+# seed-derived, unlike the one-off exact ids above.
+_EVOLUTION_JOURNAL_REGISTERED_SEED_PREFIXES = ("evo-vslice-", "ev-seed-")
+
+
+def _evolution_journal_is_registered_seed_id(value: Any) -> bool:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return False
+    if normalized in _EVOLUTION_JOURNAL_REGISTERED_SEED_EXACT_IDS:
+        return True
+    return any(
+        normalized.startswith(prefix)
+        for prefix in _EVOLUTION_JOURNAL_REGISTERED_SEED_PREFIXES
+    )
+
+
 _EVOLUTION_JOURNAL_TYPE_ALIASES = {
     "decision": "evolution_decision",
     "evolution": "evolution_decision",
@@ -36183,6 +36375,41 @@ _EVOLUTION_JOURNAL_TYPE_ALIASES = {
     "freeze": "freeze_order",
     "freeze_order": "freeze_order",
     "freeze_orders": "freeze_order",
+}
+
+
+# Typed lineage namespaces for the ?persona= filter. Two entities can share
+# the same raw string id in different namespaces (e.g. a runtime_id and an
+# unrelated artifact target_id both equal to "same-token") — matching must
+# stay scoped to the field/target-type that produced the id, never a single
+# flattened id blob.
+_EVOLUTION_JOURNAL_REFERENCE_FIELD_CATEGORY = {
+    "artifact_id": "artifact",
+    "persona_id": "persona",
+    "runtime_id": "runtime",
+    "runtime_binding_id": "binding",
+    "persona_capital_binding_id": "binding",
+    "incident_id": "incident",
+    "incident_ref": "incident",
+    "linked_incident_id": "incident",
+    "capital_pool_id": "pool",
+    "pool_id": "pool",
+    "plan_id": "plan",
+    "deployment_plan_id": "plan",
+}
+_EVOLUTION_JOURNAL_TARGET_TYPE_CATEGORY = {
+    "persona": "persona",
+    "runtime": "runtime",
+    "binding": "binding",
+    "runtime_binding": "binding",
+    "persona_capital_binding": "binding",
+    "plan": "plan",
+    "deployment_plan": "plan",
+    "pool": "pool",
+    "capital_pool": "pool",
+    "candidate_artifact": "artifact",
+    "artifact": "artifact",
+    "incident": "incident",
 }
 
 
@@ -36374,6 +36601,11 @@ def _evolution_journal_mutation_review_item(
         identity=identity,
         snapshot_at=snapshot_at,
     )
+    # Preserve metadata/provenance/origin from the source decision
+    for field in ("metadata", "provenance", "origin"):
+        if field in decision and field not in projection:
+            projection[field] = decision[field]
+
     item = _evolution_journal_base_item(
         entry_type="mutation_review",
         source_id=decision_id,
@@ -36648,28 +36880,55 @@ def _evolution_journal_items(
             items.append(item)
 
     for item in items:
-        is_seed = False
-        source_id = str(item.get("source_id") or "").lower()
-        journal_id = str(item.get("id") or "").lower()
-        for marker in ("seed", "vslice", "87c655c3e3c9", "rb-001", "fo-001", "btc-drift"):
-            if marker in source_id or marker in journal_id:
-                is_seed = True
+        origin_val = None
+        for d in (
+            item,
+            item.get("record"),
+            (item.get("record") or {}).get("metadata"),
+            (item.get("record") or {}).get("provenance"),
+            item.get("decision"),
+            (item.get("decision") or {}).get("metadata"),
+            item.get("mutation_review"),
+            (item.get("mutation_review") or {}).get("metadata"),
+            item.get("postmortem"),
+            (item.get("postmortem") or {}).get("metadata"),
+            item.get("freeze_order"),
+            (item.get("freeze_order") or {}).get("metadata"),
+            item.get("rollback"),
+            (item.get("rollback") or {}).get("metadata"),
+        ):
+            if isinstance(d, dict) and d.get("origin"):
+                origin_val = str(d.get("origin")).strip().lower()
                 break
-        if not is_seed:
-            for key in ("decision", "mutation_review", "mutationReview", "postmortem", "freeze_order", "freezeOrder", "rollback"):
-                inner = item.get(key)
-                if isinstance(inner, dict):
-                    for field in ("id", "decision_id", "source_id", "incident_id", "incident_ref", "linked_incident_id", "report_id"):
-                        val = str(inner.get(field) or "").lower()
-                        for marker in ("seed", "vslice", "87c655c3e3c9", "rb-001", "fo-001", "btc-drift"):
-                            if marker in val:
+
+        if origin_val in ("seed", "live", "unknown"):
+            item["origin"] = origin_val
+        else:
+            is_seed = (
+                _evolution_journal_is_registered_seed_id(item.get("source_id"))
+                or _evolution_journal_is_registered_seed_id(item.get("id"))
+            )
+            target_obj = item.get("target") if isinstance(item.get("target"), dict) else {}
+            if not is_seed and _evolution_journal_is_registered_seed_id(target_obj.get("id")):
+                is_seed = True
+            if not is_seed:
+                for key in ("decision", "mutation_review", "mutationReview", "postmortem", "freeze_order", "freezeOrder", "rollback"):
+                    inner = item.get(key)
+                    if isinstance(inner, dict):
+                        for field in (
+                            "id", "decision_id", "source_id", "report_id",
+                            "incident_id", "incident_ref", "linked_incident_id",
+                            "target_id", "artifact_id", "runtime_id",
+                            "runtime_binding_id", "persona_capital_binding_id",
+                            "plan_id", "deployment_plan_id",
+                        ):
+                            if _evolution_journal_is_registered_seed_id(inner.get(field)):
                                 is_seed = True
                                 break
-                        if is_seed:
-                            break
-                if is_seed:
-                    break
-        item["origin"] = "seed" if is_seed else "live"
+                    if is_seed:
+                        break
+
+            item["origin"] = "seed" if is_seed else "unknown"
 
     items.sort(
         key=lambda item: (
@@ -36691,6 +36950,14 @@ def _evolution_journal_surfaces(
         "freeze_orders": _dataset_surface_status("freeze_orders", snapshot_at=snapshot_at),
         "rollbacks": _dataset_surface_status("all_rollbacks", snapshot_at=snapshot_at),
         "approval_decisions": _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at),
+        # Not part of the base journal aggregate below — these back the
+        # ?persona= lineage filter and must stay visible on their own so a
+        # degraded/unavailable dependency there isn't reported as an
+        # authoritative empty result.
+        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "incidents": _dataset_surface_status("incidents", snapshot_at=snapshot_at),
     }
     mutation_surface = _aggregate_group_surface(
         "mutation_review",
@@ -37327,6 +37594,7 @@ async def bff_management_evolution_journal(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
+    surfaces = _evolution_journal_surfaces(snapshot_at=snapshot_at)
     items, _decisions, _postmortems, _freeze_orders, _rollbacks = _evolution_journal_items(
         identity=identity,
         snapshot_at=snapshot_at,
@@ -37341,21 +37609,169 @@ async def bff_management_evolution_journal(
     if persona:
         p_clean = persona.strip().lower()
         if p_clean:
-            filtered = [
-                item for item in filtered
-                if p_clean in _evolution_entry_text(item) or
-                any(
-                    str((item.get("record") or {}).get(field) or "").lower() == p_clean
-                    for field in ("artifact_id", "persona_id", "target_id", "runtime_id", "runtime_binding_id", "persona_capital_binding_id")
-                )
-            ]
+            for dep_key, label in (
+                ("personas", "Persona"),
+                ("persona_bindings", "Persona-capital binding"),
+                ("runtime_bindings", "Runtime binding"),
+                ("incidents", "Incident"),
+            ):
+                _raise_if_read_surface_unavailable(surfaces[dep_key], label=label)
+
+            persona_ids = {p_clean}
+            runtime_ids = set()
+            binding_ids = set()
+            plan_ids = set()
+            pool_ids = set()
+            artifact_ids = set()
+            incident_ids = set()
+
+            personas = read_store.list_personas(include_market_persona_defaults=True) or []
+            for p in personas:
+                pid = str(p.get("persona_id") or p.get("id") or "").strip().lower()
+                if pid == p_clean:
+                    # Only the persona's own directly declared artifact_id is a
+                    # matchable "owned artifact" — artifact_id discovered later
+                    # via binding/incident traversal is intentionally excluded
+                    # (see below) so a shared artifact can't pull in another
+                    # persona's unrelated rows.
+                    for field, target_set in [
+                        ("runtime_id", runtime_ids),
+                        ("binding_id", binding_ids),
+                        ("persona_capital_binding_id", binding_ids),
+                        ("pool_id", pool_ids),
+                        ("capital_pool_id", pool_ids),
+                        ("plan_id", plan_ids),
+                        ("artifact_id", artifact_ids),
+                    ]:
+                        val = str(p.get(field) or "").strip().lower()
+                        if val:
+                            target_set.add(val)
+
+            # Read canonical persona-capital bindings (read_store.list_bindings)
+            # *and* runtime bindings once each and expand runtime/binding/plan/
+            # pool ids to a fixed point. Both binding sources are traversed
+            # because a canonical persona-capital binding can exist with no
+            # matching runtime row at all; list_runtime_bindings only uses
+            # list_bindings to enrich runtime rows that already exist, so a
+            # runtime-less persona -> binding -> pool -> incident chain would
+            # otherwise be invisible. A fixed-point loop (rather than a
+            # hardcoded pass count) is required because a chain can be
+            # arbitrarily deep.
+            #
+            # persona_ids is intentionally never grown past the requested
+            # root persona. A binding reached only via a shared capital pool
+            # AND declaring a *different* persona's ownership is a neighbor
+            # belonging to that other persona, not part of the root's own
+            # chain — adopting its identity would leak that other persona's
+            # private rows into this closure (two personas can independently
+            # reference the same shared pool). A pool-only match with no
+            # foreign persona attached (e.g. an intermediate system binding
+            # that declares no persona_id at all) is still a genuine hop on
+            # the root's own resource graph and its runtime/binding/plan ids
+            # are adopted normally.
+            bindings = list(read_store.list_runtime_bindings(include_market_persona_defaults=True) or [])
+            bindings += list(read_store.list_bindings(include_market_persona_defaults=True) or [])
+            incidents = read_store.list_incidents() or []
+            changed = True
+            while changed:
+                changed = False
+                for b in bindings:
+                    b_pid = str(b.get("persona_id") or b.get("personaId") or "").strip().lower()
+                    b_rid = str(b.get("runtime_id") or "").strip().lower()
+                    b_bid = str(b.get("binding_id") or b.get("runtime_binding_id") or "").strip().lower()
+                    b_pcbid = str(b.get("persona_capital_binding_id") or "").strip().lower()
+                    b_plid = str(b.get("plan_id") or b.get("deployment_plan_id") or "").strip().lower()
+                    b_pool = str(b.get("pool_id") or b.get("capital_pool_id") or "").strip().lower()
+
+                    owned_match = (
+                        (b_pid and b_pid == p_clean) or
+                        (b_rid and b_rid in runtime_ids) or
+                        (b_bid and b_bid in binding_ids) or
+                        (b_pcbid and b_pcbid in binding_ids) or
+                        (b_plid and b_plid in plan_ids)
+                    )
+                    pool_only_match = (not owned_match) and (b_pool and b_pool in pool_ids)
+                    if not (owned_match or pool_only_match):
+                        continue
+                    if pool_only_match and b_pid and b_pid != p_clean:
+                        continue
+                    for val, target_set in (
+                        (b_rid, runtime_ids),
+                        (b_bid, binding_ids), (b_pcbid, binding_ids),
+                        (b_plid, plan_ids), (b_pool, pool_ids),
+                    ):
+                        if val and val not in target_set:
+                            target_set.add(val)
+                            changed = True
+
+                for i in incidents:
+                    i_id = str(i.get("incident_id") or i.get("id") or "").strip().lower()
+                    i_rid = str(i.get("runtime_id") or "").strip().lower()
+                    i_bid = str(i.get("binding_id") or i.get("persona_capital_binding_id") or "").strip().lower()
+                    i_plid = str(i.get("deployment_plan_id") or "").strip().lower()
+                    i_pool = str(i.get("capital_pool_id") or i.get("pool_id") or "").strip().lower()
+
+                    is_match = (
+                        (i_id and i_id in incident_ids) or
+                        (i_rid and i_rid in runtime_ids) or
+                        (i_bid and i_bid in binding_ids) or
+                        (i_plid and i_plid in plan_ids) or
+                        (i_pool and i_pool in pool_ids)
+                    )
+                    if not is_match:
+                        continue
+                    for val, target_set in (
+                        (i_id, incident_ids), (i_rid, runtime_ids),
+                        (i_bid, binding_ids), (i_plid, plan_ids),
+                        (i_pool, pool_ids),
+                    ):
+                        if val and val not in target_set:
+                            target_set.add(val)
+                            changed = True
+
+            category_sets = {
+                "persona": persona_ids,
+                "runtime": runtime_ids,
+                "binding": binding_ids,
+                "plan": plan_ids,
+                "pool": pool_ids,
+                "artifact": artifact_ids,
+                "incident": incident_ids,
+            }
+
+            def _journal_item_matches_persona_lineage(item: Dict[str, Any]) -> bool:
+                # Match only through typed reference fields/target-type
+                # namespaces — never a flattened id blob — so a shared raw
+                # string value in two different namespaces (e.g. a
+                # runtime_id equal to an unrelated artifact target_id) cannot
+                # cross-match. The entry's own identity (source_id/id/
+                # decision_id/report_id/...) is intentionally excluded:
+                # matching those against an arbitrary "persona" query string
+                # is a false collision, not a lineage relationship.
+                target_obj = item.get("target") or {}
+                if isinstance(target_obj, dict):
+                    category = _EVOLUTION_JOURNAL_TARGET_TYPE_CATEGORY.get(
+                        str(target_obj.get("type") or "").strip().lower()
+                    )
+                    target_val = str(target_obj.get("id") or "").strip().lower()
+                    if category and target_val and target_val in category_sets[category]:
+                        return True
+                record_obj = item.get("record") or {}
+                if isinstance(record_obj, dict):
+                    for field, category in _EVOLUTION_JOURNAL_REFERENCE_FIELD_CATEGORY.items():
+                        val = str(record_obj.get(field) or "").strip().lower()
+                        if val and val in category_sets[category]:
+                            return True
+                return False
+
+            filtered = [item for item in filtered if _journal_item_matches_persona_lineage(item)]
     if mutation_review:
         mr_clean = mutation_review.strip().lower()
         if mr_clean:
             filtered = [
                 item for item in filtered
                 if str(item.get("source_id") or "").lower() == mr_clean
-                and item.get("entry_type") in ("evolution_decision", "mutation_review")
+                and item.get("entry_type") == "mutation_review"
             ]
     if decision:
         dec_clean = decision.strip().lower()
@@ -37363,13 +37779,13 @@ async def bff_management_evolution_journal(
             filtered = [
                 item for item in filtered
                 if str(item.get("source_id") or "").lower() == dec_clean
-                and item.get("entry_type") in ("evolution_decision", "mutation_review")
+                and item.get("entry_type") == "evolution_decision"
             ]
 
     total = len(filtered)
     page_items, next_page_token = _page_slice(filtered, page_token, page_size)
     meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = _evolution_journal_surfaces(snapshot_at=snapshot_at)
+    meta["surfaces"] = surfaces
     meta["composition_sources"] = [
         "evolution_decisions",
         "postmortems",
@@ -37397,6 +37813,11 @@ async def bff_management_evolution_journal(
 # ---------------- /bff/management/nl (BFF-B6-001) ----------------
 
 _MGMT_NL_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_MGMT_NL_COMMAND_IDEMPOTENCY_STORE: Optional[ManagementNlCommandIdempotencyStore] = None
+_MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG: Optional[Tuple[str, float]] = None
+_MGMT_NL_COMMAND_RESERVATION_CONTEXT: ContextVar[
+    Optional[ManagementNlCommandReservation]
+] = ContextVar("management_nl_command_reservation", default=None)
 
 _MGMT_NL_VALID_FOCUS = {"cockpit", "trading_pulse", "portfolio", "persona_fleet", "all"}
 _MGMT_NL_FOCUS_ALIASES = {
@@ -39012,6 +39433,27 @@ def _mgmt_nl_raise_control_mode_actor_error(identity: OperatorIdentity) -> None:
         )
 
 
+def _mgmt_nl_require_mode_capability(identity: OperatorIdentity, mode: Any) -> None:
+    from assistant.control_mode import actor_capabilities
+
+    mode_value = str(getattr(mode, "value", mode) or "").strip()
+    required = f"assistant.{mode_value.replace('_', '.')}"
+    if required in set(actor_capabilities(identity)):
+        return
+    raise _bff_error(
+        403,
+        ErrorCode.FORBIDDEN,
+        f"Control mode {mode_value} requires {required} capability",
+        "The authenticated actor does not hold the exact capability required for the requested mode.",
+        precondition_failed="control_mode_capability",
+        details_extra={
+            "field": "capabilities",
+            "reason": "mode_capability_missing",
+            "required_capability": required,
+        },
+    )
+
+
 def _mgmt_nl_raise_control_mode_error(exc: Exception) -> None:
     status_code = int(getattr(exc, "status_code", 422) or 422)
     if status_code == 403:
@@ -39163,6 +39605,7 @@ def _mgmt_nl_handle_control_command(
     focus: str,
     ui_snapshot: Dict[str, Any],
     resolved_key: str,
+    idempotency_storage_key: str,
     request_hash: str,
     session_id: str,
     message_id: str,
@@ -39210,6 +39653,7 @@ def _mgmt_nl_handle_control_command(
                 precondition_failed="control_mode_kernel_policy",
                 details_extra={"field": exc.field},
             )
+        _mgmt_nl_require_mode_capability(identity, mode)
         ttl_seconds = _mgmt_nl_positive_int(
             options.get("ttlSeconds", options.get("ttl_seconds")),
             DEFAULT_KERNEL_TTL_SECONDS,
@@ -39232,6 +39676,7 @@ def _mgmt_nl_handle_control_command(
         except ControlModeError as exc:
             _mgmt_nl_raise_control_mode_error(exc)
     elif command_kind == "deactivate":
+        _mgmt_nl_raise_control_mode_actor_error(identity)
         control_mode = store.deactivate(identity.operator_id, reason="management_nl_chat_control_command")
     elif command_kind == "status":
         control_mode = _assistant_control_mode_for_identity(
@@ -39427,7 +39872,7 @@ def _mgmt_nl_handle_control_command(
         conversation_href=conversation_href,
         control_command=command_kind,
     )
-    _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
+    _mgmt_nl_idempotency_put(idempotency_storage_key, request_hash=request_hash, result=result)
     return JSONResponse(status_code=202, content=result)
 
 
@@ -39506,10 +39951,32 @@ def _mgmt_nl_record_high_risk_refusal(
         return None
 
 
-def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional[Dict[str, Any]]:
-    existing = _management_ai_conversation_store().get_idempotency(resolved_key)
+def _mgmt_nl_idempotency_storage_key(
+    resolved_key: str,
+    *,
+    actor_id: str,
+    tenant_id: str,
+) -> str:
+    material = "\x00".join(
+        [
+            "management-nl-v2",
+            str(actor_id or "").strip(),
+            str(tenant_id or "").strip(),
+            str(resolved_key or "").strip(),
+        ]
+    )
+    return f"management-nl-v2:{hashlib.sha256(material.encode('utf-8')).hexdigest()}"
+
+
+def _mgmt_nl_idempotency_check(
+    storage_key: str,
+    request_hash: str,
+    *,
+    display_key: str,
+) -> Optional[Dict[str, Any]]:
+    existing = _management_ai_conversation_store().get_idempotency(storage_key)
     if existing is None:
-        existing = _MGMT_NL_IDEMPOTENCY.get(resolved_key)
+        existing = _MGMT_NL_IDEMPOTENCY.get(storage_key)
     if existing is None:
         return None
     if existing.get("request_hash") != request_hash:
@@ -39517,7 +39984,7 @@ def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional
             409,
             ErrorCode.IDEMPOTENCY_CONFLICT,
             "Idempotency key was already used with a different payload",
-            f"Key {resolved_key!r} is bound to a different management NL request hash",
+            f"Key {display_key!r} is bound to a different management NL request hash",
             precondition_failed="idempotency_conflict",
             suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
         )
@@ -39525,17 +39992,280 @@ def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional
 
 
 def _mgmt_nl_idempotency_put(
-    resolved_key: str,
+    storage_key: str,
     *,
     request_hash: str,
     result: Dict[str, Any],
 ) -> None:
     _management_ai_conversation_store().put_idempotency(
-        resolved_key,
+        storage_key,
         request_hash=request_hash,
         result=result,
     )
-    _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    _MGMT_NL_IDEMPOTENCY[storage_key] = {"request_hash": request_hash, "result": result}
+
+
+def _mgmt_nl_command_idempotency_required() -> bool:
+    return _bool_from_env("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED")
+
+
+def _mgmt_nl_command_recovery_seconds() -> float:
+    raw = os.getenv(
+        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS",
+        "300",
+    ).strip()
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 300.0
+    return max(value, 0.001)
+
+
+def _mgmt_nl_command_idempotency_store() -> ManagementNlCommandIdempotencyStore:
+    global _MGMT_NL_COMMAND_IDEMPOTENCY_STORE, _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG
+    storage_path = os.getenv(
+        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
+        DEFAULT_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_PATH,
+    ).strip()
+    config = (storage_path, _mgmt_nl_command_recovery_seconds())
+    if _MGMT_NL_COMMAND_IDEMPOTENCY_STORE is None or _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG != config:
+        _MGMT_NL_COMMAND_IDEMPOTENCY_STORE = ManagementNlCommandIdempotencyStore(
+            storage_path,
+            recovery_seconds=config[1],
+        )
+        _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = config
+    return _MGMT_NL_COMMAND_IDEMPOTENCY_STORE
+
+
+def _mgmt_nl_command_scope(
+    *,
+    actor_id: str,
+    tenant_id: str,
+    resolved_key: str,
+) -> ManagementNlCommandScope:
+    return ManagementNlCommandScope(
+        actor_id=actor_id,
+        tenant_id=tenant_id,
+        route="POST /bff/management/nl/ask",
+        idempotency_key=resolved_key,
+    )
+
+
+def _mgmt_nl_result_is_terminal(result: Optional[Mapping[str, Any]]) -> bool:
+    if not isinstance(result, Mapping):
+        return False
+    data = result.get("data") if isinstance(result.get("data"), Mapping) else {}
+    meta = result.get("meta") if isinstance(result.get("meta"), Mapping) else {}
+    states = {
+        str(value or "").strip().lower()
+        for value in (
+            data.get("lifecycle_status"),
+            data.get("lifecycleStatus"),
+            data.get("status"),
+            meta.get("lifecycle_status"),
+            meta.get("lifecycleStatus"),
+            meta.get("status"),
+        )
+        if str(value or "").strip()
+    }
+    return not states.intersection({"accepted", "processing", "pending", "queued", "in_progress"})
+
+
+def _mgmt_nl_raise_command_idempotency_error(exc: Exception, *, display_key: str) -> None:
+    if isinstance(exc, ManagementNlCommandPayloadConflict):
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Idempotency key was already used with a different payload",
+            f"Key {display_key!r} is bound to a different Management NL command",
+            precondition_failed="idempotency_conflict",
+            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+        ) from exc
+    if isinstance(exc, ManagementNlCommandRecoveryRequired):
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Management NL command outcome is uncertain",
+            "The command will not be executed again until its prior outcome is reconciled.",
+            precondition_failed="idempotency_recovery_required",
+            suggestion="Inspect the durable conversation/provider audit and reconcile this key explicitly",
+        ) from exc
+    raise _bff_error(
+        503,
+        ErrorCode.DEPENDENCY_UNAVAILABLE,
+        "Management NL command admission store is unavailable",
+        str(exc),
+        precondition_failed="management_nl_command_idempotency_store",
+        suggestion="Restore the durable command idempotency volume before retrying",
+    ) from exc
+
+
+def _mgmt_nl_command_wait_seconds() -> float:
+    raw = os.getenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_WAIT_SECONDS", "").strip()
+    if raw:
+        try:
+            return max(float(raw), 0.01)
+        except (TypeError, ValueError):
+            pass
+    provider_raw = os.getenv("PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS", "180").strip()
+    try:
+        provider_seconds = max(float(provider_raw), 0.1)
+    except (TypeError, ValueError):
+        provider_seconds = 180.0
+    return provider_seconds + 10.0
+
+
+def _mgmt_nl_command_poll_seconds() -> float:
+    raw = os.getenv(
+        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_POLL_SECONDS",
+        "0.05",
+    ).strip()
+    try:
+        return min(max(float(raw), 0.005), 1.0)
+    except (TypeError, ValueError):
+        return 0.05
+
+
+async def _mgmt_nl_command_admit(
+    *,
+    scope: ManagementNlCommandScope,
+    request_hash: str,
+    legacy_result: Optional[Dict[str, Any]],
+    display_key: str,
+) -> tuple[Optional[ManagementNlCommandReservation], Optional[Dict[str, Any]]]:
+    if not _mgmt_nl_command_idempotency_required():
+        return None, legacy_result
+
+    store = _mgmt_nl_command_idempotency_store()
+    try:
+        admission = await asyncio.to_thread(
+            store.admit,
+            scope,
+            request_hash=request_hash,
+            legacy_result=legacy_result,
+            legacy_terminal=_mgmt_nl_result_is_terminal(legacy_result),
+        )
+    except (
+        ManagementNlCommandPayloadConflict,
+        ManagementNlCommandRecoveryRequired,
+        ManagementNlCommandStorageError,
+    ) as exc:
+        _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
+
+    if admission.state == "owner":
+        return admission.reservation, None
+    if admission.state == "complete":
+        return None, admission.result
+    if admission.state != "wait":
+        _mgmt_nl_raise_command_idempotency_error(
+            ManagementNlCommandStorageError(
+                f"Unsupported Management NL command admission state: {admission.state}"
+            ),
+            display_key=display_key,
+        )
+
+    deadline = asyncio.get_running_loop().time() + _mgmt_nl_command_wait_seconds()
+    while True:
+        if asyncio.get_running_loop().time() >= deadline:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Management NL command is still in progress",
+                "An exact concurrent request owns this idempotency key and has not reached a terminal result.",
+                precondition_failed="idempotency_in_progress",
+                suggestion="Retry the same payload and key after the current provider turn completes",
+            )
+        await asyncio.sleep(_mgmt_nl_command_poll_seconds())
+        try:
+            admission = await asyncio.to_thread(
+                store.observe,
+                scope,
+                request_hash=request_hash,
+            )
+        except (
+            ManagementNlCommandPayloadConflict,
+            ManagementNlCommandRecoveryRequired,
+            ManagementNlCommandStorageError,
+        ) as exc:
+            _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
+        if admission.state == "complete":
+            return None, admission.result
+        if admission.state != "wait":
+            _mgmt_nl_raise_command_idempotency_error(
+                ManagementNlCommandStorageError(
+                    f"Unsupported Management NL command observation state: {admission.state}"
+                ),
+                display_key=display_key,
+            )
+
+
+async def _mgmt_nl_command_complete(
+    reservation: Optional[ManagementNlCommandReservation],
+    result: Dict[str, Any],
+    *,
+    display_key: str,
+) -> None:
+    if reservation is None:
+        return
+    try:
+        await asyncio.to_thread(
+            _mgmt_nl_command_idempotency_store().complete,
+            reservation,
+            result,
+        )
+    except (
+        ManagementNlCommandPayloadConflict,
+        ManagementNlCommandRecoveryRequired,
+        ManagementNlCommandStorageError,
+    ) as exc:
+        _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
+
+
+async def _mgmt_nl_command_mark_uncertain(
+    reservation: Optional[ManagementNlCommandReservation],
+    *,
+    reason: str,
+) -> None:
+    if reservation is None:
+        return
+    try:
+        await asyncio.to_thread(
+            _mgmt_nl_command_idempotency_store().mark_uncertain,
+            reservation,
+            reason=reason,
+        )
+    except Exception:
+        log.exception("Failed to mark Management NL command reservation uncertain")
+
+
+def _mgmt_nl_command_reservation_guard(handler: Callable[..., Any]) -> Callable[..., Any]:
+    """Mark any owned reservation uncertain before an exceptional response exits."""
+
+    @wraps(handler)
+    async def guarded(*args: Any, **kwargs: Any) -> Any:
+        token = _MGMT_NL_COMMAND_RESERVATION_CONTEXT.set(None)
+        try:
+            return await handler(*args, **kwargs)
+        except BaseException:
+            reservation = _MGMT_NL_COMMAND_RESERVATION_CONTEXT.get()
+            if reservation is not None:
+                try:
+                    await asyncio.shield(
+                        _mgmt_nl_command_mark_uncertain(
+                            reservation,
+                            reason="request_failed_before_terminal_commit",
+                        )
+                    )
+                except BaseException:
+                    # The durable recovery deadline still turns an abandoned
+                    # in-progress record uncertain if cancellation interrupts
+                    # this best-effort immediate transition.
+                    log.exception("Management NL reservation uncertainty guard failed")
+            raise
+        finally:
+            _MGMT_NL_COMMAND_RESERVATION_CONTEXT.reset(token)
+
+    return guarded
 
 
 def _mgmt_nl_surface_confidence(surfaces: Dict[str, Any]) -> str:
@@ -40493,7 +41223,85 @@ def _mgmt_nl_openclaw_repair_metadata(payload: Dict[str, Any]) -> Dict[str, Any]
     )
     if isinstance(pull_request, dict):
         metadata["pull_request"] = pull_request
+    receipt = repair.get("receipt")
+    if isinstance(receipt, str) and receipt.strip():
+        metadata["receipt"] = receipt.strip()
     return metadata
+
+
+def _mgmt_nl_authorize_openclaw_repair_metadata(
+    payload: Dict[str, Any],
+    *,
+    identity: OperatorIdentity,
+    caller_tenant_id: str,
+    control_mode: Dict[str, Any],
+) -> Dict[str, Any]:
+    from assistant.repair_receipts import RepairReceiptError, verify_repair_receipt
+
+    supplied = _mgmt_nl_openclaw_repair_metadata(payload)
+    mode = str(control_mode.get("mode") or "") if control_mode.get("active") else "user"
+    if mode != "kernel_repair":
+        if supplied:
+            raise _bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "Prepared repair metadata requires active kernel_repair control mode",
+                "Activate kernel_repair with the same authenticated operator before forwarding a prepare receipt.",
+                precondition_failed="control_mode",
+                details_extra={"reason": "kernel_repair_required", "mode": mode},
+            )
+        return {}
+
+    _mgmt_nl_raise_control_mode_actor_error(identity)
+    _mgmt_nl_require_mode_capability(identity, "kernel_repair")
+    activation_capabilities = {
+        str(value or "").strip() for value in (control_mode.get("capabilities") or [])
+    }
+    if "assistant.kernel.repair" not in activation_capabilities:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Active control mode is not authorized for repair writes",
+            "The active control-mode activation does not include assistant.kernel.repair.",
+            precondition_failed="control_mode_capability",
+            details_extra={
+                "reason": "activation_capability_missing",
+                "required_capability": "assistant.kernel.repair",
+            },
+        )
+
+    receipt = str(supplied.pop("receipt", "") or "").strip()
+    if not receipt:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Kernel repair requires a BFF-issued prepare receipt",
+            "Call /bff/assistant/repair-worktrees/prepare and forward its exact repair object.",
+            precondition_failed="repair_receipt",
+            details_extra={"reason": "repair_receipt_missing"},
+        )
+    try:
+        signed_repair = verify_repair_receipt(
+            receipt,
+            actor_id=identity.operator_id,
+            tenant_id=caller_tenant_id,
+            control_status=control_mode,
+            supplied_repair=supplied,
+        )
+    except RepairReceiptError as exc:
+        status_code = 503 if exc.reason == "receipt_key_unconfigured" else 403
+        code = ErrorCode.PRECONDITION_FAILED if status_code == 503 else ErrorCode.FORBIDDEN
+        raise _bff_error(
+            status_code,
+            code,
+            "Assistant repair prepare receipt is invalid",
+            str(exc),
+            precondition_failed="repair_receipt",
+            details_extra={"reason": exc.reason},
+        ) from exc
+    # The signed canonical object, not browser-supplied fields, crosses the BFF
+    # provider boundary. The receipt itself stays inside the BFF.
+    return signed_repair
 
 
 def _mgmt_nl_provider_mode_prompt_lines(provider_mode: str) -> List[str]:
@@ -40752,7 +41560,7 @@ def _mgmt_nl_maybe_provider_answer(
     }
     if provider_mode == "kernel_repair" and openclaw_repair_metadata:
         metadata.update(openclaw_repair_metadata)
-        metadata["repair_metadata_source"] = "management_nl_openclaw_payload"
+        metadata["repair_metadata_source"] = "bff_prepared_repair_receipt"
 
     def _provider_failure(error: OpenClawOpsClientError) -> Tuple[None, Dict[str, Any], List[Dict[str, Any]]]:
         duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
@@ -40924,6 +41732,34 @@ def _mgmt_nl_provider_inline_grace_seconds() -> float:
     return value if value > 0 else _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS
 
 
+def _mgmt_nl_provider_inline_wait_seconds(control_mode: Dict[str, Any]) -> float:
+    """Keep admitted repair writes synchronous through durable result storage.
+
+    User/debug turns may finish asynchronously for UI responsiveness. A repair
+    turn can mutate its prepared worktree, so returning while only an in-memory
+    finalizer owns the terminal response would lose bounded recovery on BFF
+    restart. Wait through the adapter's provider timeout, then persist the
+    terminal result before returning the 202 response.
+    """
+
+    if not control_mode.get("active") or str(control_mode.get("mode") or "") != "kernel_repair":
+        return _mgmt_nl_provider_inline_grace_seconds()
+    raw = os.getenv("PANTHEON_MANAGEMENT_NL_REPAIR_INLINE_TIMEOUT_SECONDS", "").strip()
+    if raw:
+        try:
+            configured = float(raw)
+        except (TypeError, ValueError):
+            configured = 0.0
+        if configured > 0:
+            return configured
+    provider_raw = os.getenv("PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS", "180.0").strip()
+    try:
+        provider_timeout = max(float(provider_raw), 0.1)
+    except (TypeError, ValueError):
+        provider_timeout = 180.0
+    return provider_timeout + 5.0
+
+
 def _mgmt_nl_stream_read_timeout_seconds() -> float:
     raw = os.getenv("PANTHEON_MANAGEMENT_NL_STREAM_READ_TIMEOUT_SECONDS")
     if raw is None or not str(raw).strip():
@@ -40991,10 +41827,12 @@ async def _mgmt_nl_finalize_provider_turn(
     trace_id: str,
     focus: str,
     resolved_key: str,
+    idempotency_storage_key: Optional[str] = None,
     request_hash: str,
     audit_log_href: str,
     conversation_href: str,
     base_result: Dict[str, Any],
+    command_reservation: Optional[ManagementNlCommandReservation] = None,
 ) -> None:
     """Finish a nl/ask exchange whose provider call exceeded the inline grace
     window: await the in-flight agent run, then append the assistant turn exactly
@@ -41051,18 +41889,28 @@ async def _mgmt_nl_finalize_provider_turn(
             audit_log_href=audit_log_href,
             conversation_href=conversation_href,
         )
+        final_result = _mgmt_nl_finalize_result(
+            base_result,
+            answer=answer,
+            provider_status=provider_status,
+            actions=actions,
+        )
         _mgmt_nl_idempotency_put(
-            resolved_key,
+            idempotency_storage_key or resolved_key,
             request_hash=request_hash,
-            result=_mgmt_nl_finalize_result(
-                base_result,
-                answer=answer,
-                provider_status=provider_status,
-                actions=actions,
-            ),
+            result=final_result,
+        )
+        await _mgmt_nl_command_complete(
+            command_reservation,
+            final_result,
+            display_key=resolved_key,
         )
     except Exception:
         log.warning("Failed to persist async-finalised Management NL turn", exc_info=True)
+        await _mgmt_nl_command_mark_uncertain(
+            command_reservation,
+            reason="async_provider_finalization_failed",
+        )
 
 
 def _mgmt_nl_schedule_provider_finalize(**kwargs: Any) -> None:
@@ -41072,6 +41920,7 @@ def _mgmt_nl_schedule_provider_finalize(**kwargs: Any) -> None:
 
 
 @app.post("/bff/management/nl/ask", status_code=202)
+@_mgmt_nl_command_reservation_guard
 async def bff_management_nl_ask(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -41133,25 +41982,18 @@ async def bff_management_nl_ask(
     allowed_action_kinds = _mgmt_nl_allowed_action_kinds(ui_snapshot)
 
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    idempotency_storage_key = _mgmt_nl_idempotency_storage_key(
+        resolved_key,
+        actor_id=identity.operator_id,
+        tenant_id=caller_tenant_id,
+    )
     request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
-    cached = _mgmt_nl_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        cached_data = cached.get("data") if isinstance(cached, dict) else {}
-        _management_ai_record_event(
-            {
-                "event_type": "management_ai.exchange.replayed",
-                "session_id": str((cached_data or {}).get("session_id") or payload.get("session_id") or payload.get("sessionId") or ""),
-                "message_id": str((cached_data or {}).get("message_id") or ""),
-                "trace_id": str((cached_data or {}).get("trace_id") or (cached_data or {}).get("traceId") or ""),
-                "actor_id": identity.operator_id,
-                "focus": focus,
-                "route": "POST /bff/management/nl/ask",
-                "idempotency_key": resolved_key,
-            }
-        )
-        return JSONResponse(status_code=202, content=_management_json_clone(cached))
-
-    if _request_dry_run_requested():
+    legacy_cached = _mgmt_nl_idempotency_check(
+        idempotency_storage_key,
+        request_hash,
+        display_key=resolved_key,
+    )
+    if legacy_cached is None and _request_dry_run_requested():
         return _dry_run_success_response(
             {
                 "status": "accepted",
@@ -41174,12 +42016,40 @@ async def bff_management_nl_ask(
             },
         )
 
+    command_scope = _mgmt_nl_command_scope(
+        actor_id=identity.operator_id,
+        tenant_id=caller_tenant_id,
+        resolved_key=resolved_key,
+    )
+    command_reservation, cached = await _mgmt_nl_command_admit(
+        scope=command_scope,
+        request_hash=request_hash,
+        legacy_result=legacy_cached,
+        display_key=resolved_key,
+    )
+    _MGMT_NL_COMMAND_RESERVATION_CONTEXT.set(command_reservation)
+    if cached is not None:
+        cached_data = cached.get("data") if isinstance(cached, dict) else {}
+        _management_ai_record_event(
+            {
+                "event_type": "management_ai.exchange.replayed",
+                "session_id": str((cached_data or {}).get("session_id") or payload.get("session_id") or payload.get("sessionId") or ""),
+                "message_id": str((cached_data or {}).get("message_id") or ""),
+                "trace_id": str((cached_data or {}).get("trace_id") or (cached_data or {}).get("traceId") or ""),
+                "actor_id": identity.operator_id,
+                "focus": focus,
+                "route": "POST /bff/management/nl/ask",
+                "idempotency_key": resolved_key,
+            }
+        )
+        return JSONResponse(status_code=202, content=_management_json_clone(cached))
+
     now = utc_now()
     session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
     message_id = f"mnl-{uuid.uuid4().hex[:16]}"
     trace_id = str(payload.get("traceId") or payload.get("trace_id") or f"mnl-trace-{uuid.uuid4().hex[:12]}")
     if control_command is not None:
-        return _mgmt_nl_handle_control_command(
+        control_response = _mgmt_nl_handle_control_command(
             control_command=control_command,
             payload=payload,
             identity=identity,
@@ -41187,17 +42057,31 @@ async def bff_management_nl_ask(
             focus=focus,
             ui_snapshot=ui_snapshot,
             resolved_key=resolved_key,
+            idempotency_storage_key=idempotency_storage_key,
             request_hash=request_hash,
             session_id=session_id,
             message_id=message_id,
             trace_id=trace_id,
             now=now,
         )
+        control_result = json.loads(control_response.body)
+        await _mgmt_nl_command_complete(
+            command_reservation,
+            control_result,
+            display_key=resolved_key,
+        )
+        return control_response
 
     control_mode = _assistant_control_mode_for_identity(
         identity,
         management_session_id=session_id,
         touch=True,
+    )
+    openclaw_repair_metadata = _mgmt_nl_authorize_openclaw_repair_metadata(
+        payload,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        control_mode=control_mode,
     )
     _management_ai_ensure_session(
         session_id=session_id,
@@ -41353,8 +42237,6 @@ async def bff_management_nl_ask(
             "audit_ref": audit_ref,
         }
     )
-    openclaw_repair_metadata = _mgmt_nl_openclaw_repair_metadata(payload)
-
     # _mgmt_nl_maybe_provider_answer issues a synchronous, blocking HTTP call to
     # the OpenClaw adapter (OpenClawOpsClient.invoke_assistant_provider), which
     # drives the Claude/Codex CLI agent and can take 30s+. The BFF runs a single
@@ -41393,7 +42275,7 @@ async def bff_management_nl_ask(
         )
     )
     done, _ = await asyncio.wait(
-        {provider_task}, timeout=_mgmt_nl_provider_inline_grace_seconds()
+        {provider_task}, timeout=_mgmt_nl_provider_inline_wait_seconds(control_mode)
     )
     provider_pending = provider_task not in done
     if provider_pending:
@@ -41512,7 +42394,13 @@ async def bff_management_nl_ask(
         audit_log_href=audit_log_href,
         conversation_href=conversation_href,
     )
-    _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
+    _mgmt_nl_idempotency_put(idempotency_storage_key, request_hash=request_hash, result=result)
+    if not provider_pending:
+        await _mgmt_nl_command_complete(
+            command_reservation,
+            result,
+            display_key=resolved_key,
+        )
     if provider_pending:
         # The assistant turn was intentionally NOT persisted above: the store's
         # append_turn is not an upsert, so writing a placeholder here would leave
@@ -41528,10 +42416,12 @@ async def bff_management_nl_ask(
             trace_id=trace_id,
             focus=focus,
             resolved_key=resolved_key,
+            idempotency_storage_key=idempotency_storage_key,
             request_hash=request_hash,
             audit_log_href=audit_log_href,
             conversation_href=conversation_href,
             base_result=result,
+            command_reservation=command_reservation,
         )
     return JSONResponse(status_code=202, content=result)
 
@@ -41579,6 +42469,11 @@ def bff_management_nl_ask_stream(
 
     if control_command is not None:
         resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        idempotency_storage_key = _mgmt_nl_idempotency_storage_key(
+            resolved_key,
+            actor_id=identity.operator_id,
+            tenant_id=caller_tenant_id,
+        )
         request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask/stream", "payload": payload})
         control_response = _mgmt_nl_handle_control_command(
             control_command=control_command,
@@ -41588,6 +42483,7 @@ def bff_management_nl_ask_stream(
             focus=focus,
             ui_snapshot=ui_snapshot,
             resolved_key=resolved_key,
+            idempotency_storage_key=idempotency_storage_key,
             request_hash=request_hash,
             session_id=session_id,
             message_id=message_id,
@@ -43117,12 +44013,55 @@ async def bff_list_personas(
     _require_read_role(identity)
     snapshot_at = utc_now()
     raw_personas = _list_persona_records()
+
+    # Batch fetch runtime bindings and cron registrations for non-blocking readback
+    all_bindings: Dict[str, Dict[str, Any]] = {}
+    try:
+        client = _runtime_manager_client()
+        bindings_list = client.list_all()
+        for b in bindings_list:
+            b_id = b.get("binding_id") or b.get("id")
+            if b_id:
+                all_bindings[b_id] = b
+    except Exception as exc:
+        logger.warning(f"Failed to batch list runtime bindings: {exc}")
+
+    all_cron_registrations: Set[Tuple[str, str]] = set()
+    try:
+        if "persona_cron_registrar" not in sys.modules:
+            _saved_modules = {
+                name: sys.modules.pop(name)
+                for name in ("models", "workflows")
+                if name in sys.modules
+            }
+            sys.path.insert(0, _CRON_SERVICE_DIR)
+            try:
+                import persona_cron_registrar  # noqa: F401
+            finally:
+                sys.path.remove(_CRON_SERVICE_DIR)
+                for name in ("models", "workflows"):
+                    sys.modules.pop(name, None)
+                sys.modules.update(_saved_modules)
+        from persona_cron_registrar import PersonaCronRegistrar
+        registrar = PersonaCronRegistrar()
+        runtime = registrar._get_runtime()
+        if runtime is not None:
+            all_cron_registrations = registrar._existing_registrations(runtime)
+    except Exception as exc:
+        logger.warning(f"Failed to batch list cron registrations: {exc}")
+
     items = []
     for raw in raw_personas:
         persona_id = str(raw.get("persona_id") or raw.get("id") or "")
         overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
         routed = _routed_strategies_for_persona(persona_id)
-        dto = _project_persona_dto(raw, overlay=overlay, routed_strategies=routed)
+        dto = _project_persona_dto(
+            raw,
+            overlay=overlay,
+            routed_strategies=routed,
+            all_bindings=all_bindings,
+            all_cron_registrations=all_cron_registrations,
+        )
         items.append(dto)
     if state:
         items = [p for p in items if p.get("state") == state]
@@ -43302,13 +44241,44 @@ async def bff_create_persona(
             precondition_failed="name",
         )
     snapshot_at = utc_now()
-    persona_id = f"persona-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+
+    # 重重複建立與 retry 收斂邏輯
+    existing_personas = read_store.list_personas() or []
+    existing_persona = None
+    for p in existing_personas:
+        if str(p.get("name") or "").strip() == name:
+            existing_persona = p
+            break
+
+    if existing_persona:
+        persona_id = existing_persona.get("persona_id") or existing_persona.get("id")
+        existing_metadata = existing_persona.get("metadata") or {}
+        refs = {
+            "paper_ledger_id": existing_metadata.get("paper_ledger_id"),
+            "capital_pool_id": existing_metadata.get("legacy_paper_capital_pool_id") or existing_metadata.get("capital_pool_id"),
+            "binding_id": existing_metadata.get("binding_id") or existing_metadata.get("persona_capital_binding_id"),
+            "runtime_id": existing_metadata.get("runtime_id"),
+            "deployment_plan_id": existing_metadata.get("deployment_plan_id"),
+            "artifact_id": existing_metadata.get("artifact_id") or f"paper-artifact-{persona_id}",
+        }
+        if existing_persona.get("lifecycle_state") in ("provisioning_failed", "failed"):
+            read_store.update_persona(persona_id, lifecycle_state="provisioning")
+            existing_persona["lifecycle_state"] = "provisioning"
+            existing_persona["status"] = "provisioning"
+            if persona_id in _PERSONA_BFF_OVERLAY:
+                _PERSONA_BFF_OVERLAY[persona_id]["state"] = "provisioning"
+                _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = "provisioning"
+        persona_record = existing_persona
+    else:
+        persona_id = f"persona-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+        refs = _persona_create_paper_refs(persona_id, payload)
+        persona_record = None
+
     owner = str(payload.get("owner") or identity.operator_id)
     archetype = str(payload.get("archetype") or "generalist")
     risk = _normalize_risk_level(payload.get("risk") or "low")
     capital_mode = _persona_create_validate_paper_only(payload)
-    refs = _persona_create_paper_refs(persona_id, payload)
-    lifecycle_state = "paper_running"
+    lifecycle_state = "provisioning"
     market = str(payload.get("market") or "").strip().upper()
     required_data_sources = payload.get("required_data_sources") or payload.get("requiredDataSources")
     if not required_data_sources and market:
@@ -43411,71 +44381,106 @@ async def bff_create_persona(
             },
         }
     else:
-        persona_record = read_store.create_persona(
-            persona_id=persona_id,
-            name=name,
-            actor_id=owner,
-            created_at=snapshot_at,
-            archetype=archetype,
-            lifecycle_state=lifecycle_state,
-            risk_level=risk,
-            mandate=mandate,
-            strategy_family=strategy_family,
-            traits=traits,
-            metadata=persona_metadata,
-            required_data_sources=required_data_sources,
-        )
-        read_store.create_persona_binding(
-            binding_id=refs["binding_id"],
-            persona_id=persona_id,
-            capital_pool_id=refs["capital_pool_id"],
-            actor_id=owner,
-            created_at=snapshot_at,
-            role="paper_owner",
-            validity="active",
-            metadata={
-                "capital_mode": "paper",
-                "paper_ledger_id": refs["paper_ledger_id"],
-                "legacy_paper_capital_pool_id": refs["capital_pool_id"],
-                "live_capital_enabled": False,
-                "created_via": "POST /bff/personas",
-            },
-        )
-        read_store.create_deployment_plan(
-            plan_id=refs["deployment_plan_id"],
-            binding_id=refs["binding_id"],
-            artifact_id=refs["artifact_id"],
-            deployment_mode="paper",
-            capital_pool_id=refs["capital_pool_id"],
-            actor_id=owner,
-            created_at=snapshot_at,
-            params={
+        if existing_persona is None:
+            persona_record = read_store.create_persona(
+                persona_id=persona_id,
+                name=name,
+                actor_id=owner,
+                created_at=snapshot_at,
+                archetype=archetype,
+                lifecycle_state=lifecycle_state,
+                risk_level=risk,
+                mandate=mandate,
+                strategy_family=strategy_family,
+                traits=traits,
+                metadata=persona_metadata,
+                required_data_sources=required_data_sources,
+            )
+
+        if persona_record.get("lifecycle_state") == "provisioning":
+            # 1. Create the Capital binding
+            binding_payload = {
+                "actor_id": owner,
+                "actor_role": _capital_owner_role(identity),
+                "binding_id": refs["binding_id"],
                 "persona_id": persona_id,
-                "capital_mode": "paper",
-                "paper_ledger_id": refs["paper_ledger_id"],
-                "human_review_required_for_live": True,
-            },
-            locked=True,
-            status="approved",
-        )
-        read_store.create_runtime_binding(
-            runtime_id=refs["runtime_id"],
-            name=f"{name} paper runtime",
-            persona_id=persona_id,
-            binding_id=refs["binding_id"],
-            deployment_plan_id=refs["deployment_plan_id"],
-            runtime_kind="paper",
-            actor_id=owner,
-            created_at=snapshot_at,
-            params={
                 "capital_pool_id": refs["capital_pool_id"],
-                "capital_mode": "paper",
-                "paper_ledger_id": refs["paper_ledger_id"],
-                "live_write_enabled": False,
-                "order_side_effects_allowed": False,
-            },
-            state="running",
-        )
+                "role": "paper_owner",
+                "allowed_deployment_scope": "paper",
+                "idempotency_key": resolved_key,
+                "request_hash": request_hash,
+                "metadata": {
+                    "capital_mode": "paper",
+                    "paper_ledger_id": refs["paper_ledger_id"],
+                    "legacy_paper_capital_pool_id": refs["capital_pool_id"],
+                    "live_capital_enabled": False,
+                    "created_via": "POST /bff/personas",
+                },
+            }
+            create_capital_binding(binding_payload)
+
+            # 2. Create the Deployment plan (with GET check for idempotency)
+            plan_payload = {
+                "plan_id": refs["deployment_plan_id"],
+                "approval_decision_id": f"decision-persona-create-{persona_id}",
+                "capital_pool_id": refs["capital_pool_id"],
+                "target_stage": "paper",
+                "created_by": owner,
+                "sponsor_persona_id": persona_id,
+                "binding_id": refs["binding_id"],
+                "status": "approved",
+                "metadata": {
+                    "persona_id": persona_id,
+                    "capital_mode": "paper",
+                    "paper_ledger_id": refs["paper_ledger_id"],
+                    "human_review_required_for_live": True,
+                }
+            }
+            plan_exists = False
+            dep_url = _deployment_url(f"/api/deployment/plans/{refs['deployment_plan_id']}")
+            try:
+                _get_json(dep_url)
+                plan_exists = True
+            except Exception:
+                pass
+
+            if not plan_exists:
+                _post_json(_deployment_url("/api/deployment/plans"), plan_payload)
+
+            # 3. Deploy the Runtime (with GET check for idempotency)
+            runtime_payload = {
+                "plan_id": refs["deployment_plan_id"],
+                "plan_status": "approved",
+                "target_stage": "paper",
+                "artifact_id": refs["artifact_id"],
+                "artifact_version": "1.0.0",
+                "capital_pool_id": refs["capital_pool_id"],
+                "persona_capital_binding_id": refs["binding_id"],
+                "persona_capital_binding_status": "active",
+                "allowed_deployment_scope": "paper",
+                "loader_checks_passed": True,
+                "runtime_id": refs["runtime_id"],
+                "metadata": {
+                    "name": f"{name} paper runtime",
+                    "persona_id": persona_id,
+                    "binding_id": refs["binding_id"],
+                    "deployment_plan_id": refs["deployment_plan_id"],
+                    "runtime_kind": "paper",
+                    "capital_pool_id": refs["capital_pool_id"],
+                    "capital_mode": "paper",
+                    "paper_ledger_id": refs["paper_ledger_id"],
+                    "live_write_enabled": False,
+                    "order_side_effects_allowed": False,
+                }
+            }
+            client = _runtime_manager_client()
+            existing_binding = None
+            try:
+                existing_binding = client.get(refs["runtime_id"])
+            except Exception:
+                pass
+            if not existing_binding:
+                client.deploy(runtime_payload)
     overlay = _project_persona_dto(
         persona_record,
         overlay={
@@ -43518,7 +44523,7 @@ async def bff_create_persona(
         "data": overlay,
         "meta": {
             "snapshot_at": snapshot_at,
-            "create_flow": "one_shot_paper_running",
+            "create_flow": "one_shot_provisioning",
             "capital_mode": "paper",
             "paper_ledger_id": refs["paper_ledger_id"],
             "legacy_paper_capital_pool_id": refs["capital_pool_id"],

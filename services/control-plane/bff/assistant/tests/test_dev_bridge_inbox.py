@@ -9,6 +9,7 @@ import pytest
 from ..dev_bridge_inbox import drain_task_packet_inbox, queue_payload, queue_task_packet
 from ..dev_bridge_models import BridgeActor, BridgeTask, DevTaskPacket
 from ..dev_bridge_signer import sign_packet
+from .dev_bridge_test_support import write_materializing_ai_status
 
 
 TEST_KEY = b"test-key-for-dev-bridge-inbox"
@@ -45,31 +46,7 @@ def _make_packet(packet_id: str) -> DevTaskPacket:
 def _write_fake_repo(tmp_path: Path) -> Path:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
-    (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
-    scripts_dir = repo_root / "scripts"
-    scripts_dir.mkdir()
-    (scripts_dir / "ai_status.py").write_text(
-        "\n".join(
-            [
-                "import json",
-                "import os",
-                "import sys",
-                "from pathlib import Path",
-                "record = {",
-                "    'argv': sys.argv[1:],",
-                "    'ai_name': os.environ.get('AI_NAME'),",
-                "    'phase': os.environ.get('TASK_PHASE'),",
-                "    'artifacts': os.environ.get('TASK_ARTIFACTS'),",
-                "    'acceptance': os.environ.get('TASK_ACCEPTANCE'),",
-                "}",
-                "with Path('calls.jsonl').open('a', encoding='utf-8') as fh:",
-                "    fh.write(json.dumps(record, sort_keys=True) + '\\n')",
-                "sys.exit(0)",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    write_materializing_ai_status(repo_root)
     return repo_root
 
 
@@ -105,7 +82,17 @@ def test_queue_and_drain_packet_inbox_materializes_tasks(tmp_path: Path, monkeyp
         "Materialize queued assistant task",
     ]
     assert record["ai_name"] == "management-ai"
-    assert record["artifacts"] == "execute-plans/src/agora/pages/AskPersonas.tsx"
+    bridge = record["metadata"]["dev_bridge"]
+    assert bridge["packet_id"] == "pkt_inbox_live"
+    assert bridge["conversation_id"] == "mgmt-nl-inbox"
+    assert bridge["source_turn_ids"] == ["turn-user", "turn-assistant"]
+    assert bridge["task_spec"]["phase"] == "Sprint Inbox / Dev bridge"
+    assert bridge["task_spec"]["artifacts"] == [
+        "execute-plans/src/agora/pages/AskPersonas.tsx"
+    ]
+    assert bridge["task_spec"]["acceptance"] == [
+        "Task is queued then assigned through supervisor drain"
+    ]
 
 
 def test_queue_accepts_dev_docs_response_envelope_and_rejects_duplicates(
