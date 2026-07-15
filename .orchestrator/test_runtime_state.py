@@ -1527,6 +1527,52 @@ class RuntimeWriterInventoryTests(unittest.TestCase):
             ],
         )
 
+    def test_seeded_os_replace_module_call_direct_writer_is_rejected(self) -> None:
+        unsafe = self.root / "scripts/unsafe_os_replace.py"
+        unsafe.write_text(
+            "import os\n"
+            "import tempfile\n"
+            "from pathlib import Path\n"
+            "STATUS_FILE = Path(__file__).parent / 'ai-status.json'\n"
+            "def mutate():\n"
+            "    with tempfile.NamedTemporaryFile('w', delete=False) as handle:\n"
+            "        handle.write('{}\\n')\n"
+            "        temp_path = Path(handle.name)\n"
+            "    os.replace(temp_path, STATUS_FILE)\n",
+            encoding="utf-8",
+        )
+        inventory = runtime_state.runtime_lock_source_inventory(self.root)
+        self.assertEqual(
+            inventory["unregistered_direct_writers"],
+            [
+                {
+                    "path": "scripts/unsafe_os_replace.py",
+                    "line": 9,
+                    "sink": "replace",
+                    "reason_id": "unregistered_direct_canonical_write",
+                }
+            ],
+        )
+
+    def test_writer_inside_canonical_task_state_lock_block_is_not_flagged(self) -> None:
+        locked = self.root / "scripts/locked_writer.py"
+        locked.write_text(
+            "import os\n"
+            "import tempfile\n"
+            "from pathlib import Path\n"
+            "from runtime_state import canonical_task_state_lock_file\n"
+            "STATUS_FILE = Path(__file__).parent / 'ai-status.json'\n"
+            "def mutate():\n"
+            "    with canonical_task_state_lock_file(STATUS_FILE):\n"
+            "        with tempfile.NamedTemporaryFile('w', delete=False) as handle:\n"
+            "            handle.write('{}\\n')\n"
+            "            temp_path = Path(handle.name)\n"
+            "        os.replace(temp_path, STATUS_FILE)\n",
+            encoding="utf-8",
+        )
+        inventory = runtime_state.runtime_lock_source_inventory(self.root)
+        self.assertEqual(inventory["unregistered_direct_writers"], [])
+
     def test_guarded_isolated_fixture_writer_is_not_canonical(self) -> None:
         guarded = self.root / "scripts/guarded_writer.py"
         guarded.write_text(

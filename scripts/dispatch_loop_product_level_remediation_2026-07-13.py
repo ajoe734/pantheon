@@ -1715,7 +1715,12 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
 
 
 def archive_status(path: Path) -> str:
-    payload = read_json(path)
+    # Route through the no-follow archive reader: `path.is_file()` /
+    # `read_json()` both follow symlinks, which would let a symlinked archive
+    # leaf report an arbitrary external status.
+    payload = read_canonical_archive_payload(path)
+    if payload is None:
+        return ""
     task_payload = payload.get("task") if isinstance(payload.get("task"), dict) else {}
     return str(
         payload.get("terminal_status")
@@ -1733,7 +1738,7 @@ def dependency_state(
     if active is not None:
         return str(active.get("status") or "unknown"), "active"
     archived = ARCHIVE_ROOT / f"{dep_id}.json"
-    if archived.is_file():
+    if read_canonical_archive_payload(archived) is not None:
         return archive_status(archived), "archive"
     return "missing", "missing"
 
@@ -2989,7 +2994,7 @@ def build_task(
 
 def archived_primary_status(task_id: str) -> str | None:
     path = ARCHIVE_ROOT / f"{task_id}.json"
-    if not path.is_file():
+    if read_canonical_archive_payload(path) is None:
         return None
     status = archive_status(path)
     if status not in TERMINAL_STATUSES:

@@ -724,6 +724,26 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
                 ["old", "new"],
             )
 
+    def test_symlinked_rotated_archive_source_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_path.write_text('{"event_id":"active"}\n', encoding="utf-8")
+            archive_dir = log_path.parent / "archive" / "logs"
+            archive_dir.mkdir(parents=True)
+            external = Path(tmpdir) / "external-payload.gz"
+            with gzip.open(external, "wt", encoding="utf-8") as handle:
+                handle.write('{"event_id":"forged"}\n')
+            archive_leaf = archive_dir / f"{log_path.name}-deadbeef.gz"
+            archive_leaf.symlink_to(external)
+
+            with self.assertRaisesRegex(
+                RuntimeError, "activity audit source leaf cannot be a symlink"
+            ):
+                with common.activity_audit_lock_file(
+                    log_path, shared=True, nonblocking=False
+                ):
+                    common.activity_audit_source_paths_unlocked(log_path)
+
 
 if __name__ == "__main__":
     unittest.main()

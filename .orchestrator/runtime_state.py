@@ -110,6 +110,10 @@ _CANONICAL_GUARD_FUNCTIONS = {
     "assert_isolated_legacy_write_target",
     "assert_noncanonical_bundle_target",
 }
+_CANONICAL_LOCK_CONTEXT_FUNCTIONS = {
+    "canonical_task_state_lock_file",
+    "activity_audit_lock_file",
+}
 
 
 def default_state() -> dict[str, Any]:
@@ -1354,7 +1358,20 @@ def _sink_target(call: ast.Call, tainted: set[str]) -> tuple[ast.AST | None, str
         if name == "open" and _write_mode(call, builtin_open=False):
             if _ast_has_canonical_literal(receiver) or _ast_symbols(receiver) & tainted:
                 return receiver, "path.open(write)"
-        if name in _DIRECT_SINK_ATTRIBUTES:
+        # `os.replace(src, dst)` / `os.rename(src, dst)` are module-level
+        # functions reached through attribute access (`os.replace`), not
+        # `Path.replace`/`Path.rename` instance methods. Treating every
+        # `<name>.replace(...)` receiver the same conflates the two shapes:
+        # the receiver-name heuristic below exists to avoid false positives
+        # on unrelated `.replace()` calls (e.g. `str.replace`), but for a
+        # known module receiver there is no such ambiguity and the call must
+        # fall through to the destination-argument check instead of
+        # returning early.
+        receiver_is_module_call = isinstance(receiver, ast.Name) and receiver.id in {
+            "os",
+            "shutil",
+        }
+        if name in _DIRECT_SINK_ATTRIBUTES and not receiver_is_module_call:
             if name in {"replace", "rename"}:
                 receiver_symbols = _ast_symbols(receiver)
                 if isinstance(receiver, ast.Call) or not any(
@@ -1424,6 +1441,21 @@ def _python_writer_violations(root: Path, path: Path) -> list[dict[str, Any]]:
             for call in calls
             if _call_name(call) in _CANONICAL_GUARD_FUNCTIONS and call.args
         ]
+        # A write lexically inside `with canonical_task_state_lock_file(...):`
+        # (or the activity-audit equivalent) already shares the same stable
+        # lock every registered writer takes, so it is not an "unregistered"
+        # direct writer even though it lives outside the fixed core-protocol
+        # file list above.
+        lock_ranges = [
+            (int(getattr(node, "lineno", 0)), int(getattr(node, "end_lineno", getattr(node, "lineno", 0))))
+            for node in ast.walk(scope)
+            if isinstance(node, ast.With)
+            and any(
+                isinstance(item.context_expr, ast.Call)
+                and _call_name(item.context_expr) in _CANONICAL_LOCK_CONTEXT_FUNCTIONS
+                for item in node.items
+            )
+        ]
         for call in calls:
             sink = _sink_target(call, tainted)
             if sink is None:
@@ -1446,6 +1478,8 @@ def _python_writer_violations(root: Path, path: Path) -> list[dict[str, Any]]:
                 for guard in guard_calls
             )
             if guarded:
+                continue
+            if any(start <= key[0] <= end for start, end in lock_ranges):
                 continue
             violations.append(
                 {

@@ -1270,6 +1270,16 @@ def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
     )
     if log_path.is_file():
         sources.append(log_path)
+    for source in sources:
+        # A rotated or active audit source can never be a symlink: callers
+        # read these paths with a plain `gzip.open()` / `read_text()`, which
+        # follows symlinks, and a forged or conflicting external payload
+        # injected through a symlinked archive leaf would otherwise be
+        # accepted into activity_event_index()/program_activity_records().
+        if source.is_symlink():
+            raise RuntimeError(
+                f"activity audit source leaf cannot be a symlink: {source}"
+            )
     return sources
 
 

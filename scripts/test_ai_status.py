@@ -462,21 +462,27 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             ],
         }
         pantheon_root = Path("/tmp/pantheon-task-worktree")
-        missing_execute_plans_root = Path("/tmp/pantheon-worker-worktrees/pantheon/execute-plans")
+        # Use a path guaranteed absent rather than a fixed literal: a real
+        # worker layout with an active execute-plans checkout would make a
+        # hardcoded literal path like that actually exist, silently turning
+        # this into the "active" branch instead of exercising the
+        # missing-repo fallback.
+        with tempfile.TemporaryDirectory() as missing_repo_parent:
+            missing_execute_plans_root = Path(missing_repo_parent) / "execute-plans"
 
-        def fake_repository_local_path(_config: dict[str, object], repo_id: str | None) -> Path | None:
-            if repo_id == "execute_plans":
-                return missing_execute_plans_root
-            if repo_id == "pantheon":
-                return pantheon_root
-            return None
+            def fake_repository_local_path(_config: dict[str, object], repo_id: str | None) -> Path | None:
+                if repo_id == "execute_plans":
+                    return missing_execute_plans_root
+                if repo_id == "pantheon":
+                    return pantheon_root
+                return None
 
-        with (
-            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
-            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
-            mock.patch.object(ai_status, "repository_local_path", side_effect=fake_repository_local_path),
-        ):
-            delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
+            with (
+                mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+                mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+                mock.patch.object(ai_status, "repository_local_path", side_effect=fake_repository_local_path),
+            ):
+                delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
 
         self.assertEqual(delivery["repository_id"], "pantheon")
         self.assertEqual(delivery["repository_path"], str(pantheon_root))

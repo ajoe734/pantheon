@@ -1625,6 +1625,35 @@ def test_terminal_archive_symlink_is_rejected_without_writes() -> None:
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
 
+def test_external_dependency_archive_symlink_is_rejected_without_writes() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        dep_id = "LOOP-PROD-RUNTIME-BOOT-001"
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        task = next(item for item in state["tasks"] if item.get("id") == dep_id)
+        state["tasks"] = [item for item in state["tasks"] if item.get("id") != dep_id]
+        write_terminal_archive(root, task, archived_at="2026-07-15T00:00:00Z")
+        archive = root / "ai-task-archive" / "tasks" / f"{dep_id}.json"
+        external = root / f"external-{dep_id}.json"
+        archive.replace(external)
+        archive.symlink_to(external)
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        result = run_dispatch(root)
+
+        assert result.returncode == 2
+        assert "canonical task archive must be a regular file" in result.stderr
+        assert archive.is_symlink()
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
 def test_in_progress_task_with_rewritten_contract_fails_graph_binding() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)

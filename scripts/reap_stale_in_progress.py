@@ -29,6 +29,12 @@ import time
 from pathlib import Path
 
 ROOT = Path(os.environ.get("PANTHEON_STATUS_ROOT", "/home/lupin/code/pantheon"))
+ORCHESTRATOR_DIR = Path(__file__).resolve().parents[1] / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+
+from runtime_state import canonical_task_state_lock_file  # noqa: E402
+
 STATUS_FILE = ROOT / "ai-status.json"
 STATE_FILE = ROOT / ".orchestrator" / "reap-in-progress-state.json"
 LOCK_FILE = ROOT / ".orchestrator" / "reap-in-progress.lock"
@@ -72,19 +78,6 @@ def _running_task_ids() -> set[str]:
     return ids
 
 
-def _save_state(state: dict) -> None:
-    """Atomic replace, matching scripts/ai_status.py save_state discipline."""
-    serialized = json.dumps(state, indent=2, ensure_ascii=False) + "\n"
-    with tempfile.NamedTemporaryFile(
-        "w", encoding="utf-8", dir=STATUS_FILE.parent, delete=False
-    ) as handle:
-        handle.write(serialized)
-        handle.flush()
-        os.fsync(handle.fileno())
-        temp_path = Path(handle.name)
-    os.replace(temp_path, STATUS_FILE)
-
-
 def main() -> int:
     # Single-instance: a second cron tick must not race the first.
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -97,52 +90,70 @@ def main() -> int:
         print("reap: another run holds the lock; skipping")
         return 0
 
-    raw = STATUS_FILE.read_text(encoding="utf-8")
-    if not raw.strip():
-        print("reap: refusing to act on empty status file", file=sys.stderr)
-        return 1
-    data = json.loads(raw)
+    # Hold the shared canonical task-state lock for the full read-decide-write
+    # cycle so this reap pass cannot race ai_status.py / supervisor / dispatcher
+    # task-state transactions and clobber newer task truth with a stale read.
+    with canonical_task_state_lock_file(STATUS_FILE):
+        raw = STATUS_FILE.read_text(encoding="utf-8")
+        if not raw.strip():
+            print("reap: refusing to act on empty status file", file=sys.stderr)
+            return 1
+        data = json.loads(raw)
 
-    running = _running_task_ids()
-    now = time.time()
-    try:
-        seen = json.loads(STATE_FILE.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
-        seen = {}
+        running = _running_task_ids()
+        now = time.time()
+        try:
+            seen = json.loads(STATE_FILE.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            seen = {}
 
-    reaped, loop_capped = [], []
-    for task in data.get("tasks", []):
-        if task.get("status") != "in_progress":
-            continue
-        tid = task["id"]
-        if tid in running:
-            continue
-        age = now - _parse_iso(task.get("last_update", ""))
-        if age < MIN_AGE_SECONDS:
-            continue
-        record = seen.get(tid, {"reaps": 0})
-        if record.get("reaps", 0) >= MAX_AUTO_REAPS:
-            loop_capped.append(tid)
-            continue
-        if DRY_RUN:
-            print(f"WOULD reap {tid} owner={task.get('owner')} stale={age/60:.0f}m")
+        reaped, loop_capped = [], []
+        for task in data.get("tasks", []):
+            if task.get("status") != "in_progress":
+                continue
+            tid = task["id"]
+            if tid in running:
+                continue
+            age = now - _parse_iso(task.get("last_update", ""))
+            if age < MIN_AGE_SECONDS:
+                continue
+            record = seen.get(tid, {"reaps": 0})
+            if record.get("reaps", 0) >= MAX_AUTO_REAPS:
+                loop_capped.append(tid)
+                continue
+            if DRY_RUN:
+                print(f"WOULD reap {tid} owner={task.get('owner')} stale={age/60:.0f}m")
+                reaped.append(tid)
+                continue
+            task["status"] = "todo"
+            task["last_update"] = _iso_now()
+            task["next"] = (
+                f"[auto-reap] in_progress {age/60:.0f}m with no live worker; run abandoned. "
+                f"Reset to todo for re-dispatch (auto-reap #{record.get('reaps', 0) + 1}/{MAX_AUTO_REAPS})."
+            )
+            task.pop("waiting_for", None)
+            record["reaps"] = record.get("reaps", 0) + 1
+            record["last_reap_at"] = int(now)
+            seen[tid] = record
             reaped.append(tid)
-            continue
-        task["status"] = "todo"
-        task["last_update"] = _iso_now()
-        task["next"] = (
-            f"[auto-reap] in_progress {age/60:.0f}m with no live worker; run abandoned. "
-            f"Reset to todo for re-dispatch (auto-reap #{record.get('reaps', 0) + 1}/{MAX_AUTO_REAPS})."
-        )
-        task.pop("waiting_for", None)
-        record["reaps"] = record.get("reaps", 0) + 1
-        record["last_reap_at"] = int(now)
-        seen[tid] = record
-        reaped.append(tid)
 
-    if reaped and not DRY_RUN:
-        _save_state(data)
-        STATE_FILE.write_text(json.dumps(seen, indent=2))
+        if reaped and not DRY_RUN:
+            # Atomic replace, matching scripts/ai_status.py save discipline.
+            # This write must stay lexically inside the lock block above: the
+            # canonical writer-inventory scanner recognizes a direct
+            # `os.replace(..., STATUS_FILE)` as lock-protected only when it is
+            # textually nested under a `with canonical_task_state_lock_file(...)`
+            # statement in the same function scope.
+            serialized = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+            with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", dir=STATUS_FILE.parent, delete=False
+            ) as handle:
+                handle.write(serialized)
+                handle.flush()
+                os.fsync(handle.fileno())
+                temp_path = Path(handle.name)
+            os.replace(temp_path, STATUS_FILE)
+            STATE_FILE.write_text(json.dumps(seen, indent=2))
 
     print(
         f"{_iso_now()} reap-in-progress: reaped={reaped or 'none'} loop-capped={loop_capped or 'none'}"
