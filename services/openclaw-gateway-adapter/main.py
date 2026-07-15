@@ -79,11 +79,17 @@ from live_gate_adapter import (
     LiveGateError,
 )
 from assistant_credential_mounts import AssistantCredentialMounts
-from assistant_codex_provider import AssistantCodexProvider, CodexProviderError
+from assistant_codex_provider import (
+    AssistantCodexProvider,
+    CODEX_PROVIDER_ID,
+    PROVIDER_RUNTIME as CODEX_PROVIDER_RUNTIME,
+    CodexProviderError,
+)
 from assistant_claude_provider import AssistantClaudeProvider, ClaudeProviderError, ClaudeProviderResult
 from assistant_openclaw_provider import (
     AssistantOpenClawProvider,
     OpenClawProviderError as GatewayOpenClawProviderError,
+    delegates_kernel_mode_to_codex,
 )
 from assistant_provider_registry import AssistantProviderRegistry, AssistantProviderRegistryError
 from assistant_provider_runtime import (
@@ -1201,17 +1207,7 @@ def invoke_codex_provider(
     if x_trace_id:
         metadata.setdefault("trace_id", x_trace_id)
     try:
-        result = _CODEX_RUNTIME.invoke(
-            ProviderInvocationRequest(
-                provider="codex_cli",
-                mode=req.mode,
-                prompt=req.prompt,
-                context_pack=req.context_pack or {},
-                metadata=metadata,
-                messages=req.messages,
-                attachments=req.attachments,
-            )
-        )
+        result = _invoke_codex_runtime(req, metadata=metadata)
     except CodexProviderError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
     except AssistantProviderRuntimeError as exc:
@@ -1231,6 +1227,84 @@ def invoke_codex_provider(
     )
 
 
+def _invoke_codex_runtime(
+    req: AssistantProviderInvokeRequest,
+    *,
+    metadata: Dict[str, Any],
+    mode: Optional[str] = None,
+) -> Any:
+    return _CODEX_RUNTIME.invoke(
+        ProviderInvocationRequest(
+            provider=CODEX_PROVIDER_ID,
+            mode=mode or req.mode,
+            prompt=req.prompt,
+            context_pack=req.context_pack or {},
+            metadata=metadata,
+            messages=req.messages,
+            attachments=req.attachments,
+        )
+    )
+
+
+def _delegated_codex_result_data(result: Any, *, route: str) -> Dict[str, Any]:
+    raw_output = result.output
+    output = dict(raw_output) if isinstance(raw_output, dict) else {"result": raw_output}
+    runtime = str(output.get("runtime") or CODEX_PROVIDER_RUNTIME)
+    delegation = {
+        "from_provider": "openclaw",
+        "from_route": route,
+        "to_provider": str(result.provider or CODEX_PROVIDER_ID),
+        "runtime": runtime,
+    }
+    output["delegated_from"] = "openclaw"
+    output["delegated_from_route"] = route
+    output["delegation"] = delegation
+    return {
+        "provider": str(result.provider or CODEX_PROVIDER_ID),
+        "runtime": runtime,
+        "mode": result.mode,
+        "status": result.status,
+        "output": output,
+        "redaction": result.redaction,
+        "delegated_from": "openclaw",
+        "delegated_from_route": route,
+        "delegation": delegation,
+    }
+
+
+def _delegated_codex_text(value: Any) -> str:
+    if isinstance(value, str):
+        clean = value.strip()
+        if not clean:
+            return ""
+        for line in reversed(clean.splitlines()):
+            try:
+                parsed = json.loads(line)
+            except (TypeError, ValueError):
+                continue
+            found = _delegated_codex_text(parsed)
+            if found:
+                return found
+        return clean
+    if isinstance(value, list):
+        for item in reversed(value):
+            found = _delegated_codex_text(item)
+            if found:
+                return found
+        return ""
+    if not isinstance(value, dict):
+        return ""
+    for key in ("answer", "final", "text", "content", "message"):
+        found = _delegated_codex_text(value.get(key))
+        if found:
+            return found
+    for key in ("item", "output", "json_events", "stdout"):
+        found = _delegated_codex_text(value.get(key))
+        if found:
+            return found
+    return ""
+
+
 @app.post("/api/openclaw-adapter/assistant/providers/openclaw/invoke")
 def invoke_openclaw_provider(
     req: AssistantProviderInvokeRequest,
@@ -1239,10 +1313,9 @@ def invoke_openclaw_provider(
 ) -> JSONResponse:
     """Invoke the OpenClaw gateway agent as the assistant provider.
 
-    Routes the prompt through the upstream OpenClaw agent (agent=main) so
-    Management AI answers carry tool resolution, memory, and persona context.
-    Degrades cleanly: returns HTTP 200 with status=degraded when the gateway
-    is absent, so the BFF can apply its configured fallback.
+    User mode routes through the upstream OpenClaw agent. Kernel debug/repair
+    modes delegate to the adapter's Codex runtime so their read-only/task-
+    worktree sandbox and repair metadata are enforced at the execution boundary.
     """
     if not x_operator_id or not x_operator_id.strip():
         return JSONResponse(
@@ -1257,10 +1330,28 @@ def invoke_openclaw_provider(
     metadata["operator_id"] = x_operator_id.strip()
     if x_trace_id:
         metadata.setdefault("trace_id", x_trace_id)
+    mode = str(req.mode or "user").strip().lower() or "user"
+    if delegates_kernel_mode_to_codex(mode):
+        try:
+            result = _invoke_codex_runtime(req, metadata=metadata, mode=mode)
+        except CodexProviderError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+        except AssistantProviderRuntimeError as exc:
+            return _assistant_provider_runtime_error_response(exc)
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "ok",
+                "data": _delegated_codex_result_data(
+                    result,
+                    route="/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                ),
+            },
+        )
     try:
         result = _OPENCLAW_AGENT_PROVIDER.invoke(
             req.prompt,
-            mode=req.mode,
+            mode=mode,
             context_pack=req.context_pack or {},
             metadata=metadata,
             messages=req.messages,
@@ -1274,7 +1365,7 @@ def invoke_openclaw_provider(
                 "status": "ok",
                 "data": {
                     "provider": "openclaw",
-                    "mode": req.mode,
+                    "mode": mode,
                     "status": "degraded",
                     "output": {
                         "json_events": [],
@@ -1307,10 +1398,12 @@ def invoke_openclaw_provider_stream(
         data: {"type":"done","text":"...","elapsed_ms":N,"transport":"responses_http"}
         data: {"type":"error","error_code":"...","message":"..."}
         data: [DONE]
-    The agent run preserves workspace/memory/persona (same codepath as `openclaw agent`).
+    User mode preserves the upstream agent session. Kernel debug/repair modes
+    execute through the scoped Codex runtime and emit a terminal SSE event.
     """
     operator = (x_operator_id or "").strip()
     metadata = dict(req.metadata or {})
+    mode = str(req.mode or "user").strip().lower() or "user"
     # Stable per-conversation session so multi-turn shares a warm agent session.
     session_user = str(metadata.get("session_user") or metadata.get("session_id") or operator or "").strip() or None
 
@@ -1322,10 +1415,50 @@ def invoke_openclaw_provider_stream(
             }) + "\n\n"
             yield "data: [DONE]\n\n"
             return
+        metadata["operator_id"] = operator
+        if x_trace_id:
+            metadata.setdefault("trace_id", x_trace_id)
+        if delegates_kernel_mode_to_codex(mode):
+            try:
+                result = _invoke_codex_runtime(req, metadata=metadata, mode=mode)
+                data = _delegated_codex_result_data(
+                    result,
+                    route="/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream",
+                )
+                output = data["output"]
+                event = {
+                    "type": "done",
+                    "text": _delegated_codex_text(output),
+                    "transport": "codex_runtime",
+                    "provider": data["provider"],
+                    "runtime": data["runtime"],
+                    "mode": data["mode"],
+                    "delegated_from": "openclaw",
+                }
+                for key in ("sandbox", "workspace_class", "repair_workflow", "post_run_repair_workflow"):
+                    if output.get(key) is not None:
+                        event[key] = output[key]
+                yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+            except CodexProviderError as exc:
+                yield "data: " + json.dumps({
+                    "type": "error",
+                    "error_code": exc.code,
+                    "message": str(exc),
+                    "status_code": exc.status_code,
+                }) + "\n\n"
+            except AssistantProviderRuntimeError as exc:
+                yield "data: " + json.dumps({
+                    "type": "error",
+                    "error_code": exc.code,
+                    "message": str(exc),
+                    "status_code": 400,
+                }) + "\n\n"
+            yield "data: [DONE]\n\n"
+            return
         try:
             for evt in _OPENCLAW_AGENT_PROVIDER.stream(
                 req.prompt,
-                mode=req.mode,
+                mode=mode,
                 operator_id=operator,
                 trace_id=x_trace_id,
                 session_user=session_user,

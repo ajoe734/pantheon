@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 from pathlib import Path
 import sys
@@ -1446,6 +1447,157 @@ class TestOpenClawAssistantProvider(unittest.TestCase):
         body = resp.json()
         self.assertEqual(body["error_code"], "OPERATOR_REQUIRED")
 
+    def test_openclaw_kernel_debug_delegates_to_codex_read_only_runtime(self):
+        fake_result = types.SimpleNamespace(
+            provider="codex_cli",
+            mode="kernel_debug",
+            status="completed",
+            output={
+                "provider": "codex_cli",
+                "runtime": "openclaw_gateway_cli_mount",
+                "status": "completed",
+                "sandbox": "read-only",
+                "workspace_class": "read_only",
+                "json_events": [{"final": "debug complete"}],
+            },
+            redaction={"provider_invocation": {"enabled": True}},
+        )
+        with (
+            patch.object(adapter_main._CODEX_RUNTIME, "invoke", return_value=fake_result) as codex_invoke,
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke") as openclaw_invoke,
+        ):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                json={
+                    "mode": "kernel_debug",
+                    "prompt": "inspect the repository",
+                    "context_pack": {"context_pack_id": "ctx-debug"},
+                    "metadata": {"tenant_id": "tenant-alpha", "activation_id": "ctrl-debug"},
+                },
+                headers={"X-Operator-Id": "op-debug", "X-Trace-Id": "trace-debug"},
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        data = resp.json()["data"]
+        self.assertEqual(data["provider"], "codex_cli")
+        self.assertEqual(data["runtime"], "openclaw_gateway_cli_mount")
+        self.assertEqual(data["delegated_from"], "openclaw")
+        self.assertEqual(data["output"]["sandbox"], "read-only")
+        self.assertEqual(data["output"]["workspace_class"], "read_only")
+        self.assertEqual(data["output"]["delegation"]["to_provider"], "codex_cli")
+        request = codex_invoke.call_args.args[0]
+        self.assertEqual(request.provider, "codex_cli")
+        self.assertEqual(request.mode, "kernel_debug")
+        self.assertEqual(request.context_pack, {"context_pack_id": "ctx-debug"})
+        self.assertEqual(request.metadata["tenant_id"], "tenant-alpha")
+        self.assertEqual(request.metadata["activation_id"], "ctrl-debug")
+        self.assertEqual(request.metadata["operator_id"], "op-debug")
+        self.assertEqual(request.metadata["trace_id"], "trace-debug")
+        openclaw_invoke.assert_not_called()
+
+    def test_openclaw_kernel_repair_delegates_exact_metadata_to_codex_task_worktree(self):
+        repair_metadata = {
+            "task_id": "MGMT-AI-REPAIR-1",
+            "task_worktree": "/srv/pantheon-assistant/worktrees/pantheon/mgmt-ai-repair-1",
+            "declared_scope": ["services/control-plane/bff"],
+            "expected_branch": "task/MGMT-AI-REPAIR-1",
+            "remote": "origin",
+            "merge_target": "dev",
+            "repo_key": "pantheon",
+        }
+        fake_result = types.SimpleNamespace(
+            provider="codex_cli",
+            mode="kernel_repair",
+            status="completed",
+            output={
+                "provider": "codex_cli",
+                "runtime": "openclaw_gateway_cli_mount",
+                "status": "completed",
+                "sandbox": "workspace-write",
+                "workspace_class": "task_worktree",
+                "repair_workflow": {"task_id": "MGMT-AI-REPAIR-1", "clean": False},
+                "post_run_repair_workflow": {"task_id": "MGMT-AI-REPAIR-1", "clean": False},
+                "json_events": [{"final": "repair complete"}],
+            },
+            redaction={"provider_invocation": {"enabled": True}},
+        )
+        with (
+            patch.object(adapter_main._CODEX_RUNTIME, "invoke", return_value=fake_result) as codex_invoke,
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke") as openclaw_invoke,
+        ):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                json={
+                    "mode": "kernel_repair",
+                    "prompt": "write the sentinel",
+                    "metadata": repair_metadata,
+                },
+                headers={"X-Operator-Id": "op-repair", "X-Trace-Id": "trace-repair"},
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        data = resp.json()["data"]
+        self.assertEqual(data["provider"], "codex_cli")
+        self.assertEqual(data["runtime"], "openclaw_gateway_cli_mount")
+        self.assertEqual(data["delegated_from"], "openclaw")
+        self.assertEqual(data["output"]["sandbox"], "workspace-write")
+        self.assertEqual(data["output"]["workspace_class"], "task_worktree")
+        self.assertEqual(data["output"]["post_run_repair_workflow"]["task_id"], "MGMT-AI-REPAIR-1")
+        request = codex_invoke.call_args.args[0]
+        self.assertEqual(request.mode, "kernel_repair")
+        self.assertEqual(
+            {key: request.metadata[key] for key in repair_metadata},
+            repair_metadata,
+        )
+        self.assertEqual(request.metadata["operator_id"], "op-repair")
+        self.assertEqual(request.metadata["trace_id"], "trace-repair")
+        openclaw_invoke.assert_not_called()
+
+    def test_openclaw_kernel_debug_stream_delegates_to_codex_runtime(self):
+        fake_result = types.SimpleNamespace(
+            provider="codex_cli",
+            mode="kernel_debug",
+            status="completed",
+            output={
+                "provider": "codex_cli",
+                "runtime": "openclaw_gateway_cli_mount",
+                "sandbox": "read-only",
+                "workspace_class": "read_only",
+                "json_events": [{"final": "streamed debug answer"}],
+            },
+            redaction={"provider_invocation": {"enabled": True}},
+        )
+        with (
+            patch.object(adapter_main._CODEX_RUNTIME, "invoke", return_value=fake_result) as codex_invoke,
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "stream") as openclaw_stream,
+        ):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream",
+                json={
+                    "mode": "kernel_debug",
+                    "prompt": "inspect",
+                    "metadata": {"tenant_id": "tenant-alpha"},
+                },
+                headers={"X-Operator-Id": "op-debug", "X-Trace-Id": "trace-stream"},
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in resp.text.splitlines()
+            if line.startswith("data: {")
+        ]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["type"], "done")
+        self.assertEqual(events[0]["text"], "streamed debug answer")
+        self.assertEqual(events[0]["provider"], "codex_cli")
+        self.assertEqual(events[0]["sandbox"], "read-only")
+        self.assertEqual(events[0]["workspace_class"], "read_only")
+        request = codex_invoke.call_args.args[0]
+        self.assertEqual(request.metadata["tenant_id"], "tenant-alpha")
+        self.assertEqual(request.metadata["operator_id"], "op-debug")
+        openclaw_stream.assert_not_called()
+
     def test_openclaw_invoke_returns_completed_result_on_success(self):
         fake_response_body = {
             "status": "completed",
@@ -1472,7 +1624,10 @@ class TestOpenClawAssistantProvider(unittest.TestCase):
                 redaction={"provider_invocation": {"redacted_fields": 0}},
             )
 
-        with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER.__class__, "invoke", fake_invoke):
+        with (
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER.__class__, "invoke", fake_invoke),
+            patch.object(adapter_main._CODEX_RUNTIME, "invoke") as codex_invoke,
+        ):
             resp = client.post(
                 "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
                 json={"prompt": "What is the portfolio status?", "mode": "user"},
@@ -1489,6 +1644,7 @@ class TestOpenClawAssistantProvider(unittest.TestCase):
         json_events = data["output"]["json_events"]
         self.assertEqual(len(json_events), 1)
         self.assertEqual(json_events[0]["item"]["text"], "OpenClaw agent answer.")
+        codex_invoke.assert_not_called()
 
     def test_openclaw_invoke_degrades_cleanly_on_gateway_error(self):
         from assistant_openclaw_provider import OpenClawProviderError as ProvError
