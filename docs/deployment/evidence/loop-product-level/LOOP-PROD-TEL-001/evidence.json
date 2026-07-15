@@ -9,6 +9,7 @@
   "evidence_policy": {
     "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001/evidence.sha256",
     "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Raw run artifacts are immutable. The manifest record_log may only append independently observed review, check, deployment, and merge facts.",
     "recording_mode": "logical_append_only",
     "redacted": true,
     "self_hashing": false
@@ -24,7 +25,7 @@
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001/evidence.json",
-    "reviewer": "Codex",
+    "reviewer": "Claude",
     "target_environment": "dev",
     "target_maturity": "product-level",
     "task_branch": "task/LOOP-PROD-TEL-001",
