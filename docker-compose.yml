@@ -372,12 +372,20 @@ services:
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       TRAINING_SESSION_EVENT_STORE_BACKEND: ${TRAINING_SESSION_EVENT_STORE_BACKEND:-jsonl}
       TRAINING_SESSION_EVENT_STORE_DSN: ${TRAINING_SESSION_EVENT_STORE_DSN:-}
+      PANTHEON_VECTORBT_BACKEND: ${PANTHEON_VECTORBT_BACKEND:-real}
+      TRAINING_SESSION_RUNTIME_EVIDENCE_PATH: ${TRAINING_SESSION_RUNTIME_EVIDENCE_PATH:-/data/training-session/runtime-evidence.jsonl}
+      SOURCE_INGEST_API_URL: ${SOURCE_INGEST_API_URL:-http://source-ingest:8097}
+      TRAINING_SESSION_SOURCE_CONNECTOR_ID: ${TRAINING_SESSION_SOURCE_CONNECTOR_ID:-crypto-coingecko-spot}
+      TRAINING_SESSION_SOURCE_DATASET_ID: ${TRAINING_SESSION_SOURCE_DATASET_ID:-ds-coingecko-crypto-spot}
     volumes:
       - training-session-data:/data/training-session
+      - source-ingest-data:/data/source-ingest:ro
     ports:
       - "${TRAINING_SESSION_PORT:-18099}:8099"
     depends_on:
       postgres:
+        condition: service_healthy
+      source-ingest:
         condition: service_healthy
     healthcheck:
       test:
@@ -401,10 +409,23 @@ services:
       TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS: ${TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS:-30}
       TRAINING_SESSION_PREVIEW_WORKER_MAX_TICKS: ${TRAINING_SESSION_PREVIEW_WORKER_MAX_TICKS:-0}
       TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT: ${TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT:-10}
-      TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH: ${TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH:-}
+      TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS: ${TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS:-30}
+      TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH: ${TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH:-/data/training-session/preview-worker-alive}
+    volumes:
+      - training-session-data:/data/training-session
     depends_on:
       training-session-svc:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os,time; path=os.environ['TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH']; max_age=max(90, 3*int(os.environ.get('TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS','30'))); age=time.time()-os.path.getmtime(path); assert age <= max_age, f'alive marker is {age:.1f}s old'\"",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   policy-learning-svc:
     build:
