@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Postmortem publisher on incident resolution
-- Status: review
+- Status: in_progress
 - Owner: Antigravity
-- Reviewer: Claude
-- Next: Reviewer reassignment (Codex2->Claude) acknowledged. Re-verified: PR #3644 already merged into dev (f80e98a2b, mergedAt 2026-07-14T09:56:17Z); no new commits touch services/incidents, services/incident, or services/evolution/postmortem_bridge.py since. Verdict stands: APPROVED on the merits (473 passed, 1 skipped, no regressions); all 4 acceptance criteria verified. Formal approve is self-approval-blocked for AI reviewers; needs a human to run approve/done.
+- Reviewer: Codex
+- Next: Review changes required: Postgres put is insert-only and breaks incident/outbox updates; critical+frozen publishes invalid freeze/frozen and dead-letters; terminal incidents can regress without CAS and strand the event; direct resolved-to-closed can replace first resolved_at. Keep postmortem_bridge pure. See support/reviews/EVOCHAIN-003-review-codex.md; focused review suite 77 passed but misses these valid paths.
 
 ## Summary
 補上 postmortem 事件鏈缺的呼叫端：incident resolve/close 時產生 postmortem record，經 services/evolution/postmortem_bridge.on_postmortem_published 轉成 proposal，並經 POST /api/evolution/proposals 入庫。bridge 本身保持純函式不動。

@@ -576,7 +576,13 @@ def _bridge_proposal(
         publish_event_id=publish_event_id,
     )
     bridge_action = str(bridge_result["proposed_action"])
-    proposal["action_type"] = "flag_for_review" if bridge_action == "rollback" else bridge_action
+    stage = str(postmortem.get("deployment_stage") or incident.get("deployment_stage") or "").strip().lower()
+    if bridge_action == "rollback":
+        proposal["action_type"] = "flag_for_review"
+    elif bridge_action == "freeze" and stage == "frozen":
+        proposal["action_type"] = "flag_for_review"
+    else:
+        proposal["action_type"] = bridge_action
     proposal["rationale"] = str(bridge_result["rationale"])
     metadata = dict(proposal.get("metadata") or {})
     metadata.update(

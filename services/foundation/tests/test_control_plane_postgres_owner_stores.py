@@ -131,6 +131,26 @@ def test_postgres_json_owner_store_read_only_boundary():
             reader.insert_if_absent("apv-002", {"decision_id": "apv-002"})
 
 
+def test_postgres_json_owner_store_put_upsert():
+    from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        owner = PostgresJsonOwnerStore(
+            dsn="postgresql://owner@example/db",
+            table="governance.approval_decisions",
+            owner_service="governance-svc",
+        )
+        owner.put("apv-001", {"decision_id": "apv-001", "status": "draft"})
+        assert owner.get("apv-001") == {"decision_id": "apv-001", "status": "draft"}
+
+        owner.put("apv-001", {"decision_id": "apv-001", "status": "approved"})
+        assert owner.get("apv-001") == {"decision_id": "apv-001", "status": "approved"}
+
+        upsert_stmt = [s for s in _FakeConnection.statements if "ON CONFLICT" in s]
+        assert len(upsert_stmt) > 0
+
+
 def test_postgres_json_owner_store_atomically_reserves_composite_identity():
     from services.foundation.postgres_json_store import PostgresJsonOwnerStore
 
