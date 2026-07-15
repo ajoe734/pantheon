@@ -1413,6 +1413,45 @@ def test_additive_collision_rejects_each_foreign_or_stale_axis(axis: str) -> Non
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
 
+def test_nonadditive_active_preserve_rejects_missing_or_mismatched_source_ref() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        first = run_dispatch(root)
+        assert first.returncode == 0, first.stderr
+
+        mutations = (
+            lambda task: task.pop("source_ref", None),
+            lambda task: task.__setitem__("source_ref", {}),
+            lambda task: task["source_ref"].__setitem__(
+                "program_id", "foreign-program"
+            ),
+            lambda task: task["source_ref"].__setitem__("catalog_sha256", ""),
+        )
+        for mutation in mutations:
+            state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+            task = next(
+                item for item in state["tasks"] if item.get("id") == "LOOP-PROD-000"
+            )
+            mutation(task)
+            (root / "ai-status.json").write_text(
+                json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            status_before = (root / "ai-status.json").read_bytes()
+            log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+            result = run_dispatch(root)
+
+            assert result.returncode == 2, result.stdout
+            assert (
+                "missing or mismatched source_ref provenance for active catalog "
+                "task LOOP-PROD-000" in result.stderr
+            )
+            assert (root / "ai-status.json").read_bytes() == status_before
+            assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
 def test_exact_additive_archive_collision_is_preserved_without_resurrection() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)

@@ -2999,6 +2999,40 @@ def archived_primary_status(task_id: str) -> str | None:
     return status
 
 
+def validate_existing_task_provenance(
+    existing: dict[str, Any],
+    task_id: str,
+    catalog: dict[str, Any],
+    *,
+    source: str,
+) -> None:
+    """Reject an existing catalog task row with missing or foreign source_ref.
+
+    This runs for every non-additive catalog task collision in both the
+    active and archive branches of ``materialize`` (additive collisions are
+    already exhaustively covered by the stricter ``validate_additive_
+    collision``). It only requires stable dispatcher provenance (the task
+    belongs to this program and carries a non-empty catalog digest); it
+    deliberately does not require the digest to equal the *current* catalog,
+    because non-additive tasks legitimately retain the source_ref recorded
+    when an earlier catalog version created them across catalog
+    addenda/migrations.
+    """
+
+    source_ref = existing.get("source_ref")
+    if (
+        not isinstance(source_ref, dict)
+        or not source_ref
+        or source_ref.get("program_id") != catalog.get("program_id")
+        or not source_ref.get("catalog_sha256")
+    ):
+        raise DispatchError(
+            f"missing or mismatched source_ref provenance for {source} catalog "
+            f"task {task_id}; refusing to preserve foreign or tampered "
+            "task/runtime state"
+        )
+
+
 def validate_additive_collision(
     existing: dict[str, Any],
     task: dict[str, Any],
@@ -4096,19 +4130,23 @@ def materialize(
         task_id = task["id"]
         archive_state = archived_primary_status(task_id)
         if archive_state is not None:
+            archive_payload = read_json(ARCHIVE_ROOT / f"{task_id}.json")
+            archived_task = archive_payload.get("task")
+            if not isinstance(archived_task, dict):
+                raise DispatchError(
+                    f"archive collision for {task_id} has no task record"
+                )
             if task_id in additive_ids:
-                archive_payload = read_json(ARCHIVE_ROOT / f"{task_id}.json")
-                archived_task = archive_payload.get("task")
-                if not isinstance(archived_task, dict):
-                    raise DispatchError(
-                        f"archive collision for additive task {task_id} has no task record"
-                    )
                 validate_additive_collision(
                     archived_task,
                     task,
                     catalog,
                     catalog_digest,
                     source="archive",
+                )
+            else:
+                validate_existing_task_provenance(
+                    archived_task, task_id, catalog, source="archive"
                 )
             archived.append(f"{task_id}:{archive_state}")
             continue
@@ -4122,6 +4160,10 @@ def materialize(
                     catalog,
                     catalog_digest,
                     source="active",
+                )
+            else:
+                validate_existing_task_provenance(
+                    existing, task_id, catalog, source="active"
                 )
             preserved.append(f"{task_id}:{existing.get('status', 'unknown')}")
             continue
