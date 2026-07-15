@@ -16,7 +16,7 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-15T14:24:17Z",
+    "evidence_cut_at": "2026-07-15T14:31:32Z",
     "evidence_cut_semantics": "Owner implementation and local validation cut after merging origin/dev into the task branch; independent review, PR merge, and deployment identity are intentionally not asserted.",
     "id": "LOOP-PROD-AGORA-002",
     "overall_admission": "review_required_evidence_only",
@@ -92,6 +92,14 @@
       {
         "sha": "102d354742fa616caa5fdb67f0ef5d0ab24145c8",
         "subject": "Merge remote-tracking branch 'origin/dev' into task/LOOP-PROD-AGORA-002"
+      },
+      {
+        "sha": "08a339b9aeb9e052cd2ed477234c7e1a892f20b1",
+        "subject": "LOOP-PROD-AGORA-002: add v1.8 contract evidence"
+      },
+      {
+        "sha": "c77398a1da276bd25256828be5b83a13ea38418e",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/LOOP-PROD-AGORA-002"
       }
     ],
     "required_checks": []
@@ -117,11 +125,26 @@
         "command": "python3 scripts/agora_compat_manifest.py verify --manifest docs/contracts/agora/dev-compatibility-manifest.json --allow-pending",
         "result": "pass",
         "conclusion": "manifest shape, contract hashes, and required capabilities verified; deployment gate remains pending on frontend generated types and runtime commit"
+      },
+      {
+        "command": "python3 -m pytest -q services/control-plane/bff/tests/test_agora_workshop_live_operations.py services/control-plane/bff/tests/test_strategy_workshop_command_store.py scripts/test_agora_v1_8_bundle.py scripts/test_agora_compat_manifest.py",
+        "result": "pass",
+        "conclusion": "post-merge targeted validation passed: 26 passed"
+      },
+      {
+        "command": "python3 -m jsonschema -i docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-002/evidence.json schemas/product-evidence.schema.json",
+        "result": "pass",
+        "conclusion": "product evidence schema validation passed"
+      },
+      {
+        "command": "BASE=$(git merge-base HEAD origin/dev); git diff --check \"$BASE\"..HEAD",
+        "result": "pass",
+        "conclusion": "no whitespace errors in task diff"
       }
     ],
-    "validated_at": "2026-07-15T14:24:17Z",
+    "validated_at": "2026-07-15T14:31:32Z",
     "validated_base_sha": "a8b73d142e9d6ce31986e00220dcfb4b4dd0a45b",
-    "validated_head_sha": "102d354742fa616caa5fdb67f0ef5d0ab24145c8"
+    "validated_head_sha": "c77398a1da276bd25256828be5b83a13ea38418e"
   },
   "deployment": {
     "applicable": false,
@@ -344,6 +367,29 @@
       "kind": "local_validation",
       "status": "pass",
       "reference": "BFF 111 passed/1 skipped; consultation 65 passed; Agora contract/compat 48 passed"
+    },
+    {
+      "sequence": 5,
+      "recorded_at": "2026-07-15T14:24:17Z",
+      "kind": "contract_evidence_commit",
+      "status": "recorded",
+      "sha": "08a339b9aeb9e052cd2ed477234c7e1a892f20b1",
+      "reference": "additive Agora v1.8 contract, compatibility manifest update, and checksummed owner evidence"
+    },
+    {
+      "sequence": 6,
+      "recorded_at": "2026-07-15T14:31:32Z",
+      "kind": "dev_compose_merge",
+      "status": "recorded",
+      "sha": "c77398a1da276bd25256828be5b83a13ea38418e",
+      "reference": "latest origin/dev merged into task branch without conflicts"
+    },
+    {
+      "sequence": 7,
+      "recorded_at": "2026-07-15T14:31:32Z",
+      "kind": "post_merge_validation",
+      "status": "pass",
+      "reference": "targeted Agora live operations and v1.8 contract checks passed after final dev merge"
     }
   ]
 }
