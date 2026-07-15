@@ -399,3 +399,55 @@ def test_postmortem_dlq_redrive_requires_token_and_approval(monkeypatch):
     assert accepted.status_code == 200
     assert accepted.json()["status"] == "pending"
     assert accepted.json()["delivery"]["redrive_count"] == 1
+
+
+def test_critical_frozen_normalization():
+    from datetime import datetime, timezone
+    inc = IncidentCase(
+        incident_id="inc-critical-frozen",
+        title="Critical Frozen Incident",
+        status=IncidentStatus.OPEN.value,
+        severity="critical",
+        created_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        binding_id="binding-123",
+        deployment_stage="frozen",
+        deployment_plan_id="plan-123",
+        capital_pool_id="pool-123",
+        persona_capital_binding_id="pcb-123",
+        artifact_id="artifact-123",
+        artifact_version="1.0.0",
+        runtime_id="runtime-123",
+        trace_id="trace-123",
+    )
+    store._incidents["inc-critical-frozen"] = inc
+
+    pm = Postmortem(
+        postmortem_id="pm-critical-frozen",
+        title="Test Postmortem",
+        status="draft",
+        created_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        incident_id="inc-critical-frozen",
+        binding_id="binding-123",
+        deployment_stage="frozen",
+        deployment_plan_id="plan-123",
+        capital_pool_id="pool-123",
+        persona_capital_binding_id="pcb-123",
+        artifact_id="artifact-123",
+        artifact_version="1.0.0",
+        runtime_id="runtime-123",
+        trace_id="trace-123",
+        root_cause="some root cause",
+    )
+    store._postmortems["pm-critical-frozen"] = pm
+
+    r = client.post("/api/postmortems/pm-critical-frozen/status", json={"status": "published"})
+    assert r.status_code == 200
+
+    records = outbox_store.list_pending_and_failed()
+    assert len(records) == 1
+    proposal = records[0].event.payload["proposal"]
+    assert proposal["action_type"] == "flag_for_review"
+    assert proposal["target_stage"] == "frozen"
+    assert proposal["metadata"]["bridge_proposed_action"] == "freeze"
+    assert proposal["metadata"]["bridge_action_normalized"] is True
+

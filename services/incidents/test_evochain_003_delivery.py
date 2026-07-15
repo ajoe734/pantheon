@@ -253,3 +253,43 @@ def test_dead_letter_redrive_requires_token_and_approval(monkeypatch):
     assert accepted.status_code == 200
     assert accepted.json()["status"] == "pending"
     assert accepted.json()["delivery"]["redrive_count"] == 1
+
+
+def test_incident_status_regression_prevention():
+    _seed_incident()
+    # Transition to resolved (terminal status)
+    r1 = client.post("/api/incidents/inc-123/status", json={"status": "resolved"})
+    assert r1.status_code == 200
+
+    # Try regressing from resolved back to open
+    r2 = client.post("/api/incidents/inc-123/status", json={"status": "open"})
+    assert r2.status_code == 400
+    assert "cannot regress" in r2.json()["detail"]
+
+    # Transition to closed (terminal status)
+    r3 = client.post("/api/incidents/inc-123/status", json={"status": "closed"})
+    assert r3.status_code == 200
+
+    # Try regressing from closed to resolved
+    r4 = client.post("/api/incidents/inc-123/status", json={"status": "resolved"})
+    assert r4.status_code == 400
+    assert "cannot transition" in r4.json()["detail"]
+
+
+def test_incident_status_cas_validation(monkeypatch):
+    _seed_incident()
+    
+    real_update = store.update_incident_status
+    call_count = 0
+    def race_update(*args, **kwargs):
+        nonlocal call_count
+        if call_count == 0:
+            call_count += 1
+            real_update("inc-123", "investigating")
+        return real_update(*args, **kwargs)
+
+    monkeypatch.setattr(store, "update_incident_status", race_update)
+    r = client.post("/api/incidents/inc-123/status", json={"status": "resolved"})
+    assert r.status_code == 409
+    assert "changed concurrently" in r.json()["detail"]
+

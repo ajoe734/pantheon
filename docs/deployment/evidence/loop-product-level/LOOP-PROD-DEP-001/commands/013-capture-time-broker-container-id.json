@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-07-15T00:10:15Z",
+  "command": [
+    "docker",
+    "compose",
+    "-p",
+    "pantheon",
+    "-f",
+    "/home/lupin/pantheon-ci-deploy/dev-root/docker-compose.yml",
+    "ps",
+    "-q",
+    "broker"
+  ],
+  "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+  "duration_ms": 251.42,
+  "label": "capture-time-broker-container-id",
+  "returncode": 0,
+  "started_at": "2026-07-15T00:10:15Z",
+  "stderr": "",
+  "stdout": "54fa58cf1ab69f0db6121f58a9075b647cd648f6ccdd96c4b86dc8ff48e1f0e0\n"
+}

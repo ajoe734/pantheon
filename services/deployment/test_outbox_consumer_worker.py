@@ -349,6 +349,23 @@ class TestFetchPendingOutbox:
         called_url = mock_urlopen.call_args[0][0].full_url
         assert "status=pending" in called_url
 
+    def test_url_can_isolate_one_aggregate(self, worker):
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_cm = MagicMock()
+            mock_cm.__enter__ = MagicMock(return_value=mock_cm)
+            mock_cm.__exit__ = MagicMock(return_value=False)
+            mock_cm.read.return_value = b"[]"
+            mock_urlopen.return_value = mock_cm
+
+            worker.fetch_pending_outbox(
+                api_url="http://localhost:8095",
+                aggregate_id="deployment-saga-task-001",
+            )
+
+        called_url = mock_urlopen.call_args[0][0].full_url
+        assert "status=pending" in called_url
+        assert "aggregate_id=deployment-saga-task-001" in called_url
+
 
 # ---------------------------------------------------------------------------
 # consume_event
@@ -415,6 +432,20 @@ class TestConsumeEvent:
 
 
 class TestRunPoll:
+    def test_aggregate_filter_is_forwarded_to_pending_query(self, worker):
+        with patch.object(worker, "fetch_pending_outbox", return_value=[]) as fetch:
+            worker.run_poll(
+                api_url="http://localhost:8095",
+                consumer_name="test-consumer",
+                aggregate_id="deployment-saga-task-001",
+            )
+
+        fetch.assert_called_once_with(
+            api_url="http://localhost:8095",
+            timeout_seconds=10.0,
+            aggregate_id="deployment-saga-task-001",
+        )
+
     def test_no_events_returns_zero_consumed(self, worker):
         with patch.object(worker, "fetch_pending_outbox", return_value=[]):
             result = worker.run_poll(

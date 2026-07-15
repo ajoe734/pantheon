@@ -1,0 +1,619 @@
+{
+  "captured_at": "2026-07-15T00:11:49Z",
+  "duration_ms": 26.322,
+  "label": "failure-dispatch",
+  "request": {
+    "body": {
+      "actor_id": "LOOP-PROD-DEP-001",
+      "correlation_id": "failure-correlation-20260715001015",
+      "idempotency_key": "LOOP-PROD-DEP-001:20260715001015:failure",
+      "registry_entry": {
+        "approval_decision_id": "approval-loop-prod-dep-failure-20260715001015",
+        "approved_at": "2026-07-15T00:11:49Z",
+        "approver": "loop-prod-dep-001-risk-owner",
+        "artifact_state": "approved",
+        "artifact_type": "execution_bundle",
+        "checksum": "sha256:46b00a4e8a1f01941a54bdf9edcaddfaf522323ec09db14f7fe938c3af1bbd5e",
+        "created_at": "2026-07-15T00:11:49Z",
+        "deployment_summary": null,
+        "evaluation_summary": {
+          "mutable_parameter_count": 2,
+          "strategy_artifact_schema_version": "1.0"
+        },
+        "lineage": {
+          "parent_registry_ids": [
+            "artifact-tw-session-momentum-v1"
+          ],
+          "source_dataset_refs": [
+            "source-ingest:normalized/taiwanstockprice/finmind-daily"
+          ],
+          "source_run_ids": [
+            "LOOP-PROD-DEP-001",
+            "LOOP-PROD-DEP-001-failure"
+          ],
+          "source_strategy_spec_id": null
+        },
+        "metadata": {
+          "strategy_artifact": {
+            "algorithm_ref": {
+              "commit": "5ad0249432459c119f26718007e083808ef7995d",
+              "engine": "lean",
+              "entrypoint": "pantheon_algo.base:PantheonAlgoBase",
+              "logic_interpreter": "services.registry.strategy_artifact:evaluate_strategy_action",
+              "path": "Algorithm.Python/pantheon_algo/base.py",
+              "repository": "ajoe734/pantheon-lean",
+              "signal_interface": "services.execution.lean_runtime.paper_signal_producer:Strategy",
+              "signal_schema_version": "1.0"
+            },
+            "artifact_id": "artifact-loop-prod-dep-failure-20260715001015",
+            "artifact_schema_version": "1.0",
+            "binding_intent": {
+              "evidence_ref": "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-binding-intent-readback.json",
+              "observed_at": "2026-07-14T05:06:07Z",
+              "observed_binding_status": "active",
+              "observed_capital_pool_id": "pool-tw-equity-paper",
+              "observed_deployment_mode": "paper",
+              "observed_deployment_plan_id": "plan-tw-equity-paper",
+              "observed_effective_at": "2026-07-11T10:50:25Z",
+              "observed_placeholder_artifact_id": "artifact-tw-equity-session-v1",
+              "observed_placeholder_artifact_version": "1.0.0",
+              "observed_runtime_binding_id": "rb-abb82fd3538b4014bb7e7d3186a58c58",
+              "observed_runtime_id": "runtime-tw-equity-paper",
+              "persona_capital_binding_id": "binding-tw-equity-paper",
+              "persona_id": "persona-tw-equity",
+              "persona_name": "Taiwan Equity Persona",
+              "replacement_task_id": "EVOLOOP-006"
+            },
+            "lineage": {
+              "parent_registry_ids": [
+                "artifact-tw-session-momentum-v1"
+              ],
+              "source_dataset_refs": [
+                "source-ingest:normalized/taiwanstockprice/finmind-daily"
+              ],
+              "source_run_ids": [
+                "LOOP-PROD-DEP-001",
+                "LOOP-PROD-DEP-001-failure"
+              ]
+            },
+            "mutation_surface": {
+              "controls": [
+                {
+                  "allowed_range": {
+                    "max": 60,
+                    "min": 2
+                  },
+                  "current_value": 2,
+                  "parameter_key": "lookback_bars",
+                  "step": 1,
+                  "value_type": "integer"
+                },
+                {
+                  "allowed_range": {
+                    "max": 0.05,
+                    "min": 0.0
+                  },
+                  "current_value": 0.02,
+                  "parameter_key": "momentum_threshold",
+                  "step": 0.001,
+                  "value_type": "number"
+                }
+              ],
+              "immutable_parameters": [
+                "symbols",
+                "bar_frequency",
+                "data_source",
+                "order_quantity",
+                "quantity_type",
+                "zero_momentum_action"
+              ]
+            },
+            "parameters": {
+              "bar_frequency": "1d",
+              "data_source": "source-ingest:normalized/taiwanstockprice/finmind-daily",
+              "lookback_bars": 2,
+              "momentum_threshold": 0.02,
+              "order_quantity": 1,
+              "quantity_type": "SHARES",
+              "symbols": [
+                "2330.TW",
+                "2317.TW",
+                "2454.TW"
+              ],
+              "zero_momentum_action": "SELL"
+            },
+            "provenance_refs": [
+              "host-file:/home/lupin/paper-loop/tw_signal_producer.py#sha256=b9f43954395b1b98f3b253ad9e27f7955b37dbee0553bb79a88abe3b99ff2396",
+              "docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/EVOLUTION_GENERATIVE_LOOP_GAP.md",
+              "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-binding-intent-readback.json",
+              "docs/deployment/evidence/mgmt-ops-003-gap/gap-002/20260711T151356Z/reconciliation-snapshot.json"
+            ],
+            "strategy_id": "tw_session_momentum",
+            "strategy_logic": {
+              "kind": "close_to_close_momentum",
+              "lookback_parameter": "lookback_bars",
+              "non_positive_action": "SELL",
+              "positive_action": "BUY",
+              "threshold_parameter": "momentum_threshold"
+            },
+            "version": "1.15.1015"
+          },
+          "strategy_artifact_registration_checksum": "sha256:2b6da16a6ef1167b48a6396ef551df092a7582a986829594a2b1f3c3cfe60f39"
+        },
+        "producer_run_id": "LOOP-PROD-DEP-001-failure",
+        "registry_id": "artifact-loop-prod-dep-failure-20260715001015",
+        "rollback_target": null,
+        "storage_ref": {
+          "backend": "inline",
+          "path": "$.entry.metadata.strategy_artifact"
+        },
+        "strategy_id": "tw_session_momentum",
+        "updated_at": "2026-07-15T00:11:49Z",
+        "version": "1.15.1015"
+      },
+      "source_task_id": "LOOP-PROD-DEP-001",
+      "trace_id": "91777920-22f1-4399-bfa5-884c27ed32b0",
+      "workflow_id": "pantheon.loop-product-level.deployment-failure"
+    },
+    "headers": {},
+    "method": "POST",
+    "started_at": "2026-07-15T00:11:49Z",
+    "url": "http://127.0.0.1:18095/api/deployment/plans/plan-loop-prod-dep-failure-20260715001015/dispatch"
+  },
+  "response": {
+    "payload": {
+      "artifact_loader_contract": "EX-001",
+      "consistency_contract": "DEP-002",
+      "deployment_contract": "DEP-001",
+      "deployment_saga": {
+        "outbox_event": {
+          "blocked_reason": null,
+          "delivery_attempts": 0,
+          "dlq_at": null,
+          "event": {
+            "aggregate_id": "deployment-saga-plan-loop-prod-dep-failure-20260715001015",
+            "aggregate_type": "deployment_saga",
+            "causal_parent_id": null,
+            "emitted_at": "2026-07-15T00:11:49Z",
+            "event_id": "deployment-saga-plan-loop-prod-dep-failure-20260715001015-evt-0001",
+            "event_time": "2026-07-15T00:11:49Z",
+            "event_type": "runtime.binding.requested",
+            "idempotency_key": "deployment-saga-plan-loop-prod-dep-failure-20260715001015:1:runtime.binding.requested",
+            "payload": {
+              "approval_decision_id": "approval-loop-prod-dep-failure-20260715001015",
+              "artifact_id": "artifact-loop-prod-dep-failure-20260715001015",
+              "artifact_version": "1.15.1015",
+              "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+              "plan_id": "plan-loop-prod-dep-failure-20260715001015",
+              "runtime_action": "deploy_new_binding",
+              "strategy_id": "tw_session_momentum",
+              "target_stage": "paper"
+            },
+            "sequence_no": 1,
+            "trace_id": "91777920-22f1-4399-bfa5-884c27ed32b0"
+          },
+          "last_attempt_at": null,
+          "last_error": null,
+          "last_replayed_at": null,
+          "next_retry_at": null,
+          "owner_service": "deployment-orchestrator",
+          "published_at": null,
+          "replay_count": 0,
+          "retry_policy": null,
+          "status": "pending"
+        },
+        "saga": {
+          "approval_decision_id": "approval-loop-prod-dep-failure-20260715001015",
+          "artifact_id": "artifact-loop-prod-dep-failure-20260715001015",
+          "artifact_version": "1.15.1015",
+          "binding_id": null,
+          "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+          "compensation": null,
+          "created_at": "2026-07-15T00:11:49Z",
+          "current_stage": "none",
+          "current_step": "binding_requested",
+          "failure_reason": null,
+          "history": [
+            {
+              "emitted_at": "2026-07-15T00:11:49Z",
+              "event_id": "deployment-saga-plan-loop-prod-dep-failure-20260715001015-evt-0001",
+              "note": null,
+              "sequence_no": 1,
+              "status": "awaiting_binding",
+              "step": "binding_requested"
+            }
+          ],
+          "last_event_id": "deployment-saga-plan-loop-prod-dep-failure-20260715001015-evt-0001",
+          "last_sequence_no": 1,
+          "metadata": {
+            "foundation": {
+              "audit_action": {
+                "action_id": "audit-3017e7ae25334750a9f28750103018e6",
+                "action_type": "deployment.dispatch.accepted",
+                "actor_ref": {
+                  "actor_id": "LOOP-PROD-DEP-001",
+                  "actor_type": "service",
+                  "persona_id": "persona-20260531-6f175c5c",
+                  "roles": [
+                    "deployment-dispatcher"
+                  ]
+                },
+                "correlation_id": "failure-correlation-20260715001015",
+                "environment": {
+                  "name": "paper",
+                  "timezone": "UTC"
+                },
+                "metadata": {
+                  "route": "deployment.plan.dispatch"
+                },
+                "payload_checksum": "87ef301fe3a6d779ed3240b41b521fc87e358f25e65187ce7e0bb9d9b0b929aa",
+                "policy_decision_ref": "poldec-58e5ec077b794d6eab4c064b66ab67f3",
+                "reason": "deployment plan dispatch accepted",
+                "target_ref": "DeploymentPlan:plan-loop-prod-dep-failure-20260715001015",
+                "timestamp": "2026-07-15T00:11:49Z",
+                "trace_id": "91777920-22f1-4399-bfa5-884c27ed32b0"
+              },
+              "command_envelope": {
+                "actor_ref": {
+                  "actor_id": "LOOP-PROD-DEP-001",
+                  "actor_type": "service",
+                  "persona_id": "persona-20260531-6f175c5c",
+                  "roles": [
+                    "deployment-dispatcher"
+                  ]
+                },
+                "authority_scope": {
+                  "action": "deployment.dispatch_plan",
+                  "attributes": {
+                    "route": "deployment.plan.dispatch"
+                  },
+                  "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+                  "environment": {
+                    "name": "paper",
+                    "timezone": "UTC"
+                  },
+                  "persona_id": "persona-20260531-6f175c5c",
+                  "target_id": "plan-loop-prod-dep-failure-20260715001015",
+                  "target_ref": "DeploymentPlan:plan-loop-prod-dep-failure-20260715001015",
+                  "target_type": "DeploymentPlan"
+                },
+                "command_id": "cmd-dff6227b67e245339d074cc931e487d3",
+                "command_type": "deployment.dispatch_plan",
+                "idempotency_key": "LOOP-PROD-DEP-001:20260715001015:failure",
+                "payload": {
+                  "approval_decision_id": "approval-loop-prod-dep-failure-20260715001015",
+                  "dispatch": {
+                    "actor_id": "LOOP-PROD-DEP-001",
+                    "registry_entry": {
+                      "approval_decision_id": "approval-loop-prod-dep-failure-20260715001015",
+                      "approved_at": "2026-07-15T00:11:49Z",
+                      "approver": "loop-prod-dep-001-risk-owner",
+                      "artifact_state": "approved",
+                      "artifact_type": "execution_bundle",
+                      "checksum": "sha256:46b00a4e8a1f01941a54bdf9edcaddfaf522323ec09db14f7fe938c3af1bbd5e",
+                      "created_at": "2026-07-15T00:11:49Z",
+                      "deployment_summary": null,
+                      "evaluation_summary": {
+                        "mutable_parameter_count": 2,
+                        "strategy_artifact_schema_version": "1.0"
+                      },
+                      "lineage": {
+                        "parent_registry_ids": [
+                          "artifact-tw-session-momentum-v1"
+                        ],
+                        "source_dataset_refs": [
+                          "source-ingest:normalized/taiwanstockprice/finmind-daily"
+                        ],
+                        "source_run_ids": [
+                          "LOOP-PROD-DEP-001",
+                          "LOOP-PROD-DEP-001-failure"
+                        ],
+                        "source_strategy_spec_id": null
+                      },
+                      "metadata": {
+                        "strategy_artifact": {
+                          "algorithm_ref": {
+                            "commit": "5ad0249432459c119f26718007e083808ef7995d",
+                            "engine": "lean",
+                            "entrypoint": "pantheon_algo.base:PantheonAlgoBase",
+                            "logic_interpreter": "services.registry.strategy_artifact:evaluate_strategy_action",
+                            "path": "Algorithm.Python/pantheon_algo/base.py",
+                            "repository": "ajoe734/pantheon-lean",
+                            "signal_interface": "services.execution.lean_runtime.paper_signal_producer:Strategy",
+                            "signal_schema_version": "1.0"
+                          },
+                          "artifact_id": "artifact-loop-prod-dep-failure-20260715001015",
+                          "artifact_schema_version": "1.0",
+                          "binding_intent": {
+                            "evidence_ref": "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-binding-intent-readback.json",
+                            "observed_at": "2026-07-14T05:06:07Z",
+                            "observed_binding_status": "active",
+                            "observed_capital_pool_id": "pool-tw-equity-paper",
+                            "observed_deployment_mode": "paper",
+                            "observed_deployment_plan_id": "plan-tw-equity-paper",
+                            "observed_effective_at": "2026-07-11T10:50:25Z",
+                            "observed_placeholder_artifact_id": "artifact-tw-equity-session-v1",
+                            "observed_placeholder_artifact_version": "1.0.0",
+                            "observed_runtime_binding_id": "rb-abb82fd3538b4014bb7e7d3186a58c58",
+                            "observed_runtime_id": "runtime-tw-equity-paper",
+                            "persona_capital_binding_id": "binding-tw-equity-paper",
+                            "persona_id": "persona-tw-equity",
+                            "persona_name": "Taiwan Equity Persona",
+                            "replacement_task_id": "EVOLOOP-006"
+                          },
+                          "lineage": {
+                            "parent_registry_ids": [
+                              "artifact-tw-session-momentum-v1"
+                            ],
+                            "source_dataset_refs": [
+                              "source-ingest:normalized/taiwanstockprice/finmind-daily"
+                            ],
+                            "source_run_ids": [
+                              "LOOP-PROD-DEP-001",
+                              "LOOP-PROD-DEP-001-failure"
+                            ]
+                          },
+                          "mutation_surface": {
+                            "controls": [
+                              {
+                                "allowed_range": {
+                                  "max": 60,
+                                  "min": 2
+                                },
+                                "current_value": 2,
+                                "parameter_key": "lookback_bars",
+                                "step": 1,
+                                "value_type": "integer"
+                              },
+                              {
+                                "allowed_range": {
+                                  "max": 0.05,
+                                  "min": 0.0
+                                },
+                                "current_value": 0.02,
+                                "parameter_key": "momentum_threshold",
+                                "step": 0.001,
+                                "value_type": "number"
+                              }
+                            ],
+                            "immutable_parameters": [
+                              "symbols",
+                              "bar_frequency",
+                              "data_source",
+                              "order_quantity",
+                              "quantity_type",
+                              "zero_momentum_action"
+                            ]
+                          },
+                          "parameters": {
+                            "bar_frequency": "1d",
+                            "data_source": "source-ingest:normalized/taiwanstockprice/finmind-daily",
+                            "lookback_bars": 2,
+                            "momentum_threshold": 0.02,
+                            "order_quantity": 1,
+                            "quantity_type": "SHARES",
+                            "symbols": [
+                              "2330.TW",
+                              "2317.TW",
+                              "2454.TW"
+                            ],
+                            "zero_momentum_action": "SELL"
+                          },
+                          "provenance_refs": [
+                            "host-file:/home/lupin/paper-loop/tw_signal_producer.py#sha256=b9f43954395b1b98f3b253ad9e27f7955b37dbee0553bb79a88abe3b99ff2396",
+                            "docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/EVOLUTION_GENERATIVE_LOOP_GAP.md",
+                            "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-binding-intent-readback.json",
+                            "docs/deployment/evidence/mgmt-ops-003-gap/gap-002/20260711T151356Z/reconciliation-snapshot.json"
+                          ],
+                          "strategy_id": "tw_session_momentum",
+                          "strategy_logic": {
+                            "kind": "close_to_close_momentum",
+                            "lookback_parameter": "lookback_bars",
+                            "non_positive_action": "SELL",
+                            "positive_action": "BUY",
+                            "threshold_parameter": "momentum_threshold"
+                          },
+                          "version": "1.15.1015"
+                        },
+                        "strategy_artifact_registration_checksum": "sha256:2b6da16a6ef1167b48a6396ef551df092a7582a986829594a2b1f3c3cfe60f39"
+                      },
+                      "producer_run_id": "LOOP-PROD-DEP-001-failure",
+                      "registry_id": "artifact-loop-prod-dep-failure-20260715001015",
+                      "rollback_target": null,
+                      "storage_ref": {
+                        "backend": "inline",
+                        "path": "$.entry.metadata.strategy_artifact"
+                      },
+                      "strategy_id": "tw_session_momentum",
+                      "updated_at": "2026-07-15T00:11:49Z",
+                      "version": "1.15.1015"
+                    },
+                    "source_task_id": "LOOP-PROD-DEP-001",
+                    "workflow_id": "pantheon.loop-product-level.deployment-failure"
+                  },
+                  "plan_id": "plan-loop-prod-dep-failure-20260715001015",
+                  "runtime_action": "deploy_new_binding",
+                  "target_stage": "paper"
+                },
+                "requested_at": "2026-07-15T00:11:49Z",
+                "schema_version": "command_envelope.v1",
+                "trace": {
+                  "actor_ref": {
+                    "actor_id": "LOOP-PROD-DEP-001",
+                    "actor_type": "service",
+                    "persona_id": "persona-20260531-6f175c5c",
+                    "roles": [
+                      "deployment-dispatcher"
+                    ]
+                  },
+                  "correlation_id": "failure-correlation-20260715001015",
+                  "created_at": "2026-07-15T00:11:49Z",
+                  "environment": {
+                    "name": "paper",
+                    "timezone": "UTC"
+                  },
+                  "idempotency_key": "LOOP-PROD-DEP-001:20260715001015:failure",
+                  "schema_version": "trace_context.v1",
+                  "source_system": "pantheon-deployment",
+                  "trace_id": "91777920-22f1-4399-bfa5-884c27ed32b0"
+                }
+              },
+              "idempotency_record": {
+                "first_seen_at": "2026-07-15T00:11:49Z",
+                "idempotency_key": "LOOP-PROD-DEP-001:20260715001015:failure",
+                "last_seen_at": "2026-07-15T00:11:49Z",
+                "operation_type": "deployment.dispatch_plan",
+                "request_hash": "87ef301fe3a6d779ed3240b41b521fc87e358f25e65187ce7e0bb9d9b0b929aa",
+                "result_ref": "deployment_saga:deployment-saga-plan-loop-prod-dep-failure-20260715001015",
+                "status": "succeeded",
+                "target_ref": "DeploymentPlan:plan-loop-prod-dep-failure-20260715001015",
+                "trace_id": "91777920-22f1-4399-bfa5-884c27ed32b0"
+              },
+              "policy_decision": {
+                "action": "deployment.dispatch_plan",
+                "actor_ref": {
+                  "actor_id": "LOOP-PROD-DEP-001",
+                  "actor_type": "service",
+                  "persona_id": "persona-20260531-6f175c5c",
+                  "roles": [
+                    "deployment-dispatcher"
+                  ]
+                },
+                "decision": "allow",
+                "decision_id": "poldec-58e5ec077b794d6eab4c064b66ab67f3",
+                "environment": {
+                  "name": "paper",
+                  "timezone": "UTC"
+                },
+                "evaluated_at": "2026-07-15T00:11:49Z",
+                "policy_id": "deployment.dispatch.admission",
+                "policy_version": "deployment.dispatch.v1",
+                "reasons": [],
+                "target_ref": "DeploymentPlan:plan-loop-prod-dep-failure-20260715001015",
+                "trace_id": "91777920-22f1-4399-bfa5-884c27ed32b0"
+              },
+              "trace_context": {
+                "actor_ref": {
+                  "actor_id": "LOOP-PROD-DEP-001",
+                  "actor_type": "service",
+                  "persona_id": "persona-20260531-6f175c5c",
+                  "roles": [
+                    "deployment-dispatcher"
+                  ]
+                },
+                "correlation_id": "failure-correlation-20260715001015",
+                "created_at": "2026-07-15T00:11:49Z",
+                "environment": {
+                  "name": "paper",
+                  "timezone": "UTC"
+                },
+                "idempotency_key": "LOOP-PROD-DEP-001:20260715001015:failure",
+                "schema_version": "trace_context.v1",
+                "source_system": "pantheon-deployment",
+                "trace_id": "91777920-22f1-4399-bfa5-884c27ed32b0"
+              }
+            },
+            "source_task_id": "LOOP-PROD-DEP-001",
+            "workflow_id": "pantheon.loop-product-level.deployment-failure"
+          },
+          "plan_id": "plan-loop-prod-dep-failure-20260715001015",
+          "rollback_action_type": "replace",
+          "runtime_action": "deploy_new_binding",
+          "runtime_id": null,
+          "saga_id": "deployment-saga-plan-loop-prod-dep-failure-20260715001015",
+          "status": "awaiting_binding",
+          "strategy_id": "tw_session_momentum",
+          "target_stage": "paper",
+          "trace_id": "91777920-22f1-4399-bfa5-884c27ed32b0",
+          "updated_at": "2026-07-15T00:11:49Z"
+        }
+      },
+      "execution_context": "paper",
+      "execution_projection": {
+        "artifact_key": "openclaw/registry/tw_session_momentum/1.15.1015/artifact.bin",
+        "metadata": {
+          "approval_decision_id": "approval-loop-prod-dep-failure-20260715001015",
+          "approved_at": "2026-07-15T00:11:49Z",
+          "artifact_state": "approved",
+          "artifact_type": "execution_bundle",
+          "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+          "capital_scale_pct": 0.0,
+          "checksum": "sha256:46b00a4e8a1f01941a54bdf9edcaddfaf522323ec09db14f7fe938c3af1bbd5e",
+          "created_at": "2026-07-15T00:11:49Z",
+          "deployment_plan_id": "plan-loop-prod-dep-failure-20260715001015",
+          "deployment_stage": "paper",
+          "gross_scale_pct": 100.0,
+          "lineage": {
+            "parent_registry_ids": [
+              "artifact-tw-session-momentum-v1"
+            ],
+            "source_dataset_refs": [
+              "source-ingest:normalized/taiwanstockprice/finmind-daily"
+            ],
+            "source_run_ids": [
+              "LOOP-PROD-DEP-001",
+              "LOOP-PROD-DEP-001-failure"
+            ],
+            "source_strategy_spec_id": null
+          },
+          "promotion_state": "paper",
+          "registry_id": "artifact-loop-prod-dep-failure-20260715001015",
+          "rollback": {
+            "action_type": "replace",
+            "target_registry_id": "artifact-tw-session-momentum-v1",
+            "target_version": "1.0.0"
+          },
+          "runtime_action": "deploy_new_binding",
+          "sponsor_persona_id": "persona-20260531-6f175c5c",
+          "strategy_id": "tw_session_momentum",
+          "version": "1.15.1015"
+        },
+        "metadata_key": "openclaw/registry/tw_session_momentum/1.15.1015/metadata.json"
+      },
+      "plan": {
+        "approval_decision_id": "approval-loop-prod-dep-failure-20260715001015",
+        "artifact_id": "artifact-loop-prod-dep-failure-20260715001015",
+        "artifact_type": "execution_bundle",
+        "artifact_version": "1.15.1015",
+        "binding_id": null,
+        "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+        "created_at": "2026-07-15T00:11:49Z",
+        "created_by": "LOOP-PROD-DEP-001",
+        "current_stage": "none",
+        "metadata": {
+          "evidence_mode": "hosted_product_level",
+          "source_task_id": "LOOP-PROD-DEP-001"
+        },
+        "plan_id": "plan-loop-prod-dep-failure-20260715001015",
+        "post_checks": [],
+        "pre_checks": [],
+        "rollback": {
+          "action_type": "replace",
+          "reason": "LOOP-PROD-DEP-001 hosted evidence rollback parent",
+          "target_artifact_id": "artifact-tw-session-momentum-v1",
+          "target_version": "1.0.0",
+          "verified_at": null
+        },
+        "runtime_action": "deploy_new_binding",
+        "runtime_config_ref": null,
+        "scale": {
+          "capital_scale_pct": 0.0,
+          "gross_scale_pct": 100.0,
+          "ramp_schedule": []
+        },
+        "schedule_window": null,
+        "sponsor_persona_id": "persona-20260531-6f175c5c",
+        "status": "approved",
+        "strategy_id": "tw_session_momentum",
+        "supersedes_plan_id": null,
+        "target_stage": "paper",
+        "transition_type": "activate"
+      },
+      "replayed": false,
+      "strategy_id": "tw_session_momentum",
+      "target_stage": "paper",
+      "version": "1.15.1015"
+    },
+    "status": 200
+  }
+}

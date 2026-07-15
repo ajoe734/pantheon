@@ -383,3 +383,37 @@ class TestDurableInboxAndHandoffWorker:
         assert len(store.get_dlq("tenant-test", "user-test")) == 0
         assert len(store.get_backlog("tenant-test", "user-test")) == 1
 
+    def test_concurrent_add_to_inbox_postgres(self) -> None:
+        dsn = os.getenv("TEST_DATABASE_URL")
+        if not dsn:
+            pytest.skip("TEST_DATABASE_URL is not set")
+        schema = f"agora_ds_{uuid.uuid4().hex[:12]}"
+        store = AgoraDatasetStore(backend="postgres", dsn=dsn, schema=schema)
+        try:
+            self._run_concurrent_add_test(store)
+        finally:
+            with store._connect() as conn:
+                conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+
+    def test_concurrent_add_to_inbox_memory(self) -> None:
+        store = AgoraDatasetStore(backend="memory")
+        self._run_concurrent_add_test(store)
+
+    def _run_concurrent_add_test(self, store: AgoraDatasetStore) -> None:
+        import concurrent.futures
+        evidence = _make_evidence(evidence_id="ev-concurrent-1", interaction_kind="ask")
+        
+        # We will submit the same evidence concurrently in multiple threads
+        def submit():
+            return store.add_to_inbox(evidence, "tenant-test", "user-test", "2026-06-27T10:00:00Z")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(submit) for _ in range(10)]
+            results = [f.result() for f in futures]
+
+        # Verify exactly one returned True (is_new) and others returned False
+        true_count = sum(1 for res in results if res[1] is True)
+        false_count = sum(1 for res in results if res[1] is False)
+        assert true_count == 1
+        assert false_count == 9
+

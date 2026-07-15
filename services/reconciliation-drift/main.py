@@ -1227,9 +1227,9 @@ class IncidentTriggerBody(BaseModel):
     generated_at: Optional[str] = None
 
 
-def _fetch_telemetry_runtime_summaries(telemetry_url: str) -> List[Dict[str, Any]]:
+def _fetch_telemetry_runtime_summaries(telemetry_url: str) -> List[Dict[str, Any]] | None:
     if not telemetry_url:
-        return []
+        return None
     url = telemetry_url.rstrip("/") + "/api/telemetry/runtime-summaries"
     try:
         request = urllib.request.Request(url, headers={"Accept": "application/json"})
@@ -1239,10 +1239,11 @@ def _fetch_telemetry_runtime_summaries(telemetry_url: str) -> List[Dict[str, Any
         if isinstance(payload, list):
             return payload
         if isinstance(payload, dict):
-            return payload.get("summaries") or payload.get("items") or []
+            res = payload.get("summaries") or payload.get("items")
+            return res if isinstance(res, list) else []
         return []
     except (urllib.error.URLError, OSError, json.JSONDecodeError):
-        return []
+        return None
 
 
 def _tick_evaluation_id(tick_id: str, binding_id: str) -> str:
@@ -1331,7 +1332,35 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
     tick_id = body.tick_id or timestamp
 
     telemetry_url = os.getenv("PANTHEON_TELEMETRY_API_URL", "").rstrip("/")
-    summaries: List[Dict[str, Any]] = _fetch_telemetry_runtime_summaries(telemetry_url)
+    summaries = _fetch_telemetry_runtime_summaries(telemetry_url)
+
+    if summaries is None:
+        return {
+            "status": "failure",
+            "tick_id": tick_id,
+            "trigger": "scheduled",
+            "evaluated_binding_count": 0,
+            "skipped_binding_count": 0,
+            "evaluation_ids": [],
+            "skipped_binding_ids": [],
+            "telemetry_summaries_fetched": 0,
+            "triggered_at": timestamp,
+            "detail": "telemetry service unavailable",
+        }
+
+    if not summaries:
+        return {
+            "status": "degraded",
+            "tick_id": tick_id,
+            "trigger": "scheduled",
+            "evaluated_binding_count": 0,
+            "skipped_binding_count": 0,
+            "evaluation_ids": [],
+            "skipped_binding_ids": [],
+            "telemetry_summaries_fetched": 0,
+            "triggered_at": timestamp,
+            "detail": "telemetry summaries empty",
+        }
 
     existing_evaluation_ids = {str(item.get("evaluation_id") or "") for item in store.list_evaluations()}
 

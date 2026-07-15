@@ -1,0 +1,19 @@
+{
+  "captured_at": "2026-07-15T00:12:02Z",
+  "duration_ms": 3.42,
+  "label": "safe-postflight-paper-orders",
+  "request": {
+    "body": null,
+    "headers": {},
+    "method": "GET",
+    "started_at": "2026-07-15T00:12:02Z",
+    "url": "http://127.0.0.1:18106/api/broker/paper/orders?capital_pool_id=pool-rescue-0260531-6f175c5c"
+  },
+  "response": {
+    "payload": {
+      "orders": [],
+      "status": "ok"
+    },
+    "status": 200
+  }
+}

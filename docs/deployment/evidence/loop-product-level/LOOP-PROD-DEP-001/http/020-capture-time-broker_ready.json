@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-07-15T00:10:15Z",
+  "duration_ms": 3.285,
+  "label": "capture-time-broker_ready",
+  "request": {
+    "body": null,
+    "headers": {},
+    "method": "GET",
+    "started_at": "2026-07-15T00:10:15Z",
+    "url": "http://127.0.0.1:18106/readyz"
+  },
+  "response": {
+    "payload": {
+      "live_enabled": false,
+      "paper_enabled": true,
+      "service": "broker",
+      "status": "ok"
+    },
+    "status": 200
+  }
+}

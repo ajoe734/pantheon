@@ -1,0 +1,123 @@
+{
+  "captured_at": "2026-07-15T00:11:38Z",
+  "duration_ms": 3.195,
+  "label": "post-restart-terminal-outbox",
+  "request": {
+    "body": null,
+    "headers": {},
+    "method": "GET",
+    "started_at": "2026-07-15T00:11:38Z",
+    "url": "http://127.0.0.1:18095/api/deployment/outbox?aggregate_id=deployment-saga-plan-loop-prod-dep-20260715001015"
+  },
+  "response": {
+    "payload": [
+      {
+        "blocked_reason": null,
+        "delivery_attempts": 1,
+        "dlq_at": null,
+        "event": {
+          "aggregate_id": "deployment-saga-plan-loop-prod-dep-20260715001015",
+          "aggregate_type": "deployment_saga",
+          "causal_parent_id": null,
+          "emitted_at": "2026-07-15T00:10:26Z",
+          "event_id": "deployment-saga-plan-loop-prod-dep-20260715001015-evt-0001",
+          "event_time": "2026-07-15T00:10:26Z",
+          "event_type": "runtime.binding.requested",
+          "idempotency_key": "deployment-saga-plan-loop-prod-dep-20260715001015:1:runtime.binding.requested",
+          "payload": {
+            "approval_decision_id": "approval-loop-prod-dep-20260715001015",
+            "artifact_id": "artifact-loop-prod-dep-20260715001015",
+            "artifact_version": "1.14.1015",
+            "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+            "plan_id": "plan-loop-prod-dep-20260715001015",
+            "runtime_action": "deploy_new_binding",
+            "strategy_id": "tw_session_momentum",
+            "target_stage": "paper"
+          },
+          "sequence_no": 1,
+          "trace_id": "dae4254c-7edb-44d5-bb15-022f1ac5e89a"
+        },
+        "last_attempt_at": "2026-07-15T00:10:42Z",
+        "last_error": "transient dispatch failure: authoritative pre-dispatch binding recovery failed: timed out",
+        "last_replayed_at": null,
+        "next_retry_at": null,
+        "owner_service": "deployment-orchestrator",
+        "published_at": "2026-07-15T00:11:12Z",
+        "replay_count": 0,
+        "retry_policy": {
+          "consumer_name": "deployment-outbox-consumer",
+          "max_attempts": 3,
+          "retry_delay_seconds": 30,
+          "retryable": true
+        },
+        "status": "published"
+      },
+      {
+        "blocked_reason": null,
+        "delivery_attempts": 0,
+        "dlq_at": null,
+        "event": {
+          "aggregate_id": "deployment-saga-plan-loop-prod-dep-20260715001015",
+          "aggregate_type": "deployment_saga",
+          "causal_parent_id": "deployment-saga-plan-loop-prod-dep-20260715001015-evt-0001",
+          "emitted_at": "2026-07-15T00:11:12Z",
+          "event_id": "deployment-saga-plan-loop-prod-dep-20260715001015-evt-0002",
+          "event_time": "2026-07-15T00:11:12Z",
+          "event_type": "runtime.load.requested",
+          "idempotency_key": "deployment-saga-plan-loop-prod-dep-20260715001015:2:runtime.load.requested",
+          "payload": {
+            "binding_id": "rb-a1300e9ad5a74ff999cd8bb3e508d7b4",
+            "plan_id": "plan-loop-prod-dep-20260715001015",
+            "runtime_action": "deploy_new_binding",
+            "runtime_id": "runtime-loop-prod-dep-20260715001015",
+            "target_stage": "paper"
+          },
+          "sequence_no": 2,
+          "trace_id": "dae4254c-7edb-44d5-bb15-022f1ac5e89a"
+        },
+        "last_attempt_at": null,
+        "last_error": null,
+        "last_replayed_at": null,
+        "next_retry_at": null,
+        "owner_service": "runtime-manager-svc",
+        "published_at": "2026-07-15T00:11:22Z",
+        "replay_count": 0,
+        "retry_policy": null,
+        "status": "published"
+      },
+      {
+        "blocked_reason": null,
+        "delivery_attempts": 0,
+        "dlq_at": null,
+        "event": {
+          "aggregate_id": "deployment-saga-plan-loop-prod-dep-20260715001015",
+          "aggregate_type": "deployment_saga",
+          "causal_parent_id": "deployment-saga-plan-loop-prod-dep-20260715001015-evt-0002",
+          "emitted_at": "2026-07-15T00:11:22Z",
+          "event_id": "deployment-saga-plan-loop-prod-dep-20260715001015-evt-0003",
+          "event_time": "2026-07-15T00:11:22Z",
+          "event_type": "deployment.saga.completed",
+          "idempotency_key": "deployment-saga-plan-loop-prod-dep-20260715001015:3:deployment.saga.completed",
+          "payload": {
+            "binding_id": "rb-a1300e9ad5a74ff999cd8bb3e508d7b4",
+            "plan_id": "plan-loop-prod-dep-20260715001015",
+            "runtime_id": "runtime-loop-prod-dep-20260715001015",
+            "target_stage": "paper"
+          },
+          "sequence_no": 3,
+          "trace_id": "dae4254c-7edb-44d5-bb15-022f1ac5e89a"
+        },
+        "last_attempt_at": null,
+        "last_error": null,
+        "last_replayed_at": null,
+        "next_retry_at": null,
+        "owner_service": "runtime-manager-svc",
+        "published_at": "2026-07-15T00:11:33Z",
+        "replay_count": 0,
+        "retry_policy": null,
+        "status": "published"
+      }
+    ],
+    "status": 200
+  }
+}
