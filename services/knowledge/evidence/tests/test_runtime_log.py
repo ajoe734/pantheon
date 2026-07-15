@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -22,7 +24,9 @@ def test_runtime_log_appends_verified_hash_chain_and_recursively_redacts(tmp_pat
         "decision_by": "operator-alice",
         "nested": {
             "actor_id": "operator-bob",
+            "auth_header": "Bearer hidden",
             "accessToken": "secret-token",
+            "jwt": "header.payload.signature",
             "note": "contains private free-form content",
             "dataset_version_id": "dataset-v7",
         },
@@ -48,7 +52,9 @@ def test_runtime_log_appends_verified_hash_chain_and_recursively_redacts(tmp_pat
     assert second["checksum"] == compute_runtime_evidence_checksum(second)
     assert first["payload"]["decision_by"] == REDACTED_VALUE
     assert first["payload"]["nested"]["actor_id"] == REDACTED_VALUE
+    assert first["payload"]["nested"]["auth_header"] == REDACTED_VALUE
     assert first["payload"]["nested"]["accessToken"] == REDACTED_VALUE
+    assert first["payload"]["nested"]["jwt"] == REDACTED_VALUE
     assert first["payload"]["nested"]["note"] == REDACTED_VALUE
     assert first["payload"]["nested"]["dataset_version_id"] == "dataset-v7"
     assert first["payload"]["items"][0]["credentials"] == REDACTED_VALUE
@@ -63,6 +69,37 @@ def test_runtime_log_appends_verified_hash_chain_and_recursively_redacts(tmp_pat
     assert verification.last_checksum == second["checksum"]
     assert verification.owner_service == "training-session"
     assert len(path.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_runtime_log_append_or_get_dedupes_request_hash_under_concurrency(tmp_path) -> None:
+    path = tmp_path / "runtime-evidence.jsonl"
+    log = RuntimeEvidenceLog(path, owner_service="training-session")
+    start = threading.Event()
+
+    def append_duplicate(index: int) -> dict:
+        start.wait(timeout=5)
+        return log.append_or_get(
+            "persona_commit_terminal_readback",
+            {
+                "request_hash": "same-request-hash",
+                "ordinal": index,
+                "note": f"private note {index}",
+            },
+            match_payload={"request_hash": "same-request-hash"},
+            recorded_at="2026-07-15T14:02:00Z",
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(append_duplicate, index) for index in range(24)]
+        start.set()
+        results = [future.result(timeout=10) for future in futures]
+
+    records = log.read_verified()
+    assert len(records) == 1
+    assert {record["checksum"] for record in results} == {records[0]["checksum"]}
+    assert records[0]["event_type"] == "persona_commit_terminal_readback"
+    assert records[0]["payload"]["request_hash"] == "same-request-hash"
+    assert records[0]["payload"]["note"] == REDACTED_VALUE
 
 
 def test_runtime_log_detects_payload_tampering(tmp_path) -> None:

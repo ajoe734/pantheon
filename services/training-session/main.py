@@ -1351,17 +1351,10 @@ def _append_or_get_runtime_decision_evidence(
     recorded_at: str,
 ) -> Dict[str, Any]:
     log = _runtime_evidence_log()
-    for record in reversed(log.read_verified()):
-        record_payload = record.get("payload")
-        if (
-            record.get("event_type") == event_type
-            and isinstance(record_payload, dict)
-            and record_payload.get("request_hash") == request_hash
-        ):
-            return record
-    return log.append(
+    return log.append_or_get(
         event_type,
         {**payload, "request_hash": request_hash},
+        match_payload={"request_hash": request_hash},
         recorded_at=recorded_at,
     )
 
@@ -1788,219 +1781,231 @@ def _decide_replay(
     *,
     idempotency_key: Optional[str] = None,
 ) -> Dict[str, Any]:
-    replay = get_replay(session_id)
     if not idempotency_key:
         raise HTTPException(status_code=400, detail="Idempotency-Key is required for replay decisions")
     timestamp = utc_now()
-    resolution = replay.setdefault("replay_resolution", {})
     request_hash = _replay_decision_hash(session_id, body, state)
-    existing_idempotency = resolution.get("idempotency")
-    if isinstance(existing_idempotency, dict):
-        if existing_idempotency.get("key") == idempotency_key:
-            if existing_idempotency.get("request_hash") != request_hash:
-                raise HTTPException(status_code=409, detail="idempotency key conflict")
-            return _mark_replay_idempotency(
-                replay,
-                idempotency_key=idempotency_key,
-                request_hash=request_hash,
-                replayed=True,
-            )
-    if resolution.get("state") not in {"pending_decision", None}:
-        raise HTTPException(status_code=409, detail="replay already decided")
-    candidate_snapshot_at = _replay_candidate_snapshot_at(replay)
-    if not body.expected_candidate_snapshot_at:
-        raise HTTPException(status_code=409, detail="expected_candidate_snapshot_at is required")
-    if body.expected_candidate_snapshot_at != candidate_snapshot_at:
-        raise HTTPException(status_code=409, detail="candidate snapshot mismatch")
 
-    artifacts = replay.setdefault("artifacts", {})
-    proof: Dict[str, Any] = {}
-    target_receipt: Dict[str, Any] = {}
-    if state == "committed":
-        proof = _require_commit_eval_proof(session_id, replay)
-        try:
-            _append_or_get_runtime_decision_evidence(
-                "persona_commit_admission_intent",
-                {
-                    "session_id": session_id,
-                    "persona_id": replay.get("persona_id"),
-                    "candidate_snapshot_at": candidate_snapshot_at,
-                    "proof_digest": proof.get("proof_digest"),
-                    "candidate_digest": proof.get("candidate_digest"),
-                    "controls_digest": proof.get("controls_digest"),
-                    "target_precondition": proof.get("target_precondition"),
-                },
-                request_hash=request_hash,
-                recorded_at=timestamp,
-            )
-            target_receipt = _commit_authoritative_persona_target(
-                session_id=session_id,
-                replay=replay,
-                proof=proof,
-                idempotency_key=idempotency_key,
-                trusted_now=_trusted_now().astimezone(timezone.utc),
-            )
-        except PersonaTargetError as exc:
+    def decide_locked(existing_replay: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if existing_replay is None:
+            session = store.get_session(session_id)
+            if not session:
+                raise HTTPException(status_code=404, detail="training replay not found")
+            replay = dict(session)
+            replay.setdefault("replay_resolution", {"state": "not_applicable"})
+            replay.setdefault("artifacts", {})
+        else:
+            replay = existing_replay
+
+        resolution = replay.setdefault("replay_resolution", {})
+        existing_idempotency = resolution.get("idempotency")
+        if isinstance(existing_idempotency, dict):
+            if existing_idempotency.get("key") == idempotency_key:
+                if existing_idempotency.get("request_hash") != request_hash:
+                    raise HTTPException(status_code=409, detail="idempotency key conflict")
+                return _mark_replay_idempotency(
+                    replay,
+                    idempotency_key=idempotency_key,
+                    request_hash=request_hash,
+                    replayed=True,
+                )
+        if resolution.get("state") not in {"pending_decision", None}:
+            raise HTTPException(status_code=409, detail="replay already decided")
+        candidate_snapshot_at = _replay_candidate_snapshot_at(replay)
+        if not body.expected_candidate_snapshot_at:
+            raise HTTPException(status_code=409, detail="expected_candidate_snapshot_at is required")
+        if body.expected_candidate_snapshot_at != candidate_snapshot_at:
+            raise HTTPException(status_code=409, detail="candidate snapshot mismatch")
+
+        artifacts = replay.setdefault("artifacts", {})
+        proof: Dict[str, Any] = {}
+        target_receipt: Dict[str, Any] = {}
+        if state == "committed":
+            proof = _require_commit_eval_proof(session_id, replay)
             try:
                 _append_or_get_runtime_decision_evidence(
-                    "persona_commit_rejected",
+                    "persona_commit_admission_intent",
                     {
                         "session_id": session_id,
                         "persona_id": replay.get("persona_id"),
+                        "candidate_snapshot_at": candidate_snapshot_at,
                         "proof_digest": proof.get("proof_digest"),
-                        "error_code": "persona_target_authority_rejected",
+                        "candidate_digest": proof.get("candidate_digest"),
+                        "controls_digest": proof.get("controls_digest"),
+                        "target_precondition": proof.get("target_precondition"),
                     },
                     request_hash=request_hash,
                     recorded_at=timestamp,
                 )
-            except (OSError, RuntimeError):
-                pass
-            raise HTTPException(status_code=409, detail=f"persona target commit rejected: {exc}") from exc
-        except (OSError, RuntimeError) as exc:
-            raise HTTPException(status_code=503, detail=f"persona commit evidence unavailable: {exc}") from exc
+                target_receipt = _commit_authoritative_persona_target(
+                    session_id=session_id,
+                    replay=replay,
+                    proof=proof,
+                    idempotency_key=idempotency_key,
+                    trusted_now=_trusted_now().astimezone(timezone.utc),
+                )
+            except PersonaTargetError as exc:
+                try:
+                    _append_or_get_runtime_decision_evidence(
+                        "persona_commit_rejected",
+                        {
+                            "session_id": session_id,
+                            "persona_id": replay.get("persona_id"),
+                            "proof_digest": proof.get("proof_digest"),
+                            "error_code": "persona_target_authority_rejected",
+                        },
+                        request_hash=request_hash,
+                        recorded_at=timestamp,
+                    )
+                except (OSError, RuntimeError):
+                    pass
+                raise HTTPException(status_code=409, detail=f"persona target commit rejected: {exc}") from exc
+            except (OSError, RuntimeError) as exc:
+                raise HTTPException(status_code=503, detail=f"persona commit evidence unavailable: {exc}") from exc
 
-        try:
-            terminal_evidence = _append_or_get_runtime_decision_evidence(
-                "persona_commit_terminal_readback",
+            try:
+                terminal_evidence = _append_or_get_runtime_decision_evidence(
+                    "persona_commit_terminal_readback",
+                    {
+                        "session_id": session_id,
+                        "persona_id": replay.get("persona_id"),
+                        "proof_digest": proof.get("proof_digest"),
+                        "candidate_digest": proof.get("candidate_digest"),
+                        "controls_digest": proof.get("controls_digest"),
+                        "target_receipt": target_receipt,
+                    },
+                    request_hash=request_hash,
+                    recorded_at=str(target_receipt.get("target_recorded_at") or timestamp),
+                )
+            except (OSError, RuntimeError) as exc:
+                # The target owner may already be committed.  Returning failure
+                # is intentional: a retry with the same key converges through
+                # exact terminal readback before local state advances.
+                raise HTTPException(status_code=503, detail=f"persona terminal evidence unavailable: {exc}") from exc
+
+            target_ref = str(target_receipt.get("target_controller_record_ref") or "").strip()
+            if not target_ref:
+                raise HTTPException(status_code=409, detail="persona terminal target record ref is missing")
+            artifacts.update(
                 {
-                    "session_id": session_id,
-                    "persona_id": replay.get("persona_id"),
-                    "proof_digest": proof.get("proof_digest"),
-                    "candidate_digest": proof.get("candidate_digest"),
-                    "controls_digest": proof.get("controls_digest"),
-                    "target_receipt": target_receipt,
-                },
-                request_hash=request_hash,
-                recorded_at=str(target_receipt.get("target_recorded_at") or timestamp),
+                    "after_artifact_ref": target_ref,
+                    "persona_policy_ref": target_ref,
+                    "persona_target_controller_record_ref": target_ref,
+                    "approval_controller_record_ref": target_receipt.get("approval_controller_record_ref"),
+                    "approval_decision_id": target_receipt.get("approval_decision_id"),
+                    "approval_decision_ref": target_receipt.get("approval_decision_ref"),
+                    "evaluation_proof_ref": proof.get("proof_ref"),
+                    "evaluation_proof_id": proof.get("proof_id"),
+                    "evaluation_job_id": proof.get("job_id"),
+                    "evaluation_governance_gate_id": proof.get("governance_gate_id"),
+                    "evaluation_governance_gate_state": proof.get("governance_gate_state"),
+                    "decision_record_ref": f"runtime-evidence:{terminal_evidence['checksum']}",
+                    "lineage_recorded_at": target_receipt.get("target_recorded_at") or terminal_evidence["recorded_at"],
+                }
             )
-        except (OSError, RuntimeError) as exc:
-            # The target owner may already be committed.  Returning failure is
-            # intentional: a retry with the same key converges through exact
-            # terminal readback before local state advances.
-            raise HTTPException(status_code=503, detail=f"persona terminal evidence unavailable: {exc}") from exc
-
-        target_ref = str(target_receipt.get("target_controller_record_ref") or "").strip()
-        if not target_ref:
-            raise HTTPException(status_code=409, detail="persona terminal target record ref is missing")
-        artifacts.update(
-            {
-                "after_artifact_ref": target_ref,
-                "persona_policy_ref": target_ref,
-                "persona_target_controller_record_ref": target_ref,
-                "approval_controller_record_ref": target_receipt.get("approval_controller_record_ref"),
-                "approval_decision_id": target_receipt.get("approval_decision_id"),
-                "approval_decision_ref": target_receipt.get("approval_decision_ref"),
+            try:
+                policy_edges = record_policy_lineage_commit(
+                    session_id,
+                    _teaching_event_ids(replay),
+                    str(replay.get("persona_id") or ""),
+                    store=build_lineage_read_store(store.data_dir),
+                    commit_at=str(artifacts["lineage_recorded_at"]),
+                    policy_artifact_id=target_ref,
+                )
+            except PolicyLineageError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            artifacts["policy_lineage_edge_ids"] = [edge["edge_id"] for edge in policy_edges]
+            artifacts["policy_lineage_store_ref"] = "lineage-read:training-session-policy-lineage"
+            artifacts["lineage_audit"] = {
+                "state": "recorded_from_terminal_target_readback",
+                "recorded_at": artifacts["lineage_recorded_at"],
+                "policy_lineage_edge_ids": artifacts["policy_lineage_edge_ids"],
                 "evaluation_proof_ref": proof.get("proof_ref"),
-                "evaluation_proof_id": proof.get("proof_id"),
-                "evaluation_job_id": proof.get("job_id"),
-                "evaluation_governance_gate_id": proof.get("governance_gate_id"),
-                "evaluation_governance_gate_state": proof.get("governance_gate_state"),
-                "decision_record_ref": f"runtime-evidence:{terminal_evidence['checksum']}",
-                "lineage_recorded_at": target_receipt.get("target_recorded_at") or terminal_evidence["recorded_at"],
+                "governance_gate_state": proof.get("governance_gate_state"),
+                "persona_target_controller_record_ref": target_ref,
             }
-        )
-        try:
-            policy_edges = record_policy_lineage_commit(
-                session_id,
-                _teaching_event_ids(replay),
-                str(replay.get("persona_id") or ""),
-                store=build_lineage_read_store(store.data_dir),
-                commit_at=str(artifacts["lineage_recorded_at"]),
-                policy_artifact_id=target_ref,
-            )
-        except PolicyLineageError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        artifacts["policy_lineage_edge_ids"] = [edge["edge_id"] for edge in policy_edges]
-        artifacts["policy_lineage_store_ref"] = "lineage-read:training-session-policy-lineage"
-        artifacts["lineage_audit"] = {
-            "state": "recorded_from_terminal_target_readback",
-            "recorded_at": artifacts["lineage_recorded_at"],
-            "policy_lineage_edge_ids": artifacts["policy_lineage_edge_ids"],
-            "evaluation_proof_ref": proof.get("proof_ref"),
-            "governance_gate_state": proof.get("governance_gate_state"),
-            "persona_target_controller_record_ref": target_ref,
-        }
-    else:
-        try:
-            terminal_evidence = _append_or_get_runtime_decision_evidence(
-                "replay_discard_terminal",
+        else:
+            try:
+                terminal_evidence = _append_or_get_runtime_decision_evidence(
+                    "replay_discard_terminal",
+                    {
+                        "session_id": session_id,
+                        "persona_id": replay.get("persona_id"),
+                        "candidate_snapshot_at": candidate_snapshot_at,
+                        "decision_by": body.actor_id,
+                        "note": body.note,
+                    },
+                    request_hash=request_hash,
+                    recorded_at=timestamp,
+                )
+            except (OSError, RuntimeError) as exc:
+                raise HTTPException(status_code=503, detail=f"discard evidence unavailable: {exc}") from exc
+            artifacts.update(
                 {
-                    "session_id": session_id,
-                    "persona_id": replay.get("persona_id"),
-                    "candidate_snapshot_at": candidate_snapshot_at,
-                    "decision_by": body.actor_id,
-                    "note": body.note,
-                },
-                request_hash=request_hash,
-                recorded_at=timestamp,
+                    "after_artifact_ref": None,
+                    "decision_record_ref": f"runtime-evidence:{terminal_evidence['checksum']}",
+                    "lineage_recorded_at": terminal_evidence["recorded_at"],
+                }
             )
-        except (OSError, RuntimeError) as exc:
-            raise HTTPException(status_code=503, detail=f"discard evidence unavailable: {exc}") from exc
-        artifacts.update(
-            {
-                "after_artifact_ref": None,
-                "decision_record_ref": f"runtime-evidence:{terminal_evidence['checksum']}",
-                "lineage_recorded_at": terminal_evidence["recorded_at"],
-            }
-        )
 
-    resolution["state"] = state
-    resolution["decision_at"] = artifacts.get("lineage_recorded_at") or timestamp
-    resolution["decision_by"] = body.actor_id
-    resolution["note"] = body.note
-    resolution["client_decided_at"] = body.decided_at
-    if proof:
-        resolution["evaluation_proof"] = proof
-        resolution["persona_target_readback"] = target_receipt
+        resolution["state"] = state
+        resolution["decision_at"] = artifacts.get("lineage_recorded_at") or timestamp
+        resolution["decision_by"] = body.actor_id
+        resolution["note"] = body.note
+        resolution["client_decided_at"] = body.decided_at
+        if proof:
+            resolution["evaluation_proof"] = proof
+            resolution["persona_target_readback"] = target_receipt
 
-    decision_artifact_refs = {
-        "before_artifact_ref": artifacts.get("before_artifact_ref"),
-        "candidate_artifact_ref": artifacts.get("candidate_artifact_ref"),
-        "after_artifact_ref": artifacts.get("after_artifact_ref"),
-        "decision_record_ref": artifacts.get("decision_record_ref"),
-        "lineage_recorded_at": artifacts.get("lineage_recorded_at"),
-        "evaluation_proof_ref": artifacts.get("evaluation_proof_ref"),
-        "evaluation_governance_gate_id": artifacts.get("evaluation_governance_gate_id"),
-        "evaluation_governance_gate_state": artifacts.get("evaluation_governance_gate_state"),
-        "persona_policy_ref": artifacts.get("persona_policy_ref"),
-        "persona_target_controller_record_ref": artifacts.get("persona_target_controller_record_ref"),
-        "approval_controller_record_ref": artifacts.get("approval_controller_record_ref"),
-        "approval_decision_id": artifacts.get("approval_decision_id"),
-        "approval_decision_ref": artifacts.get("approval_decision_ref"),
-        "policy_lineage_edge_ids": artifacts.get("policy_lineage_edge_ids"),
-        "policy_lineage_store_ref": artifacts.get("policy_lineage_store_ref"),
-        "lineage_audit": artifacts.get("lineage_audit"),
-    }
-    decision_event = _build_teaching_event(
-        session_id=session_id,
-        event_id=f"tevt-decision-{request_hash[:20]}",
-        actor="system",
-        actor_label="Training Session Service",
-        event_type="commit" if state == "committed" else "discard",
-        summary=f"Replay candidate {state} by {body.actor_id}.",
-        timestamp=str(artifacts.get("lineage_recorded_at") or timestamp),
-        sequence_number=max(
-            (int(event.get("sequence_number") or 0) for event in replay.get("events", [])),
-            default=0,
-        )
-        + 1,
-        eval_ref={
-            "candidate_snapshot_at": candidate_snapshot_at,
+        decision_artifact_refs = {
+            "before_artifact_ref": artifacts.get("before_artifact_ref"),
+            "candidate_artifact_ref": artifacts.get("candidate_artifact_ref"),
+            "after_artifact_ref": artifacts.get("after_artifact_ref"),
+            "decision_record_ref": artifacts.get("decision_record_ref"),
+            "lineage_recorded_at": artifacts.get("lineage_recorded_at"),
             "evaluation_proof_ref": artifacts.get("evaluation_proof_ref"),
-            "governance_gate_state": artifacts.get("evaluation_governance_gate_state"),
-        },
-        artifact_refs=decision_artifact_refs,
-    )
-    _mark_replay_idempotency(
-        replay,
-        idempotency_key=idempotency_key,
-        request_hash=request_hash,
-        replayed=False,
-    )
-    stored_decision_event = store.append_event(decision_event)
-    replay.setdefault("events", []).append(stored_decision_event)
-    store.put_replay(session_id, replay)
-    return replay
+            "evaluation_governance_gate_id": artifacts.get("evaluation_governance_gate_id"),
+            "evaluation_governance_gate_state": artifacts.get("evaluation_governance_gate_state"),
+            "persona_policy_ref": artifacts.get("persona_policy_ref"),
+            "persona_target_controller_record_ref": artifacts.get("persona_target_controller_record_ref"),
+            "approval_controller_record_ref": artifacts.get("approval_controller_record_ref"),
+            "approval_decision_id": artifacts.get("approval_decision_id"),
+            "approval_decision_ref": artifacts.get("approval_decision_ref"),
+            "policy_lineage_edge_ids": artifacts.get("policy_lineage_edge_ids"),
+            "policy_lineage_store_ref": artifacts.get("policy_lineage_store_ref"),
+            "lineage_audit": artifacts.get("lineage_audit"),
+        }
+        decision_event = _build_teaching_event(
+            session_id=session_id,
+            event_id=f"tevt-decision-{request_hash[:20]}",
+            actor="system",
+            actor_label="Training Session Service",
+            event_type="commit" if state == "committed" else "discard",
+            summary=f"Replay candidate {state} by {body.actor_id}.",
+            timestamp=str(artifacts.get("lineage_recorded_at") or timestamp),
+            sequence_number=max(
+                (int(event.get("sequence_number") or 0) for event in replay.get("events", [])),
+                default=0,
+            )
+            + 1,
+            eval_ref={
+                "candidate_snapshot_at": candidate_snapshot_at,
+                "evaluation_proof_ref": artifacts.get("evaluation_proof_ref"),
+                "governance_gate_state": artifacts.get("evaluation_governance_gate_state"),
+            },
+            artifact_refs=decision_artifact_refs,
+        )
+        _mark_replay_idempotency(
+            replay,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            replayed=False,
+        )
+        stored_decision_event = store.append_event(decision_event)
+        replay.setdefault("events", []).append(stored_decision_event)
+        return replay
+
+    return store.mutate_replay(session_id, decide_locked)
 
 
 @app.post("/api/training/replays/{session_id}/commit")

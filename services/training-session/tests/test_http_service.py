@@ -5,6 +5,9 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
@@ -443,6 +446,76 @@ def test_replay_commit_idempotency_replays_without_duplicate_event() -> None:
     assert replay.json()["replay_resolution"]["idempotency"]["replayed"] is True
     events = module.TrainingSessionStore(module.store.data_dir).list_event_log(session_id)
     assert [event["event_type"] for event in events].count("commit") == 1
+
+
+def test_concurrent_replay_commit_serializes_persona_commit_and_evidence() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    session_id = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-alpha",
+            "objective": "Commit concurrently",
+            "created_at": "2026-04-28T19:30:00Z",
+        },
+    ).json()["session_id"]
+
+    _preview, _job = _run_worker_preview(module, client, session_id, key="concurrent-commit-preview")
+    completed = client.post(f"/api/training/sessions/{session_id}/complete")
+    assert completed.status_code == 201
+    candidate_snapshot_at = completed.json()["events"][-1]["eval_ref"]["candidate_snapshot_at"]
+    body = {
+        "expected_candidate_snapshot_at": candidate_snapshot_at,
+        "actor_id": "operator-1",
+        "note": "Accept candidate.",
+        "decided_at": "2026-04-28T19:35:00Z",
+    }
+
+    base_commit = make_fake_persona_target_commit()
+    call_lock = threading.Lock()
+    commit_calls: list[str] = []
+
+    def counted_commit(**kwargs):
+        with call_lock:
+            commit_calls.append(str(kwargs.get("idempotency_key") or ""))
+        time.sleep(0.05)
+        return base_commit(**kwargs)
+
+    module._commit_authoritative_persona_target = counted_commit
+    start = threading.Event()
+
+    def post_commit() -> tuple[int, dict]:
+        local_client = TestClient(module.app)
+        start.wait(timeout=5)
+        response = local_client.post(
+            f"/api/training/replays/{session_id}/commit",
+            json=body,
+            headers={"Idempotency-Key": "trn004-concurrent-commit"},
+        )
+        return response.status_code, response.json()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(post_commit) for _ in range(2)]
+        start.set()
+        results = [future.result(timeout=10) for future in futures]
+
+    assert [status for status, _payload in results] == [200, 200], results
+    payloads = [payload for _status, payload in results]
+    replayed_flags = sorted(
+        payload["replay_resolution"]["idempotency"]["replayed"]
+        for payload in payloads
+    )
+    assert replayed_flags == [False, True]
+    assert commit_calls == ["trn004-concurrent-commit"]
+    events = module.TrainingSessionStore(module.store.data_dir).list_event_log(session_id)
+    assert [event["event_type"] for event in events].count("commit") == 1
+
+    evidence_event_types = [
+        record["event_type"]
+        for record in module._runtime_evidence_log().read_verified()
+    ]
+    assert evidence_event_types.count("persona_commit_admission_intent") == 1
+    assert evidence_event_types.count("persona_commit_terminal_readback") == 1
 
 
 def test_replay_commit_records_persona_route_policy_lineage_refs() -> None:

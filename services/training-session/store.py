@@ -286,6 +286,32 @@ class TrainingSessionStore:
             self._write_map_unlocked(self.preview_jobs_path, records)
             return record
 
+    def mutate_replay(
+        self,
+        session_id: str,
+        mutator: Callable[[Optional[Dict[str, Any]]], Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Atomically read, decide, and replace one replay record.
+
+        Replay decisions can include bounded authority I/O while the replay
+        lock is held.  This serializes the local pending-decision check with
+        the external commit side effect for a session so concurrent requests
+        cannot both pass admission before the durable replay state advances.
+        Raising from the callback leaves the durable replay map unchanged.
+        """
+
+        with self._file_lock(self.replays_path, exclusive=True):
+            records = self._read_map_unlocked(self.replays_path)
+            existing = records.get(session_id)
+            candidate = mutator(json.loads(json.dumps(existing)) if existing is not None else None)
+            if not isinstance(candidate, dict):
+                raise TypeError("replay mutator must return a dict")
+            record = json.loads(json.dumps(candidate))
+            record["session_id"] = session_id
+            records[session_id] = record
+            self._write_map_unlocked(self.replays_path, records)
+            return record
+
     def list_replays(self) -> List[Dict[str, Any]]:
         return list(self._read_map(self.replays_path).values())
 

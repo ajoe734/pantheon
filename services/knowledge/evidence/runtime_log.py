@@ -37,12 +37,14 @@ _REQUIRED_FIELDS = {
     "checksum",
 }
 _SECRET_TOKENS = {
+    "auth",
     "authorization",
     "bearer",
     "cookie",
     "cookies",
     "credential",
     "credentials",
+    "jwt",
     "password",
     "passwords",
     "passwd",
@@ -331,6 +333,35 @@ class RuntimeEvidenceLog:
         self.path = Path(path)
         self.owner_service = _require_text(owner_service, "owner_service")
 
+    def _append_redacted_record_unlocked(
+        self,
+        existing: list[dict[str, Any]],
+        *,
+        event_type: str,
+        redacted_payload: Mapping[str, Any],
+        recorded_at: str,
+    ) -> dict[str, Any]:
+        previous_checksum = existing[-1]["checksum"] if existing else None
+        record: dict[str, Any] = {
+            "schema_version": RUNTIME_EVIDENCE_SCHEMA_VERSION,
+            "sequence": len(existing) + 1,
+            "previous_checksum": previous_checksum,
+            "recorded_at": recorded_at,
+            "owner_service": self.owner_service,
+            "event_type": event_type,
+            "payload": dict(redacted_payload),
+        }
+        record["checksum"] = compute_runtime_evidence_checksum(record)
+        encoded = json.dumps(
+            record,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8") + b"\n"
+        _append_single_line(self.path, encoded)
+        return record
+
     def append(
         self,
         event_type: str,
@@ -344,28 +375,60 @@ class RuntimeEvidenceLog:
         if not isinstance(payload, Mapping):
             raise TypeError("payload must be a mapping")
         timestamp = _normalize_timestamp(recorded_at)
+        redacted_payload = redact_runtime_evidence(payload)
+        if not isinstance(redacted_payload, Mapping):
+            raise TypeError("redacted payload must be a mapping")
         with _locked(self.path, exclusive=True):
             existing = _read_verified_unlocked(self.path, expected_owner=self.owner_service)
-            previous_checksum = existing[-1]["checksum"] if existing else None
-            record: dict[str, Any] = {
-                "schema_version": RUNTIME_EVIDENCE_SCHEMA_VERSION,
-                "sequence": len(existing) + 1,
-                "previous_checksum": previous_checksum,
-                "recorded_at": timestamp,
-                "owner_service": self.owner_service,
-                "event_type": normalized_event_type,
-                "payload": redact_runtime_evidence(payload),
-            }
-            record["checksum"] = compute_runtime_evidence_checksum(record)
-            encoded = json.dumps(
-                record,
-                ensure_ascii=False,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8") + b"\n"
-            _append_single_line(self.path, encoded)
-            return record
+            return self._append_redacted_record_unlocked(
+                existing,
+                event_type=normalized_event_type,
+                redacted_payload=redacted_payload,
+                recorded_at=timestamp,
+            )
+
+    def append_or_get(
+        self,
+        event_type: str,
+        payload: Mapping[str, Any],
+        *,
+        match_payload: Mapping[str, Any],
+        recorded_at: str | None = None,
+    ) -> dict[str, Any]:
+        """Atomically return an existing matching record or append one.
+
+        The match and append run under the log's exclusive lock so callers can
+        deduplicate idempotent request evidence by stable payload keys such as
+        ``request_hash`` without a read-then-append race.
+        """
+
+        normalized_event_type = _require_text(event_type, "event_type")
+        if not isinstance(payload, Mapping):
+            raise TypeError("payload must be a mapping")
+        if not isinstance(match_payload, Mapping) or not match_payload:
+            raise TypeError("match_payload must be a non-empty mapping")
+        timestamp = _normalize_timestamp(recorded_at)
+        redacted_payload = redact_runtime_evidence(payload)
+        redacted_match = redact_runtime_evidence(match_payload)
+        if not isinstance(redacted_payload, Mapping) or not isinstance(redacted_match, Mapping):
+            raise TypeError("redacted payloads must be mappings")
+        match_items = {str(key): value for key, value in redacted_match.items()}
+        with _locked(self.path, exclusive=True):
+            existing = _read_verified_unlocked(self.path, expected_owner=self.owner_service)
+            for record in reversed(existing):
+                record_payload = record.get("payload")
+                if (
+                    record.get("event_type") == normalized_event_type
+                    and isinstance(record_payload, Mapping)
+                    and all(record_payload.get(key) == value for key, value in match_items.items())
+                ):
+                    return record
+            return self._append_redacted_record_unlocked(
+                existing,
+                event_type=normalized_event_type,
+                redacted_payload=redacted_payload,
+                recorded_at=timestamp,
+            )
 
     def read_verified(self) -> list[dict[str, Any]]:
         """Verify the complete log and return its records."""
