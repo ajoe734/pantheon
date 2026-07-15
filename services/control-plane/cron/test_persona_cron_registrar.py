@@ -13,7 +13,7 @@ from persona_cron_registrar import (
     PersonaCronRegistrationResult,
     _job_name,
 )
-from workflows import WORKFLOW_CATALOG
+from workflows import PERSONA_FIRST_EVALUATION_WORKFLOW_ID, WORKFLOW_CATALOG
 
 
 def _existing_job_fixture(workflow_id: str, persona_id: str, job_id: str) -> dict:
@@ -122,7 +122,7 @@ class TestJobName(unittest.TestCase):
 
 
 class TestPersonaCronRegistrarDryRun(unittest.TestCase):
-    def test_dry_run_returns_all_four_workflows(self):
+    def test_dry_run_returns_all_catalog_workflows(self):
         registrar = PersonaCronRegistrar(dry_run=True)
         result = registrar.register_for_persona("persona-test-001")
 
@@ -205,8 +205,90 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
             payload_text = json.loads((params or {}).get("payload", {}).get("text", "{}"))
             self.assertEqual(payload_text.get("persona_id"), "persona-meta-001")
 
+    def test_registers_stable_persona_first_evaluation_workflow(self):
+        spy = GatewayRuntimeSpy()
+        result = PersonaCronRegistrar(gateway_runtime=spy).register_for_persona(
+            "persona-first-eval-001"
+        )
+
+        matching_records = [
+            record
+            for record in result.registered
+            if record.workflow_id == PERSONA_FIRST_EVALUATION_WORKFLOW_ID
+        ]
+        self.assertEqual(len(matching_records), 1)
+        matching_calls = []
+        for _, params in spy.add_calls:
+            payload = json.loads((params or {}).get("payload", {}).get("text", "{}"))
+            if payload.get("workflow_id") == PERSONA_FIRST_EVALUATION_WORKFLOW_ID:
+                matching_calls.append((params, payload))
+        self.assertEqual(len(matching_calls), 1)
+        params, payload = matching_calls[0]
+        self.assertEqual(payload["persona_id"], "persona-first-eval-001")
+        self.assertEqual(
+            (params or {}).get("schedule", {}).get("expr"),
+            WORKFLOW_CATALOG[PERSONA_FIRST_EVALUATION_WORKFLOW_ID].schedule,
+        )
+
+    def test_first_evaluation_readback_rejects_other_workflow_for_same_persona(self):
+        existing = [
+            _existing_job_fixture("pantheon.ingest", "persona-readback-001", "job-ingest")
+        ]
+        spy = GatewayRuntimeSpy(existing_jobs=existing)
+        registrar = PersonaCronRegistrar(gateway_runtime=spy)
+
+        self.assertFalse(
+            registrar.has_first_evaluation_registration(
+                "persona-readback-001",
+                runtime=spy,
+            )
+        )
+
+    def test_first_evaluation_readback_requires_matching_persona(self):
+        existing = [
+            _existing_job_fixture(
+                PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                "persona-other",
+                "job-first-eval-other",
+            )
+        ]
+        spy = GatewayRuntimeSpy(existing_jobs=existing)
+        registrar = PersonaCronRegistrar(gateway_runtime=spy)
+
+        self.assertFalse(
+            registrar.has_first_evaluation_registration(
+                "persona-readback-001",
+                runtime=spy,
+            )
+        )
+
+    def test_first_evaluation_readback_accepts_exact_identity(self):
+        existing = [
+            _existing_job_fixture(
+                PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                "persona-readback-001",
+                "job-first-eval",
+            )
+        ]
+        spy = GatewayRuntimeSpy(existing_jobs=existing)
+        registrar = PersonaCronRegistrar(gateway_runtime=spy)
+
+        self.assertTrue(
+            registrar.has_first_evaluation_registration(
+                "persona-readback-001",
+                runtime=spy,
+            )
+        )
+
+    def test_dry_run_is_not_authoritative_registration_readback(self):
+        registrar = PersonaCronRegistrar(dry_run=True)
+
+        self.assertFalse(
+            registrar.has_first_evaluation_registration("persona-dry-run-001")
+        )
+
     def test_idempotent_skip_when_job_already_present(self):
-        # Pre-seed two of the four workflow jobs as already-registered.
+        # Pre-seed two catalog workflow jobs as already-registered.
         existing = [
             _existing_job_fixture("pantheon.ingest", "persona-idem-001", "j1"),
             _existing_job_fixture("pantheon.deploy", "persona-idem-001", "j2"),
@@ -305,7 +387,7 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
         results, removed, remove_failed = PersonaCronRegistrar(gateway_runtime=spy).reconcile_personas(
             ["persona-a"]
         )
-        # Should register 3 missing jobs for persona-a (valid ingest is skipped)
+        # Should register every missing job for persona-a (valid ingest is skipped)
         self.assertEqual(len(results), 1)
         self.assertEqual(len(results[0].registered), len(WORKFLOW_CATALOG) - 1)
         self.assertEqual(results[0].skipped, ["pantheon-pantheon-ingest-persona-a"])

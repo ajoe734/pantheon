@@ -14,12 +14,13 @@ import threading
 import time
 import uuid
 from collections import deque
+from copy import deepcopy
 from concurrent.futures import Executor, ThreadPoolExecutor
 from contextvars import ContextVar, copy_context
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 from urllib.parse import quote, urlencode
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -196,6 +197,16 @@ from operations_read_model import (
 from read_store import ReadSurfaceStore, redact_evidence_refs
 from services.persona.runtime_profile import build_persona_runtime_profile
 from settings_store import SettingsStore
+from persona_provisioning import (
+    ProvisioningConflict,
+    ProvisioningRecord,
+    make_persona_provisioning_store,
+)
+from persona_provisioning_coordinator import (
+    PersonaProvisioningCoordinationError,
+    PersonaProvisioningCoordinator,
+    deterministic_provisioning_ids,
+)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -26813,6 +26824,78 @@ _STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _PERSONA_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
+_PERSONA_PROVISIONING_STORE = None
+_PERSONA_PROVISIONING_STORE_LOCK = threading.Lock()
+_PERSONA_FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
+
+
+def _persona_provisioning_store():
+    """Lazily bootstrap the durable cross-replica coordination ledger."""
+    global _PERSONA_PROVISIONING_STORE
+    if _PERSONA_PROVISIONING_STORE is not None:
+        return _PERSONA_PROVISIONING_STORE
+    with _PERSONA_PROVISIONING_STORE_LOCK:
+        if _PERSONA_PROVISIONING_STORE is None:
+            _PERSONA_PROVISIONING_STORE = make_persona_provisioning_store()
+    return _PERSONA_PROVISIONING_STORE
+
+
+class _PersonaOwnerHttpTransport:
+    """Strict synchronous transport to canonical provisioning owner APIs."""
+
+    _OWNER_ENVIRONMENTS = {
+        "capital": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
+        "registry": ("PANTHEON_REGISTRY_API_URL", "PANTHEON_REGISTRY_URL"),
+        "governance": (
+            "PANTHEON_GOVERNANCE_APPROVAL_API_URL",
+            "PANTHEON_GOVERNANCE_SERVICE_URL",
+        ),
+        "deployment": ("PANTHEON_DEPLOYMENT_API_URL", "PANTHEON_DEPLOYMENT_SERVICE_URL"),
+    }
+
+    @classmethod
+    def _url(cls, owner: str, path: str) -> str:
+        env_names = cls._OWNER_ENVIRONMENTS.get(owner)
+        if env_names is None:
+            raise RuntimeError(f"Unknown Persona provisioning owner: {owner}")
+        for env_name in env_names:
+            base = os.getenv(env_name, "").strip().rstrip("/")
+            if base:
+                return f"{base}{path}"
+        raise RuntimeError(
+            f"Persona provisioning owner {owner} is unconfigured; set {env_names[0]}"
+        )
+
+    def get(self, owner: str, path: str) -> Optional[Dict[str, Any]]:
+        try:
+            value = _get_json(self._url(owner, path))
+        except urllib_error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            raise
+        if not isinstance(value, dict):
+            raise RuntimeError(f"{owner} GET {path} returned a non-object receipt")
+        return value
+
+    def post(self, owner: str, path: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        value = _post_json(self._url(owner, path), dict(payload))
+        if not isinstance(value, dict):
+            raise RuntimeError(f"{owner} POST {path} returned a non-object receipt")
+        return value
+
+    def patch(self, owner: str, path: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        request = urllib_request.Request(
+            self._url(owner, path),
+            data=json.dumps(dict(payload)).encode("utf-8"),
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            method="PATCH",
+        )
+        timeout = max(1, int(os.getenv("PANTHEON_COMMAND_TIMEOUT_SECONDS", "30")))
+        with urllib_request.urlopen(request, timeout=timeout) as response:
+            value = json.loads(response.read().decode("utf-8"))
+        if not isinstance(value, dict):
+            raise RuntimeError(f"{owner} PATCH {path} returned a non-object receipt")
+        return value
 
 
 def _strategy_persona_idempotency_check(
@@ -27822,6 +27905,54 @@ def _deployment_url(path: str) -> str:
     return f"{base}{path}"
 
 
+def _checkpoint_persona_provisioning_readback(
+    *,
+    metadata: Dict[str, Any],
+    state: str,
+    runtime_binding_id: str,
+    runtime_id: str,
+    failure_reason: Optional[str] = None,
+) -> None:
+    """Persist terminal readback in the same durable ledger used by create."""
+    tenant_id = str(metadata.get("tenant_id") or "").strip()
+    idempotency_key = str(metadata.get("provisioning_idempotency_key") or "").strip()
+    if not tenant_id or not idempotency_key:
+        return
+    lease_owner = f"persona-readback:{uuid.uuid4().hex}"
+    try:
+        store = _persona_provisioning_store()
+        record = store.acquire(
+            tenant_id,
+            idempotency_key,
+            lease_owner=lease_owner,
+            lease_seconds=30,
+        )
+        if record is None:
+            return
+        if runtime_binding_id:
+            record.references["runtime_binding_id"] = runtime_binding_id
+        if runtime_id:
+            record.references["runtime_id"] = runtime_id
+        if state == "paper_running":
+            record.state = "succeeded"
+            record.current_step = "authoritative_readback_complete"
+            record.error = None
+        elif state == "provisioning_failed":
+            record.state = "failed"
+            record.current_step = "authoritative_readback_failed"
+            record.error = {
+                "code": "PERSONA_PROVISIONING_READBACK_FAILED",
+                "reason": failure_reason or "authoritative_readback_failed",
+                "terminal": True,
+                "recorded_at": utc_now(),
+            }
+        store.release(record, lease_owner=lease_owner)
+    except Exception as exc:
+        # Owner lifecycle remains fail-closed; inability to persist the mirror
+        # is logged and never turns missing readback into success.
+        log.warning("Failed to checkpoint Persona provisioning readback: %s", exc)
+
+
 def _evaluate_persona_provisioning_status(
     persona_id: str,
     raw: Dict[str, Any],
@@ -27833,73 +27964,138 @@ def _evaluate_persona_provisioning_status(
     current_state = raw.get("lifecycle_state") or raw.get("state")
     if current_state not in ("provisioning", "draft", "paper_running"):
         return str(current_state or "")
-
-    if current_state in ("provisioning_failed", "failed"):
-        return str(current_state or "")
-
     if current_state == "paper_running":
         return "paper_running"
-
     if current_state != "provisioning":
         return str(current_state or "")
 
-    # 1. Check RuntimeBinding
-    binding_id = metadata.get("runtime_binding_id") or metadata.get("binding_id")
-    binding = None
+    # Deployment owns admission and the runtime identity.  Never infer a
+    # RuntimeBinding id from the distinct PersonaCapitalBinding id.
+    persona_capital_binding_id = str(
+        metadata.get("persona_capital_binding_id") or metadata.get("binding_id") or ""
+    ).strip()
+    plan_id = str(metadata.get("deployment_plan_id") or "").strip()
+    binding_id = str(metadata.get("runtime_binding_id") or "").strip()
+    runtime_id = str(metadata.get("runtime_id") or "").strip()
+    projection: Dict[str, Any] = {}
+    projection_failed = False
+    if plan_id:
+        try:
+            candidate = _get_json(
+                _deployment_url(f"/api/deployment/plans/{quote(plan_id, safe='')}/projection")
+            )
+            projection = candidate if isinstance(candidate, dict) else {}
+        except Exception as exc:
+            log.warning("Failed to query Deployment projection %s for %s: %s", plan_id, persona_id, exc)
+
+    projection_saga = projection.get("deployment_saga")
+    projection_saga = projection_saga if isinstance(projection_saga, dict) else {}
+    projection_observed = bool(
+        projection
+        and str(projection.get("plan_id") or "") == plan_id
+        and str(projection.get("deployment_saga_id") or projection_saga.get("saga_id") or "")
+    )
+
+    saga_status = str(
+        projection.get("deployment_saga_status")
+        or projection_saga.get("status")
+        or ""
+    ).strip().lower()
+    saga_progress = projection.get("deployment_saga_progress")
+    saga_progress = saga_progress if isinstance(saga_progress, dict) else {}
+    progress_status = str(saga_progress.get("progress_status") or "").strip().lower()
+    projection_failed = saga_status in {"failed", "aborted", "compensated"} or progress_status in {
+        "failed",
+        "blocked",
+    }
+
+    projected_binding = projection.get("runtime_binding")
+    projected_binding = projected_binding if isinstance(projected_binding, dict) else None
+    projected_binding_id = str(
+        projection.get("runtime_binding_id")
+        or (projected_binding or {}).get("binding_id")
+        or ""
+    ).strip()
+    projected_runtime_id = str(
+        projection.get("runtime_id") or (projected_binding or {}).get("runtime_id") or ""
+    ).strip()
+    if projected_binding_id:
+        binding_id = projected_binding_id
+    if projected_runtime_id:
+        runtime_id = projected_runtime_id
+
+    binding: Optional[Dict[str, Any]] = projected_binding
     binding_ok = False
     binding_failed = False
     if binding_id:
         try:
             if all_bindings is not None:
-                binding = all_bindings.get(binding_id)
-            else:
+                binding = all_bindings.get(binding_id) or binding
+            elif binding is None:
                 client = _runtime_manager_client()
                 binding = client.get(binding_id)
             if binding:
                 binding_state = str(binding.get("state") or binding.get("status") or "").lower()
-                if binding_state in ("running", "active", "ok"):
+                binding_metadata = binding.get("metadata")
+                binding_metadata = binding_metadata if isinstance(binding_metadata, dict) else {}
+                identity_matches = all((
+                    str(binding.get("binding_id") or binding.get("id") or "") == binding_id,
+                    binding_id.startswith("rb-"),
+                    str(binding.get("plan_id") or "") == plan_id,
+                    str(binding.get("persona_capital_binding_id") or "")
+                    == persona_capital_binding_id,
+                    str(binding_metadata.get("persona_id") or "") == persona_id,
+                ))
+                if binding_state in ("running", "active", "ok") and identity_matches:
                     binding_ok = True
-                elif binding_state in ("failed", "stopped", "error"):
+                elif binding_state in ("failed", "stopped", "error", "retired") or not identity_matches:
                     binding_failed = True
         except Exception as exc:
-            logger.warning(f"Failed to query RuntimeBinding {binding_id} for {persona_id}: {exc}")
+            log.warning("Failed to query RuntimeBinding %s for %s: %s", binding_id, persona_id, exc)
 
-    # 2. Check Paper Worker Heartbeat
-    runtime_id = metadata.get("runtime_id")
-    monitoring_session = None
-    telemetry_summary = None
+    # Require exactly one fresh, active worker joined on the complete identity.
+    monitoring_sessions: List[Dict[str, Any]] = []
     if runtime_id and binding_id:
-        # Exact join on persona_id, runtime_id, and binding_id
         for s in read_store.list_paper_runtime_monitoring_sessions():
             s_pid = str(s.get("persona_id") or "").strip()
             s_rtid = str(s.get("runtime_id") or "").strip()
             s_bid = str(s.get("binding_id") or s.get("runtime_binding_id") or "").strip()
-            if s_rtid == runtime_id and s_bid == binding_id and (not s_pid or s_pid == persona_id):
-                monitoring_session = s
-                break
-    if runtime_id:
-        telemetry_summary = read_store.get_telemetry_summary(runtime_id)
+            if s_pid == persona_id and s_rtid == runtime_id and s_bid == binding_id:
+                monitoring_sessions.append(s)
 
-    heartbeat_ok = False
+    max_heartbeat_age = max(
+        1,
+        int(os.getenv("PANTHEON_PERSONA_HEARTBEAT_MAX_AGE_SECONDS", "90")),
+    )
+    now_dt = datetime.now(timezone.utc)
+    live_sessions: List[Dict[str, Any]] = []
     heartbeat_failed = False
-
-    last_hb = None
-    if monitoring_session:
-        last_hb = monitoring_session.get("last_heartbeat_at")
-        session_status = str(monitoring_session.get("status") or "").lower()
-        if session_status in ("failed", "ended", "error") or monitoring_session.get("active") is False:
+    for session in monitoring_sessions:
+        status = str(session.get("status") or "").strip().lower()
+        active = read_store._paper_runtime_monitoring_session_active(session)
+        heartbeat_at = _parse_rfc3339(session.get("last_heartbeat_at"))
+        fresh = bool(
+            heartbeat_at is not None
+            and 0 <= (now_dt - heartbeat_at).total_seconds() <= max_heartbeat_age
+        )
+        if active and fresh and status not in {"failed", "ended", "error", "stale"}:
+            live_sessions.append(session)
+        elif status in {"failed", "ended", "error", "stale"} or not active:
             heartbeat_failed = True
-    if not last_hb and telemetry_summary:
-        last_hb = telemetry_summary.get("last_heartbeat_at")
+        elif heartbeat_at is not None and not fresh:
+            heartbeat_failed = True
+    heartbeat_ok = len(live_sessions) == 1
+    if len(live_sessions) > 1:
+        heartbeat_failed = True
 
-    if last_hb:
-        heartbeat_ok = True
-
-    # 3. Check First Evaluation Schedule
+    # The schedule authority must contain the exact first-evaluation workflow.
     cron_ok = False
     try:
         if all_cron_registrations is not None:
-            cron_ok = any(pid == persona_id for (pid, wfid) in all_cron_registrations)
+            cron_ok = (
+                persona_id,
+                _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+            ) in all_cron_registrations
         else:
             if "persona_cron_registrar" not in sys.modules:
                 _saved_modules = {
@@ -27919,44 +28115,84 @@ def _evaluate_persona_provisioning_status(
             registrar = PersonaCronRegistrar()
             runtime = registrar._get_runtime()
             if runtime is not None:
-                existing = registrar._existing_registrations(runtime)
-                cron_ok = any(pid == persona_id for (pid, wfid) in existing)
+                cron_ok = registrar.has_first_evaluation_registration(
+                    persona_id,
+                    runtime=runtime,
+                )
     except Exception as exc:
-        logger.warning(f"Failed to query cron registrations for {persona_id}: {exc}")
+        log.warning("Failed to query first-evaluation schedule for %s: %s", persona_id, exc)
 
-    # Timeout check (120 seconds)
+    # A timed-out attempt is terminal even if stale evidence happens to appear
+    # later; recovery must be an explicit retry that acquires the durable lease.
     is_timeout = False
     created_at_str = raw.get("created_at") or metadata.get("created_at")
     if created_at_str:
         try:
-            if "T" in created_at_str:
-                clean_str = created_at_str.replace("Z", "+00:00")
-                created_at_dt = datetime.fromisoformat(clean_str)
-            else:
-                created_at_dt = datetime.fromisoformat(created_at_str)
-            now_dt = datetime.fromisoformat(utc_now().replace("Z", "+00:00"))
-            delta = (now_dt - created_at_dt).total_seconds()
-            if delta > 120:
-                is_timeout = True
-        except Exception:
-            pass
+            created_at_dt = _parse_rfc3339(created_at_str)
+            timeout_seconds = max(
+                1,
+                int(os.getenv("PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS", "600")),
+            )
+            is_timeout = bool(
+                created_at_dt is not None
+                and (now_dt - created_at_dt).total_seconds() > timeout_seconds
+            )
+        except (TypeError, ValueError):
+            is_timeout = False
 
-    if binding_ok and heartbeat_ok and cron_ok:
-        new_state = "paper_running"
-    elif binding_failed or heartbeat_failed or is_timeout:
+    if projection_failed or binding_failed or heartbeat_failed or is_timeout:
         new_state = "provisioning_failed"
+    elif projection_observed and binding_ok and heartbeat_ok and cron_ok:
+        new_state = "paper_running"
     else:
         new_state = "provisioning"
 
-    if new_state != current_state:
-        read_store.update_persona(persona_id, lifecycle_state=new_state)
+    metadata_updates: Dict[str, Any] = {}
+    if binding_id:
+        metadata_updates["runtime_binding_id"] = binding_id
+    if runtime_id:
+        metadata_updates["runtime_id"] = runtime_id
+    if new_state == "provisioning_failed":
+        failure_reasons = []
+        if projection_failed:
+            failure_reasons.append("deployment_saga_failed")
+        if binding_failed:
+            failure_reasons.append("runtime_binding_failed_or_mismatched")
+        if heartbeat_failed:
+            failure_reasons.append("paper_worker_failed_stale_or_duplicated")
+        if is_timeout:
+            failure_reasons.append("provisioning_timeout")
+        metadata_updates["provisioning_failure_reason"] = ",".join(failure_reasons)
+    elif new_state == "paper_running":
+        metadata_updates["paper_runtime_state"] = "running"
+        metadata_updates.pop("provisioning_failure_reason", None)
+
+    if new_state != current_state or metadata_updates:
+        read_store.update_persona(
+            persona_id,
+            lifecycle_state=new_state,
+            metadata=metadata_updates,
+        )
         if persona_id in _PERSONA_BFF_OVERLAY:
             _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
             _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
+            if binding_id:
+                _PERSONA_BFF_OVERLAY[persona_id]["runtimeBindingId"] = binding_id
+            if runtime_id:
+                _PERSONA_BFF_OVERLAY[persona_id]["runtimeId"] = runtime_id
         raw["lifecycle_state"] = new_state
         raw["status"] = new_state
-        if "metadata" in raw:
-            raw["metadata"]["lifecycle_state"] = new_state
+        raw.setdefault("metadata", {}).update(metadata_updates)
+        raw["metadata"]["lifecycle_state"] = new_state
+
+    if new_state in {"paper_running", "provisioning_failed"}:
+        _checkpoint_persona_provisioning_readback(
+            metadata={**metadata, **metadata_updates},
+            state=new_state,
+            runtime_binding_id=binding_id,
+            runtime_id=runtime_id,
+            failure_reason=metadata_updates.get("provisioning_failure_reason"),
+        )
 
     return new_state
 
@@ -27968,10 +28204,11 @@ def _project_persona_dto(
     routed_strategies: Optional[int] = None,
     all_bindings: Optional[Dict[str, Dict[str, Any]]] = None,
     all_cron_registrations: Optional[Set[Tuple[str, str]]] = None,
+    evaluate_provisioning: bool = True,
 ) -> Dict[str, Any]:
     """Project canonical persona data into execute-plans Persona DTO."""
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
-    if persona_id:
+    if persona_id and evaluate_provisioning:
         _evaluate_persona_provisioning_status(
             persona_id,
             raw,
@@ -28066,6 +28303,9 @@ def _project_persona_dto(
         dto.pop("paperLedger", None)
     if not dto.get("legacyPaperCapitalPoolId"):
         dto.pop("legacyPaperCapitalPoolId", None)
+    for optional_runtime_field in ("runtimeId", "runtimeBindingId"):
+        if not dto.get(optional_runtime_field):
+            dto.pop(optional_runtime_field, None)
     required_data_sources = (
         raw.get("required_data_sources")
         if isinstance(raw.get("required_data_sources"), list)
@@ -28154,6 +28394,7 @@ def _list_persona_records() -> List[Dict[str, Any]]:
                 "archetype": overlay.get("archetype"),
                 "owner": overlay.get("owner"),
                 "risk_level": overlay.get("risk"),
+                "tenant_id": overlay.get("tenantId"),
             },
         })
     return items
@@ -43497,6 +43738,53 @@ def _try_register_persona_cron(persona_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _register_persona_cron_required(
+    persona_id: str,
+    capital_pool_id: str,
+    binding_id: str,
+) -> Dict[str, Any]:
+    """Register and authoritatively read back the required evaluation schedule."""
+    if "persona_cron_registrar" not in sys.modules:
+        saved_modules = {
+            name: sys.modules.pop(name)
+            for name in ("models", "workflows")
+            if name in sys.modules
+        }
+        sys.path.insert(0, _CRON_SERVICE_DIR)
+        try:
+            import persona_cron_registrar  # noqa: F401
+        finally:
+            sys.path.remove(_CRON_SERVICE_DIR)
+            for name in ("models", "workflows"):
+                sys.modules.pop(name, None)
+            sys.modules.update(saved_modules)
+    from persona_cron_registrar import PersonaCronRegistrar  # type: ignore[import]
+
+    registrar = PersonaCronRegistrar()
+    result = registrar.register_for_persona(
+        persona_id,
+        capital_pool_id=capital_pool_id,
+        binding_id=binding_id,
+    )
+    body = result.to_dict()
+    if body.get("mode") != "gateway_rpc":
+        raise RuntimeError("first-evaluation schedule authority is unavailable (dry-run refused)")
+    if body.get("failed"):
+        raise RuntimeError(f"cron registration failed: {body['failed']}")
+    runtime = registrar._get_runtime()
+    if runtime is None or not registrar.has_first_evaluation_registration(
+        persona_id,
+        runtime=runtime,
+    ):
+        raise RuntimeError("first-evaluation schedule failed authoritative readback")
+    body["authoritative_readback"] = {
+        "persona_id": persona_id,
+        "workflow_id": _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+        "registered": True,
+    }
+    return body
+
+
 def _try_bootstrap_persona_ooda_packet(persona_id: str) -> Optional[Dict[str, Any]]:
     """Create and persist the initial open OODA loop packet for *persona_id*.
 
@@ -43511,6 +43799,66 @@ def _try_bootstrap_persona_ooda_packet(persona_id: str) -> Optional[Dict[str, An
 
 # ---------------- /bff/personas routes ----------------
 
+def _persona_readback_snapshot() -> Tuple[Dict[str, Dict[str, Any]], Set[Tuple[str, str]]]:
+    """Fetch owner readbacks off the async event loop for Persona projections."""
+    all_bindings: Dict[str, Dict[str, Any]] = {}
+    try:
+        client = _runtime_manager_client()
+        for binding in client.list_all():
+            binding_id = binding.get("binding_id") or binding.get("id")
+            if binding_id:
+                all_bindings[str(binding_id)] = binding
+    except Exception as exc:
+        log.warning("Failed to batch list runtime bindings: %s", exc)
+
+    all_cron_registrations: Set[Tuple[str, str]] = set()
+    try:
+        if "persona_cron_registrar" not in sys.modules:
+            saved_modules = {
+                name: sys.modules.pop(name)
+                for name in ("models", "workflows")
+                if name in sys.modules
+            }
+            sys.path.insert(0, _CRON_SERVICE_DIR)
+            try:
+                import persona_cron_registrar  # noqa: F401
+            finally:
+                sys.path.remove(_CRON_SERVICE_DIR)
+                for name in ("models", "workflows"):
+                    sys.modules.pop(name, None)
+                sys.modules.update(saved_modules)
+        from persona_cron_registrar import PersonaCronRegistrar
+
+        registrar = PersonaCronRegistrar()
+        runtime = registrar._get_runtime()
+        if runtime is not None:
+            all_cron_registrations = registrar._existing_registrations(runtime)
+    except Exception as exc:
+        log.warning("Failed to batch list cron registrations: %s", exc)
+    return all_bindings, all_cron_registrations
+
+
+def _project_persona_list_records(raw_personas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    all_bindings, all_cron_registrations = _persona_readback_snapshot()
+    items = []
+    for raw in raw_personas:
+        persona_id = str(raw.get("persona_id") or raw.get("id") or "")
+        items.append(
+            _project_persona_dto(
+                raw,
+                overlay=_PERSONA_BFF_OVERLAY.get(persona_id),
+                routed_strategies=_routed_strategies_for_persona(persona_id),
+                all_bindings=all_bindings,
+                all_cron_registrations=all_cron_registrations,
+            )
+        )
+    return items
+
+
+def _persona_record_tenant_id(raw: Mapping[str, Any]) -> str:
+    metadata = raw.get("metadata")
+    return str(metadata.get("tenant_id") or "").strip() if isinstance(metadata, dict) else ""
+
 @app.get("/bff/personas")
 async def bff_list_personas(
     state: Optional[str] = None,
@@ -43523,57 +43871,13 @@ async def bff_list_personas(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
-    raw_personas = _list_persona_records()
-
-    # Batch fetch runtime bindings and cron registrations for non-blocking readback
-    all_bindings: Dict[str, Dict[str, Any]] = {}
-    try:
-        client = _runtime_manager_client()
-        bindings_list = client.list_all()
-        for b in bindings_list:
-            b_id = b.get("binding_id") or b.get("id")
-            if b_id:
-                all_bindings[b_id] = b
-    except Exception as exc:
-        logger.warning(f"Failed to batch list runtime bindings: {exc}")
-
-    all_cron_registrations: Set[Tuple[str, str]] = set()
-    try:
-        if "persona_cron_registrar" not in sys.modules:
-            _saved_modules = {
-                name: sys.modules.pop(name)
-                for name in ("models", "workflows")
-                if name in sys.modules
-            }
-            sys.path.insert(0, _CRON_SERVICE_DIR)
-            try:
-                import persona_cron_registrar  # noqa: F401
-            finally:
-                sys.path.remove(_CRON_SERVICE_DIR)
-                for name in ("models", "workflows"):
-                    sys.modules.pop(name, None)
-                sys.modules.update(_saved_modules)
-        from persona_cron_registrar import PersonaCronRegistrar
-        registrar = PersonaCronRegistrar()
-        runtime = registrar._get_runtime()
-        if runtime is not None:
-            all_cron_registrations = registrar._existing_registrations(runtime)
-    except Exception as exc:
-        logger.warning(f"Failed to batch list cron registrations: {exc}")
-
-    items = []
-    for raw in raw_personas:
-        persona_id = str(raw.get("persona_id") or raw.get("id") or "")
-        overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
-        routed = _routed_strategies_for_persona(persona_id)
-        dto = _project_persona_dto(
-            raw,
-            overlay=overlay,
-            routed_strategies=routed,
-            all_bindings=all_bindings,
-            all_cron_registrations=all_cron_registrations,
-        )
-        items.append(dto)
+    tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+    raw_personas = [
+        raw
+        for raw in _list_persona_records()
+        if _persona_record_tenant_id(raw) in {"", tenant_id}
+    ]
+    items = await asyncio.to_thread(_project_persona_list_records, raw_personas)
     if state:
         items = [p for p in items if p.get("state") == state]
     if archetype:
@@ -43635,57 +43939,33 @@ def _persona_create_validate_paper_only(payload: Dict[str, Any]) -> str:
     return "paper"
 
 
-def _persona_create_paper_refs(persona_id: str, payload: Dict[str, Any]) -> Dict[str, str]:
-    paper_ledger_id = str(
-        payload.get("paperLedgerId")
-        or payload.get("paper_ledger_id")
-        or payload.get("paperAccountId")
-        or payload.get("paper_account_id")
-        or f"paper-ledger-{persona_id}"
-    ).strip()
-    legacy_capital_ref_id = str(
-        payload.get("legacyPaperCapitalPoolId")
-        or payload.get("legacy_paper_capital_pool_id")
-        or payload.get("paperCapitalPoolId")
-        or payload.get("paper_capital_pool_id")
-        or payload.get("capitalPoolId")
-        or payload.get("capital_pool_id")
-        or paper_ledger_id
-    ).strip()
-    binding_id = str(
-        payload.get("paperBindingId")
-        or payload.get("paper_binding_id")
-        or payload.get("bindingId")
-        or payload.get("binding_id")
-        or f"binding-{persona_id}-paper"
-    ).strip()
-    plan_id = str(
-        payload.get("paperDeploymentPlanId")
-        or payload.get("paper_deployment_plan_id")
-        or payload.get("deploymentPlanId")
-        or payload.get("deployment_plan_id")
-        or f"paper-plan-{persona_id}"
-    ).strip()
-    runtime_id = str(
-        payload.get("paperRuntimeId")
-        or payload.get("paper_runtime_id")
-        or payload.get("runtimeId")
-        or payload.get("runtime_id")
-        or f"runtime-{persona_id}-paper"
-    ).strip()
-    artifact_id = str(
-        payload.get("artifactId")
-        or payload.get("artifact_id")
-        or f"paper-artifact-{persona_id}"
-    ).strip()
-    return {
-        "paper_ledger_id": paper_ledger_id,
-        "capital_pool_id": legacy_capital_ref_id,
-        "binding_id": binding_id,
-        "deployment_plan_id": plan_id,
-        "runtime_id": runtime_id,
-        "artifact_id": artifact_id,
-    }
+def _normalize_persona_create_name(name: str) -> str:
+    return " ".join(str(name or "").casefold().split())
+
+
+def _persona_create_identity(tenant_id: str, normalized_name: str) -> str:
+    digest = hashlib.sha256(
+        f"{tenant_id}\x00{normalized_name}".encode("utf-8")
+    ).hexdigest()[:20]
+    return f"persona-{digest}"
+
+
+def _persona_create_canonical_payload(
+    payload: Mapping[str, Any],
+    *,
+    name: str,
+    tenant_id: str,
+) -> Dict[str, Any]:
+    canonical = json.loads(json.dumps(dict(payload)))
+    canonical["name"] = name
+    canonical["tenant_id"] = tenant_id
+    canonical.pop("tenantId", None)
+    canonical.pop("owner", None)
+    if "budget" not in canonical:
+        canonical["budget"] = canonical.get("paperBudget") or canonical.get("paper_budget")
+    if "risk_policy_ref" not in canonical:
+        canonical["risk_policy_ref"] = canonical.get("riskPolicyRef")
+    return canonical
 
 
 def _openclaw_agent_reconcile_request(
@@ -43726,115 +44006,66 @@ def _openclaw_agent_reconcile_request(
     return request
 
 
-@app.post("/bff/personas", status_code=201)
-async def bff_create_persona(
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: create persona stub (execute-plans compatibility)."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash({"route": "POST /bff/personas", "payload": payload})
-    dry_run = _request_dry_run_requested()
-    if not dry_run:
-        cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
-        if cached is not None:
-            return cached
-    name = str(payload.get("name") or "").strip()
-    if not name:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED, "name is required",
-            "Persona name must be a non-empty string",
-            precondition_failed="name",
-        )
-    snapshot_at = utc_now()
-
-    # 重重複建立與 retry 收斂邏輯
-    existing_personas = read_store.list_personas() or []
-    existing_persona = None
-    for p in existing_personas:
-        if str(p.get("name") or "").strip() == name:
-            existing_persona = p
-            break
-
-    if existing_persona:
-        persona_id = existing_persona.get("persona_id") or existing_persona.get("id")
-        existing_metadata = existing_persona.get("metadata") or {}
-        refs = {
-            "paper_ledger_id": existing_metadata.get("paper_ledger_id"),
-            "capital_pool_id": existing_metadata.get("legacy_paper_capital_pool_id") or existing_metadata.get("capital_pool_id"),
-            "binding_id": existing_metadata.get("binding_id") or existing_metadata.get("persona_capital_binding_id"),
-            "runtime_id": existing_metadata.get("runtime_id"),
-            "deployment_plan_id": existing_metadata.get("deployment_plan_id"),
-            "artifact_id": existing_metadata.get("artifact_id") or f"paper-artifact-{persona_id}",
-        }
-        if existing_persona.get("lifecycle_state") in ("provisioning_failed", "failed"):
-            read_store.update_persona(persona_id, lifecycle_state="provisioning")
-            existing_persona["lifecycle_state"] = "provisioning"
-            existing_persona["status"] = "provisioning"
-            if persona_id in _PERSONA_BFF_OVERLAY:
-                _PERSONA_BFF_OVERLAY[persona_id]["state"] = "provisioning"
-                _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = "provisioning"
-        persona_record = existing_persona
-    else:
-        persona_id = f"persona-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
-        refs = _persona_create_paper_refs(persona_id, payload)
-        persona_record = None
-
-    owner = str(payload.get("owner") or identity.operator_id)
-    archetype = str(payload.get("archetype") or "generalist")
-    risk = _normalize_risk_level(payload.get("risk") or "low")
-    capital_mode = _persona_create_validate_paper_only(payload)
-    lifecycle_state = "provisioning"
-    market = str(payload.get("market") or "").strip().upper()
-    required_data_sources = payload.get("required_data_sources") or payload.get("requiredDataSources")
-    if not required_data_sources and market:
-        from read_store import _market_persona_required_data_sources
-        required_data_sources = _market_persona_required_data_sources({"market": market})
-    # Real persona identity + trading-character traits — these flow to the
-    # persona's OpenClaw agent SOUL (integrations/openclaw/persona_agent_sync).
-    mandate = str(payload.get("mandate") or "").strip() or None
-    strategy_family = str(payload.get("strategy_family") or payload.get("strategyFamily") or "").strip() or None
-    raw_traits = payload.get("traits")
-    traits = {
-        k: raw_traits[k]
-        for k in ("instruments", "risk_appetite", "decision_style", "time_horizon", "hard_rules", "persona_voice")
-        if isinstance(raw_traits, dict) and raw_traits.get(k) not in (None, "")
-    } or None
-    persona_metadata = {
+def _persona_provisioning_metadata(
+    record: ProvisioningRecord,
+    *,
+    ids: Any,
+    payload: Mapping[str, Any],
+    owner: str,
+    archetype: str,
+    risk: str,
+    mandate: Optional[str],
+    strategy_family: Optional[str],
+    traits: Optional[Dict[str, Any]],
+    lifecycle_state: str,
+) -> Dict[str, Any]:
+    paper_ledger_id = f"paper-ledger-{ids.token}"
+    runtime_binding_id = str(record.references.get("runtime_binding_id") or "").strip()
+    runtime_id = str(record.references.get("runtime_id") or "").strip()
+    metadata: Dict[str, Any] = {
         "description": payload.get("description"),
         "memo": payload.get("memo"),
-        "initial_mode": payload.get("initialMode"),
-        "execution_mode": payload.get("executionMode") or payload.get("initialMode"),
+        "tenant_id": record.tenant_id,
+        "provisioning_idempotency_key": record.idempotency_key,
+        "provisioning_request_hash": record.request_hash,
+        "provisioning_state": record.state,
+        "provisioning_step": record.current_step,
+        "initial_mode": "paper",
+        "execution_mode": "paper",
         "success_rate": float(payload.get("successRate") or 0.0),
-        "capital_mode": capital_mode,
-        "paper_ledger_id": refs["paper_ledger_id"],
+        "capital_mode": "paper",
+        "paper_ledger_id": paper_ledger_id,
         "paper_ledger": {
-            "id": refs["paper_ledger_id"],
+            "id": paper_ledger_id,
             "mode": "paper",
-            "persona_id": persona_id,
+            "persona_id": record.persona_id,
             "is_isolated": True,
-            "benchmark_budget": payload.get("paperBudget") or payload.get("paper_budget"),
+            "benchmark_budget": payload.get("budget"),
         },
-        "legacy_paper_capital_pool_id": refs["capital_pool_id"],
-        "persona_capital_binding_id": refs["binding_id"],
-        "binding_id": refs["binding_id"],
-        "runtime_id": refs["runtime_id"],
-        "runtime_binding_id": refs["binding_id"],
-        "deployment_plan_id": refs["deployment_plan_id"],
+        # Internal canonical paper pool.  Public DTO projection intentionally
+        # keeps capitalPoolId empty in paper mode.
+        "legacy_paper_capital_pool_id": ids.capital_pool_id,
+        "internal_paper_capital_pool_id": ids.capital_pool_id,
+        "persona_capital_binding_id": ids.persona_capital_binding_id,
+        "registry_id": ids.registry_id,
+        "approval_decision_id": ids.approval_decision_id,
+        "deployment_plan_id": ids.deployment_plan_id,
+        "deployment_saga_id": ids.deployment_saga_id,
         "deployment_stage": "paper",
-        "paper_runtime_state": "running",
+        "paper_runtime_state": (
+            "running"
+            if lifecycle_state == "paper_running"
+            else "failed" if lifecycle_state == "provisioning_failed" else "provisioning"
+        ),
         "live_capital_enabled": False,
         "live_write_enabled": False,
         "order_side_effects_allowed": False,
         "capital_side_effects_allowed": False,
         "governance_required": True,
         "recommended_governance_action": "none",
-        "data_source_status": payload.get("dataSourceStatus") or payload.get("data_source_status") or {
+        "data_source_status": payload.get("dataSourceStatus")
+        or payload.get("data_source_status")
+        or {
             "state": "paper_readback_pending",
             "provider_count": len(payload.get("dataSources") or payload.get("data_sources") or []),
             "provider_status_counts": {},
@@ -43842,212 +44073,448 @@ async def bff_create_persona(
             "order_side_effects_allowed": False,
         },
         "data_sources": payload.get("dataSources") or payload.get("data_sources") or [],
-        "risk_profile": payload.get("riskProfile") or payload.get("risk_profile") or {
+        "risk_profile": payload.get("riskProfile")
+        or payload.get("risk_profile")
+        or {
             "risk_level": risk,
             "max_drawdown": payload.get("maxDrawdown") or payload.get("max_drawdown"),
             "daily_loss_limit": payload.get("dailyLossLimit") or payload.get("daily_loss_limit"),
         },
         "evidence_refs": [
-            f"evidence://persona-create/{persona_id}/request",
-            f"evidence://persona-create/{persona_id}/paper-ledger-binding",
-            f"evidence://persona-create/{persona_id}/paper-runtime-binding",
+            f"evidence://persona-create/{record.persona_id}/request",
+            f"evidence://persona-create/{record.persona_id}/capital-binding",
+            f"evidence://persona-create/{record.persona_id}/deployment-saga",
         ],
     }
-    persona_metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
+    if runtime_binding_id:
+        metadata["runtime_binding_id"] = runtime_binding_id
+    if runtime_id:
+        metadata["runtime_id"] = runtime_id
+    if record.error:
+        metadata["provisioning_error"] = deepcopy(record.error)
+    if record.compensation:
+        metadata["provisioning_compensation"] = deepcopy(record.compensation)
+    if traits:
+        metadata["traits"] = deepcopy(traits)
+    metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
         {
-            "id": persona_id,
-            "persona_id": persona_id,
-            "name": name,
+            "id": record.persona_id,
+            "persona_id": record.persona_id,
+            "name": str(payload.get("name") or record.normalized_name),
             "mandate": mandate or archetype,
             "strategy_family": strategy_family or archetype,
             "lifecycle_state": lifecycle_state,
             "metadata": {
-                **persona_metadata,
+                **metadata,
                 "owner": owner,
                 "archetype": archetype,
                 "risk_level": risk,
-                **({"traits": traits} if traits else {}),
             },
         },
         reason="persona_created",
     )
-    if dry_run:
-        persona_record = {
-            "id": persona_id,
-            "persona_id": persona_id,
-            "name": name,
-            "mandate": mandate or archetype,
-            "strategy_family": strategy_family or archetype,
-            "lifecycle_state": lifecycle_state,
-            "created_at": snapshot_at,
-            "updated_at": snapshot_at,
-            "created_by": owner,
-            "required_data_sources": json.loads(json.dumps(required_data_sources or [])),
-            "metadata": {
-                **persona_metadata,
-                "owner": owner,
-                "archetype": archetype,
-                "risk_level": risk,
-                **({"traits": traits} if traits else {}),
-            },
-        }
+    return metadata
+
+
+def _persona_create_required_data_sources(payload: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    required = payload.get("required_data_sources") or payload.get("requiredDataSources")
+    market = str(payload.get("market") or "").strip().upper()
+    if not required and market:
+        from read_store import _market_persona_required_data_sources
+
+        required = _market_persona_required_data_sources({"market": market})
+    return json.loads(json.dumps(required or []))
+
+
+def _persona_record_for_provisioning(
+    record: ProvisioningRecord,
+    *,
+    payload: Mapping[str, Any],
+    owner: str,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    ids = deterministic_provisioning_ids(record)
+    archetype = str(payload.get("archetype") or "generalist")
+    risk = _normalize_risk_level(payload.get("risk") or "low")
+    mandate = str(payload.get("mandate") or "").strip() or None
+    strategy_family = str(
+        payload.get("strategy_family") or payload.get("strategyFamily") or ""
+    ).strip() or None
+    raw_traits = payload.get("traits")
+    traits = {
+        key: raw_traits[key]
+        for key in (
+            "instruments",
+            "risk_appetite",
+            "decision_style",
+            "time_horizon",
+            "hard_rules",
+            "persona_voice",
+        )
+        if isinstance(raw_traits, dict) and raw_traits.get(key) not in (None, "")
+    } or None
+    if record.state == "succeeded":
+        lifecycle_state = "paper_running"
+    elif record.state in {"failed", "compensated"}:
+        lifecycle_state = "provisioning_failed"
     else:
-        if existing_persona is None:
-            persona_record = read_store.create_persona(
-                persona_id=persona_id,
-                name=name,
-                actor_id=owner,
-                created_at=snapshot_at,
-                archetype=archetype,
-                lifecycle_state=lifecycle_state,
-                risk_level=risk,
-                mandate=mandate,
-                strategy_family=strategy_family,
-                traits=traits,
-                metadata=persona_metadata,
-                required_data_sources=required_data_sources,
+        lifecycle_state = "provisioning"
+    metadata = _persona_provisioning_metadata(
+        record,
+        ids=ids,
+        payload=payload,
+        owner=owner,
+        archetype=archetype,
+        risk=risk,
+        mandate=mandate,
+        strategy_family=strategy_family,
+        traits=traits,
+        lifecycle_state=lifecycle_state,
+    )
+    existing = read_store.get_persona(record.persona_id)
+    if existing is None:
+        persona = read_store.create_persona(
+            persona_id=record.persona_id,
+            name=str(payload.get("name") or record.normalized_name),
+            actor_id=owner,
+            created_at=record.created_at,
+            archetype=archetype,
+            lifecycle_state=lifecycle_state,
+            risk_level=risk,
+            mandate=mandate,
+            strategy_family=strategy_family,
+            traits=traits,
+            metadata=metadata,
+            required_data_sources=_persona_create_required_data_sources(payload),
+        )
+    else:
+        existing_metadata = existing.get("metadata")
+        existing_metadata = existing_metadata if isinstance(existing_metadata, dict) else {}
+        if (
+            str(existing.get("name") or "").strip()
+            != str(payload.get("name") or record.normalized_name).strip()
+            or str(existing_metadata.get("tenant_id") or record.tenant_id) != record.tenant_id
+        ):
+            raise ProvisioningConflict(
+                "stable Persona identity is already occupied by different tenant/name semantics"
             )
+        if str(existing.get("lifecycle_state") or "") == "paper_running":
+            lifecycle_state = "paper_running"
+        persona = read_store.update_persona(
+            record.persona_id,
+            lifecycle_state=lifecycle_state,
+            metadata=metadata,
+        ) or existing
+    return persona, metadata
 
-        if persona_record.get("lifecycle_state") == "provisioning":
-            # 1. Create the Capital binding
-            binding_payload = {
-                "actor_id": owner,
-                "actor_role": _capital_owner_role(identity),
-                "binding_id": refs["binding_id"],
-                "persona_id": persona_id,
-                "capital_pool_id": refs["capital_pool_id"],
-                "role": "paper_owner",
-                "allowed_deployment_scope": "paper",
-                "idempotency_key": resolved_key,
-                "request_hash": request_hash,
-                "metadata": {
-                    "capital_mode": "paper",
-                    "paper_ledger_id": refs["paper_ledger_id"],
-                    "legacy_paper_capital_pool_id": refs["capital_pool_id"],
-                    "live_capital_enabled": False,
-                    "created_via": "POST /bff/personas",
-                },
-            }
-            create_capital_binding(binding_payload)
 
-            # 2. Create the Deployment plan (with GET check for idempotency)
-            plan_payload = {
-                "plan_id": refs["deployment_plan_id"],
-                "approval_decision_id": f"decision-persona-create-{persona_id}",
-                "capital_pool_id": refs["capital_pool_id"],
-                "target_stage": "paper",
-                "created_by": owner,
-                "sponsor_persona_id": persona_id,
-                "binding_id": refs["binding_id"],
-                "status": "approved",
-                "metadata": {
-                    "persona_id": persona_id,
-                    "capital_mode": "paper",
-                    "paper_ledger_id": refs["paper_ledger_id"],
-                    "human_review_required_for_live": True,
-                }
-            }
-            plan_exists = False
-            dep_url = _deployment_url(f"/api/deployment/plans/{refs['deployment_plan_id']}")
-            try:
-                _get_json(dep_url)
-                plan_exists = True
-            except Exception:
-                pass
-
-            if not plan_exists:
-                _post_json(_deployment_url("/api/deployment/plans"), plan_payload)
-
-            # 3. Deploy the Runtime (with GET check for idempotency)
-            runtime_payload = {
-                "plan_id": refs["deployment_plan_id"],
-                "plan_status": "approved",
-                "target_stage": "paper",
-                "artifact_id": refs["artifact_id"],
-                "artifact_version": "1.0.0",
-                "capital_pool_id": refs["capital_pool_id"],
-                "persona_capital_binding_id": refs["binding_id"],
-                "persona_capital_binding_status": "active",
-                "allowed_deployment_scope": "paper",
-                "loader_checks_passed": True,
-                "runtime_id": refs["runtime_id"],
-                "metadata": {
-                    "name": f"{name} paper runtime",
-                    "persona_id": persona_id,
-                    "binding_id": refs["binding_id"],
-                    "deployment_plan_id": refs["deployment_plan_id"],
-                    "runtime_kind": "paper",
-                    "capital_pool_id": refs["capital_pool_id"],
-                    "capital_mode": "paper",
-                    "paper_ledger_id": refs["paper_ledger_id"],
-                    "live_write_enabled": False,
-                    "order_side_effects_allowed": False,
-                }
-            }
-            client = _runtime_manager_client()
-            existing_binding = None
-            try:
-                existing_binding = client.get(refs["runtime_id"])
-            except Exception:
-                pass
-            if not existing_binding:
-                client.deploy(runtime_payload)
+def _persona_create_response(
+    record: ProvisioningRecord,
+    *,
+    persona: Dict[str, Any],
+    metadata: Dict[str, Any],
+    payload: Mapping[str, Any],
+    snapshot_at: str,
+    ooda_packet: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    ids = deterministic_provisioning_ids(record)
     overlay = _project_persona_dto(
-        persona_record,
+        persona,
         overlay={
             "routedStrategies": int(payload.get("routedStrategies") or 0),
             "successRate": float(payload.get("successRate") or 0.0),
             "capitalMode": "paper",
-            "paperLedgerId": refs["paper_ledger_id"],
-            "paperLedger": persona_metadata["paper_ledger"],
-            "legacyPaperCapitalPoolId": refs["capital_pool_id"],
-            "runtimeId": refs["runtime_id"],
-            "runtimeBindingId": refs["binding_id"],
-            "deploymentPlanId": refs["deployment_plan_id"],
+            "paperLedgerId": metadata["paper_ledger_id"],
+            "paperLedger": metadata["paper_ledger"],
+            "legacyPaperCapitalPoolId": ids.capital_pool_id,
+            "deploymentPlanId": ids.deployment_plan_id,
             "deploymentStage": "paper",
-            "evidenceRefs": list(persona_metadata["evidence_refs"]),
+            "evidenceRefs": list(metadata["evidence_refs"]),
+            "runtimeId": metadata.get("runtime_id"),
+            "runtimeBindingId": metadata.get("runtime_binding_id"),
+            "tenantId": record.tenant_id,
         },
         routed_strategies=0,
+        evaluate_provisioning=False,
     )
-    if dry_run:
+    _PERSONA_BFF_OVERLAY[record.persona_id] = overlay
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "create_flow": "durable_owner_coordinated_provisioning",
+        "provisioning_state": record.state,
+        "provisioning_step": record.current_step,
+        "authoritative_receipt_steps": sorted(record.references),
+        "capital_mode": "paper",
+        "paper_ledger_id": metadata["paper_ledger_id"],
+        "legacy_paper_capital_pool_id": ids.capital_pool_id,
+        "persona_capital_binding_id": ids.persona_capital_binding_id,
+        "runtime_binding_id": metadata.get("runtime_binding_id"),
+        "runtime_id": metadata.get("runtime_id"),
+        "registry_id": ids.registry_id,
+        "approval_decision_id": ids.approval_decision_id,
+        "deployment_plan_id": ids.deployment_plan_id,
+        "deployment_saga_id": ids.deployment_saga_id,
+        "first_evaluation_workflow_id": _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+        "dispatch_admitted": "deployment_dispatch" in record.references,
+        "live_capital_side_effects": False,
+        "human_review_required_for_live": True,
+    }
+    if ooda_packet:
+        meta["ooda_packet_id"] = ooda_packet.get("packet_id")
+        meta["ooda_loop_status"] = ooda_packet.get("status")
+    if record.error:
+        meta["terminal_error"] = deepcopy(record.error)
+    if record.compensation:
+        meta["compensation"] = deepcopy(record.compensation)
+    return {"data": overlay, "meta": meta}
+
+
+def _ensure_persona_ooda_packet(persona_id: str, capital_pool_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        for packet in read_store.list_ooda_packets():
+            if persona_id in [str(value) for value in (packet.get("persona_ids") or [])]:
+                return packet
+        from persona_ooda_bootstrap import bootstrap_persona_ooda_packet  # type: ignore[import]
+
+        return bootstrap_persona_ooda_packet(
+            persona_id,
+            capital_pool_id=capital_pool_id,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _coordinate_persona_create(
+    record: ProvisioningRecord,
+    *,
+    payload: Mapping[str, Any],
+    owner: str,
+) -> Tuple[ProvisioningRecord, Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
+    store = _persona_provisioning_store()
+    active, _ = store.reserve(
+        tenant_id=record.tenant_id,
+        idempotency_key=record.idempotency_key,
+        request_hash=record.request_hash,
+        normalized_name=record.normalized_name,
+        persona_id=record.persona_id,
+        request_payload=record.request_payload,
+    )
+    coordinator = PersonaProvisioningCoordinator(
+        store=store,
+        transport=_PersonaOwnerHttpTransport(),
+        schedule_registrar=_register_persona_cron_required,
+        lease_owner=f"operator-bff:{os.getenv('HOSTNAME', 'local')}:{uuid.uuid4().hex}",
+        lease_seconds=max(
+            30,
+            int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+        ),
+    )
+    try:
+        active = coordinator.coordinate(active)
+    except PersonaProvisioningCoordinationError:
+        # A concurrent replica may hold the lease.  Return only the durable
+        # progress already visible; never manufacture downstream success.
+        latest = store.get(active.tenant_id, active.idempotency_key)
+        if latest is None or latest.state not in {"reserved", "provisioning"}:
+            raise
+        active = latest
+    persona, metadata = _persona_record_for_provisioning(
+        active,
+        payload=payload,
+        owner=owner,
+    )
+    ooda_packet = None
+    if active.state not in {"failed", "compensated"}:
+        ooda_packet = _ensure_persona_ooda_packet(
+            active.persona_id,
+            deterministic_provisioning_ids(active).capital_pool_id,
+        )
+    return active, persona, metadata, ooda_packet
+
+
+@app.post("/bff/personas", status_code=201)
+async def bff_create_persona(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """Create a real dynamic paper Persona through canonical owner services."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "name is required",
+            "Persona name must be a non-empty string",
+            precondition_failed="name",
+        )
+    _persona_create_validate_paper_only(payload)
+
+    requested_owner = str(payload.get("owner") or "").strip()
+    if requested_owner and requested_owner != identity.operator_id:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Persona owner must match the authenticated operator",
+            "Client-supplied owner assertions cannot impersonate another operator",
+            precondition_failed="owner",
+        )
+    tenant = _bff_me_tenant_payload(
+        identity,
+        requested_tenant=str(payload.get("tenantId") or payload.get("tenant_id") or "").strip()
+        or None,
+    )
+    tenant_id = str(tenant["id"])
+    normalized_name = _normalize_persona_create_name(name)
+    canonical_payload = _persona_create_canonical_payload(
+        payload,
+        name=name,
+        tenant_id=tenant_id,
+    )
+    request_hash = _stable_json_hash(
+        {
+            "route": "POST /bff/personas",
+            "tenant_id": tenant_id,
+            "payload": canonical_payload,
+        }
+    )
+    snapshot_at = utc_now()
+    record = ProvisioningRecord(
+        tenant_id=tenant_id,
+        idempotency_key=resolved_key,
+        request_hash=request_hash,
+        normalized_name=normalized_name,
+        persona_id=_persona_create_identity(tenant_id, normalized_name),
+        request_payload=canonical_payload,
+        created_at=snapshot_at,
+        updated_at=snapshot_at,
+    )
+
+    if _request_dry_run_requested():
+        ids = deterministic_provisioning_ids(record)
+        archetype = str(canonical_payload.get("archetype") or "generalist")
+        risk = _normalize_risk_level(canonical_payload.get("risk") or "low")
+        mandate = str(canonical_payload.get("mandate") or "").strip() or None
+        strategy_family = str(
+            canonical_payload.get("strategy_family")
+            or canonical_payload.get("strategyFamily")
+            or ""
+        ).strip() or None
+        raw_traits = canonical_payload.get("traits")
+        traits = dict(raw_traits) if isinstance(raw_traits, dict) else None
+        metadata = _persona_provisioning_metadata(
+            record,
+            ids=ids,
+            payload=canonical_payload,
+            owner=identity.operator_id,
+            archetype=archetype,
+            risk=risk,
+            mandate=mandate,
+            strategy_family=strategy_family,
+            traits=traits,
+            lifecycle_state="provisioning",
+        )
+        preview_persona = {
+            "id": record.persona_id,
+            "persona_id": record.persona_id,
+            "name": name,
+            "mandate": mandate or archetype,
+            "strategy_family": strategy_family or archetype,
+            "lifecycle_state": "provisioning",
+            "created_at": snapshot_at,
+            "updated_at": snapshot_at,
+            "created_by": identity.operator_id,
+            "required_data_sources": _persona_create_required_data_sources(canonical_payload),
+            "metadata": {
+                **metadata,
+                "owner": identity.operator_id,
+                "archetype": archetype,
+                "risk_level": risk,
+            },
+        }
+        preview = _project_persona_dto(
+            preview_persona,
+            overlay={
+                "capitalMode": "paper",
+                "paperLedgerId": metadata["paper_ledger_id"],
+                "paperLedger": metadata["paper_ledger"],
+                "legacyPaperCapitalPoolId": ids.capital_pool_id,
+                "deploymentPlanId": ids.deployment_plan_id,
+                "deploymentStage": "paper",
+            },
+            routed_strategies=0,
+            evaluate_provisioning=False,
+        )
         return _dry_run_success_response(
-            overlay,
+            preview,
+            status_code=201,
             snapshot_at=snapshot_at,
             idempotency_key=resolved_key,
             evidence_kind="persona.create",
+            extra_meta={
+                "create_flow": "durable_owner_coordinated_provisioning_preview",
+                "mutations_performed": False,
+                "preview_ids": ids.to_dict(),
+                "first_evaluation_workflow_id": _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+            },
         )
-    _PERSONA_BFF_OVERLAY[persona_id] = overlay
 
-    # Wire persona OODA loop: register recurring cron jobs + open OODA packet.
-    cron_registration = _try_register_persona_cron(persona_id)
-    ooda_packet = _try_bootstrap_persona_ooda_packet(persona_id)
+    try:
+        active, persona, metadata, ooda_packet = await asyncio.to_thread(
+            _coordinate_persona_create,
+            record,
+            payload=canonical_payload,
+            owner=identity.operator_id,
+        )
+    except ProvisioningConflict as exc:
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Persona create conflicts with an existing durable reservation",
+            str(exc),
+            precondition_failed="idempotency_or_tenant_name",
+            suggestion="Replay the original request unchanged or choose a different Persona name",
+        ) from exc
+    except PersonaProvisioningCoordinationError as exc:
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Persona provisioning coordinator is unavailable",
+            str(exc),
+            precondition_failed="provisioning_coordinator",
+            suggestion="Retry the same Idempotency-Key after the active coordinator lease expires",
+        ) from exc
 
-    ooda_meta: Dict[str, Any] = {}
-    if ooda_packet:
-        ooda_meta["ooda_packet_id"] = ooda_packet.get("packet_id")
-        ooda_meta["ooda_loop_status"] = ooda_packet.get("status")
-    if cron_registration:
-        ooda_meta["cron_registration_mode"] = cron_registration.get("mode")
-        ooda_meta["cron_registered_count"] = len(cron_registration.get("registered") or [])
-
-    result = {
-        "data": overlay,
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "create_flow": "one_shot_provisioning",
-            "capital_mode": "paper",
-            "paper_ledger_id": refs["paper_ledger_id"],
-            "legacy_paper_capital_pool_id": refs["capital_pool_id"],
-            "runtime_binding_id": refs["binding_id"],
-            "runtime_id": refs["runtime_id"],
-            "deployment_plan_id": refs["deployment_plan_id"],
-            "live_capital_side_effects": False,
-            "human_review_required_for_live": True,
-            **ooda_meta,
-        },
-    }
-    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
+    response = _persona_create_response(
+        active,
+        persona=persona,
+        metadata=metadata,
+        payload=canonical_payload,
+        snapshot_at=snapshot_at,
+        ooda_packet=ooda_packet,
+    )
+    if active.state in {"failed", "compensated"}:
+        reason = str((active.error or {}).get("terminal_reason") or "downstream provisioning failed")
+        raise _bff_error(
+            502,
+            ErrorCode.UPSTREAM_ERROR,
+            "Persona provisioning failed",
+            reason,
+            precondition_failed=str((active.error or {}).get("failed_step") or "provisioning"),
+            suggestion="Inspect the persisted Persona provisioning receipt before a governed retry",
+            details_extra={
+                "personaId": active.persona_id,
+                "provisioningState": active.state,
+                "provisioningStep": active.current_step,
+                "compensation": active.compensation,
+            },
+        )
+    return response
 
 
 @app.post("/bff/management/personas/create-paper-bundle", status_code=201)
@@ -44057,7 +44524,7 @@ async def bff_create_paper_persona_bundle(
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    """BFF: Create paper persona bundle (atomically creates persona + paper ledger + paper runtime binding + deployment plan)."""
+    """Create a restart-safe paper Persona bundle through the shared coordinator."""
     return await bff_create_persona(
         payload=payload,
         authorization=authorization,
@@ -44106,11 +44573,21 @@ async def bff_get_persona(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
+    caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
+    if overlay and str(overlay.get("tenantId") or caller_tenant) != caller_tenant:
+        overlay = None
     raw = read_store.get_persona(persona_id)
+    if raw:
+        record_tenant = _persona_record_tenant_id(raw)
+        if record_tenant and record_tenant != caller_tenant:
+            raw = None
+            overlay = None
     detail_surface = None
     if not raw and not overlay:
         raw = _persona_catalog_fallback_record(persona_id)
+        if raw and _persona_record_tenant_id(raw) not in {"", caller_tenant}:
+            raw = None
         if raw:
             detail_surface = _persona_catalog_fallback_surface(snapshot_at)
     if not raw and not overlay:
@@ -44120,8 +44597,13 @@ async def bff_get_persona(
             f"Persona {persona_id} does not exist",
         )
     base = raw or {"persona_id": persona_id, "name": (overlay or {}).get("name")}
-    routed = _routed_strategies_for_persona(persona_id)
-    dto = _project_persona_dto(base, overlay=overlay, routed_strategies=routed)
+    dto = await asyncio.to_thread(
+        lambda: _project_persona_dto(
+            base,
+            overlay=overlay,
+            routed_strategies=_routed_strategies_for_persona(persona_id),
+        )
+    )
     containment = read_store.get_persona_containment(persona_id)
     if containment:
         containment_state = str(containment.get("containment_state") or "frozen")

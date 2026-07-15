@@ -1,7 +1,7 @@
 """PersonaCronRegistrar — register WORKFLOW_CATALOG as recurring OpenClaw cron jobs.
 
-One set of four cron jobs is registered per active persona/binding.  The
-gateway schedules them using the canonical cron expressions from each
+One set of catalog jobs is registered per active persona/binding. The gateway
+schedules them using the canonical cron expressions from each
 WorkflowDefinition so OpenClaw drives the OODA loop on the correct cadence.
 """
 from __future__ import annotations
@@ -20,7 +20,11 @@ from pathlib import Path
 from typing import Any
 
 from models import utc_now
-from workflows import WORKFLOW_CATALOG, WorkflowDefinition
+from workflows import (
+    PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+    WORKFLOW_CATALOG,
+    WorkflowDefinition,
+)
 
 
 class AdapterCronRuntime:
@@ -130,9 +134,9 @@ class PersonaCronRegistrationResult:
 class PersonaCronRegistrar:
     """Register all WORKFLOW_CATALOG workflows as recurring cron jobs in the OpenClaw gateway.
 
-    Each active persona gets its own set of four recurring jobs (ingest / review /
-    retrain / deploy) so the OODA loop runs on the canonical cadence without
-    manual intervention.
+    Each active persona gets its own recurring catalog jobs, including an
+    explicitly identified first-evaluation schedule, so the OODA loop runs on
+    the canonical cadence without manual intervention.
 
     When ``dry_run=True`` (default) or the gateway is unreachable, no RPC calls
     are made and the result is marked ``mode="dry_run"`` — persona creation
@@ -255,7 +259,7 @@ class PersonaCronRegistrar:
         capital_pool_id: str | None = None,
         binding_id: str | None = None,
     ) -> PersonaCronRegistrationResult:
-        """Register all four WORKFLOW_CATALOG workflows for *persona_id*.
+        """Register every WORKFLOW_CATALOG workflow for *persona_id*.
 
         Returns a :class:`PersonaCronRegistrationResult` describing what was
         registered (or skipped in dry-run / degraded mode).  Never raises —
@@ -337,6 +341,50 @@ class PersonaCronRegistrar:
             registered=registered,
             failed=failed,
             skipped=skipped,
+        )
+
+    def has_workflow_registration(
+        self,
+        persona_id: str,
+        workflow_id: str,
+        *,
+        runtime: Any = None,
+    ) -> bool:
+        """Return whether the exact persona/workflow pair is registered.
+
+        This is the fail-closed readback boundary for callers that require a
+        particular schedule. A different workflow registered for the same
+        persona, or the required workflow registered for another persona,
+        never satisfies the check. Dry-run/unavailable runtimes return False.
+        """
+        clean_persona_id = str(persona_id or "").strip()
+        clean_workflow_id = str(workflow_id or "").strip()
+        if not clean_persona_id:
+            raise ValueError("persona_id is required for cron registration readback")
+        if clean_workflow_id not in WORKFLOW_CATALOG:
+            raise KeyError(f"Unknown workflow: {clean_workflow_id}")
+
+        resolved_runtime = runtime
+        if resolved_runtime is None and not self._dry_run:
+            resolved_runtime = self._get_runtime()
+        if resolved_runtime is None:
+            return False
+        return (
+            clean_persona_id,
+            clean_workflow_id,
+        ) in self._existing_registrations(resolved_runtime)
+
+    def has_first_evaluation_registration(
+        self,
+        persona_id: str,
+        *,
+        runtime: Any = None,
+    ) -> bool:
+        """Require the stable persona first-evaluation workflow registration."""
+        return self.has_workflow_registration(
+            persona_id,
+            PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+            runtime=runtime,
         )
 
     def _existing_registrations(self, runtime: Any) -> set[tuple[str, str]]:
