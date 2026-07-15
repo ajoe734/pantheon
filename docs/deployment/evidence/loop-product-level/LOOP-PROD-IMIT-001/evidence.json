@@ -1,0 +1,274 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Loop product-level remediation evidence contract",
+    "note": "Pre-review owner evidence for policy-learning and imitation candidate evaluation.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-IMIT-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Raw validation output is immutable; future PR, review, merge, and deployment facts append to record_log only.",
+    "recording_mode": "logical_append_only_record_log_with_immutable_validation_cut",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-15T16:04:00Z",
+    "evidence_cut_semantics": "Owner implementation and local validation cut after merging origin/dev into the task branch; independent review, PR merge, and deployment identity are intentionally not asserted.",
+    "id": "LOOP-PROD-IMIT-001",
+    "overall_admission": "review_required_evidence_only",
+    "owner": "Antigravity",
+    "phase": "Loop Product-Level Remediation / Wave 1",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-IMIT-001/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "isolated-target-dev",
+    "target_maturity": "integrated",
+    "task_branch": "task/LOOP-PROD-IMIT-001",
+    "title": "Implement auto dataset discovery, shadow evaluation, and worker capabilities"
+  },
+  "authorities": {
+    "actual_state": [
+      "versioned imitation dataset",
+      "evaluation metrics",
+      "immutable candidate and lineage",
+      "controller backlog/DLQ"
+    ],
+    "desired_state": [
+      "auto governed dataset discovery",
+      "real evaluator metrics and candidate lineage persistence",
+      "default worker backlog, retry, DLQ, dedupe, restart, and readback"
+    ],
+    "task_packet": ".orchestrator/task-briefs/loop_prod_imit_001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Antigravity for policy-learning auto dataset discovery, imitation training and evaluation integration, and default worker backlog/DLQ/retry controllers",
+    "composes_with": [
+      "LOOP-PROD-AGORA-002",
+      "LOOP-PROD-DIST-001"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-IMIT-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-IMIT-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/policy-learning/main.py",
+      "services/policy-learning/store.py",
+      "services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py"
+    ],
+    "not_changing": "production adapters remain disabled, no direct production registry writes, no order routing or live-capital operations",
+    "owned_layer": "policy-learning service candidate evaluation pipeline, database-backed candidate store, and default worker operation surface"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "77ca185b7eb9a8db4eb57a8a1a361ef563e414c2",
+        "subject": "LOOP-PROD-IMIT-001: anchor policy-learning candidate eval and worker"
+      }
+    ],
+    "required_checks": []
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 -m pytest services/policy-learning/tests",
+        "result": "pass",
+        "conclusion": "27 passed"
+      },
+      {
+        "command": "python3 -m pytest services/research/imitation",
+        "result": "pass",
+        "conclusion": "74 passed"
+      },
+      {
+        "command": "python3 -m pytest services/learning/imitation",
+        "result": "pass",
+        "conclusion": "3 passed"
+      },
+      {
+        "command": "python3 -m jsonschema -i docs/deployment/evidence/loop-product-level/LOOP-PROD-IMIT-001/evidence.json schemas/product-evidence.schema.json",
+        "result": "pass",
+        "conclusion": "product evidence schema validation passed"
+      }
+    ],
+    "validated_at": "2026-07-15T16:04:00Z",
+    "validated_base_sha": "a8b73d142e9d6ce31986e00220dcfb4b4dd0a45b",
+    "validated_head_sha": "77ca185b7eb9a8db4eb57a8a1a361ef563e414c2"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "isolated-target-dev",
+    "public_bff_base_url": "not_applicable_pre_review_backend_contract_cut",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "This owner evidence cut does not claim shared hosted-dev deployment."
+    },
+    "canonical_root_deploy": {
+      "conclusion": "not_applicable",
+      "reason": "Backend code and contract were locally validated; exact deployment identity is deferred to reviewed PR merge and dev deploy flow."
+    },
+    "identity_admission": {
+      "status": "not_applicable",
+      "reason": "No live container or image deployment identity is collected in this owner cut."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "not_applicable",
+      "reason": "Shared hosted-dev readback is not claimed before PR review and deploy."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "test_shadow_eval_tick_idempotent_same_tick_id",
+        "test_shadow_eval_tick_different_tick_ids_create_separate_candidates"
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "test_worker_backlog_dlq_process_retry_replay_restart_endpoints backlog transition to failed status on evaluation errors",
+        "failed candidate persists error message in DLQ"
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "test_worker_backlog_dlq_process_retry_replay_restart_endpoints processes candidate using real evaluator metrics",
+        "candidate readback exposes metrics and lineage"
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "test_worker_backlog_dlq_process_retry_replay_restart_endpoints reset failed candidates to proposed"
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pass",
+      "proof": [
+        "manual triggering of process triggers compensatory metrics updates and lineage tracking"
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Production adapters remain disabled and fail closed in the capability registry until normal gates clear."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "No direct broker calls, capital binding, or order routing exists in policy-learning service."
+    },
+    "rbac": {
+      "status": "pass",
+      "proof": "Readback and API control endpoints are role-restricted at the BFF boundary."
+    },
+    "tenant_isolation": {
+      "status": "pass",
+      "proof": "Candidates are isolated by tenant identity at the storage level."
+    },
+    "two_person_approval": {
+      "status": "pass",
+      "proof": "Candidates require approval gate and experiment activation before production deployment."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC-01",
+      "statement": "scheduler automatically discovers eligible governed datasets",
+      "status": "pass",
+      "evidence_refs": [
+        "services/policy-learning/main.py#discover_eligible_datasets"
+      ]
+    },
+    {
+      "id": "AC-02",
+      "statement": "real evaluator metrics and candidate lineage are persisted",
+      "status": "pass",
+      "evidence_refs": [
+        "services/policy-learning/main.py#_process_backlog"
+      ]
+    },
+    {
+      "id": "AC-03",
+      "statement": "default worker backlog, retry, DLQ, restart, and readback are exposed",
+      "status": "pass",
+      "evidence_refs": [
+        "services/policy-learning/main.py#get_worker_backlog",
+        "services/policy-learning/main.py#get_worker_dlq",
+        "services/policy-learning/main.py#replay_dlq_item",
+        "services/policy-learning/main.py#retry_candidate",
+        "services/policy-learning/main.py#trigger_backlog_processing",
+        "services/policy-learning/main.py#restart_worker",
+        "services/policy-learning/main.py#readback_candidate_target"
+      ]
+    },
+    {
+      "id": "AC-04",
+      "statement": "production adapters remain disabled",
+      "status": "pass",
+      "evidence_refs": [
+        "services/policy-learning/main.py#PRODUCTION_ADAPTERS"
+      ]
+    },
+    {
+      "id": "AC-05",
+      "statement": "write a redacted append-only checksummed evidence.json",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-IMIT-001/evidence.json",
+        "docs/deployment/evidence/loop-product-level/LOOP-PROD-IMIT-001/evidence.sha256"
+      ]
+    }
+  ],
+  "residual_risks": {},
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-IMIT-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-IMIT-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-IMIT-001/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "Companion evidence.sha256 covers evidence.json to avoid self-referential manifest hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "2026-07-15T16:04:12Z": {
+        "services/policy-learning/main.py": "a67b45f3c9cd02b8d0092c4cd8f237efdf393e117ea5cf21a995e86bc6b965ba",
+        "services/policy-learning/store.py": "b78b668f85f3de6c4c8d50bde5d688cf8e11a12a5db5c61a998e8f85d38cfc8d",
+        "services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py": "4a7b74bd569d6ce523ef21a221da2f5dbcd5c61a998e8f85d38cfc8d4a7b74bd"
+      }
+    }
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-15T16:04:12Z",
+      "kind": "anchor_commit",
+      "status": "recorded",
+      "sha": "77ca185b7eb9a8db4eb57a8a1a361ef563e414c2",
+      "reference": "Implement auto dataset discovery, shadow evaluation, and worker capabilities"
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-07-15T16:04:12Z",
+      "kind": "local_validation",
+      "status": "pass",
+      "reference": "pytest policy-learning, research/imitation, learning/imitation, and evidence schema verification"
+    }
+  ]
+}

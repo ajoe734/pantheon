@@ -105,13 +105,107 @@ class PostgresPolicyLearningJobStore:
         return record
 
 
+class PostgresPolicyLearningCandidateStore:
+    def __init__(self, dsn: str, table: str = "policy_learning.candidates", bootstrap: bool = True) -> None:
+        if not dsn:
+            raise ValueError("Postgres DSN is required")
+        self.dsn = dsn
+        self.table = _quote_pg_identifier(table)
+        self.schema = table.split(".", 1)[0] if "." in table else ""
+        if bootstrap:
+            self.bootstrap()
+
+    def _connect(self):
+        try:
+            import psycopg  # type: ignore[import]
+        except ImportError as exc:
+            raise RuntimeError("psycopg is required when POLICY_LEARNING_STORE_BACKEND=postgres") from exc
+        return psycopg.connect(self.dsn)
+
+    def bootstrap(self) -> None:
+        with self._connect() as conn:
+            if self.schema:
+                conn.execute(f"CREATE SCHEMA IF NOT EXISTS {_quote_pg_identifier(self.schema)}")
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.table} (
+                    candidate_id TEXT PRIMARY KEY,
+                    tick_id TEXT,
+                    eval_type TEXT,
+                    status TEXT,
+                    payload JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+
+    def list_candidates(self) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            cursor = conn.execute(f"SELECT payload FROM {self.table} ORDER BY candidate_id")
+            rows = cursor.fetchall()
+        records: List[Dict[str, Any]] = []
+        for row in rows:
+            payload = row[0] if isinstance(row, tuple) else row.get("payload")
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            if isinstance(payload, dict):
+                records.append(payload)
+        return records
+
+    def get_candidate(self, candidate_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            cursor = conn.execute(f"SELECT payload FROM {self.table} WHERE candidate_id = %s", (candidate_id,))
+            rows = cursor.fetchall()
+        if not rows:
+            return None
+        payload = rows[0][0] if isinstance(rows[0], tuple) else rows[0].get("payload")
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        return payload if isinstance(payload, dict) else None
+
+    def put_candidate(self, candidate: Dict[str, Any]) -> Dict[str, Any]:
+        record = json.loads(json.dumps(candidate))
+        candidate_id = str(record.get("candidate_id") or record.get("id") or "").strip()
+        if not candidate_id:
+            raise ValueError("candidate_id is required")
+        record["candidate_id"] = candidate_id
+        record["id"] = candidate_id
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {self.table} (candidate_id, tick_id, eval_type, status, payload)
+                VALUES (%s, %s, %s, %s, %s::jsonb)
+                ON CONFLICT (candidate_id) DO UPDATE SET
+                    tick_id = EXCLUDED.tick_id,
+                    eval_type = EXCLUDED.eval_type,
+                    status = EXCLUDED.status,
+                    payload = EXCLUDED.payload,
+                    updated_at = now()
+                """,
+                (
+                    candidate_id,
+                    record.get("tick_id"),
+                    record.get("eval_type"),
+                    record.get("status"),
+                    json.dumps(record, ensure_ascii=True, sort_keys=True),
+                ),
+            )
+        return record
+
+
 class PolicyLearningStore:
-    def __init__(self, data_dir: str | Path, job_store: PostgresPolicyLearningJobStore | None = None) -> None:
+    def __init__(
+        self,
+        data_dir: str | Path,
+        job_store: PostgresPolicyLearningJobStore | None = None,
+        candidate_store: PostgresPolicyLearningCandidateStore | None = None,
+    ) -> None:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.jobs_path = self.data_dir / "policy_learning_jobs.json"
         self.candidates_path = self.data_dir / "shadow_imitation_candidates.json"
         self.job_store = job_store
+        self.candidate_store = candidate_store
 
     def _read_candidates(self) -> Dict[str, Dict[str, Any]]:
         if not self.candidates_path.exists():
@@ -129,12 +223,18 @@ class PolicyLearningStore:
         self.candidates_path.write_text(json.dumps(candidates, indent=2, ensure_ascii=True), encoding="utf-8")
 
     def list_candidates(self) -> List[Dict[str, Any]]:
+        if self.candidate_store is not None:
+            return self.candidate_store.list_candidates()
         return list(self._read_candidates().values())
 
     def get_candidate(self, candidate_id: str) -> Optional[Dict[str, Any]]:
+        if self.candidate_store is not None:
+            return self.candidate_store.get_candidate(candidate_id)
         return self._read_candidates().get(candidate_id)
 
     def put_candidate(self, candidate: Dict[str, Any]) -> Dict[str, Any]:
+        if self.candidate_store is not None:
+            return self.candidate_store.put_candidate(candidate)
         candidate_id = str(candidate.get("candidate_id") or candidate.get("id") or "").strip()
         if not candidate_id:
             raise ValueError("candidate_id is required")
@@ -196,9 +296,11 @@ def build_policy_learning_store(data_dir: str | Path) -> PolicyLearningStore:
     dsn = os.getenv("POLICY_LEARNING_STORE_DSN") or os.getenv("DATABASE_URL")
     if not dsn:
         raise ValueError("POLICY_LEARNING_STORE_DSN or DATABASE_URL is required for Postgres store")
-    table = os.getenv("POLICY_LEARNING_STORE_TABLE", "policy_learning.jobs")
+    job_table = os.getenv("POLICY_LEARNING_STORE_TABLE", "policy_learning.jobs")
+    candidate_table = os.getenv("POLICY_LEARNING_CANDIDATE_STORE_TABLE", "policy_learning.candidates")
     bootstrap = os.getenv("POLICY_LEARNING_STORE_BOOTSTRAP", "1").strip().lower() not in ("0", "false", "no")
     return PolicyLearningStore(
         data_dir,
-        job_store=PostgresPolicyLearningJobStore(dsn=dsn, table=table, bootstrap=bootstrap),
+        job_store=PostgresPolicyLearningJobStore(dsn=dsn, table=job_table, bootstrap=bootstrap),
+        candidate_store=PostgresPolicyLearningCandidateStore(dsn=dsn, table=candidate_table, bootstrap=bootstrap),
     )
