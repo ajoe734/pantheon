@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import hashlib
 import base64
+import gzip
+import hashlib
 import json
 import multiprocessing
 import os
 import signal
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -15,6 +17,7 @@ from unittest import mock
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+import common
 import runtime_state
 
 
@@ -41,33 +44,84 @@ def _hold_protocol_lock(
     status_file: str,
     activity_file: str,
     connection: object,
+    shared: bool = False,
 ) -> None:
     if plane == "runtime_admission":
         guard = runtime_state.runtime_state_lock(
             config,
-            shared=False,
+            shared=shared,
             nonblocking=False,
         )
     elif plane == "task_state":
         guard = runtime_state.canonical_task_state_lock_file(
             status_file,
-            shared=False,
+            shared=shared,
             nonblocking=False,
         )
     elif plane == "activity_audit":
         guard = runtime_state.activity_audit_lock_file(
             activity_file,
-            shared=False,
+            shared=shared,
             nonblocking=False,
         )
     else:
         raise ValueError(f"unknown test lock plane: {plane}")
+    mode = "shared" if shared else "exclusive"
     try:
         with guard:
-            connection.send(("locked", plane, os.getpid()))
+            connection.send(("locked", plane, mode, os.getpid()))
             if connection.recv() != "release":
                 raise RuntimeError("unexpected lock-holder command")
-        connection.send(("released", plane, os.getpid()))
+        connection.send(("released", plane, mode, os.getpid()))
+    finally:
+        connection.close()
+
+
+def _hold_audit_lock_and_rotate(activity_file: str, connection: object) -> None:
+    log_path = Path(activity_file)
+    try:
+        with runtime_state.activity_audit_lock_file(
+            log_path,
+            shared=False,
+            nonblocking=False,
+        ):
+            connection.send(("locked", os.getpid()))
+            if connection.recv() != "rotate":
+                raise RuntimeError("unexpected audit rotation command")
+            archive_path = common.rotate_activity_log_unlocked(
+                log_path,
+                max_bytes=1,
+                keep_lines=0,
+            )
+            connection.send(("rotated", str(archive_path)))
+            if connection.recv() != "release":
+                raise RuntimeError("unexpected audit rotation release command")
+        connection.send(("released", os.getpid()))
+    finally:
+        connection.close()
+
+
+def _write_rotating_audit_entry(
+    activity_file: str,
+    trace_file: str,
+    connection: object,
+) -> None:
+    os.environ["PANTHEON_RUNTIME_LOCK_TRACE"] = trace_file
+    try:
+        connection.send(("started", os.getpid()))
+        common.write_activity_log(
+            {
+                "paths": {
+                    "activity_log": activity_file,
+                    "activity_log_rotate_bytes": 1,
+                }
+            },
+            {
+                "event_id": "waiting-writer",
+                "type": "cross_process_rotation_test",
+            },
+        )
+        connection.send(("written", os.getpid()))
     finally:
         connection.close()
 
@@ -313,6 +367,71 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
         self.assertEqual(parent_connection.recv()[0], "locked")
         return process, parent_connection
 
+    def _protocol_guard(
+        self,
+        plane: str,
+        *,
+        shared: bool,
+        nonblocking: bool,
+    ):
+        if plane == "runtime_admission":
+            return runtime_state.runtime_state_lock(
+                self.config,
+                shared=shared,
+                nonblocking=nonblocking,
+            )
+        if plane == "task_state":
+            return runtime_state.canonical_task_state_lock_file(
+                self.root / "ai-status.json",
+                shared=shared,
+                nonblocking=nonblocking,
+            )
+        if plane == "activity_audit":
+            return runtime_state.activity_audit_lock_file(
+                self.root / "ai-activity-log.jsonl",
+                shared=shared,
+                nonblocking=nonblocking,
+            )
+        raise ValueError(f"unknown test lock plane: {plane}")
+
+    def _start_protocol_lock_holder(
+        self,
+        plane: str,
+        *,
+        shared: bool,
+    ) -> tuple[multiprocessing.Process, object]:
+        context = multiprocessing.get_context("fork")
+        parent_connection, child_connection = context.Pipe()
+        process = context.Process(
+            target=_hold_protocol_lock,
+            args=(
+                plane,
+                self.config,
+                str(self.root / "ai-status.json"),
+                str(self.root / "ai-activity-log.jsonl"),
+                child_connection,
+                shared,
+            ),
+        )
+        process.start()
+        child_connection.close()
+        try:
+            self.assertTrue(
+                parent_connection.poll(5),
+                f"child did not acquire the {plane} lock",
+            )
+            self.assertEqual(
+                parent_connection.recv()[:3],
+                ("locked", plane, "shared" if shared else "exclusive"),
+            )
+        except BaseException:
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=5)
+            parent_connection.close()
+            raise
+        return process, parent_connection
+
     def test_admission_decision_has_exact_keys_source_order_and_digests(self) -> None:
         bodies = self._write_valid_sources()
         source_sha256 = {
@@ -547,6 +666,218 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
             nonblocking=True,
         ):
             pass
+
+    def test_shared_readers_are_compatible_across_processes_on_all_planes(self) -> None:
+        for plane in ("runtime_admission", "task_state", "activity_audit"):
+            with self.subTest(plane=plane):
+                process, connection = self._start_protocol_lock_holder(
+                    plane,
+                    shared=True,
+                )
+                try:
+                    with self._protocol_guard(
+                        plane,
+                        shared=True,
+                        nonblocking=True,
+                    ):
+                        pass
+                    connection.send("release")
+                    self.assertTrue(connection.poll(5))
+                    self.assertEqual(
+                        connection.recv()[:3],
+                        ("released", plane, "shared"),
+                    )
+                    process.join(timeout=5)
+                    self.assertFalse(process.is_alive())
+                    self.assertEqual(process.exitcode, 0)
+                finally:
+                    if process.is_alive():
+                        process.kill()
+                        process.join(timeout=5)
+                    connection.close()
+
+    def test_shared_and_exclusive_contend_across_processes_on_all_planes(self) -> None:
+        modes = (
+            (True, False, "shared_holder_exclusive_contender"),
+            (False, True, "exclusive_holder_shared_contender"),
+        )
+        for plane in ("runtime_admission", "task_state", "activity_audit"):
+            for holder_shared, contender_shared, direction in modes:
+                with self.subTest(plane=plane, direction=direction):
+                    process, connection = self._start_protocol_lock_holder(
+                        plane,
+                        shared=holder_shared,
+                    )
+                    try:
+                        with self.assertRaises(BlockingIOError):
+                            with self._protocol_guard(
+                                plane,
+                                shared=contender_shared,
+                                nonblocking=True,
+                            ):
+                                self.fail(
+                                    f"{direction} bypassed the {plane} sidecar"
+                                )
+                        connection.send("release")
+                        self.assertTrue(connection.poll(5))
+                        self.assertEqual(connection.recv()[0], "released")
+                        process.join(timeout=5)
+                        self.assertFalse(process.is_alive())
+                        self.assertEqual(process.exitcode, 0)
+                        with self._protocol_guard(
+                            plane,
+                            shared=contender_shared,
+                            nonblocking=True,
+                        ):
+                            pass
+                    finally:
+                        if process.is_alive():
+                            process.kill()
+                            process.join(timeout=5)
+                        connection.close()
+
+    def test_sigkill_releases_task_and_audit_sidecars(self) -> None:
+        for plane in ("task_state", "activity_audit"):
+            with self.subTest(plane=plane):
+                process, connection = self._start_protocol_lock_holder(
+                    plane,
+                    shared=False,
+                )
+                try:
+                    os.kill(process.pid, signal.SIGKILL)
+                    process.join(timeout=5)
+
+                    self.assertFalse(process.is_alive())
+                    self.assertEqual(process.exitcode, -signal.SIGKILL)
+                    with self._protocol_guard(
+                        plane,
+                        shared=False,
+                        nonblocking=True,
+                    ):
+                        pass
+                finally:
+                    if process.is_alive():
+                        process.kill()
+                        process.join(timeout=5)
+                    connection.close()
+
+    def test_audit_rotation_serializes_a_waiting_writer_across_processes(self) -> None:
+        context = multiprocessing.get_context("fork")
+        activity_file = self.root / "ai-activity-log.jsonl"
+        trace_file = self.root / "waiting-writer-lock-trace.txt"
+        original = [
+            {"event_id": f"original-{index}", "payload": "x" * 128}
+            for index in range(3)
+        ]
+        activity_file.write_text(
+            "".join(json.dumps(row) + "\n" for row in original),
+            encoding="utf-8",
+        )
+        holder_parent, holder_child = context.Pipe()
+        holder = context.Process(
+            target=_hold_audit_lock_and_rotate,
+            args=(str(activity_file), holder_child),
+        )
+        writer_parent, writer_child = context.Pipe()
+        writer = context.Process(
+            target=_write_rotating_audit_entry,
+            args=(str(activity_file), str(trace_file), writer_child),
+        )
+        holder.start()
+        holder_child.close()
+        try:
+            self.assertTrue(holder_parent.poll(5))
+            self.assertEqual(holder_parent.recv()[0], "locked")
+
+            writer.start()
+            writer_child.close()
+            self.assertTrue(writer_parent.poll(5))
+            started = writer_parent.recv()
+            self.assertEqual(started[0], "started")
+            writer_pid = started[1]
+            request_line = f"request:activity_audit:{writer_pid}:"
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                trace = (
+                    trace_file.read_text(encoding="utf-8")
+                    if trace_file.exists()
+                    else ""
+                )
+                if request_line in trace:
+                    break
+                time.sleep(0.01)
+            else:
+                self.fail("waiting writer did not request the audit sidecar")
+            self.assertFalse(
+                writer_parent.poll(0.2),
+                "audit writer completed while another process held audit EX",
+            )
+
+            holder_parent.send("rotate")
+            self.assertTrue(holder_parent.poll(5))
+            rotated = holder_parent.recv()
+            self.assertEqual(rotated[0], "rotated")
+            self.assertTrue(Path(rotated[1]).is_file())
+            self.assertFalse(
+                writer_parent.poll(0.2),
+                "audit writer crossed the lock during rotation",
+            )
+
+            holder_parent.send("release")
+            self.assertTrue(holder_parent.poll(5))
+            self.assertEqual(holder_parent.recv()[0], "released")
+            holder.join(timeout=5)
+            self.assertFalse(holder.is_alive())
+            self.assertEqual(holder.exitcode, 0)
+
+            self.assertTrue(writer_parent.poll(5))
+            self.assertEqual(writer_parent.recv()[0], "written")
+            writer.join(timeout=5)
+            self.assertFalse(writer.is_alive())
+            self.assertEqual(writer.exitcode, 0)
+
+            rows: list[dict[str, object]] = []
+            with runtime_state.activity_audit_lock_file(
+                activity_file,
+                shared=True,
+                nonblocking=True,
+            ):
+                for source in common.activity_audit_source_paths_unlocked(
+                    activity_file
+                ):
+                    if source.suffix == ".gz":
+                        with gzip.open(source, "rt", encoding="utf-8") as handle:
+                            text = handle.read()
+                    else:
+                        text = source.read_text(encoding="utf-8")
+                    rows.extend(
+                        json.loads(line) for line in text.splitlines() if line
+                    )
+            counts: dict[str, int] = {}
+            for row in rows:
+                event_id = str(row.get("event_id") or "")
+                counts[event_id] = counts.get(event_id, 0) + 1
+            self.assertEqual(
+                counts,
+                {
+                    "original-0": 1,
+                    "original-1": 1,
+                    "original-2": 1,
+                    "waiting-writer": 1,
+                },
+            )
+            self.assertFalse(
+                common.activity_rotation_intent_path(activity_file).exists()
+            )
+        finally:
+            if holder.is_alive():
+                holder.kill()
+                holder.join(timeout=5)
+            if writer.is_alive():
+                writer.kill()
+                writer.join(timeout=5)
+            holder_parent.close()
+            writer_parent.close()
 
     def test_task_and_audit_sidecars_contend_across_processes(self) -> None:
         context = multiprocessing.get_context("fork")
