@@ -4544,7 +4544,7 @@
     {
       "id": "LOOP-PROD-CLOSE-002",
       "title": "Final primary-catalog closeout after runtime bootstrap",
-      "summary_zh": "從 clean target-dev 重跑 baseline 四大 scenarios 與 additive safety matrix；其餘 47 個 primary tasks、fleet-only delivery provenance、coordinated browser auth、protected evidence、strict auth bootstrap/ops、fleet fairness、worker/lease integrity、受保護簽核與 warning-free frontend 全部通過後，guarded finalization 才可完成第 48 個任務。",
+      "summary_zh": "從 clean target-dev 重跑 baseline 四大 scenarios 與 additive safety matrix；其餘 47 個 primary tasks、所有 external dependencies（包含已收斂之 EVOCHAIN-011、EVOLOOP-009 與 EVOLOOP-011）、fleet-only delivery provenance、coordinated browser auth、protected evidence、strict auth bootstrap/ops、fleet fairness、worker/lease integrity、受保護簽核與 warning-free frontend 全部通過後，guarded finalization 才可完成第 48 個任務並宣告 program 完成。",
       "phase": "Loop Product-Level Remediation / Wave 5",
       "owner": "Codex2",
       "reviewer": "Codex",

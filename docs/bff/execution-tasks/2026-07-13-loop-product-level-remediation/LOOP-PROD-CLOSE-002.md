@@ -4,7 +4,7 @@ Status: final program gate; starts only after every dependency is done
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `4d8b0ca0883f568495c900bf2757285f88cb7f1b56f9078453189d4dc8e0d5b5`
+Canonical contract SHA-256: `c0400267e4ff3a5f590b950a3125970e37504a92ffa77ca386ffe0b7d340a175`
 The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 

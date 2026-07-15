@@ -26,7 +26,7 @@ Planning authority delivery:
   zero-write dry-run, loop coverage, and the full dispatcher suite, and issued
   an `APPROVE` verdict.
 - Verified catalog digest:
-  `5e18e95f619c171c2717208784558552356d24584bcfdaba128e6e1018518e9c`;
+  `44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357`;
   verified dispatcher result: `172 passed`.
 - This approval closes planning authority only. Product delivery remains
   blocked on the external runtime bootstrap and every downstream fleet task's
@@ -64,7 +64,7 @@ Correction PR `#3659` merged as
 `af441973540f7cba267dd299cec549c5b22e7b39` and produced catalog digest
 `04f94c0c4b2fc9773083624d7fd100f6c3ea2f617dcee2068def61927ffe1644`.
 The exact corrected catalog in this follow-up validates as 48 tasks with digest
-`953d4c6a3033e38b1c7321937c7932a7dd4898a6be0cd2ef5391cea7c5182e4a`;
+`44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357`;
 the dispatcher suite collects and passes 172 tests. Product materialization
 remains gated as described above.
 
