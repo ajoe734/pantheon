@@ -2,6 +2,7 @@
   "schema_version": "loop_product_evidence.v1",
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Productization: First-class paper signal producer and binding discovery.",
     "note": "This is the product evidence record for LOOP-PROD-CAP-001.",
     "status": "formalized"
   },
