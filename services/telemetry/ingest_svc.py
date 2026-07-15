@@ -19,7 +19,8 @@ The ingest service provides:
 5. Backpressure management (adaptive concurrency, delay non-critical events)
 6. Dead-letter handling (diagnostic tags, JSONL spill, startup loading,
    and replay support)
-7. Idempotent deduplication by event_id (service layer + ON CONFLICT at write layer)
+7. Idempotent deduplication by event_id (service layer + transactional conflict
+   detection at the canonical write layer)
 
 Replay policy
 -------------
@@ -38,13 +39,16 @@ Replace the default memory-only sink with build_postgres_write_fn():
     write_fn = build_postgres_write_fn(dsn=os.environ["TELEMETRY_DB_DSN"])
     svc = TelemetryIngestService(write_fn=write_fn, ...)
 
-The Postgres write function uses ON CONFLICT (event_id) DO NOTHING for
-idempotent inserts under retry/replay.
+The Postgres write function distinguishes an exact retry from a conflicting
+reuse of an event_id in the same transaction.  Newly committed rows emit one
+transaction-scoped pg_notify wake-up; PostgreSQL delivers that notification
+only after the rows are commit-visible.
 """
 
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import time
 from datetime import datetime, timezone
@@ -86,6 +90,12 @@ except ImportError:
     jsonschema = None
 
 log = logging.getLogger(__name__)
+
+TELEMETRY_COMMIT_NOTIFY_CHANNEL = "pantheon_lifecycle_events"
+
+
+class ConflictingTelemetryEventError(ValueError):
+    """An event_id was reused for content other than the immutable original."""
 
 
 # ---------------------------------------------------------------------------
@@ -159,12 +169,22 @@ class RuntimeBindingProtocol(Protocol):
 def build_postgres_write_fn(
     dsn: str,
     table: str = "telemetry_events",
+    notify_channel: str = TELEMETRY_COMMIT_NOTIFY_CHANNEL,
 ) -> Callable[[list[dict[str, Any]]], Coroutine[Any, Any, WriteResult]]:
     """
     Build the canonical Postgres batch-write function for production wiring.
 
-    Uses ON CONFLICT (event_id) DO NOTHING for idempotent inserts — a batch
-    that is retried or replayed will not create duplicate rows.
+    A batch is committed atomically.  ON CONFLICT (event_id) DO NOTHING is
+    followed by an equality check against the committed immutable row:
+
+    * exact duplicates are successful no-ops;
+    * conflicting duplicates fail the whole batch as non-retryable;
+    * new rows receive database-owned ingested_seq / ingested_at values.
+
+    When at least one new row is inserted, pg_notify is invoked inside the
+    write transaction.  PostgreSQL releases the notification only when that
+    same transaction commits, so consumers can immediately read every
+    advertised ingested_seq from the canonical table.
 
     Example
     -------
@@ -177,10 +197,37 @@ def build_postgres_write_fn(
             event_id        TEXT PRIMARY KEY,
             event_type      TEXT NOT NULL,
             created_at      TIMESTAMPTZ NOT NULL,
-            payload         JSONB NOT NULL
+            payload         JSONB NOT NULL,
+            ingested_seq    BIGINT NOT NULL DEFAULT nextval('telemetry_events_ingested_seq_seq'),
+            ingested_at     TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
         );
     """
     import json as _json
+
+    table_parts = table.split(".")
+    if not table_parts or any(
+        not part
+        or not (part[0].isalpha() or part[0] == "_")
+        or any(not (char.isalnum() or char == "_") for char in part)
+        for part in table_parts
+    ):
+        raise ValueError(f"invalid Postgres table identifier: {table!r}")
+    if not notify_channel or len(notify_channel.encode("utf-8")) > 63 or "\x00" in notify_channel:
+        raise ValueError("notify_channel must be a non-empty Postgres identifier of at most 63 bytes")
+
+    insert_sql = (
+        f"INSERT INTO {table} "
+        f"(event_id, event_type, created_at, payload) "
+        f"VALUES ($1, $2, $3::timestamptz, $4::jsonb) "
+        f"ON CONFLICT (event_id) DO NOTHING "
+        f"RETURNING ingested_seq"
+    )
+    exact_duplicate_sql = (
+        f"SELECT event_type = $2 "
+        f"AND created_at = $3::timestamptz "
+        f"AND payload = $4::jsonb "
+        f"FROM {table} WHERE event_id = $1"
+    )
 
     async def _postgres_write(batch: list[dict[str, Any]]) -> WriteResult:
         try:
@@ -195,20 +242,54 @@ def build_postgres_write_fn(
                         ev.get("event_id"),
                         ev.get("event_type"),
                         _coerce_postgres_created_at(ev.get("created_at")),
-                        _json.dumps(ev),
+                        _json.dumps(ev, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
                     )
                     for ev in batch
                 ]
-                await conn.executemany(
-                    f"INSERT INTO {table} "
-                    f"(event_id, event_type, created_at, payload) "
-                    f"VALUES ($1, $2, $3::timestamptz, $4::jsonb) "
-                    f"ON CONFLICT (event_id) DO NOTHING",
-                    rows,
-                )
+                inserted_sequences: list[int] = []
+                async with conn.transaction():
+                    # Sequence values are allocated before commit. Serializing
+                    # canonical writer transactions prevents a later sequence
+                    # from committing before an earlier one and being used to
+                    # advance a projector checkpoint past an invisible gap.
+                    await conn.execute(
+                        "SELECT pg_advisory_xact_lock(hashtext($1))",
+                        table,
+                    )
+                    for row in rows:
+                        inserted = await conn.fetchrow(insert_sql, *row)
+                        if inserted is not None:
+                            inserted_sequences.append(int(inserted["ingested_seq"]))
+                            continue
+
+                        exact_duplicate = await conn.fetchval(exact_duplicate_sql, *row)
+                        if exact_duplicate is not True:
+                            raise ConflictingTelemetryEventError(
+                                f"conflicting duplicate event_id={row[0]}"
+                            )
+
+                    if inserted_sequences:
+                        notification = _json.dumps(
+                            {
+                                "schema_version": "telemetry-commit-notification/1",
+                                "table": table,
+                                "inserted_count": len(inserted_sequences),
+                                "first_ingested_seq": min(inserted_sequences),
+                                "last_ingested_seq": max(inserted_sequences),
+                            },
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        )
+                        await conn.execute(
+                            "SELECT pg_notify($1, $2)",
+                            notify_channel,
+                            notification,
+                        )
             finally:
                 await conn.close()
-            return WriteResult.ok(len(batch))
+            return WriteResult.ok(len(inserted_sequences))
+        except ConflictingTelemetryEventError as exc:
+            return WriteResult.fail(str(exc), retryable=False)
         except Exception as exc:  # noqa: BLE001
             return WriteResult.fail(str(exc), retryable=True)
 
@@ -618,8 +699,6 @@ class TelemetryIngestService:
             original_event = self._seen_event_ids[event_id]
             mismatch = False
             for k in (set(event.keys()) | set(original_event.keys())):
-                if k == "created_at":
-                    continue
                 if event.get(k) != original_event.get(k):
                     mismatch = True
                     break
@@ -690,7 +769,9 @@ class TelemetryIngestService:
 
         # Track event_id for idempotent dedup after successful enqueue
         if event_id:
-            self._seen_event_ids[event_id] = event
+            # Keep an immutable snapshot so producer-side mutation cannot turn
+            # a conflicting retry into an apparent exact duplicate.
+            self._seen_event_ids[event_id] = copy.deepcopy(event)
             # Evict oldest half when the dedup set exceeds its size limit
             if len(self._seen_event_ids) > self._dedup_max_size:
                 evict = list(self._seen_event_ids.keys())[: self._dedup_max_size // 2]

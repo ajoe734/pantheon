@@ -90,8 +90,8 @@
       "url": "https://github.com/ajoe734/pantheon/pull/3705",
       "head_sha": "ce24a68be71420b92d6e3deef9c6d66e74640102",
       "base": "dev",
-      "merged_at": null,
-      "merge_sha": null
+      "merged_at": "2026-07-15T12:46:40Z",
+      "merge_sha": "e189b3a02f8d03a60bd13b2d4d013d30375cdd96"
     },
     "required_checks": [
       {
@@ -134,7 +134,10 @@
   },
   "behavioral_proof": {
     "restart_and_recovery": {
-      "status": "pass"
+      "status": "pass",
+      "proof": [
+        "pytest services/research/alpha_replication/test_revalidation_worker.py proves crash recovery and idempotent replay from queue"
+      ]
     },
     "duplicate_safety": {
       "status": "pass"

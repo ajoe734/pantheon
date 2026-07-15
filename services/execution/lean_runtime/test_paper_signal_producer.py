@@ -16,6 +16,7 @@ from services.execution.lean_runtime.paper_signal_producer import (
 )
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
 from services.execution.lean_runtime.signal_consumer import SignalConsumer
+from services.trade_journey.correlation_envelope import validate_envelope
 
 _NOW = "2026-06-14T10:30:00Z"
 _BINDING = BindingRef(binding_id="rb-test-001", strategy_id="strategy-test-001", symbol="AAPL.US")
@@ -34,6 +35,11 @@ class TestSmokeSignalContract(unittest.TestCase):
         self.assertIsNotNone(validated, "smoke signal must pass consumer _validate")
         self.assertEqual(validated["action"], "BUY")
         self.assertEqual(validated["symbol"], "AAPL.US")
+        envelope = validate_envelope(validated["correlation_envelope"])
+        self.assertEqual(envelope["journey_id"], validated["journey_id"])
+        self.assertEqual(envelope["tenant_id"], "default")
+        self.assertEqual(envelope["environment"], "paper")
+        self.assertTrue(validated["run_id"].startswith("run-rb-test-001-"))
 
 
 class TestPaperSignalProducer(unittest.TestCase):
@@ -61,6 +67,10 @@ class TestPaperSignalProducer(unittest.TestCase):
         self.assertEqual(len(drained), 1)
         self.assertEqual(drained[0]["strategy_id"], "strategy-a")
         self.assertEqual(drained[0]["binding_id"], "rb-a")
+        self.assertEqual(
+            drained[0]["journey_id"],
+            validate_envelope(drained[0]["correlation_envelope"])["journey_id"],
+        )
 
     def test_smoke_strategy_emits_unique_signal_ids_across_ticks(self) -> None:
         store = InMemoryPendingSignalStore()
@@ -115,6 +125,11 @@ class TestPaperSignalProducer(unittest.TestCase):
         self.assertEqual(sig["symbol"], "2330.TW")
         self.assertEqual(sig["action"], "BUY")
         self.assertEqual(sig["direction"], "LONG")
+        envelope = validate_envelope(sig["correlation_envelope"])
+        self.assertEqual(envelope["tenant_id"], "test-tenant-123")
+        self.assertEqual(envelope["environment"], "paper")
+        self.assertEqual(envelope["journey_id"], sig["journey_id"])
+        self.assertTrue(sig["run_id"].startswith("run-rb-tw-test-"))
 
         # Verify metadata / identities
         self.assertEqual(sig["metadata"]["tenant_id"], "test-tenant-123")

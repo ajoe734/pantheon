@@ -217,7 +217,7 @@ def run_full_cycle_verification(base, token, ctx):
     # Step 1: Get active runtime bindings
     print("[1/11] Fetching active runtimes from BFF...")
     headers = {"Authorization": f"Bearer {token}"}
-    status, runtimes_payload = _http_request(base.rstrip("/") + "/bff/runtimes", headers=headers, ctx=ctx)
+    status, runtimes_payload = _http_request(base.rstrip("/") + "/bff/runtimes?page_size=100", headers=headers, ctx=ctx)
     if status == 401:
         # Fallback to test-operator token
         fallback_token = "test-operator:operator,reviewer,admin:mfa"
@@ -580,7 +580,7 @@ def run_full_cycle_verification(base, token, ctx):
 
     # Step 11: Check the new binding in runtimes and verify evolution journal
     print("[11/11] Verifying the new binding in runtimes and the evolution journal...")
-    status, runtimes_payload = _http_request(base.rstrip("/") + "/bff/runtimes", headers=headers, ctx=ctx)
+    status, runtimes_payload = _http_request(base.rstrip("/") + "/bff/runtimes?page_size=100", headers=headers, ctx=ctx)
     if status != 200:
         raise RuntimeError(f"Failed to fetch runtimes from BFF. Status: {status}")
 

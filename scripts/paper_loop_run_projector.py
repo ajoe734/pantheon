@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Project active paper bindings + execution telemetry into the v5 loop-run ledger.
+"""Build an explicitly non-live loop-run backfill from runtime snapshots.
 
 Context
 -------
@@ -7,9 +7,9 @@ Context
 (a JSON object keyed by loop-run `id`; see read_store.py `loop_runs` dataset).
 Nothing populates it in the deployed stack — only e2e fixtures ever wrote it — so
 the v5 loop-run ledger reads empty even though 16 paper runtime-bindings are
-active. This projector derives one loop-run record per active binding from the
-authoritative read surfaces and writes the store file, so the ledger reflects
-real runtime state instead of staying blank.
+active. This compatibility tool predates the canonical committed-telemetry
+lifecycle projector. Its mutable runtime snapshots remain useful for repair
+comparison, but are never accepted as live loop-run truth.
 
 It does NOT fabricate trading results: fills/pnl are copied from the binding's
 telemetry summary when available, and left null/zero otherwise (honest "active
@@ -24,7 +24,7 @@ service tokens:
 Usage
 -----
     BFF_BASE=https://...sslip.io BFF_TOKEN=op-dev:admin:mfa \
-        python3 scripts/paper_loop_run_projector.py --out /data/bff/loop_runs.json
+        python3 scripts/paper_loop_run_projector.py --out /data/bff/loop_runs_backfill.json
 """
 from __future__ import annotations
 
@@ -87,13 +87,22 @@ def build_loop_run(binding: dict, now: str) -> dict:
         # execution metrics are copied from telemetry when present (see enrich)
         "fills": binding.get("_fills", 0),
         "pnl": binding.get("_pnl", 0),
-        "source": "paper_loop_run_projector",
+        "source": "paper_runtime_snapshot_backfill",
+        "projection_mode": "backfill",
+        "accepted_live": False,
+        "truth_level": "legacy_snapshot_backfill",
     }
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--out", default=os.getenv("PANTHEON_BFF_LOOP_RUN_STORE", "/data/bff/loop_runs.json"))
+    ap.add_argument(
+        "--out",
+        default=os.getenv(
+            "PANTHEON_BFF_LOOP_RUN_BACKFILL_STORE",
+            "/data/bff/loop_runs_backfill.json",
+        ),
+    )
     ap.add_argument("--base", default=os.getenv("BFF_BASE"))
     ap.add_argument("--token", default=os.getenv("BFF_TOKEN", "op-dev:admin:mfa"))
     args = ap.parse_args()
@@ -106,7 +115,11 @@ def main() -> int:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
 
-    runtimes = _items(_get(args.base, args.token, ctx, "/bff/runtimes"))
+    runtime_payload = _get(args.base, args.token, ctx, "/bff/runtimes")
+    if runtime_payload is None:
+        sys.stderr.write("ERROR: runtime snapshot unavailable; preserving prior backfill output\n")
+        return 1
+    runtimes = _items(runtime_payload)
     now = _now_iso()
     store: dict = {}
     for b in runtimes:

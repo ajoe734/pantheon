@@ -80,11 +80,144 @@ def test_v5_loop_runs_list_contains_seeded_incident_derived_record(monkeypatch):
     with _v5_store() as client:
         response = client.get("/bff/v5/loop-runs", headers=HEADERS)
     assert response.status_code == 200
-    items = response.json()["items"]
+    payload = response.json()
+    items = payload["items"]
     ids = [item.get("id") for item in items]
     assert "inc-loop-1" in ids
     # sentinel incident is excluded from loop runs
     assert "inc-sentinel-1" not in ids
+    assert items[0]["source"] == "legacy_incident_backfill"
+    assert items[0]["projection_mode"] == "backfill"
+    surface = payload["meta"]["surfaces"]["loop_runs"]
+    assert surface["source"] == "legacy_incident_backfill"
+    assert surface["status"] == "degraded"
+    assert surface["accepted_live"] is False
+
+
+def test_v5_loop_runs_projector_wrapper_precedes_incidents(monkeypatch, tmp_path):
+    import json as _json
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    loop_store = tmp_path / "loop_runs.json"
+    loop_store.write_text(
+        _json.dumps(
+            {
+                "schema_version": "pantheon.loop-run-projection.v1",
+                "generation": 7,
+                "controller": {
+                    "accepted_live": True,
+                    "status": "ready",
+                    "mode": "live",
+                    "truth_level": "canonical_live",
+                },
+                "records": {
+                    "lr-canonical": {
+                        "id": "lr-canonical",
+                        "status": "active",
+                        "source": "canonical_telemetry_lifecycle_projector",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PANTHEON_BFF_LOOP_RUN_STORE", str(loop_store))
+
+    with _v5_store() as client:
+        response = client.get("/bff/v5/loop-runs", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert [item["id"] for item in payload["items"]] == ["lr-canonical"]
+    surface = payload["meta"]["surfaces"]["loop_runs"]
+    assert surface["source"] != "legacy_incident_backfill"
+    assert surface["status"] == "ok"
+    assert surface["truth_status"] == "formal"
+    assert surface["projection_generation"] == 7
+
+
+@pytest.mark.parametrize(
+    "controller",
+    [
+        {},
+        {"accepted_live": False, "status": "ready", "mode": "live", "truth_level": "canonical_live"},
+        {"accepted_live": True, "status": "failed", "mode": "live", "truth_level": "canonical_live"},
+        {"accepted_live": True, "status": "degraded", "mode": "live", "truth_level": "canonical_live"},
+        {"accepted_live": True, "status": "ready", "mode": "backfill", "truth_level": "backfill_only"},
+        {"accepted_live": True, "status": "ready", "mode": "replay", "truth_level": "canonical_live"},
+        {"accepted_live": True, "status": "ready", "mode": "recovery", "truth_level": "canonical_live"},
+        {"accepted_live": True, "status": "ready", "mode": "live"},
+    ],
+)
+def test_loop_run_controller_truth_gate_fails_closed(controller):
+    assert bff_main._loop_run_controller_is_formal(
+        {
+            "schema_version": "pantheon.loop-run-projection.v1",
+            "controller": controller,
+        }
+    ) is False
+
+
+def test_v5_recovery_controller_degrades_all_loop_surfaces_without_incident_fallback(
+    monkeypatch, tmp_path
+):
+    import json as _json
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    loop_store = tmp_path / "loop_runs.json"
+    loop_store.write_text(
+        _json.dumps(
+            {
+                "schema_version": "pantheon.loop-run-projection.v1",
+                "generation": 8,
+                "controller": {
+                    "accepted_live": True,
+                    "status": "recovering",
+                    "mode": "recovery",
+                    "truth_level": "canonical_live",
+                },
+                "records": {
+                    "lr-canonical": {
+                        "id": "lr-canonical",
+                        "status": "active",
+                        "runtime_id": "rt-canonical",
+                        "source": "canonical_telemetry_lifecycle_projector",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PANTHEON_BFF_LOOP_RUN_STORE", str(loop_store))
+
+    with _v5_store() as client:
+        list_response = client.get("/bff/v5/loop-runs", headers=HEADERS)
+        detail_response = client.get("/bff/v5/loop-runs/lr-canonical", headers=HEADERS)
+        control_response = client.get("/bff/v5/control-room", headers=HEADERS)
+        throughput_response = client.get("/bff/management/loop-throughput", headers=HEADERS)
+
+    assert list_response.status_code == 200, list_response.text
+    assert [item["id"] for item in list_response.json()["items"]] == ["lr-canonical"]
+    assert detail_response.status_code == 200, detail_response.text
+    assert detail_response.json()["data"]["id"] == "lr-canonical"
+    assert control_response.status_code == 200, control_response.text
+    assert [item["id"] for item in control_response.json()["loops"]["items"]] == ["lr-canonical"]
+    assert throughput_response.status_code == 200, throughput_response.text
+    assert [item["loop_run_id"] for item in throughput_response.json()["data"]["items"]] == ["lr-canonical"]
+
+    surfaces = [
+        list_response.json()["meta"]["surfaces"]["loop_runs"],
+        detail_response.json()["meta"]["surfaces"]["loop_run_detail"],
+        control_response.json()["loops"]["meta"]["surfaces"]["loop_runs"],
+        throughput_response.json()["meta"]["surfaces"]["loop_runs"],
+    ]
+    for surface in surfaces:
+        assert surface["status"] == "degraded"
+        assert surface["truth_status"] == "degraded"
+        assert surface["source"] != "legacy_incident_backfill"
+        assert surface["projection_mode"] == "recovery"
+        assert surface["controller"]["status"] == "recovering"
+    assert throughput_response.json()["meta"]["surfaces"]["loop_throughput"]["status"] == "degraded"
 
 
 def test_v5_loop_runs_detail_seeded_record_returns_200(monkeypatch):
@@ -269,7 +402,7 @@ _SENTINEL_FINDINGS_SEED = {
 
 def test_v5_loop_runs_dedicated_fallback_store_source_not_missing(monkeypatch):
     """Regression: when PANTHEON_BFF_LOOP_RUN_STORE has data and incidents are absent,
-    meta.surfaces.loop_runs.source must NOT be 'missing' and status must not be 'unavailable'."""
+    its records stay conclusive, but a legacy wrapper without controller truth is degraded."""
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     with _v5_fallback_store(loop_runs_data=_LOOP_RUNS_SEED) as client:
         response = client.get("/bff/v5/loop-runs", headers=HEADERS)
@@ -277,7 +410,9 @@ def test_v5_loop_runs_dedicated_fallback_store_source_not_missing(monkeypatch):
     payload = response.json()
     surface = payload.get("meta", {}).get("surfaces", {}).get("loop_runs", {})
     assert surface.get("source") != "missing", f"source must not be 'missing', got: {surface}"
-    assert surface.get("status") != "unavailable", f"status must not be 'unavailable', got: {surface}"
+    assert surface.get("status") == "degraded", f"missing controller truth must degrade: {surface}"
+    assert surface.get("truth_status") == "degraded"
+    assert surface.get("projection_schema_version") is None
     assert len(payload.get("items", [])) == 1
 
 

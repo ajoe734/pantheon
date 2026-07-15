@@ -921,7 +921,7 @@ class TestWorkshopRouterEndpoints:
         assert resp.status_code == 403, resp.text
         assert resp.json()["error"]["code"] == "FORBIDDEN"
 
-    def test_deferred_versions_returns_501(self, monkeypatch):
+    def test_versions_route_is_live_and_returns_authoritative_empty_list(self, monkeypatch):
         client = _workshop_client(monkeypatch)
         create_resp = client.post(
             "/bff/agora/workshops",
@@ -938,7 +938,9 @@ class TestWorkshopRouterEndpoints:
             f"/bff/agora/workshops/{workshop_id}/versions",
             headers={"Authorization": _OPERATOR_AUTH},
         )
-        assert resp.status_code == 501
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["versions"] == []
+        assert resp.headers["etag"].startswith('W/"workshop:')
 
     def test_workshop_router_importable(self):
         from agora.strategy_workshop.router import create_strategy_workshop_router

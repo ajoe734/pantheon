@@ -1,18 +1,34 @@
 # EVOCHAIN-001 — Threshold-breach producer (telemetry -> incidents)
 
-Status: fully implemented and verified. All review points from Codex (rounds 1-5)
-have been resolved. LIN-003 has successfully landed, adding the live telemetry
-lineage write path and resolving the default-validator platform blocker (the default
+Status: owner closeout verified by Codex after Antigravity's final approval;
+delivery PR #3620 (`task/EVOCHAIN-001` -> `dev`). Codex performed the round-9
+technical re-review, and Antigravity recorded the canonical final approval on
+2026-07-14 after independently verifying the approved producer behavior. Review
+points from rounds 1-9 have all been resolved (see below, kept as historical
+record of each round's finding and fix — a point marked "fixed" in an earlier
+round's section was true at that round's review time; round-9 found further
+gaps in some of the same areas, addressed in its own section below). LIN-003
+has successfully landed, adding the live telemetry lineage write path and
+resolving the default-validator platform blocker (the default
 CanonicalReferenceValidator now returns 201 for a live-ingested breach event).
-All tests pass locally and compose volume mounting persists the sweep state.
+Owner closeout validation on 2026-07-15 passed the focused and full local suites,
+compose rendering, service activation, diff checks, and isolated-store proof.
 
-Owner: Claude
-Reviewer: Codex
+Owner: Codex
+Reviewer: Antigravity
 Wave: 0
 Depends on: none
 
 Source gap spec: `docs/04/pantheon_evolution_journal_producer_gap_2026-07-13/EVOLUTION_JOURNAL_PRODUCER_GAP.md`
 Execution packet: `docs/bff/execution-tasks/2026-07-13-evolution-journal-producer-gap/INDEX.md`
+PR: `ajoe734/pantheon#3620`, branch `task/EVOCHAIN-001` -> `dev`. Scope: this
+task touches `services/evolution`, `services/incidents`, and
+`docker-compose.yml` (plus this doc); as of round-9 it also adds one
+optional, additive field (`threshold_identity`, default `None`) to the
+shared `IncidentCase` domain object and `PostmortemEvidenceCollector` in
+`services/incident/incident.py` and `services/incident/evidence_collector.py`
+— needed to harden the `incident_id` collision guard (round-9 §4) without
+regex-parsing free-text evidence. It does not touch any other service.
 
 ## Problem
 
@@ -46,7 +62,10 @@ postmortem -> evolution -> journal chain never fires from real data.
 - `services/evolution/config/threshold_sweep_baselines.json` — live config:
   per-`artifact_id` research-approved baseline values (e.g.
   `expected_drawdown`), used to turn a raw runtime-summary metric into a
-  unit-consistent multiple before comparison. Ships empty.
+  unit-consistent multiple before comparison. EVOLOOP-005 has since added the
+  first governed entry,
+  `artifact-tw-session-momentum-v1.expected_drawdown=0.0303`; artifacts without
+  an approved positive baseline continue to fail closed.
 - `docker-compose.yml` — new `evolution-threshold-sweep-producer` service.
   Not gated behind a profile (default-on, like `reconciliation-drift-svc`).
   Bind-mounts `services/evolution/config` read-only so operators can retune
@@ -54,7 +73,8 @@ postmortem -> evolution -> journal chain never fires from real data.
   service — no image rebuild. Own interval env
   (`EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS`, default `86400`); does not
   touch `EVOLUTION_SCHEDULER_INTERVAL_SECONDS` or any other existing cadence.
-- `services/evolution/test_threshold_sweep_worker.py` — 43 tests.
+- `services/evolution/test_threshold_sweep_worker.py` — 75 tests at owner
+  closeout (see "Local validation" below for the current count history).
 
 ## Round-1 review fixes (Codex, PR #3509, 2026-07-13)
 
@@ -119,6 +139,10 @@ Fixed:
 
 ### 2. Drawdown units did not match the governed threshold
 
+**Historical round-1 context (2026-07-13):** the baseline registry was empty
+when this fix first shipped. EVOLOOP-005 later added the first governed
+baseline; the bullets below preserve the state and reasoning at review time.
+
 The runtime summary's `drawdown`/`drawdown_pct` field is a raw metric
 (telemetry projects it straight from `metrics.drawdown_pct`, see
 `services/telemetry/runtime_summary.py`), not a "current vs. research-expected
@@ -134,8 +158,8 @@ Fixed:
 
 - Added `services/evolution/config/threshold_sweep_baselines.json`: a live
   config mapping `artifact_id -> {ratio_baseline_key: value}` for
-  research-approved baselines. Ships **empty** — no artifact has an approved
-  baseline yet.
+  research-approved baselines. It shipped **empty at round-1 review time** —
+  no artifact had an approved baseline then.
 - `threshold_sweep_thresholds.json`'s `rolling_drawdown_multiple` entry
   declares `"ratio_baseline_key": "expected_drawdown"`. In
   `evaluate_breaches()`, the raw `summary_field` value is divided by the
@@ -143,10 +167,10 @@ Fixed:
   is what gets compared to `threshold_value` (and what is recorded in
   `threshold_snapshot.observed_value`; `raw_observed_value` keeps the
   untouched raw metric for evidence/audit).
-- Fail-closed: an artifact with no baseline entry (i.e. every artifact,
-  today) is skipped with a diagnostic instead of a fabricated comparison —
-  the drawdown-multiple threshold will not fire until an operator/researcher
-  populates a real baseline for that artifact_id.
+- Fail-closed: an artifact with no baseline entry (every artifact at round-1
+  review time) is skipped with a diagnostic instead of a fabricated
+  comparison — the drawdown-multiple threshold cannot fire for that artifact
+  until an operator/researcher populates a real governed baseline.
 - Tests now seed the raw metric through the **real**
   `RuntimeSummaryProjectionStore` (`test_evaluate_breaches_detects_drawdown_breach_from_real_projection`)
   instead of hand-baking `drawdown=1.42` as if the multiple already existed,
@@ -188,6 +212,13 @@ Covered by `test_load_thresholds_drops_disabled_entries` and
 Codex requested changes on 5 points at `ef1e5b3bd`; each is addressed below.
 
 ### 1. Deployed telemetry -> incidents route still 422s (confirmed platform gap, out of scope)
+
+**Historical: this section documents the round-2 (2026-07-13) investigation
+and the gap's status as of that review round.** The "remains open" framing
+below was accurate at round-2 time; it was superseded once LIN-003 landed
+(see round-3 §1 and the Status header above) — the default deployed
+`CanonicalReferenceValidator` now returns 201 for a live-ingested breach
+event.
 
 Investigated further per the review's instruction to either close this or
 formally keep the task blocked on it. Traced the exact mechanism:
@@ -235,11 +266,13 @@ behavior" above) already covers the runtime consequence of this gap
 correctly: the worker will not create real incidents against the default
 validator today, and it will not crash or misreport success either.
 
-**This point remains open pending a separate platform task** (recommend a
-LIN-003-style follow-up: wire live-ingested telemetry into a queryable
-lineage index, or otherwise replace the static-corpus default) before any
-threshold/drift producer's incidents can be expected to pass the *default*
-`CanonicalReferenceValidator()` in production.
+**(Historical, as of round-2) This point remains open pending a separate
+platform task** (recommend a LIN-003-style follow-up: wire live-ingested
+telemetry into a queryable lineage index, or otherwise replace the
+static-corpus default) before any threshold/drift producer's incidents can
+be expected to pass the *default* `CanonicalReferenceValidator()` in
+production. **Resolved as of round-3/LIN-003 landing** — see round-3 §1
+above and the Status header.
 
 ### 2. Freshness was fail-open for ambiguous and old metric data
 
@@ -446,6 +479,347 @@ Review comments on 3 main points:
    - `evaluate_breaches()` checks metric provenance against the current binding ID of the summary and skips evaluation if they do not match.
    - Verified by `test_runtime_summary_projection_store_reset_on_binding_rollover` and `test_evaluate_breaches_validates_metric_provenance`.
 
+## Round-7 review fixes (Codex, PR #3612 merge-time review, 2026-07-14)
+
+Codex requested changes on 7 points at `4a5c9102` (comment 4965409421,
+re-confirmed unaddressed at `d8df8b940`, comment 4965680921), plus one
+additional finding surfaced during round-7 re-verification. PR #3612 had
+already merged, so these land as a new task-branch commit rather than a
+merge-only handoff.
+
+### 1. Blocker — corrupt undelivered WAL entries could lose frozen evidence
+
+`_load_pending_evidence()` silently dropped a structurally invalid record
+(missing inner `event_id`, wrong types, etc.) instead of reserving its key.
+Because the dedupe key hashes deterministically to that same `event_id`, a
+later tick with a matching live candidate treated the corrupt record as if
+it had never existed: it recomputed a fresh payload from whatever the live
+summary said *now* and admitted/posted it under the corrupt record's old id,
+silently discarding the original frozen evidence.
+
+Fixed: `_load_pending_evidence()` now returns `(valid, quarantined_event_ids)`.
+A structurally invalid record's `event_id` is reserved in the quarantine set
+instead of being forgotten. `run_tick()` refuses to admit/post any new
+candidate whose `event_id` matches a quarantined key — it fails that
+candidate closed (`errors += 1`, explicit diagnostic) rather than
+recomputing. Covered by
+`test_run_tick_quarantines_corrupt_wal_record_instead_of_recomputing_under_same_event_id`,
+which drives a real candidate to the exact deterministic `event_id` of a
+corrupt WAL record and asserts `admit_telemetry_event`/`post_incident` are
+never called and the on-disk WAL is untouched.
+
+### 2. High — missing metric provenance was still fail-open
+
+The rollover guard only rejected a *present-but-mismatched*
+`<field>_binding_id`; a summary with the provenance marker missing entirely
+(not just wrong) fell through to a real candidate. Fixed: a missing
+`<field>_binding_id` is now diagnostic-only, the same as a mismatched one.
+Covered by
+`test_evaluate_breaches_missing_metric_provenance_is_diagnostic_only_fail_closed`.
+
+### 3. High — `run_tick()` still violated its "never raises" contract
+
+`http.client.IncompleteRead` (raised by `urllib` on a truncated HTTP
+response body) is not a subclass of `OSError`/`ValueError`/`URLError`, so it
+escaped the fetch/admit/post exception whitelists. Fixed: all three HTTP
+call sites (`fetch_summaries`, `admit_telemetry_event`, `post_incident`) now
+also catch `http.client.HTTPException`. Covered by
+`test_run_tick_fails_closed_when_telemetry_fetch_raises_incomplete_read`.
+The pre-existing `test_run_tick_never_raises_on_corrupt_wal_records` was
+also non-hermetic (it relied on the default `fetch_summaries`, making a real
+network request to `http://telemetry.test`); it now injects an explicit
+in-test stub.
+
+### 4. High — the canonical ThresholdSnapshot boundary remained incomplete
+
+`build_incident_from_threshold_payload()` only validated non-empty
+`metric_name`/`policy_source`. `evolution_decision.schema.json`'s
+`threshold_snapshots[]` also requires `signal_type` (from the governance
+enum), `comparator` (from the governance enum), `observed_value`, and
+`threshold_value` — a payload that dropped any of those still created an
+`IncidentCase`. Fixed: `build_incident_from_threshold_payload()` now
+validates the full required-field boundary at the authoritative consumer
+entry point (both the direct-consumer path and the HTTP route go through
+this same function). Covered by
+`test_consume_threshold_route_rejects_missing_signal_type`,
+`test_consume_threshold_route_rejects_unknown_signal_type`,
+`test_consume_threshold_route_rejects_missing_comparator`,
+`test_consume_threshold_route_rejects_missing_observed_value`, and
+`test_consume_threshold_route_rejects_missing_threshold_value`.
+
+### 5. High — incidents route tests deleted the default persistent store
+
+The `clean_store` autouse fixture in `services/incidents/test_main_routes.py`
+cleared and unlinked the module-level `store`'s default path
+(`/tmp/pantheon/incidents/incidents.json`) before/after every test, mutating
+developer/runtime-shared state on every test run instead of using an
+isolated store. Fixed: the fixture now injects a fresh in-memory
+`IncidentStore(path=None)` via `monkeypatch.setattr` for both
+`services.incidents.main.store` (what the route handlers read) and this test
+module's own imported `store` name (what test assertions read), so no test
+in this file touches disk. Verified manually that
+`/tmp/pantheon/incidents/incidents.json` does not exist after running the
+full suite.
+
+### 6. Medium — the dedupe tuple encoding was collision-prone
+
+`f"{binding_id}:{metric_name}:{window_label}"` colon-joins fields without
+escaping: distinct tuples that only differ in *where* a colon falls (e.g.
+`metric_name="a:b", window="c"` vs `metric_name="a", window="b:c"`) produced
+the identical joined string and therefore the identical `event_id`, silently
+suppressing one candidate as a false duplicate of the other. Fixed: the
+dedupe key is now a canonical JSON array encoding of
+`[binding_id, metric_name, window_label]` (each element independently
+quoted/escaped, so the encoding is injective for this fixed-arity tuple).
+Covered by
+`test_evaluate_breaches_dedupe_key_is_not_collision_prone_across_colon_boundaries`.
+
+### 7. Delivery hygiene
+
+- Compose declared `EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS` nowhere,
+  even though `main()` reads it — an operator override in the host
+  environment never reached the container. Fixed: added to
+  `evolution-threshold-sweep-producer`'s `environment:` block in
+  `docker-compose.yml`, default `172800` (matches the worker's own
+  `_DEFAULT_METRIC_MAX_AGE_SECONDS`). Covered by a new compose contract test,
+  `test_threshold_sweep_producer_forwards_metric_max_age_env_in_root_compose`
+  (`services/evolution/test_compose_activation.py`).
+- `git diff --check` flagged trailing whitespace and extra blank lines at
+  EOF in the worker and its test file; cleaned up.
+- This document's test-count evidence was stale (claimed 58, actual 62 at
+  round-7 review time); the "Local validation" section below is refreshed
+  with the current counts.
+
+### Additional round-7 finding — heartbeat freshness was fail-open for ambiguous timestamps
+
+`_is_stale_or_degraded()` only checked `last_heartbeat_at` for truthiness,
+not whether it actually parsed as a valid timestamp or lay in the past.
+A malformed value (e.g. `"not-a-date"`) or a value in the future both read
+as "fresh" and let a summary through to real breach evaluation. Fixed:
+`_is_stale_or_degraded()` now takes the tick's `now` and requires
+`last_heartbeat_at` to parse and to not be later than `now`; either failure
+is treated as ambiguous/fail-closed the same as an explicit staleness
+marker. Covered by
+`test_evaluate_breaches_skips_summary_with_unparseable_heartbeat_timestamp`
+and `test_evaluate_breaches_skips_summary_with_future_heartbeat_timestamp`.
+
+## Round-8 review fixes (Codex, PR #3620 merge-time review, GitHub review 4691486924, 2026-07-14)
+
+Codex requested changes on 4 points; each is addressed below.
+
+### 1. Blocker — WAL quarantine was not durable
+
+`_load_pending_evidence()` (round-7 fix) correctly reserved a corrupt
+record's `event_id` in an in-memory `quarantined_event_ids` set, but
+`_save_pending_evidence()` was always called with only the currently-valid
+`pending` dict. Every prune (§2), new-candidate write-ahead-log save (§4), or
+post-delivery save (§5) therefore serialized `pending` alone and silently
+deleted the quarantined record from disk — the very next unrelated save
+after quarantine, not just a hypothetical later one. A later tick then
+reloaded a WAL with no record at all under that `event_id` and recomputed
+and posted a fresh payload under the same deterministic id, exactly the
+evidence-loss failure round-7 §1 was meant to close.
+
+Fixed: `_load_pending_evidence()` now returns `(valid, quarantined)`, where
+`quarantined` maps `event_id -> raw record as read from disk` (not just the
+id). A new `_full_state(pending, quarantined)` helper unions both back
+together, and every `_save_pending_evidence()` call site in `run_tick()`
+(prune, write-ahead log, both post-delivery saves) now writes
+`_full_state(...)` instead of `pending` alone, so a quarantine tombstone
+survives every subsequent save until the WAL is hand-repaired. Covered by
+`test_run_tick_persists_quarantine_tombstone_across_prune_and_delivery_saves`,
+a two-tick regression: tick 1 quarantines one corrupt record and, in the same
+tick, delivers an unrelated new candidate (triggering the exact
+prune/WAL/post-delivery saves that used to drop the tombstone); asserts the
+tombstone is still on disk unchanged afterward. Tick 2 re-runs and asserts
+the quarantined `event_id` is still refused (never admitted/posted) rather
+than recomputed.
+
+### 2. High — the incidents replay suite still deleted the configured persistent store
+
+`services/incidents/tests/test_incident_replay_suite.py`'s `clean_store`
+fixture imported the module-level `services.incidents.main.store` (bound to
+the real `/tmp/pantheon/incidents/incidents.json` unless
+`INCIDENTS_DATA_DIR` is overridden) and cleared/unlinked it before and after
+every test — the same class of hazard round-7 §5 already fixed in
+`test_main_routes.py`, but this second suite had not been converted. With an
+isolated `INCIDENTS_DATA_DIR`, this suite's own 17 tests still passed while
+leaving `incidents.json` deleted from disk afterward.
+
+Fixed: same pattern as `test_main_routes.py`'s `clean_store` — inject a
+fresh in-memory `IncidentStore(path=None)` via `monkeypatch.setattr` for both
+`services.incidents.main.store` (what the route handlers read) and this test
+module's own imported `store` name (what test assertions read), and drop the
+disk-deletion `_reset()` helper entirely. Verified manually that
+`/tmp/pantheon/incidents/incidents.json` is untouched after running this
+suite.
+
+### 3. Medium — canonical ThresholdSnapshot validation was fail-open for `breached`
+
+`evolution_decision.schema.json`'s `threshold_snapshots[].breached` is
+`type: boolean`, but `consumer.py::_is_breached()` coerced any truthy
+non-bool value (e.g. the string `"yes"`) into `True`, so a malformed
+producer payload — never actually validated as breached by the schema's own
+rules — could still open an `IncidentCase`.
+
+Fixed: `_is_breached()` now raises `IncidentConsumerError` for any present
+`breached` value that is not an actual `bool` (a missing key still defaults
+to `True`, unchanged). Covered by
+`test_consume_threshold_route_rejects_non_boolean_breached`
+(`services/incidents/test_main_routes.py`).
+
+### 4. Medium — dedupe trusted caller-controlled `incident_id` without identity equivalence
+
+`consumer.py::_incident_id()` accepts any producer-supplied explicit
+`incident_id` verbatim, and `ThresholdTelemetryIncidentConsumer.consume()`
+looked an existing incident up by that id alone, returning it as "the"
+duplicate (`created=False`) with no check that the new payload was actually
+about the same breach. A second payload reusing the same explicit id but
+describing a different `event_id`/`binding_id`/`metric_name` therefore
+silently discarded its own breach and reported success against an unrelated
+incident.
+
+Fixed: added `_require_same_incident_identity(existing, incident)`, called
+at both `get_incident()` lookup sites in `consume()` (the direct dedupe
+check and the create-race fallback). It requires the looked-up incident and
+the newly built one to share `binding_id`, `runtime_id`, and at least one
+`telemetry_event_id` before treating the lookup as a genuine duplicate;
+otherwise it raises `IncidentConsumerError` describing the collision instead
+of silently returning the unrelated incident. Covered by
+`test_consume_threshold_route_rejects_explicit_incident_id_collision_across_identities`,
+which reproduces the exact scenario: two fixture payloads sharing one
+explicit `incident_id` but different `event_id`/`binding_id`/`metric_name`;
+asserts the second is rejected (422) and the first incident is left
+unmodified.
+
+### Delivery hygiene
+
+- Added `test_threshold_sweep_producer_compose_shape_matches_acceptance_criteria`
+  (`services/evolution/test_compose_activation.py`): a complete compose-shape
+  assertion for `evolution-threshold-sweep-producer` (default-on, build,
+  command, restart policy, telemetry/incidents URLs, the
+  `EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS:-86400` default, the read-only
+  config bind mount, the named `evolution-data` state volume, and
+  `depends_on` health gates), not just the metric-max-age env forward the
+  round-7 test already covered.
+- Refreshed this document's stale round count/status header, PR/branch/scope
+  reference, and the "Local validation" test counts below (round-8: worker
+  file 69 tests, +1 over round-7's 68).
+- Corrected a stale residual-risk claim: `evolution-daily-sweep-scheduler`
+  was described below as still profile-gated, but EVOCHAIN-002 (merged, PR
+  #3516) already removed that gate — see the corrected "Residual risk"
+  section.
+
+## Round-9 review fixes (Codex, PR #3620 review, GitHub review comment, 2026-07-14)
+
+Codex requested changes on 6 points; each is addressed below.
+
+### 1. Blocker — the evidence WAL was neither crash-durable nor serialized
+
+`_save_pending_evidence()` wrote a temp file and called `os.replace()`, but
+never flushed/fsynced the temp file's data, fsynced the parent directory, or
+locked the read-modify-write cycle — materially weaker than
+`services/incident/incident.py`'s `IncidentStore` and
+`services/foundation/reliable_delivery.py`'s `AtomicJsonRecordStore`. A
+host/volume crash right after a save could resurrect the previous WAL
+contents even though `run_tick()` already treated the write as durable
+authorization to admit telemetry and post an incident; overlapping worker
+instances could also last-writer-win away each other's pending/delivered
+record.
+
+Fixed: `_save_pending_evidence()` now flushes and `os.fsync()`s the temp
+file's file descriptor, then `os.fsync()`s the parent directory's file
+descriptor after `os.replace()` — the same durability pattern as
+`AtomicJsonRecordStore._write_unlocked`. A new `_wal_lock()` context manager
+(`fcntl.flock`, exclusive) now wraps the *entire* WAL transaction in
+`run_tick()` — from the initial load through every prune/write-ahead-log/
+post-delivery save — so two overlapping worker instances serialize into
+sequential single-writer transactions instead of racing on the same file.
+Covered by `test_save_pending_evidence_fsyncs_temp_file_and_parent_directory`
+(spies on `os.fsync`, asserts exactly 2 calls — file + directory — and no
+leftover temp file) and `test_wal_lock_serializes_concurrent_holders` (two
+threads racing on the same lock path; asserts the second never enters while
+the first still holds it).
+
+### 2. High — a malformed `delivered=true` WAL record fabricated a dedupe
+
+`_load_pending_evidence()` only validated `event_type`/`metrics` integrity
+for *undelivered* records. A record with `delivered: true`, a matching
+inner/outer `event_id`, and no real `event_type`/`metrics` was accepted as
+valid; a genuine candidate recomputing that same deterministic `event_id`
+was then silently counted as an already-delivered dedupe instead of being
+admitted/posted.
+
+Fixed: the `event_type`/`metrics` integrity check now runs unconditionally,
+regardless of `delivered` state — a malformed record is quarantined either
+way, which correctly routes a colliding fresh candidate into the existing
+"fail-closed: corrupt/unreadable prior WAL record" path instead of a silent
+dedupe. Covered by
+`test_run_tick_quarantines_malformed_delivered_record_instead_of_fabricating_dedupe`.
+
+### 3. High — conflicting live thresholds were order-dependent instead of fail-closed
+
+`run_tick()` kept whichever duplicate `(metric_name, window)` definition
+loaded first and dropped the rest with a warning; with two conflicting
+threshold entries for the same observed value, whether an incident opened
+depended on live-config JSON key order.
+
+Fixed: entries are now grouped by `(metric_name, window)` identity.
+Byte-identical duplicates are coalesced (safe, harmless repetition);
+anything else is a genuine conflict, and the *entire* identity is disabled
+fail-closed with a diagnostic, regardless of ordering. Covered by
+`test_run_tick_disables_conflicting_threshold_entries_fail_closed`, which
+asserts zero candidates under both orderings of the same conflicting pair.
+
+### 4. High — the round-8 `incident_id` collision guard remained bypassable and omitted metric identity
+
+`_require_same_incident_identity()` compared `binding_id`, `runtime_id`, and
+*any* shared telemetry id (a full-set intersection of
+`telemetry_event_ids`). This missed the threshold's own metric/window/policy
+identity (so an explicit-id collision with only `metric_name` changed still
+passed), and a caller could inject an old event id as a supplemental
+top-level `telemetry_event_ids` entry while changing the real primary event,
+satisfying "shared evidence" without actually being the same breach.
+
+Fixed: added an optional `IncidentCase.threshold_identity` field
+(`services/incident/incident.py`), a JSON-array-encoded
+`(metric_name, window, policy_source)` string set by
+`build_incident_from_threshold_payload` via a new `_threshold_identity()`
+helper and threaded through `PostmortemEvidenceCollector.create_incident()`.
+`_require_same_incident_identity()` now requires: same `binding_id`, same
+`runtime_id`, the same *canonical primary* telemetry event id
+(`telemetry_event_ids[0]` — reliable because `_event_ids()` always adds the
+primary id first into an order-preserving dict — not an arbitrary
+intersection), and matching `threshold_identity` (an incident with no
+recorded `threshold_identity` can never be proven to be the same breach, so
+it fails closed rather than matching by default). Covered by
+`test_consume_threshold_route_rejects_explicit_incident_id_collision_across_metric_only`
+and
+`test_consume_threshold_route_rejects_explicit_incident_id_collision_via_supplemental_id_injection`.
+
+### 5. Medium — canonical ThresholdSnapshot validation was still partial
+
+`evolution_decision.schema.json` declares optional `window`/`note` as
+`type: string`, but `consumer.py` accepted lists/objects and stringified
+them into evidence via `_threshold_notes()`.
+
+Fixed: `build_incident_from_threshold_payload` now raises
+`IncidentConsumerError` if `window` or `note` is present and not a string.
+Covered by `test_consume_threshold_route_rejects_non_string_window` and
+`test_consume_threshold_route_rejects_non_string_note`.
+
+### Delivery hygiene
+
+- Replaced the destructive local-validation recipe below (which ran
+  `rm -f /tmp/pantheon/incidents/incidents.json` against the real
+  developer/runtime-shared store) with an isolated `INCIDENTS_DATA_DIR`
+  sentinel-directory proof that never touches the shared path.
+- Merged current `dev` (`origin/dev` was 22 commits ahead of this branch's
+  prior head at round-9 review time) and reran the full local validation
+  below against the merged tree.
+- Refreshed the stale "43 tests"/"70 tests" claims above and in "Local
+  validation" below to the current round-9 counts.
+
 ## Idempotency
 
 Dedupe key: `(binding_id, metric_name, threshold window, UTC day bucket)`.
@@ -499,36 +873,55 @@ Verified in `test_load_thresholds_missing_file_fails_closed`,
 
 ## Local validation
 
+Owner closeout reran the full suites on 2026-07-15, then merged the latest
+`origin/dev` (`f4a426439`; two unrelated LOOP-PROD evidence-file commits) and
+reran the 137-test focused path on merge head `3c8cec617`. The current merged
+test tree validates the runtime-manager URL during collection, so the explicit
+environment below is part of the reproducible command rather than an optional
+runtime override. Pytest bytecode/cache and incident data were redirected to
+throwaway directories; `/tmp/pantheon/incidents/incidents.json` remained
+absent before and after both runs.
+
 ```sh
+export PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager:8081
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONPYCACHEPREFIX="$(mktemp -d)/pycache"
+export PYTEST_ADDOPTS='-p no:cacheprovider'
+export INCIDENTS_DATA_DIR="$(mktemp -d)"
+
 python3 -m pytest services/evolution/test_threshold_sweep_worker.py -q
-# 58 passed (round-6: +15 new tests for fixes and regressions)
+# 75 passed
 
 python3 -m pytest services/evolution -q
-# 167 passed (no regression in the rest of the evolution service)
+# 253 passed
 
 python3 -m pytest services/incidents -q
-# 50 passed (no regression)
+# 75 passed
+
+python3 -m pytest services/incidents/tests/test_incident_replay_suite.py -q
+# 17 passed
 
 python3 -m pytest services/incident -q
-# 118 passed (no regression in the INC-001 domain layer)
+# 119 passed, 5 skipped
 
-python3 -m pytest services/telemetry -q
-# 223 passed (round-3: derived-echo metadata-marker check in
-# runtime_summary.py is additive; no existing assertion touches it)
+# Post-origin/dev-merge focused re-verification:
+python3 -m pytest -q \
+  services/evolution/test_threshold_sweep_worker.py \
+  services/incidents/test_main_routes.py \
+  services/incidents/tests/test_incident_replay_suite.py
+# 137 passed; 2 non-failing FastAPI on_event deprecation warnings
 
 docker compose config --quiet
 # passed
 
-docker compose config --services | grep evolution-threshold-sweep-producer
+docker compose config --services | grep '^evolution-threshold-sweep-producer$'
 # evolution-threshold-sweep-producer
 
-ls /tmp/pantheon/incidents/incidents.json
-# No such file or directory — confirms the round-2 test-isolation fix (§3)
-# leaves the shared persistent incident store untouched.
+git diff --check origin/dev...HEAD
+# no output
 
-ls /tmp/pantheon/evolution/threshold_sweep_state.json
-# No such file or directory — the round-3 retry-evidence state file (§3) is
-# only ever written by tests through an isolated tmp_path, never the default.
+test ! -e /tmp/pantheon/incidents/incidents.json
+# passed — the shared path was never created or touched
 ```
 
 ## Acceptance mapping
@@ -543,10 +936,13 @@ ls /tmp/pantheon/evolution/threshold_sweep_state.json
 
 ## Residual risk
 
-- No artifact has an approved `expected_drawdown` baseline yet
-  (`threshold_sweep_baselines.json` ships empty), so the drawdown-multiple
-  threshold — while now unit-correct and fail-closed — will not fire on any
-  real artifact until Research/Ops populates one. Owner: Research/Ops.
+- EVOLOOP-005 has approved
+  `artifact-tw-session-momentum-v1.expected_drawdown=0.0303`, so the
+  drawdown-multiple threshold can evaluate that artifact when fresh drawdown
+  telemetry exists. Every other artifact still requires its own governed,
+  positive `expected_drawdown` entry and remains diagnostic-only until one is
+  approved; the worker never borrows another artifact's baseline. Owner:
+  Research/Ops.
 - The `rolling_pnl_floor` threshold is `enabled: false` pending a
   governance-approved absolute PnL number (the v1 threshold spec only
   documents the drawdown multiplier). Owner: Human/Ops. To activate: set
@@ -561,6 +957,23 @@ ls /tmp/pantheon/evolution/threshold_sweep_state.json
   The EVOCHAIN-001 unit test `test_consume_threshold_route_succeeds_against_default_reference_validator`
   verifies validator structure compatibility under mock-patched lookups, but does not itself
   exercise the live end-to-end wiring.
-- This task does not enable the daily sweep scheduler
-  (`evolution-daily-sweep-scheduler` is still profile-gated) or deploy to
-  dev; that is EVOCHAIN-002 and EVOCHAIN-011 respectively.
+- **Scheduler activation resolved:** this task never enabled the daily sweep
+  scheduler itself, but the claim that `evolution-daily-sweep-scheduler` is
+  still profile-gated is now stale — EVOCHAIN-002 (merged, PR #3516) removed
+  the `profiles: ["evolution-daily-sweep-scheduler"]` gate, so it now ships
+  default-on in `docker-compose.yml`, same as this task's own
+  `evolution-threshold-sweep-producer`. Covered by
+  `test_daily_sweep_scheduler_is_enabled_by_default_in_root_compose`
+  (`services/evolution/test_compose_activation.py`).
+- The Human/Ops zero-candidate decision in
+  `.orchestrator/task-briefs/evochain_001_upstream_decision.md` is a dated
+  2026-07-14 snapshot. EVOLOOP-002 and EVOLOOP-005 have since closed the
+  performance-telemetry and first-baseline tasks; hosted chain verification
+  and shared-dev deployment remain separate EVOCHAIN-010/EVOCHAIN-011 work,
+  not part of this producer task's scope.
+- The compose default WAL path is absolute, volume-backed, writable, and
+  covered by the activation tests. A malformed operator override whose parent
+  cannot be created can still fail during lock acquisition before `run_tick()`
+  formats its diagnostic result; validating that override earlier is a
+  low-priority operability hardening follow-up, not a default-path acceptance
+  blocker. Owner: Evolution Ops.

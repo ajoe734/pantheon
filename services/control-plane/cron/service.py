@@ -9,7 +9,7 @@ from typing import Any, Callable, Mapping
 from models import OpenClawRuntimePin, WorkflowDefinition, WorkflowRunResult, utc_now
 from openclaw_client import OpenClawCronClient
 from schema_validation import validate_workflow_handoff
-from workflows import get_workflow_definition
+from workflows import PERSONA_FIRST_EVALUATION_WORKFLOW_ID, get_workflow_definition
 
 _GOVERNANCE_DIR = Path(__file__).resolve().parents[1] / "governance"
 if str(_GOVERNANCE_DIR) not in sys.path:
@@ -104,6 +104,16 @@ class CronOrchestrator:
 
         if workflow.workflow_id == "pantheon.deploy":
             return self._run_deploy(workflow, payload, dispatch_request, upstream_response)
+
+        if workflow.workflow_id == PERSONA_FIRST_EVALUATION_WORKFLOW_ID:
+            return WorkflowRunResult(
+                workflow_id=workflow_id,
+                dispatch_request=dispatch_request,
+                upstream_response=upstream_response,
+                notes=[
+                    "First evaluation resolves the persona's current canonical paper runtime at execution time."
+                ],
+            )
 
         raise ValueError(f"Unsupported workflow: {workflow_id}")
 

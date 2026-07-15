@@ -115,7 +115,7 @@ services:
       PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}
       PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE: ${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
     ports: !override
-      - "${OPENCLAW_GATEWAY_ADAPTER_PORT:-38104}:8104"
+      - "127.0.0.1:${OPENCLAW_GATEWAY_ADAPTER_PORT:-38104}:8104"
 
   router:
     extends:
@@ -164,6 +164,7 @@ services:
     environment:
       PANTHEON_INTERNAL_API_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://10.50.0.21:28081}
       PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://10.50.0.21:28081}
+      PANTHEON_REGISTRY_API_URL: http://registry:8087
       PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
       PANTHEON_SOURCE_INGEST_API_URL: http://source-ingest:8097
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
@@ -174,6 +175,8 @@ services:
       PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL: http://research-worker-gateway-svc:8103
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
     depends_on:
+      registry:
+        condition: service_healthy
       consultation-svc:
         condition: service_healthy
       source-ingest:

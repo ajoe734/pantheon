@@ -141,6 +141,18 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || error "$1 is required"
 }
 
+is_placeholder_credential() {
+  local normalized="${1,,}"
+  case "$normalized" in
+    replace-me*|changeme*|change-me*|example*|dummy*|placeholder*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 shell_quote() {
   printf "%q" "$1"
 }
@@ -318,7 +330,8 @@ fi
 if [[ "$DEPLOY_ENV" == "dev" ]]; then
   case "${DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED,,}" in
     1|true|yes|on)
-      if [[ -z "$DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN" ]]; then
+      if [[ -z "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}" ]] \
+        || is_placeholder_credential "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"; then
         error "strict OpenClaw adapter service auth requires a human-provisioned DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN; refusing to deploy with an empty or fabricated service credential"
       fi
       ;;
@@ -466,8 +479,13 @@ assert_bff_auth_gate() {
 import json, sys
 
 payload = json.loads(sys.argv[1])
-assert payload.get("auth_stub") is False, f"auth_stub={payload.get(\"auth_stub\")!r}, expected False"
-assert payload.get("auth_mode") == "strict", f"auth_mode={payload.get(\"auth_mode\")!r}, expected strict"
+posture = payload.get("config_posture")
+if not isinstance(posture, dict):
+    # Compatibility with deployment targets that predate the canonical
+    # config_posture envelope. New BFF versions publish posture only there.
+    posture = payload
+assert posture.get("auth_stub") is False, f"auth_stub={posture.get(\"auth_stub\")!r}, expected False"
+assert posture.get("auth_mode") == "strict", f"auth_mode={posture.get(\"auth_mode\")!r}, expected strict"
 ' "$version_payload" || error "hosted BFF auth posture is not strict: ${version_payload}"
 
   if [[ -z "${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" || -z "${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" ]]; then

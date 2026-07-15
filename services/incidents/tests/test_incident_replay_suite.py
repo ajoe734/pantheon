@@ -31,6 +31,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from fastapi.testclient import TestClient
+from services.incident.incident import IncidentStore
 from services.incidents.main import app, store
 
 _FIXTURE_DIR = _SERVICE_DIR / "fixtures"
@@ -44,24 +45,27 @@ RECOVERY_FIXTURE = _DRIFT_FIXTURE_DIR / "recovery_telemetry_event.json"
 
 @pytest.fixture(autouse=True)
 def clean_store(monkeypatch):
+    """Give each test an isolated in-memory IncidentStore.
+
+    The module-level `store` defaults to a persistent store backed by the
+    developer/runtime-shared incidents.json file. Clearing and unlinking that
+    real file before/after every test (the previous approach) mutated shared
+    state outside the test's own sandbox and left the configured store
+    deleted from disk after the suite ran (round-8 review point 2). Instead,
+    inject a fresh in-memory `IncidentStore(path=None)` for the route module
+    *and* this test module's own `store` name (both must point at the same
+    object: route handlers read the module global directly, and tests assert
+    against the locally-imported name), so tests never touch disk at all.
+    """
     class _AcceptAll:
         def validate_incident(self, incident):
             return None
 
     monkeypatch.setattr("services.incidents.main.reference_validator", _AcceptAll())
-    _reset()
+    fresh_store = IncidentStore(path=None)
+    monkeypatch.setattr("services.incidents.main.store", fresh_store)
+    monkeypatch.setattr(sys.modules[__name__], "store", fresh_store)
     yield
-    _reset()
-
-
-def _reset():
-    store._incidents.clear()
-    store._postmortems.clear()
-    path = getattr(store, "_path", None)
-    if path is not None and path.exists():
-        path.unlink()
-    if hasattr(store, "_loaded_mtime_ns"):
-        store._loaded_mtime_ns = None
 
 
 client = TestClient(app)
