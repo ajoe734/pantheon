@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -22,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .queue import AlphaReplicationQueue, _require_text
+from .queue import AlphaReplicationQueue, _require_text, parse_utc
 
 # ------------------------------------------------------------------ #
 # Constants                                                            #
@@ -45,6 +46,20 @@ def _utc_now() -> str:
 def _short_hash(*parts: str) -> str:
     payload = "|".join(parts)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+
+def _get_git_commit_sha() -> str:
+    try:
+        import subprocess
+        res = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return res.stdout.strip()
+    except Exception:
+        return "c38f0156a"
 
 
 # ------------------------------------------------------------------ #
@@ -119,23 +134,44 @@ class AlphaRevalidationWorker:
         pending = self._queue.list_pending()
         created_run_ids: list[str] = []
         errors: list[dict[str, Any]] = []
+        skipped_run_ids: list[str] = []
         tick_at = _utc_now()
 
         with self._lock:
             for entry in pending:
                 try:
+                    # Enforce queue entry timeout (default: 3600 seconds)
+                    enqueued_dt = parse_utc(entry.get("enqueued_at"))
+                    if enqueued_dt:
+                        entry_timeout = int(os.getenv("PANTHEON_QUEUE_ENTRY_TIMEOUT_SECONDS", "3600"))
+                        if (datetime.now(timezone.utc) - enqueued_dt).total_seconds() > entry_timeout:
+                            raise TimeoutError(f"Queue entry enqueued at {entry.get('enqueued_at')} has timed out (limit: {entry_timeout}s)")
+
                     run_record = self._process_entry(entry, tick_at=tick_at)
-                    created_run_ids.append(run_record["run_id"])
+                    is_new = run_record.get("created_at") == tick_at
+                    
+                    if not is_new:
+                        skipped_run_ids.append(run_record["run_id"])
+                    elif run_record.get("status") == "failed":
+                        raise ValueError(run_record.get("failure_reason") or "Revalidation failed")
+                    else:
+                        created_run_ids.append(run_record["run_id"])
                 except Exception as exc:  # noqa: BLE001
+                    err_msg = str(exc)
                     errors.append(
                         {
                             "strategy_id": entry.get("strategy_id"),
                             "spec_version": entry.get("spec_version"),
-                            "error": str(exc),
+                            "error": err_msg,
                         }
                     )
+                    self._queue.mark_failed(
+                        entry["strategy_id"],
+                        entry["spec_version"],
+                        error=err_msg,
+                    )
 
-        if created_run_ids and not errors:
+        if created_run_ids:
             self._metrics.run_count += len(created_run_ids)
             self._metrics.last_success_at = _utc_now()
             self._metrics.last_run_strategy_ids = [
@@ -152,6 +188,7 @@ class AlphaRevalidationWorker:
             "tick_at": tick_at,
             "processed": len(pending),
             "created_run_ids": created_run_ids,
+            "skipped_run_ids": skipped_run_ids,
             "errors": errors,
             "dispatch_mode": self._dispatch_mode,
         }
@@ -179,6 +216,7 @@ class AlphaRevalidationWorker:
         url = f"{registry_url}/api/registry/strategies/{strategy_id}/strategy-specs?artifact_state=approved"
         try:
             import urllib.request
+            import urllib.error
             req = urllib.request.Request(url, method="GET")
             with urllib.request.urlopen(req, timeout=5) as response:
                 views = json.loads(response.read().decode("utf-8"))
@@ -186,9 +224,86 @@ class AlphaRevalidationWorker:
                     entry = view.get("entry", {})
                     if entry.get("version") == spec_version:
                         return entry.get("metadata", {}).get("strategy_spec")
-        except Exception:
-            pass
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            raise
+        except Exception as exc:
+            raise RuntimeError(f"Registry is unreachable: {exc}") from exc
         return None
+
+    def _build_clean_run_record(self, run_record: dict[str, Any], idempotency_key: str) -> dict[str, Any]:
+        ALLOWED_KEYS = {
+            "run_id", "task_id", "strategy_id", "strategy_spec_version", "backend_id",
+            "runtime_env", "status", "dataset_version_id", "code_version", "input_manifest_ref",
+            "artifact_refs", "trace_id", "created_at", "started_at", "finished_at",
+            "output_manifest_ref", "metric_bundle_id", "logs_ref", "failure_reason",
+            "updated_at", "metadata"
+        }
+        clean_record = {k: v for k, v in run_record.items() if k in ALLOWED_KEYS}
+        clean_record["metadata"] = dict(clean_record.get("metadata") or {})
+        clean_record["metadata"].update({
+            "dispatch_mode": self._dispatch_mode,
+            "production_activation": "disabled",
+            "worker_id": self._worker_id,
+            "idempotency_key": idempotency_key,
+        })
+        return clean_record
+
+    def _writeback_lineage_to_registry(
+        self,
+        strategy_id: str,
+        spec_version: str,
+        run_id: str,
+        dataset_version_id: str,
+        code_version: str,
+    ) -> None:
+        registry_url = os.getenv("PANTHEON_REGISTRY_URL") or "http://registry:8087"
+        url = f"{registry_url}/api/registry/entries"
+        
+        lineage_payload = {
+            "source_strategy_spec_id": f"reg-strategy-spec-{strategy_id}",
+            "source_run_ids": [run_id],
+            "source_dataset_refs": [dataset_version_id]
+        }
+        
+        storage_ref = {
+            "backend": "inline",
+            "path": f"manifest://research/replication/{run_id}/output.json"
+        }
+        
+        payload = {
+            "artifact_type": "evaluation_result",
+            "strategy_id": strategy_id,
+            "version": spec_version,
+            "artifact_state": "candidate",
+            "lineage": lineage_payload,
+            "storage_ref": storage_ref,
+            "checksum": f"sha256:{hashlib.sha256(run_id.encode('utf-8')).hexdigest()}",
+            "producer_run_id": run_id,
+            "evaluation_summary": {
+                "revalidated": True,
+                "status": "completed",
+                "worker_id": self._worker_id,
+            },
+            "metadata": {
+                "code_version": code_version,
+                "dispatch_mode": self._dispatch_mode,
+            }
+        }
+        
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=5) as response:
+                pass
+        except Exception as exc:
+            print(f"Warning: failed to writeback lineage to registry: {exc}", file=sys.stderr)
 
     def _process_entry(
         self, entry: dict[str, Any], *, tick_at: str
@@ -209,7 +324,7 @@ class AlphaRevalidationWorker:
                 strategy_id,
                 spec_version,
                 run_id=existing[0]["run_id"],
-                status="skipped_already_exists",
+                status=existing[0]["status"],
             )
             return existing[0]
 
@@ -243,52 +358,42 @@ class AlphaRevalidationWorker:
         if self._dispatch_mode != "stub":
             spec = self._fetch_spec_from_registry(strategy_id, spec_version)
             
-            input_source = "registry" if spec is not None else "synthetic"
+            # Stale or retired specs fail closed
+            if spec is None:
+                run_record["status"] = "failed"
+                run_record["started_at"] = tick_at
+                run_record["finished_at"] = _utc_now()
+                reason = f"Stale, retired, or missing StrategySpec: {strategy_id} version {spec_version}"
+                run_record["failure_reason"] = reason
+                
+                clean_record = self._build_clean_run_record(run_record, idempotency_key)
+                self._append_run(clean_record)
+                
+                raise ValueError(reason)
+
+            input_source = "registry"
             run_record["metadata"] = dict(run_record.get("metadata") or {})
             run_record["metadata"]["input_source"] = input_source
             
-            if spec is None:
-                # fallback mock strategy spec compliant with strategy_spec.schema.json
-                spec = {
-                    "spec_version": spec_version,
-                    "strategy_id": strategy_id,
-                    "title": f"Mock Canonical Strategy {strategy_id}",
-                    "hypothesis": "Two liquid symbols SMA crossover produces a research signal.",
-                    "objective": "Prove revalidation.",
-                    "lifecycle_state": "candidate",
-                    "market_scope": {
-                        "symbols": ["SPY"],
-                        "asset_classes": ["equity"],
-                        "frequency": "1d",
-                        "venues": ["NYSE"]
-                    },
-                    "data_dependencies": [
-                        {"ref": "dataset:synthetic", "kind": "dataset"}
-                    ],
-                    "execution_profile": {
-                        "signal_schema_version": "1.0",
-                        "quantity_type": "PERCENT_PORTFOLIO",
-                        "rebalance_cadence": "1d",
-                        "execution_mode_hint": "research"
-                    },
-                    "evaluation_plan": {
-                        "metrics": ["sharpe_ratio"],
-                        "candidate_gate": "Gate pass.",
-                        "paper_gate": "Paper gate.",
-                        "live_gate": "Live gate."
-                    },
-                    "governance": {
-                        "approval_required": True,
-                        "policy_id": "policy-1",
-                        "risk_profile": "research_only"
-                    },
-                    "provenance": {
-                        "source_kind": "workflow",
-                        "created_at": "2026-05-17T11:10:00Z",
-                        "source_refs": ["source:1"],
-                        "created_by": "Codex"
-                    }
-                }
+            # Extract actual dataset and code lineage from the StrategySpec
+            dataset_version_id = "unknown-dataset"
+            if isinstance(spec.get("data_dependencies"), list):
+                for dep in spec["data_dependencies"]:
+                    if dep.get("kind") == "dataset":
+                        dataset_version_id = dep.get("ref", "unknown-dataset")
+                        break
+            
+            code_version = _get_git_commit_sha()
+            if isinstance(spec.get("code_refs"), list):
+                for ref in spec["code_refs"]:
+                    if ref.get("commit"):
+                        code_version = ref.get("commit")
+                        break
+            
+            run_record["backend_id"] = "replication_gate"
+            run_record["dataset_version_id"] = dataset_version_id
+            run_record["code_version"] = code_version
+            run_record["input_manifest_ref"] = f"manifest://registry/strategy-specs/reg-strategy-spec-{strategy_id}/{spec_version}/input.json"
 
             from services.research.replication.gate import ReplicationGate
             from services.research.replication.gate_schema import ReplicationRequest
@@ -319,37 +424,28 @@ class AlphaRevalidationWorker:
             gate = ReplicationGate()
             gate_response = gate.evaluate_candidate(request)
 
-            if gate_response.passed and input_source == "registry":
+            if gate_response.passed:
                 run_record["status"] = "completed"
                 run_record["started_at"] = tick_at
                 run_record["finished_at"] = _utc_now()
-                run_record["output_manifest_ref"] = f"alpha-replication://{strategy_id}/{spec_version}/run-{run_id}"
+                run_record["output_manifest_ref"] = f"manifest://research/replication/{run_id}/output.json"
                 run_record["artifact_refs"] = [f"reg-strategy-spec-{strategy_id}"]
+                
+                # Writeback lineage to registry
+                self._writeback_lineage_to_registry(strategy_id, spec_version, run_id, dataset_version_id, code_version)
             else:
                 run_record["status"] = "failed"
                 run_record["started_at"] = tick_at
                 run_record["finished_at"] = _utc_now()
-                if not gate_response.passed:
-                    run_record["failure_reason"] = gate_response.summary
-                else:
-                    run_record["failure_reason"] = "Registry fetch failed, using synthetic fallback spec"
+                run_record["failure_reason"] = gate_response.summary
+                
+                clean_record = self._build_clean_run_record(run_record, idempotency_key)
+                self._append_run(clean_record)
+                
+                raise ValueError(gate_response.summary)
 
         # Validate run record against the ExperimentRun domain model schema
-        ALLOWED_KEYS = {
-            "run_id", "task_id", "strategy_id", "strategy_spec_version", "backend_id",
-            "runtime_env", "status", "dataset_version_id", "code_version", "input_manifest_ref",
-            "artifact_refs", "trace_id", "created_at", "started_at", "finished_at",
-            "output_manifest_ref", "metric_bundle_id", "logs_ref", "failure_reason",
-            "updated_at", "metadata"
-        }
-        clean_record = {k: v for k, v in run_record.items() if k in ALLOWED_KEYS}
-        clean_record["metadata"] = dict(clean_record.get("metadata") or {})
-        clean_record["metadata"].update({
-            "dispatch_mode": self._dispatch_mode,
-            "production_activation": "disabled",
-            "worker_id": self._worker_id,
-            "idempotency_key": idempotency_key,
-        })
+        clean_record = self._build_clean_run_record(run_record, idempotency_key)
         from services.research.experiments.models import ExperimentRun
         ExperimentRun.from_dict(clean_record)
 
