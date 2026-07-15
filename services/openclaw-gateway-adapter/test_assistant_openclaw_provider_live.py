@@ -131,6 +131,42 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertIn("--token", cmd)
         self.assertIn("--params", cmd)
 
+    def test_gateway_cron_update_forwards_command_and_params_unchanged(self) -> None:
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, **_kw):
+            captured.append(list(cmd))
+
+            class R:
+                returncode = 0
+                stdout = '{"id":"job-1","updated":true}'
+                stderr = ""
+
+            return R()
+
+        params = {
+            "id": "job-1",
+            "patch": {
+                "enabled": False,
+                "payload": {
+                    "kind": "systemEvent",
+                    "text": '{"persona_id":"persona-1","workflow_id":"pantheon.review"}',
+                },
+                "schedule": {"kind": "cron", "expr": "*/30 * * * *"},
+            },
+        }
+        original_params = json.loads(json.dumps(params))
+        provider = self._make_provider(run_func=fake_run)
+
+        out = provider.gateway_cron_call("cron.update", params)
+
+        self.assertEqual(out, {"id": "job-1", "updated": True})
+        self.assertEqual(params, original_params, "provider must not mutate caller params")
+        cmd = captured[0]
+        self.assertEqual(cmd[1:4], ["gateway", "call", "cron.update"])
+        params_index = cmd.index("--params") + 1
+        self.assertEqual(json.loads(cmd[params_index]), original_params)
+
     def test_gateway_cron_call_parses_banner_prefixed_pretty_json(self) -> None:
         """Banner/doctor noise + pretty-printed multi-line JSON must still parse."""
         noisy = (
@@ -161,6 +197,20 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         with self.assertRaises(OpenClawProviderError) as ctx:
             provider.gateway_cron_call("agent.invoke", {})
         self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_METHOD_FORBIDDEN")
+
+    def test_gateway_cron_call_rejects_unknown_cron_method(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **_kw):
+            calls.append(list(cmd))
+            raise AssertionError("forbidden methods must not reach the subprocess")
+
+        provider = self._make_provider(run_func=fake_run)
+        with self.assertRaises(OpenClawProviderError) as ctx:
+            provider.gateway_cron_call("cron.unknown", {"id": "job-1"})
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_METHOD_FORBIDDEN")
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(calls, [])
 
     def test_readiness_no_binary_auth_probe(self) -> None:
         """auth_probe=True checks binary existence and returns degraded if missing."""

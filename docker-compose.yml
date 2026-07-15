@@ -937,6 +937,9 @@ services:
       PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND: ${PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND:-postgres}
+      PANTHEON_PERSONA_PROVISIONING_STORE_DSN: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA: ${PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA:-bff}
       PANTHEON_LIVE_BROKER_ENABLED: ${PANTHEON_LIVE_BROKER_ENABLED:-false}
       PANTHEON_ASSISTANT_ENABLED: ${PANTHEON_ASSISTANT_ENABLED:-true}
       PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED: ${PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED:-true}
@@ -995,6 +998,7 @@ services:
       PANTHEON_INTERNAL_API_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
+      PANTHEON_PAPER_FLEET_RECONCILER_URL: ${PANTHEON_PAPER_FLEET_RECONCILER_URL:-http://paper-fleet-reconciler:8011}
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
       # Wire approval read path directly to the real approval producer.
       # BFF will try http://promotion:8089/api/v1/approvals before the governance
@@ -1015,6 +1019,7 @@ services:
       PANTHEON_RESEARCH_ORCHESTRATOR_API_URL: http://research-orchestrator-svc:8101
       PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL: http://research-worker-gateway-svc:8103
       PANTHEON_MEMORY_API_URL: http://memory:8086
+      PANTHEON_REGISTRY_API_URL: ${PANTHEON_REGISTRY_API_URL:-http://registry:8087}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
@@ -1048,6 +1053,8 @@ services:
       research-worker-gateway-svc:
         condition: service_healthy
       memory:
+        condition: service_healthy
+      registry:
         condition: service_healthy
       openclaw-gateway-adapter:
         condition: service_healthy

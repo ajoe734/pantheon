@@ -3,6 +3,9 @@ from __future__ import annotations
 from models import WorkflowDefinition
 
 
+PERSONA_FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
+
+
 INGEST_WORKFLOW = WorkflowDefinition(
     workflow_id="pantheon.ingest",
     schedule="0 */6 * * *",
@@ -86,6 +89,27 @@ DEPLOY_WORKFLOW = WorkflowDefinition(
 )
 
 
+PERSONA_FIRST_EVALUATION_WORKFLOW = WorkflowDefinition(
+    workflow_id=PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+    schedule="*/15 * * * *",
+    description=(
+        "Evaluate the persona's current canonical paper runtime and emit its first "
+        "governed evaluation observation."
+    ),
+    upstream_entrypoint="evaluation.persona.first",
+    handoff_type=None,
+    from_stage="paper_running",
+    to_stage="paper_evaluation",
+    execution_context="paper",
+    policy_id="oc002.cron.persona-first-evaluation",
+    allowed_tool_classes=("monitoring", "status"),
+    artifact_type="persona_evaluation",
+    initial_lifecycle_state="scheduled",
+    approval_required=False,
+    required_payload_keys=("persona_id",),
+)
+
+
 WORKFLOW_CATALOG = {
     workflow.workflow_id: workflow
     for workflow in (
@@ -93,6 +117,7 @@ WORKFLOW_CATALOG = {
         REVIEW_WORKFLOW,
         RETRAIN_WORKFLOW,
         DEPLOY_WORKFLOW,
+        PERSONA_FIRST_EVALUATION_WORKFLOW,
     )
 }
 
