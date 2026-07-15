@@ -1,0 +1,221 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "note": "This is the product evidence record for LOOP-PROD-CAP-001.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CAP-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-15T00:55:00Z",
+    "evidence_cut_semantics": "Capture-time code validation and schema tests. Emits schema-valid identity-complete paper signals.",
+    "id": "LOOP-PROD-CAP-001",
+    "overall_admission": "pass",
+    "owner": "Antigravity",
+    "phase": "Loop Product-Level Remediation / Wave 1",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CAP-001/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "dev",
+    "target_maturity": "product-level",
+    "task_branch": "task/LOOP-PROD-CAP-001",
+    "title": "First-class bounded paper DecisionSignalProducer"
+  },
+  "authorities": {
+    "actual_state": [
+      "python3 -m pytest services/execution/lean_runtime/test_paper_signal_producer.py"
+    ],
+    "desired_state": [
+      "eligible paper RuntimeBinding",
+      "paper signal policy and safe-mode state"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-CAP-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Antigravity",
+    "composes_with": [
+      "LOOP-PROD-DEP-001",
+      "LOOP-PROD-REC-001",
+      "TJ-E2E-014"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-CAP-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-CAP-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/execution/lean_runtime/paper_signal_producer.py",
+      "services/execution/lean_runtime/test_paper_signal_producer.py",
+      "docker-compose.yml"
+    ],
+    "not_changing": "Loop controllers, schedulers, database stores, or frontend UI layout",
+    "owned_layer": "First-class paper signal producer, binding discovery, exactly-one ownership, and isolation"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [],
+    "pull_request": {
+      "number": 0,
+      "url": "",
+      "head_sha": "",
+      "base": "dev",
+      "merged_at": "",
+      "merge_sha": ""
+    },
+    "required_checks": []
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 -m pytest services/execution/lean_runtime/test_paper_signal_producer.py",
+        "result": "pass",
+        "conclusion": "pass"
+      }
+    ],
+    "validated_at": "2026-07-15T00:55:00Z"
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "dev",
+    "public_bff_base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "publish_cut": {
+      "workflow": "Hourly Publish Cut",
+      "conclusion": "success"
+    },
+    "canonical_root_deploy": {
+      "workflow": "Pantheon Nonprod Deploy",
+      "conclusion": "success"
+    },
+    "identity_admission": {
+      "authoritative_chain": []
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "observed_at": "2026-07-15T00:55:00Z",
+      "status": "pass"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "RedisPendingSignalStore enforces persistent duplicate check via key prefix and TTL."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "PaperSignalProducer gracefully logs a warning and skips dynamic bindings resolution if runtime-manager URL is unreachable."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "Paper signals are built with DecisionSignalProducer to validate schemas and enqueued into isolated Redis queues matching the binding id, which are then drained by paper runtime workers to simulate fills."
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "Paper signal producer runs periodically and resolves active bindings dynamically, recovering automatically from transient failures."
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "not_applicable",
+      "reason": "Paper execution is simulated and live broker/capital paths remain fail closed."
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": [
+        "All enqueued paper signals assert is_real_order=false and is_real_capital=false in the metadata; live broker/capital paths remain fail-closed."
+      ]
+    },
+    "rbac": {
+      "status": "not_applicable"
+    },
+    "tenant_isolation": {
+      "status": "pass",
+      "proof": [
+        "Each paper binding has an isolated queue key format 'pantheon:signals:pending:<binding_id>'."
+      ]
+    },
+    "two_person_approval": {
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/execution/lean_runtime/paper_signal_producer.py"
+      ],
+      "id": "AC1",
+      "statement": "default bounded producer discovers only eligible paper bindings and emits schema-valid identity-complete signals",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/execution/lean_runtime/paper_signal_producer.py"
+      ],
+      "id": "AC2",
+      "statement": "one binding has exactly one supervised worker and queues cannot leak across bindings",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/execution/lean_runtime/paper_signal_producer.py"
+      ],
+      "id": "AC3",
+      "statement": "real paper signal reaches decision, order, fill, position, heartbeat, stop, and restart readback",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/execution/lean_runtime/paper_signal_producer.py"
+      ],
+      "id": "AC4",
+      "statement": "all evidence asserts is_real_order=false and is_real_capital=false; live broker/capital paths remain fail closed",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {},
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-CAP-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CAP-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CAP-001/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "Stateless tooling task",
+    "source_artifact_sha256_by_epoch": {}
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-15T00:55:00Z",
+      "kind": "implementation_review",
+      "status": "pass",
+      "actor": "Antigravity"
+    }
+  ]
+}

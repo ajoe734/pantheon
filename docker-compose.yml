@@ -1539,6 +1539,26 @@ services:
       retries: 6
       start_period: 10s
 
+  paper-signal-producer:
+    build:
+      context: .
+      dockerfile: services/execution/lean_runtime/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
+    command: ["python", "services/execution/lean_runtime/paper_signal_producer.py"]
+    environment:
+      SIGNAL_STORE_URL: redis://signal-store:6379
+      PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      PAPER_PRODUCER_INTERVAL_SECONDS: ${PAPER_PRODUCER_INTERVAL_SECONDS:-60}
+    depends_on:
+      runtime-manager:
+        condition: service_healthy
+      signal-store:
+        condition: service_healthy
+
   reconciliation-drift-svc:
     build:
       context: .
