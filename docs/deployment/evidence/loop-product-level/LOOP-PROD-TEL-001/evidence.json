@@ -9,13 +9,14 @@
   "evidence_policy": {
     "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001/evidence.sha256",
     "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Raw run artifacts are immutable. The manifest record_log may only append independently observed review, check, deployment, and merge facts.",
     "recording_mode": "logical_append_only",
     "redacted": true,
     "self_hashing": false
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-15T01:05:00Z",
+    "evidence_cut_at": "2026-07-15T11:13:00Z",
     "evidence_cut_semantics": "Default services start automatically, consume real telemetry, report failure/degraded on empty/unavailable sources, and generate deduplicated incidents.",
     "id": "LOOP-PROD-TEL-001",
     "overall_admission": "pass",
@@ -24,7 +25,7 @@
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001/evidence.json",
-    "reviewer": "Codex",
+    "reviewer": "Claude",
     "target_environment": "dev",
     "target_maturity": "product-level",
     "task_branch": "task/LOOP-PROD-TEL-001",
@@ -56,24 +57,34 @@
     ],
     "implementation_changed_files": [
       "docker-compose.yml",
+      "services/reconciliation-drift/README.md",
+      "services/reconciliation-drift/consumer.py",
+      "services/reconciliation-drift/incident_listener.py",
       "services/reconciliation-drift/main.py",
+      "services/reconciliation-drift/scheduler_worker.py",
       "services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py",
-      "services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py"
+      "services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py",
+      "services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py",
+      "services/reconciliation-drift/tests/test_reconciliation_drift_worker_resilience.py",
+      "services/telemetry/runtime_summary.py",
+      "services/telemetry/test_runtime_summary_projection.py"
     ],
     "not_changing": "Telemetry ingest pathways, core incidents domain representation",
     "owned_layer": "Default compose profiles activation and empty/unavailable telemetry source handling"
   },
   "implementation_delivery": {
     "anchor_commits": [
-      "f560c408b0870fb8ee74c102a0a2df339bb5c697"
+      "f560c408b0870fb8ee74c102a0a2df339bb5c697",
+      "43e490f6e04c5b74bd1a409dd7340cb839cef78d",
+      "4673af97b789110917a499da8ba11f86f614467c"
     ],
     "pull_request": {
-      "number": 3667,
-      "url": "https://github.com/ajoe734/pantheon/pull/3667",
-      "head_sha": "f560c408b0870fb8ee74c102a0a2df339bb5c697",
+      "number": 3689,
+      "url": "https://github.com/ajoe734/pantheon/pull/3689",
+      "head_sha": "4673af97b789110917a499da8ba11f86f614467c",
       "base": "dev",
-      "merged_at": "2026-07-15T01:06:42Z",
-      "merge_sha": "df981ea902f3ea9c98695d73676766d610813f36"
+      "merged_at": "2026-07-15T11:11:12Z",
+      "merge_sha": "9eaf3f18b70a0b68a201ccc1c0cf64305df1aef0"
     },
     "required_checks": [
       "Branch CI Gate/Commit trailers",
@@ -90,7 +101,9 @@
         "conclusion": "pass"
       }
     ],
-    "validated_at": "2026-07-15T01:05:00Z"
+    "validated_at": "2026-07-15T11:08:53Z",
+    "validated_base_sha": "9eaf3f18b70a0b68a201ccc1c0cf64305df1aef0",
+    "validated_head_sha": "f8c987b59eb4cdb3a3c20790757a3e5c9b0e271a"
   },
   "deployment": {
     "applicable": true,
@@ -223,6 +236,13 @@
     {
       "sequence": 1,
       "recorded_at": "2026-07-15T01:05:00Z",
+      "kind": "implementation_review",
+      "status": "pass",
+      "actor": "Antigravity"
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-07-15T11:13:00Z",
       "kind": "implementation_review",
       "status": "pass",
       "actor": "Antigravity"
