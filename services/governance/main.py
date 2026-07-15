@@ -37,10 +37,12 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import threading
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException, Query, Body
+from fastapi import FastAPI, Header, HTTPException, Query, Body, Response
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
+from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
 
 # ---------------------------------------------------------------------------
 # Platform objects — resolve relative to repo layout
@@ -298,14 +300,136 @@ def _utc_now() -> str:
 # Routes — freeze-order and rollback write models
 # ---------------------------------------------------------------------------
 
+_freeze_order_lock = threading.Lock()
+_rollback_lock = threading.Lock()
+
+# Any authenticated caller holding one of these roles may write a freeze
+# order / rollback record at all (create or transition). Statuses that carry
+# real authority (approve/reject/activate) are further restricted below to
+# _GOVERNANCE_AUTHORITY_ROLES. Test-only aliases ("approver-role",
+# "rejecter-role") that used to satisfy the self-declared check are removed —
+# real callers authenticate with the roles they actually hold.
+_GOVERNANCE_WRITE_ROLES = (
+    "operator",
+    "admin",
+    "approver",
+    "governance_reviewer",
+    "risk_owner",
+    "governance_committee",
+)
+_GOVERNANCE_AUTHORITY_ROLES = frozenset(
+    {"governance_reviewer", "risk_owner", "governance_committee", "admin", "approver"}
+)
+
+# Freeze orders have a legitimate first-class "create as active" path (kill
+# switch, evolution-mutation freeze) that the BFF already gates at operator
+# level (see _MUTATION_EXECUTION_ROLES / ActivateKillSwitch's admin check) —
+# unlike an approve/reject *transition*, which always requires a
+# _GOVERNANCE_AUTHORITY_ROLES-level role regardless of who created the order.
+_FREEZE_CREATE_AUTHORITY_ROLES = _GOVERNANCE_AUTHORITY_ROLES | {"operator"}
+_FREEZE_AUTHORITY_STATUSES = frozenset({"approved", "rejected", "active"})
+_ROLLBACK_AUTHORITY_STATUSES = frozenset({"approved", "rejected"})
+
+
+def _authenticate_governance_write(
+    authorization: Optional[str], mfa_token: Optional[str]
+) -> AuthContext:
+    """Resolve and authenticate the caller for a freeze/rollback write.
+
+    Previously these endpoints trusted self-declared ``actor``/``identity``
+    body fields with no bearer-token check at all, so an unauthenticated
+    caller could POST a brand-new rollback with ``status: "approved"`` (or a
+    freeze order with ``status: "active"``) and get a 201. Require a valid
+    bearer token here and derive identity/roles from it instead.
+    """
+    gov_env = {
+        "PANTHEON_RUNTIME_AUTH_MODE": os.getenv("PANTHEON_GOVERNANCE_AUTH_MODE") or os.getenv("PANTHEON_BFF_AUTH_MODE") or os.getenv("PANTHEON_RUNTIME_AUTH_MODE") or "permissive",
+        "PANTHEON_RUNTIME_JWT_SECRET": os.getenv("PANTHEON_GOVERNANCE_JWT_SECRET") or os.getenv("PANTHEON_BFF_JWT_SECRET") or os.getenv("PANTHEON_RUNTIME_JWT_SECRET", ""),
+        "PANTHEON_RUNTIME_JWT_ISSUER": os.getenv("PANTHEON_GOVERNANCE_JWT_ISSUER") or os.getenv("PANTHEON_BFF_JWT_ISSUER") or os.getenv("PANTHEON_RUNTIME_JWT_ISSUER", ""),
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": os.getenv("PANTHEON_GOVERNANCE_JWT_AUDIENCE") or os.getenv("PANTHEON_BFF_JWT_AUDIENCE") or os.getenv("PANTHEON_RUNTIME_JWT_AUDIENCE", ""),
+        "PANTHEON_RUNTIME_DEFAULT_ROLE": os.getenv("PANTHEON_GOVERNANCE_DEFAULT_ROLE") or os.getenv("PANTHEON_BFF_DEFAULT_ROLE") or os.getenv("PANTHEON_RUNTIME_DEFAULT_ROLE", "operator"),
+        "PANTHEON_RUNTIME_MFA_REQUIRED": os.getenv("PANTHEON_GOVERNANCE_MFA_REQUIRED") or os.getenv("PANTHEON_BFF_MFA_REQUIRED") or os.getenv("PANTHEON_RUNTIME_MFA_REQUIRED", "false"),
+        # OIDC/JWKS optional path — active only when JWKS_URI is set.
+        "PANTHEON_RUNTIME_JWKS_URI": os.getenv("PANTHEON_GOVERNANCE_JWKS_URI") or os.getenv("PANTHEON_BFF_JWKS_URI") or os.getenv("PANTHEON_RUNTIME_JWKS_URI", ""),
+        "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL": os.getenv("PANTHEON_GOVERNANCE_OIDC_DISCOVERY_URL") or os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL") or os.getenv("PANTHEON_RUNTIME_OIDC_DISCOVERY_URL", ""),
+        "PANTHEON_RUNTIME_OIDC_ISSUER": os.getenv("PANTHEON_GOVERNANCE_OIDC_ISSUER") or os.getenv("PANTHEON_BFF_OIDC_ISSUER") or os.getenv("PANTHEON_RUNTIME_OIDC_ISSUER", ""),
+        "PANTHEON_RUNTIME_OIDC_AUDIENCE": os.getenv("PANTHEON_GOVERNANCE_OIDC_AUDIENCE") or os.getenv("PANTHEON_BFF_OIDC_AUDIENCE") or os.getenv("PANTHEON_RUNTIME_OIDC_AUDIENCE", ""),
+        "PANTHEON_RUNTIME_ROLE_CLAIMS": os.getenv("PANTHEON_GOVERNANCE_ROLE_CLAIMS") or os.getenv("PANTHEON_BFF_ROLE_CLAIMS") or os.getenv("PANTHEON_RUNTIME_ROLE_CLAIMS", ""),
+        "PANTHEON_RUNTIME_ROLE_MAP": os.getenv("PANTHEON_GOVERNANCE_ROLE_MAP") or os.getenv("PANTHEON_BFF_ROLE_MAP") or os.getenv("PANTHEON_RUNTIME_ROLE_MAP", ""),
+        "PANTHEON_RUNTIME_ROLE_MAP_MODE": os.getenv("PANTHEON_GOVERNANCE_ROLE_MAP_MODE") or os.getenv("PANTHEON_BFF_ROLE_MAP_MODE") or os.getenv("PANTHEON_RUNTIME_ROLE_MAP_MODE", ""),
+        "PANTHEON_RUNTIME_MFA_CLAIMS": os.getenv("PANTHEON_GOVERNANCE_MFA_CLAIMS") or os.getenv("PANTHEON_BFF_MFA_CLAIMS") or os.getenv("PANTHEON_RUNTIME_MFA_CLAIMS", ""),
+        "PANTHEON_RUNTIME_MFA_VALUES": os.getenv("PANTHEON_GOVERNANCE_MFA_VALUES") or os.getenv("PANTHEON_BFF_MFA_VALUES") or os.getenv("PANTHEON_RUNTIME_MFA_VALUES", ""),
+    }
+    mfa_required = gov_env["PANTHEON_RUNTIME_MFA_REQUIRED"].lower() == "true"
+    try:
+        return validate_request_auth(
+            authorization=authorization,
+            mfa_header=mfa_token,
+            required_roles=_GOVERNANCE_WRITE_ROLES,
+            mfa_required=mfa_required,
+            env=gov_env,
+        )
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+def _resolve_trusted_actor(
+    body: Dict[str, Any],
+    ctx: AuthContext,
+    *,
+    actor_field: str,
+    identity_field: str,
+) -> None:
+    """Overwrite actor/identity fields in-place with server-trusted values.
+
+    ``identity`` always comes from the authenticated token — a caller cannot
+    claim to be someone else. ``actor`` (the role label) may be declared by
+    the caller, but only if it is one of the roles the token actually
+    carries; otherwise it is rejected rather than silently trusted.
+    """
+    declared_actor = body.get(actor_field)
+    if declared_actor:
+        if declared_actor not in ctx.roles:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Authenticated role set {sorted(ctx.roles)} does not include "
+                    f"declared role '{declared_actor}' for '{actor_field}'."
+                ),
+            )
+    else:
+        for candidate in (
+            "governance_committee",
+            "risk_owner",
+            "approver",
+            "governance_reviewer",
+            "admin",
+            "operator",
+        ):
+            if candidate in ctx.roles:
+                declared_actor = candidate
+                break
+        else:
+            declared_actor = sorted(ctx.roles)[0] if ctx.roles else None
+    body[actor_field] = declared_actor
+    body[identity_field] = ctx.actor_id
+
+
 @app.post(
     "/api/governance/freeze-orders",
     response_model=Dict[str, Any],
     status_code=201,
     summary="Record or update a canonical freeze order",
 )
-def record_freeze_order(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+def record_freeze_order(
+    body: Dict[str, Any] = Body(...),
+    response: Response = None,
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+) -> Dict[str, Any]:
     """Create or update a FreezeOrder in the canonical store."""
+    ctx = _authenticate_governance_write(authorization, x_mfa_token)
+
     freeze_order_id = body.get("freeze_order_id") or body.get("id")
     if not freeze_order_id:
         freeze_order_id = f"freeze-{uuid.uuid4().hex[:12]}"
@@ -316,8 +440,108 @@ def record_freeze_order(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         body["created_at"] = _utc_now()
         body["issued_at"] = body["created_at"]
 
-    freeze_order_store.put(body)
+    with _freeze_order_lock:
+        existing = freeze_order_store.get(freeze_order_id)
+        is_transition = False
+        if existing:
+            is_transition = True
+            if response:
+                response.status_code = 200
+
+            # Enforce legal status transitions
+            existing_status = existing.get("status")
+            new_status = body.get("status")
+            if existing_status in ("released", "rejected"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot transition from terminal freeze order status '{existing_status}'.",
+                )
+            if existing_status == "active" and new_status not in ("released", "active"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid transition from active to '{new_status}'.",
+                )
+            if existing_status == "requested" and new_status not in ("active", "rejected", "requested"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid transition from requested to '{new_status}'.",
+                )
+
+            inc_source_cmd = body.get("transition_source_command_id") or body.get("source_command_id")
+            if not inc_source_cmd:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing required transition audit field: source_command_id",
+                )
+            if not body.get("transition_actor") and body.get("actor"):
+                body["transition_actor"] = body.get("actor")
+            _resolve_trusted_actor(
+                body, ctx, actor_field="transition_actor", identity_field="transition_identity"
+            )
+            inc_actor = body["transition_actor"]
+            inc_identity = body["transition_identity"]
+
+            merged = dict(existing)
+            for k, v in body.items():
+                if v is not None:
+                    merged[k] = v
+
+            # Set transition audit fields explicitly
+            merged["transition_actor"] = inc_actor
+            merged["transition_identity"] = inc_identity
+            merged["transition_source_command_id"] = inc_source_cmd
+
+            # Preserve original fields and audit origin on transitions
+            for field in ["scope", "target_id", "created_at", "issued_at", "actor", "identity", "source_command_id"]:
+                if field in existing and existing[field] not in (None, ""):
+                    merged[field] = existing[field]
+            body = merged
+        else:
+            _resolve_trusted_actor(body, ctx, actor_field="actor", identity_field="identity")
+
+        body["updated_at"] = _utc_now()
+
+        # Enforce required audit fields on final payload
+        for field in ["status", "actor", "identity", "source_command_id", "scope", "target_id"]:
+            if not body.get(field):
+                raise HTTPException(status_code=400, detail=f"Missing required audit field: {field}")
+
+        # Enforce write authority for authority-gated statuses on BOTH create and
+        # transition — a brand-new record can no longer walk straight in as
+        # "active" without an authority role, same as a transition can't.
+        new_status = body.get("status")
+        if new_status in _FREEZE_AUTHORITY_STATUSES:
+            acting_role = body.get("transition_actor") if is_transition else body.get("actor")
+            allowed_roles = _GOVERNANCE_AUTHORITY_ROLES if is_transition else _FREEZE_CREATE_AUTHORITY_ROLES
+            if acting_role not in allowed_roles:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Role '{acting_role}' is not authorized to set freeze order status to '{new_status}'.",
+                )
+
+        freeze_order_store.put(body)
+
     log.info("Recorded freeze order %s: %s", freeze_order_id, body)
+
+    # Append audit event
+    try:
+        audit_store.append_event(
+            event_type="freeze_order_state_changed" if is_transition else "freeze_order_created",
+            decision_id=freeze_order_id,
+            actor_id=body.get("transition_identity") or body.get("identity"),
+            actor_role=body.get("transition_actor") or body.get("actor"),
+            target_type="freeze_scope",
+            target_id=body.get("scope"),
+            detail={
+                "status": body.get("status"),
+                "target_id": body.get("target_id"),
+                "source_command_id": body.get("source_command_id"),
+                "transition_source_command_id": body.get("transition_source_command_id"),
+            }
+        )
+    except Exception as exc:
+        log.warning("Audit write failed: %s", exc)
+
     return body
 
 
@@ -327,8 +551,15 @@ def record_freeze_order(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     status_code=201,
     summary="Record or update a canonical rollback record",
 )
-def record_rollback(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+def record_rollback(
+    body: Dict[str, Any] = Body(...),
+    response: Response = None,
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+) -> Dict[str, Any]:
     """Create or update a Rollback record in the canonical store."""
+    ctx = _authenticate_governance_write(authorization, x_mfa_token)
+
     rollback_id = body.get("rollback_id") or body.get("id")
     if not rollback_id:
         rollback_id = f"rollback-{uuid.uuid4().hex[:12]}"
@@ -340,8 +571,107 @@ def record_rollback(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         body["initiated_at"] = body["created_at"]
         body["requested_at"] = body["created_at"]
 
-    rollback_store.put(body)
+    with _rollback_lock:
+        existing = rollback_store.get(rollback_id)
+        is_transition = False
+        if existing:
+            is_transition = True
+            if response:
+                response.status_code = 200
+
+            # Enforce legal status transitions
+            existing_status = existing.get("status")
+            new_status = body.get("status")
+            if existing_status in ("completed", "rejected", "aborted"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot transition from terminal rollback status '{existing_status}'.",
+                )
+            if existing_status == "approved" and new_status not in ("completed", "failed", "aborted", "approved", "rejected"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid transition from approved to '{new_status}'.",
+                )
+            if existing_status == "initiated" and new_status not in ("approved", "rejected", "completed", "failed", "aborted", "initiated"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid transition from initiated to '{new_status}'.",
+                )
+
+            inc_source_cmd = body.get("transition_source_command_id") or body.get("source_command_id")
+            if not inc_source_cmd:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing required transition audit field: source_command_id",
+                )
+            if not body.get("transition_actor") and body.get("actor"):
+                body["transition_actor"] = body.get("actor")
+            _resolve_trusted_actor(
+                body, ctx, actor_field="transition_actor", identity_field="transition_identity"
+            )
+            inc_actor = body["transition_actor"]
+            inc_identity = body["transition_identity"]
+
+            merged = dict(existing)
+            for k, v in body.items():
+                if v is not None:
+                    merged[k] = v
+
+            # Set transition audit fields explicitly
+            merged["transition_actor"] = inc_actor
+            merged["transition_identity"] = inc_identity
+            merged["transition_source_command_id"] = inc_source_cmd
+
+            # Preserve original fields and audit origin on transitions
+            for field in ["runtime_id", "runtime_binding_id", "action_type", "target_artifact_id", "created_at", "initiated_at", "requested_at", "actor", "identity", "source_command_id"]:
+                if field in existing and existing[field] not in (None, ""):
+                    merged[field] = existing[field]
+            body = merged
+        else:
+            _resolve_trusted_actor(body, ctx, actor_field="actor", identity_field="identity")
+
+        body["updated_at"] = _utc_now()
+
+        # Enforce required audit fields on final payload
+        for field in ["status", "actor", "identity", "source_command_id", "runtime_id", "action_type"]:
+            if not body.get(field):
+                raise HTTPException(status_code=400, detail=f"Missing required audit field: {field}")
+
+        # Enforce write authority for authority-gated statuses on BOTH create and
+        # transition — a brand-new record can no longer walk straight in as
+        # "approved" without an authority role, same as a transition can't.
+        new_status = body.get("status")
+        if new_status in _ROLLBACK_AUTHORITY_STATUSES:
+            acting_role = body.get("transition_actor") if is_transition else body.get("actor")
+            if acting_role not in _GOVERNANCE_AUTHORITY_ROLES:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Role '{acting_role}' is not authorized to set rollback status to '{new_status}'.",
+                )
+
+        rollback_store.put(body)
+
     log.info("Recorded rollback %s: %s", rollback_id, body)
+
+    # Append audit event
+    try:
+        audit_store.append_event(
+            event_type="rollback_state_changed" if is_transition else "rollback_created",
+            decision_id=rollback_id,
+            actor_id=body.get("transition_identity") or body.get("identity"),
+            actor_role=body.get("transition_actor") or body.get("actor"),
+            target_type="runtime_binding",
+            target_id=body.get("runtime_binding_id") or body.get("runtime_id"),
+            detail={
+                "status": body.get("status"),
+                "action_type": body.get("action_type"),
+                "source_command_id": body.get("source_command_id"),
+                "transition_source_command_id": body.get("transition_source_command_id"),
+            }
+        )
+    except Exception as exc:
+        log.warning("Audit write failed: %s", exc)
+
     return body
 
 
@@ -375,6 +705,12 @@ def propose_approval(body: ProposeApprovalRequest) -> ApprovalDecisionResponse:
         risk_level=body.risk_level.value,
         capital_pool_id=body.capital_pool_id,
         persona_id=body.persona_id,
+        tenant_id=body.tenant_id,
+        owner_user_id=body.owner_user_id,
+        proposal_id=body.proposal_id,
+        proposal_revision=body.proposal_revision,
+        proposal_content_digest=body.proposal_content_digest,
+        validation_result_digest=body.validation_result_digest,
     )
 
     errors = decision.validate()

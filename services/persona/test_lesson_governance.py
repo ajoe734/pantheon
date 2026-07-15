@@ -363,6 +363,3 @@ def test_create_candidate_fail_closed_canary_live(candidate_store: TradeLessonCa
     invalid_stage = make_valid_candidate({"promotion_stage": "canary_approved"})
     with pytest.raises(TradeLessonCandidateError, match="Cannot create candidate with promotion_stage 'canary_approved'"):
         candidate_store.create(invalid_stage)
-
-
-

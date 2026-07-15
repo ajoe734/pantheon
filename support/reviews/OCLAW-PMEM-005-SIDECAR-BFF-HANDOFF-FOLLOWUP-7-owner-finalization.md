@@ -1,8 +1,8 @@
 # OCLAW-PMEM-005 Sidecar BFF Handoff Follow-up 7 — Owner Finalization
 
-Task: `OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-7`  
-Owner: `Codex`  
-Reviewer: `Antigravity`  
+Task: `OCLAW-PMEM-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-7`
+Owner: `Codex`
+Reviewer: `Antigravity`
 Parent: `OCLAW-PMEM-005`
 
 ## Approved delivery

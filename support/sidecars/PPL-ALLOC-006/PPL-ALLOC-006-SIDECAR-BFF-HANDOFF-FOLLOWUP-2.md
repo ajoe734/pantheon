@@ -1,10 +1,10 @@
 # PPL-ALLOC-006 BFF / Frontend Handoff Follow-Up 2
 
-Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-2`  
-Parent: `PPL-ALLOC-006`  
-Owner: Codex  
-Reviewer: Claude  
-Kind: support-only `bff_handoff_packet`  
+Task: `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-2`
+Parent: `PPL-ALLOC-006`
+Owner: Codex
+Reviewer: Claude
+Kind: support-only `bff_handoff_packet`
 Generated: 2026-07-11
 
 ## Boundary
@@ -140,9 +140,9 @@ proposal. Do not collapse these into a generic disabled action.
 ## Composition And Review
 
 Owned here: support-only integration details and fail-closed frontend
-acceptance guidance.  
+acceptance guidance.
 Not changing: canonical policy, route contracts, BFF/runtime implementation,
-frontend code, navigation pruning, or parent lifecycle state.  
+frontend code, navigation pruning, or parent lifecycle state.
 Composes with: `PPL-ALLOC-003` binding reads, `PPL-ALLOC-004` allocation
 policy, the parent `PPL-ALLOC-006` workbench, and the earlier
 `PPL-ALLOC-006-SIDECAR-BFF-HANDOFF` packet.

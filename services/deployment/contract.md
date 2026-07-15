@@ -1,6 +1,6 @@
 # Deployment Service API Contract
 
-Last updated: 2026-04-15
+Last updated: 2026-07-14
 Status: canonical API contract for BP5-SVC-004 and BP5-SVC-005
 Owner: Codex
 Reviewer: Claude
@@ -176,12 +176,20 @@ Read-only rule:
 
 Snapshot lookup:
 
-- `capital_pools.json` and `persona_capital_bindings.json` come from
-  `CAPITAL_DATA_DIR`, then `DEPLOYMENT_DATA_DIR`, then
-  `PANTHEON_GOVERNANCE_DATA_DIR`, then `/tmp/pantheon/governance`
+- CapitalPool lookup uses `PANTHEON_CAPITAL_POOL_STORE_PATH` when present;
+  otherwise `capital_pools.json` comes from `CAPITAL_DATA_DIR`, then
+  `DEPLOYMENT_DATA_DIR`, then `PANTHEON_GOVERNANCE_DATA_DIR`, then
+  `/tmp/pantheon/governance`
+- PersonaCapitalBinding lookup uses `PANTHEON_PERSONA_BINDING_STORE_PATH` when
+  present; otherwise `persona_capital_bindings.json` uses the same directory
+  precedence
 - RuntimeBinding lookup uses `PANTHEON_RUNTIME_BINDING_STORE_PATH` when present,
   then `${PANTHEON_RUNTIME_DATA_DIR}/runtime_bindings.json`, then
   `/tmp/pantheon/runtime-manager/bindings.json`
+- the default Compose deployment binds the Capital service's `capital-data`
+  volume at `/data/capital:ro` and Runtime Manager's `runtime-data` volume at
+  `/data/runtime:ro`; both are composition-only snapshots and remain owned by
+  their source services
 
 ---
 
@@ -488,6 +496,97 @@ Supported filters:
 - `consumer_name`
 - `aggregate_id`
 - `status`
+
+---
+
+### Default outbox dispatcher convergence contract
+
+The supervised `deployment-outbox-consumer` owns the apply side effect for
+`runtime.binding.requested`, `runtime.load.requested`, and
+`deployment.compensation.requested`.
+
+It must be configured with a non-empty `PANTHEON_RUNTIME_MANAGER_URL` and send
+all RuntimeBinding commands/readbacks to that remote authority.  Missing remote
+configuration is fail-closed; the consumer must not instantiate an in-process
+Runtime Manager or fall back to a local binding store.
+
+Compose startup waits only for the unconditional Deployment and Runtime
+Manager authorities.  Paper fleet reconciliation is required only for a paper
+activation event, and Incident service reachability is required only for the
+safe-mode compensation path.  An unavailable conditional target fails the
+affected event closed and follows its retry policy; it does not prevent the
+consumer process from starting or handling unrelated events.  At retry
+exhaustion, the worker first persists saga compensation and then acknowledges
+the failed predecessor so the compensation successor can run.  It never DLQs a
+side-effect predecessor while leaving its successor sequence-blocked.
+
+Forward dispatch invariants:
+
+- caller- and DeploymentPlan-authored `loader_checks_passed` values are not
+  admission proof and are not propagated as authority
+- before dispatch, the consumer reads four canonical owners and requires exact,
+  target-bound agreement:
+  - Deployment: the fetched DeploymentPlan is approved/executing and matches
+    the saga's plan, strategy, artifact/version, approval, pool, persona, and
+    paper target
+  - Registry: the exact entry is an approved execution bundle, carries the
+    same approval and identity, and embeds a schema-valid StrategyArtifact whose
+    computed checksum matches the recorded checksum
+  - Governance: the exact ApprovalDecision is decided/approved, unconditional,
+    unrevoked, unexpired, and bound to the artifact version, pool, and persona
+  - Capital: the exact active pool enforces one runtime, admissibility is
+    permitted, and the exact active PersonaCapitalBinding and scope permit paper
+- the canonical report records those identities plus SHA-256 digests of the
+  DeploymentPlan, Registry entry, ApprovalDecision, CapitalPool, admissibility
+  response, and PersonaCapitalBinding; Runtime Manager independently repeats
+  the four-owner reads before accepting the write and persists the report as
+  `metadata.authoritative_loader_attestation`
+- binding-created response-loss recovery permits only the canonical
+  `approved -> executing` plan lifecycle change.  `current_stage` and every
+  immutable authority field remain digest-covered; the current plan's
+  `binding_id` and `metadata.runtime_lifecycle` must exactly match the recovered
+  RuntimeBinding before the predecessor receipt can be written
+- every newly created RuntimeBinding is paper-only; canary/live requires a
+  separate target-bound governed promotion/cutover verifier with the required
+  MFA/two-person proof
+- forward replace, evolution, rollback, kill-switch fallback, replay, and
+  response-loss recovery must preserve exact canonical paper lineage or fail
+  closed; a reference string, copied metadata, or self-authored fallback proof
+  cannot authorize a new binding
+- Runtime Manager POST bodies are submission receipts only
+- success requires a separate GET of the exact active RuntimeBinding, including
+  plan, pool, artifact/version, deployment/execution mode, and governance
+  binding identity, plus exact canonical authority identities and digests
+- paper success additionally requires a completed fleet reconciliation cycle
+  and exactly one matching running worker with a live process id
+- the worker then requires a joined DEP-003 projection whose plan, saga, and
+  runtime sources are canonical and terminal before it writes the inbox receipt
+
+Compensation invariants:
+
+- the applied inbox sequence is read before any side effect; an earlier DLQ
+  must be replayed first and the blocked event does not consume retry budget
+- a terminal binding/load failure is handed off durably to saga compensation
+  before its predecessor receipt is written.  If receipt persistence or its
+  response fails after handoff, replay retries the receipt and never converts
+  the predecessor to a DLQ record
+- `abort_plan` proves no RuntimeBinding exists, then writes only
+  `DeploymentPlan.status = aborted`
+- `mark_binding_failed_inactive` writes only the exact RuntimeBinding status and
+  requires authoritative `failed` readback
+- `request_rollback` uses only `DeploymentPlan.rollback` and exact prior
+  fallback binding/plan/artifact lineage.  The fallback must resolve to one
+  retired paper RuntimeBinding with a matching persisted four-authority
+  `authoritative_loader_attestation`; plan-authored/self-attested loader proof
+  is ignored.  Response-loss recovery finds the unique rollback child before
+  any new POST, and missing/ambiguous proof routes to containment rather than a
+  blind replacement
+- `enter_safe_mode_and_raise_incident` requires acknowledged kill-switch
+  follow-through, paused safe-mode/binding GET readback, and an exact stable
+  IncidentCase
+- finalize happens before consume; replay of a completed runtime-load event
+  revalidates the active binding, paper fleet when applicable, and terminal
+  DEP-003 projection before writing its receipt, without repeating mutation
 
 ---
 

@@ -1,0 +1,300 @@
+{
+  "schema_version": 1,
+  "fixture_set_id": "loop-product-browser-auth-incidents-v1",
+  "canonicalization": "utf8-json-sort-keys-compact",
+  "immutable_projection_fields": [
+    "fixture_id",
+    "semantic_intent_key",
+    "repository",
+    "pr",
+    "expected_replay"
+  ],
+  "immutable_projection_sha256": "358c9052afd1bc671a05bcedd39bd896df4599ace1b499d2809449d0344a7628",
+  "diagnosis": {
+    "observed_failure": "The fixed public-browser viewer subject was rejected by the hosted BFF before route RBAC because that BFF ran permissive auth while PR 3557 allowed the subject only in strict dev/local mode.",
+    "reason_id": "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN",
+    "not_proven": "The incident does not prove that viewer route grants were absent; a separately minted viewer identity returned 200 for GET /bff/strategies and GET /bff/approvals in the same run.",
+    "nonexistent_claim_removed": "GET /bff/dashboard/summary was in neither the deployed backend manifest nor execute-plans paths; GET /bff/management/shell-summary is the boot-critical canonical route."
+  },
+  "evidence_archival_contract": {
+    "status": "fleet_must_vendor_redacted_extracts_before_closeout",
+    "index_path": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/fixtures/evidence/browser-auth-incidents/run-29298450774/index.v1.json",
+    "required_file_ids": [
+      "bff-authenticated-live-smoke",
+      "management-live-deep-validation",
+      "playwright-results",
+      "release-gate-summary",
+      "historical-get-results",
+      "sse-replay-results"
+    ],
+    "upstream_artifact_expires_at": "2026-10-12T01:40:43Z",
+    "network_independent_replay_required": true,
+    "redaction_and_secret_scan_required": true
+  },
+  "sources": [
+    {
+      "source_id": "execute-plans-actions-run-29298450774",
+      "repository": "ajoe734/execute-plans",
+      "run_id": 29298450774,
+      "head_sha": "e24df14c515498167fd349622f4cc0338c4a6caf",
+      "started_at": "2026-07-14T01:24:00Z",
+      "completed_at": "2026-07-14T01:40:48Z",
+      "artifact_id": 8297886311,
+      "artifact_created_at": "2026-07-14T01:40:43Z",
+      "artifact_expires_at": "2026-10-12T01:40:43Z",
+      "artifact_zip_sha256": "380d712e02ec9a38fe7f648b14c401135b30b5d8d96220341bc1664ef6253a22",
+      "redacted_file_digests": {
+        "bff-authenticated-live-smoke-2026-07-14T01-26-14-131Z.md": "a00db5f46320e36ded3e1a1d520126809324325407f300c0d9e05918a9d90362",
+        "management-live-deep-validation-2026-07-14T01-26-26-087Z.json": "b66c72d82f074162223465944a6e7bf1315efc94f5e04bedff95d9eae1911700",
+        "playwright-results.json": "a70e9cbcba8bb9e77a9ea34bd779e140bfad791f8a0cabee437c2057c5bbb813",
+        "release-gate-summary.json": "3cc5a7dd689c808b1347c7e7ca614385a7d7933ecee72bc8759c6cee11443b34"
+      },
+      "observations": {
+        "fixed_public_viewer_get_probe_count": 27,
+        "fixed_public_viewer_get_status": 403,
+        "fixed_public_viewer_get_reason": "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN",
+        "minted_viewer_get_strategies_status": 200,
+        "minted_viewer_get_approvals_status": 200,
+        "fixed_public_viewer_sse_initial_status": 403,
+        "fixed_public_viewer_sse_reconnect_status": 403
+      }
+    }
+  ],
+  "fixtures": [
+    {
+      "fixture_id": "pantheon-pr-3557-bff-first-public-viewer-lockdown",
+      "semantic_intent_key": "browser-auth-cutover-2026-07-13",
+      "repository": "ajoe734/pantheon",
+      "pr": {
+        "number": 3557,
+        "created_at": "2026-07-13T19:19:55Z",
+        "merged_at": "2026-07-13T20:40:21Z",
+        "base_sha_at_merge": "c881c7f481f4810827893eab2485592c3bad909e",
+        "head_sha": "55d21e5043d8286f8f8db0d0c36c7e0d66587f83",
+        "head_tree_sha": "09e3e8483864956337060d6f8192b745e668ece3",
+        "head_parent_shas": [
+          "6bf4a9b5ec44116eabe3e7d1f40cd6fc653d5b40"
+        ],
+        "merge_sha": "79dc96fd55b5eb4f5091979f24ea2bb04bf7de74",
+        "merge_tree_sha": "0dfa863597d3ea03f20b3c95814659ecaad2692e",
+        "merge_parent_shas": [
+          "c881c7f481f4810827893eab2485592c3bad909e",
+          "55d21e5043d8286f8f8db0d0c36c7e0d66587f83"
+        ],
+        "postimage_blobs": [
+          {
+            "path": "services/control-plane/bff/main.py",
+            "sha": "a564c1d8ebfa479e4a37514706c1554215a3773b"
+          },
+          {
+            "path": "services/control-plane/bff/test_bff_auth_facade.py",
+            "sha": "abf97cdf913515b8dcb36cc02cb5f97f2dfbb3dc"
+          },
+          {
+            "path": "services/control-plane/bff/test_bff_session_auth_me_contract.py",
+            "sha": "009e72d40be4127f6a5e5a24dd8d38454a5f353d"
+          }
+        ]
+      },
+      "deployment_pair": {
+        "fe_sha": "ce4d6e038ba177e0d487d6cd28840e691587f5f9",
+        "bff_sha": "ebceb59b47bf6d3e7f76110f4d5ffa67979043fc",
+        "bff_tree_sha": "515cdc13bf7a790cfaa5bb086a42d78aa7f546e1",
+        "observed_at": "2026-07-14T01:26:14.131Z",
+        "auth_mode": "permissive",
+        "provenance_source_id": "execute-plans-actions-run-29298450774"
+      },
+      "authorization_header_sha256": {
+        "old_privileged_bundle_value": "d98481147a217ed608895643925663de6f396770ed85f00894afb1117349f445",
+        "exact_public_viewer_value": "ebf6a1118369e063cb225989b8fe873b9a83193f3e306ad346e471d5a80616a5"
+      },
+      "request_cases": [
+        {
+          "case_id": "3557-old-bundle-near-match",
+          "method": "GET",
+          "path_template": "/bff/me",
+          "identity_profile": "historical_privileged_fixed_bearer",
+          "transport_profile": "authorization_header",
+          "expected": {
+            "auth_decision": "deny",
+            "http_status": 401,
+            "error_code": "UNAUTHORIZED",
+            "reason": "AUTH_PUBLIC_BROWSER_TOKEN_NEAR_MATCH",
+            "content_type": "application/json",
+            "state_delta": "none"
+          }
+        },
+        {
+          "case_id": "3557-exact-viewer-on-permissive-deployment",
+          "method": "GET",
+          "path_template": "/bff/me",
+          "identity_profile": "exact_public_viewer_fixed_bearer",
+          "transport_profile": "authorization_header",
+          "expected": {
+            "auth_decision": "deny",
+            "http_status": 403,
+            "error_code": "FORBIDDEN",
+            "reason": "AUTH_PUBLIC_BROWSER_ENVIRONMENT_FORBIDDEN",
+            "content_type": "application/json",
+            "state_delta": "none"
+          }
+        }
+      ],
+      "expected_replay": {
+        "pre_switch_decision": "abort",
+        "effective_tree_delta": true,
+        "second_deploy_forbidden": false,
+        "rejection_reason_ids": [
+          "canonical_task_missing",
+          "planner_authored_product_change",
+          "distinct_runtime_formal_review_missing",
+          "paired_fe_bff_candidate_missing",
+          "fixed_public_browser_credential",
+          "hosted_browser_gate_missing"
+        ]
+      }
+    },
+    {
+      "fixture_id": "execute-plans-pr-323-fe-first-fixed-public-viewer",
+      "semantic_intent_key": "browser-auth-cutover-2026-07-13",
+      "repository": "ajoe734/execute-plans",
+      "pr": {
+        "number": 323,
+        "created_at": "2026-07-14T01:23:58Z",
+        "merged_at": "2026-07-14T01:25:12Z",
+        "base_sha_at_merge": "ada61156d15977bc188d7e73d4f1e04e556c2b37",
+        "head_sha": "e24df14c515498167fd349622f4cc0338c4a6caf",
+        "head_tree_sha": "2ecae388546ebd820334d39af749a6d72fda9788",
+        "head_parent_shas": [
+          "ada61156d15977bc188d7e73d4f1e04e556c2b37"
+        ],
+        "merge_sha": "ce4d6e038ba177e0d487d6cd28840e691587f5f9",
+        "merge_tree_sha": "2ecae388546ebd820334d39af749a6d72fda9788",
+        "merge_parent_shas": [
+          "ada61156d15977bc188d7e73d4f1e04e556c2b37",
+          "e24df14c515498167fd349622f4cc0338c4a6caf"
+        ],
+        "postimage_blobs": [
+          {
+            "path": ".env",
+            "sha": "d5751f7459667dba310d0444e9ff59fe378892ab"
+          }
+        ]
+      },
+      "deployment_pair": {
+        "fe_sha": "ce4d6e038ba177e0d487d6cd28840e691587f5f9",
+        "bff_sha": "ebceb59b47bf6d3e7f76110f4d5ffa67979043fc",
+        "bff_tree_sha": "515cdc13bf7a790cfaa5bb086a42d78aa7f546e1",
+        "observed_at": "2026-07-14T01:26:14.131Z",
+        "auth_mode": "permissive",
+        "provenance_source_id": "execute-plans-actions-run-29298450774"
+      },
+      "request_cases": [],
+      "expected_replay": {
+        "pre_switch_decision": "abort",
+        "effective_tree_delta": true,
+        "second_deploy_forbidden": false,
+        "rejection_reason_ids": [
+          "paired_bff_policy_missing",
+          "paired_route_matrix_missing",
+          "fixed_public_browser_credential",
+          "single_cutover_lease_missing",
+          "paired_rollback_missing"
+        ]
+      }
+    },
+    {
+      "fixture_id": "pantheon-pr-3587-effective-3557-revert",
+      "semantic_intent_key": "revert-target-79dc96fd55b5eb4f5091979f24ea2bb04bf7de74",
+      "repository": "ajoe734/pantheon",
+      "pr": {
+        "number": 3587,
+        "created_at": "2026-07-14T01:32:55Z",
+        "merged_at": "2026-07-14T01:33:05Z",
+        "base_sha_at_merge": "7475a06873202970dc6a827e4645430b192a536a",
+        "head_sha": "4b4a056d4239dcc09e0fd251ca79520a61d97fe5",
+        "head_tree_sha": "c50f4e84cb3d5a6c6ea235dec128428aa598dd5f",
+        "head_parent_shas": [
+          "7475a06873202970dc6a827e4645430b192a536a"
+        ],
+        "merge_sha": "df83574f2f735bed32158269718eba948edfd3c4",
+        "merge_tree_sha": "c50f4e84cb3d5a6c6ea235dec128428aa598dd5f",
+        "merge_parent_shas": [
+          "7475a06873202970dc6a827e4645430b192a536a",
+          "4b4a056d4239dcc09e0fd251ca79520a61d97fe5"
+        ],
+        "postimage_blobs": [
+          {
+            "path": "services/control-plane/bff/main.py",
+            "sha": "d890d58c5e02c46997abb8a25c403b043cbff192"
+          },
+          {
+            "path": "services/control-plane/bff/test_bff_auth_facade.py",
+            "sha": "f1cf3b843a365a1166584721635a21fe5c04406a"
+          },
+          {
+            "path": "services/control-plane/bff/test_bff_session_auth_me_contract.py",
+            "sha": "65115ac7f620e7ee0908bbde05cb19778042e8e7"
+          }
+        ]
+      },
+      "deployment_pair": null,
+      "request_cases": [],
+      "expected_replay": {
+        "pre_switch_decision": "admit_once_under_repair_lease",
+        "effective_tree_delta": true,
+        "second_deploy_forbidden": false,
+        "rejection_reason_ids": []
+      }
+    },
+    {
+      "fixture_id": "pantheon-pr-3588-zero-tree-duplicate-3557-revert",
+      "semantic_intent_key": "revert-target-79dc96fd55b5eb4f5091979f24ea2bb04bf7de74",
+      "repository": "ajoe734/pantheon",
+      "pr": {
+        "number": 3588,
+        "created_at": "2026-07-14T01:33:47Z",
+        "merged_at": "2026-07-14T01:33:58Z",
+        "base_sha_at_merge": "df83574f2f735bed32158269718eba948edfd3c4",
+        "head_sha": "309cf94b8d8dd44a06bdf02ada93af2c92bedbb7",
+        "head_tree_sha": "c50f4e84cb3d5a6c6ea235dec128428aa598dd5f",
+        "head_parent_shas": [
+          "7475a06873202970dc6a827e4645430b192a536a"
+        ],
+        "merge_sha": "27cd4652995a53089c77e7c3613bf0cd955971f4",
+        "merge_tree_sha": "c50f4e84cb3d5a6c6ea235dec128428aa598dd5f",
+        "merge_parent_shas": [
+          "df83574f2f735bed32158269718eba948edfd3c4",
+          "309cf94b8d8dd44a06bdf02ada93af2c92bedbb7"
+        ],
+        "postimage_blobs": [
+          {
+            "path": "services/control-plane/bff/main.py",
+            "sha": "d890d58c5e02c46997abb8a25c403b043cbff192"
+          },
+          {
+            "path": "services/control-plane/bff/test_bff_auth_facade.py",
+            "sha": "f1cf3b843a365a1166584721635a21fe5c04406a"
+          },
+          {
+            "path": "services/control-plane/bff/test_bff_session_auth_me_contract.py",
+            "sha": "65115ac7f620e7ee0908bbde05cb19778042e8e7"
+          }
+        ]
+      },
+      "deployment_pair": null,
+      "request_cases": [],
+      "expected_replay": {
+        "pre_switch_decision": "reject",
+        "effective_tree_delta": false,
+        "second_deploy_forbidden": true,
+        "rejection_reason_ids": [
+          "semantic_repair_already_admitted",
+          "duplicate_repair_lease_conflict",
+          "merge_tree_equals_first_parent_tree",
+          "second_deploy_forbidden"
+        ]
+      }
+    }
+  ]
+}

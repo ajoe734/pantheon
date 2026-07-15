@@ -1,9 +1,9 @@
 # TJ-E2E-010 - Historical Replay And Legacy Backfill
 
-Owner: Antigravity  
-Reviewer: Claude  
-Wave: 4  
-Repository: `ajoe734/pantheon`  
+Owner: Antigravity
+Reviewer: Claude
+Wave: 4
+Repository: `ajoe734/pantheon`
 Dependencies: `TJ-E2E-004`, `TJ-E2E-005`
 
 ## Goal

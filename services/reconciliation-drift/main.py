@@ -1227,9 +1227,9 @@ class IncidentTriggerBody(BaseModel):
     generated_at: Optional[str] = None
 
 
-def _fetch_telemetry_runtime_summaries(telemetry_url: str) -> List[Dict[str, Any]]:
+def _fetch_telemetry_runtime_summaries(telemetry_url: str) -> List[Dict[str, Any]] | None:
     if not telemetry_url:
-        return []
+        return None
     url = telemetry_url.rstrip("/") + "/api/telemetry/runtime-summaries"
     try:
         request = urllib.request.Request(url, headers={"Accept": "application/json"})
@@ -1239,10 +1239,11 @@ def _fetch_telemetry_runtime_summaries(telemetry_url: str) -> List[Dict[str, Any
         if isinstance(payload, list):
             return payload
         if isinstance(payload, dict):
-            return payload.get("summaries") or payload.get("items") or []
+            res = payload.get("summaries") or payload.get("items")
+            return res if isinstance(res, list) else []
         return []
     except (urllib.error.URLError, OSError, json.JSONDecodeError):
-        return []
+        return None
 
 
 def _tick_evaluation_id(tick_id: str, binding_id: str) -> str:
@@ -1255,6 +1256,270 @@ def _trigger_evaluation_id(trigger_id: str, binding_id: str) -> str:
     safe_trigger = _safe_id_component(trigger_id, fallback="trigger", limit=48)
     safe_binding = _safe_id_component(binding_id, fallback="binding", limit=24)
     return f"rdeval-incident-{safe_trigger}-{safe_binding}"
+
+
+def _summary_telemetry_event_ids(summary: Dict[str, Any]) -> List[str]:
+    values: List[Any] = list(summary.get("telemetry_event_ids") or [])
+    values.extend((summary.get("last_event_id"), summary.get("last_heartbeat_event_id")))
+    return list(dict.fromkeys(str(value) for value in values if value))
+
+
+def _summary_observed_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
+    observed: Dict[str, float] = {}
+    nested = summary.get("observed_metrics") or summary.get("metrics") or {}
+    if isinstance(nested, dict):
+        for key, raw_value in nested.items():
+            number = _numeric(raw_value)
+            if number is not None:
+                observed[str(key)] = number
+    for key in (
+        "pnl",
+        "drawdown",
+        "sharpe_ratio",
+        "fill_rate",
+        "avg_slippage_bps",
+        "total_trades",
+        "queue_lag_ms",
+        "event_delivery_lag_ms",
+    ):
+        number = _numeric(summary.get(key))
+        if number is not None:
+            observed[key] = number
+    return observed
+
+
+def _lag_check(metric: str, value: float | None, *, warning: float, critical: float) -> Dict[str, Any]:
+    if value is None:
+        return {
+            "check": metric,
+            "status": "degraded",
+            "observed": None,
+            "warning_threshold": warning,
+            "critical_threshold": critical,
+            "detail": f"{metric} is absent from authoritative runtime telemetry",
+        }
+    if value >= critical:
+        status = "critical"
+    elif value >= warning:
+        status = "warning"
+    else:
+        status = "ok"
+    return {
+        "check": metric,
+        "status": status,
+        "observed": value,
+        "warning_threshold": warning,
+        "critical_threshold": critical,
+        "detail": f"{metric}={value:g}ms",
+    }
+
+
+def _summary_actual_state_checks(
+    summary: Dict[str, Any],
+    *,
+    binding_id: str,
+    runtime_id: str,
+    telemetry_event_ids: List[str],
+    observed_metrics: Dict[str, float],
+) -> List[Dict[str, Any]]:
+    checks: List[Dict[str, Any]] = []
+    missing_identity = [
+        name
+        for name, value in (
+            ("binding_id", binding_id),
+            ("runtime_id", runtime_id),
+            ("telemetry_event_ids", telemetry_event_ids),
+        )
+        if not value
+    ]
+    checks.append(
+        {
+            "check": "authoritative_actual_identity",
+            "status": "degraded" if missing_identity else "ok",
+            "detail": "authoritative runtime identity and event evidence linked"
+            if not missing_identity
+            else "runtime summary missing " + ", ".join(missing_identity),
+            "missing_fields": missing_identity,
+            "telemetry_event_ids": telemetry_event_ids,
+        }
+    )
+
+    state = str(summary.get("state") or "").strip().lower()
+    if not state:
+        state_status = "degraded"
+    elif state in {"failed", "error", "dead", "stopped", "retired"}:
+        state_status = "critical"
+    elif state in {"degraded", "paused", "stale", "disconnected"}:
+        state_status = "warning"
+    else:
+        state_status = "ok"
+    checks.append(
+        {
+            "check": "runtime_state",
+            "status": state_status,
+            "observed": state or None,
+            "detail": f"authoritative runtime state is {state or 'missing'}",
+        }
+    )
+
+    health_summary = summary.get("health_summary")
+    health_values = health_summary if isinstance(health_summary, dict) else {}
+    unhealthy = {
+        str(key): str(value)
+        for key, value in health_values.items()
+        if str(value).strip().lower()
+        not in {"ok", "healthy", "active", "connected", "available", "not_applicable"}
+    }
+    if not health_values:
+        health_status = "degraded"
+    elif unhealthy:
+        health_status = "warning"
+    else:
+        health_status = "ok"
+    checks.append(
+        {
+            "check": "runtime_health_summary",
+            "status": health_status,
+            "observed": health_values,
+            "unhealthy": unhealthy,
+            "detail": "runtime health summary is authoritative and healthy"
+            if health_status == "ok"
+            else "runtime health summary is missing or unhealthy",
+        }
+    )
+
+    if not observed_metrics:
+        checks.append(
+            {
+                "check": "actual_metrics_presence",
+                "status": "degraded",
+                "detail": "runtime summary has no authoritative numeric actual-state metrics",
+            }
+        )
+    else:
+        checks.append(
+            {
+                "check": "actual_metrics_presence",
+                "status": "ok",
+                "detail": "runtime summary exposes authoritative numeric actual-state metrics",
+                "metric_names": sorted(observed_metrics),
+            }
+        )
+
+    checks.append(
+        _lag_check(
+            "queue_lag_ms",
+            observed_metrics.get("queue_lag_ms"),
+            warning=float(os.getenv("RECONCILIATION_DRIFT_QUEUE_LAG_WARNING_MS", "5000")),
+            critical=float(os.getenv("RECONCILIATION_DRIFT_QUEUE_LAG_CRITICAL_MS", "15000")),
+        )
+    )
+    checks.append(
+        _lag_check(
+            "event_delivery_lag_ms",
+            observed_metrics.get("event_delivery_lag_ms"),
+            warning=float(os.getenv("RECONCILIATION_DRIFT_EVENT_LAG_WARNING_MS", "10000")),
+            critical=float(os.getenv("RECONCILIATION_DRIFT_EVENT_LAG_CRITICAL_MS", "30000")),
+        )
+    )
+    return checks
+
+
+def _scheduled_drift_report(
+    *,
+    summary: Dict[str, Any],
+    evaluation: Dict[str, Any],
+    telemetry_event_ids: List[str],
+    timestamp: str,
+) -> Dict[str, Any] | None:
+    failing_checks = [
+        check
+        for check in [*evaluation.get("drift_checks", []), *evaluation.get("reconciliation_checks", [])]
+        if check.get("status") in {"warning", "critical"}
+    ]
+    if not failing_checks:
+        return None
+    required = {
+        "binding_id": evaluation.get("binding_id"),
+        "runtime_id": evaluation.get("runtime_id"),
+        "deployment_stage": summary.get("deployment_stage"),
+        "deployment_plan_id": summary.get("deployment_plan_id") or summary.get("plan_id"),
+        "capital_pool_id": summary.get("capital_pool_id"),
+        "persona_capital_binding_id": summary.get("persona_capital_binding_id"),
+        "artifact_id": summary.get("artifact_id"),
+        "artifact_version": summary.get("artifact_version"),
+        "trace_id": summary.get("trace_id"),
+    }
+    if any(value in (None, "") for value in required.values()) or not telemetry_event_ids:
+        return None
+    worst = max(failing_checks, key=lambda item: _status_rank(str(item.get("status") or "ok")))
+    metric = str(worst.get("metric") or worst.get("check") or "runtime_health")
+    event_id = telemetry_event_ids[0]
+    report_id = f"drift-{_safe_id_component(event_id)}-{_safe_id_component(metric)}"
+    cluster_id = f"drift:{_safe_id_component(metric)}"
+    severity = _incident_severity(str(worst.get("status") or "warning"))
+    return {
+        "id": report_id,
+        "drift_report_id": report_id,
+        "recon_run_id": evaluation["evaluation_id"],
+        "evaluation_id": evaluation["evaluation_id"],
+        "drift_type": "runtime_health" if "lag" in metric or "runtime" in metric else "execution",
+        "incident_cluster_id": cluster_id,
+        "scope_ref": required["binding_id"],
+        **required,
+        "telemetry_event_ids": telemetry_event_ids,
+        "baseline_ref": str(summary.get("baseline_ref") or "governed-runtime-health-policy"),
+        "current_ref": f"telemetry-runtime-summary:{required['runtime_id']}:{event_id}",
+        "severity": severity,
+        "status": "open",
+        "recommended_action": "open_incident",
+        "metrics": {
+            "baseline_metrics": evaluation.get("baseline_metrics", {}),
+            "current_metrics": evaluation.get("observed_metrics", {}),
+            "drift_checks": failing_checks,
+            "worst_metric": metric,
+            "breached_metric_ids": [
+                str(item.get("metric") or item.get("check")) for item in failing_checks
+            ],
+        },
+        "evidence_refs": [
+            *[f"telemetry_event:{event_id_value}" for event_id_value in telemetry_event_ids],
+            f"runtime_binding:{required['binding_id']}",
+            f"drift_evaluation:{evaluation['evaluation_id']}",
+            f"drift_report:{report_id}",
+        ],
+        "generated_at": timestamp,
+        "source_contract": {
+            "telemetry_truth_owner": "telemetry-ingest",
+            "incident_truth_owner": "incidents",
+            "runtime_truth_owner": "runtime-manager",
+            "derived_only": True,
+            "emergency_control_chain_affected": False,
+        },
+    }
+
+
+def _dispatch_scheduled_drift_report(report: Dict[str, Any]) -> Dict[str, Any]:
+    stored = store.put_drift_report(report)
+    result: Dict[str, Any] = {
+        "status": "not_configured",
+        "drift_report_id": stored["drift_report_id"],
+        "incident_id": None,
+        "error": None,
+    }
+    try:
+        incident = _classify_drift_report_incident(stored)
+    except HTTPException as exc:
+        result["status"] = "retryable_error"
+        result["error"] = {"status_code": exc.status_code, "detail": exc.detail}
+        return result
+    if incident is None:
+        return result
+    result["status"] = "delivered"
+    result["incident_id"] = str(
+        incident.get("incident_id") or incident.get("id") or ""
+    ).strip() or None
+    return result
 
 
 def _first_trigger_value(*payloads: Optional[Dict[str, Any]], keys: tuple[str, ...]) -> Any:
@@ -1331,12 +1596,44 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
     tick_id = body.tick_id or timestamp
 
     telemetry_url = os.getenv("PANTHEON_TELEMETRY_API_URL", "").rstrip("/")
-    summaries: List[Dict[str, Any]] = _fetch_telemetry_runtime_summaries(telemetry_url)
+    summaries = _fetch_telemetry_runtime_summaries(telemetry_url)
+
+    if summaries is None:
+        return {
+            "status": "failure",
+            "tick_id": tick_id,
+            "trigger": "scheduled",
+            "evaluated_binding_count": 0,
+            "skipped_binding_count": 0,
+            "evaluation_ids": [],
+            "skipped_binding_ids": [],
+            "telemetry_summaries_fetched": 0,
+            "triggered_at": timestamp,
+            "detail": "telemetry service unavailable",
+        }
+
+    if not summaries:
+        return {
+            "status": "degraded",
+            "tick_id": tick_id,
+            "trigger": "scheduled",
+            "evaluated_binding_count": 0,
+            "skipped_binding_count": 0,
+            "evaluation_ids": [],
+            "skipped_binding_ids": [],
+            "telemetry_summaries_fetched": 0,
+            "triggered_at": timestamp,
+            "detail": "telemetry summaries empty",
+        }
 
     existing_evaluation_ids = {str(item.get("evaluation_id") or "") for item in store.list_evaluations()}
 
     created_evaluation_ids: List[str] = []
     skipped_binding_ids: List[str] = []
+    evaluation_statuses: List[str] = []
+    drift_report_ids: List[str] = []
+    incident_ids: List[str] = []
+    incident_delivery_errors: List[Dict[str, Any]] = []
 
     for summary in summaries:
         binding_id = str(
@@ -1347,58 +1644,96 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
             continue
 
         evaluation_id = _tick_evaluation_id(tick_id, binding_id)
+        telemetry_event_ids = _summary_telemetry_event_ids(summary)
+        observed_metrics = _summary_observed_metrics(summary)
+        raw_baseline_metrics = summary.get("baseline_metrics") or {}
+        baseline_metrics: Dict[str, Any] = (
+            raw_baseline_metrics if isinstance(raw_baseline_metrics, dict) else {}
+        )
+        raw_thresholds = summary.get("thresholds") or summary.get("drift_thresholds") or {}
+        thresholds: Dict[str, Any] = raw_thresholds if isinstance(raw_thresholds, dict) else {}
+        drift_checks = _drift_checks(baseline_metrics, observed_metrics, thresholds)
+        reconciliation_checks = _summary_actual_state_checks(
+            summary,
+            binding_id=binding_id,
+            runtime_id=runtime_id,
+            telemetry_event_ids=telemetry_event_ids,
+            observed_metrics=observed_metrics,
+        )
+        status = _worst_status(
+            [
+                str(check.get("status") or "degraded")
+                for check in [*drift_checks, *reconciliation_checks]
+            ]
+        )
+
         if evaluation_id in existing_evaluation_ids:
             skipped_binding_ids.append(binding_id)
+            existing_evaluation = store.get_evaluation(evaluation_id)
+            if existing_evaluation is None:
+                continue
+            evaluation_statuses.append(str(existing_evaluation.get("status") or status))
+            report = _scheduled_drift_report(
+                summary=summary,
+                evaluation=existing_evaluation,
+                telemetry_event_ids=telemetry_event_ids,
+                timestamp=timestamp,
+            )
+            delivery = existing_evaluation.get("incident_delivery")
+            if report is None:
+                continue
+            existing_report = store.get_drift_report(str(report["drift_report_id"]))
+            report_to_dispatch = existing_report or report
+            drift_report_ids.append(str(report_to_dispatch["drift_report_id"]))
+            if isinstance(delivery, dict) and delivery.get("status") == "delivered":
+                incident_id = str(delivery.get("incident_id") or "").strip()
+                if incident_id:
+                    incident_ids.append(incident_id)
+                continue
+            delivery_result = _dispatch_scheduled_drift_report(report_to_dispatch)
+            existing_evaluation["incident_delivery"] = {
+                **delivery_result,
+                "attempted_at": timestamp,
+            }
+            store.put_evaluation(existing_evaluation)
+            incident_id = str(delivery_result.get("incident_id") or "").strip()
+            if incident_id:
+                incident_ids.append(incident_id)
+            if delivery_result.get("error"):
+                incident_delivery_errors.append(
+                    {
+                        "drift_report_id": delivery_result["drift_report_id"],
+                        **delivery_result["error"],
+                    }
+                )
             continue
-
-        # Normalize telemetry event IDs from the real telemetry runtime-summary
-        # contract.  The projection exposes last_event_id and last_heartbeat_event_id
-        # rather than a telemetry_event_ids list; accept both forms so the scheduled
-        # reconciler links real event evidence regardless of the source shape.
-        raw_event_ids: list[Any] = list(summary.get("telemetry_event_ids") or [])
-        if not raw_event_ids:
-            seen_eids: set[str] = set()
-            for _eid in (summary.get("last_event_id"), summary.get("last_heartbeat_event_id")):
-                if _eid:
-                    _eid_str = str(_eid)
-                    if _eid_str not in seen_eids:
-                        raw_event_ids.append(_eid_str)
-                        seen_eids.add(_eid_str)
-        telemetry_event_ids = [str(eid) for eid in raw_event_ids if eid]
-        observed_metrics: Dict[str, Any] = summary.get("observed_metrics") or summary.get("metrics") or {}
-        baseline_metrics: Dict[str, Any] = summary.get("baseline_metrics") or {}
 
         evaluation = {
             "id": evaluation_id,
             "evaluation_id": evaluation_id,
             "binding_id": binding_id,
             "runtime_id": runtime_id or None,
-            "status": "ok",
+            "status": status,
             "summary": {
-                "status": "ok",
+                "status": status,
                 "telemetry_event_count": len(telemetry_event_ids),
                 "baseline_metric_count": len(baseline_metrics),
                 "observed_metric_count": len(observed_metrics),
-                "drift_check_count": 0,
-                "reconciliation_check_count": 1,
+                "drift_check_count": len(drift_checks),
+                "reconciliation_check_count": len(reconciliation_checks),
             },
             "baseline_metrics": baseline_metrics,
             "observed_metrics": observed_metrics,
-            "drift_checks": [],
-            "reconciliation_checks": [
-                {
-                    "check": "telemetry_runtime_alignment",
-                    "status": "ok",
-                    "detail": "scheduled reconciliation pass; binding and runtime identifiers linked",
-                    "binding_id": binding_id,
-                    "runtime_id": runtime_id or None,
-                    "telemetry_event_ids": telemetry_event_ids,
-                }
-            ],
+            "drift_checks": drift_checks,
+            "reconciliation_checks": reconciliation_checks,
             "evidence_refs": [
                 {"type": "tick", "id": tick_id},
                 {"type": "runtime_binding", "id": binding_id},
                 *([{"type": "runtime_session", "id": runtime_id}] if runtime_id else []),
+                *[
+                    {"type": "telemetry_event", "id": event_id}
+                    for event_id in telemetry_event_ids
+                ],
             ],
             "tick_id": tick_id,
             "trigger": "scheduled",
@@ -1414,15 +1749,53 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
         stored = store.put_evaluation(evaluation)
         existing_evaluation_ids.add(evaluation_id)
         created_evaluation_ids.append(stored["evaluation_id"])
+        evaluation_statuses.append(status)
+
+        report = _scheduled_drift_report(
+            summary=summary,
+            evaluation=stored,
+            telemetry_event_ids=telemetry_event_ids,
+            timestamp=timestamp,
+        )
+        if report is None:
+            continue
+        delivery_result = _dispatch_scheduled_drift_report(report)
+        drift_report_ids.append(str(delivery_result["drift_report_id"]))
+        stored["incident_delivery"] = {
+            **delivery_result,
+            "attempted_at": timestamp,
+        }
+        store.put_evaluation(stored)
+        incident_id = str(delivery_result.get("incident_id") or "").strip()
+        if incident_id:
+            incident_ids.append(incident_id)
+        if delivery_result.get("error"):
+            incident_delivery_errors.append(
+                {
+                    "drift_report_id": delivery_result["drift_report_id"],
+                    **delivery_result["error"],
+                }
+            )
+
+    tick_status = _worst_status(evaluation_statuses)
+    if incident_delivery_errors:
+        tick_status = "failure"
+    elif not created_evaluation_ids and skipped_binding_ids:
+        tick_status = _worst_status(evaluation_statuses)
+    elif not created_evaluation_ids:
+        tick_status = "degraded"
 
     return {
-        "status": "ok",
+        "status": tick_status,
         "tick_id": tick_id,
         "trigger": "scheduled",
         "evaluated_binding_count": len(created_evaluation_ids),
         "skipped_binding_count": len(skipped_binding_ids),
         "evaluation_ids": created_evaluation_ids,
         "skipped_binding_ids": skipped_binding_ids,
+        "drift_report_ids": drift_report_ids,
+        "incident_ids": list(dict.fromkeys(incident_ids)),
+        "incident_delivery_errors": incident_delivery_errors,
         "telemetry_summaries_fetched": len(summaries),
         "triggered_at": timestamp,
     }

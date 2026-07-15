@@ -186,20 +186,20 @@ def test_recommendation_evidence_and_governance_contract() -> None:
             # Check immutable ranking evidence reference
             assert "ranking_evidence_ref" in item
             assert item["ranking_evidence_ref"].startswith("ranking-evidence:2026-q1-")
-            
+
             # Check Human Review state structure
             assert "human_review_state" in item
             hr_state = item["human_review_state"]
             assert "status" in hr_state
             assert "decision_status" in hr_state
             assert "submitted" in hr_state
-            
+
             # Check Governance structure
             assert "governance" in item
             gov = item["governance"]
             assert gov["requires_human_gate_decision"] is True
             assert gov["live_capital_mutation"] is False
-            
+
             # Verify ranking evidence cannot be mistaken for approval or application
             assert item["live_capital_mutation"] is False
             assert item["requires_human_gate_decision"] is True
@@ -222,8 +222,8 @@ def test_zero_rebalance_and_formula_rows() -> None:
 def test_explicit_source_states_and_freshness() -> None:
     """Verify metadata carries explicit source states, freshness, coverage, and observed time."""
     store = _fresh_store(allow_local_snapshot_fallback=True)
-    
-    # Seed a persona to make sure performance-attribution endpoint doesn't fail 
+
+    # Seed a persona to make sure performance-attribution endpoint doesn't fail
     store.create_persona(
         persona_id="persona-test-1",
         name="Test Persona 1",
@@ -231,13 +231,13 @@ def test_explicit_source_states_and_freshness() -> None:
         lifecycle_state="deployed",
         metadata={},
     )
-    
+
     endpoints = [
         ("/bff/management/quarterly-ranking", {"quarter": "2026-Q1"}),
         ("/bff/management/performance-attribution", {}),
         ("/bff/management/persona-league/rankings", {}),
     ]
-    
+
     with _client_with_store(store) as client:
         for path, params in endpoints:
             response = client.get(
@@ -250,10 +250,10 @@ def test_explicit_source_states_and_freshness() -> None:
             meta = body["meta"]
             assert "snapshot_at" in meta
             assert "surfaces" in meta
-            
+
             surfaces = meta["surfaces"]
             assert len(surfaces) > 0, f"No surfaces returned for {path}"
-            
+
             # Verify freshness, coverage, missing_bindings, and observed_time contract
             for name, surface in surfaces.items():
                 assert "status" in surface, f"Missing status in {name} of {path}"

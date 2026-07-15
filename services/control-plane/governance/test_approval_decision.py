@@ -391,6 +391,8 @@ class TestValidateDecisionJSON(unittest.TestCase):
             "rationale": "Looks good",
             "created_at": "2026-04-10T00:00:00Z",
             "decided_at": "2026-04-10T00:01:00Z",
+            "tenant_id": "pantheon-test",
+            "owner_user_id": "test-user",
         }
         errors = validate_decision_json(data)
         self.assertEqual(errors, [])
@@ -403,6 +405,8 @@ class TestValidateDecisionJSON(unittest.TestCase):
             "target_version": "1.0.0",
             "decision_state": "proposed",
             "created_at": "2026-04-10T00:00:00Z",
+            "tenant_id": "pantheon-test",
+            "owner_user_id": "test-user",
         }
         errors = validate_decision_json(data)
         self.assertEqual(errors, [])
@@ -582,6 +586,8 @@ class TestSchemaFile(unittest.TestCase):
             "target_version": "v1",
             "decision_state": "proposed",
             "created_at": "2026-04-10T00:00:00Z",
+            "tenant_id": "pantheon-test",
+            "owner_user_id": "test-user",
         }
         errors = list(Draft7Validator(schema).iter_errors(payload))
         self.assertEqual(errors, [])
@@ -611,6 +617,8 @@ class TestSchemaFile(unittest.TestCase):
                 {"ref_type": "committee_memo", "ref_id": "memo-alloc-001"},
                 {"ref_type": "service_handoff", "ref_id": "gh-alloc-001"},
             ],
+            "tenant_id": "pantheon-test",
+            "owner_user_id": "test-user",
         }
         errors = list(Draft7Validator(schema).iter_errors(payload))
         self.assertEqual(errors, [], msg="\n".join(str(e) for e in errors))

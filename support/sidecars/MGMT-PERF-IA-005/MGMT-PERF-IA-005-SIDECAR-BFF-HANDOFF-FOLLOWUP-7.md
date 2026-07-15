@@ -111,4 +111,3 @@ Pantheon sidecar changes no frontend files.
 - Compared the PR description and files with the support boundary above.
 - Confirmed this change is limited to this task-scoped support artifact.
 - Did not scan `current-work.md` or the complete `ai-activity-log.jsonl`.
-

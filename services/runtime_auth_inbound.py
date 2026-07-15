@@ -27,6 +27,9 @@ Environment
 PANTHEON_RUNTIME_AUTH_MODE
     ``strict`` (require JWT validated against the configured secret)
     or ``permissive`` (default; accept structured legacy tokens too).
+    Any value outside this allowlist (typos, malformed strings, unset-but-
+    non-empty) fails closed to ``strict`` rather than falling through to
+    permissive structured-token parsing.
 PANTHEON_RUNTIME_JWT_SECRET
     HS256 secret. Required when mode is ``strict`` *and* the inbound token has
     JWT shape. When unset, JWT-shaped tokens cannot be verified and only
@@ -88,6 +91,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
 
 _DEFAULT_ROLE = "operator"
 _MFA_PATTERN = re.compile(r"\d{6}")
+_VALID_AUTH_MODES = frozenset({"strict", "permissive"})
 
 
 @dataclass(frozen=True)
@@ -680,6 +684,8 @@ def validate_request_auth(
         raise AuthError("401", "Unauthorized: empty token", 401)
 
     mode = _env(env, "PANTHEON_RUNTIME_AUTH_MODE", "permissive").lower()
+    if mode not in _VALID_AUTH_MODES:
+        mode = "strict"
     secret = _env(env, "PANTHEON_RUNTIME_JWT_SECRET")
     issuer = _env(env, "PANTHEON_RUNTIME_JWT_ISSUER") or None
     audience = _env(env, "PANTHEON_RUNTIME_JWT_AUDIENCE") or None

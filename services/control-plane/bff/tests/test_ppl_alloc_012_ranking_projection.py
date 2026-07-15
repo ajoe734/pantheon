@@ -2016,4 +2016,3 @@ def test_pm12_quarterly_rows_allocation_policy_compatibility() -> None:
     assert line["target_weight"] == 0.05
     assert line["delta"] == 0.01
     assert "quarterly_increase_cap_25pct" in line["cap_reasons"]
-

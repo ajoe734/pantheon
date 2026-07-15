@@ -1,9 +1,9 @@
 # TJ-E2E-001 - Producer And Correlation Inventory
 
-Owner: Claude  
-Reviewer: Antigravity  
-Wave: 0  
-Repository: `ajoe734/pantheon`  
+Owner: Claude
+Reviewer: Antigravity
+Wave: 0
+Repository: `ajoe734/pantheon`
 Dependencies: none
 
 ## Goal

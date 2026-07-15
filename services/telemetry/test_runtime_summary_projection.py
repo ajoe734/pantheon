@@ -84,6 +84,37 @@ class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
         self.assertEqual(summary["reported_health_summary"], {"runtime": "ok"})
         self.assertEqual(summary["health_summary"]["broker"], "ok")
 
+    def test_trace_and_correlation_envelope_are_safely_projected(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "runtime_summaries.json"
+            store = RuntimeSummaryProjectionStore(path, heartbeat_stale_after_seconds=60)
+            event = _runtime_heartbeat_event()
+            event["trace_id"] = "trace-paper-001"
+            event["correlation_envelope"] = {
+                "schema_version": "trade-journey-envelope/1",
+                "tenant_id": "tenant-001",
+                "environment": "paper",
+                "journey_id": "tj-paper-001",
+                "correlation_id": "corr-paper-001",
+                "trace_id": "trace-paper-001",
+                "event_id": "corr-event-paper-001",
+                "causation_event_id": "signal-paper-001",
+                "producer": "execution.paper_runtime",
+                "event_time": "2026-05-01T00:00:05Z",
+                "received_at": "2026-05-01T00:00:05Z",
+                "producer_revision": 1,
+            }
+
+            summary = store.project_event(event)
+            event["correlation_envelope"]["trace_id"] = "mutated-after-projection"
+            reloaded = RuntimeSummaryProjectionStore(path, heartbeat_stale_after_seconds=60)
+
+            self.assertEqual(summary["trace_id"], "trace-paper-001")
+            self.assertEqual(
+                reloaded.get("rt-paper-001")["correlation_envelope"]["trace_id"],
+                "trace-paper-001",
+            )
+
     def test_deploy_completed_sets_runtime_active_without_fabricating_heartbeat(self):
         store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
 
@@ -163,6 +194,247 @@ class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
 
         self.assertIsNone(result)
 
+    def test_performance_metrics_prefer_independent_explicit_as_of_timestamps(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        event = _event("pnl_snapshot", created_at="2026-05-01T00:10:00Z")
+        event["metrics"] = {"pnl": 125.5, "drawdown_pct": 0.08}
+        event["pnl_as_of"] = "2026-05-01T00:08:00Z"
+        event["drawdown_as_of"] = "2026-05-01T00:09:00+00:00"
+
+        summary = store.project_event(event)
+
+        self.assertEqual(summary["pnl"], 125.5)
+        self.assertEqual(summary["pnl_at"], "2026-05-01T00:08:00Z")
+        self.assertEqual(summary["drawdown"], 0.08)
+        self.assertEqual(summary["drawdown_at"], "2026-05-01T00:09:00+00:00")
+
+    def test_performance_metrics_fall_back_to_created_at_for_legacy_events(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        event = _event("drawdown_snapshot", created_at="2026-05-01T00:10:00Z")
+        event["metrics"] = {"pnl": -25.0, "drawdown_pct": 0.12}
+
+        summary = store.project_event(event)
+
+        self.assertEqual(summary["pnl_at"], "2026-05-01T00:10:00Z")
+        self.assertEqual(summary["drawdown_at"], "2026-05-01T00:10:00Z")
+
+    def test_invalid_explicit_metric_as_of_falls_back_to_created_at(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        event = _event("pnl_snapshot", created_at="2026-05-01T00:10:00Z")
+        event["metrics"] = {"pnl": 5.0, "drawdown_pct": 0.02}
+        event["pnl_as_of"] = "not-a-timestamp"
+        event["drawdown_as_of"] = "2026-05-01T00:09:00"  # no timezone
+
+        summary = store.project_event(event)
+
+        self.assertEqual(summary["pnl_at"], "2026-05-01T00:10:00Z")
+        self.assertEqual(summary["drawdown_at"], "2026-05-01T00:10:00Z")
+
+    def test_threshold_derived_echo_does_not_refresh_explicit_metric_as_of(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        genuine = _event("drawdown_snapshot", created_at="2026-05-01T00:05:00Z")
+        genuine["metrics"] = {"pnl": -10.0, "drawdown_pct": 0.10}
+        genuine["pnl_as_of"] = "2026-05-01T00:03:00Z"
+        genuine["drawdown_as_of"] = "2026-05-01T00:04:00Z"
+        store.project_event(genuine)
+
+        derived = _event("drawdown_snapshot", created_at="2026-05-01T00:20:00Z")
+        derived["event_id"] = "evt-derived-threshold-echo"
+        derived["metrics"] = {"pnl": -999.0, "drawdown_pct": 0.99}
+        derived["pnl_as_of"] = "2026-05-01T00:18:00Z"
+        derived["drawdown_as_of"] = "2026-05-01T00:19:00Z"
+        derived["metadata"]["derived_from_threshold_evaluation"] = True
+
+        summary = store.project_event(derived)
+
+        self.assertEqual(summary["pnl"], -10.0)
+        self.assertEqual(summary["pnl_at"], "2026-05-01T00:03:00Z")
+        self.assertEqual(summary["drawdown"], 0.10)
+        self.assertEqual(summary["drawdown_at"], "2026-05-01T00:04:00Z")
+
+    def test_older_metric_observations_do_not_regress_independent_values(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        initial = _event("pnl_snapshot", created_at="2026-05-01T00:20:00Z")
+        initial["metrics"] = {"pnl": 100.0, "drawdown_pct": 0.10}
+        initial["pnl_as_of"] = "2026-05-01T00:10:00Z"
+        initial["drawdown_as_of"] = "2026-05-01T00:10:00Z"
+        store.project_event(initial)
+
+        older = _event("drawdown_snapshot", created_at="2026-05-01T00:30:00Z")
+        older["event_id"] = "evt-unique-older-observations"
+        older["metrics"] = {"pnl": -50.0, "drawdown_pct": 0.40}
+        older["pnl_as_of"] = "2026-05-01T00:09:00Z"
+        older["drawdown_as_of"] = "2026-05-01T00:09:00Z"
+        summary = store.project_event(older)
+
+        self.assertEqual(summary["pnl"], 100.0)
+        self.assertEqual(summary["pnl_at"], "2026-05-01T00:10:00Z")
+        self.assertEqual(summary["drawdown"], 0.10)
+        self.assertEqual(summary["drawdown_at"], "2026-05-01T00:10:00Z")
+
+        mixed = _event("pnl_snapshot", created_at="2026-05-01T00:40:00Z")
+        mixed["event_id"] = "evt-independent-metric-observations"
+        mixed["metrics"] = {"pnl": 125.0, "drawdown_pct": 0.50}
+        mixed["pnl_as_of"] = "2026-05-01T00:11:00Z"
+        mixed["drawdown_as_of"] = "2026-05-01T00:08:00Z"
+        summary = store.project_event(mixed)
+
+        self.assertEqual(summary["pnl"], 125.0)
+        self.assertEqual(summary["pnl_at"], "2026-05-01T00:11:00Z")
+        self.assertEqual(summary["drawdown"], 0.10)
+        self.assertEqual(summary["drawdown_at"], "2026-05-01T00:10:00Z")
+
+    def test_later_created_at_alone_cannot_roll_over_a_legacy_binding(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        old = _event("pnl_snapshot", created_at="2026-05-01T00:05:00Z")
+        old["metrics"] = {"pnl": 50.0, "drawdown_pct": 0.02}
+        store.project_event(old)
+
+        new = _event("heartbeat", created_at="2026-05-01T00:10:00Z")
+        new.update(
+            {
+                "event_id": "evt-binding-002-heartbeat",
+                "binding_id": "rtb-paper-002",
+                "artifact_id": "artifact-paper-002",
+                "artifact_version": "2.0.0",
+                "plan_id": "plan-paper-002",
+            }
+        )
+        summary = store.project_event(new)
+
+        self.assertEqual(summary["binding_id"], "rtb-paper-001")
+        self.assertEqual(summary["artifact_id"], "artifact-paper-001")
+        self.assertEqual(summary["last_event_id"], old["event_id"])
+        self.assertEqual(summary["pnl"], 50.0)
+        self.assertEqual(summary["drawdown"], 0.02)
+        self.assertEqual(
+            summary["projection_diagnostics"]["last_binding_rollover_rejection"][
+                "reason"
+            ],
+            "binding_effective_boundary_unavailable",
+        )
+
+    def test_retired_binding_late_event_cannot_reclaim_after_rollover(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "runtime_summaries.json"
+            store = RuntimeSummaryProjectionStore(path, heartbeat_stale_after_seconds=60)
+            old = _event(created_at="2026-05-01T00:05:00Z")
+            old["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:00:00Z"
+            store.project_event(old)
+
+            new = _event("heartbeat", created_at="2026-05-01T00:10:00Z")
+            new.update(
+                {
+                    "event_id": "evt-binding-002-heartbeat",
+                    "binding_id": "rtb-paper-002",
+                    "artifact_id": "artifact-paper-002",
+                    "artifact_version": "2.0.0",
+                    "plan_id": "plan-paper-002",
+                }
+            )
+            new["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:10:00Z"
+            store.project_event(new)
+
+            # Reload to prove that the generation boundary and retired-binding
+            # tombstone survive the JSON read-model restart.
+            reloaded = RuntimeSummaryProjectionStore(path, heartbeat_stale_after_seconds=60)
+            late_old = _event("pnl_snapshot", created_at="2026-05-01T00:20:00Z")
+            late_old["event_id"] = "evt-late-retired-binding-001"
+            late_old["metrics"] = {"pnl": 999.0, "drawdown_pct": 0.99}
+            summary = reloaded.project_event(late_old)
+
+            self.assertEqual(summary["binding_id"], "rtb-paper-002")
+            self.assertEqual(summary["artifact_id"], "artifact-paper-002")
+            self.assertEqual(summary["last_event_id"], "evt-binding-002-heartbeat")
+            self.assertNotIn("pnl", summary)
+            diagnostic = summary["projection_diagnostics"][
+                "last_binding_rollover_rejection"
+            ]
+            self.assertEqual(diagnostic["reason"], "retired_binding_reclaim")
+            self.assertEqual(diagnostic["candidate_binding_id"], "rtb-paper-001")
+            self.assertEqual(diagnostic["current_binding_id"], "rtb-paper-002")
+
+    def test_projection_first_binding_rejects_unseen_late_binding(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        current = _event("heartbeat", created_at="2026-05-01T00:11:00Z")
+        current.update(
+            {
+                "event_id": "evt-binding-002-first-projected",
+                "binding_id": "rtb-paper-002",
+                "artifact_id": "artifact-paper-002",
+                "artifact_version": "2.0.0",
+                "plan_id": "plan-paper-002",
+            }
+        )
+        current["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:10:00Z"
+        store.project_event(current)
+
+        # B1 was never observed by this projection, so it is not a tombstone.
+        # Its later event time still cannot stand in for binding generation.
+        unseen_old = _event("pnl_snapshot", created_at="2026-05-01T00:20:00Z")
+        unseen_old["event_id"] = "evt-unseen-binding-001-late"
+        unseen_old["metrics"] = {"pnl": 999.0, "drawdown_pct": 0.99}
+        summary = store.project_event(unseen_old)
+
+        self.assertEqual(summary["binding_id"], "rtb-paper-002")
+        self.assertEqual(summary["last_event_id"], "evt-binding-002-first-projected")
+        self.assertNotIn("pnl", summary)
+        self.assertEqual(
+            summary["projection_diagnostics"]["last_binding_rollover_rejection"][
+                "reason"
+            ],
+            "candidate_binding_effective_at_missing",
+        )
+
+    def test_binding_effective_metadata_allows_true_newer_rollover(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        old = _event(created_at="2026-05-01T00:05:00Z")
+        old["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:00:00Z"
+        store.project_event(old)
+
+        new = _event("heartbeat", created_at="2026-05-01T00:11:00Z")
+        new.update(
+            {
+                "event_id": "evt-effective-binding-002",
+                "binding_id": "rtb-paper-002",
+                "artifact_id": "artifact-paper-002",
+                "artifact_version": "2.0.0",
+                "plan_id": "plan-paper-002",
+            }
+        )
+        new["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:10:00Z"
+
+        summary = store.project_event(new)
+
+        self.assertEqual(summary["binding_id"], "rtb-paper-002")
+        self.assertEqual(summary["_binding_effective_at"], "2026-05-01T00:10:00Z")
+        self.assertEqual(
+            summary["_binding_boundary_source"],
+            "metadata.runtime_binding_effective_at",
+        )
+
+    def test_candidate_effective_at_can_upgrade_legacy_binding_boundary(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        store.project_event(_event(created_at="2026-05-01T00:05:00Z"))
+
+        upgraded = _event("heartbeat", created_at="2026-05-01T00:11:00Z")
+        upgraded.update(
+            {
+                "event_id": "evt-effective-upgrade-binding-002",
+                "binding_id": "rtb-paper-002",
+                "artifact_id": "artifact-paper-002",
+                "artifact_version": "2.0.0",
+                "plan_id": "plan-paper-002",
+            }
+        )
+        upgraded["metadata"]["binding_effective_at"] = "2026-05-01T00:10:00Z"
+        summary = store.project_event(upgraded)
+
+        self.assertEqual(summary["binding_id"], "rtb-paper-002")
+        self.assertEqual(summary["artifact_id"], "artifact-paper-002")
+        self.assertEqual(summary["_binding_effective_at"], "2026-05-01T00:10:00Z")
+        self.assertEqual(summary["_retired_binding_ids"], ["rtb-paper-001"])
+
     def test_multiple_stages_coexist_without_collision(self):
         store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
         fresh = datetime(2026, 5, 1, 0, 0, 30, tzinfo=timezone.utc)
@@ -232,6 +504,27 @@ class TestFillProjection(unittest.TestCase):
         self.assertEqual(summary["last_fill"]["fill_price"], 100.0)
         self.assertEqual(summary["position_count"], 1)
         self.assertEqual(summary["positions"], [{"symbol": "AAPL.US", "quantity": 7.0}])
+
+    def test_bracket_log_does_not_count_as_an_executed_fill(self):
+        store = self._store()
+        event = _event(
+            event_type="bracket_order_logged",
+            created_at="2026-05-01T00:01:00Z",
+        )
+        event["event_id"] = "evt-bracket-log-only"
+        event["metrics"] = {
+            "fill_quantity": 7.0,
+            "fill_price": 100.0,
+            "action": "bracket_logged_only",
+            "submitted_to_broker": False,
+        }
+        event["metadata"]["symbol"] = "AAPL.US"
+
+        summary = store.project_event(event)
+
+        self.assertNotIn("executed_trade_count", summary)
+        self.assertNotIn("last_fill", summary)
+        self.assertNotIn("positions", summary)
 
     def test_multiple_fills_accumulate_count_and_positions(self):
         store = self._store()

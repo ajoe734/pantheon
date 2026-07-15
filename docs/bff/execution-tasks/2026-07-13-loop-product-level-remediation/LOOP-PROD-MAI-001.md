@@ -4,6 +4,8 @@ Status: ready for fleet dispatch after the program packet is merged
 
 Canonical catalog: `tasks.json`
 
+Canonical contract SHA-256: `70289123a84536a11ab343fe1ba4e693128ce039925c719304c7365d5e13e2f2`
+
 Source plan:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md`
 
@@ -34,6 +36,8 @@ Next action: Prove the complete hosted Management AI repair and dev-bridge lifec
 - `LOOP-PROD-002`
 - `LOOP-PROD-REC-001`
 - `LOOP-PROD-TJ-001`
+- `LOOP-PROD-WORKER-001`
+- `LOOP-PROD-BROWSER-AUTH-001`
 
 Only `done` satisfies a dependency. `superseded`, `cancelled`, missing,
 or merely submitted work does not.

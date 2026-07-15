@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
@@ -60,6 +60,8 @@ class ApprovalCreateRequest(BaseModel):
     target_type: TargetType
     target_id: str
     target_version: str
+    tenant_id: str = Field(min_length=1)
+    owner_user_id: str = Field(min_length=1)
     risk_level: RiskLevel = RiskLevel.LOW
     capital_pool_id: str | None = None
     persona_id: str | None = None
@@ -271,6 +273,8 @@ def create_app() -> FastAPI:
             risk_level=body.risk_level.value,
             capital_pool_id=body.capital_pool_id,
             persona_id=body.persona_id,
+            tenant_id=body.tenant_id,
+            owner_user_id=body.owner_user_id,
         )
         errors = decision.validate()
         if errors:

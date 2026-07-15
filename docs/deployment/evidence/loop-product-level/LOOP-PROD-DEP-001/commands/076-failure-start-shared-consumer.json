@@ -1,0 +1,15 @@
+{
+  "captured_at": "2026-07-15T00:11:50Z",
+  "command": [
+    "docker",
+    "start",
+    "5f7eb6e06427b61b911c9d1779bbf2f8f762a0bbda6e56494a758965acc0b907"
+  ],
+  "cwd": null,
+  "duration_ms": 294.785,
+  "label": "failure-start-shared-consumer",
+  "returncode": 0,
+  "started_at": "2026-07-15T00:11:49Z",
+  "stderr": "",
+  "stdout": "5f7eb6e06427b61b911c9d1779bbf2f8f762a0bbda6e56494a758965acc0b907\n"
+}

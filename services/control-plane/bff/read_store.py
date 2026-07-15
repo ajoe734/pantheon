@@ -30,6 +30,8 @@ from services.consultation.client import ConsultationClientError, ConsultationSe
 from services.consultation.store import ConsultationStore
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
+_NOT_SUPPLIED = object()
+
 
 def _first_existing(paths: List[Path]) -> Optional[Path]:
     for path in paths:
@@ -10512,6 +10514,21 @@ class ReadSurfaceStore:
         decision_id = raw.get("decision_id") or raw.get("id")
         target_type = raw.get("target_type") or raw.get("decision_type")
         target_id = raw.get("target_id")
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        tenant_id = (
+            raw.get("tenant_id")
+            or raw.get("tenantId")
+            or metadata.get("tenant_id")
+            or metadata.get("tenantId")
+        )
+        owner_user_id = (
+            raw.get("owner_user_id")
+            or raw.get("user_id")
+            or raw.get("userId")
+            or metadata.get("owner_user_id")
+            or metadata.get("user_id")
+            or metadata.get("userId")
+        )
         deployment_ref = {}
         if str(target_type or "") == "DeploymentPlan" and target_id:
             deployment_ref = {
@@ -10525,6 +10542,8 @@ class ReadSurfaceStore:
             "target_type": target_type,
             "target_id": target_id,
             "target_version": raw.get("target_version"),
+            "tenant_id": tenant_id,
+            "owner_user_id": owner_user_id,
             "deployment_ref": deployment_ref,
             "outcome": raw.get("decision") or raw.get("outcome"),
             "reviewer": raw.get("actor_id") or raw.get("reviewer"),
@@ -10533,6 +10552,12 @@ class ReadSurfaceStore:
             "created_at": raw.get("created_at") or raw.get("submitted_at"),
             "submitted_at": raw.get("submitted_at") or raw.get("created_at"),
             "decided_at": raw.get("decided_at"),
+            "expires_at": raw.get("expires_at"),
+            "revoked_at": raw.get("revoked_at"),
+            "proposal_id": raw.get("proposal_id"),
+            "proposal_revision": raw.get("proposal_revision"),
+            "proposal_content_digest": raw.get("proposal_content_digest"),
+            "validation_result_digest": raw.get("validation_result_digest"),
             "risk_level": raw.get("risk_level"),
             "state": raw.get("decision_state") or raw.get("state"),
             "rationale": raw.get("rationale"),
@@ -10701,6 +10726,8 @@ class ReadSurfaceStore:
             "id": decision_id,
             "decision_id": decision_id,
             "program_id": raw.get("program_id"),
+            "persona_id": raw.get("persona_id"),
+            "capital_pool_id": raw.get("capital_pool_id"),
             "action_type": raw.get("action_type"),
             "risk_level": raw.get("risk_level"),
             "status": decision_state,
@@ -10730,6 +10757,8 @@ class ReadSurfaceStore:
             "required_approvals": raw.get("required_approvals"),
             "rollback_followthrough": raw.get("rollback_followthrough"),
             "metadata": raw.get("metadata"),
+            "origin": raw.get("origin"),
+            "provenance": raw.get("provenance"),
             "execution_result": raw.get("execution_result"),
         }
 
@@ -12819,12 +12848,15 @@ class ReadSurfaceStore:
         plan_id: str,
         *,
         plan: Optional[Dict[str, Any]] = None,
-        decision: Optional[Dict[str, Any]] = None,
+        decision: Any = _NOT_SUPPLIED,
     ) -> Dict[str, Any]:
         if plan is None:
             plan = self.get_deployment_plan(plan_id)
-        if decision is None and plan:
-            decision = self.get_approval_decision(plan.get("approval_decision_id"))
+        if decision is _NOT_SUPPLIED:
+            if plan:
+                decision = self.get_approval_decision(plan.get("approval_decision_id"))
+            else:
+                decision = None
         fallback_actions = dict((self._local_fallback("allowed_actions") or {}).get(plan_id, {}))
         if plan and (plan.get("status") is not None or plan.get("target_stage") is not None):
             can_review = self._derive_can_review_deployment_plan(plan, decision)
@@ -12860,13 +12892,16 @@ class ReadSurfaceStore:
         plan_id: str,
         *,
         plan: Optional[Dict[str, Any]] = None,
-        decision: Optional[Dict[str, Any]] = None,
+        decision: Any = _NOT_SUPPLIED,
     ) -> Dict[str, Any]:
         summary = dict((self._local_fallback("review_summaries") or {}).get(plan_id, {}))
         if plan is None:
             plan = self.get_deployment_plan(plan_id)
-        if decision is None and plan:
-            decision = self.get_approval_decision(plan.get("approval_decision_id"))
+        if decision is _NOT_SUPPLIED:
+            if plan:
+                decision = self.get_approval_decision(plan.get("approval_decision_id"))
+            else:
+                decision = None
         if decision:
             summary.setdefault("governanceOutcome", decision.get("outcome"))
             summary.setdefault("decisionState", decision.get("state"))

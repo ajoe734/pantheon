@@ -1,14 +1,14 @@
 # APP-002-W4-REMAINING-CATALOG BFF and Frontend Handoff Packet (Sidecar)
 
-**Parent Task**: `APP-002-W4-REMAINING-CATALOG` - Finish remaining contractual list/detail read surfaces  
-**Parent Owner**: Qwen  
-**Parent Reviewer**: Codex  
-**Parent Status**: `done`  
-**Sidecar Owner**: Claude (auto-generated lane; superseded during stale approval cleanup)  
-**Sidecar Reviewer**: Codex  
-**Helper Kind**: `bff_handoff_packet`  
-**Generated**: 2026-04-12  
-**Last Updated**: 2026-04-12  
+**Parent Task**: `APP-002-W4-REMAINING-CATALOG` - Finish remaining contractual list/detail read surfaces
+**Parent Owner**: Qwen
+**Parent Reviewer**: Codex
+**Parent Status**: `done`
+**Sidecar Owner**: Claude (auto-generated lane; superseded during stale approval cleanup)
+**Sidecar Reviewer**: Codex
+**Helper Kind**: `bff_handoff_packet`
+**Generated**: 2026-04-12
+**Last Updated**: 2026-04-12
 **Review Status**: absorbed by Codex during stale approval cleanup
 
 > Support artifact only. This packet summarizes the Wave 4 remaining catalog surfaces and packages them for downstream frontend and operator-surface consumers. It does not change canonical truth, policy, or runtime/governance authority.

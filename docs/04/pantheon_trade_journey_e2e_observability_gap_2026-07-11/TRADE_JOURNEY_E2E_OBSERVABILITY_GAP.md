@@ -1,9 +1,9 @@
 # Pantheon Trade Journey 端到端監看與管理 Gap 規格
 
-**文件狀態：** Proposed  
-**日期：** 2026-07-11  
-**範圍：** Pantheon control plane、BFF、telemetry/lineage、execution plane、`execute-plans` Management Console  
-**目標環境：** paper、canary、live  
+**文件狀態：** Proposed
+**日期：** 2026-07-11
+**範圍：** Pantheon control plane、BFF、telemetry/lineage、execution plane、`execute-plans` Management Console
+**目標環境：** paper、canary、live
 **主要使用者：** 投資主管、交易主管、風控、值班營運、Persona 管理者、稽核人員
 
 ## 1. Executive summary

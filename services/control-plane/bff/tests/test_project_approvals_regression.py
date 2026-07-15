@@ -174,6 +174,8 @@ class TestFetchFailureDoesNotPoisonStore:
         decision = {
             "decision_id": "apv-reg-001",
             "decision_state": "proposed",
+            "tenant_id": "pantheon-dev",
+            "owner_user_id": "strategy-owner-1",
         }
 
         def ok_get(url: str) -> object:
@@ -199,3 +201,5 @@ class TestFetchFailureDoesNotPoisonStore:
         assert rc == 0
         written = json.loads((tmp_path / "approval_decisions.json").read_text())
         assert "apv-reg-001" in written, f"expected decision key in output: {written}"
+        assert written["apv-reg-001"]["tenant_id"] == "pantheon-dev"
+        assert written["apv-reg-001"]["owner_user_id"] == "strategy-owner-1"

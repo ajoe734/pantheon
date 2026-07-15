@@ -50,7 +50,7 @@
     },
     "transition_type": {
       "type": "string",
-      "enum": ["activate", "promote", "rollback", "freeze", "resume"]
+      "enum": ["activate", "promote", "replace", "rollback", "freeze", "resume"]
     },
     "runtime_action": {
       "type": "string",

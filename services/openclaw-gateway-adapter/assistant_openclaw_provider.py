@@ -41,6 +41,7 @@ PROVIDER_RUNTIME = "openclaw_gateway_agent_cli"
 DEFAULT_AGENT_ID = "main"
 DEFAULT_TIMEOUT_SECONDS = 90
 DEFAULT_OPENCLAW_BIN = "openclaw"
+CODEX_DELEGATED_KERNEL_MODES = frozenset({"kernel_debug", "kernel_repair"})
 # `openclaw agent` accepts the prompt ONLY as an argv string (`-m/--message
 # <text>`); it has NO stdin support and `--message -` is taken LITERALLY — the
 # agent then receives a bare "-" heartbeat tick and replies "HEARTBEAT_OK"
@@ -50,6 +51,17 @@ DEFAULT_OPENCLAW_BIN = "openclaw"
 _MAX_ARGV_PROMPT_BYTES = 96 * 1024
 # Canonical docker-compose service name — used when no URL is configured.
 _DEFAULT_GATEWAY_WS_URL = "ws://openclaw-gateway:18789"
+
+
+def delegates_kernel_mode_to_codex(mode: str) -> bool:
+    """Return whether the adapter must use its scoped Codex runtime.
+
+    The upstream OpenClaw agent invocation has no task-worktree or sandbox
+    contract.  Kernel debug/repair therefore cannot safely run through that
+    transport and are delegated by the adapter route to the Codex runtime.
+    """
+
+    return str(mode or "").strip().lower() in CODEX_DELEGATED_KERNEL_MODES
 
 
 @dataclass(frozen=True)
@@ -198,6 +210,12 @@ class AssistantOpenClawProvider:
         operator_id: Optional[str] = None,
         trace_id: Optional[str] = None,
     ) -> OpenClawProviderResult:
+        if delegates_kernel_mode_to_codex(mode):
+            raise OpenClawProviderError(
+                "OpenClaw kernel modes must be delegated to the adapter Codex runtime.",
+                status_code=409,
+                error_code="OPENCLAW_KERNEL_DELEGATION_REQUIRED",
+            )
         # When no URL was explicitly configured, fall back to the canonical
         # docker-compose service name so the adapter works out of the box.
         effective_url = self._gateway_url or _DEFAULT_GATEWAY_WS_URL
@@ -470,6 +488,12 @@ class AssistantOpenClawProvider:
         The endpoint runs a normal Gateway agent run (workspace/memory/persona/tools
         preserved). Requires the gateway-side `gateway.http.endpoints.responses.enabled`.
         """
+        if delegates_kernel_mode_to_codex(mode):
+            raise OpenClawProviderError(
+                "OpenClaw kernel modes must be delegated to the adapter Codex runtime.",
+                status_code=409,
+                error_code="OPENCLAW_KERNEL_DELEGATION_REQUIRED",
+            )
         if not self._gateway_url:
             yield {"type": "error", "error_code": "OPENCLAW_GATEWAY_URL_NOT_SET",
                    "message": "OPENCLAW_GATEWAY_URL is not set."}

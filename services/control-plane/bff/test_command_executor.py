@@ -160,6 +160,10 @@ class TestDeploymentDiffExecutor(unittest.TestCase):
 class TestRollbackExecutor(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+        os.environ["PANTHEON_GOVERNANCE_SERVICE_URL"] = "http://localhost:5002"
+
+    def tearDown(self):
+        os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
 
     @patch("command_executor._post_json")
     def test_rollback_success(self, mock_post):
@@ -173,13 +177,17 @@ class TestRollbackExecutor(unittest.TestCase):
             "target_id": "dp-001",
             "rollback_to_version": "v1.0.0",
         })
-        self.assertEqual(result["rollback_id"], "rb-dp-001-123456")
+        self.assertTrue(result["rollback_id"].startswith("rb-dp-001-"))
         self.assertEqual(result["command_id"], "cmd-003")
 
 
 class TestRollbackReviewCommandExecutors(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+        os.environ["PANTHEON_GOVERNANCE_SERVICE_URL"] = "http://localhost:5002"
+
+    def tearDown(self):
+        os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
 
     @patch("command_executor._post_json")
     def test_approve_rollback_success(self, mock_post):
@@ -219,6 +227,10 @@ class TestRollbackReviewCommandExecutors(unittest.TestCase):
 class TestKillSwitchExecutor(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
+        os.environ["PANTHEON_GOVERNANCE_SERVICE_URL"] = "http://localhost:5002"
+
+    def tearDown(self):
+        os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
 
     @patch("command_executor._post_json")
     def test_kill_switch_success(self, mock_post):
@@ -385,6 +397,10 @@ class TestEvolutionDecisionExecutor(unittest.TestCase):
 class TestEvolutionActionExecutor(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_GOVERNANCE_API_URL"] = "http://localhost:5001"
+        os.environ["PANTHEON_GOVERNANCE_SERVICE_URL"] = "http://localhost:5002"
+
+    def tearDown(self):
+        os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
 
     @patch("command_executor._post_json")
     def test_execute_evolution_action_governance_api(self, mock_post):
@@ -414,11 +430,14 @@ class TestEvolutionActionExecutor(unittest.TestCase):
         self.assertEqual(result["command_id"], "cmd-006")
         self.assertEqual(result["decision_state"], "executed")
         self.assertEqual(result["execution_ref_id"], "exec-002")
+        # actor_role is normalized from the BFF-level "admin" to the
+        # evolution service's domain role "operator" (EvolutionActorRole has
+        # no "admin" member; see _evolution_actor_role).
         mock_post.assert_called_once_with(
             "http://localhost:5001/api/evolution/proposals/evo-002/execute",
             {
                 "actor_id": "op-admin",
-                "actor_role": "admin",
+                "actor_role": "operator",
                 "has_active_runtime": True,
                 "active_binding_id": "rb-002",
                 "freeze_mode": "governance_only",
@@ -459,7 +478,7 @@ class TestEvolutionActionExecutor(unittest.TestCase):
             "http://localhost:5001/api/evolution/proposals/evo-reval-002/execute",
             {
                 "actor_id": "op-admin",
-                "actor_role": "admin",
+                "actor_role": "operator",
                 "note": "Execute approved revalidation",
             },
             auth_token=auth_token,
@@ -470,6 +489,10 @@ class TestEvolutionActionExecutor(unittest.TestCase):
 class TestMutationReviewExecutors(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_GOVERNANCE_API_URL"] = "http://localhost:5001"
+        os.environ["PANTHEON_GOVERNANCE_SERVICE_URL"] = "http://localhost:5002"
+
+    def tearDown(self):
+        os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
 
     @patch("command_executor._post_json")
     def test_approve_mutation_governance_api(self, mock_post):

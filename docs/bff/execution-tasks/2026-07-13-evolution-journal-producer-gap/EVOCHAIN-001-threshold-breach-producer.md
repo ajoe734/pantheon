@@ -425,6 +425,27 @@ now injects an isolated `state_path` (`tmp_path`) instead of relying on
 -shared state file (same class of hazard the round-2 review flagged for the
 incident store).
 
+## Round-6 review fixes (Antigravity, 2026-07-14)
+
+Review comments on 3 main points:
+1. **Duplicate Telemetry Event ID Mismatch Rejection**:
+   - `TelemetryIngestService` now keeps a `dict` for `_seen_event_ids` mapping `event_id` to the originally accepted event payload.
+   - Upon duplicate event retry, we run full schema and evidence validation on the incoming event.
+   - We reject the retry (fail-closed, return `False`) if any key content fields (except transient metadata like `created_at`) mismatch the originally accepted event payload.
+   - Lineage repair uses the immutable originally accepted event payload instead of trusting the incoming replay body.
+   - Verified by `test_telemetry_duplicate_retry_rejects_content_mismatch_and_preserves_canonical`.
+2. **Robust WAL Loading**:
+   - `_load_pending_evidence()` now raises `ValueError` if the state file exists but is unreadable/malformed/non-UTF-8.
+   - `run_tick` catches this error, records an explicit fail-closed diagnostic, and exits early to ensure we never recompute a different payload under the same deterministic `event_id`.
+   - Structurally invalid records within the state JSON are safely ignored per-record and do not raise.
+   - Pending undelivered records in the WAL are retried independently of whether new thresholds config successfully loads or runtime summaries fetch successfully.
+   - Verified by `test_wal_loading_unreadable_or_malformed_fails_closed`, `test_wal_loading_ignores_structurally_invalid_records`, and `test_pending_undelivered_records_retry_independently_of_config_and_fetch_success`.
+3. **No Metric Carryover on Rollover**:
+   - `RuntimeSummaryProjectionStore` resets all metrics, positions, and as-of timestamps when a binding rollover is detected (the incoming event has a different `binding_id` than the summary on record).
+   - In addition, every projected metric is stamped with a `f"{field}_binding_id"` provenance key.
+   - `evaluate_breaches()` checks metric provenance against the current binding ID of the summary and skips evaluation if they do not match.
+   - Verified by `test_runtime_summary_projection_store_reset_on_binding_rollover` and `test_evaluate_breaches_validates_metric_provenance`.
+
 ## Idempotency
 
 Dedupe key: `(binding_id, metric_name, threshold window, UTC day bucket)`.
@@ -480,7 +501,7 @@ Verified in `test_load_thresholds_missing_file_fails_closed`,
 
 ```sh
 python3 -m pytest services/evolution/test_threshold_sweep_worker.py -q
-# 43 passed (round-3: +5 new tests for the fixes below)
+# 58 passed (round-6: +15 new tests for fixes and regressions)
 
 python3 -m pytest services/evolution -q
 # 167 passed (no regression in the rest of the evolution service)

@@ -33,11 +33,22 @@ Canonical JSON schemas live at:
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+import threading
+from copy import deepcopy
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from functools import wraps
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Mapping, Optional
+
+try:  # pragma: no cover - Linux production and CI provide fcntl.
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 
 def _utc_now() -> str:
@@ -75,6 +86,31 @@ class PostmortemStatus(str, Enum):
 
 class IncidentError(ValueError):
     """Raised when IncidentCase or Postmortem validation fails."""
+
+
+def _serialized_store_write(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._write_guard():
+            # JSON guards refresh before yielding; Postgres-backed subclasses
+            # refresh here because their guard has no filesystem path. Preserve
+            # that durable state so a failed _save (or any other exception after
+            # mutation) cannot leak an uncommitted transition through reads.
+            self._refresh_from_disk()
+            incidents_before = deepcopy(self._incidents)
+            postmortems_before = deepcopy(self._postmortems)
+            loaded_mtime_before = self._loaded_mtime_ns
+            try:
+                return method(self, *args, **kwargs)
+            except BaseException:
+                self._incidents.clear()
+                self._incidents.update(incidents_before)
+                self._postmortems.clear()
+                self._postmortems.update(postmortems_before)
+                self._loaded_mtime_ns = loaded_mtime_before
+                raise
+
+    return wrapped
 
 
 @dataclass(frozen=True)
@@ -292,6 +328,7 @@ class Postmortem:
 
     # Optional
     published_at: Optional[str] = None
+    published_event_id: Optional[str] = None
     linked_evolution_decision_id: Optional[str] = None  # set after EVO-003
 
     def __post_init__(self) -> None:
@@ -429,9 +466,35 @@ class IncidentStore:
         self._postmortems: Dict[str, Postmortem] = {}
         self._path = path
         self._loaded_mtime_ns: Optional[int] = None
+        self._thread_lock = threading.RLock()
         if path and path.exists():
             self._load(path)
             self._loaded_mtime_ns = path.stat().st_mtime_ns
+
+    @contextmanager
+    def _write_guard(self) -> Iterator[None]:
+        """Serialize JSON read-modify-write cycles across threads/processes."""
+
+        with self._thread_lock:
+            if self._path is None:
+                yield
+                return
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            lock_path = self._path.with_name(f".{self._path.name}.lock")
+            descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                if fcntl is not None:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX)
+                if self._path.exists():
+                    self._incidents.clear()
+                    self._postmortems.clear()
+                    self._load(self._path)
+                    self._loaded_mtime_ns = self._path.stat().st_mtime_ns
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
 
     def _refresh_from_disk(self) -> None:
         if not self._path or not self._path.exists():
@@ -472,6 +535,7 @@ class IncidentStore:
 
     # ---- IncidentCase writes ----
 
+    @_serialized_store_write
     def create_incident(self, inc: IncidentCase) -> IncidentCase:
         self._refresh_from_disk()
         errors = validate_incident_case(inc)
@@ -483,24 +547,39 @@ class IncidentStore:
         self._save()
         return inc
 
+    @_serialized_store_write
     def update_incident_status(
         self,
         incident_id: str,
         new_status: str,
         *,
         resolved_at: Optional[str] = None,
+        expected_snapshot: Optional[Mapping[str, Any]] = None,
     ) -> IncidentCase:
         """Transition an incident to a new status."""
         self._refresh_from_disk()
         inc = self.require_incident(incident_id)
+        if expected_snapshot is not None and inc.to_dict() != dict(expected_snapshot):
+            raise IncidentError(
+                f"IncidentCase changed concurrently before status transition: {incident_id}"
+            )
         try:
             IncidentStatus(new_status)
         except ValueError:
             raise IncidentError(f"Invalid status: {new_status!r}")
 
+        # Enforce no regression from terminal statuses
+        if inc.status == IncidentStatus.CLOSED.value and new_status != IncidentStatus.CLOSED.value:
+            raise IncidentError(f"Incident is closed and cannot transition to {new_status}")
+        if inc.status == IncidentStatus.RESOLVED.value and new_status not in {
+            IncidentStatus.RESOLVED.value,
+            IncidentStatus.CLOSED.value,
+        }:
+            raise IncidentError(f"Incident is resolved and cannot regress to {new_status}")
+
         updates: Dict[str, Any] = {"status": new_status}
         if new_status in {IncidentStatus.RESOLVED.value, IncidentStatus.CLOSED.value}:
-            updates["resolved_at"] = resolved_at or _utc_now()
+            updates["resolved_at"] = inc.resolved_at or resolved_at or _utc_now()
 
         updated = IncidentCase(**{**inc.to_dict(), **updates})
         errors = validate_incident_case(updated)
@@ -510,6 +589,7 @@ class IncidentStore:
         self._save()
         return updated
 
+    @_serialized_store_write
     def merge_incident_evidence(self, incident_id: str, incoming: IncidentCase) -> IncidentCase:
         """Merge additional evidence into an existing open IncidentCase."""
         self._refresh_from_disk()
@@ -564,6 +644,7 @@ class IncidentStore:
 
     # ---- Postmortem writes ----
 
+    @_serialized_store_write
     def create_postmortem(self, pm: Postmortem) -> Postmortem:
         """
         Create a Postmortem.
@@ -587,6 +668,7 @@ class IncidentStore:
         self._save()
         return pm
 
+    @_serialized_store_write
     def update_postmortem_draft(self, pm: Postmortem) -> Postmortem:
         """Replace an existing draft Postmortem with an updated draft."""
         self._refresh_from_disk()
@@ -611,15 +693,33 @@ class IncidentStore:
         self._save()
         return pm
 
+    @_serialized_store_write
     def update_postmortem_status(
         self,
         postmortem_id: str,
         new_status: str,
         *,
         published_at: Optional[str] = None,
+        published_event_id: Optional[str] = None,
+        expected_snapshot: Optional[Mapping[str, Any]] = None,
+        expected_incident_snapshot: Optional[Mapping[str, Any]] = None,
     ) -> Postmortem:
         self._refresh_from_disk()
         pm = self.require_postmortem(postmortem_id)
+        if expected_snapshot is not None and pm.to_dict() != dict(expected_snapshot):
+            raise IncidentError(
+                "Postmortem changed concurrently before status transition: "
+                f"{postmortem_id}"
+            )
+        incident = self.require_incident(pm.incident_id)
+        if (
+            expected_incident_snapshot is not None
+            and incident.to_dict() != dict(expected_incident_snapshot)
+        ):
+            raise IncidentError(
+                "Parent IncidentCase changed concurrently before postmortem status transition: "
+                f"{pm.incident_id}"
+            )
         try:
             PostmortemStatus(new_status)
         except ValueError:
@@ -628,6 +728,8 @@ class IncidentStore:
         updates: Dict[str, Any] = {"status": new_status}
         if new_status == PostmortemStatus.PUBLISHED.value:
             updates["published_at"] = published_at or _utc_now()
+            if published_event_id:
+                updates["published_event_id"] = published_event_id
 
         updated = Postmortem(**{**pm.to_dict(), **updates})
         errors = validate_postmortem(updated)
@@ -637,6 +739,7 @@ class IncidentStore:
         self._save()
         return updated
 
+    @_serialized_store_write
     def link_evolution_decision(
         self,
         postmortem_id: str,
@@ -664,7 +767,29 @@ class IncidentStore:
                 "incidents": [i.to_dict() for i in self._incidents.values()],
                 "postmortems": [p.to_dict() for p in self._postmortems.values()],
             }
-            self._path.write_text(json.dumps(data, indent=2))
+            handle = tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self._path.parent,
+                prefix=f".{self._path.name}.",
+                suffix=".tmp",
+                delete=False,
+            )
+            temporary_path = Path(handle.name)
+            try:
+                with handle:
+                    json.dump(data, handle, indent=2)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary_path, self._path)
+                directory_fd = os.open(self._path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            finally:
+                if temporary_path.exists():
+                    temporary_path.unlink()
             self._loaded_mtime_ns = self._path.stat().st_mtime_ns
 
     def _load(self, path: Path) -> None:

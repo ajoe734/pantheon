@@ -1,15 +1,15 @@
 # AG-FE-DB-001 Sidecar Acceptance Packet
 
-**Sidecar task:** `AG-FE-DB-001-SIDECAR-ACCEPTANCE`  
-**Helper parent:** `AG-FE-DB-001`  
-**Helper kind:** `acceptance_packet`  
-**Parent owner:** `Codex`  
-**Parent reviewer:** `Claude2` (acting as reviewer/clarifier)  
-**Parent status:** `blocked` (waiting_for `Claude2`)  
-**Sidecar owner:** `Antigravity2`  
-**Sidecar reviewer:** `Codex`  
-**Date:** `2026-06-20`  
-**Status:** `in-progress; revision-submitted`  
+**Sidecar task:** `AG-FE-DB-001-SIDECAR-ACCEPTANCE`
+**Helper parent:** `AG-FE-DB-001`
+**Helper kind:** `acceptance_packet`
+**Parent owner:** `Codex`
+**Parent reviewer:** `Claude2` (acting as reviewer/clarifier)
+**Parent status:** `blocked` (waiting_for `Claude2`)
+**Sidecar owner:** `Antigravity2`
+**Sidecar reviewer:** `Codex`
+**Date:** `2026-06-20`
+**Status:** `in-progress; revision-submitted`
 
 > Scope constraint: support artifact only. This packet summarizes acceptance
 > criteria, dependency routing, verification evidence, and reviewer attention
@@ -86,9 +86,9 @@ graph TD
     Registry_Json["docs/.../widget_registry.v1.json"] --> AG_FE_DB_001
     Widget_Schema["docs/.../widget_spec.schema.json"] --> AG_FE_DB_001
     Chart_Schema["docs/.../chart_spec.schema.json"] --> AG_FE_DB_001
-    
+
     AG_FE_000["AG-FE-000<br/>Entry/Build Setup"] -->|upstream dep| AG_FE_DB_001
-    
+
     AG_FE_DB_001 -->|downstream dep| AG_FE_DB_002["AG-FE-DB-002<br/>Grid Layout Editor"]
     AG_FE_DB_001 -->|downstream dep| AG_FE_DB_003["AG-FE-DB-003<br/>Widget Revision Drawer"]
     AG_FE_DB_001 -->|downstream dep| AG_FE_DB_004["AG-FE-DB-004<br/>Recipe Rollback/Proposal"]

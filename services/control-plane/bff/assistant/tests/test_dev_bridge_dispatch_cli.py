@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ..dev_bridge_models import BridgeActor, BridgeTask, DevTaskPacket
 from ..dev_bridge_signer import sign_packet
+from .dev_bridge_test_support import write_materializing_ai_status
 
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -46,31 +47,7 @@ def _make_packet(packet_id: str) -> DevTaskPacket:
 def _write_fake_repo(tmp_path: Path) -> Path:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
-    (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
-    scripts_dir = repo_root / "scripts"
-    scripts_dir.mkdir()
-    (scripts_dir / "ai_status.py").write_text(
-        "\n".join(
-            [
-                "import json",
-                "import os",
-                "import sys",
-                "from pathlib import Path",
-                "record = {",
-                "    'argv': sys.argv[1:],",
-                "    'ai_name': os.environ.get('AI_NAME'),",
-                "    'phase': os.environ.get('TASK_PHASE'),",
-                "    'artifacts': os.environ.get('TASK_ARTIFACTS'),",
-                "    'acceptance': os.environ.get('TASK_ACCEPTANCE'),",
-                "}",
-                "with Path('calls.jsonl').open('a', encoding='utf-8') as fh:",
-                "    fh.write(json.dumps(record, sort_keys=True) + '\\n')",
-                "sys.exit(0)",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    write_materializing_ai_status(repo_root)
     return repo_root
 
 
@@ -125,9 +102,13 @@ def test_cli_materializes_raw_signed_packet_through_ai_status(tmp_path: Path) ->
     body = json.loads(result.stdout)
     assert body["packetId"] == "pkt_cli_live"
     assert body["taskRecords"][0]["status"] == "dispatched"
-    assert (repo_root / ".orchestrator" / "dev-bridge-seen-packets.txt").read_text(
+    replay_rows = (repo_root / ".orchestrator" / "dev-bridge-seen-packets.txt").read_text(
         encoding="utf-8"
-    ).splitlines() == ["pkt_cli_live"]
+    ).splitlines()
+    assert len(replay_rows) == 1
+    replay = json.loads(replay_rows[0])
+    assert replay["packet_id"] == "pkt_cli_live"
+    assert len(replay["digest"]) == 64
 
     calls = (repo_root / "calls.jsonl").read_text(encoding="utf-8").splitlines()
     record = json.loads(calls[0])
@@ -139,7 +120,15 @@ def test_cli_materializes_raw_signed_packet_through_ai_status(tmp_path: Path) ->
         "Materialize assistant generated task",
     ]
     assert record["ai_name"] == "management-ai"
-    assert record["phase"] == "Sprint CLI / Dev bridge"
+    bridge = record["metadata"]["dev_bridge"]
+    assert bridge["packet_id"] == "pkt_cli_live"
+    assert bridge["conversation_id"] == "mgmt-nl-cli"
+    assert bridge["source_turn_ids"] == ["turn-user", "turn-assistant"]
+    assert bridge["task_spec"]["phase"] == "Sprint CLI / Dev bridge"
+    assert bridge["task_spec"]["artifacts"] == [
+        "services/control-plane/bff/assistant/dev_bridge_dispatcher.py"
+    ]
+    assert bridge["task_spec"]["acceptance"] == ["Task is assigned through ai_status.py"]
 
 
 def test_cli_rejects_unsigned_packet(tmp_path: Path) -> None:
@@ -156,3 +145,50 @@ def test_cli_rejects_unsigned_packet(tmp_path: Path) -> None:
     body = json.loads(result.stderr)
     assert body["status"] == "error"
     assert "Packet has no signature" in body["error"]
+
+
+def test_concurrent_cli_dispatches_materialize_once(tmp_path: Path) -> None:
+    repo_root = _write_fake_repo(tmp_path)
+    signed = sign_packet(_make_packet("pkt_cli_concurrent"), key_store={"assistant-bridge-dev": TEST_KEY})
+    packet_path = tmp_path / "concurrent-packet.json"
+    packet_path.write_text(
+        json.dumps(signed.model_dump(mode="json", by_alias=True)),
+        encoding="utf-8",
+    )
+    env = {**os.environ, "BRIDGE_SIGNING_KEY": TEST_KEY.hex()}
+    cmd = [
+        sys.executable,
+        str(SCRIPT),
+        "--packet-file",
+        str(packet_path),
+        "--repo-root",
+        str(repo_root),
+    ]
+    processes = [
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            cwd=str(REPO_ROOT),
+        )
+        for _ in range(4)
+    ]
+    outputs = [process.communicate(timeout=30) for process in processes]
+
+    assert sorted(process.returncode for process in processes) == [0, 1, 1, 1], outputs
+    bodies = [json.loads(stdout) for stdout, _stderr in outputs]
+    assert sum(not body["replayRejected"] for body in bodies) == 1
+    assert sum(body["replayRejected"] for body in bodies) == 3
+    assert sum(
+        record["status"] == "dispatched"
+        for body in bodies
+        for record in body["taskRecords"]
+    ) == 1
+    assert sum(
+        record["status"] == "already_dispatched"
+        for body in bodies
+        for record in body["taskRecords"]
+    ) == 3
+    assert len((repo_root / "calls.jsonl").read_text(encoding="utf-8").splitlines()) == 1
