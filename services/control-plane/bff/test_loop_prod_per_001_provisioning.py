@@ -1,0 +1,224 @@
+"""
+Tests for LOOP-PROD-PER-001: Persona provisioning, readback, duplicate safety, and terminal failure states.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+from datetime import datetime, timezone
+import pytest
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+import main as bff_main
+from read_store import ReadSurfaceStore
+
+OPERATOR_TOKEN = "Bearer op-2:operator"
+HEADERS = {
+    "Authorization": OPERATOR_TOKEN,
+    "Idempotency-Key": "test-provisioning-idempotency",
+}
+
+
+def _fresh_client(td: str) -> TestClient:
+    bff_main.read_store = ReadSurfaceStore(
+        os.path.join(td, "read_surfaces.json"),
+        allow_local_snapshot_fallback=True,
+    )
+    bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
+    bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
+    bff_main._STRATEGY_BFF_OVERLAY.clear()
+    bff_main._PERSONA_BFF_OVERLAY.clear()
+    bff_main._COMMAND_AUTH_CONTEXT.clear()
+    return TestClient(bff_main.app)
+
+
+def test_persona_creation_initial_state_is_provisioning() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            # Create a persona
+            resp = client.post(
+                "/bff/personas",
+                json={"name": "Trader A", "traits": {"risk_appetite": "low"}},
+                headers={**HEADERS, "Idempotency-Key": "create-trader-a"},
+            )
+            assert resp.status_code == 201, resp.text
+            data = resp.json()["data"]
+            assert data["name"] == "Trader A"
+            assert data["state"] == "provisioning"  # Should initially be provisioning
+
+            # Get the persona detail
+            persona_id = data["id"]
+            get_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
+            assert get_resp.status_code == 200, get_resp.text
+            assert get_resp.json()["data"]["state"] == "provisioning"
+        finally:
+            bff_main.read_store = original
+
+
+def test_persona_provisioning_completes_upon_readback_success() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            # Create a persona
+            resp = client.post(
+                "/bff/personas",
+                json={"name": "Trader B"},
+                headers={**HEADERS, "Idempotency-Key": "create-trader-b"},
+            )
+            data = resp.json()["data"]
+            persona_id = data["id"]
+            binding_id = data["runtimeBindingId"]
+            runtime_id = data["runtimeId"]
+
+            # Mock RuntimeBinding to be active/running
+            bff_main.read_store.create_runtime_binding(
+                runtime_id=runtime_id,
+                name="Trader B paper runtime",
+                persona_id=persona_id,
+                binding_id=binding_id,
+                deployment_plan_id=data["deploymentPlanId"],
+                runtime_kind="paper",
+                actor_id="test",
+                created_at=bff_main.utc_now(),
+                params={},
+                state="running",  # active/running state
+            )
+
+            # Mock monitoring session with heartbeat
+            bff_main.read_store._ensure_local_overlay_records("paper_runtime_monitoring_sessions")[
+                f"{runtime_id}:{binding_id}"
+            ] = {
+                "session_id": "session-1",
+                "runtime_id": runtime_id,
+                "binding_id": binding_id,
+                "active": True,
+                "last_heartbeat_at": bff_main.utc_now(),
+            }
+
+            # Mock evaluation schedule (cron job) - PersonaCronRegistrar uses metadata as fallback
+            # when gateway_rpc fails or is dry_run. So we store it in metadata
+            persona = bff_main.read_store.get_persona(persona_id)
+            persona["metadata"]["cron_registered_count"] = 4
+            bff_main.read_store.update_persona(persona_id, metadata=persona["metadata"])
+
+            # Query the persona -> should transition to paper_running
+            get_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
+            assert get_resp.status_code == 200, get_resp.text
+            assert get_resp.json()["data"]["state"] == "paper_running"
+
+            # Check store to verify the status is persisted (restart-safe)
+            persisted = bff_main.read_store.get_persona(persona_id)
+            assert persisted["lifecycle_state"] == "paper_running"
+        finally:
+            bff_main.read_store = original
+
+
+def test_persona_provisioning_fails_on_downstream_failure() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.post(
+                "/bff/personas",
+                json={"name": "Trader C"},
+                headers={**HEADERS, "Idempotency-Key": "create-trader-c"},
+            )
+            data = resp.json()["data"]
+            persona_id = data["id"]
+            binding_id = data["runtimeBindingId"]
+            runtime_id = data["runtimeId"]
+
+            # 1. Mock RuntimeBinding state to be failed
+            bff_main.read_store.create_runtime_binding(
+                runtime_id=runtime_id,
+                name="Trader C paper runtime",
+                persona_id=persona_id,
+                binding_id=binding_id,
+                deployment_plan_id=data["deploymentPlanId"],
+                runtime_kind="paper",
+                actor_id="test",
+                created_at=bff_main.utc_now(),
+                params={},
+                state="failed",  # failed state
+            )
+
+            # Query the persona -> should transition to failed
+            get_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
+            assert get_resp.status_code == 200, get_resp.text
+            assert get_resp.json()["data"]["state"] == "failed"
+
+            # Check store to verify failure state is persisted (restart-safe)
+            persisted = bff_main.read_store.get_persona(persona_id)
+            assert persisted["lifecycle_state"] == "provisioning_failed"
+        finally:
+            bff_main.read_store = original
+
+
+def test_persona_provisioning_fails_on_timeout() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            resp = client.post(
+                "/bff/personas",
+                json={"name": "Trader D"},
+                headers={**HEADERS, "Idempotency-Key": "create-trader-d"},
+            )
+            data = resp.json()["data"]
+            persona_id = data["id"]
+
+            # Mock creation date to be 200 seconds ago
+            persona = bff_main.read_store.get_persona(persona_id)
+            persona["created_at"] = "2026-07-15T00:00:00Z"
+            bff_main.read_store.update_persona(persona_id, updated_at="2026-07-15T00:00:00Z")
+            # Force update raw dict field in the local mock too
+            raw_personas = bff_main.read_store._ensure_local_overlay_records("personas")
+            raw_personas[persona_id]["created_at"] = "2026-07-15T00:00:00Z"
+            bff_main.read_store._save()
+
+            # Query the persona -> should transition to failed due to timeout
+            get_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
+            assert get_resp.status_code == 200, get_resp.text
+            assert get_resp.json()["data"]["state"] == "failed"
+        finally:
+            bff_main.read_store = original
+
+
+def test_persona_duplicate_create_converges() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            
+            # Create first time
+            resp1 = client.post(
+                "/bff/personas",
+                json={"name": "Trader Unique"},
+                headers={**HEADERS, "Idempotency-Key": "create-trader-unique-1"},
+            )
+            data1 = resp1.json()["data"]
+            persona_id_1 = data1["id"]
+            binding_id_1 = data1["runtimeBindingId"]
+
+            # Create second time with a different idempotency key but same name
+            resp2 = client.post(
+                "/bff/personas",
+                json={"name": "Trader Unique"},
+                headers={**HEADERS, "Idempotency-Key": "create-trader-unique-2"},
+            )
+            data2 = resp2.json()["data"]
+            persona_id_2 = data2["id"]
+            binding_id_2 = data2["runtimeBindingId"]
+
+            # They must converge to the same persona and binding
+            assert persona_id_1 == persona_id_2
+            assert binding_id_1 == binding_id_2
+        finally:
+            bff_main.read_store = original

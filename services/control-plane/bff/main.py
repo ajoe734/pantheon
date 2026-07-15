@@ -26700,6 +26700,8 @@ _STRATEGY_BFF_LIFECYCLE_MAP = {
     "rollback_required": "rollback_required",
     "stopped": "stopped",
     "failed": "failed",
+    "provisioning": "provisioning",
+    "provisioning_failed": "failed",
 }
 
 _PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({
@@ -27736,6 +27738,125 @@ def _project_strategy_dto(
     return dto
 
 
+def _evaluate_persona_provisioning_status(persona_id: str, raw: Dict[str, Any]) -> str:
+    metadata = raw.get("metadata") or {}
+    current_state = raw.get("lifecycle_state") or raw.get("state")
+    if current_state not in ("provisioning", "draft", "paper_running"):
+        return str(current_state or "")
+
+    if current_state in ("provisioning_failed", "failed"):
+        return str(current_state or "")
+
+    if current_state == "paper_running":
+        return "paper_running"
+
+    if current_state != "provisioning":
+        return str(current_state or "")
+
+    # 1. Check RuntimeBinding
+    binding_id = metadata.get("runtime_binding_id") or metadata.get("binding_id")
+    binding = read_store.get_runtime_binding(binding_id) if binding_id else None
+    
+    binding_ok = False
+    binding_failed = False
+    if binding:
+        binding_state = str(binding.get("state") or binding.get("status") or "").lower()
+        if binding_state in ("running", "active", "ok"):
+            binding_ok = True
+        elif binding_state in ("failed", "stopped", "error"):
+            binding_failed = True
+
+    # 2. Check Paper Worker Heartbeat
+    runtime_id = metadata.get("runtime_id")
+    monitoring_session = None
+    telemetry_summary = None
+    if runtime_id and binding_id:
+        monitoring_session = read_store.get_paper_runtime_monitoring_session(
+            runtime_id=runtime_id, binding_id=binding_id
+        )
+    if runtime_id:
+        telemetry_summary = read_store.get_telemetry_summary(runtime_id)
+
+    heartbeat_ok = False
+    heartbeat_failed = False
+
+    last_hb = None
+    if monitoring_session:
+        last_hb = monitoring_session.get("last_heartbeat_at")
+        session_status = str(monitoring_session.get("status") or "").lower()
+        if session_status in ("failed", "ended", "error") or monitoring_session.get("active") is False:
+            heartbeat_failed = True
+    if not last_hb and telemetry_summary:
+        last_hb = telemetry_summary.get("last_heartbeat_at")
+
+    if last_hb:
+        heartbeat_ok = True
+
+    # 3. Check First Evaluation Schedule
+    cron_ok = False
+    try:
+        if "persona_cron_registrar" not in sys.modules:
+            _saved_modules = {
+                name: sys.modules.pop(name)
+                for name in ("models", "workflows")
+                if name in sys.modules
+            }
+            sys.path.insert(0, _CRON_SERVICE_DIR)
+            try:
+                import persona_cron_registrar
+            finally:
+                sys.path.remove(_CRON_SERVICE_DIR)
+                for name in ("models", "workflows"):
+                    sys.modules.pop(name, None)
+                sys.modules.update(_saved_modules)
+        from persona_cron_registrar import PersonaCronRegistrar
+        registrar = PersonaCronRegistrar()
+        runtime = registrar._get_runtime()
+        if runtime is None:
+            cron_ok = bool(metadata.get("cron_registered_count") or metadata.get("cron_registration_mode"))
+        else:
+            existing = registrar._existing_registrations(runtime)
+            cron_ok = any(pid == persona_id for (pid, wfid) in existing)
+    except Exception:
+        cron_ok = bool(metadata.get("cron_registered_count") or metadata.get("cron_registration_mode"))
+
+    # Timeout check (120 seconds)
+    is_timeout = False
+    created_at_str = raw.get("created_at") or metadata.get("created_at")
+    if created_at_str:
+        try:
+            if "T" in created_at_str:
+                clean_str = created_at_str.replace("Z", "+00:00")
+                created_at_dt = datetime.fromisoformat(clean_str)
+            else:
+                created_at_dt = datetime.fromisoformat(created_at_str)
+            now_dt = datetime.fromisoformat(utc_now().replace("Z", "+00:00"))
+            delta = (now_dt - created_at_dt).total_seconds()
+            if delta > 120:
+                is_timeout = True
+        except Exception:
+            pass
+
+    if binding_ok and heartbeat_ok and cron_ok:
+        new_state = "paper_running"
+    elif binding_failed or heartbeat_failed or is_timeout:
+        new_state = "provisioning_failed"
+    else:
+        new_state = "provisioning"
+
+    if new_state != current_state:
+        read_store.update_persona(persona_id, lifecycle_state=new_state)
+        if persona_id in _PERSONA_BFF_OVERLAY:
+            _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
+            _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
+        raw["lifecycle_state"] = new_state
+        raw["status"] = new_state
+        if "metadata" in raw:
+            raw["metadata"]["lifecycle_state"] = new_state
+
+    return new_state
+
+
 def _project_persona_dto(
     raw: Dict[str, Any],
     *,
@@ -27744,6 +27865,8 @@ def _project_persona_dto(
 ) -> Dict[str, Any]:
     """Project canonical persona data into execute-plans Persona DTO."""
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
+    if persona_id:
+        _evaluate_persona_provisioning_status(persona_id, raw)
     metadata = dict(raw.get("metadata") or {}) if isinstance(raw.get("metadata"), dict) else {}
     archetype = str(
         metadata.get("archetype")
@@ -43228,13 +43351,42 @@ async def bff_create_persona(
             precondition_failed="name",
         )
     snapshot_at = utc_now()
-    persona_id = f"persona-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+
+    # 重重複建立與 retry 收斂邏輯
+    existing_personas = read_store.list_personas() or []
+    existing_persona = None
+    for p in existing_personas:
+        if str(p.get("name") or "").strip() == name:
+            existing_persona = p
+            break
+
+    if existing_persona:
+        persona_id = existing_persona.get("persona_id") or existing_persona.get("id")
+        existing_metadata = existing_persona.get("metadata") or {}
+        refs = {
+            "paper_ledger_id": existing_metadata.get("paper_ledger_id"),
+            "capital_pool_id": existing_metadata.get("legacy_paper_capital_pool_id") or existing_metadata.get("capital_pool_id"),
+            "binding_id": existing_metadata.get("binding_id") or existing_metadata.get("persona_capital_binding_id"),
+            "runtime_id": existing_metadata.get("runtime_id"),
+            "deployment_plan_id": existing_metadata.get("deployment_plan_id"),
+            "artifact_id": existing_metadata.get("artifact_id") or f"paper-artifact-{persona_id}",
+        }
+        if existing_persona.get("lifecycle_state") == "provisioning_failed":
+            read_store.update_persona(persona_id, lifecycle_state="provisioning")
+            existing_persona["lifecycle_state"] = "provisioning"
+            existing_persona["status"] = "provisioning"
+            if persona_id in _PERSONA_BFF_OVERLAY:
+                _PERSONA_BFF_OVERLAY[persona_id]["state"] = "provisioning"
+                _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = "provisioning"
+    else:
+        persona_id = f"persona-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+        refs = _persona_create_paper_refs(persona_id, payload)
+
     owner = str(payload.get("owner") or identity.operator_id)
     archetype = str(payload.get("archetype") or "generalist")
     risk = _normalize_risk_level(payload.get("risk") or "low")
     capital_mode = _persona_create_validate_paper_only(payload)
-    refs = _persona_create_paper_refs(persona_id, payload)
-    lifecycle_state = "paper_running"
+    lifecycle_state = "provisioning"
     market = str(payload.get("market") or "").strip().upper()
     required_data_sources = payload.get("required_data_sources") or payload.get("requiredDataSources")
     if not required_data_sources and market:

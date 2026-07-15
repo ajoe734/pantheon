@@ -290,7 +290,7 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
             create_body = create.json()
             created = create_body["data"]
             persona_id = created["id"]
-            assert created["state"] == "paper_running"
+            assert created["state"] == "provisioning"
             assert created["capitalMode"] == "paper"
             assert created["deploymentStage"] == "paper"
             assert created["paperLedgerId"].startswith("paper-ledger-")
@@ -307,6 +307,33 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
                 os.path.join(td, "read_surfaces.json"),
                 allow_local_snapshot_fallback=False,
             )
+            binding_id = created["runtimeBindingId"]
+            runtime_id = created["runtimeId"]
+            bff_main.read_store.create_runtime_binding(
+                runtime_id=runtime_id,
+                name="Macro Macro paper runtime",
+                persona_id=persona_id,
+                binding_id=binding_id,
+                deployment_plan_id=created["deploymentPlanId"],
+                runtime_kind="paper",
+                actor_id="test",
+                created_at=bff_main.utc_now(),
+                params={},
+                state="running",
+            )
+            bff_main.read_store._ensure_local_overlay_records("paper_runtime_monitoring_sessions")[
+                f"{runtime_id}:{binding_id}"
+            ] = {
+                "session_id": "session-1",
+                "runtime_id": runtime_id,
+                "binding_id": binding_id,
+                "active": True,
+                "last_heartbeat_at": bff_main.utc_now(),
+            }
+            persona = bff_main.read_store.get_persona(persona_id)
+            persona["metadata"]["cron_registered_count"] = 4
+            bff_main.read_store.update_persona(persona_id, metadata=persona["metadata"])
+
             detail = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
             assert detail.status_code == 200, detail.text
             assert detail.json()["data"]["id"] == persona_id
