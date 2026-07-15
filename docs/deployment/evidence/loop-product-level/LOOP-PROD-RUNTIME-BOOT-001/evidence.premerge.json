@@ -20,7 +20,7 @@
     "evidence_cut_semantics": "Owner exact-source implementation checks, exhaustive source inventory, and refrozen nine-writer registry are complete after composing latest origin/dev and the non-additive-provenance/status-guard-recovery fixes; independent review/signature, merge, protected installation, restart identity, and zero-write dry-run remain pending.",
     "id": "LOOP-PROD-RUNTIME-BOOT-001",
     "overall_admission": "blocked_pending_exact_head_review_merge_protected_install_and_dry_run",
-    "owner": "Claude",
+    "owner": "Antigravity",
     "phase": "Loop Product-Level Remediation / Wave -1 bootstrap",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
@@ -224,7 +224,7 @@
     ],
     "validated_at": "2026-07-15T22:02:17Z",
     "validated_base_sha": "e4c3ce68bc4df389288d428bbd5fb1d3869a2112",
-    "validated_head_sha": "a6e8116b51bf7ec2927aa8a8a484582e65636585",
+    "validated_head_sha": "48c87591ffaa3c486869c8eda13f0debbe957d8f",
     "validated_head_semantics": "The validated source head is the owner fix commit that resolves Codex2's confirmed exact-head findings (writer-scanner os.replace/os.rename blind spot, external-dependency and activity-audit-archive symlink following, and the non-hermetic mixed-repo delivery-metadata test), composed on top of origin/dev through the prior merge c8af36c00a. Later commits contain only generated registry/check/evidence artifacts whose self-reference cannot be embedded in their own commit identity."
   },
   "deployment": {
@@ -455,9 +455,9 @@
     "self_hash_reason": "This mutable premerge scaffold is intentionally not checksummed and cannot be admitted as final evidence.",
     "source_artifact_sha256_by_epoch": {
       "owner_exact_head": {
-        "checks.json": "2c07ac100e48cd40330178bfab511755e53a2271471ee0a4b93f34d000d3b466",
+        "checks.json": "7807abe6922edf50b196403127abcfc8e297727d9c8fda4f24f6fcde1441fec8",
         "runtime-task-audit-writer-registry.json": "43f92870cc3209afff461fa57671631c7ffb8de9f2a3452fdf82cde80ffe6c74",
-        "source_inventory": "beacb21ba7b7c579c6051704ace2e25beec443c764740202f435912abb9dd928"
+        "source_inventory": "1e702db985e6356b40f48018e6b88de32e42be74edb8f623972e636c88fbdb09"
       }
     }
   },
@@ -503,6 +503,15 @@
       "status": "blocked_pending_distinct_review_merge_protected_install_and_dry_run",
       "actor": "Claude",
       "checks_sha256": "2c07ac100e48cd40330178bfab511755e53a2271471ee0a4b93f34d000d3b466",
+      "writer_registry_sha256": "43f92870cc3209afff461fa57671631c7ffb8de9f2a3452fdf82cde80ffe6c74"
+    },
+    {
+      "sequence": 6,
+      "recorded_at": "2026-07-15T22:52:00Z",
+      "kind": "owner_exact_source_candidate_refrozen_after_writer_guard_redesign",
+      "status": "blocked_pending_distinct_review_merge_protected_install_and_dry_run",
+      "actor": "Antigravity",
+      "checks_sha256": "7807abe6922edf50b196403127abcfc8e297727d9c8fda4f24f6fcde1441fec8",
       "writer_registry_sha256": "43f92870cc3209afff461fa57671631c7ffb8de9f2a3452fdf82cde80ffe6c74"
     }
   ]

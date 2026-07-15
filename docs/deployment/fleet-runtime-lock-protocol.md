@@ -310,9 +310,11 @@ maintenance utilities that predate this protocol. They are not silently
 covered by the nine-path registry. Every historical direct status/audit sink
 now calls `scripts/canonical_writer_guard.py` immediately before the sink. The
 guard unconditionally rejects any canonical file inside a Git worktree. An
-explicit `PANTHEON_ALLOW_ISOLATED_LEGACY_WRITES=1` override is accepted only
-for a non-Git fixture outside every worktree and outside
-`PANTHEON_STATUS_ROOT`; it can never authorize a live Pantheon root.
+explicit `PANTHEON_ALLOW_ISOLATED_TEST_WRITES=1` override is accepted only
+for a non-Git fixture outside every worktree (while the legacy
+`PANTHEON_ALLOW_ISOLATED_LEGACY_WRITES` is explicitly disabled and cannot
+authorize writes to a configured `PANTHEON_STATUS_ROOT`); it can never authorize
+a live production Pantheon root.
 
 Bundle generation rejects the active repo/status root and pins its child sync
 process to the isolated target. Queue triage rejects output paths that alias

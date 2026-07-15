@@ -121,7 +121,7 @@ root-controlled operator installs the external verifier policy/ledger. The
 post-closeout strict live dry-run and evidence-only follow-up remain separate
 post-merge requirements.
 
-## 2026-07-15 reviewer-fix round (commits a6e8116b5, 98fc2c5af)
+## 2026-07-15 reviewer-fix round (commits a6e8116b5, 98fc2c5af, 48c87591f)
 
 Fixed four of Codex2's confirmed exact-head findings on PR #3652:
 
@@ -149,16 +149,7 @@ Fixed four of Codex2's confirmed exact-head findings on PR #3652:
   claimed 71-passed unfiltered run non-reproducible here. Now derives a
   guaranteed-absent path from a `tempfile.TemporaryDirectory()`.
 
-Left open: Codex2 also flagged `canonical_writer_guard.py`'s
-`PANTHEON_ALLOW_ISOLATED_LEGACY_WRITES` override as reachable even when the
-target matches the configured `PANTHEON_STATUS_ROOT`, as long as that root
-isn't inside a git checkout. The literal fix (require the override target be
-outside the configured status root too) was prototyped and reverted: it
-breaks the existing isolated-fixture testing convention used by
-`scripts/test_dispatch_persona_trade_journal_2026_07_11.py` and other
-dispatcher tests that intentionally point `PANTHEON_STATUS_ROOT` at a tmp
-fixture. Resolving it needs a design decision on how to distinguish a
-legitimate isolated test root from a live one, not a mechanical patch.
+Resolved: Redesigned the guard to prevent `PANTHEON_ALLOW_ISOLATED_LEGACY_WRITES` from authorizing writes to the configured `PANTHEON_STATUS_ROOT`. Introduced `PANTHEON_ALLOW_ISOLATED_TEST_WRITES` specifically for test environments, enabling isolated test fixtures to write to their custom test `PANTHEON_STATUS_ROOT` while keeping production state protected against legacy override usage. Updated `test_ai_status.py` and `test_dispatch_persona_trade_journal_2026_07_11.py` to use `PANTHEON_ALLOW_ISOLATED_TEST_WRITES` and added regression tests for the legacy override.
 
 Also still open and unrelated to the code fixes above: the live canonical
 status root currently fails closed on every `scripts/ai-status.sh` command
