@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from .. import dev_bridge_dispatcher, dev_bridge_inbox
+from .. import dev_bridge_admission, dev_bridge_dispatcher, dev_bridge_inbox
 from ..dev_bridge_dispatcher import _task_metadata, dispatch_task_packet
 from ..dev_bridge_inbox import drain_task_packet_inbox, queue_task_packet
 from ..dev_bridge_models import (
@@ -157,6 +157,104 @@ def test_reusing_completed_packet_id_for_different_payload_fails_closed(tmp_path
             BridgeDispatchRequest(packet=changed, repoRoot=str(repo_root)),
             key_store=KEY_STORE,
         )
+
+
+def test_success_persists_nonterminal_bridge_admission_with_exact_provenance(
+    tmp_path: Path,
+) -> None:
+    repo_root = _fake_repo(tmp_path)
+    packet = _signed("pkt_admission_record", task_count=2)
+
+    result = dispatch_task_packet(
+        BridgeDispatchRequest(packet=packet, repoRoot=str(repo_root)),
+        key_store=KEY_STORE,
+    )
+
+    admission = result.admission_record
+    assert admission is not None
+    assert admission["schema"] == "pantheon.assistant-dev-bridge-admission.v1"
+    assert admission["record_kind"] == "assistant_dev_bridge_admission"
+    assert admission["packet_id"] == packet.packet_id
+    assert admission["packet_digest"] == result.audit_refs["packetDigest"]
+    assert admission["conversation_id"] == packet.source_conversation_id
+    assert admission["source_turn_ids"] == packet.source_turn_ids
+    assert admission["documents"] == [
+        document.model_dump(mode="json", by_alias=True)
+        for document in packet.documents
+    ]
+    assert [item["task_id"] for item in admission["tasks"]] == [
+        task.id for task in packet.tasks
+    ]
+    assert all(len(item["task_spec_hash"]) == 64 for item in admission["tasks"])
+    relative_path = Path(admission["admission_record_path"])
+    assert relative_path.parts[:3] == (
+        "ai-task-archive",
+        "tasks",
+        "assistant-dev-bridge-admissions",
+    )
+    persisted = repo_root / relative_path
+    assert persisted.is_file()
+    assert (persisted.stat().st_mode & 0o777) == 0o600
+    assert not (repo_root / "ai-task-archive" / "tasks" / f"{packet.tasks[0].id}.json").exists()
+
+    replay = dispatch_task_packet(
+        BridgeDispatchRequest(packet=packet, repoRoot=str(repo_root)),
+        key_store=KEY_STORE,
+    )
+    assert replay.replay_rejected is True
+    assert replay.admission_record == admission
+
+
+def test_admission_persistence_failure_keeps_packet_retryable(tmp_path: Path) -> None:
+    repo_root = _fake_repo(tmp_path)
+    packet = _signed("pkt_admission_retry")
+    request = BridgeDispatchRequest(packet=packet, repoRoot=str(repo_root))
+
+    with patch.object(
+        dev_bridge_dispatcher,
+        "persist_admission_record",
+        side_effect=OSError("injected admission fsync failure"),
+    ):
+        first = dispatch_task_packet(request, key_store=KEY_STORE)
+
+    assert first.admission_record is None
+    assert first.errors == ["bridge admission: injected admission fsync failure"]
+    assert not has_seen_packet(packet.packet_id, repo_root=str(repo_root))
+
+    retry = dispatch_task_packet(request, key_store=KEY_STORE)
+    assert retry.errors == []
+    assert retry.admission_record is not None
+    assert has_seen_packet(packet.packet_id, repo_root=str(repo_root))
+
+
+def test_crash_after_admission_before_replay_mark_recovers_exact_record(
+    tmp_path: Path,
+) -> None:
+    repo_root = _fake_repo(tmp_path)
+    packet = _signed("pkt_admission_before_seen")
+    request = BridgeDispatchRequest(packet=packet, repoRoot=str(repo_root))
+
+    with patch.object(
+        dev_bridge_dispatcher,
+        "mark_packet_seen",
+        side_effect=OSError("injected replay-store fsync failure"),
+    ):
+        with pytest.raises(OSError, match="replay-store fsync failure"):
+            dispatch_task_packet(request, key_store=KEY_STORE)
+
+    digest = dev_bridge_dispatcher.packet_digest(packet)
+    durable = dev_bridge_admission.load_admission_record(
+        repo_root=str(repo_root),
+        packet_id=packet.packet_id,
+        packet_digest=digest,
+    )
+    assert durable is not None
+    assert not has_seen_packet(packet.packet_id, repo_root=str(repo_root))
+
+    recovered = dispatch_task_packet(request, key_store=KEY_STORE)
+    assert recovered.errors == []
+    assert recovered.admission_record == durable
+    assert has_seen_packet(packet.packet_id, repo_root=str(repo_root))
 
 
 def test_ai_status_bridge_assignment_preserves_exact_spec_and_is_idempotent(

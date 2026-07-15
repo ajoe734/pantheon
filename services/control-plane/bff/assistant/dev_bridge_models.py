@@ -128,4 +128,7 @@ class BridgeDispatchResult(BridgeBaseModel):
     replay_rejected: bool = Field(default=False, alias="replayRejected")
     dry_run: bool = Field(default=False, alias="dryRun")
     audit_refs: Dict[str, Any] = Field(default_factory=dict, alias="auditRefs")
+    admission_record: Optional[Dict[str, Any]] = Field(
+        default=None, alias="admissionRecord"
+    )
     errors: List[str] = Field(default_factory=list)

@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .dev_bridge_admission import load_admission_record, persist_admission_record
 from .dev_bridge_models import (
     BridgeConstraints,
     BridgeDispatchRequest,
@@ -175,6 +176,17 @@ def _audit_refs(packet: DevTaskPacket, dispatched_at: str) -> Dict[str, object]:
     }
 
 
+def _admission_tasks(packet: DevTaskPacket) -> List[Dict[str, object]]:
+    return [
+        {
+            "task_id": task.id,
+            "task_spec_hash": _task_spec_hash(task),
+            "task_spec": _task_spec(task),
+        }
+        for task in packet.tasks
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Per-task dispatch
 # ---------------------------------------------------------------------------
@@ -295,6 +307,15 @@ def dispatch_task_packet(
                 raise ValueError(
                     f"Packet id {packet.packet_id!r} is already bound to a different payload"
                 )
+            admission_record = (
+                load_admission_record(
+                    repo_root=repo_root,
+                    packet_id=packet.packet_id,
+                    packet_digest=digest,
+                )
+                if recorded_digest
+                else None
+            )
             return BridgeDispatchResult(
                 packetId=packet.packet_id,
                 dispatchedAt=dispatched_at,
@@ -310,6 +331,7 @@ def dispatch_task_packet(
                 replayRejected=True,
                 dryRun=dry_run,
                 auditRefs=audit_refs,
+                admissionRecord=admission_record,
             )
 
         task_records: List[TaskDispatchRecord] = []
@@ -328,6 +350,33 @@ def dispatch_task_packet(
             if rec.status == "error" and rec.error:
                 errors.append(f"{task.id}: {rec.error}")
 
+        admission_record = None
+        if not dry_run and not errors:
+            try:
+                admission_record = persist_admission_record(
+                    repo_root=repo_root,
+                    packet_id=packet.packet_id,
+                    packet_digest=digest,
+                    admitted_at=dispatched_at,
+                    actor=packet.actor.model_dump(mode="json", by_alias=True),
+                    mode=packet.mode,
+                    intent=packet.intent,
+                    conversation_id=packet.source_conversation_id,
+                    source_turn_ids=packet.source_turn_ids,
+                    documents=[
+                        document.model_dump(mode="json", by_alias=True)
+                        for document in packet.documents
+                    ],
+                    audit_conversation_href=packet.audit_conversation_href,
+                    tasks=_admission_tasks(packet),
+                    dispatch_records=[
+                        record.model_dump(mode="json", by_alias=True)
+                        for record in task_records
+                    ],
+                )
+            except (OSError, ValueError) as exc:
+                errors.append(f"bridge admission: {exc}")
+
         if not dry_run and not errors:
             mark_packet_seen(
                 packet.packet_id,
@@ -343,5 +392,6 @@ def dispatch_task_packet(
         replayRejected=False,
         dryRun=dry_run,
         auditRefs=audit_refs,
+        admissionRecord=admission_record,
         errors=errors,
     )
