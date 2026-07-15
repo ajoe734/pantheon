@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,17 @@ from typing import Any, Iterator
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+ORCHESTRATOR_DIR = REPO_ROOT / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+
+from common import (
+    activity_audit_source_paths_unlocked,
+    append_activity_log_entries_unlocked,
+    assert_activity_audit_stable_unlocked,
+    prepare_activity_audit_unlocked,
+)
+
 DEFAULT_CATALOG_PATH = (
     REPO_ROOT
     / "docs"
@@ -116,7 +128,10 @@ LIVE_ADMISSION_MARKER_FIELDS = {
     "worker_run_id",
 }
 TASK_CONTRACT_FIELDS = REQUIRED_TASK_FIELDS - {"owner", "reviewer", "status", "next"}
-ACTIVITY_OUTBOX_SCHEMA_VERSION = 4
+ACTIVITY_OUTBOX_SCHEMA_VERSION = 5
+PROGRAM_GRAPH_BINDINGS_STATE_KEY = "program_catalog_graph_bindings"
+PROGRAM_GRAPH_BINDING_SCHEMA_VERSION = 1
+PROGRAM_GRAPH_RECOVERY_POLICY = "supervisor_signed_only"
 ACTIVITY_EVENT_TYPES = {
     "assign",
     "catalog_migration",
@@ -167,6 +182,10 @@ ACTIVITY_EVENT_EXTRA_FIELDS = {
     "completion_authority_install": {
         "completion_authority_sha256",
         "completion_overlay_sha256",
+        "graph_binding_sha256",
+        "graph_projection_sha256",
+        "previous_graph_projection_sha256",
+        "graph_binding_reason",
     },
 }
 EXPECTED_EXECUTION_AUTHORITY = {
@@ -1696,7 +1715,12 @@ def validate_catalog(payload: dict[str, Any], path: Path) -> list[dict[str, Any]
 
 
 def archive_status(path: Path) -> str:
-    payload = read_json(path)
+    # Route through the no-follow archive reader: `path.is_file()` /
+    # `read_json()` both follow symlinks, which would let a symlinked archive
+    # leaf report an arbitrary external status.
+    payload = read_canonical_archive_payload(path)
+    if payload is None:
+        return ""
     task_payload = payload.get("task") if isinstance(payload.get("task"), dict) else {}
     return str(
         payload.get("terminal_status")
@@ -1714,7 +1738,7 @@ def dependency_state(
     if active is not None:
         return str(active.get("status") or "unknown"), "active"
     archived = ARCHIVE_ROOT / f"{dep_id}.json"
-    if archived.is_file():
+    if read_canonical_archive_payload(archived) is not None:
         return archive_status(archived), "archive"
     return "missing", "missing"
 
@@ -2220,34 +2244,14 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def activity_log_sources(*, since: datetime | None = None) -> list[Path]:
-    """Return rotated history followed by the active append-only log.
+    """Return disjoint rotated history followed by the active audit log."""
 
-    Both rotation implementations currently used by Pantheon retain an exact
-    tail in the next file.  Exact copies across different source files are
-    therefore valid, while duplicates within one source or conflicting uses of
-    one event ID are corruption and must stop recovery.
-    """
-
-    archives = sorted(
-        (STATUS_ROOT / "archive" / "logs").glob("ai-activity-log.jsonl-*.gz")
-    )
-    archives.extend(
-        sorted(
-            (STATUS_ROOT / ".orchestrator" / "logs" / "activity-log-archive").glob(
-                "ai-activity-log-*.jsonl.gz"
-            )
-        )
-    )
-    if since is not None:
-        # A pending event cannot have been rotated into an archive created
-        # before its own bound timestamp.  Use a small filesystem timestamp
-        # grace instead of re-reading years of unrelated compressed history.
-        cutoff = since.timestamp() - 300
-        archives = [path for path in archives if path.stat().st_mtime >= cutoff]
-    sources = archives
-    if LOG_PATH.is_file():
-        sources.append(LOG_PATH)
-    return sources
+    # Correctness cannot depend on archive mtimes: rotation, restore, or an
+    # operator copy can preserve an old mtime while containing a pending event.
+    # Scan every source while the audit sidecar is held so global event-ID
+    # uniqueness remains exact across active and rotated history.
+    _ = since
+    return activity_audit_source_paths_unlocked(LOG_PATH)
 
 
 def _read_activity_source(path: Path) -> str:
@@ -2307,9 +2311,14 @@ def activity_event_index(*, since: datetime | None = None) -> dict[str, str]:
             source_ids.add(event_id)
             payload_digest = canonical_json_sha256(entry)
             previous_digest = event_payloads.get(event_id)
-            if previous_digest is not None and previous_digest != payload_digest:
+            if previous_digest is not None:
+                detail = (
+                    "conflicting"
+                    if previous_digest != payload_digest
+                    else "duplicate"
+                )
                 raise DispatchError(
-                    f"conflicting activity audit event_id {event_id} across rotated logs"
+                    f"{detail} activity audit event_id {event_id} across rotated logs"
                 )
             event_payloads[event_id] = payload_digest
     return event_payloads
@@ -2348,23 +2357,7 @@ def parse_activity_timestamp(raw: Any) -> datetime:
 
 
 def append_logs(entries: list[dict[str, Any]]) -> None:
-    if not entries:
-        return
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with LOG_PATH.open("a+b") as handle:
-        handle.seek(0, os.SEEK_END)
-        if handle.tell() > 0:
-            handle.seek(-1, os.SEEK_END)
-            if handle.read(1) != b"\n":
-                handle.seek(0, os.SEEK_END)
-                handle.write(b"\n")
-        handle.seek(0, os.SEEK_END)
-        for entry in entries:
-            handle.write(
-                (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8")
-            )
-        handle.flush()
-        os.fsync(handle.fileno())
+    append_activity_log_entries_unlocked(LOG_PATH, entries)
 
 
 def build_affected_state_projection(
@@ -2398,6 +2391,9 @@ def build_affected_state_projection(
     if not isinstance(overlays, dict):
         raise DispatchError("affected-state projection completion overlay is invalid")
     program_id = str(catalog["program_id"])
+    graph_bindings = state.get(PROGRAM_GRAPH_BINDINGS_STATE_KEY) or {}
+    if not isinstance(graph_bindings, dict):
+        raise DispatchError("affected-state projection graph bindings are invalid")
     items: list[dict[str, Any]] = []
     for event in raw_events:
         event_type = str(event["type"])
@@ -2430,13 +2426,15 @@ def build_affected_state_projection(
             )
         elif event_type == "completion_authority_install":
             overlay = overlays.get(program_id)
-            if not isinstance(overlay, dict):
-                raise DispatchError("affected completion overlay is missing")
+            graph_binding = graph_bindings.get(program_id)
+            if not isinstance(overlay, dict) or not isinstance(graph_binding, dict):
+                raise DispatchError("affected completion overlay or graph binding is missing")
             items.append(
                 {
                     "event_type": event_type,
                     "task_id": task_id,
                     "completion_overlay": deepcopy(overlay),
+                    "graph_binding": deepcopy(graph_binding),
                 }
             )
         else:
@@ -2475,6 +2473,7 @@ def validate_affected_state_projection(
     if not all(active_ids) or len(active_ids) != len(set(active_ids)):
         raise DispatchError("program_activity_outbox current task IDs are not exact")
     active_by_id = {str(task["id"]): task for task in active_tasks}
+    _, archived_by_id = _program_graph_sources(state, catalog)
     records = state.get("program_catalog_migrations") or []
     if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
         raise DispatchError("program_activity_outbox current migration state is invalid")
@@ -2483,6 +2482,9 @@ def validate_affected_state_projection(
     overlays = state.get(overlay_key) or {}
     if not isinstance(overlays, dict):
         raise DispatchError("program_activity_outbox current overlay state is invalid")
+    graph_bindings = state.get(PROGRAM_GRAPH_BINDINGS_STATE_KEY) or {}
+    if not isinstance(graph_bindings, dict):
+        raise DispatchError("program_activity_outbox current graph binding state is invalid")
     for event, item in zip(raw_events, projection["items"], strict=True):
         event_type = str(event["type"])
         task_id = str(event["task_id"])
@@ -2492,7 +2494,7 @@ def validate_affected_state_projection(
             if event_type == "assign"
             else common | {"task", "migration_record"}
             if event_type == "catalog_migration"
-            else common | {"completion_overlay"}
+            else common | {"completion_overlay", "graph_binding"}
         )
         if (
             not isinstance(item, dict)
@@ -2503,7 +2505,7 @@ def validate_affected_state_projection(
             raise DispatchError("program_activity_outbox affected-state item is not exact")
         if event_type in {"assign", "catalog_migration"}:
             snapshot_task = item.get("task")
-            current_task = active_by_id.get(task_id)
+            current_task = active_by_id.get(task_id) or archived_by_id.get(task_id)
             if (
                 not isinstance(snapshot_task, dict)
                 or snapshot_task.get("id") != task_id
@@ -2566,16 +2568,30 @@ def validate_affected_state_projection(
                 )
         else:
             overlay = item.get("completion_overlay")
+            graph_binding = item.get("graph_binding")
             current_overlay = overlays.get(program_id)
+            current_graph_binding = graph_bindings.get(program_id)
             if (
                 not isinstance(overlay, dict)
+                or not isinstance(graph_binding, dict)
                 or canonical_json_sha256(overlay)
                 != event.get("completion_overlay_sha256")
+                or canonical_json_sha256(graph_binding)
+                != event.get("graph_binding_sha256")
+                or graph_binding.get("graph_projection_sha256")
+                != event.get("graph_projection_sha256")
+                or graph_binding.get("previous_graph_projection_sha256")
+                != event.get("previous_graph_projection_sha256")
+                or graph_binding.get("binding_reason")
+                != event.get("graph_binding_reason")
                 or overlay.get("completion_authority_sha256")
                 != event.get("completion_authority_sha256")
                 or current_overlay != overlay
+                or current_graph_binding != graph_binding
             ):
-                raise DispatchError("program_activity_outbox completion overlay drift")
+                raise DispatchError(
+                    "program_activity_outbox completion overlay or graph binding drift"
+                )
 
 
 def enqueue_activity_outbox(
@@ -2698,6 +2714,11 @@ def validate_activity_outbox(
     pending = state.get("program_activity_outbox")
     if not isinstance(pending, dict) or set(pending) != ACTIVITY_TRANSACTION_FIELDS:
         raise DispatchError("program_activity_outbox transaction schema is not exact")
+    if pending.get("schema_version") == 4:
+        raise DispatchError(
+            "legacy program_activity_outbox schema 4 requires supervisor-signed "
+            "recovery before graph-bound dispatch"
+        )
     if pending.get("schema_version") != ACTIVITY_OUTBOX_SCHEMA_VERSION:
         raise DispatchError("program_activity_outbox schema version mismatch")
     expected_program = str(catalog["program_id"])
@@ -2798,14 +2819,17 @@ def validate_activity_outbox(
                 raise DispatchError("migration immutable event binding is invalid")
         else:
             if entry.get("message") != (
-                "Installed exact catalog-bound completion authority overlay"
+                "Installed exact catalog-bound completion authority and task graph"
             ) or any(
                 len(str(entry.get(field) or "")) != 64
                 for field in (
                     "completion_authority_sha256",
                     "completion_overlay_sha256",
+                    "graph_binding_sha256",
+                    "graph_projection_sha256",
+                    "previous_graph_projection_sha256",
                 )
-            ):
+            ) or not str(entry.get("graph_binding_reason") or "").strip():
                 raise DispatchError("completion overlay event binding is invalid")
 
         raw_event = {
@@ -2970,7 +2994,7 @@ def build_task(
 
 def archived_primary_status(task_id: str) -> str | None:
     path = ARCHIVE_ROOT / f"{task_id}.json"
-    if not path.is_file():
+    if read_canonical_archive_payload(path) is None:
         return None
     status = archive_status(path)
     if status not in TERMINAL_STATUSES:
@@ -2978,6 +3002,40 @@ def archived_primary_status(task_id: str) -> str | None:
             f"archive collision for {task_id} has non-terminal status {status!r}"
         )
     return status
+
+
+def validate_existing_task_provenance(
+    existing: dict[str, Any],
+    task_id: str,
+    catalog: dict[str, Any],
+    *,
+    source: str,
+) -> None:
+    """Reject an existing catalog task row with missing or foreign source_ref.
+
+    This runs for every non-additive catalog task collision in both the
+    active and archive branches of ``materialize`` (additive collisions are
+    already exhaustively covered by the stricter ``validate_additive_
+    collision``). It only requires stable dispatcher provenance (the task
+    belongs to this program and carries a non-empty catalog digest); it
+    deliberately does not require the digest to equal the *current* catalog,
+    because non-additive tasks legitimately retain the source_ref recorded
+    when an earlier catalog version created them across catalog
+    addenda/migrations.
+    """
+
+    source_ref = existing.get("source_ref")
+    if (
+        not isinstance(source_ref, dict)
+        or not source_ref
+        or source_ref.get("program_id") != catalog.get("program_id")
+        or not source_ref.get("catalog_sha256")
+    ):
+        raise DispatchError(
+            f"missing or mismatched source_ref provenance for {source} catalog "
+            f"task {task_id}; refusing to preserve foreign or tampered "
+            "task/runtime state"
+        )
 
 
 def validate_additive_collision(
@@ -3341,9 +3399,342 @@ def apply_catalog_migrations(
     return migrated, logs, True
 
 
+def catalog_graph_projection(
+    catalog: dict[str, Any],
+    catalog_digest: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "program_id": str(catalog["program_id"]),
+        "catalog_sha256": catalog_digest,
+        "task_count": len(catalog["tasks"]),
+        "external_dependencies": [
+            str(item) for item in catalog["external_dependencies"]
+        ],
+        "additive_task_ids": [
+            str(item) for item in catalog.get("additive_task_ids") or []
+        ],
+        "tasks": [
+            {
+                "task_id": str(task["id"]),
+                "task_contract_sha256": task_contract_sha256(task),
+                "depends_on": [str(item) for item in task["depends_on"]],
+            }
+            for task in catalog["tasks"]
+        ],
+    }
+
+
+def historical_catalog_graph_projection(catalog: dict[str, Any]) -> dict[str, Any]:
+    """Return the one exact pre-addendum graph accepted for catalog migration."""
+
+    migrations = catalog.get("catalog_migrations") or []
+    if len(migrations) != 1:
+        raise DispatchError("historical graph requires exactly one catalog migration")
+    migration = migrations[0]
+    source_bytes = _git_output(
+        REPO_ROOT,
+        "show",
+        f"{migration['from_catalog_git_commit']}:{migration['from_catalog_path']}",
+    )
+    if sha256_bytes(source_bytes) != migration["from_catalog_sha256"]:
+        raise DispatchError("historical catalog graph Git object digest mismatch")
+    source = strict_json_loads(source_bytes, source="historical catalog graph")
+    if (
+        not isinstance(source, dict)
+        or source.get("schema_version") != 1
+        or source.get("program_id") != catalog.get("program_id")
+        or not isinstance(source.get("tasks"), list)
+        or not isinstance(source.get("external_dependencies"), list)
+    ):
+        raise DispatchError("historical catalog graph source is not exact")
+    rows = [
+        {
+            "task_id": str(task["id"]),
+            "task_contract_sha256": task_contract_sha256(task),
+            "depends_on": [str(item) for item in task["depends_on"]],
+        }
+        for task in source["tasks"]
+    ]
+    return {
+        "schema_version": 1,
+        "program_id": str(catalog["program_id"]),
+        "catalog_sha256": str(migration["from_catalog_sha256"]),
+        "task_count": len(rows),
+        "external_dependencies": [
+            str(item) for item in source["external_dependencies"]
+        ],
+        "additive_task_ids": [
+            str(item) for item in source.get("additive_task_ids") or []
+        ],
+        "tasks": rows,
+    }
+
+
+def build_program_graph_binding(
+    projection: dict[str, Any],
+    *,
+    bound_at: str,
+    binding_reason: str,
+    previous_graph_projection_sha256: str,
+) -> dict[str, Any]:
+    parse_activity_timestamp(bound_at)
+    if not binding_reason.strip():
+        raise DispatchError("program graph binding reason must be non-empty")
+    if not _is_lower_hex(previous_graph_projection_sha256, 64):
+        raise DispatchError("program graph previous projection digest is invalid")
+    graph_projection_sha256 = canonical_json_sha256(projection)
+    payload = {
+        "schema_version": PROGRAM_GRAPH_BINDING_SCHEMA_VERSION,
+        "program_id": str(projection["program_id"]),
+        "catalog_sha256": str(projection["catalog_sha256"]),
+        "graph_projection": deepcopy(projection),
+        "graph_projection_sha256": graph_projection_sha256,
+        "previous_graph_projection_sha256": previous_graph_projection_sha256,
+        "bound_at": bound_at,
+        "binding_reason": binding_reason,
+        "missing_binding_recovery_policy": PROGRAM_GRAPH_RECOVERY_POLICY,
+    }
+    payload["binding_id"] = "loop-product-graph-binding-" + canonical_json_sha256(
+        payload
+    )
+    return payload
+
+
+def validate_program_graph_binding(binding: Any) -> dict[str, Any]:
+    required_fields = {
+        "schema_version",
+        "program_id",
+        "catalog_sha256",
+        "graph_projection",
+        "graph_projection_sha256",
+        "previous_graph_projection_sha256",
+        "bound_at",
+        "binding_reason",
+        "missing_binding_recovery_policy",
+        "binding_id",
+    }
+    if not isinstance(binding, dict) or set(binding) != required_fields:
+        raise DispatchError("program catalog graph binding schema is not exact")
+    projection = binding.get("graph_projection")
+    if (
+        binding.get("schema_version") != PROGRAM_GRAPH_BINDING_SCHEMA_VERSION
+        or not isinstance(projection, dict)
+        or set(projection)
+        != {
+            "schema_version",
+            "program_id",
+            "catalog_sha256",
+            "task_count",
+            "external_dependencies",
+            "additive_task_ids",
+            "tasks",
+        }
+        or projection.get("schema_version") != 1
+        or binding.get("program_id") != projection.get("program_id")
+        or binding.get("catalog_sha256") != projection.get("catalog_sha256")
+        or binding.get("graph_projection_sha256")
+        != canonical_json_sha256(projection)
+        or binding.get("missing_binding_recovery_policy")
+        != PROGRAM_GRAPH_RECOVERY_POLICY
+        or not isinstance(projection.get("external_dependencies"), list)
+        or not isinstance(projection.get("additive_task_ids"), list)
+        or any(
+            not isinstance(item, str) or not item.strip()
+            for field in ("external_dependencies", "additive_task_ids")
+            for item in projection[field]
+        )
+        or any(
+            len(projection[field]) != len(set(projection[field]))
+            for field in ("external_dependencies", "additive_task_ids")
+        )
+        or not _is_lower_hex(binding.get("previous_graph_projection_sha256"), 64)
+        or not isinstance(binding.get("binding_reason"), str)
+        or not str(binding["binding_reason"]).strip()
+    ):
+        raise DispatchError("program catalog graph binding contract mismatch")
+    parse_activity_timestamp(binding.get("bound_at"))
+    rows = projection.get("tasks")
+    if (
+        not isinstance(rows, list)
+        or projection.get("task_count") != len(rows)
+        or not rows
+    ):
+        raise DispatchError("program catalog graph projection task count is invalid")
+    task_ids: list[str] = []
+    for row in rows:
+        if (
+            not isinstance(row, dict)
+            or set(row) != {"task_id", "task_contract_sha256", "depends_on"}
+            or not isinstance(row.get("task_id"), str)
+            or not str(row["task_id"]).strip()
+            or not _is_lower_hex(row.get("task_contract_sha256"), 64)
+            or not isinstance(row.get("depends_on"), list)
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in row["depends_on"]
+            )
+            or len(row["depends_on"]) != len(set(row["depends_on"]))
+        ):
+            raise DispatchError("program catalog graph projection row is invalid")
+        task_ids.append(str(row["task_id"]))
+    if len(task_ids) != len(set(task_ids)):
+        raise DispatchError("program catalog graph projection task IDs are duplicated")
+    unsigned = {key: deepcopy(value) for key, value in binding.items() if key != "binding_id"}
+    expected_binding_id = "loop-product-graph-binding-" + canonical_json_sha256(
+        unsigned
+    )
+    if binding.get("binding_id") != expected_binding_id:
+        raise DispatchError("program catalog graph binding ID mismatch")
+    return binding
+
+
+def read_canonical_archive_payload(path: Path) -> dict[str, Any] | None:
+    """Read one archive leaf without following or racing a symlink swap."""
+
+    try:
+        path_stat = path.lstat()
+    except FileNotFoundError:
+        return None
+    if path.is_symlink() or not stat.S_ISREG(path_stat.st_mode):
+        raise DispatchError(f"canonical task archive must be a regular file: {path}")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise DispatchError(
+            f"canonical task archive cannot be opened safely: {path}: "
+            f"{type(exc).__name__}"
+        ) from exc
+    try:
+        opened_stat = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened_stat.st_mode)
+            or (opened_stat.st_dev, opened_stat.st_ino)
+            != (path_stat.st_dev, path_stat.st_ino)
+        ):
+            raise DispatchError(
+                f"canonical task archive identity changed before read: {path}"
+            )
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            raw = handle.read()
+        after_stat = path.lstat()
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(after_stat.st_mode)
+            or (after_stat.st_dev, after_stat.st_ino)
+            != (opened_stat.st_dev, opened_stat.st_ino)
+        ):
+            raise DispatchError(
+                f"canonical task archive identity changed during read: {path}"
+            )
+    except FileNotFoundError as exc:
+        raise DispatchError(
+            f"canonical task archive disappeared during read: {path}"
+        ) from exc
+    finally:
+        os.close(descriptor)
+    payload = strict_json_loads(raw, source=f"canonical task archive {path}")
+    if not isinstance(payload, dict):
+        raise DispatchError(f"canonical task archive must be an object: {path}")
+    return payload
+
+
+def _program_graph_sources(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    active = state.get("tasks")
+    if not isinstance(active, list) or any(not isinstance(task, dict) for task in active):
+        raise DispatchError("program graph validation requires exact active task objects")
+    current_ids = {str(task["id"]) for task in catalog["tasks"]}
+    active_by_id = {
+        str(task["id"]): task
+        for task in active
+        if str(task.get("id") or "") in current_ids
+    }
+    archived_by_id: dict[str, dict[str, Any]] = {}
+    for task_id in sorted(current_ids):
+        path = ARCHIVE_ROOT / f"{task_id}.json"
+        payload = read_canonical_archive_payload(path)
+        if payload is None:
+            continue
+        archived_task = payload.get("task")
+        terminal_status = archive_status(path)
+        if (
+            set(payload)
+            != {
+                "version",
+                "task_id",
+                "archived_at",
+                "terminal_status",
+                "terminal_outcome",
+                "task",
+                "handoffs",
+                "blockers",
+            }
+            or payload.get("version") != 1
+            or payload.get("task_id") != task_id
+            or terminal_status != "done"
+            or payload.get("terminal_outcome") not in {"completed", "superseded"}
+            or not isinstance(payload.get("handoffs"), list)
+            or not isinstance(payload.get("blockers"), list)
+            or not isinstance(archived_task, dict)
+            or archived_task.get("id") != task_id
+            or archived_task.get("status") != "done"
+            or str(archived_task.get("terminal_outcome") or "completed")
+            != payload.get("terminal_outcome")
+        ):
+            raise DispatchError(
+                f"terminal archive for {task_id} must retain an exact full task contract"
+            )
+        parse_activity_timestamp(payload.get("archived_at"))
+        archived_by_id[task_id] = archived_task
+    duplicate_sources = sorted(set(active_by_id) & set(archived_by_id))
+    if duplicate_sources:
+        raise DispatchError(
+            "program tasks exist in both active and archive state: "
+            + ", ".join(duplicate_sources)
+        )
+    return active_by_id, archived_by_id
+
+
+def validate_program_graph_sources(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    projection: dict[str, Any],
+) -> None:
+    active_by_id, archived_by_id = _program_graph_sources(state, catalog)
+    observed_ids = set(active_by_id) | set(archived_by_id)
+    rows = {str(row["task_id"]): row for row in projection["tasks"]}
+    if observed_ids != set(rows):
+        missing = sorted(set(rows) - observed_ids)
+        foreign = sorted(observed_ids - set(rows))
+        raise DispatchError(
+            "program catalog graph source set mismatch: "
+            f"missing={missing} foreign={foreign}"
+        )
+    for task_id, row in rows.items():
+        source = active_by_id.get(task_id) or archived_by_id.get(task_id)
+        if not isinstance(source, dict):
+            raise DispatchError(f"program catalog graph task is missing: {task_id}")
+        if (
+            task_contract_sha256(source) != row["task_contract_sha256"]
+            or source.get("depends_on") != row["depends_on"]
+        ):
+            raise DispatchError(
+                f"program catalog graph contract or dependency mismatch: {task_id}"
+            )
+
+
 def expected_completion_overlay(
     catalog: dict[str, Any],
     catalog_digest: str,
+    graph_binding: dict[str, Any],
 ) -> dict[str, Any]:
     roles = deepcopy(catalog["completion_authority"]["live_overlay_roles"])
     catalog_by_id = {str(task["id"]): task for task in catalog["tasks"]}
@@ -3361,6 +3752,14 @@ def expected_completion_overlay(
             for task_id in roles
         },
         "contract_fixtures_sha256": contract_fixtures_sha256(catalog),
+        "catalog_graph_binding_state_key": PROGRAM_GRAPH_BINDINGS_STATE_KEY,
+        "catalog_graph_binding_sha256": canonical_json_sha256(graph_binding),
+        "catalog_graph_projection_sha256": graph_binding[
+            "graph_projection_sha256"
+        ],
+        "missing_catalog_graph_binding_recovery_policy": (
+            PROGRAM_GRAPH_RECOVERY_POLICY
+        ),
         "checkpoint_consumption_required": True,
         "checkpoint_consumption_record_contract_sha256": canonical_json_sha256(
             catalog["completion_authority"]["checkpoint_consumption_record_contract"]
@@ -3368,24 +3767,287 @@ def expected_completion_overlay(
     }
 
 
+def validate_historical_program_provenance(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    projection: dict[str, Any],
+) -> None:
+    migration = (catalog.get("catalog_migrations") or [None])[0]
+    if not isinstance(migration, dict):
+        raise DispatchError("historical catalog migration is missing")
+    fixture = validate_preimage_fixture(migration)
+    expected_source_ref = fixture["historical_source_ref"]["value"]
+    expected_metadata = fixture["historical_dispatcher_metadata"]["value"]
+    active_by_id, archived_by_id = _program_graph_sources(state, catalog)
+    for row in projection["tasks"]:
+        task_id = str(row["task_id"])
+        task = active_by_id.get(task_id) or archived_by_id.get(task_id)
+        if not isinstance(task, dict):
+            raise DispatchError(f"historical program task is missing: {task_id}")
+        metadata = {field: task.get(field) for field in expected_metadata}
+        if task.get("source_ref") != expected_source_ref or metadata != expected_metadata:
+            raise DispatchError(
+                f"historical program provenance or dispatcher metadata changed: {task_id}"
+            )
+
+
+def program_activity_records(
+    state: dict[str, Any],
+    program_id: str,
+) -> list[dict[str, Any]]:
+    """Return unique persisted-or-pending program evidence under the audit lock."""
+
+    # No-op reruns must still reject duplicate or payload-divergent event IDs.
+    activity_event_index()
+    records: list[dict[str, Any]] = []
+    by_event_id: dict[str, dict[str, Any]] = {}
+
+    def add_record(entry: dict[str, Any], *, source: str) -> None:
+        catalog_digest = entry.get("catalog_sha256")
+        event_type = entry.get("type")
+        if not _is_lower_hex(catalog_digest, 64) or not isinstance(
+            event_type,
+            str,
+        ) or not event_type.strip():
+            raise DispatchError(f"program activity audit binding is incomplete: {source}")
+        event_id = entry.get("event_id")
+        if isinstance(event_id, str) and event_id.strip():
+            previous = by_event_id.get(event_id)
+            if previous is not None:
+                if previous != entry:
+                    raise DispatchError(
+                        f"program activity event payload conflicts with pending proof: {event_id}"
+                    )
+                return
+            by_event_id[event_id] = entry
+        records.append(entry)
+
+    for path in activity_log_sources():
+        for line_number, line in enumerate(
+            _read_activity_source(path).splitlines(),
+            start=1,
+        ):
+            if not line.strip():
+                continue
+            entry = strict_json_loads(
+                line,
+                source=f"{path}:{line_number}",
+            )
+            if not isinstance(entry, dict):
+                raise DispatchError("activity audit row must be an object")
+            if entry.get("program_id") == program_id:
+                add_record(entry, source=f"{path}:{line_number}")
+
+    pending = state.get("program_activity_outbox")
+    if isinstance(pending, dict) and pending.get("program_id") == program_id:
+        events = pending.get("events")
+        if not isinstance(events, list):
+            raise DispatchError("program activity pending evidence is not a list")
+        for ordinal, entry in enumerate(events):
+            if not isinstance(entry, dict):
+                raise DispatchError("program activity pending evidence is not an object")
+            add_record(entry, source=f"program_activity_outbox.events[{ordinal}]")
+    return records
+
+
+def validate_program_graph_install_audit(
+    records: list[dict[str, Any]],
+    catalog: dict[str, Any],
+    catalog_digest: str,
+    binding: dict[str, Any],
+    overlay: dict[str, Any],
+) -> None:
+    installs = [
+        entry
+        for entry in records
+        if entry.get("type") == "completion_authority_install"
+    ]
+    if len(installs) != 1:
+        raise DispatchError(
+            "program catalog graph binding requires exactly one durable install audit event"
+        )
+    entry = installs[0]
+    if set(entry) != (
+        ACTIVITY_COMMON_EVENT_FIELDS
+        | ACTIVITY_EVENT_EXTRA_FIELDS["completion_authority_install"]
+    ):
+        raise DispatchError("program catalog graph install audit schema is not exact")
+    unsigned = {key: deepcopy(value) for key, value in entry.items() if key != "event_id"}
+    expected_event_id = "loop-product-event-" + canonical_json_sha256(unsigned)
+    if (
+        entry.get("event_id") != expected_event_id
+        or entry.get("program_id") != catalog.get("program_id")
+        or entry.get("catalog_sha256") != catalog_digest
+        or entry.get("task_id") != "LOOP-PROD-SIGNOFF-001"
+        or entry.get("message")
+        != "Installed exact catalog-bound completion authority and task graph"
+        or entry.get("completion_authority_sha256")
+        != completion_authority_sha256(catalog)
+        or entry.get("completion_overlay_sha256")
+        != canonical_json_sha256(overlay)
+        or entry.get("graph_binding_sha256")
+        != canonical_json_sha256(binding)
+        or entry.get("graph_projection_sha256")
+        != binding["graph_projection_sha256"]
+        or entry.get("previous_graph_projection_sha256")
+        != binding["previous_graph_projection_sha256"]
+        or entry.get("graph_binding_reason") != binding["binding_reason"]
+    ):
+        raise DispatchError(
+            "program catalog graph binding does not match its durable install audit event"
+        )
+
+
+def validate_program_graph_prestate(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    catalog_digest: str,
+) -> str:
+    program_id = str(catalog["program_id"])
+    active_by_id, archived_by_id = _program_graph_sources(state, catalog)
+    observed_ids = set(active_by_id) | set(archived_by_id)
+    bindings = state.get(PROGRAM_GRAPH_BINDINGS_STATE_KEY)
+    if bindings is None:
+        bindings = {}
+    if not isinstance(bindings, dict):
+        raise DispatchError("program catalog graph bindings must be an object")
+    binding = bindings.get(program_id)
+    overlay_key = str(catalog["completion_authority"]["live_overlay_state_key"])
+    overlays = state.get(overlay_key)
+    if overlays is None:
+        overlays = {}
+    if not isinstance(overlays, dict):
+        raise DispatchError("program completion authority overlays must be an object")
+    overlay = overlays.get(program_id)
+    migration_records = state.get("program_catalog_migrations")
+    activity_records = program_activity_records(state, program_id)
+    audit_catalog_digests = {
+        str(entry["catalog_sha256"]) for entry in activity_records
+    }
+    audit_event_types = {str(entry["type"]) for entry in activity_records}
+
+    if binding is None:
+        if (
+            not observed_ids
+            and overlay is None
+            and migration_records in (None, [])
+            and not audit_catalog_digests
+        ):
+            return "fresh"
+        historical_projection = historical_catalog_graph_projection(catalog)
+        historical_ids = {str(row["task_id"]) for row in historical_projection["tasks"]}
+        if (
+            observed_ids == historical_ids
+            and overlay is None
+            and migration_records in (None, [])
+            and audit_catalog_digests.issubset(
+                {str(historical_projection["catalog_sha256"])}
+            )
+            and audit_event_types.issubset({"assign"})
+        ):
+            validate_program_graph_sources(
+                state,
+                catalog,
+                historical_projection,
+            )
+            validate_historical_program_provenance(
+                state,
+                catalog,
+                historical_projection,
+            )
+            return "historical_unbound"
+        raise DispatchError(
+            "program catalog graph binding is missing; dispatcher recreation is "
+            "forbidden and supervisor-signed recovery is required"
+        )
+
+    binding = validate_program_graph_binding(binding)
+    current_projection = catalog_graph_projection(catalog, catalog_digest)
+    if binding["graph_projection"] == current_projection:
+        validate_program_graph_sources(state, catalog, current_projection)
+        expected_overlay = expected_completion_overlay(
+            catalog,
+            catalog_digest,
+            binding,
+        )
+        if overlay != expected_overlay:
+            raise DispatchError(
+                "program completion overlay and catalog graph binding are not exact"
+            )
+        validate_program_graph_install_audit(
+            activity_records,
+            catalog,
+            catalog_digest,
+            binding,
+            overlay,
+        )
+        return "current"
+    historical_projection = historical_catalog_graph_projection(catalog)
+    if binding["graph_projection"] == historical_projection:
+        raise DispatchError(
+            "historical graph binding recreation is forbidden; supervisor-signed "
+            "recovery is required"
+        )
+    raise DispatchError("program catalog graph binding does not match an exact catalog epoch")
+
+
 def ensure_completion_overlay(
     state: dict[str, Any],
     catalog: dict[str, Any],
     catalog_digest: str,
     timestamp: str,
+    *,
+    graph_prestate: str,
 ) -> tuple[list[dict[str, Any]], bool]:
+    program_id = str(catalog["program_id"])
+    bindings = state.get(PROGRAM_GRAPH_BINDINGS_STATE_KEY)
+    if bindings is None:
+        bindings = {}
+    if not isinstance(bindings, dict):
+        raise DispatchError("program catalog graph bindings must be an object")
+    current_projection = catalog_graph_projection(catalog, catalog_digest)
+    if graph_prestate == "current":
+        graph_binding = validate_program_graph_binding(bindings.get(program_id))
+    elif graph_prestate == "fresh":
+        graph_binding = build_program_graph_binding(
+            current_projection,
+            bound_at=timestamp,
+            binding_reason="dispatcher_initial",
+            previous_graph_projection_sha256="0" * 64,
+        )
+        bindings[program_id] = graph_binding
+        state[PROGRAM_GRAPH_BINDINGS_STATE_KEY] = bindings
+    elif graph_prestate == "historical_unbound":
+        migration = (catalog.get("catalog_migrations") or [None])[0]
+        if not isinstance(migration, dict):
+            raise DispatchError("historical catalog graph migration is missing")
+        graph_binding = build_program_graph_binding(
+            current_projection,
+            bound_at=timestamp,
+            binding_reason=str(migration["id"]),
+            previous_graph_projection_sha256=canonical_json_sha256(
+                historical_catalog_graph_projection(catalog)
+            ),
+        )
+        bindings[program_id] = graph_binding
+        state[PROGRAM_GRAPH_BINDINGS_STATE_KEY] = bindings
+    else:
+        raise DispatchError("program catalog graph prestate is invalid")
+    validate_program_graph_sources(state, catalog, current_projection)
+
     key = str(catalog["completion_authority"]["live_overlay_state_key"])
     overlays = state.get(key)
     if overlays is None:
         overlays = {}
     if not isinstance(overlays, dict):
         raise DispatchError("program completion authority overlays must be an object")
-    program_id = str(catalog["program_id"])
-    expected = expected_completion_overlay(catalog, catalog_digest)
+    expected = expected_completion_overlay(catalog, catalog_digest, graph_binding)
     existing = overlays.get(program_id)
     if existing is not None:
         if existing != expected:
             raise DispatchError("foreign or tampered program completion overlay")
+        if graph_prestate != "current":
+            raise DispatchError("program graph transition cannot reuse an existing overlay")
         return [], False
 
     active_by_id = {
@@ -3403,6 +4065,7 @@ def ensure_completion_overlay(
     state[key] = overlays
     state["updated_at"] = timestamp
     overlay_digest = canonical_json_sha256(expected)
+    graph_binding_digest = canonical_json_sha256(graph_binding)
     return [
         {
             "ts": timestamp,
@@ -3411,7 +4074,17 @@ def ensure_completion_overlay(
             "task_id": "LOOP-PROD-SIGNOFF-001",
             "completion_authority_sha256": completion_authority_sha256(catalog),
             "completion_overlay_sha256": overlay_digest,
-            "message": "Installed exact catalog-bound completion authority overlay",
+            "graph_binding_sha256": graph_binding_digest,
+            "graph_projection_sha256": graph_binding[
+                "graph_projection_sha256"
+            ],
+            "previous_graph_projection_sha256": graph_binding[
+                "previous_graph_projection_sha256"
+            ],
+            "graph_binding_reason": graph_binding["binding_reason"],
+            "message": (
+                "Installed exact catalog-bound completion authority and task graph"
+            ),
         }
     ], True
 
@@ -3462,19 +4135,23 @@ def materialize(
         task_id = task["id"]
         archive_state = archived_primary_status(task_id)
         if archive_state is not None:
+            archive_payload = read_json(ARCHIVE_ROOT / f"{task_id}.json")
+            archived_task = archive_payload.get("task")
+            if not isinstance(archived_task, dict):
+                raise DispatchError(
+                    f"archive collision for {task_id} has no task record"
+                )
             if task_id in additive_ids:
-                archive_payload = read_json(ARCHIVE_ROOT / f"{task_id}.json")
-                archived_task = archive_payload.get("task")
-                if not isinstance(archived_task, dict):
-                    raise DispatchError(
-                        f"archive collision for additive task {task_id} has no task record"
-                    )
                 validate_additive_collision(
                     archived_task,
                     task,
                     catalog,
                     catalog_digest,
                     source="archive",
+                )
+            else:
+                validate_existing_task_provenance(
+                    archived_task, task_id, catalog, source="archive"
                 )
             archived.append(f"{task_id}:{archive_state}")
             continue
@@ -3488,6 +4165,10 @@ def materialize(
                     catalog,
                     catalog_digest,
                     source="active",
+                )
+            else:
+                validate_existing_task_provenance(
+                    existing, task_id, catalog, source="active"
                 )
             preserved.append(f"{task_id}:{existing.get('status', 'unknown')}")
             continue
@@ -3596,6 +4277,10 @@ def main() -> int:
         catalog,
         shared=bool(args.dry_run),
     ):
+        if args.dry_run:
+            assert_activity_audit_stable_unlocked(LOG_PATH)
+        else:
+            prepare_activity_audit_unlocked(LOG_PATH)
         original_signature = file_signature(STATUS_PATH)
         state = read_json(STATUS_PATH)
         pending = state.get("program_activity_outbox")
@@ -3623,16 +4308,15 @@ def main() -> int:
         validate_live_state(state, catalog, tasks)
         validate_checkpoint_consumptions(state, catalog, catalog_digest)
         validate_new_mutation_allowed(state)
+        graph_prestate = validate_program_graph_prestate(
+            state,
+            catalog,
+            catalog_digest,
+        )
         proposed = deepcopy(state)
 
         timestamp = iso_now()
         migrated, migration_logs, migration_changed = apply_catalog_migrations(
-            proposed,
-            catalog,
-            catalog_digest,
-            timestamp,
-        )
-        overlay_logs, overlay_changed = ensure_completion_overlay(
             proposed,
             catalog,
             catalog_digest,
@@ -3644,6 +4328,13 @@ def main() -> int:
             catalog,
             catalog_digest,
             timestamp,
+        )
+        overlay_logs, overlay_changed = ensure_completion_overlay(
+            proposed,
+            catalog,
+            catalog_digest,
+            timestamp,
+            graph_prestate=graph_prestate,
         )
         logs = [*migration_logs, *overlay_logs, *logs]
         changed = migration_changed or overlay_changed or changed

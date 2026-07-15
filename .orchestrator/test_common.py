@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import gzip
+import multiprocessing
 import os
 import subprocess
 import sys
@@ -12,6 +14,37 @@ from unittest import mock
 from urllib.error import HTTPError
 
 import common
+
+
+def _sigkill_during_activity_rotation(log_path: str, point: str) -> None:
+    os.environ["LOOP_TEST_ACTIVITY_ROTATION_SIGKILL_AFTER"] = point
+    common.write_activity_log(
+        {
+            "paths": {
+                "activity_log": log_path,
+                "activity_log_rotate_bytes": 1,
+            }
+        },
+        {
+            "event_id": "child-event-must-not-commit",
+            "type": "rotation_test",
+        },
+    )
+
+
+def _probe_forked_stable_lock(lock_path: str, connection) -> None:
+    try:
+        with common.stable_sidecar_lock(
+            lock_path,
+            plane="task_state",
+            shared=False,
+            nonblocking=True,
+        ):
+            connection.send("acquired")
+    except BlockingIOError:
+        connection.send("blocked")
+    finally:
+        connection.close()
 
 
 class PlanningSharedFilesTests(unittest.TestCase):
@@ -396,6 +429,320 @@ class RecentTaskActivityTests(unittest.TestCase):
             result = common._recent_task_activity({"paths": {"activity_log": str(activity_log)}}, "TASK-1", limit=3)
 
         self.assertEqual([entry["message"] for entry in result], ["older", "newer"])
+
+
+class StableCanonicalLockPathTests(unittest.TestCase):
+    def test_data_leaf_symlinks_are_rejected_before_lock_acquisition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target_dir = root / "target"
+            target_dir.mkdir()
+            cases = (
+                (
+                    common.canonical_task_state_lock_path,
+                    root / "ai-status.json",
+                    target_dir / "ai-status.json",
+                    "task-state",
+                ),
+                (
+                    common.activity_audit_lock_path,
+                    root / "ai-activity-log.jsonl",
+                    target_dir / "ai-activity-log.jsonl",
+                    "activity-audit",
+                ),
+            )
+            for lock_path_for, data_path, target, plane in cases:
+                with self.subTest(plane=plane):
+                    target.write_text("{}\n", encoding="utf-8")
+                    data_path.symlink_to(target)
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        rf"canonical {plane} data file cannot be a symlink",
+                    ):
+                        lock_path_for(data_path)
+
+    def test_lock_paths_resolve_the_parent_without_rejecting_parent_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            real_root = root / "real-status-root"
+            real_root.mkdir()
+            alias_root = root / "status-root-alias"
+            alias_root.symlink_to(real_root, target_is_directory=True)
+
+            self.assertEqual(
+                common.canonical_task_state_lock_path(
+                    alias_root / "ai-status.json"
+                ),
+                real_root / ".orchestrator" / "task-state.lock",
+            )
+            self.assertEqual(
+                common.activity_audit_lock_path(
+                    alias_root / "ai-activity-log.jsonl"
+                ),
+                real_root / ".orchestrator" / "activity-audit.lock",
+            )
+
+    def test_stable_sidecar_rejects_a_symlink_leaf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = root / "foreign.lock"
+            target.touch()
+            sidecar = root / "task-state.lock"
+            sidecar.symlink_to(target)
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "stable lock sidecar cannot be a symlink",
+            ):
+                with common.stable_sidecar_lock(
+                    sidecar,
+                    plane="task_state",
+                    shared=False,
+                    nonblocking=False,
+                ):
+                    self.fail("symlinked sidecar must never be acquired")
+
+    def test_stable_sidecar_resolves_a_parent_alias_and_creates_regular_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            real_root = root / "real-root"
+            real_root.mkdir()
+            alias_root = root / "root-alias"
+            alias_root.symlink_to(real_root, target_is_directory=True)
+            requested = alias_root / "activity-audit.lock"
+            expected = real_root / "activity-audit.lock"
+
+            with common.stable_sidecar_lock(
+                requested,
+                plane="activity_audit",
+                shared=False,
+                nonblocking=False,
+            ):
+                self.assertTrue(expected.is_file())
+                self.assertFalse(expected.is_symlink())
+
+    def test_stable_sidecar_rejects_path_swap_after_flock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            lock_path = root / "task-state.lock"
+            replacement = root / "replacement.lock"
+            replacement.touch()
+            real_flock = common.fcntl.flock
+
+            def swap_after_flock(descriptor: int, operation: int) -> None:
+                real_flock(descriptor, operation)
+                os.replace(replacement, lock_path)
+
+            with (
+                mock.patch.object(common.fcntl, "flock", side_effect=swap_after_flock),
+                self.assertRaisesRegex(
+                    RuntimeError,
+                    "stable lock sidecar changed while opening",
+                ),
+            ):
+                with common.stable_sidecar_lock(
+                    lock_path,
+                    plane="task_state",
+                    shared=False,
+                    nonblocking=False,
+                ):
+                    self.fail("replaced sidecar pathname must never be admitted")
+
+    def test_pid_change_resets_inherited_thread_local_state(self) -> None:
+        fake_handle = mock.Mock()
+        common._STABLE_LOCK_LOCAL.held = {
+            "inherited": {
+                "handle": fake_handle,
+                "depth": 1,
+                "rank": 1,
+                "plane": "runtime_admission",
+                "shared": False,
+            }
+        }
+        common._STABLE_LOCK_LOCAL.stack = ["inherited"]
+        common._STABLE_LOCK_LOCAL.pid = 100
+        try:
+            with mock.patch.object(common.os, "getpid", return_value=200):
+                held, stack = common._stable_lock_state()
+            fake_handle.close.assert_called_once_with()
+            self.assertEqual(held, {})
+            self.assertEqual(stack, [])
+            self.assertEqual(common._STABLE_LOCK_LOCAL.pid, 200)
+        finally:
+            common._STABLE_LOCK_LOCAL.held = {}
+            common._STABLE_LOCK_LOCAL.stack = []
+            common._STABLE_LOCK_LOCAL.pid = os.getpid()
+
+    def test_forked_child_does_not_reenter_inherited_thread_local_lock(self) -> None:
+        context = multiprocessing.get_context("fork")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_path = Path(tmpdir) / "task-state.lock"
+            parent_connection, child_connection = context.Pipe(duplex=False)
+            with common.stable_sidecar_lock(
+                lock_path,
+                plane="task_state",
+                shared=False,
+                nonblocking=False,
+            ):
+                process = context.Process(
+                    target=_probe_forked_stable_lock,
+                    args=(str(lock_path), child_connection),
+                )
+                process.start()
+                child_connection.close()
+                self.assertTrue(
+                    parent_connection.poll(5),
+                    "forked lock probe did not return",
+                )
+                self.assertEqual(parent_connection.recv(), "blocked")
+                process.join(timeout=5)
+                if process.is_alive():
+                    process.kill()
+                    process.join(timeout=5)
+                    self.fail("forked lock probe hung")
+                self.assertEqual(process.exitcode, 0)
+            parent_connection.close()
+
+
+class ActivityAuditRecoveryTests(unittest.TestCase):
+    def _audit_rows(self, log_path: Path) -> list[dict]:
+        rows: list[dict] = []
+        with common.activity_audit_lock_file(
+            log_path,
+            shared=True,
+            nonblocking=False,
+        ):
+            for source in common.activity_audit_source_paths_unlocked(log_path):
+                if source.suffix == ".gz":
+                    with gzip.open(source, "rt", encoding="utf-8") as handle:
+                        text = handle.read()
+                else:
+                    text = source.read_text(encoding="utf-8")
+                rows.extend(json.loads(line) for line in text.splitlines() if line)
+        return rows
+
+    def test_sigkill_at_each_rotation_boundary_recovers_exactly_once(self) -> None:
+        context = multiprocessing.get_context("fork")
+        for point in ("intent", "archive", "tail"):
+            with self.subTest(point=point), tempfile.TemporaryDirectory() as tmpdir:
+                log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+                original = [
+                    {
+                        "event_id": f"original-{index}",
+                        "payload": "x" * 256,
+                    }
+                    for index in range(3)
+                ]
+                log_path.write_text(
+                    "".join(json.dumps(row) + "\n" for row in original),
+                    encoding="utf-8",
+                )
+                process = context.Process(
+                    target=_sigkill_during_activity_rotation,
+                    args=(str(log_path), point),
+                )
+                process.start()
+                process.join(timeout=10)
+                if process.is_alive():
+                    process.kill()
+                    process.join(timeout=5)
+                    self.fail(f"rotation child hung at {point}")
+                self.assertEqual(process.exitcode, -9)
+
+                common.write_activity_log(
+                    {
+                        "paths": {
+                            "activity_log": str(log_path),
+                            "activity_log_rotate_bytes": 1,
+                        }
+                    },
+                    {
+                        "event_id": "restart-event",
+                        "type": "rotation_test",
+                    },
+                )
+
+                rows = self._audit_rows(log_path)
+                counts: dict[str, int] = {}
+                for row in rows:
+                    event_id = str(row.get("event_id") or "")
+                    counts[event_id] = counts.get(event_id, 0) + 1
+                self.assertEqual(
+                    counts,
+                    {
+                        "original-0": 1,
+                        "original-1": 1,
+                        "original-2": 1,
+                        "restart-event": 1,
+                    },
+                )
+                self.assertFalse(
+                    common.activity_rotation_intent_path(log_path).exists()
+                )
+
+    def test_interrupted_non_newline_tail_is_repaired_before_append(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_path.write_bytes(
+                b'{"event_id":"old"}\n{"event_id":"partial"'
+            )
+
+            common.write_activity_log(
+                {
+                    "paths": {
+                        "activity_log": str(log_path),
+                        "activity_log_rotate_bytes": 1024 * 1024,
+                    }
+                },
+                {"event_id": "new", "type": "tail_recovery_test"},
+            )
+
+            rows = self._audit_rows(log_path)
+            self.assertEqual(
+                [row["event_id"] for row in rows],
+                ["old", "new"],
+            )
+
+    def test_complete_json_without_newline_is_preserved_before_append(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_path.write_bytes(b'{"event_id":"old"}')
+
+            common.write_activity_log(
+                {
+                    "paths": {
+                        "activity_log": str(log_path),
+                        "activity_log_rotate_bytes": 1024 * 1024,
+                    }
+                },
+                {"event_id": "new", "type": "tail_recovery_test"},
+            )
+
+            rows = self._audit_rows(log_path)
+            self.assertEqual(
+                [row["event_id"] for row in rows],
+                ["old", "new"],
+            )
+
+    def test_symlinked_rotated_archive_source_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_path.write_text('{"event_id":"active"}\n', encoding="utf-8")
+            archive_dir = log_path.parent / "archive" / "logs"
+            archive_dir.mkdir(parents=True)
+            external = Path(tmpdir) / "external-payload.gz"
+            with gzip.open(external, "wt", encoding="utf-8") as handle:
+                handle.write('{"event_id":"forged"}\n')
+            archive_leaf = archive_dir / f"{log_path.name}-deadbeef.gz"
+            archive_leaf.symlink_to(external)
+
+            with self.assertRaisesRegex(
+                RuntimeError, "activity audit source leaf cannot be a symlink"
+            ):
+                with common.activity_audit_lock_file(
+                    log_path, shared=True, nonblocking=False
+                ):
+                    common.activity_audit_source_paths_unlocked(log_path)
 
 
 if __name__ == "__main__":

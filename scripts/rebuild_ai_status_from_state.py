@@ -31,6 +31,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from canonical_writer_guard import assert_isolated_legacy_write_target
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -267,6 +269,10 @@ def main(argv: list[str] | None = None) -> int:
         print(recovered_json)
         print("[rebuild] dry-run: ai-status.json NOT written.", file=sys.stderr)
     else:
+        assert_isolated_legacy_write_target(
+            ai_status_path,
+            tool="rebuild_ai_status_from_state",
+        )
         ai_status_path.write_text(recovered_json + "\n", encoding="utf-8")
         print(f"[rebuild] wrote {ai_status_path} ({len(tasks)} tasks).", file=sys.stderr)
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import sys
@@ -32,19 +31,21 @@ from common import (
     write_approval_evidence,
     write_json,
 )
-from runtime_state import default_approval_state, load_approval_state, load_runtime_state, save_approval_state
+from runtime_state import (
+    default_approval_state,
+    load_approval_state,
+    load_runtime_state,
+    runtime_state_lock,
+    save_approval_state,
+)
 
 
 @contextmanager
 def approval_lock(config: dict[str, Any]):
-    lock_path = config_path(config, "approval_queue").with_suffix(".lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("w", encoding="utf-8") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    """Compatibility name for the shared runtime-admission transaction."""
+
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        yield
 
 
 def list_pending(config: dict[str, Any], include_history: bool = False) -> dict[str, Any]:
@@ -186,20 +187,20 @@ def prune_stale_approvals(config: dict[str, Any]) -> list[dict[str, Any]]:
         state["pending"] = keep
         state.setdefault("history", []).extend(pruned)
         save_approval_state(config, state)
-    for item in pruned:
-        write_activity_log(
-            config,
-            {
-                "type": "approval_pruned",
-                "provider": item.get("provider"),
-                "task_id": item.get("task_id"),
-                "message": f"Auto-pruned stale approval {item.get('approval_id')}",
-                "approval_id": item.get("approval_id"),
-                "worker_run_id": item.get("worker_run_id"),
-                "decision": "deny",
-                "evidence_ref": item.get("resolution_ref") or item.get("evidence_ref"),
-            },
-        )
+        for item in pruned:
+            write_activity_log(
+                config,
+                {
+                    "type": "approval_pruned",
+                    "provider": item.get("provider"),
+                    "task_id": item.get("task_id"),
+                    "message": f"Auto-pruned stale approval {item.get('approval_id')}",
+                    "approval_id": item.get("approval_id"),
+                    "worker_run_id": item.get("worker_run_id"),
+                    "decision": "deny",
+                    "evidence_ref": item.get("resolution_ref") or item.get("evidence_ref"),
+                },
+            )
     return pruned
 
 
@@ -252,19 +253,19 @@ def create_approval(config: dict[str, Any], item: dict[str, Any]) -> dict[str, A
         state = load_approval_state(config)
         state.setdefault("pending", []).append(approval)
         save_approval_state(config, state)
-    write_activity_log(
-        config,
-        {
-            "type": "approval_requested",
-            "provider": approval.get("provider"),
-            "task_id": approval.get("task_id"),
-            "message": f"Approval requested for {approval.get('tool_name')} ({approval['approval_id']})",
-            "approval_id": approval["approval_id"],
-            "worker_run_id": approval.get("worker_run_id"),
-            "risk_class": approval.get("risk_class"),
-            "evidence_ref": evidence_ref,
-        },
-    )
+        write_activity_log(
+            config,
+            {
+                "type": "approval_requested",
+                "provider": approval.get("provider"),
+                "task_id": approval.get("task_id"),
+                "message": f"Approval requested for {approval.get('tool_name')} ({approval['approval_id']})",
+                "approval_id": approval["approval_id"],
+                "worker_run_id": approval.get("worker_run_id"),
+                "risk_class": approval.get("risk_class"),
+                "evidence_ref": evidence_ref,
+            },
+        )
     return approval
 
 
@@ -393,21 +394,21 @@ def resolve_approval(
         state["pending"].pop(index)
         state.setdefault("history", []).append(item)
         save_approval_state(config, state)
-    _apply_remember_rule(config, item, decision)
-    write_activity_log(
-        config,
-        {
-            "type": "approval_resolved",
-            "provider": item.get("provider"),
-            "task_id": item.get("task_id"),
-            "message": f"Approval {decision} for {item.get('tool_name')} ({approval_id})",
-            "approval_id": approval_id,
-            "decision": decision,
-            "worker_run_id": item.get("worker_run_id"),
-            "remember": remember,
-            "evidence_ref": item.get("resolution_ref") or item.get("evidence_ref"),
-        },
-    )
+        _apply_remember_rule(config, item, decision)
+        write_activity_log(
+            config,
+            {
+                "type": "approval_resolved",
+                "provider": item.get("provider"),
+                "task_id": item.get("task_id"),
+                "message": f"Approval {decision} for {item.get('tool_name')} ({approval_id})",
+                "approval_id": approval_id,
+                "decision": decision,
+                "worker_run_id": item.get("worker_run_id"),
+                "remember": remember,
+                "evidence_ref": item.get("resolution_ref") or item.get("evidence_ref"),
+            },
+        )
     return item
 
 
@@ -487,6 +488,19 @@ def consume_resume_override(
                 from permission_broker import restore_rules
 
                 restore_rules(config, bucket="ask", rules=suspended_ask_rules)
+            write_activity_log(
+                config,
+                {
+                    "type": "approval_resume_override_consumed",
+                    "provider": updated.get("provider"),
+                    "task_id": updated.get("task_id"),
+                    "message": (
+                        f"Consumed approval resume override {approval_id}: {reason}"
+                    ),
+                    "approval_id": approval_id,
+                    "worker_run_id": updated.get("worker_run_id"),
+                },
+            )
             return updated
     return None
 

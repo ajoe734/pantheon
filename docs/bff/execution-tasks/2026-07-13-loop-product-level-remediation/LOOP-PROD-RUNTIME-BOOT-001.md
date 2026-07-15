@@ -14,11 +14,16 @@ Plan:
 
 | Field | Value |
 | --- | --- |
-| Owner | Codex2 |
-| Reviewer | Codex |
+| Owner | Codex |
+| Reviewer | Codex2 |
 | Repository | `pantheon` |
 | Merge target | `dev` |
 | Task class | fleet product implementation; external prerequisite to the 48-task primary catalog (49 execution tasks total) |
+
+This is the current supervisor assignment after reassignment. The
+content-addressed bootstrap fixture retains the original assignment fields as
+immutable contract history; changing the live owner/reviewer does not rewrite
+that fixture or its canonical contract digest.
 
 The planning controller may author this contract, create its canonical task,
 monitor it, and accept or reject evidence. It must not implement the declared

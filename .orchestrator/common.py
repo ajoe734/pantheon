@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import gzip
+import fcntl
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -14,12 +16,12 @@ import uuid
 import hashlib
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import local
 from typing import Any, Mapping
-
-from task_archive import TaskResolver
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
@@ -51,6 +53,255 @@ CLAUDE_OAUTH_REFRESH_HEADERS = {
     "Referer": "https://claude.ai/",
     "User-Agent": "claude-code/2.1.117",
 }
+
+
+RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_VERSION = 1
+RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID = "pantheon-runtime-task-audit-lock-v1"
+RUNTIME_TASK_AUDIT_LOCK_ORDER = (
+    "runtime_admission",
+    "task_state",
+    "activity_audit",
+)
+_LOCK_RANKS = {
+    name: index
+    for index, name in enumerate(RUNTIME_TASK_AUDIT_LOCK_ORDER, start=1)
+}
+_STABLE_LOCK_LOCAL = local()
+
+
+def _reset_stable_lock_state_after_fork() -> None:
+    """Drop inherited lock handles without unlocking the parent's file description."""
+
+    held = getattr(_STABLE_LOCK_LOCAL, "held", None)
+    if isinstance(held, dict):
+        closed: set[int] = set()
+        for entry in held.values():
+            handle = entry.get("handle") if isinstance(entry, dict) else None
+            if handle is None or id(handle) in closed:
+                continue
+            closed.add(id(handle))
+            try:
+                # The child inherited the same open-file description.  Closing
+                # its duplicate leaves the parent's descriptor (and flock)
+                # intact; LOCK_UN here would incorrectly release the parent.
+                handle.close()
+            except OSError:
+                pass
+    _STABLE_LOCK_LOCAL.held = {}
+    _STABLE_LOCK_LOCAL.stack = []
+    _STABLE_LOCK_LOCAL.pid = os.getpid()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_stable_lock_state_after_fork)
+
+
+def _stable_lock_state() -> tuple[dict[str, dict[str, Any]], list[str]]:
+    current_pid = os.getpid()
+    inherited_pid = getattr(_STABLE_LOCK_LOCAL, "pid", current_pid)
+    if inherited_pid != current_pid:
+        # Defense in depth for runtimes where the at-fork callback was not
+        # installed or a process image inherited state before registration.
+        _reset_stable_lock_state_after_fork()
+    _STABLE_LOCK_LOCAL.pid = current_pid
+    held = getattr(_STABLE_LOCK_LOCAL, "held", None)
+    if held is None:
+        held = {}
+        _STABLE_LOCK_LOCAL.held = held
+    stack = getattr(_STABLE_LOCK_LOCAL, "stack", None)
+    if stack is None:
+        stack = []
+        _STABLE_LOCK_LOCAL.stack = stack
+    return held, stack
+
+
+def _assert_stable_lock_identity(lock_path: Path, descriptor: int) -> None:
+    descriptor_stat = os.fstat(descriptor)
+    if not stat.S_ISREG(descriptor_stat.st_mode):
+        raise RuntimeError(
+            f"stable lock sidecar must be a regular file: {lock_path}"
+        )
+    path_stat = lock_path.lstat()
+    if (
+        stat.S_ISLNK(path_stat.st_mode)
+        or path_stat.st_dev != descriptor_stat.st_dev
+        or path_stat.st_ino != descriptor_stat.st_ino
+    ):
+        raise RuntimeError(f"stable lock sidecar changed while opening: {lock_path}")
+
+
+def _trace_stable_lock(action: str, plane: str, path: Path) -> None:
+    """Append an optional process-test trace without touching canonical audit."""
+
+    trace_value = (
+        os.environ.get("PANTHEON_RUNTIME_LOCK_TRACE")
+        or os.environ.get("LOOP_TEST_LOCK_TRACE")
+        or ""
+    ).strip()
+    if not trace_value:
+        return
+    trace_path = Path(trace_value).expanduser()
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = f"{action}:{plane}:{os.getpid()}:{path}\n".encode("utf-8")
+    descriptor = os.open(trace_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        os.write(descriptor, payload)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
+def stable_sidecar_lock(
+    path: str | Path,
+    *,
+    plane: str,
+    shared: bool = False,
+    nonblocking: bool = False,
+):
+    """Hold one never-replaced flock sidecar and enforce the global lock order.
+
+    Locks are process-thread re-entrant for the same path. A shared lock cannot
+    be upgraded in place, and acquiring an earlier or peer plane while a later
+    plane is held fails before entering the kernel, preventing hidden reverse
+    ordering in nested writer helpers.
+    """
+
+    if plane not in _LOCK_RANKS:
+        raise ValueError(f"unknown canonical lock plane: {plane}")
+    requested_path = Path(path).expanduser()
+    # Resolve the directory, not the lock leaf.  Resolving the complete path
+    # would silently follow a sidecar symlink and let a retargeted link move
+    # future contenders to a different inode.
+    lock_path = requested_path.parent.resolve() / requested_path.name
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if lock_path.is_symlink():
+        raise RuntimeError(f"stable lock sidecar cannot be a symlink: {lock_path}")
+    key = str(lock_path)
+    held, stack = _stable_lock_state()
+    existing = held.get(key)
+    if existing is not None:
+        if bool(existing["shared"]) and not shared:
+            raise RuntimeError(
+                f"cannot upgrade shared {plane} lock to exclusive: {lock_path}"
+            )
+        existing["depth"] += 1
+        stack.append(key)
+        try:
+            yield existing["handle"]
+        finally:
+            stack.pop()
+            existing["depth"] -= 1
+        return
+
+    rank = _LOCK_RANKS[plane]
+    active_ranks = [int(held[item]["rank"]) for item in stack if item in held]
+    if active_ranks and rank <= max(active_ranks):
+        active_planes = [str(held[item]["plane"]) for item in stack if item in held]
+        raise RuntimeError(
+            "canonical lock order violation: "
+            f"cannot acquire {plane} after {','.join(active_planes)}"
+        )
+
+    flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(lock_path, flags, 0o600)
+    try:
+        _assert_stable_lock_identity(lock_path, descriptor)
+        handle = os.fdopen(descriptor, "a+", encoding="utf-8")
+    except BaseException:
+        os.close(descriptor)
+        raise
+    operation = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
+    if nonblocking:
+        operation |= fcntl.LOCK_NB
+    _trace_stable_lock("request", plane, lock_path)
+    try:
+        fcntl.flock(handle.fileno(), operation)
+        # A pathname swap between open(2) and flock(2) would otherwise leave
+        # this process holding an orphaned inode while the next contender opens
+        # the replacement.  Verify the pathname still names our locked FD.
+        _assert_stable_lock_identity(lock_path, handle.fileno())
+    except BaseException:
+        handle.close()
+        raise
+    _trace_stable_lock("acquire", plane, lock_path)
+    held[key] = {
+        "handle": handle,
+        "depth": 1,
+        "rank": rank,
+        "plane": plane,
+        "shared": bool(shared),
+    }
+    stack.append(key)
+    try:
+        yield handle
+    finally:
+        stack.pop()
+        entry = held.pop(key)
+        _trace_stable_lock("release", plane, lock_path)
+        try:
+            fcntl.flock(entry["handle"].fileno(), fcntl.LOCK_UN)
+        finally:
+            entry["handle"].close()
+
+
+def _canonical_data_parent(data_file: str | Path, *, plane: str) -> Path:
+    data_path = Path(data_file).expanduser()
+    if data_path.is_symlink():
+        raise RuntimeError(
+            f"canonical {plane} data file cannot be a symlink: {data_path}"
+        )
+    # Atomic replacement changes the data-file inode.  Deriving the sidecar
+    # from the resolved data leaf would therefore be unsafe when that leaf is
+    # a symlink: replacing it changes where the next caller resolves the lock.
+    # Resolve only the stable parent directory.
+    return data_path.parent.resolve()
+
+
+def canonical_task_state_lock_path(status_file: str | Path) -> Path:
+    root = _canonical_data_parent(status_file, plane="task-state")
+    return root / ".orchestrator" / "task-state.lock"
+
+
+@contextmanager
+def canonical_task_state_lock_file(
+    status_file: str | Path,
+    *,
+    shared: bool = False,
+    nonblocking: bool = False,
+):
+    with stable_sidecar_lock(
+        canonical_task_state_lock_path(status_file),
+        plane="task_state",
+        shared=shared,
+        nonblocking=nonblocking,
+    ) as handle:
+        yield handle
+
+
+def activity_audit_lock_path(activity_file: str | Path) -> Path:
+    root = _canonical_data_parent(activity_file, plane="activity-audit")
+    return root / ".orchestrator" / "activity-audit.lock"
+
+
+@contextmanager
+def activity_audit_lock_file(
+    activity_file: str | Path,
+    *,
+    shared: bool = False,
+    nonblocking: bool = False,
+):
+    with stable_sidecar_lock(
+        activity_audit_lock_path(activity_file),
+        plane="activity_audit",
+        shared=shared,
+        nonblocking=nonblocking,
+    ) as handle:
+        yield handle
 
 
 def utc_now() -> str:
@@ -106,6 +357,11 @@ def write_json(path: Path, payload: Any) -> None:
         os.fsync(handle.fileno())
         temp_path = Path(handle.name)
     os.replace(temp_path, path)
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -133,6 +389,8 @@ def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     ensure_parent(path)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def deep_merge(base: Any, overlay: Any) -> Any:
@@ -469,7 +727,12 @@ def render_template(path: Path, variables: dict[str, Any]) -> str:
 
 
 ACTIVITY_LOG_ROTATE_BYTES_DEFAULT = 50 * 1024 * 1024  # 50 MiB
-ACTIVITY_LOG_ARCHIVE_SUBDIR = Path(".orchestrator") / "logs" / "activity-log-archive"
+ACTIVITY_LOG_ARCHIVE_SUBDIR = Path("archive") / "logs"
+ACTIVITY_LOG_LEGACY_ARCHIVE_SUBDIR = (
+    Path(".orchestrator") / "logs" / "activity-log-archive"
+)
+ACTIVITY_LOG_ROTATION_SUBDIR = Path(".orchestrator") / "logs" / "activity-rotation"
+ACTIVITY_LOG_ROTATION_SCHEMA_VERSION = 1
 
 
 def _activity_log_rotate_threshold(config: dict[str, Any]) -> int:
@@ -481,34 +744,617 @@ def _activity_log_rotate_threshold(config: dict[str, Any]) -> int:
     return threshold if threshold > 0 else ACTIVITY_LOG_ROTATE_BYTES_DEFAULT
 
 
-def _rotate_activity_log_if_needed(config: dict[str, Any], log_path: Path) -> None:
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
     try:
-        size = log_path.stat().st_size
-    except FileNotFoundError:
-        return
-    if size <= _activity_log_rotate_threshold(config):
-        return
-    archive_dir = ROOT / ACTIVITY_LOG_ARCHIVE_SUBDIR
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    archive_path = archive_dir / f"{log_path.stem}-{stamp}.jsonl.gz"
-    counter = 1
-    while archive_path.exists():
-        archive_path = archive_dir / f"{log_path.stem}-{stamp}-{counter}.jsonl.gz"
-        counter += 1
-    rotating_path = log_path.with_suffix(log_path.suffix + ".rotating")
-    try:
-        os.replace(log_path, rotating_path)
-    except FileNotFoundError:
-        return
-    try:
-        with rotating_path.open("rb") as src, gzip.open(archive_path, "wb") as dst:
-            shutil.copyfileobj(src, dst, length=1024 * 1024)
+        os.fsync(descriptor)
     finally:
+        os.close(descriptor)
+
+
+def durable_write_bytes(
+    path: Path,
+    payload: bytes,
+    *,
+    mode: int | None = None,
+) -> None:
+    """Atomically replace one file and durably publish its directory entry."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            if mode is not None:
+                os.fchmod(handle.fileno(), mode)
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+        _fsync_directory(path.parent)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def durable_create_bytes(
+    path: Path,
+    payload: bytes,
+    *,
+    mode: int = 0o600,
+) -> None:
+    """Durably create one regular-file evidence leaf without clobbering it."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(path, flags, mode)
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        path_stat = path.lstat()
+        if (
+            not stat.S_ISREG(descriptor_stat.st_mode)
+            or stat.S_ISLNK(path_stat.st_mode)
+            or (path_stat.st_dev, path_stat.st_ino)
+            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        ):
+            raise RuntimeError(f"created evidence leaf is not stable: {path}")
+        view = memoryview(payload)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError(f"evidence write made no progress: {path}")
+            view = view[written:]
+        os.fchmod(descriptor, mode)
+        os.fsync(descriptor)
+        after_stat = path.lstat()
+        readback = bytearray()
+        offset = 0
+        while len(readback) < len(payload):
+            chunk = os.pread(descriptor, len(payload) - len(readback), offset)
+            if not chunk:
+                break
+            readback.extend(chunk)
+            offset += len(chunk)
+        if (
+            stat.S_ISLNK(after_stat.st_mode)
+            or (after_stat.st_dev, after_stat.st_ino)
+            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+            or bytes(readback) != payload
+        ):
+            raise RuntimeError(f"created evidence readback mismatch: {path}")
+    finally:
+        os.close(descriptor)
+    _fsync_directory(path.parent)
+
+
+def read_regular_file_snapshot(
+    path: Path,
+    *,
+    source: str,
+) -> tuple[bytes, os.stat_result]:
+    """Read one stable regular-file leaf and return bytes plus its FD stat."""
+
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(path, flags)
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        path_stat = path.lstat()
+        if (
+            not stat.S_ISREG(descriptor_stat.st_mode)
+            or stat.S_ISLNK(path_stat.st_mode)
+            or (path_stat.st_dev, path_stat.st_ino)
+            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        ):
+            raise RuntimeError(f"{source} must be a stable regular file: {path}")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after_stat = path.lstat()
+        if (
+            stat.S_ISLNK(after_stat.st_mode)
+            or (after_stat.st_dev, after_stat.st_ino)
+            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        ):
+            raise RuntimeError(f"{source} changed during read: {path}")
+        return b"".join(chunks), descriptor_stat
+    finally:
+        os.close(descriptor)
+
+
+def read_regular_file_bytes(path: Path, *, source: str) -> bytes:
+    """Read one stable regular-file leaf without following a symlink."""
+
+    payload, _ = read_regular_file_snapshot(path, source=source)
+    return payload
+
+
+def restore_canonical_task_state_bytes(
+    status_file: str | Path,
+    payload: bytes,
+    *,
+    mode: int = 0o664,
+) -> None:
+    """Durably restore canonical task state under its stable lock and read it back."""
+
+    status_path = Path(status_file).expanduser()
+    with canonical_task_state_lock_file(status_path):
+        durable_write_bytes(status_path, payload, mode=mode)
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        descriptor = os.open(status_path, flags)
         try:
-            rotating_path.unlink()
-        except FileNotFoundError:
-            pass
+            descriptor_stat = os.fstat(descriptor)
+            path_stat = status_path.lstat()
+            if (
+                not stat.S_ISREG(descriptor_stat.st_mode)
+                or stat.S_ISLNK(path_stat.st_mode)
+                or (path_stat.st_dev, path_stat.st_ino)
+                != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+            ):
+                raise RuntimeError(
+                    f"canonical task-state changed during restore: {status_path}"
+                )
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            after_stat = status_path.lstat()
+            if (
+                stat.S_ISLNK(after_stat.st_mode)
+                or (after_stat.st_dev, after_stat.st_ino)
+                != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+                or b"".join(chunks) != payload
+            ):
+                raise RuntimeError(
+                    f"canonical task-state restore readback mismatch: {status_path}"
+                )
+        finally:
+            os.close(descriptor)
+        _fsync_directory(status_path.parent)
+
+
+def _durable_write_gzip(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "wb") as raw:
+            with gzip.GzipFile(
+                filename="",
+                mode="wb",
+                fileobj=raw,
+                mtime=0,
+            ) as compressed:
+                compressed.write(payload)
+            raw.flush()
+            os.fsync(raw.fileno())
+        os.replace(temp_path, path)
+        _fsync_directory(path.parent)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _activity_rotation_dir(log_path: Path) -> Path:
+    return log_path.parent / ACTIVITY_LOG_ROTATION_SUBDIR
+
+
+def activity_rotation_intent_path(log_path: Path) -> Path:
+    return _activity_rotation_dir(log_path) / f"{log_path.name}.intent.json"
+
+
+def _canonical_json_sha256(payload: Any) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _activity_rotation_fault(point: str) -> None:
+    """Process-test-only SIGKILL seam used to prove restart convergence."""
+
+    requested = str(
+        os.environ.get("LOOP_TEST_ACTIVITY_ROTATION_SIGKILL_AFTER") or ""
+    ).strip()
+    if requested == point:
+        os.kill(os.getpid(), 9)
+
+
+def _validated_activity_rotation_intent(
+    log_path: Path,
+    payload: Any,
+) -> dict[str, Any]:
+    required = {
+        "schema_version",
+        "transaction_id",
+        "log_name",
+        "source_sha256",
+        "archive_sha256",
+        "tail_sha256",
+        "archive_relative_path",
+    }
+    if not isinstance(payload, dict) or set(payload) != required:
+        raise RuntimeError("activity rotation intent schema is not exact")
+    seed = {key: payload[key] for key in sorted(required - {"transaction_id"})}
+    expected_id = "activity-rotation-" + _canonical_json_sha256(seed)
+    if (
+        payload.get("schema_version") != ACTIVITY_LOG_ROTATION_SCHEMA_VERSION
+        or payload.get("transaction_id") != expected_id
+        or payload.get("log_name") != log_path.name
+        or any(
+            not isinstance(payload.get(key), str)
+            or len(str(payload[key])) != 64
+            for key in ("source_sha256", "archive_sha256", "tail_sha256")
+        )
+    ):
+        raise RuntimeError("activity rotation intent contract is invalid")
+    relative = Path(str(payload.get("archive_relative_path") or ""))
+    if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+        raise RuntimeError("activity rotation archive path is invalid")
+    archive_path = (log_path.parent / relative).resolve()
+    try:
+        archive_path.relative_to(log_path.parent.resolve())
+    except ValueError as exc:
+        raise RuntimeError("activity rotation archive escapes status root") from exc
+    return payload
+
+
+def _load_activity_rotation_intent(log_path: Path) -> dict[str, Any] | None:
+    path = activity_rotation_intent_path(log_path)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("activity rotation intent is unreadable") from exc
+    return _validated_activity_rotation_intent(log_path, payload)
+
+
+def _activity_rotation_stage_paths(
+    log_path: Path,
+    transaction_id: str,
+) -> tuple[Path, Path]:
+    root = _activity_rotation_dir(log_path)
+    return (
+        root / f"{transaction_id}.archive.gz",
+        root / f"{transaction_id}.tail",
+    )
+
+
+def _read_gzip_bytes(path: Path) -> bytes:
+    with gzip.open(path, "rb") as handle:
+        return handle.read()
+
+
+def recover_activity_log_rotation_unlocked(log_path: Path) -> Path | None:
+    """Finish a durable archive/tail transaction while audit EX is held."""
+
+    log_path = log_path.expanduser().resolve()
+    intent = _load_activity_rotation_intent(log_path)
+    if intent is None:
+        return None
+    transaction_id = str(intent["transaction_id"])
+    stage_archive, stage_tail = _activity_rotation_stage_paths(
+        log_path,
+        transaction_id,
+    )
+    archive_path = (
+        log_path.parent / str(intent["archive_relative_path"])
+    ).resolve()
+
+    try:
+        tail = stage_tail.read_bytes()
+    except OSError as exc:
+        raise RuntimeError("activity rotation tail stage is missing") from exc
+    if hashlib.sha256(tail).hexdigest() != intent["tail_sha256"]:
+        raise RuntimeError("activity rotation tail stage digest mismatch")
+
+    if stage_archive.is_file():
+        try:
+            archive_payload = _read_gzip_bytes(stage_archive)
+        except (OSError, EOFError, gzip.BadGzipFile) as exc:
+            raise RuntimeError("activity rotation archive stage is unreadable") from exc
+    elif archive_path.is_file():
+        try:
+            archive_payload = _read_gzip_bytes(archive_path)
+        except (OSError, EOFError, gzip.BadGzipFile) as exc:
+            raise RuntimeError("activity rotation archive is unreadable") from exc
+    else:
+        raise RuntimeError("activity rotation archive stage is missing")
+    if hashlib.sha256(archive_payload).hexdigest() != intent["archive_sha256"]:
+        raise RuntimeError("activity rotation archive digest mismatch")
+    if hashlib.sha256(archive_payload + tail).hexdigest() != intent["source_sha256"]:
+        raise RuntimeError("activity rotation source partition digest mismatch")
+
+    if archive_path.exists():
+        try:
+            installed_archive = _read_gzip_bytes(archive_path)
+        except (OSError, EOFError, gzip.BadGzipFile) as exc:
+            raise RuntimeError("activity rotation installed archive is unreadable") from exc
+        if installed_archive != archive_payload:
+            raise RuntimeError("activity rotation installed archive conflicts")
+    else:
+        _durable_write_gzip(archive_path, archive_payload)
+    _activity_rotation_fault("archive")
+
+    try:
+        active = log_path.read_bytes()
+    except FileNotFoundError:
+        active = None
+    except OSError as exc:
+        raise RuntimeError("activity log is unreadable during recovery") from exc
+    active_digest = hashlib.sha256(active).hexdigest() if active is not None else None
+    if active_digest == intent["source_sha256"] or active is None:
+        durable_write_bytes(log_path, tail)
+    elif active_digest != intent["tail_sha256"]:
+        raise RuntimeError("activity log changed during rotation recovery")
+    _activity_rotation_fault("tail")
+
+    if log_path.read_bytes() != tail:
+        raise RuntimeError("activity rotation tail readback mismatch")
+    if _read_gzip_bytes(archive_path) != archive_payload:
+        raise RuntimeError("activity rotation archive readback mismatch")
+
+    intent_path = activity_rotation_intent_path(log_path)
+    intent_path.unlink(missing_ok=True)
+    stage_archive.unlink(missing_ok=True)
+    stage_tail.unlink(missing_ok=True)
+    _fsync_directory(intent_path.parent)
+    return archive_path
+
+
+def prepare_activity_audit_unlocked(log_path: Path) -> None:
+    """Recover rotation and one interrupted, non-newline append under audit EX."""
+
+    recover_activity_log_rotation_unlocked(log_path)
+    repair_activity_log_tail_unlocked(log_path)
+
+
+def assert_activity_audit_stable_unlocked(log_path: Path) -> None:
+    """Fail closed when a shared reader observes unfinished writer recovery."""
+
+    if activity_rotation_intent_path(log_path).exists():
+        raise RuntimeError("activity rotation recovery is pending")
+    if log_path.is_file():
+        data = log_path.read_bytes()
+        if data and not data.endswith(b"\n"):
+            raise RuntimeError("activity audit has an interrupted trailing row")
+
+
+def repair_activity_log_tail_unlocked(log_path: Path) -> bool:
+    """Repair only a non-newline tail; complete malformed rows remain fatal."""
+
+    try:
+        data = log_path.read_bytes()
+    except FileNotFoundError:
+        return False
+    if not data or data.endswith(b"\n"):
+        return False
+    split_at = data.rfind(b"\n")
+    prefix = data[: split_at + 1] if split_at >= 0 else b""
+    fragment = data[split_at + 1 :]
+    try:
+        decoded = fragment.decode("utf-8")
+        parsed = json.loads(decoded)
+        complete = isinstance(parsed, dict)
+    except (UnicodeError, json.JSONDecodeError):
+        complete = False
+    repaired = data + b"\n" if complete else prefix
+    durable_write_bytes(log_path, repaired)
+    return True
+
+
+def rotate_activity_log_unlocked(
+    log_path: Path,
+    *,
+    max_bytes: int,
+    keep_lines: int = 0,
+    archive_dir: Path | None = None,
+) -> Path | None:
+    """Durably partition active bytes into one archive and one active tail."""
+
+    log_path = log_path.expanduser().resolve()
+    prepare_activity_audit_unlocked(log_path)
+    if max_bytes <= 0:
+        return None
+    try:
+        data = log_path.read_bytes()
+    except FileNotFoundError:
+        return None
+    if len(data) <= max_bytes:
+        return None
+    if keep_lines > 0:
+        lines = data.splitlines(keepends=True)
+        if len(lines) > keep_lines:
+            archive_payload = b"".join(lines[:-keep_lines])
+            tail = b"".join(lines[-keep_lines:])
+        else:
+            archive_payload = data
+            tail = b""
+    else:
+        archive_payload = data
+        tail = b""
+    if not archive_payload:
+        return None
+
+    archive_digest = hashlib.sha256(archive_payload).hexdigest()
+    archive_dir = (
+        archive_dir.expanduser().resolve()
+        if archive_dir is not None
+        else (log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR).resolve()
+    )
+    try:
+        archive_relative = archive_dir.relative_to(log_path.parent)
+    except ValueError as exc:
+        raise RuntimeError("activity archive directory escapes status root") from exc
+    archive_path = archive_dir / f"{log_path.name}-{archive_digest}.gz"
+    seed = {
+        "schema_version": ACTIVITY_LOG_ROTATION_SCHEMA_VERSION,
+        "log_name": log_path.name,
+        "source_sha256": hashlib.sha256(data).hexdigest(),
+        "archive_sha256": archive_digest,
+        "tail_sha256": hashlib.sha256(tail).hexdigest(),
+        "archive_relative_path": str(archive_relative / archive_path.name),
+    }
+    transaction_id = "activity-rotation-" + _canonical_json_sha256(seed)
+    intent = {**seed, "transaction_id": transaction_id}
+    rotation_dir = _activity_rotation_dir(log_path)
+    rotation_dir.mkdir(parents=True, exist_ok=True)
+    stage_archive, stage_tail = _activity_rotation_stage_paths(
+        log_path,
+        transaction_id,
+    )
+    _durable_write_gzip(stage_archive, archive_payload)
+    durable_write_bytes(stage_tail, tail)
+    write_json(activity_rotation_intent_path(log_path), intent)
+    _activity_rotation_fault("intent")
+    return recover_activity_log_rotation_unlocked(log_path)
+
+
+def _rotate_activity_log_if_needed(
+    config: dict[str, Any],
+    log_path: Path,
+) -> Path | None:
+    return rotate_activity_log_unlocked(
+        log_path,
+        max_bytes=_activity_log_rotate_threshold(config),
+        keep_lines=0,
+    )
+
+
+def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
+    """Return disjoint rotated sources plus active while audit SH/EX is held."""
+
+    log_path = log_path.expanduser().resolve()
+    assert_activity_audit_stable_unlocked(log_path)
+    sources = sorted(
+        (log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR).glob(
+            f"{log_path.name}-*.gz"
+        )
+    )
+    sources.extend(
+        sorted(
+            (log_path.parent / ACTIVITY_LOG_LEGACY_ARCHIVE_SUBDIR).glob(
+                f"{log_path.stem}-*.jsonl.gz"
+            )
+        )
+    )
+    if log_path.is_file():
+        sources.append(log_path)
+    for source in sources:
+        # A rotated or active audit source can never be a symlink: callers
+        # read these paths with a plain `gzip.open()` / `read_text()`, which
+        # follows symlinks, and a forged or conflicting external payload
+        # injected through a symlinked archive leaf would otherwise be
+        # accepted into activity_event_index()/program_activity_records().
+        if source.is_symlink():
+            raise RuntimeError(
+                f"activity audit source leaf cannot be a symlink: {source}"
+            )
+    return sources
+
+
+def append_activity_log_entries_unlocked(
+    log_path: Path,
+    entries: list[dict[str, Any]],
+    *,
+    rotate_bytes: int | None = None,
+    keep_lines: int = 0,
+) -> None:
+    """Recover, optionally rotate, and durably append while audit EX is held."""
+
+    log_path = log_path.expanduser().resolve()
+    prepare_activity_audit_unlocked(log_path)
+    if rotate_bytes is not None:
+        rotate_activity_log_unlocked(
+            log_path,
+            max_bytes=rotate_bytes,
+            keep_lines=keep_lines,
+        )
+    if not entries:
+        return
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    created = not log_path.exists()
+    with log_path.open("ab") as handle:
+        for entry in entries:
+            handle.write(
+                (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8")
+            )
+        handle.flush()
+        os.fsync(handle.fileno())
+    if created:
+        _fsync_directory(log_path.parent)
+
+
+def _tail_bytes_unlocked(path: Path, max_lines: int | None) -> bytes | None:
+    if not path.exists():
+        return None
+    if max_lines is None or max_lines <= 0:
+        return path.read_bytes()
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        position = handle.tell()
+        buffer = bytearray()
+        line_count = 0
+        while position > 0 and line_count <= max_lines:
+            read_size = min(1 << 16, position)
+            position -= read_size
+            handle.seek(position)
+            buffer[0:0] = handle.read(read_size)
+            line_count = buffer.count(b"\n")
+    tail = bytes(buffer)
+    if line_count > max_lines:
+        split_at = -1
+        for _ in range(line_count - max_lines):
+            split_at = tail.find(b"\n", split_at + 1)
+            if split_at < 0:
+                break
+        if split_at >= 0:
+            tail = tail[split_at + 1 :]
+    return tail
+
+
+def read_activity_log_tail_bytes(
+    log_path: Path,
+    *,
+    max_lines: int | None,
+) -> bytes | None:
+    """Recover under EX, then return one consistent active-tail snapshot under SH."""
+
+    with activity_audit_lock_file(log_path, shared=False, nonblocking=False):
+        prepare_activity_audit_unlocked(log_path)
+    with activity_audit_lock_file(log_path, shared=True, nonblocking=False):
+        assert_activity_audit_stable_unlocked(log_path)
+        return _tail_bytes_unlocked(log_path, max_lines)
 
 
 def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
@@ -518,8 +1364,13 @@ def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
         **entry,
     }
     log_path = config_path(config, "activity_log")
-    _rotate_activity_log_if_needed(config, log_path)
-    append_jsonl(log_path, payload)
+    with activity_audit_lock_file(log_path, shared=False, nonblocking=False):
+        append_activity_log_entries_unlocked(
+            log_path,
+            [payload],
+            rotate_bytes=_activity_log_rotate_threshold(config),
+            keep_lines=0,
+        )
 
 
 def runtime_log_path(prefix: str, target: str) -> Path:
@@ -766,55 +1617,58 @@ def task_brief_path(task_id: str | None) -> Path:
 
 def _recent_task_activity(config: dict[str, Any], task_id: str, *, limit: int = 6) -> list[dict[str, Any]]:
     path = config_path(config, "activity_log")
-    if not path.exists():
-        return []
+    with activity_audit_lock_file(path, shared=True, nonblocking=False):
+        if not path.exists():
+            return []
 
-    entries: list[dict[str, Any]] = []
-    chunk_size = 64 * 1024
-    max_scan_bytes = 16 * 1024 * 1024
-    scanned = 0
+        entries: list[dict[str, Any]] = []
+        chunk_size = 64 * 1024
+        max_scan_bytes = 16 * 1024 * 1024
+        scanned = 0
 
-    with path.open("rb") as handle:
-        handle.seek(0, os.SEEK_END)
-        position = handle.tell()
-        buffer = b""
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            position = handle.tell()
+            buffer = b""
 
-        while position > 0 and len(entries) < limit and scanned < max_scan_bytes:
-            read_size = min(chunk_size, position)
-            position -= read_size
-            handle.seek(position)
-            chunk = handle.read(read_size)
-            scanned += read_size
-            buffer = chunk + buffer
-            lines = buffer.splitlines()
+            while position > 0 and len(entries) < limit and scanned < max_scan_bytes:
+                read_size = min(chunk_size, position)
+                position -= read_size
+                handle.seek(position)
+                chunk = handle.read(read_size)
+                scanned += read_size
+                buffer = chunk + buffer
+                lines = buffer.splitlines()
 
-            if position > 0:
-                buffer = lines[0] if lines else buffer
-                complete_lines = lines[1:]
-            else:
-                buffer = b""
-                complete_lines = lines
+                if position > 0:
+                    buffer = lines[0] if lines else buffer
+                    complete_lines = lines[1:]
+                else:
+                    buffer = b""
+                    complete_lines = lines
 
-            for raw_line in reversed(complete_lines):
-                line = raw_line.decode("utf-8", errors="ignore").strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    # Ignore a partially-written tail line rather than stalling dispatch.
-                    continue
-                if str(entry.get("task_id") or "").strip() != task_id:
-                    continue
-                entries.append(entry)
-                if len(entries) >= limit:
-                    break
+                for raw_line in reversed(complete_lines):
+                    line = raw_line.decode("utf-8", errors="ignore").strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        # Ignore a partially-written tail line rather than stalling dispatch.
+                        continue
+                    if str(entry.get("task_id") or "").strip() != task_id:
+                        continue
+                    entries.append(entry)
+                    if len(entries) >= limit:
+                        break
 
-    entries.reverse()
-    return entries
+        entries.reverse()
+        return entries
 
 
 def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None:
+    from task_archive import TaskResolver
+
     if not task_id:
         return None
     status = load_status(config)

@@ -586,6 +586,33 @@ def program_tasks(state: dict) -> list[dict]:
     ]
 
 
+def graph_binding(state: dict) -> dict:
+    program_id = load_catalog()["program_id"]
+    return state["program_catalog_graph_bindings"][program_id]
+
+
+def write_terminal_archive(root: Path, task: dict, *, archived_at: str) -> dict:
+    archived_task = deepcopy(task)
+    archived_task["status"] = "done"
+    terminal_outcome = str(archived_task.get("terminal_outcome") or "completed")
+    payload = {
+        "version": 1,
+        "task_id": str(archived_task["id"]),
+        "archived_at": archived_at,
+        "terminal_status": "done",
+        "terminal_outcome": terminal_outcome,
+        "task": archived_task,
+        "handoffs": [],
+        "blockers": [],
+    }
+    path = root / "ai-task-archive" / "tasks" / f"{archived_task['id']}.json"
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return archived_task
+
+
 def test_catalog_validates_and_has_complete_task_documents() -> None:
     result = subprocess.run(
         ["python3", str(SCRIPT), "--validate-only"],
@@ -836,6 +863,35 @@ def test_dispatch_is_idempotent_and_preserves_supervisor_agent_queues() -> None:
         assert all(task["formal_review_required"] is True for task in tasks)
         assert all(task["source_ref"]["execution_authority_sha256"] for task in tasks)
         assert state["agents"] == agents_before
+        binding = graph_binding(state)
+        projection = binding["graph_projection"]
+        assert binding["binding_reason"] == "dispatcher_initial"
+        assert binding["missing_binding_recovery_policy"] == "supervisor_signed_only"
+        assert projection["catalog_sha256"] == binding["catalog_sha256"]
+        assert projection["task_count"] == len(projection["tasks"]) == 48
+        assert [row["task_id"] for row in projection["tasks"]] == [
+            task["id"] for task in load_catalog()["tasks"]
+        ]
+        assert all(
+            row["task_contract_sha256"] == canonical_sha256(
+                {
+                    field: next(
+                        item
+                        for item in load_catalog()["tasks"]
+                        if item["id"] == row["task_id"]
+                    ).get(field)
+                    for field in sorted(DISPATCH["TASK_CONTRACT_FIELDS"])
+                }
+            )
+            for row in projection["tasks"]
+        )
+        overlay = state["program_completion_authorities"][
+            load_catalog()["program_id"]
+        ]
+        assert overlay["catalog_graph_binding_sha256"] == canonical_sha256(binding)
+        assert overlay["catalog_graph_projection_sha256"] == binding[
+            "graph_projection_sha256"
+        ]
         assert len(log_after_first.decode("utf-8").splitlines()) == 49
 
         second = run_dispatch(root)
@@ -862,7 +918,7 @@ def test_activity_outbox_recovers_crash_between_status_and_log() -> None:
         )
         assert len(program_tasks(interrupted_state)) == 48
         outbox = interrupted_state["program_activity_outbox"]
-        assert outbox["schema_version"] == 4
+        assert outbox["schema_version"] == 5
         assert outbox["actor_policy"] == load_catalog()["allowed_owners"]
         assert outbox["actor_policy_sha256"] == canonical_sha256(
             outbox["actor_policy"]
@@ -933,6 +989,110 @@ def test_activity_outbox_deduplicates_crash_after_log_append() -> None:
         ]
         assert len(records) == 49
         assert len({record["event_id"] for record in records}) == 49
+
+
+def test_activity_outbox_recovers_after_assigned_task_is_archived() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        interrupted = run_dispatch(
+            root,
+            extra_env={"LOOP_PRODUCT_DISPATCH_FAIL_AFTER_STATUS_COMMIT": "1"},
+        )
+        assert interrupted.returncode == 2
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        task = next(item for item in state["tasks"] if item.get("id") == "LOOP-PROD-000")
+        state["tasks"] = [
+            item for item in state["tasks"] if item.get("id") != "LOOP-PROD-000"
+        ]
+        write_terminal_archive(
+            root,
+            task,
+            archived_at="2026-07-15T00:00:00Z",
+        )
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+        recovered = run_dispatch(root)
+
+        assert recovered.returncode == 0, recovered.stderr
+        after = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        assert after["program_activity_outbox"] is None
+        assert not any(task.get("id") == "LOOP-PROD-000" for task in after["tasks"])
+        assert (root / "ai-task-archive" / "tasks" / "LOOP-PROD-000.json").is_file()
+        records = [
+            json.loads(line)
+            for line in (root / "ai-activity-log.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert len(records) == 49
+        assert len({record["event_id"] for record in records}) == 49
+
+
+def test_activity_outbox_deduplicates_events_in_old_mtime_archive() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        interrupted = run_dispatch(
+            root,
+            extra_env={"LOOP_PRODUCT_DISPATCH_FAIL_AFTER_ACTIVITY_APPEND": "1"},
+        )
+        assert interrupted.returncode == 2
+        active_log = root / "ai-activity-log.jsonl"
+        exact_log = active_log.read_text(encoding="utf-8")
+        archive = root / "archive" / "logs" / "ai-activity-log.jsonl-2000.gz"
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        with gzip.open(archive, "wt", encoding="utf-8") as handle:
+            handle.write(exact_log)
+        os.utime(archive, (1, 1))
+        active_log.write_text("", encoding="utf-8")
+
+        recovered = run_dispatch(root)
+
+        assert recovered.returncode == 0, recovered.stderr
+        after = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        assert after["program_activity_outbox"] is None
+        assert active_log.read_text(encoding="utf-8") == ""
+        with gzip.open(archive, "rt", encoding="utf-8") as handle:
+            records = [json.loads(line) for line in handle if line.strip()]
+        assert len(records) == 49
+        assert len({record["event_id"] for record in records}) == 49
+
+
+def test_activity_outbox_repairs_interrupted_tail_then_replays_once() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        interrupted = run_dispatch(
+            root,
+            extra_env={"LOOP_PRODUCT_DISPATCH_FAIL_AFTER_STATUS_COMMIT": "1"},
+        )
+        assert interrupted.returncode == 2
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        events = state["program_activity_outbox"]["events"]
+        (root / "ai-activity-log.jsonl").write_bytes(
+            (json.dumps(events[0], ensure_ascii=False) + "\n").encode("utf-8")
+            + b'{"event_id":"interrupted-tail"'
+        )
+
+        recovered = run_dispatch(root)
+
+        assert recovered.returncode == 0, recovered.stderr
+        after = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        assert after["program_activity_outbox"] is None
+        rows = [
+            json.loads(line)
+            for line in (root / "ai-activity-log.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert len(rows) == len(events)
+        assert {row["event_id"] for row in rows} == {
+            event["event_id"] for event in events
+        }
 
 
 def test_activity_outbox_same_id_different_payload_retains_outbox() -> None:
@@ -1116,7 +1276,7 @@ def test_activity_outbox_recovery_rejects_corrupt_active_audit_log(
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
 
-def test_activity_outbox_deduplicates_exact_events_across_rotated_history() -> None:
+def test_activity_outbox_rejects_exact_duplicates_across_rotated_history() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         prepare_status(root)
@@ -1138,9 +1298,10 @@ def test_activity_outbox_deduplicates_exact_events_across_rotated_history() -> N
 
         recovered = run_dispatch(root)
 
-        assert recovered.returncode == 0, recovered.stderr
+        assert recovered.returncode == 2
+        assert "duplicate activity audit event_id" in recovered.stderr
         after = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
-        assert after["program_activity_outbox"] is None
+        assert after["program_activity_outbox"] is not None
         assert (root / "ai-activity-log.jsonl").read_text(encoding="utf-8") == body
 
 
@@ -1182,8 +1343,11 @@ def test_foreign_additive_final_authority_collision_fails_closed(source: str) ->
         result = run_dispatch(root)
 
         assert result.returncode == 2
-        assert "foreign or stale" in result.stderr
-        assert "LOOP-PROD-CLOSE-002" in result.stderr
+        if source == "active":
+            assert "graph binding is missing" in result.stderr
+        else:
+            assert "must retain an exact full task contract" in result.stderr
+            assert "LOOP-PROD-CLOSE-002" in result.stderr
         assert (root / "ai-status.json").read_bytes() == status_before
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
@@ -1241,9 +1405,51 @@ def test_additive_collision_rejects_each_foreign_or_stale_axis(axis: str) -> Non
         result = run_dispatch(root)
 
         assert result.returncode == 2
-        assert "foreign or stale active collision" in result.stderr
+        if axis == "contract_field":
+            assert "graph contract or dependency mismatch" in result.stderr
+        else:
+            assert "foreign or stale active collision" in result.stderr
         assert (root / "ai-status.json").read_bytes() == status_before
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
+def test_nonadditive_active_preserve_rejects_missing_or_mismatched_source_ref() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        first = run_dispatch(root)
+        assert first.returncode == 0, first.stderr
+
+        mutations = (
+            lambda task: task.pop("source_ref", None),
+            lambda task: task.__setitem__("source_ref", {}),
+            lambda task: task["source_ref"].__setitem__(
+                "program_id", "foreign-program"
+            ),
+            lambda task: task["source_ref"].__setitem__("catalog_sha256", ""),
+        )
+        for mutation in mutations:
+            state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+            task = next(
+                item for item in state["tasks"] if item.get("id") == "LOOP-PROD-000"
+            )
+            mutation(task)
+            (root / "ai-status.json").write_text(
+                json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            status_before = (root / "ai-status.json").read_bytes()
+            log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+            result = run_dispatch(root)
+
+            assert result.returncode == 2, result.stdout
+            assert (
+                "missing or mismatched source_ref provenance for active catalog "
+                "task LOOP-PROD-000" in result.stderr
+            )
+            assert (root / "ai-status.json").read_bytes() == status_before
+            assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
 
 def test_exact_additive_archive_collision_is_preserved_without_resurrection() -> None:
@@ -1259,21 +1465,10 @@ def test_exact_additive_archive_collision_is_preserved_without_resurrection() ->
         state["tasks"] = [
             item for item in state["tasks"] if item.get("id") != "LOOP-PROD-CLOSE-002"
         ]
-        archived_task["status"] = "done"
-        archive = root / "ai-task-archive" / "tasks" / "LOOP-PROD-CLOSE-002.json"
-        archive.write_text(
-            json.dumps(
-                {
-                    "version": 1,
-                    "task_id": "LOOP-PROD-CLOSE-002",
-                    "terminal_status": "done",
-                    "task": archived_task,
-                },
-                indent=2,
-                ensure_ascii=False,
-            )
-            + "\n",
-            encoding="utf-8",
+        write_terminal_archive(
+            root,
+            archived_task,
+            archived_at="2026-07-15T00:00:00Z",
         )
         (root / "ai-status.json").write_text(
             json.dumps(state, indent=2, ensure_ascii=False) + "\n",
@@ -1286,6 +1481,30 @@ def test_exact_additive_archive_collision_is_preserved_without_resurrection() ->
 
         assert result.returncode == 0, result.stderr
         assert "SKIP-ARCHIVED LOOP-PROD-CLOSE-002:done" in result.stdout
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
+def test_program_task_cannot_exist_in_active_and_archive_state() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        first = run_dispatch(root)
+        assert first.returncode == 0, first.stderr
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        task = next(item for item in state["tasks"] if item.get("id") == "LOOP-PROD-000")
+        write_terminal_archive(
+            root,
+            task,
+            archived_at="2026-07-15T00:00:00Z",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        result = run_dispatch(root)
+
+        assert result.returncode == 2
+        assert "exist in both active and archive state" in result.stderr
         assert (root / "ai-status.json").read_bytes() == status_before
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
@@ -1311,7 +1530,7 @@ def test_duplicate_live_task_ids_fail_closed() -> None:
         assert (root / "ai-activity-log.jsonl").read_text(encoding="utf-8") == ""
 
 
-def test_archived_terminal_primary_id_is_never_resurrected() -> None:
+def test_minimal_terminal_archive_without_exact_task_contract_fails_closed() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         prepare_status(root)
@@ -1331,19 +1550,111 @@ def test_archived_terminal_primary_id_is_never_resurrected() -> None:
 
         result = run_dispatch(root)
 
+        assert result.returncode == 2
+        assert "must retain an exact full task contract" in result.stderr
+        assert not program_tasks(
+            json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        )
+        assert (root / "ai-activity-log.jsonl").read_text(encoding="utf-8") == ""
+
+
+def test_exact_nonadditive_terminal_archive_is_preserved_without_resurrection() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        first = run_dispatch(root)
+        assert first.returncode == 0, first.stderr
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        task = next(item for item in state["tasks"] if item.get("id") == "LOOP-PROD-000")
+        state["tasks"] = [
+            item for item in state["tasks"] if item.get("id") != "LOOP-PROD-000"
+        ]
+        write_terminal_archive(
+            root,
+            task,
+            archived_at="2026-07-15T00:00:00Z",
+        )
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        result = run_dispatch(root)
+
         assert result.returncode == 0, result.stderr
         assert "SKIP-ARCHIVED LOOP-PROD-000:done" in result.stdout
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
+def test_terminal_archive_symlink_is_rejected_without_writes() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        first = run_dispatch(root)
+        assert first.returncode == 0, first.stderr
         state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
-        assert "LOOP-PROD-000" not in {task["id"] for task in program_tasks(state)}
-        assert len(program_tasks(state)) == 47
-        assert len((root / "ai-activity-log.jsonl").read_text(encoding="utf-8").splitlines()) == 48
+        task = next(item for item in state["tasks"] if item.get("id") == "LOOP-PROD-000")
+        state["tasks"] = [
+            item for item in state["tasks"] if item.get("id") != "LOOP-PROD-000"
+        ]
+        write_terminal_archive(
+            root,
+            task,
+            archived_at="2026-07-15T00:00:00Z",
+        )
+        archive = root / "ai-task-archive" / "tasks" / "LOOP-PROD-000.json"
+        external = root / "external-LOOP-PROD-000.json"
+        archive.replace(external)
+        archive.symlink_to(external)
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
 
-        second = run_dispatch(root)
-        assert second.returncode == 0, second.stderr
-        assert len(program_tasks(json.loads((root / "ai-status.json").read_text()))) == 47
+        result = run_dispatch(root)
+
+        assert result.returncode == 2
+        assert "canonical task archive must be a regular file" in result.stderr
+        assert archive.is_symlink()
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
 
-def test_existing_non_todo_task_record_is_preserved_in_full() -> None:
+def test_external_dependency_archive_symlink_is_rejected_without_writes() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        dep_id = "LOOP-PROD-RUNTIME-BOOT-001"
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        task = next(item for item in state["tasks"] if item.get("id") == dep_id)
+        state["tasks"] = [item for item in state["tasks"] if item.get("id") != dep_id]
+        write_terminal_archive(root, task, archived_at="2026-07-15T00:00:00Z")
+        archive = root / "ai-task-archive" / "tasks" / f"{dep_id}.json"
+        external = root / f"external-{dep_id}.json"
+        archive.replace(external)
+        archive.symlink_to(external)
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        result = run_dispatch(root)
+
+        assert result.returncode == 2
+        assert "canonical task archive must be a regular file" in result.stderr
+        assert archive.is_symlink()
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
+def test_in_progress_task_with_rewritten_contract_fails_graph_binding() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         prepare_status(root)
@@ -1367,15 +1678,204 @@ def test_existing_non_todo_task_record_is_preserved_in_full() -> None:
             deepcopy(sentinel) if task.get("id") == "LOOP-PROD-000" else task
             for task in state["tasks"]
         ]
-        prepare_status(root, state)
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
 
         result = run_dispatch(root)
 
-        assert result.returncode == 0, result.stderr
-        after = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
-        preserved = next(task for task in after["tasks"] if task["id"] == "LOOP-PROD-000")
-        assert preserved == sentinel
-        assert after["agents"] == state["agents"]
+        assert result.returncode == 2
+        assert "contract or dependency mismatch" in result.stderr
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
+@pytest.mark.parametrize("mutation", ["missing", "tampered"])
+def test_missing_or_tampered_catalog_graph_binding_fails_without_writes(
+    mutation: str,
+) -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        first = run_dispatch(root)
+        assert first.returncode == 0, first.stderr
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        program_id = load_catalog()["program_id"]
+        if mutation == "missing":
+            del state["program_catalog_graph_bindings"][program_id]
+        else:
+            state["program_catalog_graph_bindings"][program_id][
+                "graph_projection"
+            ]["tasks"][0]["depends_on"].append("FOREIGN-TASK")
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        result = run_dispatch(root)
+
+        assert result.returncode == 2
+        assert "graph binding" in result.stderr
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
+@pytest.mark.parametrize("mutation", ["missing", "duplicate"])
+def test_graph_binding_requires_one_unique_install_audit_event(mutation: str) -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        first = run_dispatch(root)
+        assert first.returncode == 0, first.stderr
+        log_path = root / "ai-activity-log.jsonl"
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+        install = next(
+            line
+            for line in lines
+            if json.loads(line).get("type") == "completion_authority_install"
+        )
+        if mutation == "missing":
+            lines = [line for line in lines if line != install]
+        else:
+            lines.append(install)
+        log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = log_path.read_bytes()
+
+        result = run_dispatch(root)
+
+        assert result.returncode == 2
+        if mutation == "missing":
+            assert "exactly one durable install audit event" in result.stderr
+        else:
+            assert "duplicate activity audit event_id" in result.stderr
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert log_path.read_bytes() == log_before
+
+
+def test_self_consistent_graph_binding_recreation_cannot_bypass_install_audit() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        first = run_dispatch(root)
+        assert first.returncode == 0, first.stderr
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        program_id = load_catalog()["program_id"]
+        binding = state["program_catalog_graph_bindings"][program_id]
+        binding["bound_at"] = "2026-07-15T23:59:59Z"
+        unsigned = {key: deepcopy(value) for key, value in binding.items() if key != "binding_id"}
+        binding["binding_id"] = "loop-product-graph-binding-" + canonical_sha256(unsigned)
+        state["program_completion_authorities"][program_id][
+            "catalog_graph_binding_sha256"
+        ] = canonical_sha256(binding)
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        result = run_dispatch(root)
+
+        assert result.returncode == 2
+        assert "does not match its durable install audit event" in result.stderr
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
+def test_fabricated_historical_graph_binding_requires_supervisor_recovery() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        state, _ = prepare_baseline_program(root)
+        catalog = load_catalog()
+        projection = DISPATCH["historical_catalog_graph_projection"](catalog)
+        binding = DISPATCH["build_program_graph_binding"](
+            projection,
+            bound_at="2026-07-15T00:00:00Z",
+            binding_reason="fabricated-recovery",
+            previous_graph_projection_sha256="0" * 64,
+        )
+        state["program_catalog_graph_bindings"] = {
+            catalog["program_id"]: binding,
+        }
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        result = run_dispatch(root)
+
+        assert result.returncode == 2
+        assert "historical graph binding recreation is forbidden" in result.stderr
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
+def test_baseline_nonmigration_dependency_rewrite_fails_graph_binding() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        state, _ = prepare_baseline_program(root)
+        task = next(
+            item for item in state["tasks"] if item.get("id") == "LOOP-PROD-AUTH-001"
+        )
+        task["depends_on"].append("LOOP-PROD-ATTEST-001")
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        result = run_dispatch(root)
+
+        assert result.returncode == 2
+        assert "contract or dependency mismatch" in result.stderr
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
+def test_terminal_archive_stub_cannot_mask_rewritten_live_task() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        first = run_dispatch(root)
+        assert first.returncode == 0, first.stderr
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        task = next(item for item in state["tasks"] if item.get("id") == "LOOP-PROD-000")
+        task["depends_on"].append("LOOP-PROD-ATTEST-001")
+        archive = root / "ai-task-archive" / "tasks" / "LOOP-PROD-000.json"
+        archive.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "task_id": "LOOP-PROD-000",
+                    "terminal_status": "done",
+                    "task": {"id": "LOOP-PROD-000", "status": "done"},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        result = run_dispatch(root)
+
+        assert result.returncode == 2
+        assert "must retain an exact full task contract" in result.stderr
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
 
 def test_frozen_wave_rejects_dispatch_without_writes() -> None:
@@ -1604,7 +2104,7 @@ def test_live_addendum_migration_rejects_exact_record_while_tasks_are_preimage()
         result = run_dispatch(root)
 
         assert result.returncode == 2
-        assert "audit record exists while live tasks remain at the preimage" in result.stderr
+        assert "graph contract or dependency mismatch" in result.stderr
         assert (root / "ai-status.json").read_bytes() == status_before
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
@@ -2226,6 +2726,32 @@ def test_dry_run_rejects_corrupt_pending_outbox_without_writes() -> None:
         result = run_dispatch(root, "--dry-run")
         assert result.returncode == 2
         assert "outbox" in result.stderr
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
+def test_legacy_v4_pending_outbox_requires_supervisor_signed_recovery() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        interrupted = run_dispatch(
+            root,
+            extra_env={"LOOP_PRODUCT_DISPATCH_FAIL_AFTER_STATUS_COMMIT": "1"},
+        )
+        assert interrupted.returncode == 2
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        state["program_activity_outbox"]["schema_version"] = 4
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        result = run_dispatch(root)
+
+        assert result.returncode == 2
+        assert "schema 4 requires supervisor-signed recovery" in result.stderr
         assert (root / "ai-status.json").read_bytes() == status_before
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
