@@ -37,6 +37,14 @@ on:
         required: false
         default: false
         type: boolean
+      dev_auth_profile:
+        description: "Dev only: strict by default; permissive-stub is for bounded governed proof runs"
+        required: false
+        default: strict
+        type: choice
+        options:
+          - strict
+          - permissive-stub
       run_evolution_dispatch_probe:
         description: "Dev root only: run and upload the EVOLOOP-001 hosted dispatch probe"
         required: false
@@ -76,6 +84,7 @@ jobs:
       TARGET_REF: ${{ github.event_name == 'push' && github.ref_name || inputs.ref || github.sha }}
       ALLOW_DIRTY: ${{ github.event_name == 'push' && 'false' || inputs.allow_dirty }}
       ALLOW_EXAMPLE_ENV: ${{ github.event_name == 'push' && 'false' || inputs.allow_example_env }}
+      DEV_AUTH_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.dev_auth_profile || 'strict' }}
     steps:
       - name: Checkout requested ref
         uses: actions/checkout@v4
@@ -101,6 +110,11 @@ jobs:
               exit 1
               ;;
           esac
+
+          if [[ "${TARGET_ENV}" != "dev" && "${DEV_AUTH_PROFILE}" != "strict" ]]; then
+            echo "Auth profile ${DEV_AUTH_PROFILE} is valid only for dev deployments." >&2
+            exit 1
+          fi
 
       - name: Authenticate to Google Cloud via Workload Identity Federation
         uses: google-github-actions/auth@v2
@@ -141,6 +155,27 @@ jobs:
           STAGING_EXEC_REMOTE_DIR: ${{ vars.STAGING_EXEC_REMOTE_DIR || '/home/lupin/code/pantheon' }}
           STAGING_EXEC_HEALTH_URL: ${{ vars.STAGING_EXEC_HEALTH_URL || 'http://10.50.0.21:28081' }}
         run: |
+          case "${DEV_AUTH_PROFILE}" in
+            strict)
+              export DEV_BFF_AUTH_STUB=false
+              export DEV_BFF_AUTH_MODE=strict
+              ;;
+            permissive-stub)
+              if [[ "${TARGET_ENV}" != "dev" ]]; then
+                echo "Auth profile permissive-stub is valid only for dev deployments." >&2
+                exit 1
+              fi
+              export DEV_BFF_AUTH_STUB=true
+              export DEV_BFF_AUTH_MODE=permissive
+              ;;
+            *)
+              echo "Unknown dev auth profile: ${DEV_AUTH_PROFILE}" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "Dev BFF auth profile: ${DEV_AUTH_PROFILE} (stub=${DEV_BFF_AUTH_STUB}, mode=${DEV_BFF_AUTH_MODE})"
+
           args=(
             --environment "${TARGET_ENV}"
             --component "${TARGET_COMPONENT}"
