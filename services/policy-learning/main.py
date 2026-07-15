@@ -485,6 +485,119 @@ SEED_DATASET = {
 
 
 def _get_dataset_payload(dataset_id: str) -> Dict[str, Any]:
+    backend = os.getenv("POLICY_LEARNING_STORE_BACKEND", "json").strip().lower()
+    if backend == "postgres" and dataset_id.startswith("ds-trace-"):
+        dsn = os.getenv("POLICY_LEARNING_STORE_DSN") or os.getenv("DATABASE_URL")
+        if dsn:
+            try:
+                import psycopg
+                with psycopg.connect(dsn) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT persona_id, COALESCE(session_id, 'default'), content, source_refs, evidence_id "
+                            "FROM agora.agora_dataset_records "
+                            "WHERE learning_eligible = true"
+                        )
+                        rows = cur.fetchall()
+                        
+                        sessions = []
+                        source_dataset_refs = []
+                        strategy_id = None
+                        source_strategy_spec_id = None
+                        
+                        for row in rows:
+                            row_persona_id, row_session_id, content, source_refs, evidence_id = row
+                            expected_id = f"ds-trace-{row_persona_id}-{row_session_id}"
+                            if expected_id == dataset_id:
+                                source_dataset_refs.append(f"evidence://{evidence_id}")
+                                if source_refs:
+                                    if isinstance(source_refs, list):
+                                        source_dataset_refs.extend(source_refs)
+                                    elif isinstance(source_refs, str):
+                                        try:
+                                            parsed_refs = _json.loads(source_refs)
+                                            if isinstance(parsed_refs, list):
+                                                source_dataset_refs.extend(parsed_refs)
+                                        except Exception:
+                                            source_dataset_refs.append(source_refs)
+                                
+                                if isinstance(content, str):
+                                    try:
+                                        content = _json.loads(content)
+                                    except Exception:
+                                        continue
+                                
+                                if not isinstance(content, dict):
+                                    continue
+                                
+                                if "sessions" in content and isinstance(content["sessions"], list):
+                                    for s in content["sessions"]:
+                                        if isinstance(s, dict) and "steps" in s:
+                                            sessions.append(s)
+                                    if "strategy_id" in content:
+                                        strategy_id = content["strategy_id"]
+                                    if "source_strategy_spec_id" in content:
+                                        source_strategy_spec_id = content["source_strategy_spec_id"]
+                                else:
+                                    steps = content.get("steps")
+                                    if steps and isinstance(steps, list):
+                                        session_data = {
+                                            "trajectory_id": content.get("trajectory_id") or f"traj-{evidence_id}",
+                                            "actor_id": content.get("actor_id") or "default-actor",
+                                            "actor_role": content.get("actor_role") or "operator",
+                                            "decision": content.get("decision") or "approve",
+                                            "target": content.get("target") or {
+                                                "registry_id": "default",
+                                                "strategy_id": "default",
+                                                "artifact_version": "1.0.0",
+                                                "artifact_type": "strategy_spec",
+                                                "promotion_state": "candidate"
+                                            },
+                                            "steps": steps
+                                        }
+                                        sessions.append(session_data)
+                                        if "strategy_id" in content:
+                                            strategy_id = content["strategy_id"]
+                                        if "source_strategy_spec_id" in content:
+                                            source_strategy_spec_id = content["source_strategy_spec_id"]
+                                    elif "observation" in content and "action" in content:
+                                        session_data = {
+                                            "trajectory_id": f"traj-{evidence_id}",
+                                            "actor_id": content.get("actor_id") or "default-actor",
+                                            "actor_role": content.get("actor_role") or "operator",
+                                            "decision": content.get("decision") or "approve",
+                                            "target": content.get("target") or {
+                                                "registry_id": "default",
+                                                "strategy_id": "default",
+                                                "artifact_version": "1.0.0",
+                                                "artifact_type": "strategy_spec",
+                                                "promotion_state": "candidate"
+                                            },
+                                            "steps": [{
+                                                "observation": content["observation"],
+                                                "action": content["action"],
+                                                "reward": content.get("reward") or 0.0,
+                                                "feedback_event_id": evidence_id
+                                            }]
+                                        }
+                                        sessions.append(session_data)
+                                        if "strategy_id" in content:
+                                            strategy_id = content["strategy_id"]
+                                        if "source_strategy_spec_id" in content:
+                                            source_strategy_spec_id = content["source_strategy_spec_id"]
+                        
+                        if sessions:
+                            return {
+                                "dataset_id": dataset_id,
+                                "strategy_id": strategy_id or "alpha-mean-reversion",
+                                "source_dataset_refs": sorted(list(set(source_dataset_refs))),
+                                "source_strategy_spec_id": source_strategy_spec_id or "strat-alpha-mean-reversion-v2",
+                                "sessions": sessions
+                            }
+            except Exception as exc:
+                import logging
+                logging.getLogger("policy-learning").warning("Failed to load dataset content from postgres: %s", exc)
+
     payload = copy.deepcopy(SEED_DATASET)
     payload["dataset_id"] = dataset_id
     return payload
