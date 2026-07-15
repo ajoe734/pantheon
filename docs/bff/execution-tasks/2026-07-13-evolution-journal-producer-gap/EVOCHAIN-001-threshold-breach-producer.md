@@ -1,16 +1,19 @@
 # EVOCHAIN-001 — Threshold-breach producer (telemetry -> incidents)
 
-Status: implemented; round-9 review fixes applied and awaiting re-review on
-PR #3620 (`task/EVOCHAIN-001` -> `dev`). Review points from rounds 1-8 have
-been resolved (see below, kept as historical record of each round's finding
-and fix — a point marked "fixed" in an earlier round's section was true at
-that round's review time; round-9 found further gaps in some of the same
-areas, addressed in its own section below). Round-9 fixed 6 further points
-found during re-review of that same PR. LIN-003 has successfully landed,
-adding the live telemetry lineage write path and resolving the
-default-validator platform blocker (the default CanonicalReferenceValidator
-now returns 201 for a live-ingested breach event). All tests pass locally and
-compose volume mounting persists the sweep state.
+Status: reviewed and approved (Codex, round-9 re-review) on PR #3620
+(`task/EVOCHAIN-001` -> `dev`); closeout in progress. Review points from
+rounds 1-9 have all been resolved (see below, kept as historical record of
+each round's finding and fix — a point marked "fixed" in an earlier round's
+section was true at that round's review time; round-9 found further gaps in
+some of the same areas, addressed in its own section below). Round-9 fixed 6
+further points found during re-review of that same PR, and the round-9 fixes
+themselves were independently re-verified as correct at closeout time. LIN-003
+has successfully landed, adding the live telemetry lineage write path and
+resolving the default-validator platform blocker (the default
+CanonicalReferenceValidator now returns 201 for a live-ingested breach event).
+All tests pass locally (135 across the worker, incidents, and incidents
+replay suites, re-run after merging `origin/dev` to resolve a second BEHIND
+state) and compose volume mounting persists the sweep state.
 
 Owner: Claude
 Reviewer: Codex
