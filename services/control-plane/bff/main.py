@@ -36328,6 +36328,29 @@ def _management_intervention_stream_response(
     }
 
 
+_EVOLUTION_JOURNAL_REGISTERED_SEED_EXACT_IDS = {
+    "87c655c3e3c9", "inc-87c655c3e3c9", "rb-001", "fo-001", "btc-drift",
+    "inc-20260410-001", "inc-20260409-002", "pm-20260409-002",
+    "plan-f-042", "artifact-042", "runtime-042", "binding-042",
+}
+# "evo-vslice-" and "ev-seed-" are registered seed *families* (see
+# services/evolution/seed_data.py ev-seed-001..005) — any id in a family is
+# seed-derived, unlike the one-off exact ids above.
+_EVOLUTION_JOURNAL_REGISTERED_SEED_PREFIXES = ("evo-vslice-", "ev-seed-")
+
+
+def _evolution_journal_is_registered_seed_id(value: Any) -> bool:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return False
+    if normalized in _EVOLUTION_JOURNAL_REGISTERED_SEED_EXACT_IDS:
+        return True
+    return any(
+        normalized.startswith(prefix)
+        for prefix in _EVOLUTION_JOURNAL_REGISTERED_SEED_PREFIXES
+    )
+
+
 _EVOLUTION_JOURNAL_TYPE_ALIASES = {
     "decision": "evolution_decision",
     "evolution": "evolution_decision",
@@ -36343,6 +36366,41 @@ _EVOLUTION_JOURNAL_TYPE_ALIASES = {
     "freeze": "freeze_order",
     "freeze_order": "freeze_order",
     "freeze_orders": "freeze_order",
+}
+
+
+# Typed lineage namespaces for the ?persona= filter. Two entities can share
+# the same raw string id in different namespaces (e.g. a runtime_id and an
+# unrelated artifact target_id both equal to "same-token") — matching must
+# stay scoped to the field/target-type that produced the id, never a single
+# flattened id blob.
+_EVOLUTION_JOURNAL_REFERENCE_FIELD_CATEGORY = {
+    "artifact_id": "artifact",
+    "persona_id": "persona",
+    "runtime_id": "runtime",
+    "runtime_binding_id": "binding",
+    "persona_capital_binding_id": "binding",
+    "incident_id": "incident",
+    "incident_ref": "incident",
+    "linked_incident_id": "incident",
+    "capital_pool_id": "pool",
+    "pool_id": "pool",
+    "plan_id": "plan",
+    "deployment_plan_id": "plan",
+}
+_EVOLUTION_JOURNAL_TARGET_TYPE_CATEGORY = {
+    "persona": "persona",
+    "runtime": "runtime",
+    "binding": "binding",
+    "runtime_binding": "binding",
+    "persona_capital_binding": "binding",
+    "plan": "plan",
+    "deployment_plan": "plan",
+    "pool": "pool",
+    "capital_pool": "pool",
+    "candidate_artifact": "artifact",
+    "artifact": "artifact",
+    "incident": "incident",
 }
 
 
@@ -36534,6 +36592,11 @@ def _evolution_journal_mutation_review_item(
         identity=identity,
         snapshot_at=snapshot_at,
     )
+    # Preserve metadata/provenance/origin from the source decision
+    for field in ("metadata", "provenance", "origin"):
+        if field in decision and field not in projection:
+            projection[field] = decision[field]
+
     item = _evolution_journal_base_item(
         entry_type="mutation_review",
         source_id=decision_id,
@@ -36808,28 +36871,55 @@ def _evolution_journal_items(
             items.append(item)
 
     for item in items:
-        is_seed = False
-        source_id = str(item.get("source_id") or "").lower()
-        journal_id = str(item.get("id") or "").lower()
-        for marker in ("seed", "vslice", "87c655c3e3c9", "rb-001", "fo-001", "btc-drift"):
-            if marker in source_id or marker in journal_id:
-                is_seed = True
+        origin_val = None
+        for d in (
+            item,
+            item.get("record"),
+            (item.get("record") or {}).get("metadata"),
+            (item.get("record") or {}).get("provenance"),
+            item.get("decision"),
+            (item.get("decision") or {}).get("metadata"),
+            item.get("mutation_review"),
+            (item.get("mutation_review") or {}).get("metadata"),
+            item.get("postmortem"),
+            (item.get("postmortem") or {}).get("metadata"),
+            item.get("freeze_order"),
+            (item.get("freeze_order") or {}).get("metadata"),
+            item.get("rollback"),
+            (item.get("rollback") or {}).get("metadata"),
+        ):
+            if isinstance(d, dict) and d.get("origin"):
+                origin_val = str(d.get("origin")).strip().lower()
                 break
-        if not is_seed:
-            for key in ("decision", "mutation_review", "mutationReview", "postmortem", "freeze_order", "freezeOrder", "rollback"):
-                inner = item.get(key)
-                if isinstance(inner, dict):
-                    for field in ("id", "decision_id", "source_id", "incident_id", "incident_ref", "linked_incident_id", "report_id"):
-                        val = str(inner.get(field) or "").lower()
-                        for marker in ("seed", "vslice", "87c655c3e3c9", "rb-001", "fo-001", "btc-drift"):
-                            if marker in val:
+
+        if origin_val in ("seed", "live", "unknown"):
+            item["origin"] = origin_val
+        else:
+            is_seed = (
+                _evolution_journal_is_registered_seed_id(item.get("source_id"))
+                or _evolution_journal_is_registered_seed_id(item.get("id"))
+            )
+            target_obj = item.get("target") if isinstance(item.get("target"), dict) else {}
+            if not is_seed and _evolution_journal_is_registered_seed_id(target_obj.get("id")):
+                is_seed = True
+            if not is_seed:
+                for key in ("decision", "mutation_review", "mutationReview", "postmortem", "freeze_order", "freezeOrder", "rollback"):
+                    inner = item.get(key)
+                    if isinstance(inner, dict):
+                        for field in (
+                            "id", "decision_id", "source_id", "report_id",
+                            "incident_id", "incident_ref", "linked_incident_id",
+                            "target_id", "artifact_id", "runtime_id",
+                            "runtime_binding_id", "persona_capital_binding_id",
+                            "plan_id", "deployment_plan_id",
+                        ):
+                            if _evolution_journal_is_registered_seed_id(inner.get(field)):
                                 is_seed = True
                                 break
-                        if is_seed:
-                            break
-                if is_seed:
-                    break
-        item["origin"] = "seed" if is_seed else "live"
+                    if is_seed:
+                        break
+
+            item["origin"] = "seed" if is_seed else "unknown"
 
     items.sort(
         key=lambda item: (
@@ -36851,6 +36941,14 @@ def _evolution_journal_surfaces(
         "freeze_orders": _dataset_surface_status("freeze_orders", snapshot_at=snapshot_at),
         "rollbacks": _dataset_surface_status("all_rollbacks", snapshot_at=snapshot_at),
         "approval_decisions": _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at),
+        # Not part of the base journal aggregate below — these back the
+        # ?persona= lineage filter and must stay visible on their own so a
+        # degraded/unavailable dependency there isn't reported as an
+        # authoritative empty result.
+        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "incidents": _dataset_surface_status("incidents", snapshot_at=snapshot_at),
     }
     mutation_surface = _aggregate_group_surface(
         "mutation_review",
@@ -37487,6 +37585,7 @@ async def bff_management_evolution_journal(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
+    surfaces = _evolution_journal_surfaces(snapshot_at=snapshot_at)
     items, _decisions, _postmortems, _freeze_orders, _rollbacks = _evolution_journal_items(
         identity=identity,
         snapshot_at=snapshot_at,
@@ -37501,21 +37600,169 @@ async def bff_management_evolution_journal(
     if persona:
         p_clean = persona.strip().lower()
         if p_clean:
-            filtered = [
-                item for item in filtered
-                if p_clean in _evolution_entry_text(item) or
-                any(
-                    str((item.get("record") or {}).get(field) or "").lower() == p_clean
-                    for field in ("artifact_id", "persona_id", "target_id", "runtime_id", "runtime_binding_id", "persona_capital_binding_id")
-                )
-            ]
+            for dep_key, label in (
+                ("personas", "Persona"),
+                ("persona_bindings", "Persona-capital binding"),
+                ("runtime_bindings", "Runtime binding"),
+                ("incidents", "Incident"),
+            ):
+                _raise_if_read_surface_unavailable(surfaces[dep_key], label=label)
+
+            persona_ids = {p_clean}
+            runtime_ids = set()
+            binding_ids = set()
+            plan_ids = set()
+            pool_ids = set()
+            artifact_ids = set()
+            incident_ids = set()
+
+            personas = read_store.list_personas(include_market_persona_defaults=True) or []
+            for p in personas:
+                pid = str(p.get("persona_id") or p.get("id") or "").strip().lower()
+                if pid == p_clean:
+                    # Only the persona's own directly declared artifact_id is a
+                    # matchable "owned artifact" — artifact_id discovered later
+                    # via binding/incident traversal is intentionally excluded
+                    # (see below) so a shared artifact can't pull in another
+                    # persona's unrelated rows.
+                    for field, target_set in [
+                        ("runtime_id", runtime_ids),
+                        ("binding_id", binding_ids),
+                        ("persona_capital_binding_id", binding_ids),
+                        ("pool_id", pool_ids),
+                        ("capital_pool_id", pool_ids),
+                        ("plan_id", plan_ids),
+                        ("artifact_id", artifact_ids),
+                    ]:
+                        val = str(p.get(field) or "").strip().lower()
+                        if val:
+                            target_set.add(val)
+
+            # Read canonical persona-capital bindings (read_store.list_bindings)
+            # *and* runtime bindings once each and expand runtime/binding/plan/
+            # pool ids to a fixed point. Both binding sources are traversed
+            # because a canonical persona-capital binding can exist with no
+            # matching runtime row at all; list_runtime_bindings only uses
+            # list_bindings to enrich runtime rows that already exist, so a
+            # runtime-less persona -> binding -> pool -> incident chain would
+            # otherwise be invisible. A fixed-point loop (rather than a
+            # hardcoded pass count) is required because a chain can be
+            # arbitrarily deep.
+            #
+            # persona_ids is intentionally never grown past the requested
+            # root persona. A binding reached only via a shared capital pool
+            # AND declaring a *different* persona's ownership is a neighbor
+            # belonging to that other persona, not part of the root's own
+            # chain — adopting its identity would leak that other persona's
+            # private rows into this closure (two personas can independently
+            # reference the same shared pool). A pool-only match with no
+            # foreign persona attached (e.g. an intermediate system binding
+            # that declares no persona_id at all) is still a genuine hop on
+            # the root's own resource graph and its runtime/binding/plan ids
+            # are adopted normally.
+            bindings = list(read_store.list_runtime_bindings(include_market_persona_defaults=True) or [])
+            bindings += list(read_store.list_bindings(include_market_persona_defaults=True) or [])
+            incidents = read_store.list_incidents() or []
+            changed = True
+            while changed:
+                changed = False
+                for b in bindings:
+                    b_pid = str(b.get("persona_id") or b.get("personaId") or "").strip().lower()
+                    b_rid = str(b.get("runtime_id") or "").strip().lower()
+                    b_bid = str(b.get("binding_id") or b.get("runtime_binding_id") or "").strip().lower()
+                    b_pcbid = str(b.get("persona_capital_binding_id") or "").strip().lower()
+                    b_plid = str(b.get("plan_id") or b.get("deployment_plan_id") or "").strip().lower()
+                    b_pool = str(b.get("pool_id") or b.get("capital_pool_id") or "").strip().lower()
+
+                    owned_match = (
+                        (b_pid and b_pid == p_clean) or
+                        (b_rid and b_rid in runtime_ids) or
+                        (b_bid and b_bid in binding_ids) or
+                        (b_pcbid and b_pcbid in binding_ids) or
+                        (b_plid and b_plid in plan_ids)
+                    )
+                    pool_only_match = (not owned_match) and (b_pool and b_pool in pool_ids)
+                    if not (owned_match or pool_only_match):
+                        continue
+                    if pool_only_match and b_pid and b_pid != p_clean:
+                        continue
+                    for val, target_set in (
+                        (b_rid, runtime_ids),
+                        (b_bid, binding_ids), (b_pcbid, binding_ids),
+                        (b_plid, plan_ids), (b_pool, pool_ids),
+                    ):
+                        if val and val not in target_set:
+                            target_set.add(val)
+                            changed = True
+
+                for i in incidents:
+                    i_id = str(i.get("incident_id") or i.get("id") or "").strip().lower()
+                    i_rid = str(i.get("runtime_id") or "").strip().lower()
+                    i_bid = str(i.get("binding_id") or i.get("persona_capital_binding_id") or "").strip().lower()
+                    i_plid = str(i.get("deployment_plan_id") or "").strip().lower()
+                    i_pool = str(i.get("capital_pool_id") or i.get("pool_id") or "").strip().lower()
+
+                    is_match = (
+                        (i_id and i_id in incident_ids) or
+                        (i_rid and i_rid in runtime_ids) or
+                        (i_bid and i_bid in binding_ids) or
+                        (i_plid and i_plid in plan_ids) or
+                        (i_pool and i_pool in pool_ids)
+                    )
+                    if not is_match:
+                        continue
+                    for val, target_set in (
+                        (i_id, incident_ids), (i_rid, runtime_ids),
+                        (i_bid, binding_ids), (i_plid, plan_ids),
+                        (i_pool, pool_ids),
+                    ):
+                        if val and val not in target_set:
+                            target_set.add(val)
+                            changed = True
+
+            category_sets = {
+                "persona": persona_ids,
+                "runtime": runtime_ids,
+                "binding": binding_ids,
+                "plan": plan_ids,
+                "pool": pool_ids,
+                "artifact": artifact_ids,
+                "incident": incident_ids,
+            }
+
+            def _journal_item_matches_persona_lineage(item: Dict[str, Any]) -> bool:
+                # Match only through typed reference fields/target-type
+                # namespaces — never a flattened id blob — so a shared raw
+                # string value in two different namespaces (e.g. a
+                # runtime_id equal to an unrelated artifact target_id) cannot
+                # cross-match. The entry's own identity (source_id/id/
+                # decision_id/report_id/...) is intentionally excluded:
+                # matching those against an arbitrary "persona" query string
+                # is a false collision, not a lineage relationship.
+                target_obj = item.get("target") or {}
+                if isinstance(target_obj, dict):
+                    category = _EVOLUTION_JOURNAL_TARGET_TYPE_CATEGORY.get(
+                        str(target_obj.get("type") or "").strip().lower()
+                    )
+                    target_val = str(target_obj.get("id") or "").strip().lower()
+                    if category and target_val and target_val in category_sets[category]:
+                        return True
+                record_obj = item.get("record") or {}
+                if isinstance(record_obj, dict):
+                    for field, category in _EVOLUTION_JOURNAL_REFERENCE_FIELD_CATEGORY.items():
+                        val = str(record_obj.get(field) or "").strip().lower()
+                        if val and val in category_sets[category]:
+                            return True
+                return False
+
+            filtered = [item for item in filtered if _journal_item_matches_persona_lineage(item)]
     if mutation_review:
         mr_clean = mutation_review.strip().lower()
         if mr_clean:
             filtered = [
                 item for item in filtered
                 if str(item.get("source_id") or "").lower() == mr_clean
-                and item.get("entry_type") in ("evolution_decision", "mutation_review")
+                and item.get("entry_type") == "mutation_review"
             ]
     if decision:
         dec_clean = decision.strip().lower()
@@ -37523,13 +37770,13 @@ async def bff_management_evolution_journal(
             filtered = [
                 item for item in filtered
                 if str(item.get("source_id") or "").lower() == dec_clean
-                and item.get("entry_type") in ("evolution_decision", "mutation_review")
+                and item.get("entry_type") == "evolution_decision"
             ]
 
     total = len(filtered)
     page_items, next_page_token = _page_slice(filtered, page_token, page_size)
     meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = _evolution_journal_surfaces(snapshot_at=snapshot_at)
+    meta["surfaces"] = surfaces
     meta["composition_sources"] = [
         "evolution_decisions",
         "postmortems",
