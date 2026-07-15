@@ -66,11 +66,13 @@
     "owned_layer": "BFF Persona creation, dynamic provisioning verification (RuntimeBinding, worker heartbeat, cron jobs), duplicate safety, and terminal failure mode"
   },
   "implementation_delivery": {
-    "anchor_commits": [],
+    "anchor_commits": [
+      "f76edde689bae9ce2f1b5e1676fe01097bf42869"
+    ],
     "pull_request": {
-      "number": 0,
-      "url": "",
-      "head_sha": "",
+      "number": 3671,
+      "url": "https://github.com/ajoe734/pantheon/pull/3671",
+      "head_sha": "f76edde689bae9ce2f1b5e1676fe01097bf42869",
       "base": "dev",
       "merged_at": "",
       "merge_sha": ""
