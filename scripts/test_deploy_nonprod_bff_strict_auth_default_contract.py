@@ -5,6 +5,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "deploy_nonprod_vm.sh"
+DEPLOY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 
 
 def test_nonprod_deploy_defaults_to_strict_bff_auth() -> None:
@@ -19,6 +20,47 @@ def test_nonprod_deploy_defaults_to_strict_bff_auth() -> None:
     assert 'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"' in script
     assert 'DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-true}"' not in script
     assert 'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-permissive}"' not in script
+
+
+def test_workflow_rejects_refs_that_predate_the_strict_auth_contract() -> None:
+    """The dispatch workflow must gate an older checkout before deployment."""
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    gate = workflow.index("- name: Enforce dev auth deployment floor")
+    deploy = workflow.index("- name: Deploy requested VM stack")
+    assert gate < deploy
+
+    for secret in (
+        "secrets.DEV_BFF_JWT_SECRET",
+        "secrets.DEV_BFF_OIDC_CLIENT_ID",
+        "secrets.DEV_BFF_OIDC_CLIENT_SECRET",
+    ):
+        assert secret in workflow[gate:deploy]
+
+    for marker in (
+        'case "${DEV_AUTH_PROFILE}" in',
+        'DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"',
+        'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"',
+        "no governed verifier/dev-login credentials",
+        "assert_bff_auth_gate",
+    ):
+        assert marker in workflow[gate:deploy]
+
+    assert "refusing to run any target ref before strict auth can be verified" in workflow[gate:deploy]
+
+
+def test_nonprod_workflow_has_bounded_dev_permissive_stub_profile() -> None:
+    """The explicit dev-only fallback must transport one atomic auth pair."""
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "dev_auth_profile:" in workflow
+    assert "default: strict" in workflow
+    assert "- permissive-stub" in workflow
+    assert "export DEV_BFF_AUTH_STUB=false" in workflow
+    assert "export DEV_BFF_AUTH_MODE=strict" in workflow
+    assert "export DEV_BFF_AUTH_STUB=true" in workflow
+    assert "export DEV_BFF_AUTH_MODE=permissive" in workflow
+    assert "Auth profile permissive-stub is valid only for dev deployments." in workflow
 
 
 def _run_deploy_script(
