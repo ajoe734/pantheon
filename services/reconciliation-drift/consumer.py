@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from services.trade_journey.correlation_envelope import propagate_envelope
 
@@ -17,6 +17,17 @@ from services.trade_journey.correlation_envelope import propagate_envelope
 DEFAULT_WARNING_RELATIVE_DELTA = 0.2
 DEFAULT_CRITICAL_RELATIVE_DELTA = 0.5
 DRIFT_STATUSES = {"warning", "critical"}
+SUMMARY_NUMERIC_FIELDS = (
+    "pnl",
+    "drawdown",
+    "sharpe_ratio",
+    "fill_rate",
+    "avg_slippage_bps",
+    "total_trades",
+    "queue_lag_ms",
+    "event_delivery_lag_ms",
+)
+CONSUMER_STATE_VERSION = 1
 
 
 def utc_now() -> str:
@@ -349,10 +360,312 @@ def post_events(service_url: str, events: list[dict[str, Any]]) -> dict[str, Any
         raise RuntimeError(f"reconciliation-drift service unavailable: {exc.reason}") from exc
 
 
+def fetch_runtime_summaries(telemetry_url: str, *, timeout_seconds: float = 10.0) -> list[dict[str, Any]]:
+    """Read the telemetry-owned authoritative runtime-summary projection."""
+    if not telemetry_url:
+        raise RuntimeError("PANTHEON_TELEMETRY_API_URL is required")
+    request = urllib.request.Request(
+        telemetry_url.rstrip("/") + "/api/telemetry/runtime-summaries",
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
+            body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"telemetry runtime summaries rejected: {exc.code} {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"telemetry service unavailable: {exc.reason}") from exc
+
+    try:
+        payload = json.loads(body) if body else {}
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("telemetry runtime summaries returned invalid JSON") from exc
+    if isinstance(payload, list):
+        summaries = payload
+    elif isinstance(payload, dict):
+        summaries = payload.get("summaries") or payload.get("items") or []
+    else:
+        raise RuntimeError("telemetry runtime summaries returned an invalid envelope")
+    if not isinstance(summaries, list):
+        raise RuntimeError("telemetry runtime summaries must be a list")
+    return [item for item in summaries if isinstance(item, dict)]
+
+
+def runtime_summary_to_event(summary: dict[str, Any]) -> dict[str, Any]:
+    """Convert one authoritative summary without fabricating identity or metrics."""
+    event_id = str(summary.get("last_event_id") or summary.get("last_heartbeat_event_id") or "").strip()
+    binding_id = str(summary.get("binding_id") or summary.get("runtime_binding_id") or "").strip()
+    runtime_id = str(summary.get("runtime_id") or summary.get("id") or "").strip()
+    deployment_stage = str(summary.get("deployment_stage") or "").strip().lower()
+    required = {
+        "event_id": event_id,
+        "binding_id": binding_id,
+        "runtime_id": runtime_id,
+        "deployment_stage": deployment_stage,
+        "deployment_plan_id": str(summary.get("deployment_plan_id") or summary.get("plan_id") or "").strip(),
+        "capital_pool_id": str(summary.get("capital_pool_id") or "").strip(),
+        "persona_capital_binding_id": str(summary.get("persona_capital_binding_id") or "").strip(),
+        "artifact_id": str(summary.get("artifact_id") or "").strip(),
+        "artifact_version": str(summary.get("artifact_version") or "").strip(),
+        "trace_id": str(summary.get("trace_id") or "").strip(),
+    }
+    missing = sorted(key for key, value in required.items() if not value)
+    if missing:
+        raise ValueError("runtime summary missing authoritative identity: " + ", ".join(missing))
+
+    metrics: dict[str, float] = {}
+    nested_metrics = summary.get("observed_metrics") or summary.get("metrics") or {}
+    if isinstance(nested_metrics, dict):
+        for key, value in nested_metrics.items():
+            numeric = _numeric(value)
+            if numeric is not None:
+                metrics[str(key)] = numeric
+    for field in SUMMARY_NUMERIC_FIELDS:
+        numeric = _numeric(summary.get(field))
+        if numeric is not None:
+            metrics[field] = numeric
+    if not metrics:
+        raise ValueError("runtime summary has no authoritative numeric actual-state metrics")
+
+    event: dict[str, Any] = {
+        **required,
+        "event_type": str(summary.get("last_event_type") or "runtime_summary"),
+        "created_at": str(summary.get("last_event_at") or summary.get("collected_at") or ""),
+        "metrics": metrics,
+        "baseline_metrics": summary.get("baseline_metrics") if isinstance(summary.get("baseline_metrics"), dict) else {},
+        "thresholds": summary.get("thresholds") if isinstance(summary.get("thresholds"), dict) else {},
+        "baseline_ref": str(summary.get("baseline_ref") or ""),
+        "current_ref": f"telemetry-runtime-summary:{runtime_id}:{event_id}",
+        "telemetry_event_ids": list(
+            dict.fromkeys(
+                str(value)
+                for value in (summary.get("last_event_id"), summary.get("last_heartbeat_event_id"))
+                if value
+            )
+        ),
+        "runtime_state": summary.get("state"),
+        "health_summary": summary.get("health_summary") if isinstance(summary.get("health_summary"), dict) else {},
+        "source_contract": {
+            "telemetry_truth_owner": "telemetry-ingest",
+            "projection_source": summary.get("projection_source") or "telemetry_ingest",
+            "synthetic": False,
+        },
+    }
+    if isinstance(summary.get("correlation_envelope"), dict):
+        event["correlation_envelope"] = summary["correlation_envelope"]
+    return event
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+class ConsumerWorkerState:
+    """Durable delivery state for retry, DLQ, replay, and restart truth."""
+
+    def __init__(self, path: str | Path | None = None) -> None:
+        self.path = Path(path) if path else None
+        self.pending: dict[str, dict[str, Any]] = {}
+        self.dead_letters: dict[str, dict[str, Any]] = {}
+        self.completed: dict[str, dict[str, Any]] = {}
+        self.last_success_at: str | None = None
+        self.last_failure_at: str | None = None
+        self.last_failure_error: str | None = None
+        if self.path and self.path.exists():
+            self._load()
+
+    def _load(self) -> None:
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))  # type: ignore[union-attr]
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(payload, dict) or payload.get("version") != CONSUMER_STATE_VERSION:
+            return
+        for field in ("pending", "dead_letters", "completed"):
+            value = payload.get(field)
+            if isinstance(value, dict):
+                setattr(self, field, value)
+        self.last_success_at = payload.get("last_success_at")
+        self.last_failure_at = payload.get("last_failure_at")
+        self.last_failure_error = payload.get("last_failure_error")
+
+    def save(self) -> None:
+        if self.path is None:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "version": CONSUMER_STATE_VERSION,
+            "pending": self.pending,
+            "dead_letters": self.dead_letters,
+            "completed": self.completed,
+            "last_success_at": self.last_success_at,
+            "last_failure_at": self.last_failure_at,
+            "last_failure_error": self.last_failure_error,
+        }
+        temporary = self.path.with_name(self.path.name + ".tmp")
+        temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        os.replace(temporary, self.path)
+
+    def enqueue(self, event: dict[str, Any], *, observed_at: str) -> bool:
+        key = str(event["event_id"])
+        if key in self.completed or key in self.pending or key in self.dead_letters:
+            return False
+        self.pending[key] = {
+            "event": event,
+            "attempt_count": 0,
+            "first_seen_at": observed_at,
+            "last_attempt_at": None,
+            "last_error": None,
+        }
+        return True
+
+    def replay_dead_letters(self) -> int:
+        replayed = 0
+        for key, record in list(self.dead_letters.items()):
+            restored = dict(record)
+            restored["attempt_count"] = 0
+            restored["last_error"] = None
+            self.pending[key] = restored
+            del self.dead_letters[key]
+            replayed += 1
+        return replayed
+
+    def oldest_backlog_lag_seconds(self, *, now: datetime) -> float:
+        timestamps = [
+            parsed
+            for record in [*self.pending.values(), *self.dead_letters.values()]
+            if (parsed := _parse_timestamp(record.get("first_seen_at"))) is not None
+        ]
+        if not timestamps:
+            return 0.0
+        return max(0.0, (now - min(timestamps)).total_seconds())
+
+
+def run_runtime_summary_consumer_once(
+    *,
+    service_url: str,
+    telemetry_url: str,
+    state: ConsumerWorkerState,
+    max_attempts: int = 3,
+    retry_backoff_seconds: float = 0.0,
+    replay_dead_letters: bool = False,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> dict[str, Any]:
+    """Fetch real summaries, durably deliver them, and expose controller truth."""
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be >= 1")
+    now = now_fn().astimezone(timezone.utc)
+    observed_at = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    replayed_count = state.replay_dead_letters() if replay_dead_letters else 0
+    invalid_summaries: list[dict[str, Any]] = []
+    source_error: str | None = None
+    summaries: list[dict[str, Any]] = []
+    try:
+        summaries = fetch_runtime_summaries(telemetry_url)
+    except RuntimeError as exc:
+        source_error = str(exc)
+        state.last_failure_at = observed_at
+        state.last_failure_error = source_error
+
+    enqueued_count = 0
+    source_lags: list[float] = []
+    for index, summary in enumerate(summaries):
+        try:
+            event = runtime_summary_to_event(summary)
+        except ValueError as exc:
+            invalid_summaries.append({"index": index, "detail": str(exc)})
+            continue
+        event_at = _parse_timestamp(event.get("created_at"))
+        if event_at is not None:
+            source_lags.append(max(0.0, (now - event_at).total_seconds()))
+        if state.enqueue(event, observed_at=observed_at):
+            enqueued_count += 1
+
+    delivered_count = 0
+    delivery_errors: list[dict[str, Any]] = []
+    drift_report_count = 0
+    incident_case_count = 0
+    for key, record in list(state.pending.items()):
+        while int(record.get("attempt_count") or 0) < max_attempts:
+            record["attempt_count"] = int(record.get("attempt_count") or 0) + 1
+            record["last_attempt_at"] = observed_at
+            try:
+                response = post_events(service_url, [record["event"]])
+            except RuntimeError as exc:
+                record["last_error"] = str(exc)
+                if int(record["attempt_count"]) < max_attempts and retry_backoff_seconds > 0:
+                    sleep_fn(retry_backoff_seconds)
+                continue
+            delivered_count += 1
+            drift_report_count += int(response.get("drift_report_count") or 0)
+            incident_case_count += int(response.get("incident_case_count") or 0)
+            state.completed[key] = {"completed_at": observed_at, "attempt_count": record["attempt_count"]}
+            del state.pending[key]
+            break
+        if key in state.pending and int(record.get("attempt_count") or 0) >= max_attempts:
+            state.dead_letters[key] = dict(record)
+            del state.pending[key]
+            delivery_errors.append({"event_id": key, "detail": record.get("last_error")})
+
+    if len(state.completed) > 2000:
+        state.completed = dict(list(state.completed.items())[-2000:])
+
+    if delivered_count and not source_error and not invalid_summaries and not state.dead_letters:
+        state.last_success_at = observed_at
+        state.last_failure_error = None
+    elif source_error or invalid_summaries or delivery_errors:
+        state.last_failure_at = observed_at
+        state.last_failure_error = source_error or str(invalid_summaries[0] if invalid_summaries else delivery_errors[0])
+    state.save()
+
+    if source_error:
+        status = "failure"
+    elif not summaries:
+        status = "degraded"
+    elif invalid_summaries or state.dead_letters or delivery_errors:
+        status = "degraded"
+    else:
+        status = "ok"
+    backlog_count = len(state.pending) + len(state.dead_letters)
+    return {
+        "status": status,
+        "source": "telemetry_runtime_summaries",
+        "summary_count": len(summaries),
+        "invalid_summary_count": len(invalid_summaries),
+        "invalid_summaries": invalid_summaries,
+        "enqueued_event_count": enqueued_count,
+        "delivered_event_count": delivered_count,
+        "drift_report_count": drift_report_count,
+        "incident_case_count": incident_case_count,
+        "pending_count": len(state.pending),
+        "dead_letter_count": len(state.dead_letters),
+        "backlog_count": backlog_count,
+        "oldest_backlog_lag_seconds": state.oldest_backlog_lag_seconds(now=now),
+        "max_source_lag_seconds": max(source_lags) if source_lags else None,
+        "replayed_dead_letter_count": replayed_count,
+        "source_error": source_error,
+        "delivery_errors": delivery_errors,
+        "last_success_at": state.last_success_at,
+        "last_failure_at": state.last_failure_at,
+        "controller_status": "healthy" if status == "ok" and backlog_count == 0 else status,
+    }
+
+
 def _input_paths_from_env() -> list[str]:
     raw = os.getenv("RECONCILIATION_DRIFT_CONSUMER_INPUT") or os.getenv("RECONCILIATION_DRIFT_CONSUMER_FIXTURE")
     if not raw:
-        raw = "/fixtures/reconciliation-drift"
+        return []
     return [item for item in raw.split(os.pathsep) if item]
 
 
@@ -366,12 +679,23 @@ def run_consumer_once(*, service_url: str, input_paths: Iterable[str]) -> dict[s
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Consume telemetry fixtures into reconciliation-drift DriftReports.")
+    parser = argparse.ArgumentParser(description="Consume authoritative runtime telemetry into reconciliation-drift.")
     parser.add_argument(
         "--service-url",
         default=os.getenv("RECONCILIATION_DRIFT_URL", "http://reconciliation-drift-svc:8102"),
     )
     parser.add_argument("--input", action="append", dest="inputs", default=None)
+    parser.add_argument(
+        "--telemetry-url",
+        default=os.getenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry:8083"),
+    )
+    parser.add_argument(
+        "--state-path",
+        default=os.getenv(
+            "RECONCILIATION_DRIFT_CONSUMER_WORKER_STATE_PATH",
+            "/data/reconciliation-drift/consumer-worker-state.json",
+        ),
+    )
     parser.add_argument(
         "--interval-seconds",
         type=float,
@@ -385,9 +709,29 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     inputs = args.inputs or _input_paths_from_env()
+    state = ConsumerWorkerState(args.state_path or None)
+    max_attempts = int(os.getenv("RECONCILIATION_DRIFT_CONSUMER_MAX_ATTEMPTS", "3"))
+    retry_backoff_seconds = float(os.getenv("RECONCILIATION_DRIFT_CONSUMER_RETRY_BACKOFF_SECONDS", "1"))
+    replay_dead_letters = os.getenv("RECONCILIATION_DRIFT_CONSUMER_REPLAY_DLQ", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     tick = 0
     while args.max_ticks <= 0 or tick < args.max_ticks:
-        result = run_consumer_once(service_url=args.service_url, input_paths=inputs)
+        if inputs:
+            result = run_consumer_once(service_url=args.service_url, input_paths=inputs)
+            result["source"] = "explicit_fixture_input"
+        else:
+            result = run_runtime_summary_consumer_once(
+                service_url=args.service_url,
+                telemetry_url=args.telemetry_url,
+                state=state,
+                max_attempts=max_attempts,
+                retry_backoff_seconds=retry_backoff_seconds,
+                replay_dead_letters=replay_dead_letters,
+            )
         print(json.dumps(result, sort_keys=True))
         tick += 1
         if args.max_ticks == 1:
