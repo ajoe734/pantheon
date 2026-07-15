@@ -183,6 +183,7 @@ class AgoraDatasetStore:
 
         with self._connect() as conn:
             with conn.cursor() as cur:
+                # 1. Optimistic SELECT first to avoid transaction aborts/slow paths for typical duplicates
                 cur.execute(
                     f"SELECT evidence_id, tenant_id, user_id, interaction_kind, persona_id, session_id, "
                     f"content, source_refs, learning_eligible, captured_at, status, error_message, "
@@ -202,10 +203,12 @@ class AgoraDatasetStore:
                     }
                     return entry, False
 
+                # 2. INSERT with ON CONFLICT DO NOTHING to prevent TOCTOU race condition
                 cur.execute(
                     f"INSERT INTO {self._inbox_table} (evidence_id, tenant_id, user_id, interaction_kind, "
                     f"persona_id, session_id, content, source_refs, learning_eligible, captured_at, extracted_at, status) "
-                    f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending') RETURNING created_at",
+                    f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending') "
+                    f"ON CONFLICT (evidence_id) DO NOTHING RETURNING created_at",
                     (
                         evidence.evidence_id, tenant_id, user_id, evidence.interaction_kind.value,
                         evidence.persona_id, evidence.session_id, json.dumps(evidence.content),
@@ -213,7 +216,30 @@ class AgoraDatasetStore:
                         extracted_at
                     )
                 )
-                created_at = cur.fetchone()[0]
+                res = cur.fetchone()
+                if res is None:
+                    # Conflict occurred! Re-select the existing row.
+                    cur.execute(
+                        f"SELECT evidence_id, tenant_id, user_id, interaction_kind, persona_id, session_id, "
+                        f"content, source_refs, learning_eligible, captured_at, status, error_message, "
+                        f"created_at, processed_at, extracted_at FROM {self._inbox_table} WHERE evidence_id = %s",
+                        (evidence.evidence_id,)
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        entry = {
+                            "evidence_id": row[0], "tenant_id": row[1], "user_id": row[2],
+                            "interaction_kind": row[3], "persona_id": row[4], "session_id": row[5],
+                            "content": row[6], "source_refs": row[7], "learning_eligible": row[8],
+                            "captured_at": row[9], "status": row[10], "error_message": row[11],
+                            "created_at": row[12].isoformat() if row[12] else None,
+                            "processed_at": row[13].isoformat() if row[13] else None,
+                            "extracted_at": row[14],
+                        }
+                        return entry, False
+                    raise RuntimeError(f"Conflict on evidence_id {evidence.evidence_id} but row could not be re-selected.")
+
+                created_at = res[0]
                 entry = {
                     "evidence_id": evidence.evidence_id,
                     "tenant_id": tenant_id,
@@ -326,53 +352,57 @@ class AgoraDatasetStore:
                 for row in rows:
                     evidence_id, tenant_id, user_id, interaction_kind, persona_id, session_id, content, source_refs, learning_eligible, captured_at, extracted_at = row
                     try:
+                        # Validate interaction_kind against InteractionKind enum
+                        _ = InteractionKind(interaction_kind)
                         kind = route_to_dataset(interaction_kind)
                         
-                        # Get version
-                        cur.execute(
-                            f"SELECT version FROM {self._records_table} WHERE evidence_id = %s",
-                            (evidence_id,)
-                        )
-                        version_row = cur.fetchone()
-                        version = (version_row[0] + 1) if version_row else 1
-
-                        # Insert/Update dataset record
-                        cur.execute(
-                            f"INSERT INTO {self._records_table} (evidence_id, dataset_kind, interaction_kind, "
-                            f"persona_id, session_id, tenant_id, user_id, content, source_refs, learning_eligible, "
-                            f"captured_at, extracted_at, version) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                            f"ON CONFLICT (evidence_id) DO UPDATE SET "
-                            f"dataset_kind = EXCLUDED.dataset_kind, interaction_kind = EXCLUDED.interaction_kind, "
-                            f"persona_id = EXCLUDED.persona_id, session_id = EXCLUDED.session_id, "
-                            f"tenant_id = EXCLUDED.tenant_id, user_id = EXCLUDED.user_id, "
-                            f"content = EXCLUDED.content, source_refs = EXCLUDED.source_refs, "
-                            f"learning_eligible = EXCLUDED.learning_eligible, "
-                            f"captured_at = EXCLUDED.captured_at, extracted_at = EXCLUDED.extracted_at, "
-                            f"version = EXCLUDED.version",
-                            (
-                                evidence_id, kind.value, interaction_kind, persona_id, session_id,
-                                tenant_id, user_id, json.dumps(content), json.dumps(source_refs),
-                                learning_eligible, captured_at, extracted_at, version
+                        with conn.transaction():
+                            # Get version
+                            cur.execute(
+                                f"SELECT version FROM {self._records_table} WHERE evidence_id = %s",
+                                (evidence_id,)
                             )
-                        )
+                            version_row = cur.fetchone()
+                            version = (version_row[0] + 1) if version_row else 1
 
-                        # Update inbox status
-                        cur.execute(
-                            f"UPDATE {self._inbox_table} SET status = 'processed', error_message = NULL, "
-                            f"processed_at = now() WHERE evidence_id = %s",
-                            (evidence_id,)
-                        )
+                            # Insert/Update dataset record
+                            cur.execute(
+                                f"INSERT INTO {self._records_table} (evidence_id, dataset_kind, interaction_kind, "
+                                f"persona_id, session_id, tenant_id, user_id, content, source_refs, learning_eligible, "
+                                f"captured_at, extracted_at, version) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                                f"ON CONFLICT (evidence_id) DO UPDATE SET "
+                                f"dataset_kind = EXCLUDED.dataset_kind, interaction_kind = EXCLUDED.interaction_kind, "
+                                f"persona_id = EXCLUDED.persona_id, session_id = EXCLUDED.session_id, "
+                                f"tenant_id = EXCLUDED.tenant_id, user_id = EXCLUDED.user_id, "
+                                f"content = EXCLUDED.content, source_refs = EXCLUDED.source_refs, "
+                                f"learning_eligible = EXCLUDED.learning_eligible, "
+                                f"captured_at = EXCLUDED.captured_at, extracted_at = EXCLUDED.extracted_at, "
+                                f"version = EXCLUDED.version",
+                                (
+                                    evidence_id, kind.value, interaction_kind, persona_id, session_id,
+                                    tenant_id, user_id, json.dumps(content), json.dumps(source_refs),
+                                    learning_eligible, captured_at, extracted_at, version
+                                )
+                            )
+
+                            # Update inbox status
+                            cur.execute(
+                                f"UPDATE {self._inbox_table} SET status = 'processed', error_message = NULL, "
+                                f"processed_at = now() WHERE evidence_id = %s",
+                                (evidence_id,)
+                            )
                         processed_count += 1
 
                         group_key = (tenant_id, user_id, kind.value)
                         groups.setdefault(group_key, []).append(evidence_id)
 
                     except Exception as exc:
-                        cur.execute(
-                            f"UPDATE {self._inbox_table} SET status = 'failed', error_message = %s, "
-                            f"processed_at = now() WHERE evidence_id = %s",
-                            (str(exc), evidence_id)
-                        )
+                        with conn.transaction():
+                            cur.execute(
+                                f"UPDATE {self._inbox_table} SET status = 'failed', error_message = %s, "
+                                f"processed_at = now() WHERE evidence_id = %s",
+                                (str(exc), evidence_id)
+                            )
                         failed_count += 1
 
                 # Generate handoffs

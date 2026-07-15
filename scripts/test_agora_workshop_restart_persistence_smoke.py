@@ -36,6 +36,7 @@ def test_helper_seeds_and_verifies_workshop_proposal_and_outbox() -> None:
     helper = _load_helper()
     store = FakeStore()
     proposals = helper.ProposalStore(backend="memory")
+    dataset_store = helper.AgoraDatasetStore(backend="memory")
 
     helper.seed(
         store,
@@ -43,6 +44,7 @@ def test_helper_seeds_and_verifies_workshop_proposal_and_outbox() -> None:
         workshop_id="ws-run-1",
         tenant_id="tenant",
         user_id="viewer",
+        dataset_store=dataset_store,
     )
 
     scope = helper.command_scope(tenant_id="tenant", user_id="viewer")
@@ -57,6 +59,7 @@ def test_helper_seeds_and_verifies_workshop_proposal_and_outbox() -> None:
         workshop_id="ws-run-1",
         tenant_id="tenant",
         user_id="viewer",
+        dataset_store=dataset_store,
     )
 
     assert store.sessions["ws-run-1"] == {
@@ -81,13 +84,21 @@ def test_helper_fails_closed_without_postgres_backend(monkeypatch: pytest.Monkey
     helper = _load_helper()
     monkeypatch.setenv(helper.WORKSHOP_BACKEND_ENV, "off")
     monkeypatch.setenv(helper.GOVERNANCE_BACKEND_ENV, "postgres")
+    monkeypatch.setenv(helper.DATASET_BACKEND_ENV, "postgres")
 
     with pytest.raises(RuntimeError, match="requires AGORA_WORKSHOP_STORE_BACKEND=postgres"):
         helper.require_postgres_backends()
 
     monkeypatch.setenv(helper.WORKSHOP_BACKEND_ENV, "postgres")
     monkeypatch.setenv(helper.GOVERNANCE_BACKEND_ENV, "off")
+    monkeypatch.setenv(helper.DATASET_BACKEND_ENV, "postgres")
     with pytest.raises(RuntimeError, match="requires AGORA_GOVERNANCE_STORE_BACKEND=postgres"):
+        helper.require_postgres_backends()
+
+    monkeypatch.setenv(helper.WORKSHOP_BACKEND_ENV, "postgres")
+    monkeypatch.setenv(helper.GOVERNANCE_BACKEND_ENV, "postgres")
+    monkeypatch.setenv(helper.DATASET_BACKEND_ENV, "off")
+    with pytest.raises(RuntimeError, match="requires AGORA_DATASET_STORE_BACKEND=postgres"):
         helper.require_postgres_backends()
 
 
@@ -147,9 +158,11 @@ def test_workflow_log_and_inspect_probes_consume_complete_input_under_pipefail()
     step = step.split("- name: Summarize auto-deploy", 1)[0]
 
     assert "grep -q" not in step
-    assert step.count("docker inspect pantheon-operator-bff-1") == 2
-    assert step.count("docker logs pantheon-operator-bff-1") == 2
+    assert step.count("docker inspect pantheon-operator-bff-1") == 3
+    assert step.count("docker logs pantheon-operator-bff-1") == 3
     assert "grep -F -x 'AGORA_WORKSHOP_STORE_BACKEND=postgres' >/dev/null" in step
     assert "grep -F -x 'AGORA_GOVERNANCE_STORE_BACKEND=postgres' >/dev/null" in step
+    assert "grep -F -x 'AGORA_DATASET_STORE_BACKEND=postgres' >/dev/null" in step
     assert "grep -F 'Agora workshop store initialized backend=postgres' >/dev/null" in step
     assert "grep -F 'Agora governance store initialized backend=postgres' >/dev/null" in step
+    assert "grep -F 'Agora dataset store initialized backend=postgres' >/dev/null" in step
