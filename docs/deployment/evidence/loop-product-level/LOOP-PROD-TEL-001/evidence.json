@@ -96,10 +96,21 @@
       "merge_sha": "9eaf3f18b70a0b68a201ccc1c0cf64305df1aef0"
     },
     "required_checks": [
-      "Branch CI Gate/Commit trailers",
-      "Branch CI Gate/Runtime mirror guard",
-      "Branch CI Gate/Smoke acceptance",
-      "Orchestrator Sync/Forward"
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "conclusion": "success",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        }
+      },
+      {
+        "workflow": "Orchestrator Sync/Forward",
+        "event": "push",
+        "conclusion": "success"
+      }
     ]
   },
   "validation": {
