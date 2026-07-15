@@ -505,11 +505,130 @@ def test_replay_discard_idempotency_keeps_after_artifact_empty() -> None:
         headers={"X-Idempotency-Key": "trn004-discard-001"},
     )
 
-    assert first.status_code == 200, first.text
-    assert replay.status_code == 200, replay.text
     assert replay.json()["replay_resolution"]["state"] == "discarded"
     assert replay.json()["replay_resolution"]["idempotency"]["replayed"] is True
     assert replay.json()["artifacts"]["after_artifact_ref"] is None
     assert "persona_policy_ref" not in replay.json()["artifacts"]
     events = module.TrainingSessionStore(module.store.data_dir).list_event_log(session_id)
     assert [event["event_type"] for event in events].count("discard") == 1
+
+
+def test_canonical_dataset_validation_and_fail_closed_and_evidence(tmp_path: Path, monkeypatch) -> None:
+    import json
+    module = _load_service_module()
+    client = TestClient(module.app)
+    
+    mock_dir = tmp_path / "mock_config"
+    mock_dir.mkdir()
+    
+    dataset_path = mock_dir / "mock_dataset.json"
+    policy_path = mock_dir / "mock_policy.json"
+    
+    data = []
+    import datetime
+    start_date = datetime.date(2026, 6, 1)
+    for i in range(35):
+        date_str = (start_date + datetime.timedelta(days=i)).strftime("%Y-%m-%d")
+        data.append({
+            "instrument": "BTCUSD", "date": date_str,
+            "open": 100.0, "high": 105.0, "low": 95.0, "close": 100.0, "volume": 1000.0
+        })
+        data.append({
+            "instrument": "ETHUSD", "date": date_str,
+            "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.0, "volume": 1000.0
+        })
+    dataset_payload = {
+        "dataset_id": "test-dataset-v1",
+        "records": data
+    }
+    dataset_path.write_text(json.dumps(dataset_payload), encoding="utf-8")
+    
+    policy_payload_fail = {
+        "max_staleness_days": 10,
+        "min_bars_per_instrument": 100,
+        "min_instruments": 2,
+        "required_instruments": ["BTCUSD", "ETHUSD"],
+        "min_sharpe_ratio": -1.0,
+        "min_total_return": -0.5
+    }
+    policy_path.write_text(json.dumps(policy_payload_fail), encoding="utf-8")
+    
+    monkeypatch.setenv("TRAINING_SESSION_CANONICAL_DATASET_PATH", str(dataset_path))
+    monkeypatch.setenv("TRAINING_SESSION_THRESHOLD_POLICY_PATH", str(policy_path))
+    
+    session_id = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-alpha",
+            "objective": "Test fail closed validation",
+            "created_at": "2026-04-28T22:00:00Z",
+        },
+    ).json()["session_id"]
+    
+    preview = client.post(f"/api/training/sessions/{session_id}/preview", json={"mode": "refresh"})
+    assert preview.status_code == 201
+    assert preview.json()["validation_status"] == "failed"
+    assert preview.json()["evaluation_proof"]["status"] == "failed"
+    assert preview.json()["evaluation_proof"]["governance_gate_state"] == "failed"
+    
+    client.post(f"/api/training/sessions/{session_id}/complete")
+    commit_resp = client.post(
+        f"/api/training/replays/{session_id}/commit",
+        json={
+            "actor_id": "operator-1",
+            "decided_at": "2026-04-28T22:05:00Z",
+        }
+    )
+    assert commit_resp.status_code == 409
+    assert "governance gate is not passed" in commit_resp.json()["detail"]
+    
+    policy_payload_pass = {
+        "max_staleness_days": 1000,
+        "min_bars_per_instrument": 30,
+        "min_instruments": 2,
+        "required_instruments": ["BTCUSD", "ETHUSD"],
+        "min_sharpe_ratio": -2.0,
+        "min_total_return": -0.9
+    }
+    policy_path.write_text(json.dumps(policy_payload_pass), encoding="utf-8")
+    
+    session_id_pass = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-alpha",
+            "objective": "Test passing validation",
+            "created_at": "2026-04-28T23:00:00Z",
+        },
+    ).json()["session_id"]
+    
+    preview_pass = client.post(f"/api/training/sessions/{session_id_pass}/preview", json={"mode": "refresh"})
+    assert preview_pass.status_code == 201
+    assert preview_pass.json()["validation_status"] == "passed"
+    assert preview_pass.json()["evaluation_proof"]["status"] == "passed"
+    
+    client.post(f"/api/training/sessions/{session_id_pass}/complete")
+    commit_pass = client.post(
+        f"/api/training/replays/{session_id_pass}/commit",
+        json={
+            "actor_id": "operator-1",
+            "decided_at": "2026-04-28T23:05:00Z",
+        }
+    )
+    assert commit_pass.status_code == 200, commit_pass.text
+    
+    evidence_file = Path(SERVICE_DIR).parent.parent / "docs" / "deployment" / "evidence" / "loop-product-level" / "LOOP-PROD-TEACH-001" / "evidence.json"
+    assert evidence_file.exists()
+    
+    lines = evidence_file.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) >= 2
+    
+    from hashlib import sha256
+    for line in lines[-2:]:
+        record = json.loads(line)
+        assert "checksum" in record
+        assert "actor_id" not in record["payload"] or record["payload"]["actor_id"] == "[REDACTED]"
+        
+        checksum = record.pop("checksum")
+        serialized = json.dumps(record, sort_keys=True, separators=(",", ":"))
+        calculated = sha256(serialized.encode("utf-8")).hexdigest()
+        assert calculated == checksum

@@ -391,7 +391,6 @@ services:
       start_period: 5s
 
   training-session-preview-worker:
-    profiles: ["training-session-preview-worker"]
     build:
       context: .
       dockerfile: services/training-session/Dockerfile
