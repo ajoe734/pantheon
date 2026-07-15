@@ -947,6 +947,11 @@ services:
       PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH: ${PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH:-/data/bff/management-ai-attachments}
       PANTHEON_MGMT_AI_ATTACH_BUCKET: ${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}
       PANTHEON_MANAGEMENT_AI_AUDIT_PATH: ${PANTHEON_MANAGEMENT_AI_AUDIT_PATH:-/data/bff/management-ai-audit.jsonl}
+      # Management NL provider turns reserve their actor/tenant/route/key before
+      # any conversation or provider side effect. Hosted retries must use this
+      # durable, cross-process admission store rather than an in-memory mutex.
+      PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED: ${PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED:-true}
+      PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH: ${PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH:-/data/bff/management-nl-command-idempotency.json}
       PANTHEON_ASSISTANT_PROVIDER: ${PANTHEON_ASSISTANT_PROVIDER:-openclaw}
       # BFF→adapter HTTP budget. Raised 75→180: a real openclaw agent turn runs
       # ~60-90s+ (gpt-5.5 + thinking + full context pack); at 75 the BFF gave up

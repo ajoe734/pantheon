@@ -19,7 +19,7 @@ from contextvars import ContextVar, copy_context
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 from urllib.parse import quote, urlencode
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -157,6 +157,15 @@ from persona_allocation_policy import (
 from emergency_containment_policy import validate_emergency_containment
 from session_lifecycle_store import SessionLifecycleStore
 from management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
+from management_nl_command_idempotency import (
+    DEFAULT_STORAGE_PATH as DEFAULT_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_PATH,
+    ManagementNlCommandIdempotencyStore,
+    ManagementNlCommandPayloadConflict,
+    ManagementNlCommandRecoveryRequired,
+    ManagementNlCommandReservation,
+    ManagementNlCommandScope,
+    ManagementNlCommandStorageError,
+)
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from source_search_ops_client import (
     SearchIndexCommandClient,
@@ -37397,6 +37406,8 @@ async def bff_management_evolution_journal(
 # ---------------- /bff/management/nl (BFF-B6-001) ----------------
 
 _MGMT_NL_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_MGMT_NL_COMMAND_IDEMPOTENCY_STORE: Optional[ManagementNlCommandIdempotencyStore] = None
+_MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG: Optional[Tuple[str, float]] = None
 
 _MGMT_NL_VALID_FOCUS = {"cockpit", "trading_pulse", "portfolio", "persona_fleet", "all"}
 _MGMT_NL_FOCUS_ALIASES = {
@@ -39584,6 +39595,239 @@ def _mgmt_nl_idempotency_put(
     _MGMT_NL_IDEMPOTENCY[storage_key] = {"request_hash": request_hash, "result": result}
 
 
+def _mgmt_nl_command_idempotency_required() -> bool:
+    return _bool_from_env("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED")
+
+
+def _mgmt_nl_command_recovery_seconds() -> float:
+    raw = os.getenv(
+        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS",
+        "300",
+    ).strip()
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 300.0
+    return max(value, 0.001)
+
+
+def _mgmt_nl_command_idempotency_store() -> ManagementNlCommandIdempotencyStore:
+    global _MGMT_NL_COMMAND_IDEMPOTENCY_STORE, _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG
+    storage_path = os.getenv(
+        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
+        DEFAULT_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_PATH,
+    ).strip()
+    config = (storage_path, _mgmt_nl_command_recovery_seconds())
+    if _MGMT_NL_COMMAND_IDEMPOTENCY_STORE is None or _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG != config:
+        _MGMT_NL_COMMAND_IDEMPOTENCY_STORE = ManagementNlCommandIdempotencyStore(
+            storage_path,
+            recovery_seconds=config[1],
+        )
+        _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = config
+    return _MGMT_NL_COMMAND_IDEMPOTENCY_STORE
+
+
+def _mgmt_nl_command_scope(
+    *,
+    actor_id: str,
+    tenant_id: str,
+    resolved_key: str,
+) -> ManagementNlCommandScope:
+    return ManagementNlCommandScope(
+        actor_id=actor_id,
+        tenant_id=tenant_id,
+        route="POST /bff/management/nl/ask",
+        idempotency_key=resolved_key,
+    )
+
+
+def _mgmt_nl_result_is_terminal(result: Optional[Mapping[str, Any]]) -> bool:
+    if not isinstance(result, Mapping):
+        return False
+    data = result.get("data") if isinstance(result.get("data"), Mapping) else {}
+    meta = result.get("meta") if isinstance(result.get("meta"), Mapping) else {}
+    states = {
+        str(value or "").strip().lower()
+        for value in (
+            data.get("lifecycle_status"),
+            data.get("lifecycleStatus"),
+            data.get("status"),
+            meta.get("lifecycle_status"),
+            meta.get("lifecycleStatus"),
+            meta.get("status"),
+        )
+        if str(value or "").strip()
+    }
+    return not states.intersection({"accepted", "processing", "pending", "queued", "in_progress"})
+
+
+def _mgmt_nl_raise_command_idempotency_error(exc: Exception, *, display_key: str) -> None:
+    if isinstance(exc, ManagementNlCommandPayloadConflict):
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Idempotency key was already used with a different payload",
+            f"Key {display_key!r} is bound to a different Management NL command",
+            precondition_failed="idempotency_conflict",
+            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+        ) from exc
+    if isinstance(exc, ManagementNlCommandRecoveryRequired):
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Management NL command outcome is uncertain",
+            "The command will not be executed again until its prior outcome is reconciled.",
+            precondition_failed="idempotency_recovery_required",
+            suggestion="Inspect the durable conversation/provider audit and reconcile this key explicitly",
+        ) from exc
+    raise _bff_error(
+        503,
+        ErrorCode.DEPENDENCY_UNAVAILABLE,
+        "Management NL command admission store is unavailable",
+        str(exc),
+        precondition_failed="management_nl_command_idempotency_store",
+        suggestion="Restore the durable command idempotency volume before retrying",
+    ) from exc
+
+
+def _mgmt_nl_command_wait_seconds() -> float:
+    raw = os.getenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_WAIT_SECONDS", "").strip()
+    if raw:
+        try:
+            return max(float(raw), 0.01)
+        except (TypeError, ValueError):
+            pass
+    provider_raw = os.getenv("PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS", "180").strip()
+    try:
+        provider_seconds = max(float(provider_raw), 0.1)
+    except (TypeError, ValueError):
+        provider_seconds = 180.0
+    return provider_seconds + 10.0
+
+
+def _mgmt_nl_command_poll_seconds() -> float:
+    raw = os.getenv(
+        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_POLL_SECONDS",
+        "0.05",
+    ).strip()
+    try:
+        return min(max(float(raw), 0.005), 1.0)
+    except (TypeError, ValueError):
+        return 0.05
+
+
+async def _mgmt_nl_command_admit(
+    *,
+    scope: ManagementNlCommandScope,
+    request_hash: str,
+    legacy_result: Optional[Dict[str, Any]],
+    display_key: str,
+) -> tuple[Optional[ManagementNlCommandReservation], Optional[Dict[str, Any]]]:
+    if not _mgmt_nl_command_idempotency_required():
+        return None, legacy_result
+
+    store = _mgmt_nl_command_idempotency_store()
+    try:
+        admission = await asyncio.to_thread(
+            store.admit,
+            scope,
+            request_hash=request_hash,
+            legacy_result=legacy_result,
+            legacy_terminal=_mgmt_nl_result_is_terminal(legacy_result),
+        )
+    except (
+        ManagementNlCommandPayloadConflict,
+        ManagementNlCommandRecoveryRequired,
+        ManagementNlCommandStorageError,
+    ) as exc:
+        _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
+
+    if admission.state == "owner":
+        return admission.reservation, None
+    if admission.state == "complete":
+        return None, admission.result
+    if admission.state != "wait":
+        _mgmt_nl_raise_command_idempotency_error(
+            ManagementNlCommandStorageError(
+                f"Unsupported Management NL command admission state: {admission.state}"
+            ),
+            display_key=display_key,
+        )
+
+    deadline = asyncio.get_running_loop().time() + _mgmt_nl_command_wait_seconds()
+    while True:
+        if asyncio.get_running_loop().time() >= deadline:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Management NL command is still in progress",
+                "An exact concurrent request owns this idempotency key and has not reached a terminal result.",
+                precondition_failed="idempotency_in_progress",
+                suggestion="Retry the same payload and key after the current provider turn completes",
+            )
+        await asyncio.sleep(_mgmt_nl_command_poll_seconds())
+        try:
+            admission = await asyncio.to_thread(
+                store.observe,
+                scope,
+                request_hash=request_hash,
+            )
+        except (
+            ManagementNlCommandPayloadConflict,
+            ManagementNlCommandRecoveryRequired,
+            ManagementNlCommandStorageError,
+        ) as exc:
+            _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
+        if admission.state == "complete":
+            return None, admission.result
+        if admission.state != "wait":
+            _mgmt_nl_raise_command_idempotency_error(
+                ManagementNlCommandStorageError(
+                    f"Unsupported Management NL command observation state: {admission.state}"
+                ),
+                display_key=display_key,
+            )
+
+
+async def _mgmt_nl_command_complete(
+    reservation: Optional[ManagementNlCommandReservation],
+    result: Dict[str, Any],
+    *,
+    display_key: str,
+) -> None:
+    if reservation is None:
+        return
+    try:
+        await asyncio.to_thread(
+            _mgmt_nl_command_idempotency_store().complete,
+            reservation,
+            result,
+        )
+    except (
+        ManagementNlCommandPayloadConflict,
+        ManagementNlCommandRecoveryRequired,
+        ManagementNlCommandStorageError,
+    ) as exc:
+        _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
+
+
+async def _mgmt_nl_command_mark_uncertain(
+    reservation: Optional[ManagementNlCommandReservation],
+    *,
+    reason: str,
+) -> None:
+    if reservation is None:
+        return
+    try:
+        await asyncio.to_thread(
+            _mgmt_nl_command_idempotency_store().mark_uncertain,
+            reservation,
+            reason=reason,
+        )
+    except Exception:
+        log.exception("Failed to mark Management NL command reservation uncertain")
+
+
 def _mgmt_nl_surface_confidence(surfaces: Dict[str, Any]) -> str:
     statuses = [v.get("status", "unavailable") for v in surfaces.values() if isinstance(v, dict)]
     if not statuses:
@@ -41148,6 +41392,7 @@ async def _mgmt_nl_finalize_provider_turn(
     audit_log_href: str,
     conversation_href: str,
     base_result: Dict[str, Any],
+    command_reservation: Optional[ManagementNlCommandReservation] = None,
 ) -> None:
     """Finish a nl/ask exchange whose provider call exceeded the inline grace
     window: await the in-flight agent run, then append the assistant turn exactly
@@ -41204,18 +41449,28 @@ async def _mgmt_nl_finalize_provider_turn(
             audit_log_href=audit_log_href,
             conversation_href=conversation_href,
         )
+        final_result = _mgmt_nl_finalize_result(
+            base_result,
+            answer=answer,
+            provider_status=provider_status,
+            actions=actions,
+        )
         _mgmt_nl_idempotency_put(
             idempotency_storage_key or resolved_key,
             request_hash=request_hash,
-            result=_mgmt_nl_finalize_result(
-                base_result,
-                answer=answer,
-                provider_status=provider_status,
-                actions=actions,
-            ),
+            result=final_result,
+        )
+        await _mgmt_nl_command_complete(
+            command_reservation,
+            final_result,
+            display_key=resolved_key,
         )
     except Exception:
         log.warning("Failed to persist async-finalised Management NL turn", exc_info=True)
+        await _mgmt_nl_command_mark_uncertain(
+            command_reservation,
+            reason="async_provider_finalization_failed",
+        )
 
 
 def _mgmt_nl_schedule_provider_finalize(**kwargs: Any) -> None:
@@ -41292,28 +41547,12 @@ async def bff_management_nl_ask(
         tenant_id=caller_tenant_id,
     )
     request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
-    cached = _mgmt_nl_idempotency_check(
+    legacy_cached = _mgmt_nl_idempotency_check(
         idempotency_storage_key,
         request_hash,
         display_key=resolved_key,
     )
-    if cached is not None:
-        cached_data = cached.get("data") if isinstance(cached, dict) else {}
-        _management_ai_record_event(
-            {
-                "event_type": "management_ai.exchange.replayed",
-                "session_id": str((cached_data or {}).get("session_id") or payload.get("session_id") or payload.get("sessionId") or ""),
-                "message_id": str((cached_data or {}).get("message_id") or ""),
-                "trace_id": str((cached_data or {}).get("trace_id") or (cached_data or {}).get("traceId") or ""),
-                "actor_id": identity.operator_id,
-                "focus": focus,
-                "route": "POST /bff/management/nl/ask",
-                "idempotency_key": resolved_key,
-            }
-        )
-        return JSONResponse(status_code=202, content=_management_json_clone(cached))
-
-    if _request_dry_run_requested():
+    if legacy_cached is None and _request_dry_run_requested():
         return _dry_run_success_response(
             {
                 "status": "accepted",
@@ -41336,12 +41575,39 @@ async def bff_management_nl_ask(
             },
         )
 
+    command_scope = _mgmt_nl_command_scope(
+        actor_id=identity.operator_id,
+        tenant_id=caller_tenant_id,
+        resolved_key=resolved_key,
+    )
+    command_reservation, cached = await _mgmt_nl_command_admit(
+        scope=command_scope,
+        request_hash=request_hash,
+        legacy_result=legacy_cached,
+        display_key=resolved_key,
+    )
+    if cached is not None:
+        cached_data = cached.get("data") if isinstance(cached, dict) else {}
+        _management_ai_record_event(
+            {
+                "event_type": "management_ai.exchange.replayed",
+                "session_id": str((cached_data or {}).get("session_id") or payload.get("session_id") or payload.get("sessionId") or ""),
+                "message_id": str((cached_data or {}).get("message_id") or ""),
+                "trace_id": str((cached_data or {}).get("trace_id") or (cached_data or {}).get("traceId") or ""),
+                "actor_id": identity.operator_id,
+                "focus": focus,
+                "route": "POST /bff/management/nl/ask",
+                "idempotency_key": resolved_key,
+            }
+        )
+        return JSONResponse(status_code=202, content=_management_json_clone(cached))
+
     now = utc_now()
     session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
     message_id = f"mnl-{uuid.uuid4().hex[:16]}"
     trace_id = str(payload.get("traceId") or payload.get("trace_id") or f"mnl-trace-{uuid.uuid4().hex[:12]}")
     if control_command is not None:
-        return _mgmt_nl_handle_control_command(
+        control_response = _mgmt_nl_handle_control_command(
             control_command=control_command,
             payload=payload,
             identity=identity,
@@ -41356,6 +41622,13 @@ async def bff_management_nl_ask(
             trace_id=trace_id,
             now=now,
         )
+        control_result = json.loads(control_response.body)
+        await _mgmt_nl_command_complete(
+            command_reservation,
+            control_result,
+            display_key=resolved_key,
+        )
+        return control_response
 
     control_mode = _assistant_control_mode_for_identity(
         identity,
@@ -41680,6 +41953,12 @@ async def bff_management_nl_ask(
         conversation_href=conversation_href,
     )
     _mgmt_nl_idempotency_put(idempotency_storage_key, request_hash=request_hash, result=result)
+    if not provider_pending:
+        await _mgmt_nl_command_complete(
+            command_reservation,
+            result,
+            display_key=resolved_key,
+        )
     if provider_pending:
         # The assistant turn was intentionally NOT persisted above: the store's
         # append_turn is not an upsert, so writing a placeholder here would leave
@@ -41700,6 +41979,7 @@ async def bff_management_nl_ask(
             audit_log_href=audit_log_href,
             conversation_href=conversation_href,
             base_result=result,
+            command_reservation=command_reservation,
         )
     return JSONResponse(status_code=202, content=result)
 

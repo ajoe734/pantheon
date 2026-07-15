@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -16,6 +20,12 @@ import main as bff_main
 from assistant.control_mode import ControlModeStore
 from assistant.models import AssistantMode
 from assistant.repair_receipts import issue_repair_receipt
+from management_nl_command_idempotency import (
+    ManagementNlCommandIdempotencyStore,
+    ManagementNlCommandPayloadConflict,
+    ManagementNlCommandRecoveryRequired,
+    ManagementNlCommandScope,
+)
 from models import OperatorIdentity
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from read_store import ReadSurfaceStore
@@ -131,6 +141,22 @@ class FakeProviderClient:
             "policy_allowed_tools": ["assistant.command"],
             "effective_tools": [],
         }
+
+
+class BlockingProviderClient(FakeProviderClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self._calls_lock = threading.Lock()
+
+    def invoke_assistant_provider(self, **kwargs: Any) -> dict[str, Any]:
+        with self._calls_lock:
+            self.calls.append(kwargs)
+        self.entered.set()
+        if not self.release.wait(timeout=10):
+            raise TimeoutError("test provider release timed out")
+        return self.result
 
 
 class FakeHttpResponse:
@@ -293,6 +319,19 @@ def _clear_provider_env(monkeypatch) -> None:
         monkeypatch.delenv(env_name, raising=False)
 
 
+def _enable_management_nl_command_idempotency(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED", "true")
+    monkeypatch.setenv(
+        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
+        str(tmp_path / "management-nl-command-idempotency.json"),
+    )
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS", "30")
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_WAIT_SECONDS", "5")
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_POLL_SECONDS", "0.01")
+    bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_STORE = None
+    bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
+
+
 def _kernel_operator_identity(
     *,
     operator_id: str = "asst-bff-002",
@@ -374,6 +413,197 @@ def test_management_nl_idempotency_storage_is_scoped_by_actor_and_tenant() -> No
 
     assert len({actor_a, actor_b, tenant_b}) == 3
     assert all(client_key not in value for value in (actor_a, actor_b, tenant_b))
+
+
+def test_management_nl_command_store_reloads_exact_result_and_scopes_every_boundary(
+    tmp_path: Path,
+) -> None:
+    store_path = tmp_path / "management-nl-command-idempotency.json"
+    store = ManagementNlCommandIdempotencyStore(str(store_path))
+    request_hash = "a" * 64
+    result = {
+        "status": "accepted",
+        "data": {"status": "completed", "message_id": "mnl-durable"},
+    }
+    scope = ManagementNlCommandScope(
+        actor_id="operator-a",
+        tenant_id="tenant-a",
+        route="POST /bff/management/nl/ask",
+        idempotency_key="browser-key",
+    )
+
+    owner = store.admit(scope, request_hash=request_hash)
+    assert owner.state == "owner"
+    assert owner.reservation is not None
+    store.complete(owner.reservation, result)
+
+    reloaded = ManagementNlCommandIdempotencyStore(str(store_path))
+    replay = reloaded.admit(scope, request_hash=request_hash)
+    assert replay.state == "complete"
+    assert replay.result == result
+    assert store_path.stat().st_mode & 0o777 == 0o600
+
+    with pytest.raises(ManagementNlCommandPayloadConflict):
+        reloaded.admit(scope, request_hash="b" * 64)
+
+    scoped_variants = (
+        ManagementNlCommandScope("operator-b", "tenant-a", scope.route, "browser-key"),
+        ManagementNlCommandScope("operator-a", "tenant-b", scope.route, "browser-key"),
+        ManagementNlCommandScope("operator-a", "tenant-a", "POST /different", "browser-key"),
+        ManagementNlCommandScope("operator-a", "tenant-a", scope.route, "different-key"),
+    )
+    assert all(
+        reloaded.admit(variant, request_hash=request_hash).state == "owner"
+        for variant in scoped_variants
+    )
+
+
+def test_management_nl_command_store_reload_expires_to_uncertain_without_reexecution(
+    tmp_path: Path,
+) -> None:
+    now = [100.0]
+    scope = ManagementNlCommandScope(
+        "operator-a",
+        "tenant-a",
+        "POST /bff/management/nl/ask",
+        "crash-key",
+    )
+    request_hash = "c" * 64
+    path = tmp_path / "management-nl-command-idempotency.json"
+    first = ManagementNlCommandIdempotencyStore(
+        str(path),
+        recovery_seconds=5,
+        clock=lambda: now[0],
+    )
+    assert first.admit(scope, request_hash=request_hash).state == "owner"
+
+    now[0] = 106.0
+    reloaded = ManagementNlCommandIdempotencyStore(
+        str(path),
+        recovery_seconds=5,
+        clock=lambda: now[0],
+    )
+    with pytest.raises(ManagementNlCommandRecoveryRequired):
+        reloaded.observe(scope, request_hash=request_hash)
+    with pytest.raises(ManagementNlCommandRecoveryRequired):
+        reloaded.admit(scope, request_hash=request_hash)
+
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert list(document["records"].values())[0]["status"] == "uncertain"
+    assert list(document["records"].values())[0]["reason"] == "reservation_expired"
+
+
+def test_management_nl_concurrent_exact_request_invokes_provider_once_and_replays_terminal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    provider = BlockingProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        _enable_management_nl_command_idempotency(tmp_path, monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_PROVIDER_INLINE_GRACE_SECONDS", "8")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: provider)
+        _seeded_client(tmp_path, monkeypatch)
+        payload = {
+            "question": "Prove concurrent exact command admission.",
+            "focus": "portfolio",
+            "sessionId": "mgmt-command-concurrent-exact",
+        }
+        key = "mgmt-command-concurrent-key"
+
+        async def exercise() -> tuple[Any, Any]:
+            kwargs = {
+                "payload": payload,
+                "authorization": OPERATOR_HEADERS["Authorization"],
+                "idempotency_key": key,
+                "x_idempotency_key": None,
+                "x_tenant_id": None,
+                "x_pantheon_tenant": None,
+            }
+            first = asyncio.create_task(bff_main.bff_management_nl_ask(**kwargs))
+            assert await asyncio.to_thread(provider.entered.wait, 10)
+            second = asyncio.create_task(bff_main.bff_management_nl_ask(**kwargs))
+            await asyncio.sleep(0.1)
+            assert not second.done(), "the exact contender should wait without invoking the provider"
+            provider.release.set()
+            return await asyncio.gather(first, second)
+
+        first_response, second_response = asyncio.run(exercise())
+        assert first_response.status_code == 202
+        assert second_response.status_code == 202
+        assert json.loads(second_response.body) == json.loads(first_response.body)
+        assert len(provider.calls) == 1
+        turns = bff_main._management_ai_conversation_store().list_turns(
+            "mgmt-command-concurrent-exact"
+        )
+        assert [turn["role"] for turn in turns] == ["user", "assistant"]
+    finally:
+        provider.release.set()
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_STORE = None
+        bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
+
+
+def test_management_nl_concurrent_conflict_returns_409_before_second_side_effect(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    provider = BlockingProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        _enable_management_nl_command_idempotency(tmp_path, monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_PROVIDER_INLINE_GRACE_SECONDS", "8")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: provider)
+        _seeded_client(tmp_path, monkeypatch)
+        key = "mgmt-command-conflict-key"
+        first_payload = {
+            "question": "First command owns this durable key.",
+            "focus": "portfolio",
+            "sessionId": "mgmt-command-conflict-owner",
+        }
+        conflict_payload = {
+            "question": "Different command must fail before side effects.",
+            "focus": "portfolio",
+            "sessionId": "mgmt-command-conflict-contender",
+        }
+
+        async def exercise() -> Any:
+            common = {
+                "authorization": OPERATOR_HEADERS["Authorization"],
+                "idempotency_key": key,
+                "x_idempotency_key": None,
+                "x_tenant_id": None,
+                "x_pantheon_tenant": None,
+            }
+            first = asyncio.create_task(
+                bff_main.bff_management_nl_ask(payload=first_payload, **common)
+            )
+            assert await asyncio.to_thread(provider.entered.wait, 10)
+            with pytest.raises(HTTPException) as conflict:
+                await bff_main.bff_management_nl_ask(payload=conflict_payload, **common)
+            assert getattr(conflict.value, "status_code", None) == 409
+            assert len(provider.calls) == 1
+            assert (
+                bff_main._management_ai_conversation_store().get_session(
+                    "mgmt-command-conflict-contender"
+                )
+                is None
+            )
+            provider.release.set()
+            return await first
+
+        assert asyncio.run(exercise()).status_code == 202
+    finally:
+        provider.release.set()
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_STORE = None
+        bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
 
 
 def test_management_nl_repair_waits_through_provider_timeout_before_return(monkeypatch) -> None:
