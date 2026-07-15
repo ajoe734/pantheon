@@ -27,6 +27,7 @@ from .identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
 from .identity.router import create_identity_router
 from .servant.router import create_servant_router
 from .strategy_workshop.router import create_strategy_workshop_router
+from .strategy_workshop.operations import WorkshopCanonicalOperations
 from .strategy_workshop.store import make_workshop_store
 from .research.router import create_research_router
 from .trading_room.router import create_trading_room_router
@@ -84,6 +85,11 @@ def create_agora_router(
     """
     router = APIRouter(tags=["agora"])
     workshop_store = make_workshop_store()
+    workshop_canonical_operations = WorkshopCanonicalOperations(
+        approval_resolver=lambda decision_id: get_read_store().get_approval_decision(
+            decision_id
+        )
+    )
     proposal_store = ProposalStore()
 
     # ------------------------------------------------------------------ #
@@ -181,6 +187,7 @@ def create_agora_router(
         **_kw,
         require_write_role=require_write_role,
         workshop_store=workshop_store,
+        canonical_operations=workshop_canonical_operations,
     ))
     router.include_router(create_research_router(**_kw))
     router.include_router(create_trading_room_router(**_kw, workshop_store=workshop_store))
