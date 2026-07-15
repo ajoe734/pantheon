@@ -234,11 +234,31 @@ class JourneyMaterializer:
         return [stage for stage in STAGES[:furthest + 1] if stage not in stages]
 
     @staticmethod
-    def _sort_key(event: Mapping[str, Any]) -> tuple[str, int, str, str]:
-        # ordering_at falls back to ingest/record time when producer clock skew
-        # exceeds policy. Sequence and event id preserve deterministic causal
-        # ordering across rebuilds and equal timestamps.
-        return event.get("ordering_at", event["occurred_at"]), int(event.get("sequence", 0)), event["occurred_at"], event["event_id"]
+    def _sort_key(event: Mapping[str, Any]) -> tuple[int, int, str, str, str]:
+        # Canonical aggregate sequence takes precedence over producer clocks.
+        # Legacy events without a sequence retain deterministic event-time
+        # ordering so old stores remain readable while lifecycle-projector
+        # output follows the L1 ``sequence_no`` contract.
+        raw_sequence = event.get("sequence_no", event.get("sequence"))
+        if raw_sequence is None:
+            return (
+                1,
+                0,
+                event.get("ordering_at", event["occurred_at"]),
+                event["occurred_at"],
+                event["event_id"],
+            )
+        try:
+            sequence = int(raw_sequence)
+        except (TypeError, ValueError) as exc:
+            raise MaterializationError("sequence_no must be an integer") from exc
+        return (
+            0,
+            sequence,
+            event.get("ordering_at", event["occurred_at"]),
+            event["occurred_at"],
+            event["event_id"],
+        )
 
     @classmethod
     def _normalize(cls, event: Mapping[str, Any]) -> dict[str, Any]:

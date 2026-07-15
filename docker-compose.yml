@@ -918,7 +918,9 @@ services:
       PANTHEON_BFF_AGORA_EVALUATION_SUITE_STORE: ${PANTHEON_BFF_AGORA_EVALUATION_SUITE_STORE:-/data/bff/agora_evaluation_suites.json}
       PANTHEON_BFF_AGORA_EVALUATION_RUN_STORE: ${PANTHEON_BFF_AGORA_EVALUATION_RUN_STORE:-/data/bff/agora_evaluation_runs.json}
       PANTHEON_BFF_POSTMORTEM_STORE: ${PANTHEON_BFF_POSTMORTEM_STORE:-/data/bff/postmortems.json}
-      PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE: ${PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE:-/data/bff/trade_journey_events.json}
+      # Both lifecycle read models are switched through one projector-owned
+      # generation symlink, so the BFF can never observe a mixed generation.
+      PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE: ${PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE:-/data/bff/lifecycle-projection/current/trade_journey_events.json}
       PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND:-postgres}
       PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS: ${PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS:-5}
@@ -930,7 +932,7 @@ services:
       PANTHEON_BFF_PERSONA_SESSION_STORE: /data/bff/persona_sessions.json
       PANTHEON_BFF_PAPER_LIVE_DRIFT_STORE: /data/bff/paper_live_drift_reports.json
       PANTHEON_BFF_V5_INTERVENTION_STORE: /data/bff/v5_interventions.json
-      PANTHEON_BFF_LOOP_RUN_STORE: /data/bff/loop_runs.json
+      PANTHEON_BFF_LOOP_RUN_STORE: ${PANTHEON_BFF_LOOP_RUN_STORE:-/data/bff/lifecycle-projection/current/loop_runs.json}
       PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io,https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}
       PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
@@ -1065,6 +1067,8 @@ services:
         condition: service_healthy
       telemetry:
         condition: service_healthy
+      loop-run-projector-scheduler:
+        condition: service_healthy
       lineage-read:
         condition: service_healthy
       postgres:
@@ -1081,25 +1085,39 @@ services:
       start_period: 5s
 
   loop-run-projector-scheduler:
-    profiles: ["loop-run-projector"]
+    # Preserve the legacy service key so deploys replace the snapshot cron
+    # instead of leaving a second writer.  The implementation is now the
+    # canonical committed-telemetry lifecycle projector.
     build:
       context: .
-      dockerfile: services/control-plane/bff/Dockerfile
+      dockerfile: services/telemetry/Dockerfile
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
-    command: ["python", "scripts/loop_run_projector_scheduler.py"]
+    command: ["python", "-m", "services.trade_journey.lifecycle_projector", "run"]
+    restart: unless-stopped
     environment:
-      BFF_BASE: http://operator-bff:8001
-      BFF_TOKEN: ${BFF_TOKEN:-op-dev:admin:mfa}
-      BFF_INSECURE: "0"
-      PANTHEON_BFF_LOOP_RUN_STORE: /data/bff/loop_runs.json
-      LOOP_RUN_PROJECTOR_INTERVAL_SECONDS: ${LOOP_RUN_PROJECTOR_INTERVAL_SECONDS:-300}
-      LOOP_RUN_PROJECTOR_MAX_TICKS: ${LOOP_RUN_PROJECTOR_MAX_TICKS:-0}
+      TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      LIFECYCLE_PROJECTION_ROOT: /data/bff/lifecycle-projection
+      LIFECYCLE_PROJECTOR_STATE_PATH: /data/bff/lifecycle-projection/controller_state.json
+      LIFECYCLE_PROJECTOR_POLL_SECONDS: ${LIFECYCLE_PROJECTOR_POLL_SECONDS:-1}
+      LIFECYCLE_PROJECTOR_BATCH_SIZE: ${LIFECYCLE_PROJECTOR_BATCH_SIZE:-500}
+      LIFECYCLE_PROJECTOR_MAX_TICKS: ${LIFECYCLE_PROJECTOR_MAX_TICKS:-0}
+      LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-30}
+      LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG:-5000}
+      GIT_SHA: ${GIT_SHA:-unknown}
     volumes:
       - bff-data:/data/bff
     depends_on:
-      operator-bff:
+      postgres:
         condition: service_healthy
+      telemetry:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.trade_journey.lifecycle_projector", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   persona:
     build:
@@ -1596,7 +1614,7 @@ services:
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
-    command: ["python", "services/execution/lean_runtime/paper_signal_producer.py"]
+    command: ["python", "-m", "services.execution.lean_runtime.paper_signal_producer"]
     environment:
       SIGNAL_STORE_URL: redis://signal-store:6379
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081

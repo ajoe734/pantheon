@@ -1,14 +1,12 @@
-"""Regression: list_loop_runs / get_loop_run must merge the dedicated v5
-loop-run ledger (PANTHEON_BFF_LOOP_RUN_STORE, written by the loop-run projector)
-with incident-derived recovery loops.
+"""Canonical loop-run ledger truth precedence regressions.
 
-Before this fix, an available `incidents` dataset short-circuited the method, so
-the projector's `lr-rb-*` records never surfaced whenever any incident existed —
-leaving `/bff/v5/loop-runs` blank even when paper runtimes were active and the
-projector had populated the store (paper-loop activation, 2026-06-15).
+The lifecycle projector ledger is conclusive whenever available.  Incident
+reconstruction remains an explicitly degraded legacy backfill only when the
+canonical ledger is unavailable; the two sources must never be merged.
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -38,26 +36,74 @@ LR = {
 INC = {"inc-1": {"id": "inc-1", "title": "rescue loop", "status": "open"}}
 
 
-def test_list_merges_projector_runs_and_incidents():
+def test_list_uses_only_projector_runs_when_incidents_are_also_available():
     svc = _adapter(LR, INC)
     ok, runs = rs.ServiceBackedReadAdapter.list_loop_runs(svc)
     assert ok
     ids = {r.get("id") for r in runs}
-    assert {"lr-rb-aaa", "lr-rb-bbb"} <= ids, "projector loop-runs missing"
-    assert "inc-1" in ids, "incident-derived loop-run missing"
-    assert len(runs) == 3
+    assert ids == {"lr-rb-aaa", "lr-rb-bbb"}
+    assert "inc-1" not in ids
 
 
 def test_list_returns_projector_runs_even_with_incidents_present():
-    # The exact regression: incidents present must NOT hide the ledger.
     svc = _adapter(LR, INC)
     _, runs = rs.ServiceBackedReadAdapter.list_loop_runs(svc)
     assert any(r.get("id", "").startswith("lr-rb-") for r in runs)
 
 
-def test_get_resolves_projector_id_and_incident_id():
+def test_get_canonical_ledger_is_conclusive_and_does_not_fall_through():
     svc = _adapter(LR, INC)
     ok_a, run_a = rs.ServiceBackedReadAdapter.get_loop_run(svc, "lr-rb-aaa")
     assert ok_a and run_a and run_a["id"] == "lr-rb-aaa"
     ok_i, run_i = rs.ServiceBackedReadAdapter.get_loop_run(svc, "inc-1")
-    assert ok_i and run_i and run_i["id"] == "inc-1"
+    assert ok_i is True
+    assert run_i is None
+
+
+def test_incident_only_fallback_is_explicitly_legacy_backfill_degraded():
+    svc = _adapter(None, INC)
+    ok, runs = rs.ServiceBackedReadAdapter.list_loop_runs(svc)
+    assert ok is True
+    assert len(runs) == 1
+    assert runs[0]["source"] == "legacy_incident_backfill"
+    assert runs[0]["projection_mode"] == "backfill"
+    assert runs[0]["truth_level"] == "legacy_backfill"
+    assert runs[0]["accepted_live"] is False
+    assert runs[0]["read_state"] == "degraded"
+
+
+def test_loop_store_projector_wrapper_reads_nested_records(tmp_path, monkeypatch):
+    store_path = tmp_path / "loop_runs.json"
+    store_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "pantheon.loop-run-projection.v1",
+                "generation": 3,
+                "controller": {
+                    "accepted_live": True,
+                    "status": "ready",
+                    "mode": "live",
+                    "truth_level": "canonical_live",
+                },
+                "records": LR,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PANTHEON_BFF_LOOP_RUN_STORE", str(store_path))
+    svc = rs.ServiceBackedReadAdapter(allow_snapshot_fallback=False)
+
+    ok, runs = svc.list_loop_runs()
+
+    assert ok is True
+    assert {run["id"] for run in runs} == {"lr-rb-aaa", "lr-rb-bbb"}
+    assert svc.envelope_metadata("loop_runs") == {
+        "schema_version": "pantheon.loop-run-projection.v1",
+        "generation": 3,
+        "controller": {
+            "accepted_live": True,
+            "status": "ready",
+            "mode": "live",
+            "truth_level": "canonical_live",
+        },
+    }
