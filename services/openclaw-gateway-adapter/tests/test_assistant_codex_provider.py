@@ -466,12 +466,98 @@ def test_repair_mode_uses_workspace_write_for_task_worktree(tmp_path: Path) -> N
             },
         }
     )
-    cmd = calls[0][0]
+    cmd, kwargs = calls[0]
     assert cmd[cmd.index("-C") + 1] == str(worktree)
     assert "--skip-git-repo-check" in cmd
     assert cmd[cmd.index("-s") + 1] == "workspace-write"
+    assert kwargs["cwd"] == str(worktree)
+    assert result["sandbox"] == "workspace-write"
+    assert result["workspace_class"] == "task_worktree"
+    assert result["pre_run_repair_workflow"]["clean"] is True
+    assert result["post_run_repair_workflow"]["clean"] is True
+    assert result["repair_workflow"] == result["post_run_repair_workflow"]
     assert result["repair_workflow"]["branch"] == f"task/{task_id}"
     assert result["repair_workflow"]["merge_target"] == "dev"
+
+
+def test_repair_mode_returns_post_run_readback_for_scoped_write(tmp_path: Path) -> None:
+    task_id = "ASST-OCGW-POST-READBACK"
+    root, worktree = _init_task_worktree(tmp_path, task_id)
+    scoped_dir = worktree / "services" / "openclaw-gateway-adapter"
+
+    def fake_run(cmd, **kwargs):
+        scoped_dir.mkdir(parents=True, exist_ok=True)
+        (scoped_dir / "sentinel.txt").write_text("scoped\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"final":"ok"}\n', stderr="")
+
+    provider = _provider(
+        tmp_path,
+        fake_run,
+        env={"PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": str(root)},
+    )
+    result = provider.invoke(
+        {
+            "mode": "kernel_repair",
+            "prompt": "write the scoped sentinel",
+            "metadata": {
+                "operator_id": "op-1",
+                "task_id": task_id,
+                "task_worktree": str(worktree),
+                "declared_scope": ["services/openclaw-gateway-adapter"],
+            },
+        }
+    )
+
+    assert result["status"] == "completed"
+    assert result["pre_run_repair_workflow"]["clean"] is True
+    post_run = result["post_run_repair_workflow"]
+    assert post_run["clean"] is False
+    assert post_run["dirty_entries"] == [
+        {
+            "index": "?",
+            "worktree": "?",
+            "path": "services/openclaw-gateway-adapter/sentinel.txt",
+        }
+    ]
+    assert result["repair_workflow"] == post_run
+
+
+def test_repair_mode_fails_closed_when_provider_writes_outside_scope(tmp_path: Path) -> None:
+    task_id = "ASST-OCGW-SCOPE-ESCAPE"
+    root, worktree = _init_task_worktree(tmp_path, task_id)
+
+    def fake_run(cmd, **kwargs):
+        (Path(kwargs["cwd"]) / "outside.txt").write_text("escaped\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"final":"done"}\n', stderr="")
+
+    provider = _provider(
+        tmp_path,
+        fake_run,
+        env={"PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": str(root)},
+    )
+
+    with pytest.raises(CodexProviderError) as exc_info:
+        provider.invoke(
+            {
+                "mode": "kernel_repair",
+                "prompt": "attempt an out-of-scope write",
+                "metadata": {
+                    "operator_id": "op-1",
+                    "task_id": task_id,
+                    "task_worktree": str(worktree),
+                    "declared_scope": ["services/openclaw-gateway-adapter"],
+                },
+            }
+        )
+
+    assert exc_info.value.code == "REPAIR_DIRTY_UNRELATED"
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.retryable is False
+    assert exc_info.value.details["failure_stage"] == "post_run_repair_validation"
+    audit_text = (tmp_path / "provider-audit.jsonl").read_text(encoding="utf-8")
+    assert "post_run_repair_validation" in audit_text
+    assert "REPAIR_DIRTY_UNRELATED" in audit_text
+    assert "assistant.provider.completed" not in audit_text
 
 
 def test_successful_returncode_with_bwrap_namespace_error_fails_closed(tmp_path: Path) -> None:

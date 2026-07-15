@@ -84,6 +84,37 @@ class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
         self.assertEqual(summary["reported_health_summary"], {"runtime": "ok"})
         self.assertEqual(summary["health_summary"]["broker"], "ok")
 
+    def test_trace_and_correlation_envelope_are_safely_projected(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "runtime_summaries.json"
+            store = RuntimeSummaryProjectionStore(path, heartbeat_stale_after_seconds=60)
+            event = _runtime_heartbeat_event()
+            event["trace_id"] = "trace-paper-001"
+            event["correlation_envelope"] = {
+                "schema_version": "trade-journey-envelope/1",
+                "tenant_id": "tenant-001",
+                "environment": "paper",
+                "journey_id": "tj-paper-001",
+                "correlation_id": "corr-paper-001",
+                "trace_id": "trace-paper-001",
+                "event_id": "corr-event-paper-001",
+                "causation_event_id": "signal-paper-001",
+                "producer": "execution.paper_runtime",
+                "event_time": "2026-05-01T00:00:05Z",
+                "received_at": "2026-05-01T00:00:05Z",
+                "producer_revision": 1,
+            }
+
+            summary = store.project_event(event)
+            event["correlation_envelope"]["trace_id"] = "mutated-after-projection"
+            reloaded = RuntimeSummaryProjectionStore(path, heartbeat_stale_after_seconds=60)
+
+            self.assertEqual(summary["trace_id"], "trace-paper-001")
+            self.assertEqual(
+                reloaded.get("rt-paper-001")["correlation_envelope"]["trace_id"],
+                "trace-paper-001",
+            )
+
     def test_deploy_completed_sets_runtime_active_without_fabricating_heartbeat(self):
         store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
 

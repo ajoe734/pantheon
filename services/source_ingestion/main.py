@@ -9,17 +9,21 @@ refs, DLQ routing, and audit replay contract from the source_ingestion library.
 
 from __future__ import annotations
 
+import fcntl
 import json
+import hmac
 import os
 import re
+import threading
 import urllib.parse
 import urllib.request
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 try:
     from pydantic import BaseModel, ConfigDict, Field
 except ImportError:  # pragma: no cover - compatibility with older pydantic.
@@ -33,6 +37,7 @@ from services.foundation import (
     AuditAction,
     DeadLetterQueue,
     DeadLetterReplayProcessor,
+    DeadLetterStatus,
     SchemaRegistry,
     TraceContext,
 )
@@ -82,7 +87,10 @@ from .ingest_manager import IngestManager
 from .market_data_storage import MarketDataStorageWriter
 from .pg_store import build_source_evidence_repository
 from .policy_registry import crawler_policy_for_connector, policy_registry_payload
-from .persona_source_reconciler import SourceProvisioningReconciler
+from .controller_state import ControllerStateError, read_controller_state
+from .controller_auth import load_controller_token
+from .persona_source_reconciler import RECONCILIATION_METADATA_KEY, SourceProvisioningReconciler
+from .requirement_state import RequirementSnapshotStore, RequirementStateError
 from .scheduler import IngestBatch, IngestionScheduler, JsonlIngestScheduleStore
 from .source_health import (
     SourceHealth,
@@ -114,11 +122,24 @@ CONNECTOR_SCHEDULE_CONFIG_PATH = Path(os.getenv("SOURCE_INGEST_SCHEDULE_CONFIG_P
 SOURCE_HEALTH_STORE_PATH = Path(os.getenv("SOURCE_INGEST_HEALTH_STORE_PATH", str(DATA_DIR / "source_health.jsonl")))
 SOURCE_USAGE_STORE_PATH = Path(os.getenv("SOURCE_INGEST_USAGE_STORE_PATH", str(DATA_DIR / "source_usage_daily.jsonl")))
 MARKET_DATA_STORAGE_ROOT = Path(os.getenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(DATA_DIR / "market_data_store")))
+CONTROLLER_STATE_PATH = Path(
+    os.getenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(DATA_DIR / "controller_state.json"))
+)
+REQUIREMENT_STATE_PATH = Path(
+    os.getenv("SOURCE_INGEST_REQUIREMENT_STATE_PATH", str(DATA_DIR / "requirement_snapshots.jsonl"))
+)
+CONTROLLER_TOKEN_PATH = Path(
+    os.getenv("SOURCE_INGEST_CONTROLLER_TOKEN_FILE", str(DATA_DIR / "controller_token"))
+)
 SOURCE_RECORD_SCHEMA_PATH = Path(__file__).with_name("source_record.schema.json")
 MAX_RECORDS_PER_JOB = int(os.getenv("SOURCE_INGEST_MAX_RECORDS", "100"))
 SCHEDULER_MAX_CONCURRENCY = max(1, int(os.getenv("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY", "2")))
 FRONTIER_MAX_ATTEMPTS = max(1, int(os.getenv("SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS", "2")))
 FRONTIER_BACKOFF_SECONDS = max(0, int(os.getenv("SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS", "60")))
+FRONTIER_RUNNING_TIMEOUT_SECONDS = max(
+    1,
+    int(os.getenv("SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS", "300")),
+)
 # Optional: when set, notify search service after successful ingest runs (fire-and-forget).
 SEARCH_INGEST_NOTIFY_URL = os.getenv("SEARCH_INGEST_NOTIFY_URL", "").rstrip("/")
 PRODUCTION_POSTURE = require_source_search_posture("source-ingest")
@@ -139,6 +160,11 @@ scheduler = IngestionScheduler(manager=manager, store=store, dead_letter_queue=d
 replay_processor = DeadLetterReplayProcessor(schema_registry=SchemaRegistry())
 source_health_store = SourceHealthStore.from_jsonl(SOURCE_HEALTH_STORE_PATH)
 source_usage_store = SourceUsageDailyStore.from_jsonl(SOURCE_USAGE_STORE_PATH)
+requirement_snapshot_store = RequirementSnapshotStore(REQUIREMENT_STATE_PATH)
+controller_token = load_controller_token(token_path=CONTROLLER_TOKEN_PATH, create=True)
+authoritative_reconcile_lock = threading.RLock()
+audit_store_lock = threading.RLock()
+source_execution_lock = threading.RLock()
 market_data_storage_writer = MarketDataStorageWriter(MARKET_DATA_STORAGE_ROOT)
 register_fastapi_health_routes(
     app,
@@ -152,6 +178,15 @@ register_fastapi_health_routes(
         "source_record_count": len(evidence_repository.list_source_records()),
         "evidence_item_count": len(evidence_repository.list_evidence_items()),
         "dlq_count": len(dead_letter_queue.entries()),
+        "pending_dlq_count": len(dead_letter_queue.pending_entries()),
+        "unresolved_dlq_count": sum(
+            len(dead_letter_queue.entries(status=status))
+            for status in (
+                DeadLetterStatus.PENDING,
+                DeadLetterStatus.REPLAY_FAILED,
+                DeadLetterStatus.SCHEMA_REJECTED,
+            )
+        ),
         "frontier_count": len(store.list_frontier()),
         "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
     },
@@ -423,16 +458,58 @@ class SetConnectorLifecycleRequest(StrictBaseModel):
 
 class RunScheduledRequest(StrictBaseModel):
     max_concurrency: int | None = None
+    force_connector_ids: list[str] = Field(default_factory=list)
 
 
 class PersonaSourceProvisioningRequest(StrictBaseModel):
     persona: dict[str, Any] | None = None
-    personas: list[dict[str, Any]] = Field(default_factory=list)
+    personas: list[dict[str, Any]] | None = None
     dry_run: bool = False
+    authoritative_snapshot: bool = False
+    desired_state_sha256: str | None = None
+    source_authority: str | None = None
 
 
 class ReplayFrontierRequest(StrictBaseModel):
     trace_id: str | None = None
+
+
+def _require_controller_authorization(authorization: str | None, *, operation: str) -> None:
+    scheme, _, presented = str(authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not presented:
+        raise HTTPException(
+            status_code=401,
+            detail=f"controller service authorization is required for {operation}",
+        )
+    if not hmac.compare_digest(presented, controller_token):
+        raise HTTPException(
+            status_code=403,
+            detail=f"controller service authorization is invalid for {operation}",
+        )
+
+
+def _is_controller_owned(connector: SourceConnector | None) -> bool:
+    if connector is None:
+        return False
+    marker = connector.metadata.get(RECONCILIATION_METADATA_KEY)
+    return bool(
+        isinstance(marker, Mapping)
+        and marker.get("managed_by") == "persona_source_provisioning_reconciler"
+    )
+
+
+def _fence_managed_connector_mutation(
+    connector_id: str,
+    authorization: str | None,
+    *,
+    operation: str,
+    proposed_connector: SourceConnector | None = None,
+) -> None:
+    existing = connector_store.get_config(connector_id)
+    if _is_controller_owned(existing.connector if existing is not None else None) or _is_controller_owned(
+        proposed_connector
+    ):
+        _require_controller_authorization(authorization, operation=operation)
 
 
 def _register_or_validate_connector(connector: SourceConnector) -> SourceConnector:
@@ -789,14 +866,31 @@ def _source_provisioning_reconciler() -> SourceProvisioningReconciler:
     )
 
 
-def _persona_source_provisioning_payload(request: PersonaSourceProvisioningRequest) -> dict[str, Any]:
-    personas = list(request.personas)
-    if request.persona is not None:
-        personas.insert(0, request.persona)
-    if not personas:
-        raise SourceEvidenceError("persona or personas is required")
-    reconciler = _source_provisioning_reconciler()
-    results = reconciler.reconcile_personas(personas, dry_run=request.dry_run)
+def _desired_state_digest(personas: list[dict[str, Any]]) -> str:
+    body = json.dumps(
+        personas,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return sha256(body).hexdigest()
+
+
+def _requirement_bindings(results: list[Any]) -> dict[str, str]:
+    bindings: dict[str, str] = {}
+    for result in results:
+        for action in result.actions:
+            if action.connector_id and action.status in {"satisfied", "mutated"}:
+                existing = bindings.get(action.idempotency_key)
+                if existing is not None and existing != action.connector_id:
+                    raise SourceEvidenceError(
+                        f"requirement binding conflict for {action.idempotency_key}: {existing} != {action.connector_id}"
+                    )
+                bindings[action.idempotency_key] = action.connector_id
+    return bindings
+
+
+def _provisioning_summary(results: list[Any]) -> dict[str, int]:
     summary = {
         "persona_count": len(results),
         "total": 0,
@@ -809,12 +903,251 @@ def _persona_source_provisioning_payload(request: PersonaSourceProvisioningReque
     for result in results:
         for key, value in result.summary.items():
             summary[key] = int(summary.get(key, 0)) + int(value)
+    return summary
+
+
+def _retire_removed_requirement_bindings(
+    *,
+    current_bindings: Mapping[str, str],
+) -> list[dict[str, Any]]:
+    retained_connector_ids = set(current_bindings.values())
+    removed_connector_ids = sorted(
+        config.connector.connector_id
+        for config in connector_store.list_configs()
+        if (
+            config.connector.connector_id not in retained_connector_ids
+            and isinstance(config.connector.metadata.get(RECONCILIATION_METADATA_KEY), Mapping)
+            and config.connector.metadata[RECONCILIATION_METADATA_KEY].get("managed_by")
+            == "persona_source_provisioning_reconciler"
+        )
+    )
+    actions: list[dict[str, Any]] = []
+    for connector_id in removed_connector_ids:
+        config = connector_store.get_config(connector_id)
+        if config is None:
+            actions.append({"connector_id": connector_id, "action": "already_absent"})
+            continue
+        marker = config.connector.metadata.get(RECONCILIATION_METADATA_KEY)
+        owner = str(marker.get("managed_by") or "") if isinstance(marker, Mapping) else ""
+        if owner != "persona_source_provisioning_reconciler":
+            actions.append({"connector_id": connector_id, "action": "retained_operator_owned"})
+            continue
+        schedule = schedule_config_store.get_schedule(connector_id)
+        already_retired = (
+            config.connector.status == ConnectorStatus.DISABLED
+            and isinstance(marker, Mapping)
+            and marker.get("retired_by_authoritative_snapshot") is True
+            and (schedule is None or not schedule.enabled)
+        )
+        if already_retired:
+            actions.append({"connector_id": connector_id, "action": "already_disabled_controller_owned"})
+            continue
+        connector_payload = config.connector.to_dict()
+        connector_payload["status"] = ConnectorStatus.DISABLED.value
+        metadata = dict(connector_payload.get("metadata") or {})
+        reconciliation = dict(metadata.get(RECONCILIATION_METADATA_KEY) or {})
+        reconciliation["retired_by_authoritative_snapshot"] = True
+        metadata[RECONCILIATION_METADATA_KEY] = reconciliation
+        connector_payload["metadata"] = metadata
+        retired_connector = SourceConnector.from_dict(connector_payload)
+        connector_store.upsert_config(retired_connector, config.fetch)
+        manager.upsert_connector(retired_connector)
+        if schedule is not None and schedule.enabled:
+            schedule_config_store.upsert_schedule(
+                connector_id,
+                interval_seconds=schedule.interval_seconds,
+                enabled=False,
+            )
+        actions.append({"connector_id": connector_id, "action": "disabled_controller_owned"})
+    return actions
+
+
+def _source_record_readback(record: SourceRecord | None) -> dict[str, Any] | None:
+    if record is None:
+        return None
+    payload = record.to_dict()
+    metadata = dict(record.metadata)
+    provenance_keys = (
+        "provider",
+        "dataset",
+        "source_dataset",
+        "venue",
+        "market",
+        "event_time",
+        "available_time",
+        "api_endpoint",
+        "access_scope",
+        "license_scope",
+        "schema_hash",
+        "source_ingest_run_id",
+    )
+    return {
+        "source_id": payload["source_id"],
+        "connector_id": payload["connector_id"],
+        "source_type": payload["source_type"],
+        "title": payload["title"],
+        "content_ref": payload["content_ref"],
+        "status": payload["status"],
+        "trace_id": payload["trace_id"],
+        "created_at": payload["created_at"],
+        "provenance": {key: metadata[key] for key in provenance_keys if key in metadata},
+    }
+
+
+def _latest_source_record_by_connector() -> dict[str, SourceRecord]:
+    latest: dict[str, SourceRecord] = {}
+    for record in evidence_repository.list_source_records():
+        current = latest.get(record.connector_id)
+        if current is None or str(record.to_dict()["created_at"]) > str(current.to_dict()["created_at"]):
+            latest[record.connector_id] = record
+    return latest
+
+
+def _controller_connector_readbacks() -> list[dict[str, Any]]:
+    latest_by_connector = _latest_source_record_by_connector()
+    readbacks: list[dict[str, Any]] = []
+    for config in sorted(connector_store.list_configs(), key=lambda item: item.connector.connector_id):
+        connector = config.connector
+        connector_id = connector.connector_id
+        schedule = schedule_config_store.get_schedule(connector_id)
+        freshness = _connector_freshness_summary(connector_id)
+        health = source_health_store.get(connector_id)
+        health_payload = health.to_dict() if health is not None else None
+        if health_payload is not None:
+            health_payload["staleness_seconds"] = freshness.get("staleness_seconds")
+        reconciliation = connector.metadata.get(RECONCILIATION_METADATA_KEY)
+        if not isinstance(reconciliation, Mapping):
+            reconciliation = {}
+        desired_state = reconciliation.get("desired_state")
+        readbacks.append(
+            {
+                "connector_id": connector_id,
+                "configured": True,
+                "connector": connector.to_dict(),
+                "desired_state": dict(desired_state) if isinstance(desired_state, Mapping) else {},
+                "desired_state_sha256": reconciliation.get("desired_state_sha256"),
+                "schedule": schedule.to_dict() if schedule is not None else None,
+                "fetch_state": connector_store.get_fetch_state(connector_id),
+                "freshness": freshness,
+                "latest_source_record": _source_record_readback(latest_by_connector.get(connector_id)),
+                "source_health": health_payload,
+            }
+        )
+    return readbacks
+
+
+def _controller_readback_payload() -> dict[str, Any]:
+    connector_readbacks = _controller_connector_readbacks()
+    frontier = store.list_frontier()
+    frontier_backlog = sum(1 for item in frontier if item.status in {"queued", "retry", "running"})
+    staleness_values = [
+        int(item["freshness"]["staleness_seconds"])
+        for item in connector_readbacks
+        if item.get("freshness", {}).get("staleness_seconds") is not None
+    ]
+    controller_state = read_controller_state(CONTROLLER_STATE_PATH)
+    requirement_snapshot = requirement_snapshot_store.latest
+    dlq_entries = dead_letter_queue.entries()
+    dlq_status_counts = {
+        status.value: sum(1 for entry in dlq_entries if entry.status == status)
+        for status in DeadLetterStatus
+    }
+    unresolved_dlq_count = sum(
+        dlq_status_counts[status.value]
+        for status in (
+            DeadLetterStatus.PENDING,
+            DeadLetterStatus.REPLAY_FAILED,
+            DeadLetterStatus.SCHEMA_REJECTED,
+        )
+    )
+    return {
+        "schema_version": "source_ingest_controller_readback.v1",
+        "captured_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "controller_state": controller_state,
+        "controller_state_path": str(CONTROLLER_STATE_PATH),
+        "requirement_snapshot": requirement_snapshot.to_dict() if requirement_snapshot is not None else None,
+        "connector_count": len(connector_readbacks),
+        "source_record_count": len(evidence_repository.list_source_records()),
+        "dlq_count": len(dlq_entries),
+        "pending_dlq_count": dlq_status_counts[DeadLetterStatus.PENDING.value],
+        "unresolved_dlq_count": unresolved_dlq_count,
+        "dlq_status_counts": dlq_status_counts,
+        "frontier_backlog": frontier_backlog,
+        "max_lag_seconds": max(staleness_values, default=0),
+        "connectors": connector_readbacks,
+    }
+
+
+def _persona_source_provisioning_payload(request: PersonaSourceProvisioningRequest) -> dict[str, Any]:
+    if request.authoritative_snapshot:
+        if request.personas is None or request.persona is not None:
+            raise SourceEvidenceError(
+                "authoritative source reconciliation requires an explicit canonical personas array"
+            )
+        if not str(request.desired_state_sha256 or "").strip():
+            raise SourceEvidenceError(
+                "authoritative source reconciliation requires desired_state_sha256 from the desired-state authority"
+            )
+    personas = list(request.personas or [])
+    if request.persona is not None:
+        personas.insert(0, request.persona)
+    if not personas and not request.authoritative_snapshot:
+        raise SourceEvidenceError("persona or personas is required")
+    desired_state_sha256 = _desired_state_digest(personas)
+    if request.desired_state_sha256 and request.desired_state_sha256 != desired_state_sha256:
+        raise SourceEvidenceError("desired_state_sha256 does not match canonical persona snapshot")
+    pre_readback = _controller_readback_payload()
+    reconciler = _source_provisioning_reconciler()
+    retirement_actions: list[dict[str, Any]] = []
+    accepted_snapshot = None
+    if request.authoritative_snapshot and not request.dry_run:
+        # Phase 1 validates the complete desired snapshot and computes stable
+        # bindings without changing actual state.  Persisting that admitted
+        # intent before convergence makes a crash retryable instead of leaving
+        # mutated connectors governed by an older authoritative snapshot.
+        planned_results = list(reconciler.reconcile_personas(personas, dry_run=True))
+        planned_summary = _provisioning_summary(planned_results)
+        planned_bindings = _requirement_bindings(planned_results)
+        if planned_summary["conflicts"] or planned_summary["unsupported"]:
+            results = planned_results
+            summary = planned_summary
+            bindings = planned_bindings
+        else:
+            accepted_snapshot = requirement_snapshot_store.append(
+                desired_state_sha256=desired_state_sha256,
+                bindings=planned_bindings,
+                persona_count=len(personas),
+                authority=str(request.source_authority or "api://persona-source-provisioning"),
+                authoritative=True,
+            )
+            results = list(reconciler.reconcile_personas(personas, dry_run=False))
+            summary = _provisioning_summary(results)
+            bindings = _requirement_bindings(results)
+            if summary["conflicts"] or summary["unsupported"] or bindings != planned_bindings:
+                raise SourceEvidenceError(
+                    "actual source convergence contradicted the admitted authoritative requirement snapshot"
+                )
+            retirement_actions = _retire_removed_requirement_bindings(
+                current_bindings=bindings,
+            )
+    else:
+        results = list(reconciler.reconcile_personas(personas, dry_run=request.dry_run))
+        summary = _provisioning_summary(results)
+        bindings = _requirement_bindings(results)
     return {
         "schema_version": "persona_source_provisioning_response.v1",
         "controller": "persona_source_provisioning_reconciler",
         "dry_run": request.dry_run,
+        "authoritative_snapshot": request.authoritative_snapshot,
+        "desired_state_sha256": desired_state_sha256,
+        "source_authority": request.source_authority,
         "summary": summary,
         "results": [result.to_dict() for result in results],
+        "bindings": bindings,
+        "retirement_actions": retirement_actions,
+        "accepted_requirement_snapshot": accepted_snapshot.to_dict() if accepted_snapshot is not None else None,
+        "pre_readback": pre_readback,
+        "post_readback": _controller_readback_payload(),
     }
 
 
@@ -863,20 +1196,57 @@ def _configured_fetch(
 def _append_audit_actions(actions: tuple[Any, ...]) -> None:
     if not actions:
         return
-    AUDIT_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with AUDIT_STORE_PATH.open("a", encoding="utf-8") as handle:
-        for action in actions:
-            handle.write(json.dumps(action.to_dict(), sort_keys=True, separators=(",", ":")) + "\n")
+    payloads = [action.to_dict() for action in actions]
+    with audit_store_lock:
+        AUDIT_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        file_preexisted = AUDIT_STORE_PATH.exists()
+        wrote = False
+        with AUDIT_STORE_PATH.open("a+", encoding="utf-8") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                handle.seek(0)
+                existing_ids = {
+                    str(payload.get("action_id"))
+                    for line in handle
+                    if line.strip()
+                    for payload in (json.loads(line),)
+                    if isinstance(payload, Mapping) and payload.get("action_id")
+                }
+                handle.seek(0, os.SEEK_END)
+                for payload in payloads:
+                    action_id = str(payload.get("action_id") or "").strip()
+                    if action_id in existing_ids:
+                        continue
+                    handle.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+                    existing_ids.add(action_id)
+                    wrote = True
+                if wrote:
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        if wrote and not file_preexisted:
+            directory_fd = os.open(AUDIT_STORE_PATH.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
 
 
 def _load_audit_actions() -> list[dict[str, Any]]:
-    if not AUDIT_STORE_PATH.exists():
-        return []
-    actions: list[dict[str, Any]] = []
-    for line in AUDIT_STORE_PATH.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            actions.append(json.loads(line))
-    return actions
+    with audit_store_lock:
+        if not AUDIT_STORE_PATH.exists():
+            return []
+        actions: list[dict[str, Any]] = []
+        with AUDIT_STORE_PATH.open("r", encoding="utf-8") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+            try:
+                for line in handle:
+                    if line.strip():
+                        actions.append(json.loads(line))
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return actions
 
 
 def _stable_ref(prefix: str, value: str) -> str:
@@ -1403,7 +1773,11 @@ def _result_error(result: Any) -> str:
     return f"source ingest run ended with status={result.run.status.value}"
 
 
-def _run_frontier_item(item: Any) -> tuple[Any, dict[str, Any], Any, dict[str, Any] | None]:
+def _run_frontier_item(
+    item: Any,
+    *,
+    resolve_correlated_dlq: bool = True,
+) -> tuple[Any, dict[str, Any], Any, dict[str, Any] | None]:
     config = connector_store.get_config(item.connector_id)
     if config is None:
         updated = store.fail_frontier(
@@ -1433,8 +1807,18 @@ def _run_frontier_item(item: Any) -> tuple[Any, dict[str, Any], Any, dict[str, A
         )
         raise SourceEvidenceError(f"frontier run failed before ingest result persisted: {updated.last_error}") from exc
 
-    if result.run.status.value in {"completed", "rejected"}:
+    if result.run.status.value == "completed":
+        # Publish the durable completed frontier, then resolve correlated DLQ
+        # entries.  A crash between the two writes leaves pending_dlq_count
+        # non-zero, so terminal admission fails closed and the next scheduled
+        # tick's repair sweep completes the saga.
         updated = store.complete_frontier(item.frontier_id, ingest_run_id=result.run.ingest_run_id)
+        if resolve_correlated_dlq:
+            _resolve_pending_dlq_for_recovery(
+                frontier_id=item.frontier_id,
+                connector_id=item.connector_id,
+                recovery_ingest_run_id=result.run.ingest_run_id,
+            )
     else:
         updated = store.fail_frontier(
             item.frontier_id,
@@ -1443,6 +1827,139 @@ def _run_frontier_item(item: Any) -> tuple[Any, dict[str, Any], Any, dict[str, A
             ingest_run_id=result.run.ingest_run_id,
         )
     return result, evidence_refs, updated, source_search_refresh
+
+
+def _unresolved_dead_letter_entries(*, tag_filter: str | None = None) -> list[Any]:
+    entries: list[Any] = []
+    for status in (
+        DeadLetterStatus.PENDING,
+        DeadLetterStatus.REPLAY_FAILED,
+        DeadLetterStatus.SCHEMA_REJECTED,
+    ):
+        entries.extend(dead_letter_queue.entries(status=status, tag_filter=tag_filter))
+    return entries
+
+
+def _resolve_pending_dlq_for_recovery(
+    *,
+    frontier_id: str,
+    connector_id: str,
+    recovery_ingest_run_id: str,
+) -> list[dict[str, Any]]:
+    """Durably close correlated pending DLQ entries after a recovered run."""
+
+    recovery_run = store.get_run(recovery_ingest_run_id)
+    frontier = store.get_frontier(frontier_id)
+    if (
+        recovery_run is None
+        or recovery_run.status.value != "completed"
+        or recovery_run.connector_id != connector_id
+        or frontier is None
+        or frontier.connector_id != connector_id
+        or frontier.status != "done"
+        or frontier.ingest_run_id != recovery_ingest_run_id
+    ):
+        return []
+    resolved: list[dict[str, Any]] = []
+    for entry in _unresolved_dead_letter_entries(tag_filter="retry_exhausted"):
+        if entry.event.event_type != "source_ingestion.scheduled_run_failed":
+            continue
+        event_frontier_id = str(entry.event.payload.get("frontier_id") or "").strip()
+        event_connector_id = str(entry.event.payload.get("connector_id") or "").strip()
+        if event_frontier_id != frontier_id or event_connector_id != connector_id:
+            continue
+        failed_ingest_run_id = str(entry.event.payload.get("ingest_run_id") or "").strip()
+        failed_run = store.get_run(failed_ingest_run_id)
+        if (
+            not failed_ingest_run_id
+            or entry.event.aggregate_type != "source_ingest_run"
+            or entry.event.aggregate_id != failed_ingest_run_id
+            or failed_run is None
+            or failed_run.connector_id != connector_id
+            or failed_run.status.value != "failed"
+        ):
+            continue
+        audit = AuditAction.record(
+            actor_ref=scheduler.actor_ref,
+            action_type="source_ingestion.scheduled_run.recovered",
+            target_ref=f"dead_letter:{entry.entry_id}",
+            environment=scheduler.environment,
+            reason="durable crawl frontier retry completed the dead-lettered source run",
+            trace=entry.event.trace,
+            payload={
+                "entry_id": entry.entry_id,
+                "frontier_id": frontier_id,
+                "connector_id": connector_id,
+                "failed_ingest_run_id": failed_ingest_run_id,
+                "recovery_ingest_run_id": recovery_ingest_run_id,
+            },
+            before_state_ref=f"dead_letter:{entry.entry_id}:{entry.status.value}",
+            after_state_ref=f"source_ingest_run:{recovery_ingest_run_id}:completed",
+            metadata={
+                "dead_letter_entry_id": entry.entry_id,
+                "frontier_id": frontier_id,
+                "failed_ingest_run_id": failed_ingest_run_id,
+                "recovery_ingest_run_id": recovery_ingest_run_id,
+            },
+        )
+        audit = replace(
+            audit,
+            action_id=(
+                "audit-source-recovery-"
+                + sha256(
+                    f"{entry.entry_id}:{frontier_id}:{recovery_ingest_run_id}".encode("utf-8")
+                ).hexdigest()
+            ),
+        )
+        updated = entry.with_replay_result(status=DeadLetterStatus.REPLAYED, audit_action=audit)
+        # Audit is part of the terminal recovery fact.  Make it durable first;
+        # a crash then leaves the entry pending (fail closed), while the stable
+        # action id makes the retry idempotent.
+        _append_audit_actions((audit,))
+        dead_letter_queue.replace_entry(updated)
+        resolved.append(
+            {
+                "entry_id": entry.entry_id,
+                "frontier_id": frontier_id,
+                "recovery_ingest_run_id": recovery_ingest_run_id,
+                "status": updated.status.value,
+            }
+        )
+    return resolved
+
+
+def _resolve_pending_dlq_for_completed_frontiers() -> list[dict[str, Any]]:
+    """Repair a crash after frontier completion but before DLQ resolution.
+
+    The scheduler performs bounded attempts inside each frontier attempt.  An
+    inner exhaustion creates a DLQ entry while the durable frontier may still
+    be retryable.  Once a later frontier attempt completes, retaining that
+    entry as pending would contradict terminal controller truth.  This repair
+    is idempotent and is also run at the start of every scheduled tick so a
+    crash after frontier completion but before DLQ replacement converges on
+    restart.
+    """
+
+    resolved: list[dict[str, Any]] = []
+    pending_frontier_ids = {
+        str(entry.event.payload.get("frontier_id") or "").strip()
+        for entry in _unresolved_dead_letter_entries(tag_filter="retry_exhausted")
+        if entry.event.event_type == "source_ingestion.scheduled_run_failed"
+    }
+    for event_frontier_id in sorted(pending_frontier_ids):
+        if not event_frontier_id:
+            continue
+        frontier = store.get_frontier(event_frontier_id)
+        if frontier is None or frontier.status != "done" or not frontier.ingest_run_id:
+            continue
+        resolved.extend(
+            _resolve_pending_dlq_for_recovery(
+                frontier_id=event_frontier_id,
+                connector_id=frontier.connector_id,
+                recovery_ingest_run_id=frontier.ingest_run_id,
+            )
+        )
+    return resolved
 
 
 def _replay_source_event(event: Any) -> str:
@@ -1571,6 +2088,15 @@ def health() -> dict[str, Any]:
         "source_record_count": len(evidence_repository.list_source_records()),
         "evidence_item_count": len(evidence_repository.list_evidence_items()),
         "dlq_count": len(dead_letter_queue.entries()),
+        "pending_dlq_count": len(dead_letter_queue.pending_entries()),
+        "unresolved_dlq_count": sum(
+            len(dead_letter_queue.entries(status=status))
+            for status in (
+                DeadLetterStatus.PENDING,
+                DeadLetterStatus.REPLAY_FAILED,
+                DeadLetterStatus.SCHEMA_REJECTED,
+            )
+        ),
         "frontier_count": len(store.list_frontier()),
         "scheduler_max_concurrency": SCHEDULER_MAX_CONCURRENCY,
         "frontier_max_attempts": FRONTIER_MAX_ATTEMPTS,
@@ -1581,9 +2107,20 @@ def health() -> dict[str, Any]:
 
 
 @app.post("/api/source-ingest/connectors", status_code=201)
-def configure_connector(request: ConfigureConnectorRequest) -> dict[str, Any]:
+def configure_connector(
+    request: ConfigureConnectorRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     try:
-        return _configure_connector(request)
+        with authoritative_reconcile_lock:
+            proposed = request.connector.to_domain()
+            _fence_managed_connector_mutation(
+                proposed.connector_id,
+                authorization,
+                operation="controller-owned connector configuration",
+                proposed_connector=proposed,
+            )
+            return _configure_connector(request)
     except SourceEvidenceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1618,11 +2155,31 @@ def source_connector_registry() -> dict[str, Any]:
 
 
 @app.post("/api/source-ingest/persona-source-provisioning/reconcile")
-def reconcile_persona_source_provisioning(request: PersonaSourceProvisioningRequest) -> dict[str, Any]:
+def reconcile_persona_source_provisioning(
+    request: PersonaSourceProvisioningRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     try:
+        if not request.dry_run:
+            _require_controller_authorization(
+                authorization,
+                operation="source reconciliation mutation",
+            )
+            with authoritative_reconcile_lock:
+                return _persona_source_provisioning_payload(request)
         return _persona_source_provisioning_payload(request)
-    except SourceEvidenceError as exc:
+    except (SourceEvidenceError, RequirementStateError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/source-ingest/controller/readback")
+def source_ingest_controller_readback() -> dict[str, Any]:
+    """Return authoritative connector/schedule/record/health actual state."""
+
+    try:
+        return _controller_readback_payload()
+    except ControllerStateError as exc:
+        raise HTTPException(status_code=503, detail=f"controller state is invalid: {exc}") from exc
 
 
 @app.get("/api/source-ingest/policy-registry")
@@ -1653,7 +2210,10 @@ def active_universe_plan(request: ActiveUniversePlanRequest) -> dict[str, Any]:
 
 
 @app.post("/api/source-ingest/active-universe/schedule")
-def active_universe_schedule(request: ActiveUniverseScheduleRequest) -> dict[str, Any]:
+def active_universe_schedule(
+    request: ActiveUniverseScheduleRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     try:
         rules = [rule.to_domain() for rule in request.rules] if request.rules else DEFAULT_SOURCE_UPDATE_RULES
         fanout = build_active_universe_job_fanout(
@@ -1668,25 +2228,39 @@ def active_universe_schedule(request: ActiveUniverseScheduleRequest) -> dict[str
     enqueued: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = list(fanout["skipped"])
     if request.enqueue:
-        now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        for job in fanout["jobs"]:
-            connector_id = str(job["connector_id"])
-            config = connector_store.get_config(connector_id)
-            if config is None:
-                skipped.append({**job, "reason": "connector-config-missing"})
-                continue
-            if config.connector.status == ConnectorStatus.DISABLED:
-                skipped.append({**job, "reason": "connector-disabled"})
-                continue
-            frontier = store.enqueue_frontier(
-                connector_id=connector_id,
-                trace_id=request.trace_id or f"active-universe-{connector_id}-{request.run_date}",
-                trigger_type="active_universe_scheduled",
-                max_attempts=FRONTIER_MAX_ATTEMPTS,
-                available_at=now_iso,
-                job_parameters=job,
-            )
-            enqueued.append(frontier.to_dict())
+        with authoritative_reconcile_lock, source_execution_lock:
+            managed_job_ids = {
+                str(job["connector_id"])
+                for job in fanout["jobs"]
+                if (
+                    (config := connector_store.get_config(str(job["connector_id"]))) is not None
+                    and _is_controller_owned(config.connector)
+                )
+            }
+            if managed_job_ids:
+                _require_controller_authorization(
+                    authorization,
+                    operation="controller-owned active-universe scheduling",
+                )
+            now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            for job in fanout["jobs"]:
+                connector_id = str(job["connector_id"])
+                config = connector_store.get_config(connector_id)
+                if config is None:
+                    skipped.append({**job, "reason": "connector-config-missing"})
+                    continue
+                if config.connector.status == ConnectorStatus.DISABLED:
+                    skipped.append({**job, "reason": "connector-disabled"})
+                    continue
+                frontier = store.enqueue_frontier(
+                    connector_id=connector_id,
+                    trace_id=request.trace_id or f"active-universe-{connector_id}-{request.run_date}",
+                    trigger_type="active_universe_scheduled",
+                    max_attempts=FRONTIER_MAX_ATTEMPTS,
+                    available_at=now_iso,
+                    job_parameters=job,
+                )
+                enqueued.append(frontier.to_dict())
 
     return {
         **fanout,
@@ -1719,32 +2293,66 @@ def get_connector(connector_id: str) -> dict[str, Any]:
 
 
 @app.put("/api/source-ingest/connectors/{connector_id}/lifecycle")
-def set_connector_lifecycle(connector_id: str, request: SetConnectorLifecycleRequest) -> dict[str, Any]:
+def set_connector_lifecycle(
+    connector_id: str,
+    request: SetConnectorLifecycleRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     try:
-        return _set_connector_lifecycle(connector_id, request)
+        with authoritative_reconcile_lock:
+            _fence_managed_connector_mutation(
+                connector_id,
+                authorization,
+                operation="controller-owned connector lifecycle mutation",
+            )
+            return _set_connector_lifecycle(connector_id, request)
     except SourceEvidenceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/source-ingest/jobs", status_code=201)
-def trigger_job(request: TriggerIngestJobRequest) -> dict[str, Any]:
-    return _run_ingest_request(request)
+def trigger_job(
+    request: TriggerIngestJobRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    with authoritative_reconcile_lock:
+        connector_id = request.connector.connector_id if request.connector is not None else str(request.connector_id or "")
+        proposed = request.connector.to_domain() if request.connector is not None else None
+        _fence_managed_connector_mutation(
+            connector_id,
+            authorization,
+            operation="controller-owned connector ingest mutation",
+            proposed_connector=proposed,
+        )
+        return _run_ingest_request(request)
 
 
 @app.post("/api/source-ingest/source-records", status_code=201)
-def ingest_source_records(request: SourceRecordIngestRequest) -> dict[str, Any]:
+def ingest_source_records(
+    request: SourceRecordIngestRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     if not request.records:
         raise HTTPException(status_code=400, detail="records is required for SourceRecord ingest")
-    return _run_ingest_request(
-        TriggerIngestJobRequest(
-            connector=request.connector,
-            connector_id=request.connector_id,
-            trace_id=request.trace_id,
-            trigger_type=request.trigger_type,
-            records=request.records,
-            next_watermark=request.next_watermark,
+    with authoritative_reconcile_lock:
+        connector_id = request.connector.connector_id if request.connector is not None else str(request.connector_id or "")
+        proposed = request.connector.to_domain() if request.connector is not None else None
+        _fence_managed_connector_mutation(
+            connector_id,
+            authorization,
+            operation="controller-owned connector source-record mutation",
+            proposed_connector=proposed,
         )
-    )
+        return _run_ingest_request(
+            TriggerIngestJobRequest(
+                connector=request.connector,
+                connector_id=request.connector_id,
+                trace_id=request.trace_id,
+                trigger_type=request.trigger_type,
+                records=request.records,
+                next_watermark=request.next_watermark,
+            )
+        )
 
 
 @app.get("/api/source-ingest/jobs")
@@ -1777,14 +2385,15 @@ def list_crawl_frontier(
 
 @app.post("/api/source-ingest/frontier/{frontier_id}/replay")
 def replay_frontier(frontier_id: str, request: ReplayFrontierRequest | None = None) -> dict[str, Any]:
-    try:
-        trace_id = request.trace_id if request and request.trace_id else f"frontier-replay-{frontier_id}"
-        store.replay_frontier(frontier_id, trace_id=trace_id)
-        item = store.claim_frontier(frontier_id)
-        result, evidence_refs, frontier, source_search_refresh = _run_frontier_item(item)
-        return {**_result_payload(result, evidence_refs, source_search_refresh), "frontier": frontier.to_dict()}
-    except (EvidenceValidationError, SourceEvidenceError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with source_execution_lock:
+        try:
+            trace_id = request.trace_id if request and request.trace_id else f"frontier-replay-{frontier_id}"
+            store.replay_frontier(frontier_id, trace_id=trace_id)
+            item = store.claim_frontier(frontier_id)
+            result, evidence_refs, frontier, source_search_refresh = _run_frontier_item(item)
+            return {**_result_payload(result, evidence_refs, source_search_refresh), "frontier": frontier.to_dict()}
+        except (EvidenceValidationError, SourceEvidenceError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/source-ingest/source-records")
@@ -1843,40 +2452,112 @@ def get_knowledge_object(knowledge_object_id: str) -> dict[str, Any]:
 def list_dlq(
     status: Literal["pending", "replayed", "duplicate_skipped", "replay_failed", "schema_rejected"] | None = None,
 ) -> dict[str, Any]:
-    return {"entries": [entry.to_dict() for entry in dead_letter_queue.entries(status=status)]}
+    entries = dead_letter_queue.entries(status=status)
+    all_entries = dead_letter_queue.entries()
+    status_counts = {
+        item.value: sum(1 for entry in all_entries if entry.status == item)
+        for item in DeadLetterStatus
+    }
+    unresolved_count = sum(
+        status_counts[item.value]
+        for item in (
+            DeadLetterStatus.PENDING,
+            DeadLetterStatus.REPLAY_FAILED,
+            DeadLetterStatus.SCHEMA_REJECTED,
+        )
+    )
+    return {
+        "entries": [entry.to_dict() for entry in entries],
+        "entry_count": len(entries),
+        "pending_count": status_counts[DeadLetterStatus.PENDING.value],
+        "unresolved_count": unresolved_count,
+        "status_counts": status_counts,
+    }
 
 
 @app.post("/api/source-ingest/dlq/replay")
 def replay_dlq(request: ReplayDlqRequest) -> dict[str, Any]:
-    entries = dead_letter_queue.pending_entries(tag_filter=request.tag or None)
-    if request.entry_ids:
-        requested = set(request.entry_ids)
-        entries = [entry for entry in entries if entry.entry_id in requested]
-    actor_ref = ActorRef(ActorType.SERVICE, request.actor_id, roles=("source_ingest_replay",))
-    replay_result = replay_processor.replay(
-        entries,
-        actor_ref=actor_ref,
-        environment=scheduler.environment,
-        reason=request.reason,
-        queue=dead_letter_queue,
-        apply_fn=_replay_source_event,
-    )
-    _append_audit_actions(tuple(result.audit_action for result in replay_result.results))
-    return replay_result.to_dict()
+    with source_execution_lock:
+        before_entries = {
+            entry.entry_id: entry
+            for entry in _unresolved_dead_letter_entries(tag_filter=request.tag or None)
+        }
+        entries = list(before_entries.values())
+        requested: set[str] = set()
+        if request.entry_ids:
+            requested = set(request.entry_ids)
+            entries = [entry for entry in entries if entry.entry_id in requested]
+        unique_entries: list[Any] = []
+        seen_frontiers: set[tuple[str, str]] = set()
+        for entry in entries:
+            frontier_id = str(entry.event.payload.get("frontier_id") or "").strip()
+            connector_id = str(entry.event.payload.get("connector_id") or "").strip()
+            if frontier_id:
+                correlation = (frontier_id, connector_id)
+                if correlation in seen_frontiers:
+                    continue
+                seen_frontiers.add(correlation)
+            unique_entries.append(entry)
+        actor_ref = ActorRef(ActorType.SERVICE, request.actor_id, roles=("source_ingest_replay",))
+        replay_result = replay_processor.replay(
+            unique_entries,
+            actor_ref=actor_ref,
+            environment=scheduler.environment,
+            reason=request.reason,
+            queue=dead_letter_queue,
+            apply_fn=_replay_source_event,
+            before_replace_fn=lambda result: _append_audit_actions((result.audit_action,)),
+        )
+        selected_entry_ids = {entry.entry_id for entry in unique_entries}
+        after_entries = {entry.entry_id: entry for entry in dead_letter_queue.entries()}
+        correlated_resolutions = []
+        for entry_id, before in sorted(before_entries.items()):
+            after = after_entries.get(entry_id)
+            if after is None or (
+                after.status == before.status
+                and after.replay_attempts == before.replay_attempts
+            ):
+                continue
+            correlated_resolutions.append(
+                {
+                    "entry_id": entry_id,
+                    "previous_status": before.status.value,
+                    "status": after.status.value,
+                    "previous_replay_attempts": before.replay_attempts,
+                    "replay_attempts": after.replay_attempts,
+                    "explicitly_requested": entry_id in requested if request.entry_ids else False,
+                    "selected_for_execution": entry_id in selected_entry_ids,
+                }
+            )
+        payload = replay_result.to_dict()
+        payload["selected_entry_ids"] = sorted(selected_entry_ids)
+        payload["correlated_resolutions"] = correlated_resolutions
+        payload["summary"]["correlated_resolution_count"] = len(correlated_resolutions)
+        return payload
 
 
 @app.put("/api/source-ingest/connectors/{connector_id}/schedule")
-def set_connector_schedule(connector_id: str, request: SetScheduleRequest) -> dict[str, Any]:
+def set_connector_schedule(
+    connector_id: str,
+    request: SetScheduleRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     config = connector_store.get_config(connector_id)
     if config is None:
         raise HTTPException(status_code=404, detail="connector config not found")
     try:
-        schedule = schedule_config_store.upsert_schedule(
-            connector_id,
-            interval_seconds=request.interval_seconds,
-            enabled=request.enabled,
-        )
-        return {"schedule": schedule.to_dict()}
+        with authoritative_reconcile_lock:
+            _fence_managed_connector_mutation(
+                connector_id,
+                authorization,
+                operation="controller-owned connector schedule mutation",
+            )
+            schedule = schedule_config_store.upsert_schedule(
+                connector_id,
+                interval_seconds=request.interval_seconds,
+                enabled=request.enabled,
+            )
+            return {"schedule": schedule.to_dict()}
     except SourceEvidenceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1890,10 +2571,28 @@ def get_connector_schedule(connector_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/source-ingest/run-scheduled")
-def run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict[str, Any]:
+def run_scheduled_connectors(
+    request: RunScheduledRequest | None = None,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    with source_execution_lock:
+        if any(_is_controller_owned(config.connector) for config in connector_store.list_configs()):
+            _require_controller_authorization(
+                authorization,
+                operation="controller-owned scheduled source execution",
+            )
+        return _run_scheduled_connectors(request)
+
+
+def _run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     now_iso = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
     max_concurrency = request.max_concurrency if request and request.max_concurrency is not None else SCHEDULER_MAX_CONCURRENCY
+    force_connector_ids = {
+        str(connector_id).strip()
+        for connector_id in (request.force_connector_ids if request else [])
+        if str(connector_id).strip()
+    }
     if max_concurrency < 1:
         raise HTTPException(status_code=400, detail="max_concurrency must be >= 1")
     schedules = schedule_config_store.list_schedules()
@@ -1901,13 +2600,29 @@ def run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict
     ran: list[dict[str, Any]] = []
     skipped: list[str] = []
     failed: list[dict[str, Any]] = []
+    resolved_dlq = _resolve_pending_dlq_for_completed_frontiers()
+    recovered_frontier = store.recover_stale_running(
+        timeout_seconds=FRONTIER_RUNNING_TIMEOUT_SECONDS,
+        now=now_iso,
+    )
+    active_frontier_connector_ids = {
+        item.connector_id
+        for item in store.list_frontier()
+        if item.status in {"queued", "running", "retry"}
+    }
+    configured_schedule_ids = {schedule.connector_id for schedule in schedules}
+    for connector_id in sorted(force_connector_ids - configured_schedule_ids):
+        failed.append({"connector_id": connector_id, "error": "forced connector schedule not found"})
 
     for sched in schedules:
         if not sched.enabled or sched.interval_seconds <= 0:
             skipped.append(sched.connector_id)
             continue
+        if sched.connector_id in active_frontier_connector_ids:
+            skipped.append(sched.connector_id)
+            continue
         watermark = store.get_watermark(sched.connector_id)
-        if watermark is not None:
+        if watermark is not None and sched.connector_id not in force_connector_ids:
             try:
                 last_run = datetime.fromisoformat(watermark.updated_at.replace("Z", "+00:00"))
                 elapsed = (now - last_run).total_seconds()
@@ -1933,6 +2648,7 @@ def run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict
                 available_at=now_iso,
             )
             enqueued.append(frontier.to_dict())
+            active_frontier_connector_ids.add(sched.connector_id)
         except (EvidenceValidationError, SourceEvidenceError) as exc:
             failed.append({"connector_id": sched.connector_id, "error": str(exc)})
 
@@ -1947,7 +2663,7 @@ def run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict
                 "evidence_refs": evidence_refs,
                 "source_search_refresh": source_search_refresh,
             }
-            if result.run.status.value == "failed":
+            if result.run.status.value != "completed":
                 failed.append({**payload, "error": _result_error(result)})
             else:
                 ran.append(payload)
@@ -1967,12 +2683,17 @@ def run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dict
         "ran": ran,
         "skipped": skipped,
         "failed": failed,
+        "recovered_frontier": [item.to_dict() for item in recovered_frontier],
+        "resolved_dlq": resolved_dlq,
         "summary": {
             "total_ran": len(ran),
             "total_skipped": len(skipped),
             "total_failed": len(failed),
             "total_enqueued": len(enqueued),
             "max_concurrency": max_concurrency,
+            "forced_connector_count": len(force_connector_ids),
+            "recovered_frontier_count": len(recovered_frontier),
+            "resolved_dlq_count": len(resolved_dlq),
         },
     }
 

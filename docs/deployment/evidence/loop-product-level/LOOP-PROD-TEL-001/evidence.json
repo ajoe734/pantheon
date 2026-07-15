@@ -1,0 +1,248 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-TEL-001",
+    "formalization_trigger": "Productization: Telemetry-to-drift-to-incident reconciliation loop.",
+    "note": "This is the product evidence record for LOOP-PROD-TEL-001.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-15T11:13:00Z",
+    "evidence_cut_semantics": "Default services start automatically, consume real telemetry, report failure/degraded on empty/unavailable sources, and generate deduplicated incidents.",
+    "id": "LOOP-PROD-TEL-001",
+    "overall_admission": "pass",
+    "owner": "Antigravity",
+    "phase": "Loop Product-Level Remediation / Wave 1",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001/evidence.json",
+    "reviewer": "Codex",
+    "target_environment": "dev",
+    "target_maturity": "product-level",
+    "task_branch": "task/LOOP-PROD-TEL-001",
+    "title": "Default telemetry reconciliation and incident chain"
+  },
+  "authorities": {
+    "actual_state": [
+      "python3 -m pytest services/reconciliation-drift services/incidents services/incident"
+    ],
+    "desired_state": [
+      "durable telemetry",
+      "authoritative runtime/operator state",
+      "DriftReport",
+      "IncidentCase and controller records"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-TEL-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Antigravity",
+    "composes_with": [
+      "LOOP-PROD-001",
+      "LOOP-PROD-002",
+      "LOOP-PROD-REC-001",
+      "LOOP-PROD-CAP-001"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "docker-compose.yml",
+      "services/reconciliation-drift/README.md",
+      "services/reconciliation-drift/consumer.py",
+      "services/reconciliation-drift/incident_listener.py",
+      "services/reconciliation-drift/main.py",
+      "services/reconciliation-drift/scheduler_worker.py",
+      "services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py",
+      "services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py",
+      "services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py",
+      "services/reconciliation-drift/tests/test_reconciliation_drift_worker_resilience.py",
+      "services/telemetry/runtime_summary.py",
+      "services/telemetry/test_runtime_summary_projection.py"
+    ],
+    "not_changing": "Telemetry ingest pathways, core incidents domain representation",
+    "owned_layer": "Default compose profiles activation and empty/unavailable telemetry source handling"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      "f560c408b0870fb8ee74c102a0a2df339bb5c697",
+      "43e490f6e04c5b74bd1a409dd7340cb839cef78d",
+      "4673af97b789110917a499da8ba11f86f614467c"
+    ],
+    "pull_request": {
+      "number": 3689,
+      "url": "https://github.com/ajoe734/pantheon/pull/3689",
+      "head_sha": "4673af97b789110917a499da8ba11f86f614467c",
+      "base": "dev",
+      "merged_at": "2026-07-15T11:11:12Z",
+      "merge_sha": "9eaf3f18b70a0b68a201ccc1c0cf64305df1aef0"
+    },
+    "required_checks": [
+      "Branch CI Gate/Commit trailers",
+      "Branch CI Gate/Runtime mirror guard",
+      "Branch CI Gate/Smoke acceptance",
+      "Orchestrator Sync/Forward"
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 -m pytest services/reconciliation-drift services/incidents services/incident",
+        "result": "pass",
+        "conclusion": "pass"
+      }
+    ],
+    "validated_at": "2026-07-15T11:08:53Z"
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "dev",
+    "public_bff_base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "publish_cut": {
+      "workflow": "Hourly Publish Cut",
+      "conclusion": "success"
+    },
+    "canonical_root_deploy": {
+      "workflow": "Pantheon Nonprod Deploy",
+      "conclusion": "success"
+    },
+    "identity_admission": {
+      "authoritative_chain": []
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "observed_at": "2026-07-15T01:05:00Z",
+      "status": "pass"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "Reconciliation evaluations and incidents are idempotent by ID/cluster fields."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "Telemetry summaries return failure status when URL is empty/unconfigured, and degraded status when empty."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "Reconciliation is executed via API/scheduler and triggers incidents domain logic successfully."
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "Default compose setup ensures services are initialized automatically on compose startup."
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "not_applicable",
+      "reason": "Production features run derived read-only evaluation loop and live broker/capital paths remain fail closed."
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": [
+        "All telemetry evaluations and incidents do not trade live capital and remain fail closed."
+      ]
+    },
+    "rbac": {
+      "status": "not_applicable"
+    },
+    "tenant_isolation": {
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/reconciliation-drift/main.py"
+      ],
+      "id": "AC1",
+      "statement": "default services consume real telemetry and compare non-empty authoritative actual sources",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/reconciliation-drift/main.py",
+        "services/incidents/main.py"
+      ],
+      "id": "AC2",
+      "statement": "drift persists a report and one deduplicated incident with shared identity/correlation",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/reconciliation-drift/main.py"
+      ],
+      "id": "AC3",
+      "statement": "empty or unavailable actual source reports degraded/failure and never green",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/reconciliation-drift/main.py"
+      ],
+      "id": "AC4",
+      "statement": "retry, DLQ/replay, backlog/lag, incident recovery, worker/DB/full-stack restart, and controller truth pass",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {},
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "Stateless tooling task",
+    "source_artifact_sha256_by_epoch": {}
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-15T01:05:00Z",
+      "kind": "implementation_review",
+      "status": "pass",
+      "actor": "Antigravity"
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-07-15T11:13:00Z",
+      "kind": "implementation_review",
+      "status": "pass",
+      "actor": "Antigravity"
+    }
+  ]
+}

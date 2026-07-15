@@ -110,6 +110,17 @@ def _summary_key(payload: dict[str, Any]) -> Optional[str]:
     return runtime_id or None
 
 
+def _json_safe_object(value: Any) -> Optional[dict[str, Any]]:
+    """Return a detached JSON object, or None for unsafe/non-object input."""
+    if not isinstance(value, dict):
+        return None
+    try:
+        cloned = json.loads(json.dumps(value))
+    except (TypeError, ValueError):
+        return None
+    return cloned if isinstance(cloned, dict) else None
+
+
 class RuntimeSummaryProjectionStore:
     """Small telemetry-owned read model for BFF runtime status surfaces."""
 
@@ -155,6 +166,20 @@ class RuntimeSummaryProjectionStore:
         metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
         metrics = event.get("metrics") if isinstance(event.get("metrics"), dict) else {}
         binding_id = str(event.get("binding_id") or event.get("runtime_binding_id") or "").strip()
+        raw_trace_id = event.get("trace_id")
+        trace_id = raw_trace_id.strip() if isinstance(raw_trace_id, str) else ""
+        correlation_envelope = _json_safe_object(event.get("correlation_envelope"))
+        if correlation_envelope is not None:
+            raw_envelope_trace_id = correlation_envelope.get("trace_id")
+            envelope_trace_id = (
+                raw_envelope_trace_id.strip()
+                if isinstance(raw_envelope_trace_id, str)
+                else ""
+            )
+            if trace_id and envelope_trace_id and envelope_trace_id != trace_id:
+                correlation_envelope = None
+            elif not trace_id:
+                trace_id = envelope_trace_id
         (
             binding_effective_text,
             binding_effective_at,
@@ -226,7 +251,8 @@ class RuntimeSummaryProjectionStore:
                     "_positions_by_symbol", "positions", "position_count",
                     "last_heartbeat_at", "last_heartbeat_event_id",
                     "state", "connectivity_status", "broker_status",
-                    "queue_lag_ms", "event_delivery_lag_ms", "reported_health_summary"
+                    "queue_lag_ms", "event_delivery_lag_ms", "reported_health_summary",
+                    "trace_id", "correlation_envelope",
                 ]
                 for key in keys_to_clear:
                     current.pop(key, None)
@@ -283,6 +309,14 @@ class RuntimeSummaryProjectionStore:
                     "projection_updated_at": utc_now_rfc3339(),
                 }
             )
+            if trace_id:
+                current["trace_id"] = trace_id
+            else:
+                current.pop("trace_id", None)
+            if correlation_envelope is not None:
+                current["correlation_envelope"] = correlation_envelope
+            else:
+                current.pop("correlation_envelope", None)
 
             if event_type == "heartbeat":
                 current["last_heartbeat_at"] = event_time

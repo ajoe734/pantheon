@@ -1,0 +1,20 @@
+{
+  "captured_at": "2026-07-15T00:11:49Z",
+  "command": [
+    "docker",
+    "compose",
+    "-p",
+    "pantheon",
+    "-f",
+    "/home/lupin/pantheon-ci-deploy/dev-root/docker-compose.yml",
+    "stop",
+    "deployment-outbox-consumer"
+  ],
+  "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+  "duration_ms": 10775.244,
+  "label": "failure-stop-shared-consumer",
+  "returncode": 0,
+  "started_at": "2026-07-15T00:11:38Z",
+  "stderr": " Container pantheon-deployment-outbox-consumer-1  Stopping\n Container pantheon-deployment-outbox-consumer-1  Stopped\n",
+  "stdout": ""
+}

@@ -270,6 +270,8 @@ class RegistryWritebackBody(BaseModel):
 
 app = FastAPI(title="Pantheon Research Orchestrator Service", version="0.1.0")
 store = build_research_orchestrator_store(DATA_DIR)
+def get_store() -> ResearchOrchestratorStore:
+    return store
 register_fastapi_health_routes(
     app,
     "research-orchestrator",
@@ -812,7 +814,144 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
     store.put_run(run)
     for event in events:
         store.append_event(event)
+    if not rejected and "decision_id" in body.parameters and "target_artifact_id" in body.parameters:
+        _trigger_retrain_execution(run["run_id"], body.parameters)
     return run
+
+
+def _trigger_retrain_execution(run_id: str, params: dict) -> None:
+    def run_worker():
+        try:
+            import urllib.request
+            import json
+            import os
+            
+            decision_id = params["decision_id"]
+            target_artifact_id = params["target_artifact_id"]
+            work_item_id = params["work_item_id"]
+            
+            training_session_url = os.getenv("TRAINING_SESSION_URL", "http://training-session-svc:8099")
+            registry_url = os.getenv("REGISTRY_URL", "http://registry:8087")
+            research_url = os.getenv("RESEARCH_ORCHESTRATOR_URL", "http://research-orchestrator-svc:8101")
+
+            # Update research run status to running
+            from services.research.main import get_store as get_research_store
+            rstore = get_research_store()
+            r_run = rstore.get_run(run_id)
+            if r_run:
+                r_run["status"] = "running"
+                rstore.put_run(r_run)
+
+            # 1. Create a training session in training-session-svc
+            session_body = {
+                "persona_id": "persona-tw-equity",
+                "objective": f"Evolutionary parameter mutation for {target_artifact_id}",
+                "mode": "coaching",
+                "context_refs": [
+                    {"type": "evolution_decision", "id": decision_id},
+                    {"type": "research_run", "id": run_id}
+                ],
+                "actor_id": "research-orchestrator"
+            }
+            session_req = urllib.request.Request(
+                f"{training_session_url}/api/training/sessions",
+                data=json.dumps(session_body).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(session_req, timeout=10) as resp:
+                session_data = json.loads(resp.read().decode("utf-8"))
+            
+            session_id = session_data["session_id"]
+            
+            # 2. Fetch the current artifact (v1) from the registry to see its parameters
+            get_req = urllib.request.Request(
+                f"{registry_url}/api/registry/strategy-artifacts/{target_artifact_id}",
+                method="GET"
+            )
+            with urllib.request.urlopen(get_req, timeout=10) as resp:
+                artifact_view = json.loads(resp.read().decode("utf-8"))
+            
+            parent_artifact = artifact_view["entry"]["metadata"]["strategy_artifact"]
+            
+            # 3. Determine the parameter update.
+            parameter_updates = {}
+            current_params = parent_artifact.get("parameters") or {}
+            
+            if "lookback_bars" in current_params:
+                current_lookback = int(current_params["lookback_bars"])
+                new_lookback = 3 if current_lookback == 2 else 2
+                parameter_updates["lookback_bars"] = new_lookback
+            elif "momentum_threshold" in current_params:
+                current_threshold = float(current_params["momentum_threshold"])
+                new_threshold = 0.01 if current_threshold == 0.0 else 0.0
+                parameter_updates["momentum_threshold"] = new_threshold
+            else:
+                parameter_updates["momentum_threshold"] = 0.01
+
+            # 4. Mutate the artifact v1 to produce v2 using registry /mutate endpoint!
+            new_artifact_id = target_artifact_id
+            if "-v1" in target_artifact_id:
+                new_artifact_id = target_artifact_id.replace("-v1", "-v2")
+            else:
+                new_artifact_id = target_artifact_id + "-v2"
+                
+            new_version = "1.1.0"
+            if parent_artifact.get("version") == "1.1.0":
+                new_version = "1.2.0"
+                
+            mutate_body = {
+                "new_artifact_id": new_artifact_id,
+                "new_version": new_version,
+                "parameter_updates": parameter_updates,
+                "source_run_ids": [
+                    decision_id,
+                    work_item_id,
+                    session_id
+                ]
+            }
+            
+            mutate_req = urllib.request.Request(
+                f"{registry_url}/api/registry/strategy-artifacts/{target_artifact_id}/mutate",
+                data=json.dumps(mutate_body).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(mutate_req, timeout=10) as resp:
+                mutate_data = json.loads(resp.read().decode("utf-8"))
+            
+            # 5. Complete the training session
+            complete_req = urllib.request.Request(
+                f"{training_session_url}/api/training/sessions/{session_id}/complete",
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(complete_req, timeout=10) as resp:
+                json.loads(resp.read().decode("utf-8"))
+                
+            # 6. Complete the research run in research-orchestrator!
+            r_run = rstore.get_run(run_id)
+            if r_run:
+                r_run["status"] = "completed"
+                r_run["registry_writebacks"] = r_run.get("registry_writebacks") or []
+                r_run["registry_writebacks"].append({
+                    "registry_id": new_artifact_id,
+                    "artifact_state": "candidate",
+                    "created_at": utc_now()
+                })
+                rstore.put_run(r_run)
+                
+        except Exception as e:
+            from services.research.main import get_store as get_research_store
+            rstore = get_research_store()
+            r_run = rstore.get_run(run_id)
+            if r_run:
+                r_run["status"] = "failed"
+                r_run["rejection"] = {"reason": "retrain_failed", "detail": str(e)}
+                rstore.put_run(r_run)
+
+    import threading
+    threading.Thread(target=run_worker, name=f"retrain-executor-{run_id}").start()
 
 
 @app.get("/api/research-orchestrator/runs")

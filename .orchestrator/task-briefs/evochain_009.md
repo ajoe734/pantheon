@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: FE journal formal-entry fields + fixture badge
 - Status: in_progress
-- Owner: Claude
+- Owner: Antigravity
 - Reviewer: Codex
-- Next: Addressed Codex's review-changes-required note: e2e/evochain009.spec.ts now positively asserts the persona_fleet_summary fallback card (headline/focus/target) and waits for loading to clear instead of a blind 5s timeout; both Playwright projects pass and the archived fallback screenshot now visibly shows the card. Reconciled EVOCHAIN-009-fe-journal-cards.md: 43/43 focused Vitest across 3 files (added EvolutionJournalPage.test.tsx), owner/reviewer Claude/Codex, PR #339 + Pantheon PR #3616 merge SHAs recorded, PR #339 integration-gate run 29308210648 terminal outcome (failure, pre-existing/systemic, unrelated to this diff) recorded. execute-plans PR #343 and pantheon PR #3626 open with auto-merge; re-handing off to Codex for review.
+- Next: Review changes required: (1) e2e/evochain009.spec.ts still does not deterministically select a true fallback persona. Journal fetch accepts parseable empty or missing envelopes, reads only the default first page, and compares fleet ids only to exact target.id. Live data has zero exact intersections while three formal entries match personas through target substrings, so the first fleet row is chosen by accident. Validate canonical envelopes, inspect all pages or query candidate persona filters, and fail closed. (2) Preserve the real mobile-chromium viewport, avoid both projects overwriting one evidence PNG, and put page.goto inside the bounded retry and 60s budget. (3) _core.tsx must use Number.isFinite for before and after; typeof NaN is number and currently renders NaN despite acceptance. Add numeric-NaN coverage. (4) Obtain terminal authenticated chromium and mobile-chromium evidence after the fixes, then reconcile provenance and current FE/BFF identities and merge Pantheon PR #3685. Formal PNG originated in PR #3610; fallback blob is from PR #3650, so record re-verification honestly before re-handoff.
 
 ## Summary
 演化日誌卡片渲染 formal entry 的完整欄位（risk_level、action_type、target version、approval 狀態），並對 origin: seed 的 entries 顯示 fixture 徽章。2026-07-10 的 fallback 卡契約（persona-fleet-summary 卡）保持不變。跨 repo task：repo 是 execute-plans。
