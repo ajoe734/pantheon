@@ -1,0 +1,11 @@
+{
+  "max_staleness_days": 10,
+  "min_bars_per_instrument": 30,
+  "min_instruments": 2,
+  "required_instruments": [
+    "BTCUSD",
+    "ETHUSD"
+  ],
+  "min_sharpe_ratio": -1.0,
+  "min_total_return": -0.5
+}

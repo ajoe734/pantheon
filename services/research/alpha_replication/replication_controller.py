@@ -47,18 +47,19 @@ class ReplicationControllerConfig:
         self.seed_store_path = seed_store_path or Path(os.getenv("STRATEGY_SPEC_SEED_STORE_PATH") or "data/source-ingest/distill_seeds.jsonl")
 
 
-def _get_registry_entry(registry_url: str, registry_id: str) -> dict | None:
-    url = f"{registry_url}/api/registry/strategy-specs/{registry_id}"
+def _get_approved_specs_for_strategy(registry_url: str, strategy_id: str) -> list[dict]:
+    url = f"{registry_url}/api/registry/strategies/{strategy_id}/strategy-specs?artifact_state=approved"
     try:
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=5) as response:
-            return json.loads(response.read().decode("utf-8"))
+            views = json.loads(response.read().decode("utf-8"))
+            return [view["entry"] for view in views if "entry" in view]
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
-            return None
+            return []
         raise
     except Exception as exc:
-        raise RuntimeError(f"Failed to query registry for {registry_id}: {exc}") from exc
+        raise RuntimeError(f"Failed to query registry for strategy {strategy_id}: {exc}") from exc
 
 
 def build_loop_writer(*, dsn: str, state: ControllerState) -> Any:
@@ -113,18 +114,11 @@ def run_controller_tick(
         # Always look up registry entries
         approved_specs = []
         for sid in source_ids:
-            registry_id = f"reg-strategy-spec-{sid}"
             try:
-                entry_view = _get_registry_entry(config.registry_url, registry_id)
-                if entry_view:
-                    entry = entry_view.get("entry", {})
-                    # If the entry state is approved, it's a desired spec for replication
-                    if entry.get("artifact_state") == "approved":
-                        spec = entry.get("metadata", {}).get("strategy_spec")
-                        if spec:
-                            approved_specs.append(entry)
+                entries = _get_approved_specs_for_strategy(config.registry_url, sid)
+                approved_specs.extend(entries)
             except Exception as exc:
-                print(f"Warning: registry lookup failed for {registry_id}: {exc}", file=sys.stderr)
+                raise RuntimeError(f"Registry lookup failed for strategy {sid}: {exc}") from exc
         
         desired_meta = {"approved_spec_count": len(approved_specs), "strategy_ids": [e["strategy_id"] for e in approved_specs]}
         
@@ -142,7 +136,7 @@ def run_controller_tick(
                     if res is not None:
                         enqueued_count += 1
                 except Exception as exc:
-                    print(f"Warning: failed to enqueue spec {spec.get('strategy_id')}: {exc}", file=sys.stderr)
+                    raise RuntimeError(f"Failed to enqueue spec {spec.get('strategy_id')}: {exc}") from exc
         
         # 3. Process the queue using AlphaRevalidationWorker
         worker = AlphaRevalidationWorker(

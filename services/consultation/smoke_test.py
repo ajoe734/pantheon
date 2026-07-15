@@ -38,6 +38,7 @@ except ImportError:
 
 class ConsultationSmokeTest(unittest.TestCase):
     def setUp(self):
+        os.environ["PANTHEON_TEST_MODE"] = "true"
         self.client = TestClient(app)
         # Use a temporary directory for store data during tests
         self.test_dir = tempfile.TemporaryDirectory()
