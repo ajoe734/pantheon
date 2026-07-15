@@ -1482,13 +1482,23 @@ def _declared_scope_from_payload(
             "declaredScope must contain one or more repo-relative paths",
             field="declaredScope",
         )
-    if any(value == "." or value.startswith("../") or "/../" in value for value in values):
+    invalid_scope = any(
+        value == "."
+        or value.startswith("/")
+        or value.startswith("../")
+        or "/../" in value
+        or value.endswith("/..")
+        or "\\" in value
+        or ".git" in value.split("/")
+        for value in values
+    )
+    if invalid_scope:
         _raise_error(
             bff_error,
             422,
             ErrorCode.VALIDATION_FAILED,
             "Repair declaredScope entries must be repo-relative paths",
-            "declaredScope cannot include '.', '..', or parent traversal",
+            "declaredScope cannot include absolute paths, '.', '..', '.git', or parent traversal",
             field="declaredScope",
         )
     return values
