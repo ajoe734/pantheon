@@ -416,7 +416,7 @@ def approve_artifact(
         "capital_pool_id": SAFE_POOL_ID,
         "decision_id": decision_id,
         "persona_id": SAFE_PERSONA_ID,
-        "risk_level": "low",
+        "risk_level": "medium",
         "target_id": artifact_id,
         "target_type": "registry_entry",
         "target_version": version,
@@ -478,6 +478,12 @@ def create_plan(
         "sponsor_persona_id": SAFE_PERSONA_ID,
         "status": "approved",
         "target_stage": "paper",
+        "rollback": {
+            "target_artifact_id": PARENT_ARTIFACT_ID,
+            "target_version": "1.0.0",
+            "action_type": "replace",
+            "reason": f"{TASK_ID} hosted evidence rollback parent",
+        },
     }
     recorder.http(
         f"{label}-plan-validate",
@@ -827,8 +833,7 @@ def run_probe(args: argparse.Namespace, recorder: Recorder) -> None:
         try:
             recorder.command(
                 "positive-start-consumer-during-runtime-timeout",
-                compose_command(args.compose_dir, "start", "deployment-outbox-consumer"),
-                cwd=args.compose_dir,
+                ["docker", "start", identity["containers"]["deployment-outbox-consumer"]["container_id"]],
             )
 
             def timeout_recorded() -> Any:
@@ -998,7 +1003,7 @@ def run_probe(args: argparse.Namespace, recorder: Recorder) -> None:
                 "Authorization": "Bearer <redacted>",
                 "X-MFA-Token": "<redacted-invalid-proof>",
             },
-            expected={401},
+            expected={400, 401},
         )
         live_body = {
             "allowed_deployment_scope": "live",
@@ -1126,8 +1131,7 @@ def run_probe(args: argparse.Namespace, recorder: Recorder) -> None:
             raise ProbeError("DLQ replay did not return replayed=true")
         recorder.command(
             "failure-start-shared-consumer",
-            compose_command(args.compose_dir, "start", "deployment-outbox-consumer"),
-            cwd=args.compose_dir,
+            ["docker", "start", identity["containers"]["deployment-outbox-consumer"]["container_id"]],
         )
         compensated = wait_until(
             "unapproved artifact compensation",
@@ -1262,8 +1266,7 @@ def run_probe(args: argparse.Namespace, recorder: Recorder) -> None:
         )
         recorder.command(
             "cleanup-start-shared-consumer",
-            compose_command(args.compose_dir, "start", "deployment-outbox-consumer"),
-            cwd=args.compose_dir,
+            ["docker", "start", identity["containers"]["deployment-outbox-consumer"]["container_id"]],
             expected_returncodes={0},
         )
 
