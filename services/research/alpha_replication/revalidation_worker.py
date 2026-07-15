@@ -201,7 +201,7 @@ class AlphaRevalidationWorker:
             r
             for r in self._read_runs()
             if r.get("strategy_id") == strategy_id
-            and r.get("spec_version") == spec_version
+            and (r.get("spec_version") == spec_version or r.get("strategy_spec_version") == spec_version)
         ]
         if existing:
             # Already processed; update the queue record and return.
@@ -353,14 +353,14 @@ class AlphaRevalidationWorker:
         from services.research.experiments.models import ExperimentRun
         ExperimentRun.from_dict(clean_record)
 
-        self._append_run(run_record)
+        self._append_run(clean_record)
         self._queue.mark_revalidated(
             strategy_id,
             spec_version,
             run_id=run_id,
-            status="dispatched" if self._dispatch_mode == "stub" else run_record["status"],
+            status="dispatched" if self._dispatch_mode == "stub" else clean_record["status"],
         )
-        return run_record
+        return clean_record
 
     def _read_runs(self) -> list[dict[str, Any]]:
         if not self._runs_path.exists():

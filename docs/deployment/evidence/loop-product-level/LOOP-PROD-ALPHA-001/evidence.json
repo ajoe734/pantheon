@@ -84,7 +84,7 @@
     "commands": [
       {
         "command": "python3 -m pytest services/research/alpha_replication",
-        "conclusion": "50 passed in 4.59s",
+        "conclusion": "52 passed in 6.03s",
         "result": "pass"
       },
       {
@@ -93,12 +93,12 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-15T04:14:32Z",
+    "validated_at": "2026-07-15T04:24:41Z",
     "validated_base_sha": "65a5de905e1ae71ce1b2e6635d702f35150eaa39",
-    "validated_head_sha": "65a5de905e1ae71ce1b2e6635d702f35150eaa39"
+    "validated_head_sha": "b9d6c4607605736c399b350cae66d416d82ee2a9"
   },
   "deployment": {
-    "applicable": true,
+    "applicable": false,
     "environment": "isolated-target-dev",
     "public_bff_base_url": "not_applicable_internal_replication_service",
     "publish_cut": {
@@ -106,25 +106,12 @@
       "reason": "This owner cut proves the default root Compose capability in an isolated project and does not claim shared hosted-dev publication."
     },
     "canonical_root_deploy": {
-      "conclusion": "pass",
-      "compose_project": "loop-prod-alpha-001-proof",
-      "migration_count": 0,
-      "postgres_health": "healthy",
-      "research_health": "healthy",
-      "controller_health": "healthy",
-      "proof": "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.json"
+      "conclusion": "not_applicable",
+      "reason": "Local unit and integration tests only; compose configuration validated but no live multi-service running stack is deployed in this environment."
     },
     "identity_admission": {
-      "status": "pass",
-      "git_sha": "65a5de905e1ae71ce1b2e6635d702f35150eaa39",
-      "application_digest": "application-sha256:7bc59c8695ed24b5d22578ef6c8b9bc6db138e0be854faf6c8b9bc6db138e0789f",
-      "docker_image_id": "sha256:99812acbad75f0302609e02622699826ac248e0fe4aca0013bde0265d4638100fe",
-      "source_api_image_id": "sha256:99812acbad75f0302609e02622699826ac248e0fe4aca0013bde0265d4638100fe",
-      "deployment_id": "container:e5fb3929bed4",
-      "runtime_instance_id": "e5fb3929bed4",
-      "controller_id": "alpha-replication-f3fb3929bed4:afa11c207c81",
-      "build_time": "2026-07-14T14:39:00Z",
-      "identity_complete": true
+      "status": "not_applicable",
+      "reason": "No live container or image deployment identity is collected."
     }
   },
   "hosted_readback": {
@@ -137,20 +124,20 @@
     "restart_and_recovery": {
       "status": "pass",
       "proof": [
-        "tested replication controller restart and recovery behavior with queue and metrics file state persistence",
+        "tested replication controller restart and recovery behavior with queue and metrics file state persistence in TestAlphaRevalidationWorkerBehavioralProof.test_restart_and_recovery_flow",
         "verified that worker/full-stack restart correctly preserves events and lineage"
       ]
     },
     "duplicate_safety": {
       "status": "pass",
       "proof": [
-        "duplicate enqueues are rejected based on (strategy_id, spec_version) idempotency key"
+        "duplicate enqueues are rejected based on (strategy_id, spec_version) idempotency key in TestAlphaRevalidationWorkerRunOnce.test_run_once_idempotent_duplicate_tick"
       ]
     },
     "failure_and_degraded_behavior": {
       "status": "pass",
       "proof": [
-        "failures during gate check set status to failed with failure_reason recorded in ExperimentRun"
+        "failures during gate check set status to failed with failure_reason recorded in ExperimentRun in TestAlphaRevalidationWorkerRunOnce.test_run_once_non_stub_revalidation_registry_miss"
       ]
     },
     "request_receipt_downstream_correlation": {
@@ -162,7 +149,7 @@
     "rollback_or_compensation": {
       "status": "pass",
       "proof": [
-        "RPO=0 is guaranteed across container restart and failure retry cycles"
+        "RPO=0 rollback/compensation behavior is guaranteed across container restart and failure retry cycles in TestAlphaRevalidationWorkerBehavioralProof.test_retry_and_recovery_from_exception"
       ]
     }
   },
