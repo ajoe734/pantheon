@@ -55,12 +55,28 @@ from services.execution.lean_runtime.performance_telemetry import (
 from services.execution.lean_runtime.runtime_context import PantheonRuntimeContext
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.execution.lean_runtime.signal_consumer import SignalConsumer
-from services.trade_journey.correlation_envelope import propagate_envelope
+from services.trade_journey.correlation_envelope import (
+    CorrelationEnvelopeError,
+    propagate_envelope,
+    validate_envelope,
+)
 
 log = logging.getLogger(__name__)
 
 
 _HALT_BINDING_STATUSES = frozenset({"paused", "pending_pause", "failed", "retired"})
+_CANONICAL_LIFECYCLE_EVENT_TYPES = frozenset(
+    {
+        "signal_generation",
+        "trade_decision",
+        "order_submitted",
+        "paper_order_simulated",
+        "paper_fill_simulated",
+        "order_rejection",
+        "position_snapshot",
+    }
+)
+_LIFECYCLE_UUID_NAMESPACE = uuid.UUID("1760784c-c9e0-47eb-b0aa-d37f58d892df")
 """Binding statuses at which the paper runtime must NOT execute signals.
 
 A binding moved to paused / pending_pause / failed / retired (e.g. by an operator
@@ -220,9 +236,11 @@ class OrderEvent:
     broker_submission_status: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=_iso_now)
+    event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
+            "event_id": self.event_id,
             "event_type": self.event_type,
             "symbol": self.symbol,
             "quantity": self.quantity,
@@ -561,6 +579,15 @@ class PaperExecutionAlgorithm:
         event_metadata = dict(self._current_signal_metadata)
         if metadata:
             event_metadata.update(metadata)
+        if event_type == "paper_fill_simulated":
+            # All fill publishers call `_commit_fill` first.  This marker makes
+            # the ordering explicit so downstream code never emits a position
+            # snapshot for an uncommitted or rejected paper fill.
+            event_metadata["ledger_committed"] = True
+            event_metadata["ledger_fill_count"] = int(self._fill_count)
+            event_metadata["position_quantity"] = float(
+                self._holding(str(symbol)).Quantity
+            )
         self._event_sink(
             OrderEvent(
                 event_type=event_type,
@@ -1691,15 +1718,17 @@ class RuntimeTelemetryEmitter:
         if missing:
             return self._fail_build(f"binding context missing required fields: {missing}")
 
+        supplied_metadata = dict(metadata or {})
         strategy_id = str(
-            os.getenv("PANTHEON_STRATEGY_ID")
+            supplied_metadata.get("strategy_id")
+            or os.getenv("PANTHEON_STRATEGY_ID")
             or (self._runtime_context.artifact.strategy_id if self._runtime_context else "")
             or artifact_id
             or "paper-runtime"
         )
         artifact_type = str(os.getenv("PANTHEON_ARTIFACT_TYPE", "execution_bundle"))
         event_metadata = self._base_metadata(binding)
-        event_metadata.update(metadata or {})
+        event_metadata.update(supplied_metadata)
         incoming_envelope = event_metadata.get("correlation_envelope")
         event_metrics = dict(metrics)
         metric_as_of: str | None = None
@@ -1742,12 +1771,84 @@ class RuntimeTelemetryEmitter:
         if self._identity.trace_id:
             payload["trace_id"] = self._identity.trace_id
         if isinstance(incoming_envelope, Mapping):
-            payload["correlation_envelope"] = propagate_envelope(
-                incoming_envelope,
-                producer="execution.paper_runtime",
-                event_id=str(payload["event_id"]),
-                event_time=str(payload["created_at"]),
+            try:
+                outgoing_envelope = propagate_envelope(
+                    incoming_envelope,
+                    producer="execution.paper_runtime",
+                    event_id=str(payload["event_id"]),
+                    event_time=str(payload["created_at"]),
+                )
+            except CorrelationEnvelopeError as exc:
+                return self._fail_build(f"invalid correlation envelope: {exc}")
+            payload["correlation_envelope"] = outgoing_envelope
+            payload["tenant_id"] = outgoing_envelope["tenant_id"]
+            payload["journey_id"] = outgoing_envelope["journey_id"]
+            payload["trace_id"] = outgoing_envelope["trace_id"]
+
+        if event_type in _CANONICAL_LIFECYCLE_EVENT_TYPES and isinstance(
+            payload.get("correlation_envelope"), Mapping
+        ):
+            run_id = str(event_metadata.get("run_id") or "").strip()
+            signal_id = str(event_metadata.get("signal_id") or "").strip()
+            raw_sequence = event_metadata.get("sequence_no")
+            causal_parent_id = str(
+                event_metadata.get("causal_parent_id") or ""
+            ).strip()
+            if isinstance(raw_sequence, bool) or not isinstance(raw_sequence, int):
+                return self._fail_build(
+                    "canonical lifecycle sequence_no must be a positive integer"
+                )
+            if raw_sequence < 1:
+                return self._fail_build(
+                    "canonical lifecycle sequence_no must be a positive integer"
+                )
+            if not run_id or not signal_id or not causal_parent_id:
+                return self._fail_build(
+                    "canonical lifecycle telemetry requires run_id, signal_id, and causal_parent_id"
+                )
+            outgoing_envelope = payload["correlation_envelope"]
+            if outgoing_envelope["causation_event_id"] != causal_parent_id:
+                return self._fail_build(
+                    "causal_parent_id must match correlation envelope causation_event_id"
+                )
+            journey_id = str(outgoing_envelope["journey_id"])
+            loop_run_id = str(
+                event_metadata.get("loop_run_id") or f"lr-{run_id}"
             )
+            payload.update(
+                {
+                    "aggregate_type": "trade_journey",
+                    "aggregate_id": journey_id,
+                    "sequence_no": raw_sequence,
+                    "causal_parent_id": causal_parent_id,
+                    "source_mode": "live",
+                    "run_id": run_id,
+                    "loop_run_id": loop_run_id,
+                    "signal_id": signal_id,
+                }
+            )
+            event_metadata.setdefault("journey_id", journey_id)
+            event_metadata.setdefault("loop_run_id", loop_run_id)
+            event_metadata.setdefault("source_mode", "live")
+            for field in (
+                "decision_id",
+                "risk_decision_id",
+                "client_order_id",
+                "order_id",
+                "fill_id",
+                "position_id",
+                "symbol",
+            ):
+                value = event_metadata.get(field)
+                if value not in (None, ""):
+                    payload[field] = value
+            if event_type == "position_snapshot":
+                position_qty = event_metrics.get("position_qty")
+                if position_qty is not None:
+                    payload["position_qty"] = position_qty
+                price = event_metrics.get("price")
+                if price is not None:
+                    payload["price"] = price
         return payload
 
     def emit(
@@ -1950,6 +2051,12 @@ class PaperRuntimeService:
             self._binding_resolver,
             runtime_context=runtime_context,
         )
+        self._legacy_journey_publish_enabled = _as_bool(
+            os.getenv("PANTHEON_LEGACY_JOURNEY_BFF_PUBLISH_ENABLED"),
+            default=False,
+        )
+        self._lifecycle_chains: dict[str, dict[str, Any]] = {}
+        self._blocked_lifecycle_chains: set[str] = set()
         self._mark_provider = mark_provider or SourceIngestMarkProvider()
         self._drawdown_tracker = RollingDrawdownTracker(
             window_days=int(os.getenv("PANTHEON_PERFORMANCE_WINDOW_DAYS", "20"))
@@ -1984,7 +2091,7 @@ class PaperRuntimeService:
         self._thread: threading.Thread | None = None
         self._outbox_path = os.getenv("PANTHEON_OUTBOX_PATH") or "/data/runtime/outbox.jsonl"
         outbox_dir = os.path.dirname(self._outbox_path)
-        if outbox_dir:
+        if self._legacy_journey_publish_enabled and outbox_dir:
             try:
                 os.makedirs(outbox_dir, exist_ok=True)
             except Exception:
@@ -2018,16 +2125,22 @@ class PaperRuntimeService:
             return
         self._emit_deploy_started()
 
-        # Ensure outbox directory exists
-        outbox_dir = os.path.dirname(self._outbox_path)
-        if outbox_dir:
-            try:
-                os.makedirs(outbox_dir, exist_ok=True)
-            except Exception as exc:
-                log.warning("Failed to create outbox directory %s: %s", outbox_dir, exc)
+        if self._legacy_journey_publish_enabled:
+            # Temporary compatibility publisher. Canonical live journey writes
+            # flow through telemetry and the lifecycle projector by default.
+            outbox_dir = os.path.dirname(self._outbox_path)
+            if outbox_dir:
+                try:
+                    os.makedirs(outbox_dir, exist_ok=True)
+                except Exception as exc:
+                    log.warning("Failed to create outbox directory %s: %s", outbox_dir, exc)
 
-        self._outbox_thread = threading.Thread(target=self._outbox_loop, daemon=True, name="paper-runtime-outbox")
-        self._outbox_thread.start()
+            self._outbox_thread = threading.Thread(
+                target=self._outbox_loop,
+                daemon=True,
+                name="paper-runtime-legacy-journey-outbox",
+            )
+            self._outbox_thread.start()
 
         self._thread = threading.Thread(target=self._run_loop, daemon=True, name="paper-runtime-loop")
         self._thread.start()
@@ -2166,32 +2279,164 @@ class PaperRuntimeService:
             self.drain_once()
             self._shutdown.wait(self._poll_interval_seconds)
 
+    @staticmethod
+    def _signal_lifecycle_metadata(signal: Mapping[str, Any]) -> dict[str, Any]:
+        nested = signal.get("metadata")
+        metadata = dict(nested) if isinstance(nested, Mapping) else {}
+        for field in (
+            "signal_id",
+            "strategy_id",
+            "run_id",
+            "binding_id",
+            "runtime_id",
+            "source_worker",
+            "tenant_id",
+            "environment",
+            "journey_id",
+            "decision_id",
+            "correlation_envelope",
+        ):
+            value = signal.get(field)
+            if value not in (None, "", [], {}):
+                metadata[field] = value
+        return metadata
+
+    @staticmethod
+    def _canonical_lifecycle_identity(
+        metadata: Mapping[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        raw_envelope = metadata.get("correlation_envelope")
+        run_id = str(metadata.get("run_id") or "").strip()
+        signal_id = str(metadata.get("signal_id") or "").strip()
+        if not isinstance(raw_envelope, Mapping) or not run_id or not signal_id:
+            return None
+        try:
+            envelope = validate_envelope(raw_envelope)
+        except CorrelationEnvelopeError as exc:
+            log.warning("Skipping non-canonical lifecycle telemetry: %s", exc)
+            return None
+        normalized = dict(metadata)
+        normalized["correlation_envelope"] = envelope
+        normalized["run_id"] = run_id
+        normalized["signal_id"] = signal_id
+        normalized["journey_id"] = envelope["journey_id"]
+        normalized.setdefault("tenant_id", envelope["tenant_id"])
+        normalized.setdefault("environment", envelope["environment"])
+        normalized.setdefault("loop_run_id", f"lr-{run_id}")
+        return normalized, envelope
+
+    def _emit_lifecycle_telemetry(
+        self,
+        event_type: str,
+        metrics: dict[str, Any],
+        metadata: Mapping[str, Any],
+        *,
+        event_id: str,
+        created_at: str,
+    ) -> dict[str, Any] | None:
+        canonical = self._canonical_lifecycle_identity(metadata)
+        if canonical is None:
+            return None
+        lifecycle_metadata, incoming_envelope = canonical
+        journey_id = str(incoming_envelope["journey_id"])
+        if journey_id in self._blocked_lifecycle_chains:
+            log.warning(
+                "Lifecycle chain %s is blocked after an unacknowledged event; skipping %s",
+                journey_id,
+                event_type,
+            )
+            return None
+        chain = self._lifecycle_chains.get(journey_id)
+        if chain is None:
+            sequence_no = 1
+            causal_parent_id = str(incoming_envelope["event_id"])
+        else:
+            sequence_no = int(chain["sequence_no"]) + 1
+            causal_parent_id = str(chain["event_id"])
+            previous_envelope = chain.get("correlation_envelope")
+            if isinstance(previous_envelope, Mapping):
+                lifecycle_metadata["correlation_envelope"] = dict(previous_envelope)
+
+        lifecycle_metadata["sequence_no"] = sequence_no
+        lifecycle_metadata["causal_parent_id"] = causal_parent_id
+        lifecycle_metadata["source_mode"] = "live"
+
+        builder = getattr(self._telemetry, "build_event", None)
+        sender = getattr(self._telemetry, "emit_payload", None)
+        if callable(builder) and callable(sender):
+            payload = builder(
+                event_type,
+                metrics,
+                metadata=lifecycle_metadata,
+                event_id=event_id,
+                created_at=created_at,
+            )
+            if payload is None:
+                self._blocked_lifecycle_chains.add(journey_id)
+                return None
+            acknowledged = bool(sender(payload))
+        else:  # pragma: no cover - compatibility with minimal emitters
+            acknowledged = bool(
+                self._telemetry.emit(event_type, metrics, metadata=lifecycle_metadata)
+            )
+            payload = {
+                "event_id": event_id,
+                "event_type": event_type,
+                "created_at": created_at,
+                "metrics": dict(metrics),
+                "metadata": lifecycle_metadata,
+            }
+
+        if not acknowledged:
+            self._blocked_lifecycle_chains.add(journey_id)
+            return None
+
+        outgoing_envelope = payload.get("correlation_envelope")
+        if not isinstance(outgoing_envelope, Mapping):
+            outgoing_envelope = propagate_envelope(
+                lifecycle_metadata["correlation_envelope"],
+                producer="execution.paper_runtime",
+                event_id=event_id,
+                event_time=created_at,
+            )
+        self._lifecycle_chains[journey_id] = {
+            "sequence_no": sequence_no,
+            "event_id": event_id,
+            "correlation_envelope": dict(outgoing_envelope),
+        }
+        return dict(payload)
+
     def _handle_order_event(self, event: OrderEvent) -> None:
         if event.event_type == "signal_generation":
-            binding = self._binding_resolver.resolve() or {}
-            tenant_id = binding.get("tenant_id") or "default"
-            environment = binding.get("deployment_stage") or "paper"
-            signal_id = event.metadata.get("signal_id")
-            journey_id = event.metadata.get("journey_id") or (f"tj-{signal_id}" if signal_id else f"tj-evt-{event.event_id}")
-
-            journey_event = {
-                "event_id": f"sig-{signal_id}-generation",
-                "journey_id": journey_id,
-                "tenant_id": tenant_id,
-                "environment": environment,
-                "occurred_at": event.metadata.get("timestamp") or event.created_at,
-                "recorded_at": _iso_now(),
-                "source": "runtime",
-                "stage": "signal_generation",
-                "stage_status": "succeeded",
-                "signal_id": signal_id,
-                "symbol": event.symbol,
-                "order_type": event.metadata.get("order_type", "MARKET"),
-                "quantity": event.quantity,
-                "strategy_id": event.metadata.get("strategy_id"),
-                "sequence": 1,
-            }
-            self._publish_journey_events([journey_event])
+            signal_metadata = self._signal_lifecycle_metadata(event.metadata)
+            signal_metadata.setdefault("symbol", event.symbol)
+            signal_metadata.setdefault("order_type", event.metadata.get("order_type", "MARKET"))
+            occurred_at = str(event.metadata.get("timestamp") or event.created_at)
+            signal_payload = self._emit_lifecycle_telemetry(
+                "signal_generation",
+                {
+                    "action": "signal_generated",
+                    "signal_quantity": event.quantity,
+                },
+                signal_metadata,
+                event_id=event.event_id,
+                created_at=occurred_at,
+            )
+            if signal_payload is not None:
+                decision_event_id = str(
+                    uuid.uuid5(
+                        _LIFECYCLE_UUID_NAMESPACE,
+                        f"{event.event_id}:trade_decision",
+                    )
+                )
+                self._emit_lifecycle_telemetry(
+                    "trade_decision",
+                    {"action": "trade_decision_recorded"},
+                    signal_metadata,
+                    event_id=decision_event_id,
+                    created_at=occurred_at,
+                )
+            self._publish_legacy_journey_events(event)
             return
 
         event_payload = event.to_dict()
@@ -2250,99 +2495,154 @@ class PaperRuntimeService:
                 "action": event.action,
                 "submitted_to_broker": event.submitted_to_broker,
             }
-        self._telemetry.emit(event.event_type, metrics, metadata=telemetry_metadata)
+        lifecycle_payload = None
+        canonical_lifecycle = (
+            event.event_type in _CANONICAL_LIFECYCLE_EVENT_TYPES
+            and self._canonical_lifecycle_identity(telemetry_metadata) is not None
+        )
+        committed_fill = (
+            event.event_type == "paper_fill_simulated"
+            and event.metadata.get("ledger_committed") is True
+        )
+        if committed_fill and canonical_lifecycle:
+            order_event_id = str(
+                uuid.uuid5(
+                    _LIFECYCLE_UUID_NAMESPACE,
+                    f"{event.event_id}:order_submitted",
+                )
+            )
+            telemetry_metadata.setdefault("order_id", f"paper-order-{order_event_id}")
+            telemetry_metadata.setdefault("fill_id", f"paper-fill-{event.event_id}")
+            self._emit_lifecycle_telemetry(
+                "order_submitted",
+                {
+                    "action": "paper_order_submitted",
+                    "order_quantity": abs(event.quantity),
+                    "order_price": event.fill_price,
+                },
+                telemetry_metadata,
+                event_id=order_event_id,
+                created_at=event.created_at,
+            )
+        if canonical_lifecycle and (
+            event.event_type != "paper_fill_simulated" or committed_fill
+        ):
+            lifecycle_payload = self._emit_lifecycle_telemetry(
+                event.event_type,
+                metrics,
+                telemetry_metadata,
+                event_id=event.event_id,
+                created_at=event.created_at,
+            )
+        if lifecycle_payload is None and not canonical_lifecycle:
+            self._telemetry.emit(event.event_type, metrics, metadata=telemetry_metadata)
 
-        # Build first-class journey events directly with deterministic ordering and matching timestamps
-        try:
-            metadata = event.metadata or {}
-            envelope = metadata.get("correlation_envelope") or {}
-            signal_id = metadata.get("signal_id") or envelope.get("signal_id")
-
-            binding = self._binding_resolver.resolve() or {}
-            tenant_id = metadata.get("tenant_id") or envelope.get("tenant_id") or binding.get("tenant_id") or "default"
-            environment = metadata.get("environment") or envelope.get("environment") or binding.get("deployment_stage") or "paper"
-
-            journey_id = metadata.get("journey_id") or envelope.get("journey_id")
-            if not journey_id:
-                journey_id = f"tj-{signal_id}" if signal_id else f"tj-evt-{event.event_id}"
-
-            journey_events = []
-            occurred_at = event.created_at or _iso_now()
-            recorded_at = _iso_now()
-
-            # Sequence 2: trade_decision
-            if event.event_type in ("paper_fill_simulated", "paper_order_simulated", "order_rejection"):
-                journey_events.append({
-                    "event_id": f"sig-{signal_id}-decision" if signal_id else f"evt-{event.event_id}-decision",
-                    "journey_id": journey_id,
-                    "tenant_id": tenant_id,
-                    "environment": environment,
-                    "occurred_at": occurred_at,
-                    "recorded_at": recorded_at,
-                    "source": "runtime",
-                    "stage": "trade_decision",
-                    "stage_status": metadata.get("decision_status") or "succeeded",
-                    "signal_id": signal_id,
-                    "symbol": event.symbol,
-                    "sequence": 2,
-                    "correlation_envelope": envelope,
-                })
-
-            # Sequence 3: order_submission
-            if event.event_type in ("paper_fill_simulated", "paper_order_simulated", "order_rejection"):
-                stage_status = "submitted"
-                if event.event_type == "paper_order_simulated":
-                    stage_status = "noop"
-                elif event.event_type == "order_rejection":
-                    stage_status = "rejected"
-
-                journey_events.append({
-                    "event_id": f"sig-{signal_id}-order" if signal_id else f"evt-{event.event_id}-order",
-                    "journey_id": journey_id,
-                    "tenant_id": tenant_id,
-                    "environment": environment,
-                    "occurred_at": occurred_at,
-                    "recorded_at": recorded_at,
-                    "source": "runtime",
-                    "stage": "order_submission",
-                    "stage_status": stage_status,
-                    "signal_id": signal_id,
-                    "symbol": event.symbol,
-                    "sequence": 3,
-                    "correlation_envelope": envelope,
-                })
-
-            # Sequence 4: fill_management
-            if event.event_type in ("paper_fill_simulated", "order_rejection"):
-                stage_status = "filled" if event.event_type == "paper_fill_simulated" else "failed"
-                fill_event = {
-                    "event_id": f"sig-{signal_id}-fill" if signal_id else f"evt-{event.event_id}-fill",
-                    "journey_id": journey_id,
-                    "tenant_id": tenant_id,
-                    "environment": environment,
-                    "occurred_at": occurred_at,
-                    "recorded_at": recorded_at,
-                    "source": "runtime",
-                    "stage": "fill_management",
-                    "stage_status": stage_status,
-                    "signal_id": signal_id,
-                    "symbol": event.symbol,
-                    "sequence": 4,
-                    "correlation_envelope": envelope,
+        if (
+            committed_fill
+            and lifecycle_payload is not None
+        ):
+            fill_count = int(event.metadata.get("ledger_fill_count") or 0)
+            position_event_id = str(
+                uuid.uuid5(
+                    _LIFECYCLE_UUID_NAMESPACE,
+                    f"{event.event_id}:position_snapshot",
+                )
+            )
+            position_metadata = dict(telemetry_metadata)
+            position_metadata.update(
+                {
+                    "ledger_committed": True,
+                    "ledger_fill_count": fill_count,
+                    "source_fill_event_id": event.event_id,
+                    "position_id": (
+                        f"{self._identity.runtime_id or 'paper-runtime'}:"
+                        f"{event.symbol}:{fill_count}"
+                    ),
                 }
-                if event.event_type == "paper_fill_simulated":
-                    fill_event["quantity"] = abs(event.quantity)
-                    fill_event["price"] = event.fill_price
-                    fill_event["side"] = "sell" if event.quantity < 0 else "buy"
-                journey_events.append(fill_event)
+            )
+            position_quantity = float(self._algo._holding(event.symbol).Quantity)
+            position_price = float(self._algo._security(event.symbol).Price)
+            self._emit_lifecycle_telemetry(
+                "position_snapshot",
+                {
+                    "action": "position_snapshot_committed",
+                    "position_qty": position_quantity,
+                    "price": position_price,
+                    "cash": float(self._algo._cash),
+                },
+                position_metadata,
+                event_id=position_event_id,
+                created_at=_iso_now(),
+            )
 
-            if journey_events:
-                self._publish_journey_events(journey_events)
-        except Exception as exc:
-            log.warning("Failed to map or publish journey events directly: %s", exc)
+        self._publish_legacy_journey_events(event)
+
+    def _publish_legacy_journey_events(self, event: OrderEvent) -> None:
+        """Opt-in compatibility writer; canonical telemetry remains sole default."""
+        if not self._legacy_journey_publish_enabled:
+            return
+        metadata = self._signal_lifecycle_metadata(event.metadata)
+        envelope = metadata.get("correlation_envelope")
+        envelope = dict(envelope) if isinstance(envelope, Mapping) else {}
+        signal_id = metadata.get("signal_id")
+        binding = self._binding_resolver.resolve() or {}
+        tenant_id = metadata.get("tenant_id") or envelope.get("tenant_id") or binding.get("tenant_id") or "default"
+        environment = metadata.get("environment") or envelope.get("environment") or binding.get("deployment_stage") or "paper"
+        journey_id = metadata.get("journey_id") or envelope.get("journey_id")
+        if not journey_id:
+            journey_id = f"tj-{signal_id}" if signal_id else f"tj-evt-{event.event_id}"
+        common = {
+            "journey_id": journey_id,
+            "tenant_id": tenant_id,
+            "environment": environment,
+            "occurred_at": event.created_at,
+            "recorded_at": _iso_now(),
+            "source": "runtime_legacy_direct",
+            "signal_id": signal_id,
+            "symbol": event.symbol,
+            "run_id": metadata.get("run_id"),
+            "correlation_envelope": envelope,
+        }
+        specs: list[tuple[str, str, int]] = []
+        if event.event_type == "signal_generation":
+            specs = [("signal_generation", "succeeded", 1)]
+            common["occurred_at"] = event.metadata.get("timestamp") or event.created_at
+        elif event.event_type in {"paper_fill_simulated", "paper_order_simulated", "order_rejection"}:
+            specs.append(("trade_decision", metadata.get("decision_status") or "succeeded", 2))
+            order_status = "succeeded"
+            if event.event_type == "paper_order_simulated":
+                order_status = "noop"
+            elif event.event_type == "order_rejection":
+                order_status = "rejected"
+            specs.append(("order_submission", order_status, 3))
+            if event.event_type in {"paper_fill_simulated", "order_rejection"}:
+                specs.append(
+                    (
+                        "fill_management",
+                        "succeeded" if event.event_type == "paper_fill_simulated" else "failed",
+                        4,
+                    )
+                )
+        journey_events = []
+        for stage, status, sequence in specs:
+            item = {
+                **common,
+                "event_id": f"{event.event_id}:{stage}",
+                "stage": stage,
+                "stage_status": status,
+                "sequence": sequence,
+            }
+            if stage == "fill_management" and event.event_type == "paper_fill_simulated":
+                item.update(
+                    quantity=abs(event.quantity),
+                    price=event.fill_price,
+                    side="sell" if event.quantity < 0 else "buy",
+                )
+            journey_events.append(item)
+        self._publish_journey_events(journey_events)
 
     def _publish_journey_events(self, events: list[dict[str, Any]]) -> None:
-        if not events:
+        if not self._legacy_journey_publish_enabled or not events:
             return
         if not self._outbox_thread or not self._outbox_thread.is_alive():
             # Fallback to synchronous publish in tests or if the thread isn't running
@@ -2407,6 +2707,8 @@ class PaperRuntimeService:
                 self._shutdown.wait(timeout=2.0)
 
     def _send_to_bff(self, events: list[dict[str, Any]]) -> bool:
+        if not self._legacy_journey_publish_enabled:
+            return False
         bff_url = os.getenv("PANTHEON_BFF_URL", "http://operator-bff:8080").strip().rstrip("/")
         url = f"{bff_url}/bff/management/trade-journeys/events"
         body = json.dumps(events, allow_nan=False).encode("utf-8")

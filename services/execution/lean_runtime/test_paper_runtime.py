@@ -1219,15 +1219,32 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertAlmostEqual(stop_leg["stop_price"], 98.0, places=4)
         self.assertAlmostEqual(tp_leg["limit_price"], 105.0, places=4)
 
-    def test_runtime_directly_publishes_journey_events_to_bff(self):
+    def test_legacy_direct_journey_publisher_is_disabled_by_default(self):
+        signal = self._signal()
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([signal]),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=_FakeTelemetryEmitter(),
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+
+        with patch("urllib.request.urlopen") as urlopen:
+            service.drain_once()
+
+        urlopen.assert_not_called()
+
+    @patch.dict(
+        "os.environ",
+        {"PANTHEON_LEGACY_JOURNEY_BFF_PUBLISH_ENABLED": "true"},
+    )
+    def test_legacy_direct_journey_publisher_can_be_opted_in(self):
         from unittest.mock import patch, MagicMock
         signal = self._signal()
         signal["signal_id"] = "sig-12345"
         store = InMemoryPendingSignalStore([signal])
-        telemetry = RuntimeTelemetryEmitter(
-            self._identity(),
-            _FakeBindingResolver(self._binding())
-        )
+        telemetry = _FakeTelemetryEmitter()
         service = PaperRuntimeService(
             store=store,
             identity=self._identity(),
@@ -1259,7 +1276,7 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(sig_gen["journey_id"], "tj-sig-12345")
         self.assertEqual(sig_gen["signal_id"], "sig-12345")
         self.assertEqual(sig_gen["stage_status"], "succeeded")
-        self.assertEqual(sig_gen["source"], "runtime")
+        self.assertEqual(sig_gen["source"], "runtime_legacy_direct")
         self.assertEqual(sig_gen["sequence"], 1)
 
         decision = next(ev for ev in events if ev["stage"] == "trade_decision")
@@ -1280,6 +1297,340 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         # Assert matching timestamps for the decision, order, fill chain
         self.assertEqual(decision["occurred_at"], order["occurred_at"])
         self.assertEqual(order["occurred_at"], fill["occurred_at"])
+        self.assertEqual(len({event["event_id"] for event in events}), len(events))
+
+    def test_canonical_lifecycle_telemetry_preserves_identity_and_committed_position(self):
+        from unittest.mock import MagicMock
+
+        from services.execution.lean_runtime.signal_producer import build_decision_signals
+
+        binding = self._binding()
+        binding["tenant_id"] = "tenant-paper"
+        now = self._signal()["timestamp"]
+        [signal] = build_decision_signals(
+            {
+                "decision_id": "decision-canonical-001",
+                "signal_id": "signal-canonical-001",
+                "strategy_id": "strategy-paper",
+                "timestamp": now,
+                "tenant_id": "tenant-paper",
+                "environment": "paper",
+                "symbol": "AAPL.US",
+                "action": "BUY",
+                "direction": "LONG",
+                "quantity": 10,
+                "quantity_type": "SHARES",
+                "run_id": "run-canonical-001",
+            },
+            binding_id=binding["binding_id"],
+            runtime_id=binding["runtime_id"],
+        )
+        captured = []
+
+        def fake_urlopen(request, timeout=None):
+            captured.append((request.full_url, json.loads(request.data.decode("utf-8"))))
+            response = MagicMock()
+            response.status = 202
+            response.__enter__.return_value = response
+            return response
+
+        with patch.dict(os.environ, {"PANTHEON_TELEMETRY_URL": "http://telemetry:8080"}):
+            identity = self._identity()
+            telemetry = RuntimeTelemetryEmitter(
+                identity,
+                _FakeBindingResolver(binding),
+            )
+            service = PaperRuntimeService(
+                store=InMemoryPendingSignalStore([signal]),
+                identity=identity,
+                runtime_manager_client=_FakeRuntimeManagerClient([binding]),
+                telemetry_emitter=telemetry,
+                poll_interval_seconds=3600,
+                max_batch_size=10,
+            )
+            with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                service.drain_once()
+                service._consumer.flush_rebalance(signal["run_id"], service._algo)
+
+        self.assertFalse(
+            any("/bff/management/trade-journeys/events" in url for url, _ in captured)
+        )
+        lifecycle = [
+            payload
+            for _, payload in captured
+            if payload["event_type"]
+            in {
+                "signal_generation",
+                "trade_decision",
+                "order_submitted",
+                "paper_fill_simulated",
+                "position_snapshot",
+            }
+        ]
+        self.assertEqual(
+            [event["event_type"] for event in lifecycle],
+            [
+                "signal_generation",
+                "trade_decision",
+                "order_submitted",
+                "paper_fill_simulated",
+                "position_snapshot",
+            ],
+        )
+        from jsonschema import Draft7Validator, FormatChecker
+
+        telemetry_schema = json.loads(
+            (
+                Path(__file__).resolve().parents[2]
+                / "telemetry"
+                / "telemetry_event.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        validator = Draft7Validator(
+            telemetry_schema,
+            format_checker=FormatChecker(),
+        )
+        for event in lifecycle:
+            self.assertEqual(list(validator.iter_errors(event)), [])
+        self.assertEqual(
+            [event["sequence_no"] for event in lifecycle],
+            [1, 2, 3, 4, 5],
+        )
+        self.assertEqual(
+            lifecycle[0]["causal_parent_id"],
+            signal["correlation_envelope"]["event_id"],
+        )
+        self.assertEqual(
+            [event["causal_parent_id"] for event in lifecycle[1:]],
+            [event["event_id"] for event in lifecycle[:-1]],
+        )
+        self.assertEqual(len({event["event_id"] for event in lifecycle}), 5)
+        for event in lifecycle:
+            self.assertEqual(str(uuid.UUID(event["event_id"])), event["event_id"])
+        self.assertEqual(
+            {event["journey_id"] for event in lifecycle},
+            {signal["journey_id"]},
+        )
+        self.assertEqual(
+            {event["run_id"] for event in lifecycle},
+            {"run-canonical-001"},
+        )
+        self.assertEqual(
+            {event["loop_run_id"] for event in lifecycle},
+            {"lr-run-canonical-001"},
+        )
+        self.assertEqual(lifecycle[2]["order_id"], lifecycle[3]["order_id"])
+        self.assertTrue(lifecycle[4]["metadata"]["ledger_committed"])
+        self.assertEqual(lifecycle[4]["position_qty"], 10.0)
+
+    def test_multiple_committed_fills_get_unique_occurrence_ids_and_sequences(self):
+        from services.execution.lean_runtime.signal_producer import build_decision_signals
+
+        binding = self._binding()
+        now = self._signal()["timestamp"]
+        [signal] = build_decision_signals(
+            {
+                "decision_id": "decision-multi-fill",
+                "signal_id": "signal-multi-fill",
+                "strategy_id": "strategy-paper",
+                "timestamp": now,
+                "tenant_id": "tenant-paper",
+                "environment": "paper",
+                "symbol": "AAPL.US",
+                "action": "BUY",
+                "direction": "LONG",
+                "quantity": 1,
+                "quantity_type": "SHARES",
+                "run_id": "run-multi-fill",
+            },
+            binding_id=binding["binding_id"],
+            runtime_id=binding["runtime_id"],
+        )
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore(),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([binding]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+
+        service._algo.RecordSignalProcessed(signal)
+        service._algo.SetCurrentSignalContext(
+            {
+                "signal_id": signal["signal_id"],
+                "strategy_id": signal["strategy_id"],
+                "run_id": signal["run_id"],
+                "binding_id": signal["binding_id"],
+                "correlation_envelope": signal["correlation_envelope"],
+            }
+        )
+        service._algo.MarketOrder("AAPL", 1)
+        service._algo.MarketOrder("AAPL", 2)
+
+        lifecycle = [
+            event
+            for event in telemetry.events
+            if event["event_type"]
+            in {
+                "signal_generation",
+                "trade_decision",
+                "order_submitted",
+                "paper_fill_simulated",
+                "position_snapshot",
+            }
+        ]
+        self.assertEqual(
+            [event["event_type"] for event in lifecycle],
+            [
+                "signal_generation",
+                "trade_decision",
+                "order_submitted",
+                "paper_fill_simulated",
+                "position_snapshot",
+                "order_submitted",
+                "paper_fill_simulated",
+                "position_snapshot",
+            ],
+        )
+        self.assertEqual(
+            [event["metadata"]["sequence_no"] for event in lifecycle],
+            [1, 2, 3, 4, 5, 6, 7, 8],
+        )
+        ids = [event["event_id"] for event in lifecycle]
+        self.assertEqual(len(set(ids)), 8)
+        self.assertEqual(
+            [event["metadata"]["causal_parent_id"] for event in lifecycle[1:]],
+            ids[:-1],
+        )
+
+    def test_unacknowledged_order_blocks_fill_and_position_chain(self):
+        from services.execution.lean_runtime.signal_producer import build_decision_signals
+
+        class RejectOrderTelemetry(_FakeTelemetryEmitter):
+            def emit_payload(self, payload):
+                captured = json.loads(json.dumps(dict(payload)))
+                self.events.append(captured)
+                return captured["event_type"] != "order_submitted"
+
+        binding = self._binding()
+        now = self._signal()["timestamp"]
+        [signal] = build_decision_signals(
+            {
+                "decision_id": "decision-reject-order-ack",
+                "signal_id": "signal-reject-order-ack",
+                "strategy_id": "strategy-paper",
+                "timestamp": now,
+                "tenant_id": "tenant-paper",
+                "environment": "paper",
+                "symbol": "AAPL.US",
+                "action": "BUY",
+                "direction": "LONG",
+                "quantity": 1,
+                "quantity_type": "SHARES",
+                "run_id": "run-reject-order-ack",
+            },
+            binding_id=binding["binding_id"],
+            runtime_id=binding["runtime_id"],
+        )
+        telemetry = RejectOrderTelemetry()
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([signal]),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([binding]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+
+        service.drain_once()
+        service._consumer.flush_rebalance(signal["run_id"], service._algo)
+
+        attempted_chain = [
+            event
+            for event in telemetry.events
+            if event["event_type"]
+            in {
+                "signal_generation",
+                "trade_decision",
+                "order_submitted",
+                "paper_fill_simulated",
+                "position_snapshot",
+            }
+        ]
+        self.assertEqual(
+            [event["event_type"] for event in attempted_chain],
+            ["signal_generation", "trade_decision", "order_submitted"],
+        )
+        self.assertNotIn(
+            "paper_fill_simulated",
+            [event["event_type"] for event in telemetry.events],
+        )
+        self.assertNotIn(
+            "position_snapshot",
+            [event["event_type"] for event in telemetry.events],
+        )
+        self.assertIn(signal["journey_id"], service._blocked_lifecycle_chains)
+
+    def test_canonical_noop_does_not_fabricate_order_or_fill_occurrences(self):
+        from services.execution.lean_runtime.signal_producer import build_decision_signals
+
+        binding = self._binding()
+        now = self._signal()["timestamp"]
+        [signal] = build_decision_signals(
+            {
+                "decision_id": "decision-canonical-noop",
+                "signal_id": "signal-canonical-noop",
+                "strategy_id": "strategy-paper",
+                "timestamp": now,
+                "tenant_id": "tenant-paper",
+                "environment": "paper",
+                "symbol": "AAPL.US",
+                "action": "HOLD",
+                "direction": "LONG",
+                "quantity": 0,
+                "quantity_type": "SHARES",
+                "run_id": "run-canonical-noop",
+            },
+            binding_id=binding["binding_id"],
+            runtime_id=binding["runtime_id"],
+        )
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([signal]),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([binding]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+
+        service.drain_once()
+        service._consumer.flush_rebalance(signal["run_id"], service._algo)
+
+        lifecycle = [
+            event
+            for event in telemetry.events
+            if event.get("event_id")
+            and event["event_type"]
+            in {
+                "signal_generation",
+                "trade_decision",
+                "paper_order_simulated",
+                "order_submitted",
+                "paper_fill_simulated",
+                "position_snapshot",
+            }
+        ]
+        self.assertEqual(
+            [event["event_type"] for event in lifecycle],
+            ["signal_generation", "trade_decision", "paper_order_simulated"],
+        )
+        self.assertEqual(
+            [event["metadata"]["sequence_no"] for event in lifecycle],
+            [1, 2, 3],
+        )
 
 
 class PaperExecutionInputHardeningTest(unittest.TestCase):
