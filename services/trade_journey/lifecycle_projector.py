@@ -398,6 +398,14 @@ class LifecycleProjector:
             candidate["checkpoint"] = max_seen
         candidate["generation"] = int(candidate.get("generation", 0)) + 1
         controller = candidate.setdefault("controller", {})
+        previous_high_watermark = int(controller.get("source_high_watermark") or 0)
+        next_high_watermark = (
+            int(source_high_watermark)
+            if source_high_watermark is not None
+            else previous_high_watermark
+            if mode in {"backfill", "replay"}
+            else max(max_seen, previous_high_watermark)
+        )
         controller.update(
             {
                 "controller_id": "canonical-lifecycle-projector",
@@ -405,11 +413,7 @@ class LifecycleProjector:
                 "deployment_sha": self.deployment_sha,
                 "mode": mode,
                 "checkpoint": int(candidate.get("checkpoint", 0)),
-                "source_high_watermark": int(
-                    source_high_watermark
-                    if source_high_watermark is not None
-                    else max(max_seen, int(controller.get("source_high_watermark") or 0))
-                ),
+                "source_high_watermark": next_high_watermark,
                 "last_poll_at": now,
                 "last_projection_success_at": now,
                 "last_error": None,
@@ -436,17 +440,20 @@ class LifecycleProjector:
             controller["last_backfill_at"] = now
         elif mode == "replay":
             controller["last_replay_at"] = now
-        controller["accepted_live"] = bool(controller.get("last_live_success_at"))
+        historic_live = bool(controller.get("last_live_success_at"))
+        controller["accepted_live"] = mode == "live" and historic_live
         controller["truth_level"] = (
             "canonical_live"
             if controller["accepted_live"]
+            else f"{mode}_with_historic_live"
+            if historic_live
             else f"{mode}_only"
         )
         controller["status"] = (
             "degraded"
             if controller["quarantine_count"]
             else "ready"
-            if controller["accepted_live"] and controller["backlog"] == 0
+            if mode == "live" and controller["accepted_live"] and controller["backlog"] == 0
             else "recovering"
             if mode == "recovery" or controller["backlog"]
             else "repair_only"
@@ -479,6 +486,17 @@ class LifecycleProjector:
         candidate = copy.deepcopy(self.state)
         now = self.clock()
         controller = candidate.setdefault("controller", {})
+        semantic_fields = (
+            "status",
+            "mode",
+            "truth_level",
+            "accepted_live",
+            "checkpoint",
+            "source_high_watermark",
+            "backlog",
+            "last_error",
+        )
+        previous_semantics = tuple(controller.get(field) for field in semantic_fields)
         controller.update(
             {
                 "deployment_sha": self.deployment_sha,
@@ -487,16 +505,37 @@ class LifecycleProjector:
                 "backlog": max(0, int(backlog)),
                 "mode": mode,
                 "checkpoint": int(candidate.get("checkpoint", 0)),
+                "last_error": None,
             }
         )
-        if not controller.get("last_error"):
-            controller["status"] = (
-                "ready"
-                if controller.get("accepted_live") and int(backlog) == 0
-                else "recovering"
-                if mode == "recovery" or int(backlog) > 0
-                else "repair_only"
+        historic_live = bool(controller.get("last_live_success_at"))
+        if mode == "live" and int(backlog) == 0:
+            # A successful zero-backlog read is the controller's authoritative
+            # live admission boundary after startup/recovery, even when no new
+            # trade arrived during that poll.
+            controller["last_live_success_at"] = now
+            controller["accepted_live"] = True
+            controller["truth_level"] = "canonical_live"
+        else:
+            controller["accepted_live"] = False
+            controller["truth_level"] = (
+                f"{mode}_with_historic_live" if historic_live else f"{mode}_only"
             )
+        controller["status"] = (
+            "degraded"
+            if int(controller.get("quarantine_count") or 0) > 0
+            else "ready"
+            if mode == "live" and int(backlog) == 0
+            else "recovering"
+            if mode == "recovery" or int(backlog) > 0
+            else "repair_only"
+        )
+        current_semantics = tuple(controller.get(field) for field in semantic_fields)
+        if current_semantics != previous_semantics:
+            candidate["generation"] = int(candidate.get("generation", 0)) + 1
+            controller["generation"] = int(candidate["generation"])
+            journey_payload, loop_payload = self._render(candidate)
+            self.bundle.publish(candidate["generation"], journey_payload, loop_payload)
         _atomic_write_json(self.state_path, candidate)
         self.state = candidate
 

@@ -234,6 +234,15 @@ def test_out_of_order_aggregate_sequence_and_restart_converge(tmp_path):
     assert restarted.controller["accepted_live"] is False
     assert restarted.controller["truth_level"] == "recovery_only"
 
+    restarted.record_poll(source_high_watermark=3, backlog=0, mode="live")
+    assert restarted.controller["accepted_live"] is True
+    assert restarted.controller["truth_level"] == "canonical_live"
+    assert restarted.controller["status"] == "ready"
+    published_controller = _current_json(tmp_path, "loop_runs.json")["controller"]
+    assert published_controller["mode"] == "live"
+    assert published_controller["status"] == "ready"
+    assert published_controller["accepted_live"] is True
+
 
 def test_backfill_and_replay_never_advance_live_freshness(tmp_path):
     rows = lifecycle_rows()
@@ -255,6 +264,14 @@ def test_backfill_and_replay_never_advance_live_freshness(tmp_path):
     projector.project_records([live_row], mode="live", source_high_watermark=1)
     assert projector.controller["accepted_live"] is True
     assert projector.controller["last_live_success_at"] is not None
+
+    last_live_success_at = projector.controller["last_live_success_at"]
+    projector.project_records(rows[6:7], mode="backfill")
+    assert projector.controller["mode"] == "backfill"
+    assert projector.controller["accepted_live"] is False
+    assert projector.controller["truth_level"] == "backfill_with_historic_live"
+    assert projector.controller["status"] == "repair_only"
+    assert projector.controller["last_live_success_at"] == last_live_success_at
 
 
 def test_missing_identity_is_quarantined_and_cursor_progresses(tmp_path):
@@ -304,3 +321,9 @@ def test_source_failure_preserves_last_good_bundle(tmp_path):
     assert projector.controller["status"] == "degraded"
     assert projector.controller["last_error"] == "postgres unavailable"
     assert projector.controller["backlog"] == 7
+
+    projector.record_poll(source_high_watermark=1, backlog=0, mode="live")
+    recovered = _current_json(tmp_path, "trade_journey_events.json")
+    assert recovered["events"] == before
+    assert recovered["controller"]["status"] == "ready"
+    assert recovered["controller"]["last_error"] is None
