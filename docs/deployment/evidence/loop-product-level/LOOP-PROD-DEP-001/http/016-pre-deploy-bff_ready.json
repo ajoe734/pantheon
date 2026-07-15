@@ -1,0 +1,43 @@
+{
+  "captured_at": "2026-07-15T00:06:39Z",
+  "duration_ms": 4.217,
+  "label": "pre-deploy-bff_ready",
+  "request": {
+    "body": null,
+    "headers": {},
+    "method": "GET",
+    "started_at": "2026-07-15T00:06:39Z",
+    "url": "http://127.0.0.1:18001/readyz"
+  },
+  "response": {
+    "payload": {
+      "dependencies": {
+        "deployment": {
+          "status": "ok",
+          "url": "http://deployment:8095"
+        },
+        "governance": {
+          "status": "ok",
+          "url": "http://governance:8082"
+        },
+        "runtime_manager": {
+          "status": "ok",
+          "url": "http://runtime-manager:8081"
+        }
+      },
+      "details": {
+        "data_dir": "/data/bff",
+        "version": "0.2.0"
+      },
+      "live": true,
+      "metrics": {
+        "service_up": 1
+      },
+      "ready": true,
+      "service": "operator-bff",
+      "status": "ok",
+      "timestamp": "2026-07-15T00:06:39Z"
+    },
+    "status": 200
+  }
+}

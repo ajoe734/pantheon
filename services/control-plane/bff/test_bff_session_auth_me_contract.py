@@ -1,6 +1,8 @@
 """Contract tests for BFF-LUV-GAP-009 `/bff/me` current-user DTO."""
 from __future__ import annotations
 
+import base64
+import json
 import os
 import sys
 import time
@@ -412,7 +414,7 @@ def test_bff_dev_login_issues_short_lived_jwt_for_me(monkeypatch) -> None:
             "grant_type": "client_credentials",
             "client_id": "ci-client",
             "client_secret": "ci-secret",
-            "roles": ["operator", "reviewer", "approver"],
+            "roles": ["operator"],
             "tenant_id": "tenant-alpha",
         },
     )
@@ -423,14 +425,15 @@ def test_bff_dev_login_issues_short_lived_jwt_for_me(monkeypatch) -> None:
     assert 300 <= payload["expires_in"] <= 3600
     assert payload["expires_in"] == 600
     assert payload["meta"]["contract"] == "FE-INT-GATE-OIDC-DEV-LOGIN"
+    assert payload["meta"]["identity"] == "operator"
 
     me = client.get("/bff/me", headers={"Authorization": f"Bearer {payload['access_token']}"})
     assert me.status_code == 200, me.text
     data = me.json()["data"]
-    assert data["currentUser"]["id"] == "pantheon-dev-ci-client"
+    assert data["currentUser"]["id"] == "pantheon-dev-operator"
     assert data["session"]["session_kind"] == "bearer"
     assert data["tenant"]["id"] == "tenant-alpha"
-    assert set(data["roles"]) == {"operator", "reviewer", "approver"}
+    assert set(data["roles"]) == {"operator"}
 
 
 def test_bff_dev_login_defaults_match_frontend_dev_gate_session(monkeypatch) -> None:
@@ -447,7 +450,6 @@ def test_bff_dev_login_defaults_match_frontend_dev_gate_session(monkeypatch) -> 
             "grant_type": "client_credentials",
             "client_id": "ci-client",
             "client_secret": "ci-secret",
-            "roles": ["operator", "reviewer", "approver"],
         },
     )
 
@@ -463,7 +465,144 @@ def test_bff_dev_login_defaults_match_frontend_dev_gate_session(monkeypatch) -> 
     data = me.json()["data"]
     assert data["tenant"]["id"] == "tenant-dev"
     assert data["tenant"]["allowed_ids"] == ["tenant-dev"]
-    assert set(data["roles"]) == {"operator", "reviewer", "approver"}
+    assert set(data["roles"]) == {"operator"}
+
+
+def test_bff_dev_login_rejects_role_escalation_beyond_bound_identity(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_ID", "ci-client")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_SECRET", "ci-secret")
+
+    client = TestClient(bff_main.app)
+    login = client.post(
+        "/bff/auth/dev-login",
+        json={
+            "grant_type": "client_credentials",
+            "client_id": "ci-client",
+            "client_secret": "ci-secret",
+            "roles": ["admin"],
+        },
+    )
+    assert login.status_code == 403, login.text
+    error = login.json()["error"]
+    assert error["details"]["reason"] == "AUTH_DEV_LOGIN_ESCALATION_DENIED"
+    assert error["details"]["precondition_failed"] == "roles"
+
+
+def test_bff_dev_login_rejects_cross_tenant_escalation(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_ID", "ci-client")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_SECRET", "ci-secret")
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+
+    client = TestClient(bff_main.app)
+    login = client.post(
+        "/bff/auth/dev-login",
+        json={
+            "grant_type": "client_credentials",
+            "client_id": "ci-client",
+            "client_secret": "ci-secret",
+            "tenant_id": "tenant-unconfigured",
+        },
+    )
+    assert login.status_code == 403, login.text
+    error = login.json()["error"]
+    assert error["details"]["reason"] == "AUTH_DEV_LOGIN_ESCALATION_DENIED"
+    assert error["details"]["precondition_failed"] == "tenant_id"
+
+
+def test_bff_dev_login_distinct_identities_have_distinct_subjects_and_roles(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID", "viewer-client")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET", "viewer-secret")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID", "approver-client")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET", "approver-secret")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID", "risk-owner-client")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET", "risk-owner-secret")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID", "operator-a-client")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET", "operator-a-secret")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID", "operator-b-client")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET", "operator-b-secret")
+
+    client = TestClient(bff_main.app)
+
+    def _login(client_id, client_secret):
+        resp = client.post(
+            "/bff/auth/dev-login",
+            json={"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret},
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    viewer = _login("viewer-client", "viewer-secret")
+    approver = _login("approver-client", "approver-secret")
+    risk_owner = _login("risk-owner-client", "risk-owner-secret")
+    operator_a = _login("operator-a-client", "operator-a-secret")
+    operator_b = _login("operator-b-client", "operator-b-secret")
+
+    assert viewer["meta"]["identity"] == "viewer"
+    assert approver["meta"]["identity"] == "approver"
+    assert risk_owner["meta"]["identity"] == "risk_owner"
+
+    def _jwt_claims(token):
+        payload_b64 = token.split(".")[1]
+        padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+        return json.loads(base64.urlsafe_b64decode(padded))
+
+    def _me(token):
+        resp = client.get("/bff/me", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 200, resp.text
+        return resp.json()["data"]
+
+    viewer_data = _me(viewer["access_token"])
+    approver_data = _me(approver["access_token"])
+    operator_a_data = _me(operator_a["access_token"])
+    operator_b_data = _me(operator_b["access_token"])
+    # risk_owner is not in the generic read-role set (_READ_ROLES), so /bff/me
+    # correctly 403s for it; assert its claims directly off the issued JWT.
+    risk_owner_claims = _jwt_claims(risk_owner["access_token"])
+
+    assert set(viewer_data["roles"]) == {"viewer"}
+    assert set(approver_data["roles"]) == {"approver"}
+    assert set(risk_owner_claims["roles"]) == {"risk_owner"}
+    assert set(operator_a_data["roles"]) == {"operator"}
+    assert set(operator_b_data["roles"]) == {"operator"}
+
+    # Operator A and B share a role but must never share a subject/actor id.
+    assert operator_a_data["currentUser"]["id"] != operator_b_data["currentUser"]["id"]
+    subjects = {
+        viewer_data["currentUser"]["id"],
+        approver_data["currentUser"]["id"],
+        risk_owner_claims["sub"],
+        operator_a_data["currentUser"]["id"],
+        operator_b_data["currentUser"]["id"],
+    }
+    assert len(subjects) == 5
+
+
+def test_bff_dev_login_unconfigured_identity_has_no_shared_fallback(monkeypatch) -> None:
+    # viewer/approver/risk_owner/operator_a/operator_b must NOT fall back to
+    # the legacy shared operator credential when their own dedicated
+    # credential is not configured.
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_ID", "ci-client")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_SECRET", "ci-secret")
+
+    client = TestClient(bff_main.app)
+    login = client.post(
+        "/bff/auth/dev-login",
+        json={"grant_type": "client_credentials", "client_id": "viewer-client", "client_secret": "viewer-secret"},
+    )
+    assert login.status_code == 401, login.text
+    assert login.json()["error"]["details"]["reason"] == "AUTH_DEV_LOGIN_CLIENT_CREDENTIALS"
 
 
 def test_bff_dev_login_single_role_fallback_when_unspecified(monkeypatch) -> None:

@@ -1,0 +1,16 @@
+{
+  "captured_at": "2026-07-15T00:10:15Z",
+  "duration_ms": 2.926,
+  "label": "shared-outbox-preflight",
+  "request": {
+    "body": null,
+    "headers": {},
+    "method": "GET",
+    "started_at": "2026-07-15T00:10:15Z",
+    "url": "http://127.0.0.1:18095/api/deployment/outbox?status=pending"
+  },
+  "response": {
+    "payload": [],
+    "status": 200
+  }
+}

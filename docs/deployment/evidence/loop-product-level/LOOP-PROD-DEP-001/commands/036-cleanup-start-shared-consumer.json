@@ -1,0 +1,20 @@
+{
+  "captured_at": "2026-07-15T00:05:33Z",
+  "command": [
+    "docker",
+    "compose",
+    "-p",
+    "pantheon",
+    "-f",
+    "/home/lupin/pantheon-ci-deploy/dev-root/docker-compose.yml",
+    "start",
+    "deployment-outbox-consumer"
+  ],
+  "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+  "duration_ms": 2166.822,
+  "label": "cleanup-start-shared-consumer",
+  "returncode": 0,
+  "started_at": "2026-07-15T00:05:31Z",
+  "stderr": " Container pantheon-postgres-1  Waiting\n Container pantheon-nats-1  Waiting\n Container pantheon-postgres-1  Waiting\n Container pantheon-minio-1  Waiting\n Container pantheon-nats-1  Healthy\n Container pantheon-postgres-1  Healthy\n Container pantheon-postgres-1  Healthy\n Container pantheon-minio-1  Healthy\n Container pantheon-consultation-svc-1  Waiting\n Container pantheon-governance-1  Waiting\n Container pantheon-consultation-svc-1  Healthy\n Container pantheon-governance-1  Healthy\n Container pantheon-runtime-manager-1  Waiting\n Container pantheon-deployment-1  Waiting\n Container pantheon-deployment-1  Healthy\n Container pantheon-runtime-manager-1  Healthy\n Container pantheon-deployment-outbox-consumer-1  Starting\n Container pantheon-deployment-outbox-consumer-1  Started\n",
+  "stdout": ""
+}
