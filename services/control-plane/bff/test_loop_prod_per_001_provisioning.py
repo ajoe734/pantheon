@@ -23,6 +23,54 @@ HEADERS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def mock_external_services(monkeypatch):
+    # Mock create_capital_binding
+    monkeypatch.setattr(bff_main, "create_capital_binding", lambda payload: {"status": "created"})
+    
+    # Mock _post_json to do nothing and return empty dict
+    monkeypatch.setattr(bff_main, "_post_json", lambda *args, **kwargs: {})
+    
+    # Mock _get_json to raise urllib.error.HTTPError for 404 (not found) by default
+    import urllib.error
+    from io import BytesIO
+    fp = BytesIO(b"")
+    mock_404 = urllib.error.HTTPError("url", 404, "Not Found", {}, fp)
+    monkeypatch.setattr(bff_main, "_get_json", lambda *args, **kwargs: (_ for _ in ()).throw(mock_404))
+    
+    # Mock _runtime_manager_client
+    class MockRuntimeManagerClient:
+        def deploy(self, request):
+            binding_id = (
+                request.get("persona_capital_binding_id")
+                or request.get("binding_id")
+                or request.get("runtime_binding_id")
+                or "test-binding"
+            )
+            bff_main.read_store.create_runtime_binding(
+                runtime_id=request.get("runtime_id", "test-runtime"),
+                name=request.get("metadata", {}).get("name", "test"),
+                persona_id=request.get("metadata", {}).get("persona_id", "test"),
+                binding_id=binding_id,
+                deployment_plan_id=request.get("plan_id", "test-plan"),
+                runtime_kind="paper",
+                actor_id="test",
+                created_at=bff_main.utc_now(),
+                params=request.get("metadata", {}),
+                state=request.get("state") or "running",
+            )
+            return bff_main.read_store.get_runtime_binding(binding_id)
+            
+        def get(self, binding_id):
+            return bff_main.read_store.get_runtime_binding(binding_id)
+            
+        def list_all(self):
+            return list((bff_main.read_store._ensure_local_overlay_records("runtime_bindings") or {}).values())
+            
+    mock_client = MockRuntimeManagerClient()
+    monkeypatch.setattr(bff_main, "_runtime_manager_client", lambda: mock_client)
+
+
 def _fresh_client(td: str) -> TestClient:
     bff_main.read_store = ReadSurfaceStore(
         os.path.join(td, "read_surfaces.json"),
