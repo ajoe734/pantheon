@@ -392,6 +392,47 @@ class AssistantCodexProvider:
                 shutil.rmtree(image_tmpdir, ignore_errors=True)
 
         duration_ms = _duration_ms(started)
+        post_run_repair_workflow: Mapping[str, Any] | None = None
+        if mode == "kernel_repair":
+            try:
+                post_run_repair_workflow = self._repair_workflow.validate(
+                    metadata,
+                    require_clean=False,
+                ).to_dict()
+            except AssistantRepairWorkflowError as exc:
+                self._audit.record(
+                    {
+                        "event_type": "assistant.provider.failed",
+                        "provider": CODEX_PROVIDER_ID,
+                        "runtime": PROVIDER_RUNTIME,
+                        **audit_context,
+                        "mode": mode,
+                        "sandbox": context.sandbox,
+                        "workspace_class": context.workspace_class,
+                        **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
+                        "duration_ms": duration_ms,
+                        "returncode": completed.returncode,
+                        "error_code": exc.code,
+                        "failure_stage": "post_run_repair_validation",
+                        "error_details": exc.details,
+                    }
+                )
+                raise CodexProviderError(
+                    exc.code,
+                    f"Codex repair post-run validation failed: {exc}",
+                    status_code=exc.status_code,
+                    retryable=False,
+                    details={**exc.details, "failure_stage": "post_run_repair_validation"},
+                ) from exc
+
+        repair_readback: dict[str, Any] = {}
+        if context.repair_workflow:
+            repair_readback = {
+                "pre_run_repair_workflow": context.repair_workflow,
+                "post_run_repair_workflow": post_run_repair_workflow,
+                # Keep the established field as the authoritative latest readback.
+                "repair_workflow": post_run_repair_workflow or context.repair_workflow,
+            }
         if completed.returncode != 0:
             code, status_code, retryable = _classify_failure(completed.stdout, completed.stderr)
             self._audit.record(
@@ -403,7 +444,7 @@ class AssistantCodexProvider:
                     "mode": mode,
                     "sandbox": context.sandbox,
                     "workspace_class": context.workspace_class,
-                    **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
+                    **repair_readback,
                     "duration_ms": duration_ms,
                     "returncode": completed.returncode,
                     "stdout": completed.stdout,
@@ -431,7 +472,7 @@ class AssistantCodexProvider:
                     "mode": mode,
                     "sandbox": context.sandbox,
                     "workspace_class": context.workspace_class,
-                    **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
+                    **repair_readback,
                     "duration_ms": duration_ms,
                     "returncode": completed.returncode,
                     "stdout": completed.stdout,
@@ -456,7 +497,7 @@ class AssistantCodexProvider:
                 "mode": mode,
                 "sandbox": context.sandbox,
                 "workspace_class": context.workspace_class,
-                **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
+                **repair_readback,
                 "duration_ms": duration_ms,
                 "returncode": completed.returncode,
                 "output_summary": _codex_output_summary(completed.stdout),
@@ -469,7 +510,7 @@ class AssistantCodexProvider:
             "mode": mode,
             "sandbox": context.sandbox,
             "workspace_class": context.workspace_class,
-            **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
+            **repair_readback,
             "returncode": completed.returncode,
             "duration_ms": duration_ms,
             "stdout": completed.stdout,

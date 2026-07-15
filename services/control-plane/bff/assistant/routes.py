@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException
 from pydantic import ValidationError
@@ -13,6 +14,12 @@ from pydantic import ValidationError
 from models import ErrorCode
 
 from .context_composer import AssistantContextPolicyError
+from .command_idempotency import (
+    CommandIdempotencyError,
+    CommandIdempotencyStore,
+    CommandIdempotencyTransaction,
+    resolve_command_idempotency_key,
+)
 from .control_mode import (
     CONTROL_MODE_CAPABILITY_PREFIX,
     CONTROL_MODE_ROLES,
@@ -49,6 +56,7 @@ from .models import (
 )
 from .orchestrator_status import read_orchestrator_status
 from .redaction import RedactionError, redact_assistant_payload
+from .repair_receipts import RepairReceiptError, issue_repair_receipt
 from .tool_contracts import (
     ASSISTANT_TOOL_ALLOWLIST,
     ToolNotAllowedError,
@@ -128,6 +136,7 @@ def create_assistant_router(
     _session_store = session_store if session_store is not None else InMemorySessionStore()
     _transcript_store = transcript_store if transcript_store is not None else InMemoryTranscriptStore()
     _control_mode_store = control_mode_store if control_mode_store is not None else ControlModeStore()
+    _command_idempotency_store = CommandIdempotencyStore()
 
     @router.post("/sessions/{session_id}/context", status_code=201)
     async def build_session_context_pack(
@@ -364,10 +373,27 @@ def create_assistant_router(
     async def activate_control_mode(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_recovery_id: Optional[str] = Header(
+            default=None, alias="X-Idempotency-Recovery-Id"
+        ),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
         _require_control_mode_actor(identity, bff_error=bff_error)
+
+        tenant_id = _resolve_identity_tenant(
+            identity,
+            requested_tenant=_resolve_tenant_header(
+                x_tenant_id,
+                x_pantheon_tenant,
+                bff_error=bff_error,
+            ),
+            bff_error=bff_error,
+        )
 
         mode_raw = payload.get("mode") or "kernel_debug"
         try:
@@ -385,40 +411,103 @@ def create_assistant_router(
                 str(exc),
                 field=exc.field,
             )
+        _require_mode_capability(identity, mode, bff_error=bff_error)
 
         ttl_seconds = _positive_int(payload.get("ttlSeconds", payload.get("ttl_seconds")), DEFAULT_KERNEL_TTL_SECONDS)
         idle_ttl_seconds = _positive_int(
             payload.get("idleTtlSeconds", payload.get("idle_ttl_seconds")),
             default_idle_ttl(ttl_seconds),
         )
-        try:
-            activation = _control_mode_store.activate(
-                actor_id=identity.operator_id,
-                mode=mode,
-                capabilities=actor_capabilities(identity),
-                reason=str(payload.get("reason") or "").strip(),
-                passphrase=str(payload.get("passphrase") or payload.get("phrase") or ""),
-                ttl_seconds=ttl_seconds,
-                idle_ttl_seconds=idle_ttl_seconds,
-                management_session_id=payload.get("managementSessionId") or payload.get("management_session_id"),
-            )
-        except ControlModeError as exc:
-            _raise_control_mode_error(bff_error, exc)
-        return {"data": activation}
+        actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
+        with _assistant_command_idempotency(
+            _command_idempotency_store,
+            actor_id=actor_id,
+            route="/bff/assistant/control-mode/activate",
+            payload={"payload": payload, "tenant_id": tenant_id},
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+            recovery_id=idempotency_recovery_id,
+            bff_error=bff_error,
+        ) as transaction:
+            if transaction is not None and transaction.replayed:
+                replayed = transaction.response or {}
+                replayed_data = replayed.get("data") if isinstance(replayed, dict) else {}
+                replayed_data = replayed_data if isinstance(replayed_data, dict) else {}
+                current = _control_mode_store.status_for_actor(
+                    identity.operator_id,
+                    management_session_id=payload.get("managementSessionId")
+                    or payload.get("management_session_id"),
+                )
+                replayed_activation_id = replayed_data.get("activationId") or replayed_data.get(
+                    "activation_id"
+                )
+                current_activation_id = current.get("activationId") or current.get("activation_id")
+                if not current.get("active") or current_activation_id != replayed_activation_id:
+                    _raise_error(
+                        bff_error,
+                        409,
+                        ErrorCode.RESOURCE_CONFLICT,
+                        "Cached control-mode activation is no longer active",
+                        "A BFF restart, expiry, or deactivation invalidated the cached activation. "
+                        "Activate again with a new Idempotency-Key.",
+                        field="idempotency_key",
+                        reason="idempotency_replay_state_stale",
+                    )
+                return replayed
+            try:
+                activation = _control_mode_store.activate(
+                    actor_id=identity.operator_id,
+                    mode=mode,
+                    capabilities=actor_capabilities(identity),
+                    reason=str(payload.get("reason") or "").strip(),
+                    passphrase=str(payload.get("passphrase") or payload.get("phrase") or ""),
+                    ttl_seconds=ttl_seconds,
+                    idle_ttl_seconds=idle_ttl_seconds,
+                    management_session_id=payload.get("managementSessionId")
+                    or payload.get("management_session_id"),
+                )
+            except ControlModeError as exc:
+                _raise_control_mode_error(bff_error, exc)
+            response = {"data": activation}
+            if transaction is not None:
+                transaction.complete(response)
+            return response
 
     @router.post("/control-mode/deactivate", status_code=202)
     async def deactivate_control_mode(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_recovery_id: Optional[str] = Header(
+            default=None, alias="X-Idempotency-Recovery-Id"
+        ),
     ) -> dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        return {
-            "data": _control_mode_store.deactivate(
-                identity.operator_id,
-                reason=str(payload.get("reason") or "operator_deactivated").strip(),
-            )
-        }
+        _require_control_mode_actor(identity, bff_error=bff_error)
+        actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
+        with _assistant_command_idempotency(
+            _command_idempotency_store,
+            actor_id=actor_id,
+            route="/bff/assistant/control-mode/deactivate",
+            payload=payload,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+            recovery_id=idempotency_recovery_id,
+            bff_error=bff_error,
+        ) as transaction:
+            if transaction is not None and transaction.replayed:
+                return transaction.response or {}
+            response = {
+                "data": _control_mode_store.deactivate(
+                    identity.operator_id,
+                    reason=str(payload.get("reason") or "operator_deactivated").strip(),
+                )
+            }
+            if transaction is not None:
+                transaction.complete(response)
+            return response
 
     # ------------------------------------------------------------------
     # Orchestrator status readback (ASST-INTEG-007)
@@ -525,6 +614,13 @@ def create_assistant_router(
     async def prepare_assistant_repair_worktree(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_recovery_id: Optional[str] = Header(
+            default=None, alias="X-Idempotency-Recovery-Id"
+        ),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> dict[str, Any]:
         """Prepare the clean task worktree required by kernel_repair.
 
@@ -558,16 +654,77 @@ def create_assistant_router(
         )
         trace_id = str(payload.get("traceId") or payload.get("trace_id") or "").strip() or None
         actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
-        prepared = prepare_repair_worktree(request_payload, actor_id, trace_id)
-        if isinstance(prepared, dict) and isinstance(prepared.get("data"), dict):
-            return {
-                "data": prepared["data"],
-                "meta": {
-                    "openclawAdapterStatus": prepared.get("status"),
-                    "openclaw_adapter_status": prepared.get("status"),
-                },
-            }
-        return {"data": prepared}
+        tenant_id = _resolve_identity_tenant(
+            identity,
+            requested_tenant=_resolve_tenant_header(
+                x_tenant_id,
+                x_pantheon_tenant,
+                bff_error=bff_error,
+            ),
+            bff_error=bff_error,
+        )
+        activation_id = control_status.get("activation_id") or control_status.get("activationId")
+        with _assistant_command_idempotency(
+            _command_idempotency_store,
+            actor_id=actor_id,
+            route="/bff/assistant/repair-worktrees/prepare",
+            payload={
+                "payload": payload,
+                "tenant_id": tenant_id,
+                "control_activation_id": activation_id,
+            },
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+            recovery_id=idempotency_recovery_id,
+            bff_error=bff_error,
+        ) as transaction:
+            if transaction is not None and transaction.replayed:
+                return transaction.response or {}
+            prepared = prepare_repair_worktree(request_payload, actor_id, trace_id)
+            if isinstance(prepared, dict) and isinstance(prepared.get("data"), dict):
+                prepared_data = dict(prepared["data"])
+                raw_repair = prepared_data.get("repair")
+                if not isinstance(raw_repair, dict):
+                    _raise_error(
+                        bff_error,
+                        502,
+                        ErrorCode.PRECONDITION_FAILED,
+                        "OpenClaw adapter did not return prepared repair metadata",
+                        "The repair-worktree response cannot be authorized without canonical repair metadata.",
+                        field="openclaw_adapter",
+                        reason="repair_metadata_missing",
+                    )
+                repair = dict(raw_repair)
+                try:
+                    repair["receipt"] = issue_repair_receipt(
+                        repair,
+                        actor_id=actor_id,
+                        tenant_id=tenant_id,
+                        control_status=control_status,
+                    )
+                except RepairReceiptError as exc:
+                    _raise_error(
+                        bff_error,
+                        503,
+                        ErrorCode.PRECONDITION_FAILED,
+                        "Assistant repair receipt could not be issued",
+                        str(exc),
+                        field="repair_receipt",
+                        reason=exc.reason,
+                    )
+                prepared_data["repair"] = repair
+                response = {
+                    "data": prepared_data,
+                    "meta": {
+                        "openclawAdapterStatus": prepared.get("status"),
+                        "openclaw_adapter_status": prepared.get("status"),
+                    },
+                }
+            else:
+                response = {"data": prepared}
+            if transaction is not None:
+                transaction.complete(response)
+            return response
 
     @router.post("/provider/reauth", status_code=202)
     async def start_assistant_provider_reauth(
@@ -734,6 +891,13 @@ def create_assistant_router(
     async def generate_assistant_dev_docs(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_recovery_id: Optional[str] = Header(
+            default=None, alias="X-Idempotency-Recovery-Id"
+        ),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> dict[str, Any]:
         """Generate SA/SD artifacts from a Management AI conversation.
 
@@ -751,81 +915,112 @@ def create_assistant_router(
 
         request = _parse_dev_doc_request(payload, bff_error=bff_error)
         trace_id = str(payload.get("traceId") or payload.get("trace_id") or "").strip() or None
-        _require_assistant_skill_authorized(
-            skill_id=ASSISTANT_SA_SD_GENERATE_SKILL_ID,
-            authorize_assistant_skill=authorize_assistant_skill,
-            identity=identity,
-            control_status=control_status,
-            session_id=request.conversation_id,
-            trace_id=trace_id,
-            request_type="assistant_dev_docs_generate",
-            audit_extra={
-                "archive": request.archive,
-                "queue_task_packet": _should_queue_task_packet(payload),
-                "affected_module_count": len(request.affected_modules),
-            },
-            bff_error=bff_error,
-        )
-        turns = _conversation_turns_for_request(_transcript_store, request)
-        context_pack = _context_pack_for_dev_docs(
-            payload,
-            request,
+        actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
+        activation_id = control_status.get("activation_id") or control_status.get("activationId")
+        tenant_id = _resolve_identity_tenant(
             identity,
-            control_status=control_status,
-            build_context_pack=build_context_pack,
+            requested_tenant=_resolve_tenant_header(
+                x_tenant_id,
+                x_pantheon_tenant,
+                bff_error=bff_error,
+            ),
             bff_error=bff_error,
         )
-
-        packet = generate_dev_doc_packet(
-            request=request,
-            turns=turns,
-            context_pack=context_pack,
-        )
-
-        archive_locations = None
-        if request.archive:
-            archive_locations = archive_packet(
-                packet,
-                repo_root=_dev_docs_repo_root(dev_docs_repo_root),
+        with _assistant_command_idempotency(
+            _command_idempotency_store,
+            actor_id=actor_id,
+            route="/bff/assistant/dev-docs/generate",
+            payload={
+                "payload": payload,
+                "control_activation_id": activation_id,
+                "tenant_id": tenant_id,
+            },
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+            recovery_id=idempotency_recovery_id,
+            bff_error=bff_error,
+        ) as transaction:
+            if transaction is not None and transaction.replayed:
+                return transaction.response or {}
+            _require_assistant_skill_authorized(
+                skill_id=ASSISTANT_SA_SD_GENERATE_SKILL_ID,
+                authorize_assistant_skill=authorize_assistant_skill,
+                identity=identity,
+                control_status=control_status,
+                session_id=request.conversation_id,
+                trace_id=trace_id,
+                request_type="assistant_dev_docs_generate",
+                audit_extra={
+                    "archive": request.archive,
+                    "queue_task_packet": _should_queue_task_packet(payload),
+                    "affected_module_count": len(request.affected_modules),
+                },
+                bff_error=bff_error,
             )
-            packet = packet.model_copy(update={"archive_locations": archive_locations})
-
-        meta: Dict[str, Any] = {
-            "archived": archive_locations is not None,
-            "archiveLocations": archive_locations.model_dump(mode="json", by_alias=True)
-            if archive_locations is not None
-            else None,
-            "devBridge": _dev_bridge_meta(),
-        }
-
-        task_packet: Optional[DevTaskPacket] = None
-        should_emit_task_packet = _should_emit_task_packet(payload)
-        should_queue_task_packet = _should_queue_task_packet(payload)
-        if should_emit_task_packet or should_queue_task_packet:
-            task_packet = _signed_dev_task_packet(
-                packet,
+            turns = _conversation_turns_for_request(_transcript_store, request)
+            context_pack = _context_pack_for_dev_docs(
+                payload,
+                request,
                 identity,
-                mode=str(control_status.get("mode") or AssistantMode.KERNEL_DEBUG.value),
-                key_store=bridge_key_store,
+                control_status=control_status,
+                build_context_pack=build_context_pack,
+                bff_error=bff_error,
             )
 
-        if task_packet is not None and should_emit_task_packet:
-            meta["taskPacket"] = task_packet.model_dump(mode="json", by_alias=True)
-
-        if task_packet is not None and should_queue_task_packet:
-            queue_receipt = queue_task_packet(
-                task_packet,
-                repo_root=_dev_bridge_queue_repo_root(dev_docs_repo_root),
-                key_store=bridge_key_store,
-                source="bff_assistant_dev_docs_generate",
+            packet = generate_dev_doc_packet(
+                request=request,
+                turns=turns,
+                context_pack=context_pack,
             )
-            meta["taskPacketQueued"] = bool(queue_receipt.get("queued"))
-            meta["taskPacketQueueReceipt"] = queue_receipt
-            if "taskPacket" not in meta:
+
+            archive_locations = None
+            if request.archive:
+                archive_locations = archive_packet(
+                    packet,
+                    repo_root=_dev_docs_repo_root(dev_docs_repo_root),
+                )
+                packet = packet.model_copy(update={"archive_locations": archive_locations})
+
+            meta: Dict[str, Any] = {
+                "archived": archive_locations is not None,
+                "archiveLocations": archive_locations.model_dump(mode="json", by_alias=True)
+                if archive_locations is not None
+                else None,
+                "devBridge": _dev_bridge_meta(),
+            }
+
+            task_packet: Optional[DevTaskPacket] = None
+            should_emit_task_packet = _should_emit_task_packet(payload)
+            should_queue_task_packet = _should_queue_task_packet(payload)
+            if should_emit_task_packet or should_queue_task_packet:
+                task_packet = _signed_dev_task_packet(
+                    packet,
+                    identity,
+                    mode=str(control_status.get("mode") or AssistantMode.KERNEL_DEBUG.value),
+                    key_store=bridge_key_store,
+                )
+
+            if task_packet is not None and should_emit_task_packet:
                 meta["taskPacket"] = task_packet.model_dump(mode="json", by_alias=True)
 
-        response = DevDocGenerateResponse(data=packet, meta=meta)
-        return response.model_dump(mode="json", by_alias=True)
+            if task_packet is not None and should_queue_task_packet:
+                queue_receipt = queue_task_packet(
+                    task_packet,
+                    repo_root=_dev_bridge_queue_repo_root(dev_docs_repo_root),
+                    key_store=bridge_key_store,
+                    source="bff_assistant_dev_docs_generate",
+                )
+                meta["taskPacketQueued"] = bool(queue_receipt.get("queued"))
+                meta["taskPacketQueueReceipt"] = queue_receipt
+                if "taskPacket" not in meta:
+                    meta["taskPacket"] = task_packet.model_dump(mode="json", by_alias=True)
+
+            response = DevDocGenerateResponse(data=packet, meta=meta).model_dump(
+                mode="json", by_alias=True
+            )
+            if transaction is not None:
+                transaction.complete(response)
+            return response
 
     @router.get("/dev-docs/{packet_id}")
     async def get_assistant_dev_doc_packet(
@@ -847,6 +1042,13 @@ def create_assistant_router(
     async def create_assistant_dev_task_packet(
         payload: dict = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        idempotency_recovery_id: Optional[str] = Header(
+            default=None, alias="X-Idempotency-Recovery-Id"
+        ),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> dict[str, Any]:
         """Sign or queue a DevTaskPacket for repo-local dispatch.
 
@@ -861,28 +1063,61 @@ def create_assistant_router(
             _control_mode_store,
             bff_error=bff_error,
         )
-
-        packet = _parse_dev_doc_packet(payload, bff_error=bff_error)
-        task_packet = _signed_dev_task_packet(
-            packet,
+        actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
+        activation_id = control_status.get("activation_id") or control_status.get("activationId")
+        tenant_id = _resolve_identity_tenant(
             identity,
-            mode=str(payload.get("mode") or control_status.get("mode") or AssistantMode.KERNEL_DEBUG.value),
-            key_store=bridge_key_store,
+            requested_tenant=_resolve_tenant_header(
+                x_tenant_id,
+                x_pantheon_tenant,
+                bff_error=bff_error,
+            ),
+            bff_error=bff_error,
         )
-        meta = _dev_bridge_meta()
-        if _should_queue_task_packet(payload):
-            queue_receipt = queue_task_packet(
-                task_packet,
-                repo_root=_dev_bridge_queue_repo_root(dev_docs_repo_root),
+        with _assistant_command_idempotency(
+            _command_idempotency_store,
+            actor_id=actor_id,
+            route="/bff/assistant/dev-bridge/task-packet",
+            payload={
+                "payload": payload,
+                "control_activation_id": activation_id,
+                "tenant_id": tenant_id,
+            },
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+            recovery_id=idempotency_recovery_id,
+            bff_error=bff_error,
+        ) as transaction:
+            if transaction is not None and transaction.replayed:
+                return transaction.response or {}
+            packet = _parse_dev_doc_packet(payload, bff_error=bff_error)
+            task_packet = _signed_dev_task_packet(
+                packet,
+                identity,
+                mode=str(
+                    payload.get("mode")
+                    or control_status.get("mode")
+                    or AssistantMode.KERNEL_DEBUG.value
+                ),
                 key_store=bridge_key_store,
-                source="bff_assistant_dev_bridge_route",
             )
-            meta["taskPacketQueued"] = bool(queue_receipt.get("queued"))
-            meta["taskPacketQueueReceipt"] = queue_receipt
-        return {
-            "data": task_packet.model_dump(mode="json", by_alias=True),
-            "meta": meta,
-        }
+            meta = _dev_bridge_meta()
+            if _should_queue_task_packet(payload):
+                queue_receipt = queue_task_packet(
+                    task_packet,
+                    repo_root=_dev_bridge_queue_repo_root(dev_docs_repo_root),
+                    key_store=bridge_key_store,
+                    source="bff_assistant_dev_bridge_route",
+                )
+                meta["taskPacketQueued"] = bool(queue_receipt.get("queued"))
+                meta["taskPacketQueueReceipt"] = queue_receipt
+            response = {
+                "data": task_packet.model_dump(mode="json", by_alias=True),
+                "meta": meta,
+            }
+            if transaction is not None:
+                transaction.complete(response)
+            return response
 
     # ------------------------------------------------------------------
     # Governed tool contract routes (ASST-INTEG-004)
@@ -1112,6 +1347,62 @@ def _raise_error(
             }
         },
     )
+
+
+@contextmanager
+def _assistant_command_idempotency(
+    store: CommandIdempotencyStore,
+    *,
+    actor_id: str,
+    route: str,
+    payload: Any,
+    idempotency_key: Optional[str],
+    x_idempotency_key: Optional[str],
+    recovery_id: Optional[str],
+    bff_error: Optional[BffErrorFactory],
+) -> Iterator[Optional[CommandIdempotencyTransaction]]:
+    try:
+        resolved_key = resolve_command_idempotency_key(idempotency_key, x_idempotency_key)
+        if resolved_key is None:
+            yield None
+            return
+        if str(recovery_id or "").strip():
+            store.recover_uncertain(
+                actor_id=actor_id,
+                route=route,
+                idempotency_key=resolved_key,
+                request_payload=payload,
+                recovery_id=str(recovery_id),
+            )
+        with store.transaction(
+            actor_id=actor_id,
+            route=route,
+            idempotency_key=resolved_key,
+            request_payload=payload,
+        ) as transaction:
+            yield transaction
+    except CommandIdempotencyError as exc:
+        if exc.status_code == 409:
+            error_code = ErrorCode.RESOURCE_CONFLICT
+        elif exc.status_code == 503:
+            error_code = ErrorCode.PRECONDITION_FAILED
+        else:
+            error_code = ErrorCode.VALIDATION_FAILED
+        _raise_error(
+            bff_error,
+            exc.status_code,
+            error_code,
+            str(exc),
+            str(exc),
+            field="idempotency_key",
+            reason=exc.reason,
+            recovery=(
+                "Use an authenticated operational recovery workflow after the recovery delay; "
+                "never retry an uncertain mutation with a new key."
+                if exc.reason == "idempotency_recovery_required"
+                else None
+            ),
+        )
 
 
 def _get_session_for_identity(session_store: Any, session_id: str, identity: Any) -> Any:
@@ -1482,13 +1773,23 @@ def _declared_scope_from_payload(
             "declaredScope must contain one or more repo-relative paths",
             field="declaredScope",
         )
-    if any(value == "." or value.startswith("../") or "/../" in value for value in values):
+    invalid_scope = any(
+        value == "."
+        or value.startswith("/")
+        or value.startswith("../")
+        or "/../" in value
+        or value.endswith("/..")
+        or "\\" in value
+        or ".git" in value.split("/")
+        for value in values
+    )
+    if invalid_scope:
         _raise_error(
             bff_error,
             422,
             ErrorCode.VALIDATION_FAILED,
             "Repair declaredScope entries must be repo-relative paths",
-            "declaredScope cannot include '.', '..', or parent traversal",
+            "declaredScope cannot include absolute paths, '.', '..', '.git', or parent traversal",
             field="declaredScope",
         )
     return values
@@ -1862,6 +2163,109 @@ def _require_control_mode_actor(
             field="capabilities",
             required_capability_prefix=CONTROL_MODE_CAPABILITY_PREFIX,
         )
+
+
+def _require_mode_capability(
+    identity: Any,
+    mode: AssistantMode,
+    *,
+    bff_error: Optional[BffErrorFactory],
+) -> None:
+    required = f"assistant.{mode.value.replace('_', '.')}"
+    capabilities = set(actor_capabilities(identity))
+    if required in capabilities:
+        return
+    _raise_error(
+        bff_error,
+        403,
+        ErrorCode.FORBIDDEN,
+        f"Control mode {mode.value} requires {required} capability",
+        "The authenticated actor does not hold the exact capability required for the requested mode.",
+        field="capabilities",
+        reason="mode_capability_missing",
+        required_capability=required,
+    )
+
+
+def _identity_tenant_values(identity: Any) -> List[str]:
+    claims = getattr(identity, "claims", {}) if identity is not None else {}
+    if not isinstance(claims, dict):
+        claims = {}
+    raw_values: List[Any] = []
+    for key in ("tenant_id", "tenantId", "tenant_ids", "tenantIds", "tid"):
+        value = claims.get(key)
+        if isinstance(value, (list, tuple, set)):
+            raw_values.extend(value)
+        elif value not in (None, ""):
+            raw_values.append(value)
+    result: List[str] = []
+    seen = set()
+    for value in raw_values:
+        clean = str(value or "").strip()
+        if clean and clean not in seen:
+            seen.add(clean)
+            result.append(clean)
+    return result
+
+
+def _resolve_identity_tenant(
+    identity: Any,
+    *,
+    requested_tenant: Optional[str],
+    bff_error: Optional[BffErrorFactory],
+) -> str:
+    allowed = _identity_tenant_values(identity)
+    default_tenant = str(os.getenv("PANTHEON_BFF_TENANT_ID") or "pantheon-dev").strip()
+    effective_allowed = allowed or ([default_tenant] if default_tenant else [])
+    requested = str(requested_tenant or "").strip()
+    if requested:
+        if "*" not in effective_allowed and requested not in effective_allowed:
+            _raise_error(
+                bff_error,
+                403,
+                ErrorCode.FORBIDDEN,
+                "Requested tenant is outside the authenticated identity scope",
+                "Repair receipts are bound to the authenticated tenant and cannot cross tenant boundaries.",
+                field="tenant_id",
+                reason="tenant_mismatch",
+                requested_tenant=requested,
+            )
+        return requested
+    concrete = [value for value in effective_allowed if value != "*"]
+    if len(concrete) == 1:
+        return concrete[0]
+    if len(concrete) > 1:
+        _raise_error(
+            bff_error,
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Repair worktree preparation requires an explicit tenant",
+            "Send X-Tenant-Id when the authenticated identity is scoped to more than one tenant.",
+            field="tenant_id",
+            reason="tenant_required",
+        )
+    return default_tenant or "pantheon-dev"
+
+
+def _resolve_tenant_header(
+    x_tenant_id: Optional[str],
+    x_pantheon_tenant: Optional[str],
+    *,
+    bff_error: Optional[BffErrorFactory],
+) -> Optional[str]:
+    canonical = str(x_tenant_id or "").strip()
+    alias = str(x_pantheon_tenant or "").strip()
+    if canonical and alias and canonical != alias:
+        _raise_error(
+            bff_error,
+            400,
+            ErrorCode.VALIDATION_FAILED,
+            "X-Tenant-Id and X-Pantheon-Tenant must match when both are supplied",
+            "Conflicting tenant headers are not accepted for assistant control operations.",
+            field="tenant_id",
+            reason="tenant_header_conflict",
+        )
+    return canonical or alias or None
 
 
 def _raise_control_mode_error(
