@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review
 - Owner: Antigravity
 - Reviewer: Claude
-- Next: Reviewed PR #3725 (merged be105af5f). CHANGES REQUESTED: _get_dataset_payload (main.py:487) always trains/evaluates on hardcoded SEED_DATASET regardless of dataset_id, so discovered datasets never actually reach the trainer/evaluator -- fails AC-02 and the seed-fixture-as-live-proof non-goal. Full findings posted as PR comment. Waiting on owner (Antigravity) to fetch real dataset content before this can move to review_approved.
+- Next: Re-checked 2026-07-15: confirmed still unfixed. _get_dataset_payload (main.py:487-490) ignores dataset_id, always trains/evaluates on hardcoded SEED_DATASET. No new commits since PR #3725 merge/review comment (same timestamp 16:13:52-58Z). Waiting on owner (Antigravity) to wire real discovered-dataset content before this can move to review_approved.
 
 ## Summary
 讓 scheduler 自動發現合格 governed datasets，執行真實 shadow/OOS evaluator metrics，持久化 immutable candidate 與 lineage；不得靠 empty body，也不得繞過 experiment→approval→deployment。
