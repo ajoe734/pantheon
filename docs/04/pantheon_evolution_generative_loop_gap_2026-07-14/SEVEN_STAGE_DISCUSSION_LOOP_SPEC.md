@@ -150,3 +150,24 @@ To decouple conversation interfaces from governance databases, specialized adapt
     2. Set `type="approval"` and target fields based on recommended mutations.
     3. Call `bridge()` to obtain an `ApprovalDecisionProposal`.
     4. Dispatch proposal to `/api/governance/approvals`.
+
+---
+
+## 5. Write-Owner, Emergency Semantics, and Document Authority Alignment
+
+### 5.1. Emergency & Safe-Mode Fast-Path Semantics
+In accordance with [KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md](file:///tmp/pantheon-worker-worktrees/pantheon/evoloop-010/KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md), emergency operations (such as `pause`, `risk_off`, `liquidate`, `replace`, and `terminate`) are prioritized for system protection and bypass the multi-stage discussion loop. 
+* **Fast-Path Integrity**: Emergency commands must route through the `runtime-manager` high-priority fast path, never bypassing it to contact the LEAN runtime or broker directly.
+* **Telemetry Acknowledgement**: An emergency action is complete only when the `runtime-manager` returns a `telemetry_ack` confirming the state change has been successfully registered and persisted.
+* **Fail-Closed Default**: In case of a `fail_closed` acknowledgement status, the system remains in the safest possible safe-mode state, and subsequent promotion gates are blocked.
+
+### 5.2. Write-Owner Authority Matrix
+State mutations to active assets must respect the write-owner authority matrix defined in [BINDING_AND_DEPLOYMENT_SEMANTICS.md](file:///tmp/pantheon-worker-worktrees/pantheon/evoloop-010/BINDING_AND_DEPLOYMENT_SEMANTICS.md):
+* Only the designated write-owners (such as `runtime-manager` or the authorized dispatch worker) may update runtime bindings and active strategy mappings.
+* Consultation and conversation plane adapters only generate *proposals* (e.g. `ApprovalDecisionProposal` or `EvolutionDecisionProposal`) and have no direct write authority over production assets or active bindings.
+
+### 5.3. Document Authority & Record Boundary
+Under [DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md](file:///tmp/pantheon-worker-worktrees/pantheon/evoloop-010/DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md):
+* This specification acts as an L1 platform policy document.
+* All discussion transcripts, Agora workshop logs, committee memos, and audit traces generated throughout the Seven-Stage Discussion Loop are categorized as **L2/L3 Working Records** and cannot override or silently rewrite L1 architecture and policy blueprints.
+
