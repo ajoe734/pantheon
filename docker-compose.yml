@@ -1614,7 +1614,7 @@ services:
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
-    command: ["python", "services/execution/lean_runtime/paper_signal_producer.py"]
+    command: ["python", "-m", "services.execution.lean_runtime.paper_signal_producer"]
     environment:
       SIGNAL_STORE_URL: redis://signal-store:6379
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081

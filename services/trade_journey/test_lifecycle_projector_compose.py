@@ -70,3 +70,16 @@ def test_legacy_snapshot_projector_can_only_write_backfill_truth():
     assert "PANTHEON_BFF_LOOP_RUN_BACKFILL_STORE" in projector
     assert '"/data/bff/loop_runs_backfill.json"' in projector
     assert "services.trade_journey.lifecycle_projector" in scheduler
+
+
+def test_default_paper_signal_producer_uses_package_safe_module_entrypoint():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    producer = compose["services"]["paper-signal-producer"]
+
+    assert "profiles" not in producer
+    assert producer["restart"] == "unless-stopped"
+    assert producer["command"] == [
+        "python",
+        "-m",
+        "services.execution.lean_runtime.paper_signal_producer",
+    ]
