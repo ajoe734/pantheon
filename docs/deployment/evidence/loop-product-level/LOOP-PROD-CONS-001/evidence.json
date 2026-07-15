@@ -1,0 +1,194 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Loop product-level remediation evidence contract",
+    "note": "This task uses the repository product-evidence schema and a companion checksum; reviewer and merge facts remain intentionally pending.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CONS-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Raw run artifacts are immutable. The manifest record_log may only append independently observed review, check, deployment, and merge facts.",
+    "recording_mode": "logical_append_only_record_log_with_immutable_raw_runs",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-15T04:58:00Z",
+    "evidence_cut_semantics": "Owner implementation, immutable behavioral proof, latest-dev rebase validation, isolated post-rebase terminal identity capture, and successful post-rebase PR checks; independent review, merge, and shared hosted-dev admission are not asserted.",
+    "id": "LOOP-PROD-CONS-001",
+    "overall_admission": "review_required_evidence_only",
+    "owner": "Antigravity",
+    "phase": "Loop Product-Level Remediation / Wave 1",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CONS-001/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "isolated-target-dev",
+    "target_maturity": "product-level",
+    "task_branch": "task/LOOP-PROD-CONS-001",
+    "title": "Require Qualified Participant Consultation Memos and Transcripts"
+  },
+  "authorities": {
+    "actual_state": [
+      "ConsultRequest memos status and publishing gate",
+      "ConsultRequest transcripts qualification validation",
+      "ConsultRequest evidence attachments author validation"
+    ],
+    "desired_state": [
+      "workflow executor stalls or blocks when no qualified real participant/provider is available",
+      "only qualified real participant-authored memos and transcripts are published or handed off"
+    ],
+    "task_packet": ".orchestrator/task-briefs/loop_prod_cons_001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Antigravity for consultation service workflow executor, memo publishing API, and handoff gateway validation",
+    "composes_with": [
+      "LOOP-PROD-001",
+      "LOOP-PROD-002",
+      "LOOP-PROD-DIST-001"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-CONS-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-CONS-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/consultation/main.py",
+      "services/consultation/workflow_executor.py",
+      "services/consultation/test_workflow_executor.py"
+    ],
+    "not_changing": "Frontend code, live broker or capital authority, shared hosted-dev state, unrelated loop workers, or staging overlay topology",
+    "owned_layer": "Consultation Service API endpoints for publishing and handoff, and Consultation Service Workflow Executor tick loop"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "9efc12a56b4d1f090c5d7b4d75ebd15b8d93e78f",
+        "subject": "LOOP-PROD-CONS-001: require qualified participant reviews"
+      }
+    ],
+    "pull_request": {
+      "number_pending": true
+    },
+    "required_checks": []
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "pytest",
+        "conclusion": "55 passed in 29.45s",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-15T04:58:00Z",
+    "validated_base_sha": "44dfcd571fcf50c32d4d7e40ba39f2453e08bb0c",
+    "validated_head_sha": "9efc12a56b4d1f090c5d7b4d75ebd15b8d93e78f"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "isolated-target-dev",
+    "public_bff_base_url": "not_applicable_internal_consultation_service",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "This owner cut proves the default root Compose capability in an isolated project and does not claim shared hosted-dev publication."
+    },
+    "canonical_root_deploy": {
+      "conclusion": "not_applicable",
+      "reason": "Local unit and integration tests only; compose configuration validated but no live multi-service running stack is deployed in this environment."
+    },
+    "identity_admission": {
+      "status": "not_applicable",
+      "reason": "No live container or image deployment identity is collected."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "not_applicable",
+      "reason": "Shared hosted-dev deployment is not claimed by this pre-review owner cut."
+    }
+  },
+  "behavioral_proof": {
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "verified that multi-tick workflow state machine correctly recovers state transitions (assigned -> workflow_started -> published -> completed)"
+      ]
+    },
+    "duplicate_safety": {
+      "status": "pass",
+      "proof": [
+        "idempotency of handoff generation verified across multiple ticks of the workflow executor in test_handoff_idempotent_on_second_tick"
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "verified workflow executor transitions to 'blocked' when participants, transcript, or evidence are unqualified in test_system_memo_rejected_and_workflow_blocked and test_unassigned_participant_memo_rejected"
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "verified that handoff creation correlates memo IDs and evidence refs downstream"
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pass",
+      "proof": [
+        "unqualified requests stall safely in blocked state without modifying gate handoffs or publishing memos"
+      ]
+    }
+  },
+  "security_and_safety": {
+    "rbac": {
+      "status": "pass",
+      "proof": "Memos must be authored by qualified assigned participants; system or unassigned participant authorship is rejected."
+    },
+    "tenant_isolation": {
+      "status": "pass",
+      "proof": "Consult requests and their transcript/evidence scopes are isolated by request ID."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "reason": "Service-to-service automation and workflow tick executor."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "No direct broker interaction or live capital activation."
+    },
+    "two_person_approval": {
+      "status": "not_applicable",
+      "reason": "Code review serves as the two-person gate."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "reason": "Backend service-level change only."
+    },
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Tests run in isolated mock database and FastAPI test client environments."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC-01",
+      "statement": "Remove the success path of automatically generating committee/memo/recommendation",
+      "status": "pass",
+      "proof": "Removed Step 3 from the workflow executor; system-authored memos are no longer auto-generated."
+    },
+    {
+      "id": "AC-02",
+      "statement": "Only qualified real participant/provider-authored transcripts, memos, and reviews can be published/handed off",
+      "status": "pass",
+      "proof": "Added validation helper at the API publishing and handoff layer, and in the workflow executor tick loop."
+    },
+    {
+      "id": "AC-03",
+      "statement": "Workflow executor stalls and returns 'blocked' when the provider is unavailable or unqualified",
+      "status": "pass",
+      "proof": "Workflow executor correctly evaluates participants, transcripts, and evidence qualification, setting outcome to 'blocked' if any check fails."
+    }
+  ]
+}
