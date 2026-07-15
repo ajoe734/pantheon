@@ -72,7 +72,7 @@ def test_training_session_lifecycle_event_preview_and_replay_contract() -> None:
         "Keep drawdown capped.",
     ]
 
-    preview = client.post(f"/api/training/sessions/{session_id}/preview", json={"mode": "refresh"})
+    preview = client.post(f"/api/training/sessions/{session_id}/preview", json={"mode": "refresh", "refreshed_at": "2026-07-15T12:00:00Z"})
     assert preview.status_code == 201
     assert preview.json()["status"] == "completed"
     assert preview.json()["candidate_snapshot_at"]
@@ -390,7 +390,7 @@ def test_replay_commit_idempotency_replays_without_duplicate_event() -> None:
         },
     ).json()["session_id"]
 
-    preview = client.post(f"/api/training/sessions/{session_id}/preview", json={"mode": "refresh"})
+    preview = client.post(f"/api/training/sessions/{session_id}/preview", json={"mode": "refresh", "refreshed_at": "2026-07-15T12:00:00Z"})
     assert preview.status_code == 201
     completed = client.post(f"/api/training/sessions/{session_id}/complete")
     assert completed.status_code == 201
@@ -439,7 +439,7 @@ def test_replay_commit_records_persona_route_policy_lineage_refs() -> None:
             "created_at": "2026-04-28T20:00:00Z",
         },
     ).json()["session_id"]
-    preview = client.post(f"/api/training/sessions/{session_id}/preview", json={"mode": "refresh"})
+    preview = client.post(f"/api/training/sessions/{session_id}/preview", json={"mode": "refresh", "refreshed_at": "2026-07-15T12:00:00Z"})
     assert preview.status_code == 201
     completed = client.post(f"/api/training/sessions/{session_id}/complete")
     candidate_snapshot_at = completed.json()["events"][-1]["eval_ref"]["candidate_snapshot_at"]
@@ -484,7 +484,7 @@ def test_replay_discard_idempotency_keeps_after_artifact_empty() -> None:
             "created_at": "2026-04-28T21:00:00Z",
         },
     ).json()["session_id"]
-    preview = client.post(f"/api/training/sessions/{session_id}/preview", json={"mode": "refresh"})
+    preview = client.post(f"/api/training/sessions/{session_id}/preview", json={"mode": "refresh", "refreshed_at": "2026-07-15T12:00:00Z"})
     assert preview.status_code == 201
     completed = client.post(f"/api/training/sessions/{session_id}/complete")
     candidate_snapshot_at = completed.json()["events"][-1]["eval_ref"]["candidate_snapshot_at"]
@@ -565,7 +565,7 @@ def test_canonical_dataset_validation_and_fail_closed_and_evidence(tmp_path: Pat
         },
     ).json()["session_id"]
     
-    preview = client.post(f"/api/training/sessions/{session_id}/preview", json={"mode": "refresh"})
+    preview = client.post(f"/api/training/sessions/{session_id}/preview", json={"mode": "refresh", "refreshed_at": "2026-07-05T12:00:00Z"})
     assert preview.status_code == 201
     assert preview.json()["validation_status"] == "failed"
     assert preview.json()["evaluation_proof"]["status"] == "failed"
@@ -601,7 +601,7 @@ def test_canonical_dataset_validation_and_fail_closed_and_evidence(tmp_path: Pat
         },
     ).json()["session_id"]
     
-    preview_pass = client.post(f"/api/training/sessions/{session_id_pass}/preview", json={"mode": "refresh"})
+    preview_pass = client.post(f"/api/training/sessions/{session_id_pass}/preview", json={"mode": "refresh", "refreshed_at": "2026-07-05T12:00:00Z"})
     assert preview_pass.status_code == 201
     assert preview_pass.json()["validation_status"] == "passed"
     assert preview_pass.json()["evaluation_proof"]["status"] == "passed"

@@ -746,10 +746,7 @@ def _run_preview_evaluation(
     current_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).astimezone(timezone.utc)
     staleness_days = (current_time.date() - latest_date.date()).days
     max_staleness_days = policy.get("max_staleness_days", 10)
-
-    import sys
-    is_test = "pytest" in sys.modules or "unittest" in sys.modules
-    is_fresh = staleness_days <= max_staleness_days if not is_test else True
+    is_fresh = staleness_days <= max_staleness_days
 
     dataset = {
         "dataset_id": dataset_id,
