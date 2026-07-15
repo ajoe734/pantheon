@@ -101,6 +101,7 @@ if str(_INC_DIR) not in sys.path:
 try:
     from services.incident.incident import (  # type: ignore
         IncidentCase,
+        IncidentConcurrencyError,
         IncidentError,
         IncidentStatus,
         IncidentStore,
@@ -110,6 +111,7 @@ try:
 except ImportError:
     from incident.incident import (  # type: ignore
         IncidentCase,
+        IncidentConcurrencyError,
         IncidentError,
         IncidentStatus,
         IncidentStore,
@@ -287,6 +289,8 @@ def create_incident(body: CreateIncidentRequest) -> IncidentResponse:
 
     try:
         store.create_incident(inc)
+    except IncidentConcurrencyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except IncidentError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -450,7 +454,7 @@ def _delivery_environment(deployment_stage: str | None) -> EnvironmentName:
             return EnvironmentName.DEV
 
 
-def _prepare_postmortem_delivery(incident_id: str, terminal_status: str) -> ReliableOutboxRecord:
+def _prepare_postmortem_delivery(incident_id: str) -> ReliableOutboxRecord:
     incident = store.get_incident(incident_id)
     if incident is None:
         raise ValueError(f"incident not found while preparing delivery: {incident_id}")
@@ -467,7 +471,11 @@ def _prepare_postmortem_delivery(incident_id: str, terminal_status: str) -> Reli
         aggregate_id=incident_id,
         sequence_no=1,
         trace=trace,
-        payload={"incident_id": incident_id, "terminal_status": terminal_status},
+        # The deterministic event represents the first terminal boundary, not
+        # a request attempt.  Keep the legacy-compatible ``resolved`` value
+        # stable so failed resolve and later direct-close attempts can reuse
+        # one durable intent without an identity collision.
+        payload={"incident_id": incident_id, "terminal_status": "resolved"},
         idempotency_key=idempotency_key,
         producer_service="incident-svc",
     )
@@ -502,17 +510,26 @@ def reconcile_incidents_outbox() -> int:
 
 
 def _repair_prepared_after_transition_conflict(record: ReliableOutboxRecord) -> None:
-    """Activate a winning terminal transition or discard the losing intent."""
+    """Activate a winning terminal transition or preserve its future intent.
+
+    A nonterminal conflict cannot safely delete the deterministic record: a
+    concurrent terminal winner may already have reused the exact prepared
+    snapshot and be between its domain CAS and activation.  The transition-
+    neutral intent stays inert until a later terminal commit activates it.
+    """
 
     try:
         if _incident_transition_applied(dict(record.transition or {})):
             outbox_store.activate(record)
         else:
-            outbox_store.discard_prepared(record)
+            log.info(
+                "AUDIT: Preserved prepared incident intent %s after nonterminal CAS conflict",
+                record.outbox_id,
+            )
     except Exception:
         # Preserve the original domain conflict for the caller.  The exact
-        # compare/delete and compare/activate operations above ensure this
-        # repair cannot regress a concurrently advanced outbox record.
+        # compare/activate operation above cannot regress a concurrently
+        # advanced outbox record.
         log.exception(
             "AUDIT: Could not reconcile losing prepared incident intent %s",
             record.outbox_id,
@@ -659,7 +676,7 @@ def update_status(
     prepared: ReliableOutboxRecord | None = None
     if crosses_terminal_boundary:
         try:
-            prepared = _prepare_postmortem_delivery(incident_id, body.status)
+            prepared = _prepare_postmortem_delivery(incident_id)
         except Exception as exc:
             log.exception("AUDIT: Could not prepare incident outbox for %s", incident_id)
             raise HTTPException(

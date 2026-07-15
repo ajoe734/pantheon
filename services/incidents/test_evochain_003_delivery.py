@@ -292,13 +292,32 @@ def test_incident_status_cas_validation(monkeypatch):
     r = client.post("/api/incidents/inc-123/status", json={"status": "resolved"})
     assert r.status_code == 409
     assert "changed concurrently" in r.json()["detail"]
-    assert outbox_store.list_prepared() == []
+    assert len(outbox_store.list_prepared()) == 1
 
-    # The losing resolved intent included terminal_status=resolved.  It must be
-    # removed so a later valid close can reuse the deterministic outbox ID with
-    # terminal_status=closed instead of failing on an identity collision.
+    # The losing intent remains inert and transition-neutral.  A later close
+    # reuses and activates it instead of racing a check-then-delete cleanup.
     retried = client.post("/api/incidents/inc-123/status", json={"status": "closed"})
     assert retried.status_code == 200, retried.text
     records = outbox_store.list_pending_and_failed()
     assert len(records) == 1
-    assert records[0].event.payload["terminal_status"] == "closed"
+    assert records[0].event.payload["terminal_status"] == "resolved"
+
+
+def test_conflict_repair_does_not_clear_a_live_delivery_claim():
+    from services.incidents import main as incidents_main
+
+    _seed_incident()
+    published = client.post(
+        "/api/incidents/inc-123/status",
+        json={"status": "resolved"},
+    )
+    assert published.status_code == 200
+    claimed = outbox_store.claim_due(worker_id="worker-a", lease_seconds=30)
+    assert len(claimed) == 1
+
+    incidents_main._repair_prepared_after_transition_conflict(claimed[0])
+
+    canonical = outbox_store.get(claimed[0].outbox_id)
+    assert canonical is not None
+    assert canonical.claim_token == claimed[0].claim_token
+    assert outbox_store.claim_due(worker_id="worker-b") == []

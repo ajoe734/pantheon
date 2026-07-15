@@ -294,6 +294,12 @@ class ReliableOutboxRecord:
         )
 
     def activate(self) -> "ReliableOutboxRecord":
+        if (
+            self.delivery_ready
+            or self.status != OutboxRecordStatus.PENDING
+            or self.claim_token is not None
+        ):
+            raise ValueError(f"only an unclaimed prepared outbox record can activate: {self.outbox_id}")
         return ReliableOutboxRecord(
             record=_copy_outbox(self.record, updated_at=utc_now()),
             delivery_ready=True,
@@ -470,6 +476,27 @@ class ReliableOutboxStore:
         return canonical
 
     def activate(self, record: ReliableOutboxRecord) -> ReliableOutboxRecord:
+        # ``prepare`` deliberately returns the canonical record on exact
+        # retries.  It may already be ready, leased, or terminal; those states
+        # are monotonic and must never be rebuilt from ``activate()``, which
+        # would otherwise erase a live worker claim.
+        if (
+            record.delivery_ready
+            or record.status != OutboxRecordStatus.PENDING
+            or record.claim_token is not None
+        ):
+            canonical = self.get(record.outbox_id)
+            if canonical is None:
+                raise ValueError(f"outbox record disappeared: {record.outbox_id}")
+            _assert_same_prepared_semantics(
+                existing=canonical,
+                incoming_record=record.record,
+                incoming_transition=record.transition or {},
+            )
+            if canonical.delivery_ready or canonical.status != OutboxRecordStatus.PENDING:
+                return canonical
+            raise ValueError(f"outbox activation supplied a stale advanced record: {record.outbox_id}")
+
         activated = record.activate()
         replaced, canonical_payload = self.impl.compare_and_set(
             record.outbox_id,
@@ -486,11 +513,7 @@ class ReliableOutboxStore:
             incoming_record=record.record,
             incoming_transition=record.transition or {},
         )
-        if canonical.delivery_ready or canonical.status in {
-            OutboxRecordStatus.PUBLISHED,
-            OutboxRecordStatus.FAILED,
-            OutboxRecordStatus.DEAD_LETTERED,
-        }:
+        if canonical.delivery_ready or canonical.status != OutboxRecordStatus.PENDING:
             return canonical
         raise ValueError(f"prepared outbox activation changed concurrently: {record.outbox_id}")
 
@@ -661,6 +684,10 @@ def _assert_same_prepared_semantics(
         )
 
 
+class ReliableInboxConcurrencyError(RuntimeError):
+    """A transient inbox reservation race prevented receipt finalization."""
+
+
 class ReliableInboxStore:
     """Persistent inbox receipts keyed by complete immutable event envelopes."""
 
@@ -703,6 +730,8 @@ class ReliableInboxStore:
         event: EventEnvelope,
         *,
         result_ref: str,
+        lease_seconds: float = 30.0,
+        now: datetime | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Atomically claim first-hop admission for an event identity.
 
@@ -712,6 +741,7 @@ class ReliableInboxStore:
         closed.
         """
 
+        effective_now = now or utc_now()
         payload = {
             "event_id": event.event_id,
             "idempotency_key": event.idempotency_key,
@@ -719,6 +749,11 @@ class ReliableInboxStore:
             "event": event.to_dict(),
             "state": "reserved",
             "result_ref": str(result_ref),
+            "reservation_token": str(uuid.uuid4()),
+            "reserved_at": _format_time(effective_now),
+            "reservation_expires_at": _format_time(
+                effective_now + timedelta(seconds=max(1.0, float(lease_seconds)))
+            ),
         }
         inserted, canonical = self.impl.insert_if_absent(
             event.event_id,
@@ -727,9 +762,37 @@ class ReliableInboxStore:
         )
         if canonical.get("event_checksum") != payload["event_checksum"]:
             return "conflict", canonical
-        if str(canonical.get("result_ref") or "") != str(result_ref):
+        if inserted:
+            return "claimed", canonical
+
+        if canonical.get("state") == "applied" or isinstance(canonical.get("receipt"), Mapping):
+            return "applied", canonical
+
+        if canonical.get("state") != "reserved":
             return "conflict", canonical
-        return ("claimed" if inserted else "duplicate"), canonical
+
+        # A reserved result reference is provisional: a legacy/manual
+        # Postmortem can become the incident's canonical result while the
+        # claimant is running.  Event identity stays immutable and the first
+        # applied receipt finalizes the actual result reference.
+        expires_at = _parse_time(canonical.get("reservation_expires_at"))
+        if expires_at is None or expires_at <= effective_now:
+            canonical_id = str(canonical.get("event_id") or event.event_id)
+            replaced, durable = self.impl.compare_and_set(
+                canonical_id,
+                canonical,
+                payload,
+            )
+            if replaced:
+                return "claimed", payload
+            if durable is None:
+                return "in_progress", canonical
+            if durable.get("event_checksum") != payload["event_checksum"]:
+                return "conflict", durable
+            if durable.get("state") == "applied" or isinstance(durable.get("receipt"), Mapping):
+                return "applied", durable
+            return "in_progress", durable
+        return "in_progress", canonical
 
     def release_reservation(
         self,
@@ -754,6 +817,7 @@ class ReliableInboxStore:
         *,
         result_ref: str,
         notes: str | None = None,
+        reservation: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         receipt = InboxReceipt.record(
             consumer_name=self.consumer_name,
@@ -771,6 +835,32 @@ class ReliableInboxStore:
             "result_ref": result_ref,
             "state": "applied",
         }
+
+        if reservation is not None:
+            claimed = dict(reservation)
+            if (
+                claimed.get("state") != "reserved"
+                or not str(claimed.get("reservation_token") or "").strip()
+                or claimed.get("event_checksum") != payload["event_checksum"]
+            ):
+                raise ReliableInboxConcurrencyError(
+                    f"invalid inbox reservation claim for event_id={event.event_id!r}"
+                )
+            canonical_id = str(claimed.get("event_id") or event.event_id)
+            replaced, durable = self.impl.compare_and_set(
+                canonical_id,
+                claimed,
+                payload,
+            )
+            if replaced:
+                return payload
+            return self._resolve_applied_cas_loss(
+                event=event,
+                result_ref=result_ref,
+                payload=payload,
+                durable=durable,
+            )
+
         inserted, canonical = self.impl.insert_if_absent(
             event.event_id,
             payload,
@@ -780,27 +870,39 @@ class ReliableInboxStore:
             return canonical
         if canonical.get("event_checksum") != payload["event_checksum"]:
             raise ValueError(f"divergent replay for event_id={event.event_id!r}")
-        if str(canonical.get("result_ref") or "") != str(result_ref):
-            raise ValueError(f"divergent result for event_id={event.event_id!r}")
         if canonical.get("state") == "applied" or isinstance(canonical.get("receipt"), Mapping):
+            if str(canonical.get("result_ref") or "") != str(result_ref):
+                raise ValueError(f"divergent result for event_id={event.event_id!r}")
             return canonical
 
-        canonical_id = str(canonical.get("event_id") or event.event_id)
-        replaced, durable = self.impl.compare_and_set(
-            canonical_id,
-            canonical,
-            payload,
+        # Reserved receipts must be completed with the exact claim returned by
+        # ``reserve``.  An ownerless caller must not adopt a newer claimant's
+        # token after lease expiry.
+        raise ReliableInboxConcurrencyError(
+            f"inbox reservation claim required for event_id={event.event_id!r}"
         )
-        if replaced:
-            return payload
-        if (
-            durable is not None
-            and durable.get("event_checksum") == payload["event_checksum"]
-            and str(durable.get("result_ref") or "") == str(result_ref)
-            and (durable.get("state") == "applied" or isinstance(durable.get("receipt"), Mapping))
-        ):
+
+    @staticmethod
+    def _resolve_applied_cas_loss(
+        *,
+        event: EventEnvelope,
+        result_ref: str,
+        payload: Mapping[str, Any],
+        durable: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        if durable is None:
+            raise ReliableInboxConcurrencyError(
+                f"inbox reservation disappeared concurrently for event_id={event.event_id!r}"
+            )
+        if durable.get("event_checksum") != payload["event_checksum"]:
+            raise ValueError(f"divergent replay for event_id={event.event_id!r}")
+        if durable.get("state") == "applied" or isinstance(durable.get("receipt"), Mapping):
+            if str(durable.get("result_ref") or "") != str(result_ref):
+                raise ValueError(f"divergent result for event_id={event.event_id!r}")
             return durable
-        raise ValueError(f"inbox reservation changed concurrently for event_id={event.event_id!r}")
+        raise ReliableInboxConcurrencyError(
+            f"inbox reservation changed concurrently for event_id={event.event_id!r}"
+        )
 
 
 def reconcile_prepared(

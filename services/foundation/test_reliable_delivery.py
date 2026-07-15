@@ -16,6 +16,7 @@ from services.foundation import (
 )
 from services.foundation.reliable_delivery import (
     AtomicJsonRecordStore,
+    ReliableInboxConcurrencyError,
     ReliableInboxStore,
     ReliableOutboxStore,
     reconcile_prepared,
@@ -368,6 +369,38 @@ def test_outbox_claim_lease_prevents_stale_worker_completion(tmp_path):
     assert _outbox(tmp_path).get("outbox-1").status == "published"  # type: ignore[union-attr]
 
 
+def test_prepare_retry_and_activate_cannot_clear_live_delivery_claim(tmp_path):
+    store = _outbox(tmp_path)
+    transition = {"aggregate_type": "incident", "aggregate_id": "inc-1"}
+    prepared = store.prepare(
+        record=OutboxRecord(
+            outbox_id="outbox-1",
+            owner_service="incident-svc",
+            event=_event(),
+        ),
+        transition=transition,
+    )
+    store.activate(prepared)
+    claimed = store.claim_due(worker_id="worker-a", lease_seconds=30)
+    assert len(claimed) == 1
+
+    retried = _outbox(tmp_path).prepare(
+        record=OutboxRecord(
+            outbox_id="outbox-1",
+            owner_service="incident-svc",
+            event=_event(),
+        ),
+        transition=transition,
+    )
+    canonical = _outbox(tmp_path).activate(retried)
+
+    assert canonical.claim_token == claimed[0].claim_token
+    assert _outbox(tmp_path).claim_due(worker_id="worker-b") == []
+    applied, completed = store.complete_published(claimed[0])
+    assert applied is True
+    assert completed.status == "published"
+
+
 def test_inbox_accepts_exact_retry_and_rejects_divergent_replay(tmp_path):
     inbox = _inbox(tmp_path)
     event = _event()
@@ -396,14 +429,103 @@ def test_inbox_reservation_is_atomic_and_completion_is_monotonic(tmp_path):
     second_state, duplicate = second.reserve(event, result_ref="pm-inc-1")
 
     assert first_state == "claimed"
-    assert second_state == "duplicate"
+    assert second_state == "in_progress"
     assert duplicate == reservation
-    applied = second.record_applied(event, result_ref="pm-inc-1")
+    applied = second.record_applied(
+        event,
+        result_ref="pm-inc-1",
+        reservation=reservation,
+    )
     assert applied["state"] == "applied"
     assert first.release_reservation(event, reservation) is False
     replay_state, replay = first.reserve(event, result_ref="pm-inc-1")
-    assert replay_state == "duplicate"
+    assert replay_state == "applied"
     assert replay["state"] == "applied"
+
+
+def test_inbox_expired_reservation_can_be_reclaimed_after_crash(tmp_path):
+    inbox = _inbox(tmp_path)
+    event = _event()
+    started = datetime(2026, 7, 15, tzinfo=timezone.utc)
+
+    state, abandoned = inbox.reserve(
+        event,
+        result_ref="pm-inc-1",
+        lease_seconds=1,
+        now=started,
+    )
+    duplicate_state, _ = _inbox(tmp_path).reserve(
+        event,
+        result_ref="pm-inc-1",
+        lease_seconds=1,
+        now=started,
+    )
+    reclaimed_state, reclaimed = _inbox(tmp_path).reserve(
+        event,
+        result_ref="pm-inc-1",
+        lease_seconds=10,
+        now=started + timedelta(seconds=2),
+    )
+
+    assert state == "claimed"
+    assert duplicate_state == "in_progress"
+    assert reclaimed_state == "claimed"
+    assert reclaimed["reservation_token"] != abandoned["reservation_token"]
+    assert inbox.release_reservation(event, abandoned) is False
+    with pytest.raises(ReliableInboxConcurrencyError, match="changed concurrently"):
+        inbox.record_applied(
+            event,
+            result_ref="pm-inc-1",
+            reservation=abandoned,
+        )
+    canonical = _inbox(tmp_path).impl.get(event.event_id)
+    assert canonical["reservation_token"] == reclaimed["reservation_token"]
+    assert inbox.record_applied(
+        event,
+        result_ref="pm-inc-1",
+        reservation=reclaimed,
+    )["state"] == "applied"
+
+
+def test_inbox_applied_receipt_finalizes_provisional_result_reference(tmp_path):
+    inbox = _inbox(tmp_path)
+    event = _event()
+
+    state, reservation = inbox.reserve(event, result_ref="pm-provisional")
+    applied = inbox.record_applied(
+        event,
+        result_ref="pm-legacy",
+        reservation=reservation,
+    )
+    replay_state, replay = _inbox(tmp_path).reserve(event, result_ref="pm-legacy")
+
+    assert state == "claimed"
+    assert reservation["result_ref"] == "pm-provisional"
+    assert applied["result_ref"] == "pm-legacy"
+    assert replay_state == "applied"
+    assert replay["result_ref"] == "pm-legacy"
+
+
+def test_inbox_receipt_cas_loss_is_retryable_not_semantic_conflict(
+    tmp_path,
+    monkeypatch,
+):
+    inbox = _inbox(tmp_path)
+    event = _event()
+    state, reservation = inbox.reserve(event, result_ref="pm-inc-1")
+    assert state == "claimed"
+    monkeypatch.setattr(
+        inbox.impl,
+        "compare_and_set",
+        lambda *args, **kwargs: (False, None),
+    )
+
+    with pytest.raises(ReliableInboxConcurrencyError, match="disappeared concurrently"):
+        inbox.record_applied(
+            event,
+            result_ref="pm-inc-1",
+            reservation=reservation,
+        )
 
 
 def test_concurrent_divergent_inbox_idempotency_key_fails_closed(tmp_path, monkeypatch):

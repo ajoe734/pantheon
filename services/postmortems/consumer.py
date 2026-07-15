@@ -1,6 +1,7 @@
 """Resolved incident consumer for the Postmortem Evidence Service."""
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from typing import Any
 
 from services.incident.incident import (
     IncidentCase,
+    IncidentConcurrencyError,
     IncidentError,
     IncidentStatus,
     IncidentStore,
@@ -23,6 +25,10 @@ def _utc_now() -> str:
 
 class PostmortemDraftConsumerError(ValueError):
     """Raised when a resolved incident event cannot produce a draft."""
+
+
+class PostmortemDraftConsumerRetryableError(PostmortemDraftConsumerError):
+    """Raised when a concurrent owner write requires first-hop retry."""
 
 
 @dataclass(frozen=True)
@@ -50,6 +56,8 @@ class ResolvedIncidentPostmortemDraftConsumer:
         if existing is None:
             try:
                 created = self._store.create_postmortem(draft)
+            except IncidentConcurrencyError as exc:
+                raise PostmortemDraftConsumerRetryableError(str(exc)) from exc
             except IncidentError as exc:
                 raise PostmortemDraftConsumerError(str(exc)) from exc
             return ResolvedIncidentDraftResult(postmortem=created, created=True, updated=False)
@@ -62,7 +70,12 @@ class ResolvedIncidentPostmortemDraftConsumer:
             return ResolvedIncidentDraftResult(postmortem=existing, created=False, updated=False)
 
         try:
-            updated = self._store.update_postmortem_draft(merged)
+            updated = self._store.update_postmortem_draft(
+                merged,
+                expected_snapshot=existing.to_dict(),
+            )
+        except IncidentConcurrencyError as exc:
+            raise PostmortemDraftConsumerRetryableError(str(exc)) from exc
         except IncidentError as exc:
             raise PostmortemDraftConsumerError(str(exc)) from exc
         return ResolvedIncidentDraftResult(postmortem=updated, created=False, updated=True)
@@ -172,7 +185,14 @@ def merge_postmortem_draft(existing: Postmortem, incoming: Postmortem) -> Postmo
 def postmortem_id_for_incident(incident_id: str) -> str:
     """Return the deterministic postmortem identity for one incident."""
 
-    suffix = re.sub(r"[^A-Za-z0-9_.:-]+", "-", incident_id).strip("-")
+    raw = str(incident_id)
+    suffix = re.sub(r"[^A-Za-z0-9_.:-]+", "-", raw).strip("-")
+    if not suffix or suffix != raw:
+        # Preserve legacy IDs for already-safe incident identifiers, while a
+        # digest prevents distinct arbitrary identifiers (``a b``/``a-b``)
+        # from collapsing onto the same Postmortem key.
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+        suffix = f"{suffix or 'incident'}-{digest}"
     return f"pm-{suffix or 'incident'}"
 
 

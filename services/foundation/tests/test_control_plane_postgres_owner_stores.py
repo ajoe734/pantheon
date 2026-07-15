@@ -5,6 +5,7 @@ import json
 import re
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -65,8 +66,20 @@ class _FakeConnection:
                 return _FakeCursor([])
             removed = table_rows.pop(record_id)
             return _FakeCursor([(removed,)])
+        if normalized.startswith("SELECT PAYLOAD") and "PAYLOAD ->> 'INCIDENT_ID'" in normalized:
+            incident_id = str(params[0])
+            matching = [
+                payload
+                for payload in self.rows.get(table, {}).values()
+                if str(payload.get("incident_id") or "") == incident_id
+            ]
+            return _FakeCursor([(matching[0],)] if matching else [])
         if normalized.startswith("SELECT PAYLOAD") and "WHERE RECORD_ID" in normalized:
             record = self.rows.get(table, {}).get(str(params[0]))
+            if "AND PAYLOAD" in normalized and record is not None:
+                expected = json.loads(params[1]) if isinstance(params[1], str) else params[1]
+                if record != expected:
+                    record = None
             return _FakeCursor([(record,)] if record is not None else [])
         if normalized.startswith("SELECT PAYLOAD"):
             return _FakeCursor([(payload,) for payload in self.rows.get(table, {}).values()])
@@ -273,7 +286,7 @@ def test_postgres_json_owner_store_atomically_reserves_composite_identity():
 
 
 def test_postgres_incident_store_persists_one_row_and_rejects_stale_snapshot():
-    from services.incident.incident import IncidentCase, IncidentError
+    from services.incident.incident import IncidentCase, IncidentConcurrencyError
     from services.incident.pg_store import PostgresIncidentStore
 
     def incident(incident_id: str) -> IncidentCase:
@@ -318,21 +331,21 @@ def test_postgres_incident_store_persists_one_row_and_rejects_stale_snapshot():
         assert 'UPDATE "INCIDENT"."INCIDENT_CASES"' in writes[0]
 
         expected = updated.to_dict()
-        owner = store._incident_records
-        real_compare_and_set = owner.compare_and_set
+        real_save = store._save
         table = '"incident"."incident_cases"'
 
-        def concurrent_close(record_id, expected_payload, payload):
+        def concurrent_close(**kwargs):
+            record_id = kwargs["record_id"]
             current = dict(_FakeConnection.rows[table][record_id])
             _FakeConnection.rows[table][record_id] = {
                 **current,
                 "status": "closed",
                 "resolved_at": "2026-07-15T00:01:00Z",
             }
-            return real_compare_and_set(record_id, expected_payload, payload)
+            return real_save(**kwargs)
 
-        with mock.patch.object(owner, "compare_and_set", side_effect=concurrent_close):
-            with pytest.raises(IncidentError, match="changed concurrently"):
+        with mock.patch.object(store, "_save", side_effect=concurrent_close):
+            with pytest.raises(IncidentConcurrencyError, match="changed concurrently"):
                 store.update_incident_status(
                     "inc-1",
                     "resolved",
@@ -341,6 +354,255 @@ def test_postgres_incident_store_persists_one_row_and_rejects_stale_snapshot():
 
         assert store.require_incident("inc-1").status == "closed"
         assert store.require_incident("inc-1").resolved_at == "2026-07-15T00:01:00Z"
+
+
+def test_postgres_incident_store_explicit_target_prevents_cross_row_aba_corruption():
+    from services.incident.incident import IncidentCase
+    from services.incident.pg_store import PostgresIncidentStore
+
+    def incident(incident_id: str) -> IncidentCase:
+        return IncidentCase(
+            incident_id=incident_id,
+            title=f"Incident {incident_id}",
+            status="open",
+            severity="high",
+            created_at="2026-07-15T00:00:00Z",
+            binding_id=f"binding-{incident_id}",
+            deployment_stage="paper",
+            deployment_plan_id=f"plan-{incident_id}",
+            capital_pool_id="pool-1",
+            persona_capital_binding_id=f"pcb-{incident_id}",
+            artifact_id=f"artifact-{incident_id}",
+            artifact_version="1.0.0",
+            runtime_id=f"runtime-{incident_id}",
+            trace_id=f"trace-{incident_id}",
+        )
+
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        store = PostgresIncidentStore(dsn="postgresql://owner@example/db")
+        store.create_incident(incident("inc-1"))
+        store.create_incident(incident("inc-2"))
+        table = '"incident"."incident_cases"'
+        real_require = store.require_incident
+
+        def cross_row_aba(incident_id: str):
+            second = dict(_FakeConnection.rows[table]["inc-2"])
+            _FakeConnection.rows[table]["inc-2"] = {
+                **second,
+                "status": "investigating",
+            }
+            target = real_require(incident_id)
+            _FakeConnection.rows[table]["inc-2"] = second
+            return target
+
+        with mock.patch.object(store, "require_incident", side_effect=cross_row_aba):
+            updated = store.update_incident_status("inc-1", "investigating")
+
+        assert updated.status == "investigating"
+        assert _FakeConnection.rows[table]["inc-1"]["status"] == "investigating"
+        assert _FakeConnection.rows[table]["inc-2"]["status"] == "open"
+
+
+def test_postgres_incident_store_reads_share_the_guarded_write_lock():
+    from services.incident.incident import IncidentCase
+    from services.incident.pg_store import PostgresIncidentStore
+
+    incident = IncidentCase(
+        incident_id="inc-1",
+        title="Incident inc-1",
+        status="open",
+        severity="high",
+        created_at="2026-07-15T00:00:00Z",
+        binding_id="binding-1",
+        deployment_stage="paper",
+        deployment_plan_id="plan-1",
+        capital_pool_id="pool-1",
+        persona_capital_binding_id="pcb-1",
+        artifact_id="artifact-1",
+        artifact_version="1.0.0",
+        runtime_id="runtime-1",
+        trace_id="trace-1",
+    )
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        store = PostgresIncidentStore(dsn="postgresql://owner@example/db")
+        store.create_incident(incident)
+        real_save = store._save
+        reader_started = threading.Event()
+        reader_finished = threading.Event()
+        reader_threads: list[threading.Thread] = []
+        reader_results = []
+
+        def read_during_save():
+            reader_started.set()
+            reader_results.append(store.require_incident("inc-1"))
+            reader_finished.set()
+
+        def save_with_reader(**kwargs):
+            reader = threading.Thread(target=read_during_save)
+            reader_threads.append(reader)
+            reader.start()
+            assert reader_started.wait(timeout=2)
+            assert reader_finished.wait(timeout=0.05) is False
+            return real_save(**kwargs)
+
+        with mock.patch.object(store, "_save", side_effect=save_with_reader):
+            updated = store.update_incident_status("inc-1", "investigating")
+
+        for reader in reader_threads:
+            reader.join(timeout=2)
+        assert reader_finished.is_set()
+        assert updated.status == "investigating"
+        assert reader_results[0].status == "investigating"
+
+
+def test_postgres_postmortem_cas_locks_and_checks_parent_snapshot():
+    from services.incident.incident import (
+        IncidentCase,
+        IncidentConcurrencyError,
+        Postmortem,
+    )
+    from services.incident.pg_store import PostgresIncidentStore
+
+    incident = IncidentCase(
+        incident_id="inc-1",
+        title="Incident",
+        status="resolved",
+        severity="high",
+        created_at="2026-07-15T00:00:00Z",
+        binding_id="binding-1",
+        deployment_stage="paper",
+        deployment_plan_id="plan-1",
+        capital_pool_id="pool-1",
+        persona_capital_binding_id="pcb-1",
+        artifact_id="artifact-1",
+        artifact_version="1.0.0",
+        runtime_id="runtime-1",
+        trace_id="trace-1",
+        resolved_at="2026-07-15T00:01:00Z",
+    )
+    postmortem = Postmortem(
+        postmortem_id="pm-1",
+        title="Postmortem",
+        status="draft",
+        created_at="2026-07-15T00:02:00Z",
+        incident_id="inc-1",
+        binding_id="binding-1",
+        deployment_stage="paper",
+        deployment_plan_id="plan-1",
+        capital_pool_id="pool-1",
+        persona_capital_binding_id="pcb-1",
+        artifact_id="artifact-1",
+        artifact_version="1.0.0",
+        runtime_id="runtime-1",
+        trace_id="trace-1",
+        root_cause="pending",
+    )
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        store = PostgresIncidentStore(dsn="postgresql://owner@example/db")
+        store.create_incident(incident)
+        store.create_postmortem(postmortem)
+        incident_table = '"incident"."incident_cases"'
+        real_save = store._save
+
+        def parent_changes_before_transaction(**kwargs):
+            current = dict(_FakeConnection.rows[incident_table]["inc-1"])
+            _FakeConnection.rows[incident_table]["inc-1"] = {
+                **current,
+                "evidence_summary": "concurrent evidence",
+            }
+            return real_save(**kwargs)
+
+        with mock.patch.object(
+            store,
+            "_save",
+            side_effect=parent_changes_before_transaction,
+        ):
+            with pytest.raises(
+                IncidentConcurrencyError,
+                match="IncidentCase changed concurrently",
+            ):
+                store.update_postmortem_status(
+                    "pm-1",
+                    "published",
+                    published_event_id="evt-1",
+                    expected_snapshot=postmortem.to_dict(),
+                    expected_incident_snapshot=incident.to_dict(),
+                )
+
+        assert store.require_postmortem("pm-1").status == "draft"
+        assert store.require_incident("inc-1").evidence_summary == "concurrent evidence"
+        assert any("FOR SHARE" in statement.upper() for statement in _FakeConnection.statements)
+
+
+def test_postgres_postmortem_create_race_is_retryable_and_one_per_incident():
+    from services.incident.incident import (
+        IncidentCase,
+        IncidentConcurrencyError,
+        Postmortem,
+    )
+    from services.incident.pg_store import PostgresIncidentStore
+
+    incident = IncidentCase(
+        incident_id="inc-1",
+        title="Incident",
+        status="resolved",
+        severity="high",
+        created_at="2026-07-15T00:00:00Z",
+        binding_id="binding-1",
+        deployment_stage="paper",
+        deployment_plan_id="plan-1",
+        capital_pool_id="pool-1",
+        persona_capital_binding_id="pcb-1",
+        artifact_id="artifact-1",
+        artifact_version="1.0.0",
+        runtime_id="runtime-1",
+        trace_id="trace-1",
+        resolved_at="2026-07-15T00:01:00Z",
+    )
+
+    def postmortem(postmortem_id: str) -> Postmortem:
+        return Postmortem(
+            postmortem_id=postmortem_id,
+            title="Postmortem",
+            status="draft",
+            created_at="2026-07-15T00:02:00Z",
+            incident_id="inc-1",
+            binding_id="binding-1",
+            deployment_stage="paper",
+            deployment_plan_id="plan-1",
+            capital_pool_id="pool-1",
+            persona_capital_binding_id="pcb-1",
+            artifact_id="artifact-1",
+            artifact_version="1.0.0",
+            runtime_id="runtime-1",
+            trace_id="trace-1",
+            root_cause="pending",
+        )
+
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        store = PostgresIncidentStore(dsn="postgresql://owner@example/db")
+        store.create_incident(incident)
+        postmortem_table = '"incident"."postmortems"'
+        real_save = store._save
+
+        def concurrent_manual_create(**kwargs):
+            _FakeConnection.rows.setdefault(postmortem_table, {})["pm-manual"] = postmortem(
+                "pm-manual"
+            ).to_dict()
+            return real_save(**kwargs)
+
+        with mock.patch.object(store, "_save", side_effect=concurrent_manual_create):
+            with pytest.raises(
+                IncidentConcurrencyError,
+                match="already exists for IncidentCase",
+            ):
+                store.create_postmortem(postmortem("pm-generated"))
+
+        assert list(_FakeConnection.rows[postmortem_table]) == ["pm-manual"]
 
 
 def test_ensure_postgres_schema_accepts_precreated_schema_for_restricted_role():

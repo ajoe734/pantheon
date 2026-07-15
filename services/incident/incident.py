@@ -88,6 +88,22 @@ class IncidentError(ValueError):
     """Raised when IncidentCase or Postmortem validation fails."""
 
 
+class IncidentConcurrencyError(IncidentError):
+    """Raised when a guarded mutation loses a durable compare-and-set race."""
+
+
+def _serialized_store_read(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        # Postgres refreshes replace both in-memory caches.  Reads must share
+        # the write lock so they cannot clear a mutation between its domain
+        # update and durable compare-and-set.
+        with self._thread_lock:
+            return method(self, *args, **kwargs)
+
+    return wrapped
+
+
 def _serialized_store_write(method):
     @wraps(method)
     def wrapped(self, *args, **kwargs):
@@ -100,8 +116,6 @@ def _serialized_store_write(method):
             incidents_before = deepcopy(self._incidents)
             postmortems_before = deepcopy(self._postmortems)
             loaded_mtime_before = self._loaded_mtime_ns
-            previous_snapshot = self._active_write_snapshot
-            self._active_write_snapshot = (incidents_before, postmortems_before)
             try:
                 return method(self, *args, **kwargs)
             except BaseException:
@@ -111,8 +125,6 @@ def _serialized_store_write(method):
                 self._postmortems.update(postmortems_before)
                 self._loaded_mtime_ns = loaded_mtime_before
                 raise
-            finally:
-                self._active_write_snapshot = previous_snapshot
 
     return wrapped
 
@@ -470,9 +482,6 @@ class IncidentStore:
         self._postmortems: Dict[str, Postmortem] = {}
         self._path = path
         self._loaded_mtime_ns: Optional[int] = None
-        self._active_write_snapshot: Optional[
-            tuple[Dict[str, IncidentCase], Dict[str, Postmortem]]
-        ] = None
         self._thread_lock = threading.RLock()
         if path and path.exists():
             self._load(path)
@@ -514,6 +523,7 @@ class IncidentStore:
 
     # ---- IncidentCase reads ----
 
+    @_serialized_store_read
     def get_incident(self, incident_id: str) -> Optional[IncidentCase]:
         self._refresh_from_disk()
         return self._incidents.get(incident_id)
@@ -524,18 +534,22 @@ class IncidentStore:
             raise IncidentError(f"IncidentCase not found: {incident_id}")
         return inc
 
+    @_serialized_store_read
     def list_incidents(self) -> List[IncidentCase]:
         self._refresh_from_disk()
         return list(self._incidents.values())
 
+    @_serialized_store_read
     def find_incidents_by_binding(self, binding_id: str) -> List[IncidentCase]:
         self._refresh_from_disk()
         return [i for i in self._incidents.values() if i.binding_id == binding_id]
 
+    @_serialized_store_read
     def find_incidents_by_pool(self, capital_pool_id: str) -> List[IncidentCase]:
         self._refresh_from_disk()
         return [i for i in self._incidents.values() if i.capital_pool_id == capital_pool_id]
 
+    @_serialized_store_read
     def find_open_incidents(self) -> List[IncidentCase]:
         self._refresh_from_disk()
         return [i for i in self._incidents.values() if i.is_open()]
@@ -544,14 +558,17 @@ class IncidentStore:
 
     @_serialized_store_write
     def create_incident(self, inc: IncidentCase) -> IncidentCase:
-        self._refresh_from_disk()
         errors = validate_incident_case(inc)
         if errors:
             raise IncidentError(f"Invalid IncidentCase: {errors}")
         if inc.incident_id in self._incidents:
             raise IncidentError(f"IncidentCase already exists: {inc.incident_id}")
         self._incidents[inc.incident_id] = inc
-        self._save()
+        self._save(
+            aggregate_type="incident",
+            record_id=inc.incident_id,
+            expected_snapshot=None,
+        )
         return inc
 
     @_serialized_store_write
@@ -564,10 +581,9 @@ class IncidentStore:
         expected_snapshot: Optional[Mapping[str, Any]] = None,
     ) -> IncidentCase:
         """Transition an incident to a new status."""
-        self._refresh_from_disk()
         inc = self.require_incident(incident_id)
         if expected_snapshot is not None and inc.to_dict() != dict(expected_snapshot):
-            raise IncidentError(
+            raise IncidentConcurrencyError(
                 f"IncidentCase changed concurrently before status transition: {incident_id}"
             )
         try:
@@ -593,13 +609,16 @@ class IncidentStore:
         if errors:
             raise IncidentError(f"Status update produces invalid IncidentCase: {errors}")
         self._incidents[incident_id] = updated
-        self._save()
+        self._save(
+            aggregate_type="incident",
+            record_id=incident_id,
+            expected_snapshot=inc.to_dict(),
+        )
         return updated
 
     @_serialized_store_write
     def merge_incident_evidence(self, incident_id: str, incoming: IncidentCase) -> IncidentCase:
         """Merge additional evidence into an existing open IncidentCase."""
-        self._refresh_from_disk()
         existing = self.require_incident(incident_id)
         updates: Dict[str, Any] = {
             "telemetry_event_ids": _merge_unique(
@@ -625,11 +644,16 @@ class IncidentStore:
         if errors:
             raise IncidentError(f"Evidence merge produces invalid IncidentCase: {errors}")
         self._incidents[incident_id] = updated
-        self._save()
+        self._save(
+            aggregate_type="incident",
+            record_id=incident_id,
+            expected_snapshot=existing.to_dict(),
+        )
         return updated
 
     # ---- Postmortem reads ----
 
+    @_serialized_store_read
     def get_postmortem(self, postmortem_id: str) -> Optional[Postmortem]:
         self._refresh_from_disk()
         return self._postmortems.get(postmortem_id)
@@ -640,10 +664,12 @@ class IncidentStore:
             raise IncidentError(f"Postmortem not found: {postmortem_id}")
         return pm
 
+    @_serialized_store_read
     def list_postmortems(self) -> List[Postmortem]:
         self._refresh_from_disk()
         return list(self._postmortems.values())
 
+    @_serialized_store_read
     def find_postmortem_for_incident(self, incident_id: str) -> Optional[Postmortem]:
         self._refresh_from_disk()
         matches = [p for p in self._postmortems.values() if p.incident_id == incident_id]
@@ -659,27 +685,56 @@ class IncidentStore:
         The referenced IncidentCase must exist in this store before a
         Postmortem can be created.
         """
-        self._refresh_from_disk()
         errors = validate_postmortem(pm)
         if errors:
             raise IncidentError(f"Invalid Postmortem: {errors}")
         if pm.postmortem_id in self._postmortems:
-            raise IncidentError(f"Postmortem already exists: {pm.postmortem_id}")
+            raise IncidentConcurrencyError(
+                f"Postmortem already exists: {pm.postmortem_id}"
+            )
         if pm.incident_id not in self._incidents:
             raise IncidentError(
                 f"Postmortem references unknown IncidentCase: {pm.incident_id}. "
                 "Create the IncidentCase first."
             )
-        self._validate_postmortem_against_incident(pm, self._incidents[pm.incident_id])
+        parent = self._incidents[pm.incident_id]
+        existing_for_incident = next(
+            (
+                candidate
+                for candidate in self._postmortems.values()
+                if candidate.incident_id == pm.incident_id
+            ),
+            None,
+        )
+        if existing_for_incident is not None:
+            raise IncidentConcurrencyError(
+                "Postmortem already exists for IncidentCase "
+                f"{pm.incident_id}: {existing_for_incident.postmortem_id}"
+            )
+        self._validate_postmortem_against_incident(pm, parent)
         self._postmortems[pm.postmortem_id] = pm
-        self._save()
+        self._save(
+            aggregate_type="postmortem",
+            record_id=pm.postmortem_id,
+            expected_snapshot=None,
+            consistency_checks=(("incident", pm.incident_id, parent.to_dict()),),
+        )
         return pm
 
     @_serialized_store_write
-    def update_postmortem_draft(self, pm: Postmortem) -> Postmortem:
+    def update_postmortem_draft(
+        self,
+        pm: Postmortem,
+        *,
+        expected_snapshot: Optional[Mapping[str, Any]] = None,
+    ) -> Postmortem:
         """Replace an existing draft Postmortem with an updated draft."""
-        self._refresh_from_disk()
         existing = self.require_postmortem(pm.postmortem_id)
+        if expected_snapshot is not None and existing.to_dict() != dict(expected_snapshot):
+            raise IncidentConcurrencyError(
+                "Postmortem changed concurrently before draft update: "
+                f"{pm.postmortem_id}"
+            )
         if existing.status != PostmortemStatus.DRAFT.value or pm.status != PostmortemStatus.DRAFT.value:
             raise IncidentError("Only draft Postmortems can be updated by the draft worker")
         if existing.incident_id != pm.incident_id:
@@ -695,9 +750,15 @@ class IncidentStore:
                 f"Postmortem references unknown IncidentCase: {pm.incident_id}. "
                 "Create the IncidentCase first."
             )
-        self._validate_postmortem_against_incident(pm, self._incidents[pm.incident_id])
+        parent = self._incidents[pm.incident_id]
+        self._validate_postmortem_against_incident(pm, parent)
         self._postmortems[pm.postmortem_id] = pm
-        self._save()
+        self._save(
+            aggregate_type="postmortem",
+            record_id=pm.postmortem_id,
+            expected_snapshot=existing.to_dict(),
+            consistency_checks=(("incident", pm.incident_id, parent.to_dict()),),
+        )
         return pm
 
     @_serialized_store_write
@@ -711,10 +772,9 @@ class IncidentStore:
         expected_snapshot: Optional[Mapping[str, Any]] = None,
         expected_incident_snapshot: Optional[Mapping[str, Any]] = None,
     ) -> Postmortem:
-        self._refresh_from_disk()
         pm = self.require_postmortem(postmortem_id)
         if expected_snapshot is not None and pm.to_dict() != dict(expected_snapshot):
-            raise IncidentError(
+            raise IncidentConcurrencyError(
                 "Postmortem changed concurrently before status transition: "
                 f"{postmortem_id}"
             )
@@ -723,7 +783,7 @@ class IncidentStore:
             expected_incident_snapshot is not None
             and incident.to_dict() != dict(expected_incident_snapshot)
         ):
-            raise IncidentError(
+            raise IncidentConcurrencyError(
                 "Parent IncidentCase changed concurrently before postmortem status transition: "
                 f"{pm.incident_id}"
             )
@@ -758,7 +818,12 @@ class IncidentStore:
         if errors:
             raise IncidentError(f"Status update produces invalid Postmortem: {errors}")
         self._postmortems[postmortem_id] = updated
-        self._save()
+        self._save(
+            aggregate_type="postmortem",
+            record_id=postmortem_id,
+            expected_snapshot=pm.to_dict(),
+            consistency_checks=(("incident", pm.incident_id, incident.to_dict()),),
+        )
         return updated
 
     @_serialized_store_write
@@ -773,16 +838,26 @@ class IncidentStore:
         Called by EVO-003 when an EvolutionDecision is created referencing
         this postmortem (evolution_decision.postmortem lineage edge).
         """
-        self._refresh_from_disk()
         pm = self.require_postmortem(postmortem_id)
         updated = Postmortem(**{**pm.to_dict(), "linked_evolution_decision_id": evolution_decision_id})
         self._postmortems[postmortem_id] = updated
-        self._save()
+        self._save(
+            aggregate_type="postmortem",
+            record_id=postmortem_id,
+            expected_snapshot=pm.to_dict(),
+        )
         return updated
 
     # ---- Persistence ----
 
-    def _save(self) -> None:
+    def _save(
+        self,
+        *,
+        aggregate_type: str,
+        record_id: str,
+        expected_snapshot: Optional[Mapping[str, Any]],
+        consistency_checks: tuple[tuple[str, str, Mapping[str, Any]], ...] = (),
+    ) -> None:
         if self._path:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             data = {
