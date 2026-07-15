@@ -121,6 +121,28 @@ def test_atomic_json_insert_if_absent_reserves_record_and_composite_identity(tmp
     assert first.list_all() == [canonical]
 
 
+def test_atomic_json_compare_and_set_and_delete_are_snapshot_guarded(tmp_path):
+    first = AtomicJsonRecordStore(tmp_path / "records.json")
+    second = AtomicJsonRecordStore(tmp_path / "records.json")
+
+    inserted, canonical = first.compare_and_set("record-1", None, {"state": "pending"})
+    stale, observed = second.compare_and_set("record-1", None, {"state": "other"})
+    advanced, canonical = second.compare_and_set(
+        "record-1",
+        {"state": "pending"},
+        {"state": "published"},
+    )
+
+    assert inserted is True
+    assert stale is False
+    assert observed == {"state": "pending"}
+    assert advanced is True
+    assert canonical == {"state": "published"}
+    assert first.delete_if_matches("record-1", {"state": "pending"}) is False
+    assert second.delete_if_matches("record-1", {"state": "published"}) is True
+    assert first.get("record-1") is None
+
+
 def test_prepared_record_survives_restart_and_reconciles(tmp_path):
     store = _outbox(tmp_path)
     event = _event()
@@ -303,6 +325,49 @@ def test_backoff_dead_letter_and_governed_redrive_are_durable(tmp_path):
     assert _outbox(tmp_path).get("outbox-1").redrive_count == 1  # type: ignore[union-attr]
 
 
+def test_outbox_claim_lease_prevents_stale_worker_completion(tmp_path):
+    store = _outbox(tmp_path)
+    prepared = store.prepare(
+        record=OutboxRecord(outbox_id="outbox-1", owner_service="incident-svc", event=_event()),
+        transition={"aggregate_type": "incident", "aggregate_id": "inc-1"},
+    )
+    store.activate(prepared)
+    started = datetime(2026, 7, 15, tzinfo=timezone.utc)
+
+    first_claim = store.claim_due(
+        worker_id="worker-a",
+        lease_seconds=1,
+        now=started,
+    )
+    assert len(first_claim) == 1
+    assert _outbox(tmp_path).claim_due(
+        worker_id="worker-b",
+        lease_seconds=1,
+        now=started,
+    ) == []
+
+    second_claim = _outbox(tmp_path).claim_due(
+        worker_id="worker-b",
+        lease_seconds=10,
+        now=started + timedelta(seconds=2),
+    )
+    assert len(second_claim) == 1
+    published, canonical = store.complete_published(second_claim[0])
+    assert published is True
+    assert canonical.status == "published"
+
+    stale, canonical = store.complete_failed(
+        first_claim[0],
+        "late failure",
+        max_attempts=3,
+        base_delay_seconds=0,
+        now=started + timedelta(seconds=3),
+    )
+    assert stale is False
+    assert canonical.status == "published"
+    assert _outbox(tmp_path).get("outbox-1").status == "published"  # type: ignore[union-attr]
+
+
 def test_inbox_accepts_exact_retry_and_rejects_divergent_replay(tmp_path):
     inbox = _inbox(tmp_path)
     event = _event()
@@ -320,6 +385,25 @@ def test_inbox_accepts_exact_retry_and_rejects_divergent_replay(tmp_path):
     assert state == "conflict"
     with pytest.raises(ValueError, match="divergent replay"):
         inbox.record_applied(divergent, result_ref="pm-other")
+
+
+def test_inbox_reservation_is_atomic_and_completion_is_monotonic(tmp_path):
+    first = _inbox(tmp_path)
+    second = _inbox(tmp_path)
+    event = _event()
+
+    first_state, reservation = first.reserve(event, result_ref="pm-inc-1")
+    second_state, duplicate = second.reserve(event, result_ref="pm-inc-1")
+
+    assert first_state == "claimed"
+    assert second_state == "duplicate"
+    assert duplicate == reservation
+    applied = second.record_applied(event, result_ref="pm-inc-1")
+    assert applied["state"] == "applied"
+    assert first.release_reservation(event, reservation) is False
+    replay_state, replay = first.reserve(event, result_ref="pm-inc-1")
+    assert replay_state == "duplicate"
+    assert replay["state"] == "applied"
 
 
 def test_concurrent_divergent_inbox_idempotency_key_fails_closed(tmp_path, monkeypatch):

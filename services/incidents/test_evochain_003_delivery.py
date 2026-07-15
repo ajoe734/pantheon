@@ -292,4 +292,13 @@ def test_incident_status_cas_validation(monkeypatch):
     r = client.post("/api/incidents/inc-123/status", json={"status": "resolved"})
     assert r.status_code == 409
     assert "changed concurrently" in r.json()["detail"]
+    assert outbox_store.list_prepared() == []
 
+    # The losing resolved intent included terminal_status=resolved.  It must be
+    # removed so a later valid close can reuse the deterministic outbox ID with
+    # terminal_status=closed instead of failing on an identity collision.
+    retried = client.post("/api/incidents/inc-123/status", json={"status": "closed"})
+    assert retried.status_code == 200, retried.text
+    records = outbox_store.list_pending_and_failed()
+    assert len(records) == 1
+    assert records[0].event.payload["terminal_status"] == "closed"

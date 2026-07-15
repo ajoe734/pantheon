@@ -4,6 +4,9 @@ import httpx
 from pathlib import Path
 import pytest
 import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 # Allow import of parent package
@@ -11,6 +14,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fastapi.testclient import TestClient
 from services.incident.incident import IncidentCase, IncidentStatus, Postmortem
+from services.foundation import (
+    EnvironmentName,
+    EnvironmentScope,
+    EventEnvelope,
+    TraceContext,
+)
 from services.postmortems import main as postmortems_main
 from services.postmortems.main import (
     app,
@@ -103,6 +112,71 @@ def _seed_postmortem(postmortem_id="pm-123", incident_id="inc-123"):
     )
     store._postmortems[postmortem_id] = pm
     return pm
+
+
+def _resolved_incident_event(incident_id="inc-123"):
+    trace = TraceContext.new(
+        environment=EnvironmentScope(name=EnvironmentName.LIVE),
+        source_system="incident-svc",
+        idempotency_key=f"idmp-{incident_id}",
+    )
+    return EventEnvelope(
+        event_id=f"evt-{incident_id}",
+        event_type="incident.resolved",
+        aggregate_type="incident",
+        aggregate_id=incident_id,
+        sequence_no=1,
+        trace=trace,
+        payload={"incident_id": incident_id, "terminal_status": "resolved"},
+        idempotency_key=f"idmp-{incident_id}",
+        producer_service="incident-svc",
+    )
+
+
+def test_concurrent_exact_first_hop_is_claimed_instead_of_false_rejected(monkeypatch):
+    incident = _seed_incident()
+    store._incidents[incident.incident_id] = replace(
+        incident,
+        status="resolved",
+        resolved_at="2026-07-15T00:00:00Z",
+    )
+    event = _resolved_incident_event()
+    request = {"incident_id": "inc-123", "event": event.to_dict()}
+    entered = threading.Event()
+    release = threading.Event()
+    consumer_type = postmortems_main.ResolvedIncidentPostmortemDraftConsumer
+    real_consume = consumer_type.consume
+
+    def delayed_consume(self, payload):
+        entered.set()
+        assert release.wait(timeout=5)
+        return real_consume(self, payload)
+
+    monkeypatch.setattr(consumer_type, "consume", delayed_consume)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first_future = pool.submit(
+            lambda: TestClient(app).post(
+                "/api/postmortems/consume-resolved-incident",
+                json=request,
+            )
+        )
+        assert entered.wait(timeout=5)
+        concurrent = TestClient(app).post(
+            "/api/postmortems/consume-resolved-incident",
+            json=request,
+        )
+        release.set()
+        first = first_future.result(timeout=5)
+
+    assert first.status_code == 201, first.text
+    assert concurrent.status_code == 503, concurrent.text
+    assert concurrent.status_code != 422
+    replay = TestClient(app).post(
+        "/api/postmortems/consume-resolved-incident",
+        json=request,
+    )
+    assert replay.status_code == 200, replay.text
+    assert len(store.list_postmortems()) == 1
 
 def test_publish_delivery_success():
     _seed_incident()
@@ -273,6 +347,33 @@ def test_duplicate_publish_transition_keeps_one_logical_event():
     records = outbox_store.list_pending_and_failed()
     assert len(records) == 1
     assert records[0].event.event_id.startswith("evt-postmortem-published-")
+
+
+def test_published_postmortem_cannot_regress_or_replace_publish_identity():
+    _seed_incident()
+    _seed_postmortem()
+
+    published = client.post(
+        "/api/postmortems/pm-123/status",
+        json={"status": "published"},
+    )
+    regressed = client.post(
+        "/api/postmortems/pm-123/status",
+        json={"status": "draft"},
+    )
+    republished = client.post(
+        "/api/postmortems/pm-123/status",
+        json={"status": "published", "published_at": "2030-01-01T00:00:00Z"},
+    )
+
+    assert published.status_code == 200
+    assert regressed.status_code == 400
+    assert "cannot transition" in regressed.json()["detail"]
+    assert republished.status_code == 400
+    assert "cannot replace" in republished.json()["detail"]
+    durable = store.get_postmortem("pm-123")
+    assert durable.status == "published"
+    assert durable.published_at == published.json()["published_at"]
 
 
 def test_prepare_failure_does_not_publish_postmortem(monkeypatch):
@@ -450,4 +551,3 @@ def test_critical_frozen_normalization():
     assert proposal["target_stage"] == "frozen"
     assert proposal["metadata"]["bridge_proposed_action"] == "freeze"
     assert proposal["metadata"]["bridge_action_normalized"] is True
-

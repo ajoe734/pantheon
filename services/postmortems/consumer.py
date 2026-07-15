@@ -120,7 +120,7 @@ def build_postmortem_draft_from_incident(
         contributing_factors.append(f"incident_evidence_summary={incident.evidence_summary}")
 
     return Postmortem(
-        postmortem_id=_postmortem_id_for_incident(incident.incident_id),
+        postmortem_id=postmortem_id_for_incident(incident.incident_id),
         title=f"Postmortem draft: {incident.title}",
         status=PostmortemStatus.DRAFT.value,
         created_at=created,
@@ -169,7 +169,9 @@ def merge_postmortem_draft(existing: Postmortem, incoming: Postmortem) -> Postmo
     return Postmortem(**{**existing.to_dict(), **updates})
 
 
-def _postmortem_id_for_incident(incident_id: str) -> str:
+def postmortem_id_for_incident(incident_id: str) -> str:
+    """Return the deterministic postmortem identity for one incident."""
+
     suffix = re.sub(r"[^A-Za-z0-9_.:-]+", "-", incident_id).strip("-")
     return f"pm-{suffix or 'incident'}"
 

@@ -100,6 +100,8 @@ def _serialized_store_write(method):
             incidents_before = deepcopy(self._incidents)
             postmortems_before = deepcopy(self._postmortems)
             loaded_mtime_before = self._loaded_mtime_ns
+            previous_snapshot = self._active_write_snapshot
+            self._active_write_snapshot = (incidents_before, postmortems_before)
             try:
                 return method(self, *args, **kwargs)
             except BaseException:
@@ -109,6 +111,8 @@ def _serialized_store_write(method):
                 self._postmortems.update(postmortems_before)
                 self._loaded_mtime_ns = loaded_mtime_before
                 raise
+            finally:
+                self._active_write_snapshot = previous_snapshot
 
     return wrapped
 
@@ -466,6 +470,9 @@ class IncidentStore:
         self._postmortems: Dict[str, Postmortem] = {}
         self._path = path
         self._loaded_mtime_ns: Optional[int] = None
+        self._active_write_snapshot: Optional[
+            tuple[Dict[str, IncidentCase], Dict[str, Postmortem]]
+        ] = None
         self._thread_lock = threading.RLock()
         if path and path.exists():
             self._load(path)
@@ -724,6 +731,21 @@ class IncidentStore:
             PostmortemStatus(new_status)
         except ValueError:
             raise IncidentError(f"Invalid postmortem status: {new_status!r}")
+
+        if pm.status == PostmortemStatus.PUBLISHED.value:
+            if new_status != PostmortemStatus.PUBLISHED.value:
+                raise IncidentError(
+                    f"Postmortem is published and cannot transition to {new_status}"
+                )
+            if published_event_id and published_event_id != pm.published_event_id:
+                raise IncidentError(
+                    "Published Postmortem cannot be republished with a different event identity"
+                )
+            if published_at and published_at != pm.published_at:
+                raise IncidentError(
+                    "Published Postmortem cannot replace its original published_at"
+                )
+            return pm
 
         updates: Dict[str, Any] = {"status": new_status}
         if new_status == PostmortemStatus.PUBLISHED.value:

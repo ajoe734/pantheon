@@ -129,6 +129,7 @@ try:
     from .consumer import (
         PostmortemDraftConsumerError,
         ResolvedIncidentPostmortemDraftConsumer,
+        postmortem_id_for_incident,
     )
 except ImportError:
     from models import (  # type: ignore
@@ -141,6 +142,7 @@ except ImportError:
     from consumer import (  # type: ignore
         PostmortemDraftConsumerError,
         ResolvedIncidentPostmortemDraftConsumer,
+        postmortem_id_for_incident,
     )
 
 try:
@@ -364,6 +366,7 @@ def consume_resolved_incident(
 ) -> PostmortemResponse:
     """Create or refresh a draft Postmortem from a resolved IncidentCase."""
     event: EventEnvelope | None = None
+    reservation: Dict[str, Any] | None = None
     raw_event = body.get("event")
     if raw_event is not None:
         try:
@@ -384,16 +387,33 @@ def consume_resolved_incident(
                 status_code=422,
                 detail="incident delivery envelope does not match the requested incident_id",
             )
-        inbox_state, receipt = inbox_store.classify(event)
+        result_ref = postmortem_id_for_incident(incident_id)
+        inbox_state, reservation = inbox_store.reserve(
+            event,
+            result_ref=result_ref,
+        )
         if inbox_state == "conflict":
             raise HTTPException(status_code=409, detail="divergent incident delivery replay")
-        if inbox_state == "duplicate" and receipt is not None:
-            existing = store.get_postmortem(str(receipt.get("result_ref") or ""))
+        if inbox_state == "duplicate":
+            existing = store.get_postmortem(result_ref)
             if existing is None:
                 raise HTTPException(
                     status_code=503,
-                    detail="inbox receipt exists but its postmortem result is unavailable",
+                    detail="incident delivery is already claimed and its postmortem result is not yet visible",
                 )
+            if existing.incident_id != incident_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="incident delivery result identity is occupied by another incident",
+                )
+            try:
+                inbox_store.record_applied(
+                    event,
+                    result_ref=existing.postmortem_id,
+                    notes="Recovered or replayed an exact incident delivery",
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             response.status_code = 200
             return _to_response(existing)
 
@@ -401,7 +421,13 @@ def consume_resolved_incident(
     try:
         result = consumer.consume(body)
     except PostmortemDraftConsumerError as exc:
+        if event is not None and reservation is not None:
+            inbox_store.release_reservation(event, reservation)
         raise HTTPException(status_code=422, detail=str(exc))
+    except BaseException:
+        if event is not None and reservation is not None:
+            inbox_store.release_reservation(event, reservation)
+        raise
 
     if not result.created:
         response.status_code = 200
@@ -699,7 +725,10 @@ def _publish_postmortem_to_evolution_if_needed(postmortem_id: str) -> None:
 # background delivery loop for postmortems
 async def process_postmortems_outbox():
     reconcile_postmortems_outbox()
-    records = outbox_store.list_due()
+    records = outbox_store.claim_due(
+        worker_id="postmortems-outbox-worker",
+        lease_seconds=_positive_int_env("POSTMORTEMS_OUTBOX_CLAIM_SECONDS", 30),
+    )
     if not records:
         return
 
@@ -717,7 +746,13 @@ async def process_postmortems_outbox():
             proposal_payload = record.event.payload.get("proposal")
             if proposal_payload is None:
                 log.info("AUDIT: Bridge produced no proposal for postmortem %s", postmortem_id)
-                outbox_store.put(record.mark_published())
+                applied, canonical = outbox_store.complete_published(record)
+                if not applied:
+                    log.warning(
+                        "AUDIT: Ignored stale no-op completion for postmortem outbox %s; canonical status=%s",
+                        record.outbox_id,
+                        canonical.status,
+                    )
                 continue
             request_payload = {**dict(proposal_payload), "delivery_event": record.event.to_dict()}
 
@@ -725,28 +760,44 @@ async def process_postmortems_outbox():
                 resp = await client.post(url, json=request_payload)
                 if resp.status_code in {200, 201}:
                     log.info("AUDIT: Successfully delivered proposal for postmortem %s to evolution. Status: %d", postmortem_id, resp.status_code)
-                    outbox_store.put(record.mark_published())
+                    applied, canonical = outbox_store.complete_published(record)
+                    if not applied:
+                        log.warning(
+                            "AUDIT: Ignored stale success completion for postmortem outbox %s; canonical status=%s",
+                            record.outbox_id,
+                            canonical.status,
+                        )
                 else:
                     err_msg = f"status_code={resp.status_code} body={resp.text}"
                     log.warning("AUDIT: Outbox delivery attempt %d for postmortem %s returned error: %s", record.delivery_attempts + 1, postmortem_id, err_msg)
-                    outbox_store.put(
-                        record.mark_failed(
-                            err_msg,
-                            max_attempts=max_attempts,
-                            base_delay_seconds=base_delay,
-                            permanent=resp.status_code in {400, 409, 422},
-                        )
-                    )
-            except Exception as exc:
-                err_msg = str(exc)
-                log.warning("AUDIT: Outbox delivery attempt %d for postmortem %s failed with exception: %s", record.delivery_attempts + 1, postmortem_id, err_msg)
-                outbox_store.put(
-                    record.mark_failed(
+                    applied, canonical = outbox_store.complete_failed(
+                        record,
                         err_msg,
                         max_attempts=max_attempts,
                         base_delay_seconds=base_delay,
+                        permanent=resp.status_code in {400, 409, 422},
                     )
+                    if not applied:
+                        log.warning(
+                            "AUDIT: Ignored stale failure completion for postmortem outbox %s; canonical status=%s",
+                            record.outbox_id,
+                            canonical.status,
+                        )
+            except Exception as exc:
+                err_msg = str(exc)
+                log.warning("AUDIT: Outbox delivery attempt %d for postmortem %s failed with exception: %s", record.delivery_attempts + 1, postmortem_id, err_msg)
+                applied, canonical = outbox_store.complete_failed(
+                    record,
+                    err_msg,
+                    max_attempts=max_attempts,
+                    base_delay_seconds=base_delay,
                 )
+                if not applied:
+                    log.warning(
+                        "AUDIT: Ignored stale exception completion for postmortem outbox %s; canonical status=%s",
+                        record.outbox_id,
+                        canonical.status,
+                    )
 
 async def postmortems_outbox_loop():
     while True:

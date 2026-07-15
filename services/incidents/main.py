@@ -501,10 +501,31 @@ def reconcile_incidents_outbox() -> int:
     return reconcile_prepared(outbox_store, transition_applied=_incident_transition_applied)
 
 
+def _repair_prepared_after_transition_conflict(record: ReliableOutboxRecord) -> None:
+    """Activate a winning terminal transition or discard the losing intent."""
+
+    try:
+        if _incident_transition_applied(dict(record.transition or {})):
+            outbox_store.activate(record)
+        else:
+            outbox_store.discard_prepared(record)
+    except Exception:
+        # Preserve the original domain conflict for the caller.  The exact
+        # compare/delete and compare/activate operations above ensure this
+        # repair cannot regress a concurrently advanced outbox record.
+        log.exception(
+            "AUDIT: Could not reconcile losing prepared incident intent %s",
+            record.outbox_id,
+        )
+
+
 # background delivery loop for incidents
 async def process_incidents_outbox():
     reconcile_incidents_outbox()
-    records = outbox_store.list_due()
+    records = outbox_store.claim_due(
+        worker_id="incidents-outbox-worker",
+        lease_seconds=_positive_int_env("INCIDENTS_OUTBOX_CLAIM_SECONDS", 30),
+    )
     if not records:
         return
 
@@ -526,28 +547,44 @@ async def process_incidents_outbox():
                 )
                 if resp.status_code in {200, 201}:
                     log.info("AUDIT: Successfully delivered resolved incident %s to postmortems via outbox. Status: %d", incident_id, resp.status_code)
-                    outbox_store.put(record.mark_published())
+                    applied, canonical = outbox_store.complete_published(record)
+                    if not applied:
+                        log.warning(
+                            "AUDIT: Ignored stale success completion for incident outbox %s; canonical status=%s",
+                            record.outbox_id,
+                            canonical.status,
+                        )
                 else:
                     err_msg = f"status_code={resp.status_code} body={resp.text}"
                     log.warning("AUDIT: Outbox delivery attempt %d for resolved incident %s returned error: %s", record.delivery_attempts + 1, incident_id, err_msg)
-                    outbox_store.put(
-                        record.mark_failed(
-                            err_msg,
-                            max_attempts=max_attempts,
-                            base_delay_seconds=base_delay,
-                            permanent=resp.status_code in {400, 409, 422},
-                        )
-                    )
-            except Exception as exc:
-                err_msg = str(exc)
-                log.warning("AUDIT: Outbox delivery attempt %d for resolved incident %s failed with exception: %s", record.delivery_attempts + 1, incident_id, err_msg)
-                outbox_store.put(
-                    record.mark_failed(
+                    applied, canonical = outbox_store.complete_failed(
+                        record,
                         err_msg,
                         max_attempts=max_attempts,
                         base_delay_seconds=base_delay,
+                        permanent=resp.status_code in {400, 409, 422},
                     )
+                    if not applied:
+                        log.warning(
+                            "AUDIT: Ignored stale failure completion for incident outbox %s; canonical status=%s",
+                            record.outbox_id,
+                            canonical.status,
+                        )
+            except Exception as exc:
+                err_msg = str(exc)
+                log.warning("AUDIT: Outbox delivery attempt %d for resolved incident %s failed with exception: %s", record.delivery_attempts + 1, incident_id, err_msg)
+                applied, canonical = outbox_store.complete_failed(
+                    record,
+                    err_msg,
+                    max_attempts=max_attempts,
+                    base_delay_seconds=base_delay,
                 )
+                if not applied:
+                    log.warning(
+                        "AUDIT: Ignored stale exception completion for incident outbox %s; canonical status=%s",
+                        record.outbox_id,
+                        canonical.status,
+                    )
 
 async def incidents_outbox_loop():
     while True:
@@ -637,6 +674,8 @@ def update_status(
             expected_snapshot=previous.to_dict(),
         )
     except IncidentError as exc:
+        if prepared is not None:
+            _repair_prepared_after_transition_conflict(prepared)
         status_code = 409 if "changed concurrently" in str(exc) else 400
         raise HTTPException(status_code=status_code, detail=str(exc))
 

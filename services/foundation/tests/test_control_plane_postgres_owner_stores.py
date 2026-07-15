@@ -42,8 +42,29 @@ class _FakeConnection:
             return _FakeCursor([])
         if normalized.startswith("INSERT INTO"):
             payload = json.loads(params[1]) if isinstance(params[1], str) else params[1]
-            self.rows.setdefault(table, {})[str(params[0])] = payload
-            return _FakeCursor([])
+            table_rows = self.rows.setdefault(table, {})
+            record_id = str(params[0])
+            if "DO NOTHING" in normalized and record_id in table_rows:
+                return _FakeCursor([])
+            table_rows[record_id] = payload
+            return _FakeCursor([(payload,)] if "RETURNING PAYLOAD" in normalized else [])
+        if normalized.startswith("UPDATE"):
+            payload = json.loads(params[0]) if isinstance(params[0], str) else params[0]
+            record_id = str(params[1])
+            expected = json.loads(params[2]) if isinstance(params[2], str) else params[2]
+            table_rows = self.rows.setdefault(table, {})
+            if table_rows.get(record_id) != expected:
+                return _FakeCursor([])
+            table_rows[record_id] = payload
+            return _FakeCursor([(payload,)])
+        if normalized.startswith("DELETE FROM"):
+            record_id = str(params[0])
+            expected = json.loads(params[1]) if isinstance(params[1], str) else params[1]
+            table_rows = self.rows.setdefault(table, {})
+            if table_rows.get(record_id) != expected:
+                return _FakeCursor([])
+            removed = table_rows.pop(record_id)
+            return _FakeCursor([(removed,)])
         if normalized.startswith("SELECT PAYLOAD") and "WHERE RECORD_ID" in normalized:
             record = self.rows.get(table, {}).get(str(params[0]))
             return _FakeCursor([(record,)] if record is not None else [])
@@ -56,7 +77,11 @@ class _FakeConnection:
 
     @staticmethod
     def _table_name(sql: str) -> str:
-        match = re.search(r"(?:FROM|INTO)\s+((?:\"[^\"]+\"\.)?\"[^\"]+\")", sql, re.IGNORECASE)
+        match = re.search(
+            r"(?:FROM|INTO|UPDATE)\s+((?:\"[^\"]+\"\.)?\"[^\"]+\")",
+            sql,
+            re.IGNORECASE,
+        )
         return match.group(1) if match else "<unknown>"
 
 
@@ -129,6 +154,10 @@ def test_postgres_json_owner_store_read_only_boundary():
             reader.put("apv-002", {"decision_id": "apv-002"})
         with pytest.raises(PermissionError, match="writes must go through governance-svc"):
             reader.insert_if_absent("apv-002", {"decision_id": "apv-002"})
+        with pytest.raises(PermissionError, match="writes must go through governance-svc"):
+            reader.compare_and_set("apv-001", None, {"decision_id": "apv-001"})
+        with pytest.raises(PermissionError, match="writes must go through governance-svc"):
+            reader.delete_if_matches("apv-001", {"decision_id": "apv-001"})
 
 
 def test_postgres_json_owner_store_put_upsert():
@@ -149,6 +178,60 @@ def test_postgres_json_owner_store_put_upsert():
 
         upsert_stmt = [s for s in _FakeConnection.statements if "ON CONFLICT" in s]
         assert len(upsert_stmt) > 0
+
+
+def test_postgres_json_owner_store_compare_and_set_is_row_scoped():
+    from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        owner = PostgresJsonOwnerStore(
+            dsn="postgresql://owner@example/db",
+            table="incident.incident_cases",
+            owner_service="incident-svc",
+        )
+        created, canonical = owner.compare_and_set(
+            "inc-1",
+            None,
+            {"incident_id": "inc-1", "status": "open"},
+        )
+        stale_create, observed = owner.compare_and_set(
+            "inc-1",
+            None,
+            {"incident_id": "inc-1", "status": "investigating"},
+        )
+        advanced, canonical = owner.compare_and_set(
+            "inc-1",
+            {"incident_id": "inc-1", "status": "open"},
+            {"incident_id": "inc-1", "status": "resolved"},
+        )
+        stale_update, observed_after = owner.compare_and_set(
+            "inc-1",
+            {"incident_id": "inc-1", "status": "open"},
+            {"incident_id": "inc-1", "status": "investigating"},
+        )
+
+        assert created is True
+        assert stale_create is False
+        assert advanced is True
+        assert stale_update is False
+        assert observed == {"incident_id": "inc-1", "status": "open"}
+        assert canonical == observed_after == {
+            "incident_id": "inc-1",
+            "status": "resolved",
+        }
+        assert owner.delete_if_matches(
+            "inc-1",
+            {"incident_id": "inc-1", "status": "open"},
+        ) is False
+        assert owner.delete_if_matches(
+            "inc-1",
+            {"incident_id": "inc-1", "status": "resolved"},
+        ) is True
+
+    statements = " ".join(_FakeConnection.statements).upper()
+    assert "WHERE RECORD_ID = %S AND PAYLOAD = %S::JSONB" in statements
+    assert "RETURNING PAYLOAD" in statements
 
 
 def test_postgres_json_owner_store_atomically_reserves_composite_identity():
@@ -187,6 +270,77 @@ def test_postgres_json_owner_store_atomically_reserves_composite_identity():
     }
     assert len(_FakeConnection.rows['"incident"."delivery_inbox"']) == 1
     assert any("LOCK TABLE" in statement for statement in _FakeConnection.statements)
+
+
+def test_postgres_incident_store_persists_one_row_and_rejects_stale_snapshot():
+    from services.incident.incident import IncidentCase, IncidentError
+    from services.incident.pg_store import PostgresIncidentStore
+
+    def incident(incident_id: str) -> IncidentCase:
+        return IncidentCase(
+            incident_id=incident_id,
+            title=f"Incident {incident_id}",
+            status="open",
+            severity="high",
+            created_at="2026-07-15T00:00:00Z",
+            binding_id=f"binding-{incident_id}",
+            deployment_stage="paper",
+            deployment_plan_id=f"plan-{incident_id}",
+            capital_pool_id="pool-1",
+            persona_capital_binding_id=f"pcb-{incident_id}",
+            artifact_id=f"artifact-{incident_id}",
+            artifact_version="1.0.0",
+            runtime_id=f"runtime-{incident_id}",
+            trace_id=f"trace-{incident_id}",
+        )
+
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        store = PostgresIncidentStore(dsn="postgresql://owner@example/db")
+        store.create_incident(incident("inc-1"))
+        store.create_incident(incident("inc-2"))
+        _FakeConnection.statements.clear()
+
+        previous = store.require_incident("inc-1")
+        updated = store.update_incident_status(
+            "inc-1",
+            "investigating",
+            expected_snapshot=previous.to_dict(),
+        )
+        assert updated.status == "investigating"
+        assert store.require_incident("inc-2").status == "open"
+        writes = [
+            " ".join(statement.split()).upper()
+            for statement in _FakeConnection.statements
+            if statement.lstrip().upper().startswith(("UPDATE", "INSERT", "DELETE"))
+        ]
+        assert len(writes) == 1
+        assert 'UPDATE "INCIDENT"."INCIDENT_CASES"' in writes[0]
+
+        expected = updated.to_dict()
+        owner = store._incident_records
+        real_compare_and_set = owner.compare_and_set
+        table = '"incident"."incident_cases"'
+
+        def concurrent_close(record_id, expected_payload, payload):
+            current = dict(_FakeConnection.rows[table][record_id])
+            _FakeConnection.rows[table][record_id] = {
+                **current,
+                "status": "closed",
+                "resolved_at": "2026-07-15T00:01:00Z",
+            }
+            return real_compare_and_set(record_id, expected_payload, payload)
+
+        with mock.patch.object(owner, "compare_and_set", side_effect=concurrent_close):
+            with pytest.raises(IncidentError, match="changed concurrently"):
+                store.update_incident_status(
+                    "inc-1",
+                    "resolved",
+                    expected_snapshot=expected,
+                )
+
+        assert store.require_incident("inc-1").status == "closed"
+        assert store.require_incident("inc-1").resolved_at == "2026-07-15T00:01:00Z"
 
 
 def test_ensure_postgres_schema_accepts_precreated_schema_for_restricted_role():

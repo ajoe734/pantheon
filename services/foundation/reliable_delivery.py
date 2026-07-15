@@ -13,6 +13,7 @@ import json
 import os
 import tempfile
 import threading
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -129,6 +130,38 @@ class AtomicJsonRecordStore:
             records[str(record_id)] = dict(payload)
             self._write_unlocked(records)
 
+    def compare_and_set(
+        self,
+        record_id: str,
+        expected_payload: dict[str, Any] | None,
+        payload: dict[str, Any],
+    ) -> tuple[bool, dict[str, Any] | None]:
+        """Atomically replace one record if its complete snapshot still matches."""
+
+        if not str(record_id).strip():
+            raise ValueError("record_id is required")
+        with self._locked(exclusive=True):
+            records = self._read_unlocked()
+            current = records.get(str(record_id))
+            if current != expected_payload:
+                return False, dict(current) if current is not None else None
+            records[str(record_id)] = dict(payload)
+            self._write_unlocked(records)
+            return True, dict(payload)
+
+    def delete_if_matches(self, record_id: str, expected_payload: dict[str, Any]) -> bool:
+        """Delete one record if no concurrent writer changed it."""
+
+        if not str(record_id).strip():
+            raise ValueError("record_id is required")
+        with self._locked(exclusive=True):
+            records = self._read_unlocked()
+            if records.get(str(record_id)) != expected_payload:
+                return False
+            del records[str(record_id)]
+            self._write_unlocked(records)
+            return True
+
     def insert_if_absent(
         self,
         record_id: str,
@@ -203,6 +236,8 @@ class ReliableOutboxRecord:
     last_redrive_actor: str | None = None
     last_redrive_note: str | None = None
     transition: Mapping[str, Any] | None = None
+    claim_token: str | None = None
+    claim_expires_at: datetime | None = None
 
     @property
     def outbox_id(self) -> str:
@@ -237,6 +272,8 @@ class ReliableOutboxRecord:
             "last_redrive_actor": self.last_redrive_actor,
             "last_redrive_note": self.last_redrive_note,
             "transition": dict(self.transition or {}),
+            "claim_token": self.claim_token,
+            "claim_expires_at": _format_time(self.claim_expires_at),
         }
         return payload
 
@@ -252,6 +289,8 @@ class ReliableOutboxRecord:
             last_redrive_actor=delivery.get("last_redrive_actor"),
             last_redrive_note=delivery.get("last_redrive_note"),
             transition=dict(delivery.get("transition") or {}),
+            claim_token=delivery.get("claim_token"),
+            claim_expires_at=_parse_time(delivery.get("claim_expires_at")),
         )
 
     def activate(self) -> "ReliableOutboxRecord":
@@ -262,6 +301,31 @@ class ReliableOutboxRecord:
             last_redrive_actor=self.last_redrive_actor,
             last_redrive_note=self.last_redrive_note,
             transition=self.transition,
+        )
+
+    def claim_for_delivery(
+        self,
+        *,
+        token: str,
+        lease_seconds: float,
+        now: datetime | None = None,
+    ) -> "ReliableOutboxRecord":
+        effective_now = now or utc_now()
+        if not str(token).strip():
+            raise ValueError("delivery claim token is required")
+        if not self.is_due(effective_now):
+            raise ValueError(f"outbox record is not due: {self.outbox_id}")
+        return ReliableOutboxRecord(
+            record=_copy_outbox(self.record, updated_at=effective_now),
+            delivery_ready=self.delivery_ready,
+            next_attempt_at=self.next_attempt_at,
+            redrive_count=self.redrive_count,
+            last_redrive_actor=self.last_redrive_actor,
+            last_redrive_note=self.last_redrive_note,
+            transition=self.transition,
+            claim_token=str(token).strip(),
+            claim_expires_at=effective_now
+            + timedelta(seconds=max(1.0, float(lease_seconds))),
         )
 
     def mark_published(self) -> "ReliableOutboxRecord":
@@ -324,11 +388,15 @@ class ReliableOutboxRecord:
         )
 
     def is_due(self, now: datetime | None = None) -> bool:
+        effective_now = now or utc_now()
         if not self.delivery_ready:
             return False
         if self.status not in {OutboxRecordStatus.PENDING, OutboxRecordStatus.FAILED}:
             return False
-        return self.next_attempt_at is None or self.next_attempt_at <= (now or utc_now())
+        if self.claim_token:
+            if self.claim_expires_at is None or self.claim_expires_at > effective_now:
+                return False
+        return self.next_attempt_at is None or self.next_attempt_at <= effective_now
 
 
 def _copy_outbox(record: OutboxRecord, *, updated_at: datetime) -> OutboxRecord:
@@ -403,8 +471,37 @@ class ReliableOutboxStore:
 
     def activate(self, record: ReliableOutboxRecord) -> ReliableOutboxRecord:
         activated = record.activate()
-        self.put(activated)
-        return activated
+        replaced, canonical_payload = self.impl.compare_and_set(
+            record.outbox_id,
+            record.to_dict(),
+            activated.to_dict(),
+        )
+        if replaced:
+            return activated
+        if canonical_payload is None:
+            raise ValueError(f"prepared outbox record disappeared: {record.outbox_id}")
+        canonical = ReliableOutboxRecord.from_dict(canonical_payload)
+        _assert_same_prepared_semantics(
+            existing=canonical,
+            incoming_record=record.record,
+            incoming_transition=record.transition or {},
+        )
+        if canonical.delivery_ready or canonical.status in {
+            OutboxRecordStatus.PUBLISHED,
+            OutboxRecordStatus.FAILED,
+            OutboxRecordStatus.DEAD_LETTERED,
+        }:
+            return canonical
+        raise ValueError(f"prepared outbox activation changed concurrently: {record.outbox_id}")
+
+    def discard_prepared(self, record: ReliableOutboxRecord) -> bool:
+        """Remove an inert intent only while its exact prepared snapshot remains."""
+
+        if record.delivery_ready or record.status != OutboxRecordStatus.PENDING:
+            raise ValueError("only pending, non-deliverable prepared records may be discarded")
+        if record.claim_token:
+            raise ValueError("claimed outbox records cannot be discarded")
+        return self.impl.delete_if_matches(record.outbox_id, record.to_dict())
 
     def list_all(self) -> list[ReliableOutboxRecord]:
         return [ReliableOutboxRecord.from_dict(payload) for payload in self.impl.list_all()]
@@ -420,6 +517,79 @@ class ReliableOutboxStore:
     def list_due(self, *, now: datetime | None = None) -> list[ReliableOutboxRecord]:
         return [record for record in self.list_pending_and_failed() if record.is_due(now)]
 
+    def claim_due(
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: float = 30.0,
+        now: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[ReliableOutboxRecord]:
+        """Atomically lease due records so only one worker completes each attempt."""
+
+        effective_now = now or utc_now()
+        claimed: list[ReliableOutboxRecord] = []
+        for candidate in self.list_due(now=effective_now):
+            if limit is not None and len(claimed) >= max(0, int(limit)):
+                break
+            token = f"{str(worker_id).strip() or 'worker'}:{uuid.uuid4()}"
+            leased = candidate.claim_for_delivery(
+                token=token,
+                lease_seconds=lease_seconds,
+                now=effective_now,
+            )
+            replaced, _ = self.impl.compare_and_set(
+                candidate.outbox_id,
+                candidate.to_dict(),
+                leased.to_dict(),
+            )
+            if replaced:
+                claimed.append(leased)
+        return claimed
+
+    def complete_published(
+        self,
+        claimed: ReliableOutboxRecord,
+    ) -> tuple[bool, ReliableOutboxRecord]:
+        return self._complete_claim(claimed, claimed.mark_published())
+
+    def complete_failed(
+        self,
+        claimed: ReliableOutboxRecord,
+        error: str,
+        *,
+        max_attempts: int,
+        base_delay_seconds: float,
+        now: datetime | None = None,
+        permanent: bool = False,
+    ) -> tuple[bool, ReliableOutboxRecord]:
+        failed = claimed.mark_failed(
+            error,
+            max_attempts=max_attempts,
+            base_delay_seconds=base_delay_seconds,
+            now=now,
+            permanent=permanent,
+        )
+        return self._complete_claim(claimed, failed)
+
+    def _complete_claim(
+        self,
+        claimed: ReliableOutboxRecord,
+        completed: ReliableOutboxRecord,
+    ) -> tuple[bool, ReliableOutboxRecord]:
+        if not claimed.claim_token:
+            raise ValueError("outbox completion requires a delivery claim")
+        replaced, canonical_payload = self.impl.compare_and_set(
+            claimed.outbox_id,
+            claimed.to_dict(),
+            completed.to_dict(),
+        )
+        if replaced:
+            return True, completed
+        if canonical_payload is None:
+            raise ValueError(f"claimed outbox record disappeared: {claimed.outbox_id}")
+        return False, ReliableOutboxRecord.from_dict(canonical_payload)
+
     def list_prepared(self) -> list[ReliableOutboxRecord]:
         return [
             record
@@ -432,8 +602,16 @@ class ReliableOutboxStore:
         if existing is None:
             raise KeyError(outbox_id)
         redriven = existing.redrive(actor=actor, note=note)
-        self.put(redriven)
-        return redriven
+        replaced, canonical_payload = self.impl.compare_and_set(
+            outbox_id,
+            existing.to_dict(),
+            redriven.to_dict(),
+        )
+        if replaced:
+            return redriven
+        if canonical_payload is None:
+            raise KeyError(outbox_id)
+        raise ValueError(f"outbox record changed concurrently before redrive: {outbox_id}")
 
 
 _STABLE_EVENT_FIELDS = (
@@ -520,6 +698,56 @@ class ReliableInboxStore:
             )
         return "new", None
 
+    def reserve(
+        self,
+        event: EventEnvelope,
+        *,
+        result_ref: str,
+    ) -> tuple[str, dict[str, Any]]:
+        """Atomically claim first-hop admission for an event identity.
+
+        The reservation is written before domain mutation.  Exact concurrent
+        callers observe the same reservation instead of both executing the
+        consumer, while a divergent event ID or idempotency-key reuse fails
+        closed.
+        """
+
+        payload = {
+            "event_id": event.event_id,
+            "idempotency_key": event.idempotency_key,
+            "event_checksum": sha256_checksum(event.to_dict()),
+            "event": event.to_dict(),
+            "state": "reserved",
+            "result_ref": str(result_ref),
+        }
+        inserted, canonical = self.impl.insert_if_absent(
+            event.event_id,
+            payload,
+            unique_fields=("idempotency_key",),
+        )
+        if canonical.get("event_checksum") != payload["event_checksum"]:
+            return "conflict", canonical
+        if str(canonical.get("result_ref") or "") != str(result_ref):
+            return "conflict", canonical
+        return ("claimed" if inserted else "duplicate"), canonical
+
+    def release_reservation(
+        self,
+        event: EventEnvelope,
+        reservation: Mapping[str, Any],
+    ) -> bool:
+        """Release only the exact still-unapplied reservation after failure."""
+
+        canonical = dict(reservation)
+        if canonical.get("state") != "reserved" or canonical.get("receipt") is not None:
+            return False
+        if canonical.get("event_checksum") != sha256_checksum(event.to_dict()):
+            return False
+        return self.impl.delete_if_matches(
+            str(canonical.get("event_id") or event.event_id),
+            canonical,
+        )
+
     def record_applied(
         self,
         event: EventEnvelope,
@@ -541,15 +769,38 @@ class ReliableInboxStore:
             "event": event.to_dict(),
             "receipt": receipt.to_dict(),
             "result_ref": result_ref,
+            "state": "applied",
         }
         inserted, canonical = self.impl.insert_if_absent(
             event.event_id,
             payload,
             unique_fields=("idempotency_key",),
         )
-        if inserted or canonical.get("event_checksum") == payload["event_checksum"]:
+        if inserted:
             return canonical
-        raise ValueError(f"divergent replay for event_id={event.event_id!r}")
+        if canonical.get("event_checksum") != payload["event_checksum"]:
+            raise ValueError(f"divergent replay for event_id={event.event_id!r}")
+        if str(canonical.get("result_ref") or "") != str(result_ref):
+            raise ValueError(f"divergent result for event_id={event.event_id!r}")
+        if canonical.get("state") == "applied" or isinstance(canonical.get("receipt"), Mapping):
+            return canonical
+
+        canonical_id = str(canonical.get("event_id") or event.event_id)
+        replaced, durable = self.impl.compare_and_set(
+            canonical_id,
+            canonical,
+            payload,
+        )
+        if replaced:
+            return payload
+        if (
+            durable is not None
+            and durable.get("event_checksum") == payload["event_checksum"]
+            and str(durable.get("result_ref") or "") == str(result_ref)
+            and (durable.get("state") == "applied" or isinstance(durable.get("receipt"), Mapping))
+        ):
+            return durable
+        raise ValueError(f"inbox reservation changed concurrently for event_id={event.event_id!r}")
 
 
 def reconcile_prepared(
