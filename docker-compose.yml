@@ -1011,6 +1011,12 @@ services:
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
+      # Every hosted assistant mutation requires a stable client key and stores
+      # its replay envelope on the durable BFF volume.  This keeps exact retries
+      # deterministic across operator-bff restarts and fails closed on uncertain
+      # outcomes instead of silently executing a second mutation.
+      PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_REQUIRED: ${PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_REQUIRED:-true}
+      PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH: ${PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH:-/data/bff/assistant-command-idempotency.json}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - bff-data:/data/bff

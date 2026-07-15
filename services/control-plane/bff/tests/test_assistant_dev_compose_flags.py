@@ -60,6 +60,14 @@ def test_dev_compose_enables_codex_assistant_provider_for_bff() -> None:
         env["PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED"]
         == "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}"
     )
+    assert (
+        env["PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_REQUIRED"]
+        == "${PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_REQUIRED:-true}"
+    )
+    assert (
+        env["PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH"]
+        == "${PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH:-/data/bff/assistant-command-idempotency.json}"
+    )
     assert env["PANTHEON_LIVE_BROKER_ENABLED"] == "${PANTHEON_LIVE_BROKER_ENABLED:-false}"
     assert (
         "${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:rw"
