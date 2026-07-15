@@ -120,11 +120,11 @@ class TestAlphaRevalidationWorkerRunOnce:
         assert run["run_id"].startswith("arvrun-")
         assert run["task_id"].startswith("arvtask-")
         assert run["strategy_id"] == "s1"
-        assert run["spec_version"] == "1.0"
+        assert run["strategy_spec_version"] == "1.0"
         assert run["status"] == "pending"
         assert run["runtime_env"] == "research"
-        assert run["production_activation"] == "disabled"
-        assert run["dispatch_mode"] == "stub"
+        assert run["metadata"]["production_activation"] == "disabled"
+        assert run["metadata"]["dispatch_mode"] == "stub"
         assert run["trace_id"].startswith("trace-alpha-reval-")
 
     def test_run_record_persists_to_file(self, tmp_path):
@@ -143,6 +143,90 @@ class TestAlphaRevalidationWorkerRunOnce:
         assert entries[0]["last_revalidation_status"] in ("dispatched", "skipped_already_exists")
         assert entries[0]["revalidation_count"] >= 1
         assert len(entries[0]["experiment_run_ids"]) >= 1
+
+    def test_run_once_non_stub_revalidation_completed(self, tmp_path):
+        queue, worker = _make_worker(tmp_path, dispatch_mode="handoff_only")
+        queue.enqueue(_approved_spec("s1"))
+        
+        mock_spec = {
+            "spec_version": "1.0",
+            "strategy_id": "s1",
+            "title": "Mock Canonical Strategy s1",
+            "hypothesis": "Two liquid symbols SMA crossover produces a research signal.",
+            "objective": "Prove revalidation.",
+            "lifecycle_state": "candidate",
+            "market_scope": {
+                "symbols": ["SPY"],
+                "asset_classes": ["equity"],
+                "frequency": "1d",
+                "venues": ["NYSE"]
+            },
+            "data_dependencies": [
+                {"ref": "dataset:synthetic", "kind": "dataset"}
+            ],
+            "execution_profile": {
+                "signal_schema_version": "1.0",
+                "quantity_type": "PERCENT_PORTFOLIO",
+                "rebalance_cadence": "1d",
+                "execution_mode_hint": "research"
+            },
+            "evaluation_plan": {
+                "metrics": ["sharpe_ratio"],
+                "candidate_gate": "Gate pass.",
+                "paper_gate": "Paper gate.",
+                "live_gate": "Live gate."
+            },
+            "governance": {
+                "approval_required": True,
+                "policy_id": "policy-1",
+                "risk_profile": "research_only"
+            },
+            "provenance": {
+                "source_kind": "workflow",
+                "created_at": "2026-05-17T11:10:00Z",
+                "source_refs": ["source:1"],
+                "created_by": "Codex"
+            }
+        }
+        
+        with mock.patch.object(worker, "_fetch_spec_from_registry", return_value=mock_spec) as mock_fetch:
+            result = worker.run_once()
+            mock_fetch.assert_called_once_with("s1", "1.0")
+
+        assert result["processed"] == 1
+        assert len(result["created_run_ids"]) == 1
+        assert result["dispatch_mode"] == "handoff_only"
+
+        runs = worker.list_runs()
+        assert len(runs) == 1
+        run = runs[0]
+        assert run["status"] == "completed"
+        assert run["started_at"] is not None
+        assert run["finished_at"] is not None
+        assert run["output_manifest_ref"].startswith("alpha-replication://")
+        assert run["artifact_refs"] == ["reg-strategy-spec-s1"]
+        assert run["metadata"].get("input_source") == "registry"
+        assert run["metadata"].get("production_activation") == "disabled"
+
+    def test_run_once_non_stub_revalidation_registry_miss(self, tmp_path):
+        queue, worker = _make_worker(tmp_path, dispatch_mode="handoff_only")
+        queue.enqueue(_approved_spec("s1"))
+
+        with mock.patch.object(worker, "_fetch_spec_from_registry", return_value=None) as mock_fetch:
+            result = worker.run_once()
+            mock_fetch.assert_called_once_with("s1", "1.0")
+
+        assert result["processed"] == 1
+        assert len(result["created_run_ids"]) == 1
+        assert result["dispatch_mode"] == "handoff_only"
+
+        runs = worker.list_runs()
+        assert len(runs) == 1
+        run = runs[0]
+        assert run["status"] == "failed"
+        assert run["failure_reason"] == "Registry fetch failed, using synthetic fallback spec"
+        assert run["metadata"].get("input_source") == "synthetic"
+        assert run["metadata"].get("production_activation") == "disabled"
 
 
 class TestAlphaRevalidationWorkerMetrics:
@@ -199,3 +283,89 @@ class TestAlphaRevalidationWorkerListRuns:
         queue.enqueue(_approved_spec("s1"))
         worker.run_once()
         assert worker.list_runs(strategy_id="nonexistent") == []
+
+
+class TestAlphaRevalidationWorkerBehavioralProof:
+    def test_restart_and_recovery_flow(self, tmp_path):
+        # 1. Start with initial queue and worker
+        queue = AlphaReplicationQueue(tmp_path)
+        worker = AlphaRevalidationWorker(queue, tmp_path)
+        
+        # Enqueue spec
+        spec = _approved_spec("strat-restart", "1.0")
+        queue.enqueue(spec)
+        
+        # Verify pending
+        assert len(queue.list_pending()) == 1
+        
+        # 2. Simulate shutdown/restart by recreating queue and worker from the same files
+        queue_restarted = AlphaReplicationQueue(tmp_path)
+        worker_restarted = AlphaRevalidationWorker(queue_restarted, tmp_path)
+        
+        # State should be recovered
+        assert len(queue_restarted.list_pending()) == 1
+        
+        # Process and verify
+        res = worker_restarted.run_once()
+        assert res["processed"] == 1
+        assert len(res["created_run_ids"]) == 1
+        
+        # Recreated worker should list the run
+        runs = worker_restarted.list_runs()
+        assert len(runs) == 1
+        assert runs[0]["strategy_id"] == "strat-restart"
+        
+        # Recreated worker metrics should be updated
+        metrics = worker_restarted.get_metrics()
+        assert metrics["run_count"] == 1
+        assert metrics["last_success_at"] is not None
+
+    def test_retry_and_recovery_from_exception(self, tmp_path):
+        # Test that if _process_entry raises an exception, the queue entry remains pending
+        # and can be retried in a subsequent run/after restart (guaranteeing RPO=0 / no lost events).
+        queue = AlphaReplicationQueue(tmp_path)
+        worker = AlphaRevalidationWorker(queue, tmp_path, dispatch_mode="handoff_only")
+        
+        # Enqueue spec
+        spec = _approved_spec("strat-retry", "1.0")
+        queue.enqueue(spec)
+        
+        # Mock _fetch_spec_from_registry to raise an exception
+        with mock.patch.object(worker, "_fetch_spec_from_registry", side_effect=RuntimeError("Transient registry error")):
+            result = worker.run_once()
+            
+            # The run failed with an error
+            assert result["processed"] == 1
+            assert len(result["created_run_ids"]) == 0
+            assert len(result["errors"]) == 1
+            assert "Transient registry error" in result["errors"][0]["error"]
+            
+        # Verify that queue entry is STILL pending (rollback/compensation behavior)
+        # and not lost or marked as completed/dispatched.
+        assert len(queue.list_pending()) == 1
+        
+        # Now simulate a retry where the error is resolved
+        mock_spec = {
+            "spec_version": "1.0",
+            "strategy_id": "strat-retry",
+            "title": "Strategy",
+            "hypothesis": "H",
+            "objective": "O",
+            "lifecycle_state": "candidate",
+            "market_scope": {"symbols": ["SPY"], "asset_classes": ["equity"], "frequency": "1d", "venues": ["NYSE"]},
+            "data_dependencies": [{"ref": "dataset:synthetic", "kind": "dataset"}],
+            "execution_profile": {"signal_schema_version": "1.0", "quantity_type": "PERCENT_PORTFOLIO", "rebalance_cadence": "1d", "execution_mode_hint": "research"},
+            "evaluation_plan": {"metrics": ["sharpe_ratio"], "candidate_gate": "pass", "paper_gate": "pass", "live_gate": "pass"},
+            "governance": {"approval_required": True, "policy_id": "policy-1", "risk_profile": "research_only"},
+            "provenance": {"source_kind": "workflow", "created_at": "2026-05-17T11:10:00Z", "source_refs": ["source:1"], "created_by": "Codex"}
+        }
+        with mock.patch.object(worker, "_fetch_spec_from_registry", return_value=mock_spec):
+            result2 = worker.run_once()
+            assert result2["processed"] == 1
+            assert len(result2["created_run_ids"]) == 1
+            
+        # The queue entry is still logically there, but its last revalidation status is completed.
+        entries = queue.list_all()
+        assert len(entries) == 1
+        assert entries[0]["last_revalidation_status"] == "completed"
+
