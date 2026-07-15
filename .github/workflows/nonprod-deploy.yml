@@ -50,6 +50,11 @@ on:
         required: false
         default: false
         type: boolean
+      run_loop_prod_tel_002_probe:
+        description: "Dev root only: prove a natural canonical paper lifecycle against committed telemetry"
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       # publish/v* push  → auto-redeploy DEV VM with the publish snapshot.
@@ -136,6 +141,8 @@ jobs:
           esac
 
       - name: Validate target and compose contract
+        env:
+          RUN_LOOP_PROD_TEL_002_PROBE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe || false }}
         run: |
           case "${TARGET_ENV}:${TARGET_COMPONENT}" in
             dev:auto|dev:root|dev:bff)
@@ -152,6 +159,11 @@ jobs:
 
           if [[ "${TARGET_ENV}" != "dev" && "${DEV_AUTH_PROFILE}" != "strict" ]]; then
             echo "Auth profile ${DEV_AUTH_PROFILE} is valid only for dev deployments." >&2
+            exit 1
+          fi
+
+          if [[ "${RUN_LOOP_PROD_TEL_002_PROBE}" == "true" && ( "${TARGET_ENV}:${TARGET_COMPONENT}" != "dev:root" || "${DEV_AUTH_PROFILE}" != "strict" ) ]]; then
+            echo "LOOP-PROD-TEL-002 hosted proof requires dev/root with strict auth." >&2
             exit 1
           fi
 
@@ -280,6 +292,77 @@ jobs:
         with:
           name: evoloop-001-hosted-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.evolution-dispatch-probe.outputs.artifact_path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Dev canonical paper lifecycle hosted probe
+        id: loop-prod-tel-002-probe
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe && env.TARGET_ENV == 'dev' && env.TARGET_COMPONENT == 'root' }}
+        env:
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || '/home/lupin/pantheon-ci-deploy/dev-root' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}
+          DEV_BFF_PUBLIC_URL: ${{ vars.DEV_BFF_PUBLIC_URL || 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io' }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          DEPLOY_SHA: ${{ steps.sha.outputs.sha }}
+        run: |
+          set -euo pipefail
+          evidence_name="loop-prod-tel-002-hosted-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          readback_name="loop-prod-tel-002-bff-readback-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          remote_evidence="/tmp/${evidence_name}"
+          local_evidence="/tmp/${evidence_name}"
+          readback_evidence="/tmp/${readback_name}"
+          container_evidence="/tmp/${evidence_name}"
+          printf -v worktree_q '%q' "${DEV_DEPLOY_WORKTREE}"
+          printf -v deploy_sha_q '%q' "${DEPLOY_SHA}"
+          printf -v remote_evidence_q '%q' "${remote_evidence}"
+          printf -v container_evidence_q '%q' "${container_evidence}"
+          echo "artifact_path=${local_evidence}" >> "$GITHUB_OUTPUT"
+          echo "readback_artifact_path=${readback_evidence}" >> "$GITHUB_OUTPUT"
+          set +e
+          gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
+            --zone "${DEV_ZONE}" \
+            --project "${GCP_DEPLOY_PROJECT_ID}" \
+            --ssh-flag=-T \
+            --command "set -uo pipefail; cd ${worktree_q} || exit 1; container_evidence=${container_evidence_q}; remote_evidence=${remote_evidence_q}; probe_status=0; docker compose -p pantheon -f docker-compose.yml exec -T loop-run-projector-scheduler python -m services.trade_journey.hosted_lifecycle_probe --expected-sha ${deploy_sha_q} --output \"\${container_evidence}\" --timeout-seconds 420 --poll-seconds 5 || probe_status=\$?; container_id=\$(docker compose -p pantheon -f docker-compose.yml ps -q loop-run-projector-scheduler) || exit 1; if [[ -z \"\${container_id}\" ]]; then exit 1; fi; docker cp \"\${container_id}:\${container_evidence}\" \"\${remote_evidence}\" || exit 1; exit \${probe_status}"
+          probe_status=$?
+          scp_status=0
+          gcloud compute scp \
+            --zone "${DEV_ZONE}" \
+            --project "${GCP_DEPLOY_PROJECT_ID}" \
+            "${REMOTE_USER}@${DEV_VM}:${remote_evidence}" \
+            "${local_evidence}" || scp_status=$?
+          set -e
+          if [[ "${scp_status}" -ne 0 || ! -s "${local_evidence}" ]]; then
+            python3 -c 'import sys; from pathlib import Path; from services.trade_journey.hosted_lifecycle_probe import write_failure_artifact; write_failure_artifact(Path(sys.argv[1]), expected_sha=sys.argv[2], code="hosted_probe_transport_error", message="hosted lifecycle evidence transport failed")' "${local_evidence}" "${DEPLOY_SHA}"
+          fi
+          readback_status=0
+          python3 -m services.trade_journey.hosted_bff_readback \
+            --source "${local_evidence}" \
+            --output "${readback_evidence}" \
+            --expected-sha "${DEPLOY_SHA}" \
+            --base-url "${DEV_BFF_PUBLIC_URL}" || readback_status=$?
+          echo "Canonical lifecycle hosted evidence: ${evidence_name}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Authenticated public BFF readback evidence: ${readback_name}" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${probe_status}" -ne 0 ]]; then
+            exit "${probe_status}"
+          fi
+          if [[ "${scp_status}" -ne 0 ]]; then
+            exit "${scp_status}"
+          fi
+          exit "${readback_status}"
+
+      - name: Upload canonical paper lifecycle hosted evidence
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe && env.TARGET_ENV == 'dev' && env.TARGET_COMPONENT == 'root' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: loop-prod-tel-002-hosted-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.loop-prod-tel-002-probe.outputs.artifact_path }}
+            ${{ steps.loop-prod-tel-002-probe.outputs.readback_artifact_path }}
           if-no-files-found: error
           retention-days: 30
 
