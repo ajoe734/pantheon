@@ -1,22 +1,21 @@
 # EVOCHAIN-001 — Threshold-breach producer (telemetry -> incidents)
 
-Status: reviewed and approved (Codex, round-9 re-review) on PR #3620
-(`task/EVOCHAIN-001` -> `dev`); closeout in progress. Review points from
-rounds 1-9 have all been resolved (see below, kept as historical record of
-each round's finding and fix — a point marked "fixed" in an earlier round's
-section was true at that round's review time; round-9 found further gaps in
-some of the same areas, addressed in its own section below). Round-9 fixed 6
-further points found during re-review of that same PR, and the round-9 fixes
-themselves were independently re-verified as correct at closeout time. LIN-003
+Status: owner closeout verified by Codex after Antigravity's final approval;
+delivery PR #3620 (`task/EVOCHAIN-001` -> `dev`). Codex performed the round-9
+technical re-review, and Antigravity recorded the canonical final approval on
+2026-07-14 after independently verifying the approved producer behavior. Review
+points from rounds 1-9 have all been resolved (see below, kept as historical
+record of each round's finding and fix — a point marked "fixed" in an earlier
+round's section was true at that round's review time; round-9 found further
+gaps in some of the same areas, addressed in its own section below). LIN-003
 has successfully landed, adding the live telemetry lineage write path and
 resolving the default-validator platform blocker (the default
 CanonicalReferenceValidator now returns 201 for a live-ingested breach event).
-All tests pass locally (135 across the worker, incidents, and incidents
-replay suites, re-run after merging `origin/dev` to resolve a second BEHIND
-state) and compose volume mounting persists the sweep state.
+Owner closeout validation on 2026-07-15 passed the focused and full local suites,
+compose rendering, service activation, diff checks, and isolated-store proof.
 
-Owner: Claude
-Reviewer: Codex
+Owner: Codex
+Reviewer: Antigravity
 Wave: 0
 Depends on: none
 
@@ -63,7 +62,10 @@ postmortem -> evolution -> journal chain never fires from real data.
 - `services/evolution/config/threshold_sweep_baselines.json` — live config:
   per-`artifact_id` research-approved baseline values (e.g.
   `expected_drawdown`), used to turn a raw runtime-summary metric into a
-  unit-consistent multiple before comparison. Ships empty.
+  unit-consistent multiple before comparison. EVOLOOP-005 has since added the
+  first governed entry,
+  `artifact-tw-session-momentum-v1.expected_drawdown=0.0303`; artifacts without
+  an approved positive baseline continue to fail closed.
 - `docker-compose.yml` — new `evolution-threshold-sweep-producer` service.
   Not gated behind a profile (default-on, like `reconciliation-drift-svc`).
   Bind-mounts `services/evolution/config` read-only so operators can retune
@@ -71,8 +73,8 @@ postmortem -> evolution -> journal chain never fires from real data.
   service — no image rebuild. Own interval env
   (`EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS`, default `86400`); does not
   touch `EVOLUTION_SCHEDULER_INTERVAL_SECONDS` or any other existing cadence.
-- `services/evolution/test_threshold_sweep_worker.py` — 74 tests (round-9;
-  see "Local validation" below for the current count history).
+- `services/evolution/test_threshold_sweep_worker.py` — 75 tests at owner
+  closeout (see "Local validation" below for the current count history).
 
 ## Round-1 review fixes (Codex, PR #3509, 2026-07-13)
 
@@ -137,6 +139,10 @@ Fixed:
 
 ### 2. Drawdown units did not match the governed threshold
 
+**Historical round-1 context (2026-07-13):** the baseline registry was empty
+when this fix first shipped. EVOLOOP-005 later added the first governed
+baseline; the bullets below preserve the state and reasoning at review time.
+
 The runtime summary's `drawdown`/`drawdown_pct` field is a raw metric
 (telemetry projects it straight from `metrics.drawdown_pct`, see
 `services/telemetry/runtime_summary.py`), not a "current vs. research-expected
@@ -152,8 +158,8 @@ Fixed:
 
 - Added `services/evolution/config/threshold_sweep_baselines.json`: a live
   config mapping `artifact_id -> {ratio_baseline_key: value}` for
-  research-approved baselines. Ships **empty** — no artifact has an approved
-  baseline yet.
+  research-approved baselines. It shipped **empty at round-1 review time** —
+  no artifact had an approved baseline then.
 - `threshold_sweep_thresholds.json`'s `rolling_drawdown_multiple` entry
   declares `"ratio_baseline_key": "expected_drawdown"`. In
   `evaluate_breaches()`, the raw `summary_field` value is divided by the
@@ -161,10 +167,10 @@ Fixed:
   is what gets compared to `threshold_value` (and what is recorded in
   `threshold_snapshot.observed_value`; `raw_observed_value` keeps the
   untouched raw metric for evidence/audit).
-- Fail-closed: an artifact with no baseline entry (i.e. every artifact,
-  today) is skipped with a diagnostic instead of a fabricated comparison —
-  the drawdown-multiple threshold will not fire until an operator/researcher
-  populates a real baseline for that artifact_id.
+- Fail-closed: an artifact with no baseline entry (every artifact at round-1
+  review time) is skipped with a diagnostic instead of a fabricated
+  comparison — the drawdown-multiple threshold cannot fire for that artifact
+  until an operator/researcher populates a real governed baseline.
 - Tests now seed the raw metric through the **real**
   `RuntimeSummaryProjectionStore` (`test_evaluate_breaches_detects_drawdown_breach_from_real_projection`)
   instead of hand-baking `drawdown=1.42` as if the multiple already existed,
@@ -867,56 +873,55 @@ Verified in `test_load_thresholds_missing_file_fails_closed`,
 
 ## Local validation
 
-Counts below are post-merge (`origin/dev` merged into this branch again at
-round-9 review time to resolve a second BEHIND state — `dev` had advanced 37
-commits with unrelated work, merged cleanly with no conflicts).
+Owner closeout reran the full suites on 2026-07-15, then merged the latest
+`origin/dev` (`f4a426439`; two unrelated LOOP-PROD evidence-file commits) and
+reran the 137-test focused path on merge head `3c8cec617`. The current merged
+test tree validates the runtime-manager URL during collection, so the explicit
+environment below is part of the reproducible command rather than an optional
+runtime override. Pytest bytecode/cache and incident data were redirected to
+throwaway directories; `/tmp/pantheon/incidents/incidents.json` remained
+absent before and after both runs.
 
 ```sh
+export PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager:8081
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONPYCACHEPREFIX="$(mktemp -d)/pycache"
+export PYTEST_ADDOPTS='-p no:cacheprovider'
+export INCIDENTS_DATA_DIR="$(mktemp -d)"
+
 python3 -m pytest services/evolution/test_threshold_sweep_worker.py -q
-# 74 passed (round-9: +4 new tests — malformed-delivered-record quarantine,
-# conflicting-threshold fail-closed disable, WAL fsync spy, WAL lock mutual
-# exclusion; remainder unchanged from round-8 plus unrelated dev-merge tests)
+# 75 passed
 
 python3 -m pytest services/evolution -q
-# 217 passed (round-9: +4 in the worker file above; remainder is unrelated
-# work merged in from dev — no regression)
+# 253 passed
 
 python3 -m pytest services/incidents -q
-# 68 passed (round-9: +5 new tests — metric-only incident_id collision,
-# supplemental-ID-injection collision, non-string window rejection,
-# non-string note rejection, and the isolated replay-suite run below counted
-# once via the combined `services/incidents` package; remainder is unrelated
-# work merged in from dev — no regression)
+# 75 passed
 
 python3 -m pytest services/incidents/tests/test_incident_replay_suite.py -q
-# 17 passed (unchanged from round-8; no regression)
+# 17 passed
 
 python3 -m pytest services/incident -q
-# 119 passed (no regression in the INC-001 domain layer; threshold_identity
-# is an optional additive field, default None, no existing test depends on it)
+# 119 passed, 5 skipped
+
+# Post-origin/dev-merge focused re-verification:
+python3 -m pytest -q \
+  services/evolution/test_threshold_sweep_worker.py \
+  services/incidents/test_main_routes.py \
+  services/incidents/tests/test_incident_replay_suite.py
+# 137 passed; 2 non-failing FastAPI on_event deprecation warnings
 
 docker compose config --quiet
 # passed
 
-docker compose config --services | grep evolution-threshold-sweep-producer
+docker compose config --services | grep '^evolution-threshold-sweep-producer$'
 # evolution-threshold-sweep-producer
 
-git diff --check origin/dev...HEAD -- services/evolution/threshold_sweep_worker.py services/evolution/test_threshold_sweep_worker.py services/incidents/consumer.py services/incidents/test_main_routes.py services/incident/incident.py services/incident/evidence_collector.py
+git diff --check origin/dev...HEAD
 # no output
 
-# Isolated-store proof (round-9: replaces the round-8 recipe's
-# `rm -f /tmp/pantheon/incidents/incidents.json`, which deleted the same
-# developer/runtime-shared store the isolation fix is meant to protect).
-# Points INCIDENTS_DATA_DIR at a throwaway sentinel directory instead, so the
-# real shared store is never touched, and confirms it stays untouched:
-SENTINEL_DIR=$(mktemp -d)
-INCIDENTS_DATA_DIR="$SENTINEL_DIR" python3 -m pytest services/incidents/test_main_routes.py services/incidents/tests/test_incident_replay_suite.py -q
-# 60 passed
-ls /tmp/pantheon/incidents/incidents.json
-# No such file or directory — the shared path was never created or touched;
-# both test_main_routes.py's and the replay suite's `clean_store` fixtures
-# inject an in-memory IncidentStore(path=None), so neither ever writes
-# through INCIDENTS_DATA_DIR for the incident store itself.
+test ! -e /tmp/pantheon/incidents/incidents.json
+# passed — the shared path was never created or touched
 ```
 
 ## Acceptance mapping
@@ -931,10 +936,13 @@ ls /tmp/pantheon/incidents/incidents.json
 
 ## Residual risk
 
-- No artifact has an approved `expected_drawdown` baseline yet
-  (`threshold_sweep_baselines.json` ships empty), so the drawdown-multiple
-  threshold — while now unit-correct and fail-closed — will not fire on any
-  real artifact until Research/Ops populates one. Owner: Research/Ops.
+- EVOLOOP-005 has approved
+  `artifact-tw-session-momentum-v1.expected_drawdown=0.0303`, so the
+  drawdown-multiple threshold can evaluate that artifact when fresh drawdown
+  telemetry exists. Every other artifact still requires its own governed,
+  positive `expected_drawdown` entry and remains diagnostic-only until one is
+  approved; the worker never borrows another artifact's baseline. Owner:
+  Research/Ops.
 - The `rolling_pnl_floor` threshold is `enabled: false` pending a
   governance-approved absolute PnL number (the v1 threshold spec only
   documents the drawdown multiplier). Owner: Human/Ops. To activate: set
@@ -957,5 +965,15 @@ ls /tmp/pantheon/incidents/incidents.json
   `evolution-threshold-sweep-producer`. Covered by
   `test_daily_sweep_scheduler_is_enabled_by_default_in_root_compose`
   (`services/evolution/test_compose_activation.py`).
-- Deploying this stack to the shared `dev` environment is still separate
-  follow-up work (EVOCHAIN-011), not part of this task's scope.
+- The Human/Ops zero-candidate decision in
+  `.orchestrator/task-briefs/evochain_001_upstream_decision.md` is a dated
+  2026-07-14 snapshot. EVOLOOP-002 and EVOLOOP-005 have since closed the
+  performance-telemetry and first-baseline tasks; hosted chain verification
+  and shared-dev deployment remain separate EVOCHAIN-010/EVOCHAIN-011 work,
+  not part of this producer task's scope.
+- The compose default WAL path is absolute, volume-backed, writable, and
+  covered by the activation tests. A malformed operator override whose parent
+  cannot be created can still fail during lock acquisition before `run_tick()`
+  formats its diagnostic result; validating that override earlier is a
+  low-priority operability hardening follow-up, not a default-path acceptance
+  blocker. Owner: Evolution Ops.
