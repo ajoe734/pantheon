@@ -39,11 +39,15 @@ class _AssistantSecurityIdentity:
         roles: list[str] | None = None,
         capabilities: list[str] | None = None,
         mfa_verified: bool = False,
+        tenant_ids: list[str] | None = None,
     ) -> None:
         self.operator_id = operator_id
         self.roles = roles or ["operator"]
         self.mfa_verified = mfa_verified
-        self.claims = {"capabilities": capabilities or []}
+        self.claims = {
+            "capabilities": capabilities or [],
+            "tenant_ids": tenant_ids or ["pantheon-dev"],
+        }
 
 
 def _control_mode_client(
@@ -52,6 +56,7 @@ def _control_mode_client(
     roles: list[str] | None = None,
     capabilities: list[str] | None = None,
     mfa_verified: bool = False,
+    tenant_ids: list[str] | None = None,
     prepare_repair_worktree=None,
     provider_list=None,
     provider_register=None,
@@ -63,6 +68,7 @@ def _control_mode_client(
         roles=roles,
         capabilities=capabilities,
         mfa_verified=mfa_verified,
+        tenant_ids=tenant_ids,
     )
 
     router = create_assistant_router(
@@ -271,6 +277,95 @@ def test_control_mode_activation_requires_exact_requested_mode_capability(monkey
     assert details["reason"] == "mode_capability_missing"
     assert details["required_capability"] == "assistant.kernel.repair"
     assert store.status_for_actor("op-security")["active"] is False
+
+
+def test_control_mode_commands_replay_stably_and_validate_aliases_and_tenant(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_REQUIRED", "true")
+    monkeypatch.setenv(
+        "PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH",
+        str(tmp_path / "assistant-command-idempotency.json"),
+    )
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.debug"],
+        mfa_verified=True,
+        tenant_ids=["tenant-alpha"],
+    )
+    payload = {
+        "mode": "kernel_debug",
+        "passphrase": "control phrase ok",
+        "reason": "idempotent activation",
+    }
+
+    missing = client.post(
+        "/bff/assistant/control-mode/activate",
+        json=payload,
+        headers=OPERATOR_TOOL_HEADERS,
+    )
+    assert missing.status_code == 400
+    assert missing.json()["error"]["details"]["reason"] == "idempotency_key_required"
+
+    wrong_tenant = client.post(
+        "/bff/assistant/control-mode/activate",
+        json=payload,
+        headers={
+            **OPERATOR_TOOL_HEADERS,
+            "Idempotency-Key": "activate-wrong-tenant",
+            "X-Tenant-Id": "tenant-beta",
+        },
+    )
+    assert wrong_tenant.status_code == 403
+    assert wrong_tenant.json()["error"]["details"]["reason"] == "tenant_mismatch"
+
+    headers = {
+        **OPERATOR_TOOL_HEADERS,
+        "Idempotency-Key": "activate-stable",
+        "X-Tenant-Id": "tenant-alpha",
+    }
+    first = client.post("/bff/assistant/control-mode/activate", json=payload, headers=headers)
+    replay = client.post("/bff/assistant/control-mode/activate", json=payload, headers=headers)
+    assert first.status_code == replay.status_code == 202
+    assert replay.json() == first.json()
+    assert replay.json()["data"]["activationId"] == first.json()["data"]["activationId"]
+
+    conflict = client.post(
+        "/bff/assistant/control-mode/activate",
+        json={**payload, "reason": "different payload"},
+        headers=headers,
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["details"]["reason"] == "idempotency_payload_conflict"
+
+    alias_conflict = client.post(
+        "/bff/assistant/control-mode/activate",
+        json=payload,
+        headers={**headers, "X-Idempotency-Key": "different-alias"},
+    )
+    assert alias_conflict.status_code == 400
+    assert alias_conflict.json()["error"]["details"]["reason"] == "idempotency_header_conflict"
+
+    deactivate_headers = {
+        **OPERATOR_TOOL_HEADERS,
+        "X-Idempotency-Key": "deactivate-stable",
+    }
+    deactivate = client.post(
+        "/bff/assistant/control-mode/deactivate",
+        json={"reason": "idempotency test complete"},
+        headers=deactivate_headers,
+    )
+    deactivate_replay = client.post(
+        "/bff/assistant/control-mode/deactivate",
+        json={"reason": "idempotency test complete"},
+        headers=deactivate_headers,
+    )
+    assert deactivate.status_code == deactivate_replay.status_code == 202
+    assert deactivate_replay.json() == deactivate.json()
 
 
 def test_control_mode_activation_rejects_invalid_ttl_and_idle_timeout(monkeypatch) -> None:
@@ -496,6 +591,99 @@ def test_repair_worktree_prepare_delegates_to_openclaw_adapter(monkeypatch) -> N
     assert resp.json()["data"]["repair"]["task_id"] == "MGMT-AI-REPAIR-TEST"
     assert resp.json()["data"]["repair"]["receipt"].count(".") == 1
     assert resp.json()["meta"]["openclawAdapterStatus"] == "ok"
+
+
+def test_repair_worktree_prepare_replays_across_router_reload(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_REPAIR_RECEIPT_KEY", "repair-receipt-test-secret")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_REQUIRED", "true")
+    monkeypatch.setenv(
+        "PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH",
+        str(tmp_path / "assistant-command-idempotency.json"),
+    )
+    calls = []
+
+    def prepare(payload, operator_id, trace_id):
+        calls.append((payload, operator_id, trace_id))
+        return {
+            "status": "ok",
+            "data": {
+                "repair": {
+                    "task_id": payload["task_id"],
+                    "task_worktree": "/srv/pantheon-assistant/worktrees/idempotent",
+                    "declared_scope": payload["declared_scope"],
+                    "expected_branch": payload["expected_branch"],
+                    "remote": "origin",
+                    "merge_target": "dev",
+                    "repo_key": payload["repo_key"],
+                    "require_clean": True,
+                }
+            },
+        }
+
+    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.repair"],
+        mfa_verified=True,
+        prepare_repair_worktree=prepare,
+    )
+    activate = client.post(
+        "/bff/assistant/control-mode/activate",
+        json={
+            "passphrase": "control phrase ok",
+            "mode": "kernel_repair",
+            "reason": "prepare idempotency",
+        },
+        headers={**OPERATOR_TOOL_HEADERS, "Idempotency-Key": "activate-repair-idem"},
+    )
+    assert activate.status_code == 202, activate.text
+
+    payload = {
+        "taskId": "MGMT-AI-IDEMPOTENT",
+        "repoKey": "pantheon",
+        "declaredScope": ["services/control-plane/bff"],
+        "expectedBranch": "task/MGMT-AI-IDEMPOTENT",
+    }
+    headers = {**OPERATOR_TOOL_HEADERS, "Idempotency-Key": "prepare-stable"}
+    first = client.post(
+        "/bff/assistant/repair-worktrees/prepare",
+        json=payload,
+        headers=headers,
+    )
+    replay = client.post(
+        "/bff/assistant/repair-worktrees/prepare",
+        json=payload,
+        headers=headers,
+    )
+    assert first.status_code == replay.status_code == 201
+    assert replay.json() == first.json()
+    assert len(calls) == 1
+
+    reloaded_client = _control_mode_client(
+        store,
+        roles=["operator"],
+        capabilities=["assistant.kernel.repair"],
+        mfa_verified=True,
+        prepare_repair_worktree=prepare,
+    )
+    replay_after_reload = reloaded_client.post(
+        "/bff/assistant/repair-worktrees/prepare",
+        json=payload,
+        headers=headers,
+    )
+    assert replay_after_reload.status_code == 201
+    assert replay_after_reload.json() == first.json()
+    assert len(calls) == 1
+
+    conflict = reloaded_client.post(
+        "/bff/assistant/repair-worktrees/prepare",
+        json={**payload, "declaredScope": ["services/openclaw-gateway-adapter"]},
+        headers=headers,
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["details"]["reason"] == "idempotency_payload_conflict"
 
 
 def test_provider_reauth_does_not_require_active_control_mode(monkeypatch) -> None:

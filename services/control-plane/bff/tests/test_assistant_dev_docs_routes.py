@@ -84,6 +84,7 @@ def _make_client(
     *,
     active_control: bool,
     skill_authorizer: Any = _allow_skill,
+    activation_idempotency_key: str | None = None,
 ) -> tuple[TestClient, InMemoryTranscriptStore]:
     identity = _DevDocsIdentity()
     control_store = ControlModeStore(storage_path="off", initial_passphrase=CONTROL_PHRASE)
@@ -105,6 +106,9 @@ def _make_client(
     client = TestClient(app, raise_server_exceptions=True)
 
     if active_control:
+        activation_headers = dict(HEADERS)
+        if activation_idempotency_key:
+            activation_headers["Idempotency-Key"] = activation_idempotency_key
         response = client.post(
             "/bff/assistant/control-mode/activate",
             json={
@@ -112,7 +116,7 @@ def _make_client(
                 "reason": "generate assistant SA/SD for test",
                 "mode": AssistantMode.KERNEL_DEBUG.value,
             },
-            headers=HEADERS,
+            headers=activation_headers,
         )
         assert response.status_code == 202, response.text
 
@@ -234,6 +238,73 @@ def test_dev_docs_generate_archives_and_emits_signed_task_packet(tmp_path, monke
     )
     assert bridge_response.status_code == 201, bridge_response.text
     assert bridge_response.json()["data"]["packetId"] == f"bridge_{packet['packetId']}"
+
+
+def test_dev_docs_and_bridge_commands_are_exactly_replayed(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_REQUIRED", "true")
+    monkeypatch.setenv(
+        "PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH",
+        str(tmp_path / "assistant-command-idempotency.json"),
+    )
+    authorization_calls = []
+
+    def authorize(skill_id, payload, operator_id, trace_id):
+        authorization_calls.append((skill_id, payload, operator_id, trace_id))
+        return _allow_skill(skill_id, payload, operator_id, trace_id)
+
+    client, transcript_store = _make_client(
+        tmp_path,
+        active_control=True,
+        skill_authorizer=authorize,
+        activation_idempotency_key="activate-dev-doc-idempotency",
+    )
+    _seed_turns(transcript_store, "conv-dev-docs-idempotency")
+    payload = {
+        "conversationId": "conv-dev-docs-idempotency",
+        "featureSummary": "Generate an exactly-once SA/SD packet",
+        "affectedModules": ["assistant", "management_ai"],
+        "proposedOwner": "Codex",
+        "emitTaskPacket": True,
+    }
+    generate_headers = {**HEADERS, "Idempotency-Key": "generate-dev-doc-stable"}
+
+    first = client.post(
+        "/bff/assistant/dev-docs/generate",
+        json=payload,
+        headers=generate_headers,
+    )
+    replay = client.post(
+        "/bff/assistant/dev-docs/generate",
+        json=payload,
+        headers=generate_headers,
+    )
+    assert first.status_code == replay.status_code == 201
+    assert replay.json() == first.json()
+    assert len(authorization_calls) == 1
+
+    conflict = client.post(
+        "/bff/assistant/dev-docs/generate",
+        json={**payload, "featureSummary": "Different request"},
+        headers=generate_headers,
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["error"]["details"]["reason"] == "idempotency_payload_conflict"
+
+    bridge_payload = {"devDocPacket": first.json()["data"]}
+    bridge_headers = {**HEADERS, "X-Idempotency-Key": "bridge-packet-stable"}
+    bridge = client.post(
+        "/bff/assistant/dev-bridge/task-packet",
+        json=bridge_payload,
+        headers=bridge_headers,
+    )
+    bridge_replay = client.post(
+        "/bff/assistant/dev-bridge/task-packet",
+        json=bridge_payload,
+        headers=bridge_headers,
+    )
+    assert bridge.status_code == bridge_replay.status_code == 201
+    assert bridge_replay.json() == bridge.json()
 
 
 def test_dev_docs_generate_can_queue_signed_task_packet_for_supervisor_inbox(tmp_path, monkeypatch) -> None:
