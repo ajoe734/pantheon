@@ -115,6 +115,30 @@ class AlphaReplicationQueue:
             self._rewrite_durable(entries)
             return new_entry
 
+    def claim_next_pending(
+        self, tenant_id: str, claimant: str = "system", ignore_keys: set[tuple[str, str]] | None = None
+    ) -> dict[str, Any] | None:
+        """Atomically claim the next pending StrategySpec for a given tenant.
+
+        Updates status to 'claimed', records claimant and timestamp, and returns the entry.
+        """
+        with self._lock_context():
+            entries = self._read()
+            for entry in entries:
+                key = (entry["strategy_id"], entry["spec_version"])
+                if ignore_keys and key in ignore_keys:
+                    continue
+                if (
+                    entry.get("tenant_id", "default") == tenant_id
+                    and entry.get("status") == "pending"
+                ):
+                    entry["status"] = "claimed"
+                    entry["claimed_by"] = claimant
+                    entry["claimed_at"] = _utc_now()
+                    self._rewrite_durable(entries)
+                    return dict(entry)
+            return None
+
     def list_pending(self) -> list[dict[str, Any]]:
         """Return all entries with status='pending'."""
         with self._lock_context():
