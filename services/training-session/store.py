@@ -7,7 +7,7 @@ import tempfile
 from contextlib import contextmanager
 from fcntl import LOCK_EX, LOCK_SH, LOCK_UN, flock
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 
 _PG_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -208,6 +208,12 @@ class TrainingSessionStore:
         if not str(record.get("event_id") or "").strip():
             raise ValueError("event_id is required")
         with self._file_lock(self.events_path, exclusive=True):
+            existing = self._read_jsonl_unlocked(self.events_path)
+            for prior in existing:
+                if prior.get("event_id") == record.get("event_id"):
+                    if prior != record:
+                        raise ValueError(f"event_id conflict: {record['event_id']}")
+                    return prior
             with self.events_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record, ensure_ascii=True, sort_keys=True))
                 handle.write("\n")
@@ -255,6 +261,30 @@ class TrainingSessionStore:
         record = json.loads(json.dumps(job))
         record["job_id"] = job_id
         return self._put_map_record(self.preview_jobs_path, job_id, record)
+
+    def mutate_preview_job(
+        self,
+        job_id: str,
+        mutator: Callable[[Optional[Dict[str, Any]]], Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Atomically read, validate, and replace one preview job.
+
+        The callback runs while the cross-process file lock is held.  It must
+        not call another method on this store or perform network I/O.
+        Raising from the callback leaves the durable map unchanged.
+        """
+
+        with self._file_lock(self.preview_jobs_path, exclusive=True):
+            records = self._read_map_unlocked(self.preview_jobs_path)
+            existing = records.get(job_id)
+            candidate = mutator(json.loads(json.dumps(existing)) if existing is not None else None)
+            if not isinstance(candidate, dict):
+                raise TypeError("preview job mutator must return a dict")
+            record = json.loads(json.dumps(candidate))
+            record["job_id"] = job_id
+            records[job_id] = record
+            self._write_map_unlocked(self.preview_jobs_path, records)
+            return record
 
     def list_replays(self) -> List[Dict[str, Any]]:
         return list(self._read_map(self.replays_path).values())
