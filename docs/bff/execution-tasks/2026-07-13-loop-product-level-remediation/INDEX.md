@@ -26,7 +26,7 @@ Planning authority delivery:
   zero-write dry-run, loop coverage, and the full dispatcher suite, and issued
   an `APPROVE` verdict.
 - Verified catalog digest:
-  `04f94c0c4b2fc9773083624d7fd100f6c3ea2f617dcee2068def61927ffe1644`;
+  `5e18e95f619c171c2717208784558552356d24584bcfdaba128e6e1018518e9c`;
   verified dispatcher result: `172 passed`.
 - This approval closes planning authority only. Product delivery remains
   blocked on the external runtime bootstrap and every downstream fleet task's
@@ -35,6 +35,38 @@ Planning authority delivery:
 ## Addendum Gating & Batching Rationale
 
 The remaining 10 addendum tasks (ATTEST, AUTH-BOOT, AUTH-OPS, BROWSER-AUTH, CLOSE-002, DELIVERY, FE-BUILD, FE-EVID, FLEET, SIGNOFF) are deliberately gated and cannot be dispatched (applied) onto the live board until the prerequisite bootstrap task `LOOP-PROD-RUNTIME-BOOT-001` transitions to `done`. This strict dependency ensures that all subsequent productization tasks run with the proper runtime task audit lock protocol in place, failing closed otherwise to preserve system integrity.
+
+### Addendum convergence audit
+
+The 11 addendum tasks were checked individually against
+`CONVERGENCE-EVOCHAIN-EVOLOOP-2026-07-14.md`. Only the final additive
+program closeout overlaps an existing EVOCHAIN/EVOLOOP delivery. The other ten
+tasks own runtime-lock, delivery-provenance, auth, evidence, build, fleet, or
+sign-off controls and have no overlap with the ruling's evolution dispatch,
+artifact, promote, signal, performance-telemetry, verifier, or thin-slice
+closeout scope.
+
+| Addendum task | Convergence result |
+| --- | --- |
+| `LOOP-PROD-RUNTIME-BOOT-001` | Checked; no EVOCHAIN/EVOLOOP overlap |
+| `LOOP-PROD-ATTEST-001` | Checked; no EVOCHAIN/EVOLOOP overlap |
+| `LOOP-PROD-AUTH-BOOT-001` | Checked; no EVOCHAIN/EVOLOOP overlap |
+| `LOOP-PROD-AUTH-OPS-001` | Checked; no EVOCHAIN/EVOLOOP overlap |
+| `LOOP-PROD-BROWSER-AUTH-001` | Checked; no EVOCHAIN/EVOLOOP overlap |
+| `LOOP-PROD-DELIVERY-001` | Checked; no EVOCHAIN/EVOLOOP overlap |
+| `LOOP-PROD-FE-BUILD-001` | Checked; no EVOCHAIN/EVOLOOP overlap |
+| `LOOP-PROD-FE-EVID-001` | Checked; no EVOCHAIN/EVOLOOP overlap |
+| `LOOP-PROD-FLEET-001` | Checked; no EVOCHAIN/EVOLOOP overlap |
+| `LOOP-PROD-SIGNOFF-001` | Checked; no EVOCHAIN/EVOLOOP overlap |
+| `LOOP-PROD-CLOSE-002` | Consumes `EVOCHAIN-011`, thin-slice deploy/closeout evidence from `EVOLOOP-009`, and persona-learning feedback from `EVOLOOP-011`; does not recreate those scopes |
+
+Correction PR `#3659` merged as
+`af441973540f7cba267dd299cec549c5b22e7b39` and produced catalog digest
+`04f94c0c4b2fc9773083624d7fd100f6c3ea2f617dcee2068def61927ffe1644`.
+The exact corrected catalog in this follow-up validates as 48 tasks with digest
+`953d4c6a3033e38b1c7321937c7932a7dd4898a6be0cd2ef5391cea7c5182e4a`;
+the dispatcher suite collects and passes 172 tests. Product materialization
+remains gated as described above.
 
 ## Product contract
 
@@ -213,7 +245,7 @@ live. It is a checkpoint, not the final program verdict after this addendum.
 
 | Task | Owner / reviewer | Repo | True dependencies | Outcome |
 | --- | --- | --- | --- | --- |
-| [LOOP-PROD-CLOSE-002](LOOP-PROD-CLOSE-002.md) | Codex2 / Codex | `pantheon` | `LOOP-PROD-CLOSE-001`<br>`LOOP-PROD-DELIVERY-001`<br>`LOOP-PROD-WORKER-001`<br>`LOOP-PROD-LEASE-001`<br>`LOOP-PROD-BROWSER-AUTH-001`<br>`LOOP-PROD-FLEET-001`<br>`LOOP-PROD-ATTEST-001`<br>`LOOP-PROD-AUTH-OPS-001`<br>`LOOP-PROD-FE-EVID-001`<br>`LOOP-PROD-FE-BUILD-001`<br>`LOOP-PROD-SIGNOFF-001` | Sole final verdict for the 48-task primary catalog after bootstrap evidence |
+| [LOOP-PROD-CLOSE-002](LOOP-PROD-CLOSE-002.md) | Codex2 / Codex | `pantheon` | `EVOCHAIN-011`<br>`EVOLOOP-009`<br>`EVOLOOP-011`<br>`LOOP-PROD-CLOSE-001`<br>`LOOP-PROD-DELIVERY-001`<br>`LOOP-PROD-WORKER-001`<br>`LOOP-PROD-LEASE-001`<br>`LOOP-PROD-BROWSER-AUTH-001`<br>`LOOP-PROD-FLEET-001`<br>`LOOP-PROD-ATTEST-001`<br>`LOOP-PROD-AUTH-OPS-001`<br>`LOOP-PROD-FE-EVID-001`<br>`LOOP-PROD-FE-BUILD-001`<br>`LOOP-PROD-SIGNOFF-001` | Sole final verdict for the 48-task primary catalog after bootstrap evidence |
 
 Wave 1 deliberately carries additional delivery dependencies between tasks
 that share the root `docker-compose.yml` integration surface. Those edges
@@ -230,6 +262,7 @@ state or the archive at live dispatch time:
 - `AG-GAP-013`
 - `AG-GAP-014`
 - `EVOCHAIN-011`
+- `EVOLOOP-009`
 - `EVOLOOP-011`
 - `MGMT-SSE-001`
 - `OPENCLAW-CRON-WRITE-SCOPE`
@@ -254,6 +287,10 @@ In particular:
   implementation convergence path.
 - `EVOCHAIN-011` must complete before the new target-plane evolution
   dispatcher can start.
+- `EVOLOOP-009` supplies the thin-slice deploy-and-closeout evidence consumed
+  by `LOOP-PROD-CLOSE-002`; it is not re-dispatched here.
+- `EVOLOOP-011` supplies persona-learning feedback consumed by the global OODA
+  closeout; it is not the EVOLOOP deploy-and-closeout task.
 - completed OpenClaw cron/write-scope/packet tasks are substrate for the OODA
   overlay task, not product-level restart and controller-health proof.
 - `AG-GAP-005` preserved the six unavailable operations honestly; the new

@@ -4,7 +4,7 @@ Status: final program gate; starts only after every dependency is done
 
 Canonical catalog: `tasks.json`
 
-Canonical contract SHA-256: `2ffaf38a76b8b9a3f64b9b6c421c02db9d0a2670c5da11792622ee9c80303e38`
+Canonical contract SHA-256: `4d8b0ca0883f568495c900bf2757285f88cb7f1b56f9078453189d4dc8e0d5b5`
 The complete catalog task contract is machine-authoritative;
 the prose sections below are explanatory renderings.
 
@@ -28,14 +28,25 @@ Source addendum:
 ## Product outcome
 
 以 clean target-dev 重跑完整四大 scenarios 與 additive safety matrix；其餘 47 個
-primary tasks、所有 external dependencies（包含已收斂之 EVOCHAIN-011 與 EVOLOOP-011）、fleet-only delivery provenance、
+primary tasks、所有 external dependencies（包含已收斂之 EVOCHAIN-011、
+EVOLOOP-009 與 EVOLOOP-011）、fleet-only delivery provenance、
 coordinated browser auth、protected attestation、strict auth ops、fleet fairness、
 worker/lease integrity、受保護簽核與 warning-free frontend 全部通過後，guarded
-finalization 才可完成第 48 個任務並宣告 program 完成。此任務已收斂 EVOLOOP-011 與 EVOCHAIN-011 的 closeout 職責。
+finalization 才可完成第 48 個任務並宣告 program 完成。
+
+## EVOCHAIN / EVOLOOP convergence boundary
+
+- `EVOCHAIN-011` provides the observation-half full-chain verifier.
+- `EVOLOOP-009` owns the thin-slice deploy-and-closeout evidence; this task
+  consumes that evidence and does not recreate its hosted proof.
+- `EVOLOOP-011` owns executed-decision and postmortem feedback into persona
+  memory; this task verifies that consumed learning connector as part of the
+  global OODA closeout and does not relabel it as EVOLOOP closeout work.
 
 ## Dependencies
 
 - `EVOCHAIN-011`
+- `EVOLOOP-009`
 - `EVOLOOP-011`
 - `LOOP-PROD-CLOSE-001`
 - `LOOP-PROD-DELIVERY-001`
