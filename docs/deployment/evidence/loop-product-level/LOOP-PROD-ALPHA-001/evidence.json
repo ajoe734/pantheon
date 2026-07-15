@@ -70,12 +70,24 @@
       {
         "sha": "65a5de905e1ae71ce1b2e6635d702f35150eaa39",
         "subject": "LOOP-PROD-ALPHA-001: implement durable alpha replication"
+      },
+      {
+        "sha": "9f5655cbc1022bc0fc711528e502f8f72568bcaf",
+        "subject": "LOOP-PROD-ALPHA-001: fix docker-compose depends_on and update evidence"
+      },
+      {
+        "sha": "b9d6c4607605736c399b350cae66d416d82ee2a9",
+        "subject": "LOOP-PROD-ALPHA-001: anchor revalidation lineage and registry mock"
+      },
+      {
+        "sha": "352de7dc6723b0845b24a73eca8ed148432dedbc",
+        "subject": "LOOP-PROD-ALPHA-001: anchor worker fixes and evidence"
       }
     ],
     "pull_request": {
       "number": 3658,
       "url": "https://github.com/ajoe734/pantheon/pull/3658",
-      "head_sha": "65a5de905e1ae71ce1b2e6635d702f35150eaa39",
+      "head_sha": "352de7dc6723b0845b24a73eca8ed148432dedbc",
       "base": "dev"
     },
     "required_checks": []
@@ -93,9 +105,9 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-15T04:24:41Z",
-    "validated_base_sha": "65a5de905e1ae71ce1b2e6635d702f35150eaa39",
-    "validated_head_sha": "b9d6c4607605736c399b350cae66d416d82ee2a9"
+    "validated_at": "2026-07-15T04:35:00Z",
+    "validated_base_sha": "94fc32a87672e344174235d611fcc817f94a8f31",
+    "validated_head_sha": "352de7dc6723b0845b24a73eca8ed148432dedbc"
   },
   "deployment": {
     "applicable": false,
