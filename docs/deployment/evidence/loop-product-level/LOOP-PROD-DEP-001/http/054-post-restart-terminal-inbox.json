@@ -1,0 +1,65 @@
+{
+  "captured_at": "2026-07-15T00:11:38Z",
+  "duration_ms": 3.441,
+  "label": "post-restart-terminal-inbox",
+  "request": {
+    "body": null,
+    "headers": {},
+    "method": "GET",
+    "started_at": "2026-07-15T00:11:38Z",
+    "url": "http://127.0.0.1:18095/api/deployment/inbox?aggregate_id=deployment-saga-plan-loop-prod-dep-20260715001015&consumer_name=deployment-outbox-consumer"
+  },
+  "response": {
+    "payload": [
+      {
+        "aggregate_id": "deployment-saga-plan-loop-prod-dep-20260715001015",
+        "aggregate_type": "deployment_saga",
+        "consumer_name": "deployment-outbox-consumer",
+        "event_id": "deployment-saga-plan-loop-prod-dep-20260715001015-evt-0001",
+        "idempotency_key": "deployment-saga-plan-loop-prod-dep-20260715001015:1:runtime.binding.requested",
+        "notes": null,
+        "processed_at": "2026-07-15T00:11:12Z",
+        "sequence_no": 1,
+        "status": "applied",
+        "trace_id": "dae4254c-7edb-44d5-bb15-022f1ac5e89a"
+      },
+      {
+        "aggregate_id": "deployment-saga-plan-loop-prod-dep-20260715001015",
+        "aggregate_type": "deployment_saga",
+        "consumer_name": "deployment-outbox-consumer",
+        "event_id": "deployment-saga-plan-loop-prod-dep-20260715001015-evt-0002",
+        "idempotency_key": "deployment-saga-plan-loop-prod-dep-20260715001015:2:runtime.load.requested",
+        "notes": null,
+        "processed_at": "2026-07-15T00:11:22Z",
+        "sequence_no": 2,
+        "status": "applied",
+        "trace_id": "dae4254c-7edb-44d5-bb15-022f1ac5e89a"
+      },
+      {
+        "aggregate_id": "deployment-saga-plan-loop-prod-dep-20260715001015",
+        "aggregate_type": "deployment_saga",
+        "consumer_name": "deployment-outbox-consumer",
+        "event_id": "deployment-saga-plan-loop-prod-dep-20260715001015-evt-0001",
+        "idempotency_key": "deployment-saga-plan-loop-prod-dep-20260715001015:1:runtime.binding.requested",
+        "notes": "Duplicate delivery skipped by event_id / idempotency_key.",
+        "processed_at": "2026-07-15T00:11:25Z",
+        "sequence_no": 1,
+        "status": "duplicate",
+        "trace_id": "dae4254c-7edb-44d5-bb15-022f1ac5e89a"
+      },
+      {
+        "aggregate_id": "deployment-saga-plan-loop-prod-dep-20260715001015",
+        "aggregate_type": "deployment_saga",
+        "consumer_name": "deployment-outbox-consumer",
+        "event_id": "deployment-saga-plan-loop-prod-dep-20260715001015-evt-0003",
+        "idempotency_key": "deployment-saga-plan-loop-prod-dep-20260715001015:3:deployment.saga.completed",
+        "notes": null,
+        "processed_at": "2026-07-15T00:11:33Z",
+        "sequence_no": 3,
+        "status": "applied",
+        "trace_id": "dae4254c-7edb-44d5-bb15-022f1ac5e89a"
+      }
+    ],
+    "status": 200
+  }
+}

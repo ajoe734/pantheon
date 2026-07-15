@@ -4558,6 +4558,7 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "quota exceeded",
         "quota_exceeded",
         "exceeded your monthly quota",
+        "individual quota reached",
         "free daily quota has been reached",
         "free tier quota exceeded",
         "quota will reset after",

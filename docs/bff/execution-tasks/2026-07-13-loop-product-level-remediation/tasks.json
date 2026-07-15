@@ -410,6 +410,8 @@
       "LOOP-PROD-ATTEST-001"
     ],
     "final_direct_dependency_ids": [
+      "EVOCHAIN-011",
+      "EVOLOOP-011",
       "LOOP-PROD-CLOSE-001",
       "LOOP-PROD-DELIVERY-001",
       "LOOP-PROD-WORKER-001",
@@ -580,6 +582,7 @@
     "AG-GAP-013",
     "AG-GAP-014",
     "EVOCHAIN-011",
+    "EVOLOOP-011",
     "MGMT-SSE-001",
     "OPENCLAW-CRON-WRITE-SCOPE",
     "OPENCLAW-PERSONA-CRON-BACKFILL",
@@ -2442,8 +2445,8 @@
       "title": "Persona provisioning through binding and first-evaluation readback",
       "summary_zh": "persona create 必須保持 provisioning，直到 canonical RuntimeBinding、paper worker 與 first evaluation schedule 全部 read back；使用真實 persona identity，不可 seed binding，失敗需 terminal/restart-safe。",
       "phase": "Loop Product-Level Remediation / Wave 2",
-      "owner": "Codex",
-      "reviewer": "Codex2",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
       "status": "todo",
       "depends_on": [
         "LOOP-PROD-DEP-001",
@@ -2518,6 +2521,7 @@
         "deploy and verify exact target identity when the task changes a deployed capability"
       ],
       "product_level_required": true,
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
       "evidence_root": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/",
       "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-PER-001.md",
       "requires_human_ops_signoff": false
@@ -4545,6 +4549,8 @@
       "reviewer": "Codex",
       "status": "todo",
       "depends_on": [
+        "EVOCHAIN-011",
+        "EVOLOOP-011",
         "LOOP-PROD-CLOSE-001",
         "LOOP-PROD-DELIVERY-001",
         "LOOP-PROD-WORKER-001",

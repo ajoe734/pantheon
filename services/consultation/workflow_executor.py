@@ -268,6 +268,27 @@ def create_handoff(
     )
 
 
+def get_transcript(
+    *,
+    api_url: str,
+    request_id: str,
+    timeout_seconds: float,
+) -> dict[str, Any] | None:
+    url = api_url.rstrip("/") + f"/api/consult/requests/{request_id}/transcript"
+    return _json_get(url, timeout_seconds=timeout_seconds)
+
+
+def list_evidence(
+    *,
+    api_url: str,
+    request_id: str,
+    timeout_seconds: float,
+) -> list[dict[str, Any]]:
+    url = api_url.rstrip("/") + f"/api/consult/requests/{request_id}/evidence"
+    result = _json_get(url, timeout_seconds=timeout_seconds)
+    return result if isinstance(result, list) else []
+
+
 # ---------------------------------------------------------------------------
 # Workflow logic
 # ---------------------------------------------------------------------------
@@ -343,83 +364,157 @@ def execute_workflow(
             )
             result["outcome"] = "advanced"
             result["detail"] = f"assigned participant={participant_ref}"
-            status = "assigned"
+            return result
 
     # 2. Post workflow-start transcript event if no transcript events yet.
-    if status in {"submitted", "assigned", "in_progress"}:
-        existing_memos = list_memos(
-            api_url=api_url, request_id=request_id, timeout_seconds=timeout_seconds
+    transcript = get_transcript(
+        api_url=api_url, request_id=request_id, timeout_seconds=timeout_seconds
+    )
+    if not transcript or not transcript.get("events"):
+        post_transcript_event(
+            api_url=api_url,
+            request_id=request_id,
+            event_type="workflow_started",
+            actor_type="service",
+            actor_id=_CONSUMER_NAME,
+            content={
+                "workflow": _request_type_to_memo_type(request_type),
+                "participant_ref": participant_ref,
+            },
+            timeout_seconds=timeout_seconds,
         )
-        if not existing_memos:
-            post_transcript_event(
-                api_url=api_url,
-                request_id=request_id,
-                event_type="workflow_started",
-                actor_type="service",
-                actor_id=_CONSUMER_NAME,
-                content={
-                    "workflow": _request_type_to_memo_type(request_type),
-                    "participant_ref": participant_ref,
-                },
-                timeout_seconds=timeout_seconds,
-            )
+        result["outcome"] = "advanced"
+        result["detail"] = "posted workflow_started event"
+        return result
 
-    # 3. Submit memo if no memo exists yet.
-    if status in {"submitted", "assigned", "in_progress"}:
-        existing_memos = list_memos(
-            api_url=api_url, request_id=request_id, timeout_seconds=timeout_seconds
-        )
-        submitted_or_published = [
-            m for m in existing_memos if m.get("status") in {"submitted", "published"}
-        ]
-        if not submitted_or_published:
-            memo_type = _request_type_to_memo_type(request_type)
-            submitted = submit_memo(
-                api_url=api_url,
-                request_id=request_id,
-                memo_type=memo_type,
-                author_ref=_CONSUMER_NAME,
-                summary=(
-                    f"Workflow executor auto-generated {memo_type} memo for request "
-                    f"{request_id} (type={request_type}). "
-                    "Pending human or committee review before governance gate handoff."
-                ),
-                recommendation="approve_with_conditions",
-                timeout_seconds=timeout_seconds,
-            )
-            existing_memos = [submitted]
-            result["outcome"] = "advanced"
-            result["detail"] = f"submitted memo={submitted.get('memo_id')}"
-            status = "memo_pending"
+    # 3. Validation: Fetch assigned participants/providers
+    participants = list_participants(
+        api_url=api_url, request_id=request_id, timeout_seconds=timeout_seconds
+    )
+    if not participants:
+        result["outcome"] = "blocked"
+        result["detail"] = "no assigned participants/providers available"
+        return result
 
-    # 4. Publish submitted memos and create the gate handoff.
+    # 4. Check if transcript is qualified
+    has_real_event = False
+    if transcript and isinstance(transcript.get("events"), list):
+        for event in transcript["events"]:
+            actor = event.get("actor") or {}
+            actor_type = actor.get("actor_type")
+            actor_id = actor.get("actor_id")
+            if actor_type in {"service", "system"}:
+                continue
+            for p in participants:
+                mapped_ptype = "human" if p.get("participant_type") == "human_reviewer" else p.get("participant_type")
+                if p.get("participant_ref") == actor_id and mapped_ptype == actor_type:
+                    has_real_event = True
+                    break
+            if has_real_event:
+                break
+    if not has_real_event:
+        result["outcome"] = "blocked"
+        result["detail"] = "transcript is not qualified: no event from a real assigned participant/provider"
+        return result
+
+    # 5. Check if evidence is qualified
+    attachments = list_evidence(
+        api_url=api_url, request_id=request_id, timeout_seconds=timeout_seconds
+    )
+    total_ev = len(request.get("evidence_refs") or []) + len(attachments)
+    if total_ev == 0:
+        result["outcome"] = "blocked"
+        result["detail"] = "review evidence is missing (no request evidence_refs or attachments)"
+        return result
+
+    for att in attachments:
+        attached_by = att.get("attached_by") or {}
+        actor_type = attached_by.get("actor_type")
+        actor_id = attached_by.get("actor_id")
+        if actor_type in {"service", "system"}:
+            result["outcome"] = "blocked"
+            result["detail"] = f"evidence attachment {att.get('attachment_id')} has invalid author type: {actor_type}"
+            return result
+        att_qualified = False
+        for p in participants:
+            mapped_ptype = "human" if p.get("participant_type") == "human_reviewer" else p.get("participant_type")
+            if p.get("participant_ref") == actor_id and mapped_ptype == actor_type:
+                att_qualified = True
+                break
+        if not att_qualified:
+            result["outcome"] = "blocked"
+            result["detail"] = f"evidence attachment {att.get('attachment_id')} was not attached by an assigned participant"
+            return result
+
+    # 6. Check that at least one memo has been submitted by a qualified real participant
     all_memos = list_memos(
         api_url=api_url, request_id=request_id, timeout_seconds=timeout_seconds
     )
-    submitted_memos = [m for m in all_memos if m.get("status") == "submitted"]
-    for memo in submitted_memos:
-        publish_memo(
-            api_url=api_url, memo_id=memo["memo_id"], timeout_seconds=timeout_seconds
-        )
+    
+    # Filter for qualified submitted memos
+    qualified_submitted_memos = []
+    for memo in all_memos:
+        if memo.get("status") != "submitted":
+            continue
+        author_type = memo.get("author_type")
+        author_ref = memo.get("author_ref")
+        if author_type == "system":
+            continue
+        # Check against assigned participants
+        is_qual = False
+        for p in participants:
+            mapped_ptype = "human" if p.get("participant_type") == "human_reviewer" else p.get("participant_type")
+            if p.get("participant_ref") == author_ref and mapped_ptype == author_type:
+                is_qual = True
+                break
+        if is_qual:
+            qualified_submitted_memos.append(memo)
+
+    # Publish qualified submitted memos
+    if qualified_submitted_memos:
+        for memo in qualified_submitted_memos:
+            publish_memo(
+                api_url=api_url, memo_id=memo["memo_id"], timeout_seconds=timeout_seconds
+            )
         result["outcome"] = "advanced"
-        result["detail"] = f"published memo={memo['memo_id']}"
+        result["detail"] = f"published {len(qualified_submitted_memos)} memo(s)"
 
-    published_memos = [m for m in list_memos(
+    # Get published memos
+    all_memos = list_memos(
         api_url=api_url, request_id=request_id, timeout_seconds=timeout_seconds
-    ) if m.get("status") == "published"]
+    )
+    published_memos = [
+        m for m in all_memos if m.get("status") == "published"
+    ]
 
-    if not published_memos:
+    # Enforce qualified published memos check
+    qualified_published_memos = []
+    for memo in published_memos:
+        author_type = memo.get("author_type")
+        author_ref = memo.get("author_ref")
+        if author_type == "system":
+            continue
+        is_qual = False
+        for p in participants:
+            mapped_ptype = "human" if p.get("participant_type") == "human_reviewer" else p.get("participant_type")
+            if p.get("participant_ref") == author_ref and mapped_ptype == author_type:
+                is_qual = True
+                break
+        if is_qual:
+            qualified_published_memos.append(memo)
+
+    if not qualified_published_memos:
         result["outcome"] = "blocked"
-        result["detail"] = "no published memo available for handoff"
+        result["detail"] = "no qualified real participant/provider-authored memo published or available for handoff"
         return result
 
-    # 5. Create gate handoff if not yet created.
+    # 7. Create gate handoff if not yet created.
     existing_handoffs = list_handoffs(
         api_url=api_url, request_id=request_id, timeout_seconds=timeout_seconds
     )
     if not existing_handoffs:
         target_gate = _request_type_to_gate(request_type)
-        memo_ids = [m["memo_id"] for m in published_memos]
+        memo_ids = [m["memo_id"] for m in qualified_published_memos]
         evidence_refs = list(request.get("evidence_refs") or [])
         handoff = create_handoff(
             api_url=api_url,
@@ -433,7 +528,7 @@ def execute_workflow(
         result["detail"] = (
             f"gate_handoff={handoff.get('handoff_id')} target_gate={target_gate}"
         )
-    elif result["outcome"] == "skipped":
+    else:
         result["outcome"] = "completed"
         result["detail"] = f"handoff already exists: {existing_handoffs[0].get('handoff_id')}"
 

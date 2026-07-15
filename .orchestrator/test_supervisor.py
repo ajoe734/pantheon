@@ -476,6 +476,19 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(result["kind"], "quota_terminal")
         self.assertFalse(result["transient"])
 
+    def test_classifies_antigravity_individual_quota_as_terminal_quota(self) -> None:
+        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
+        worker = {"provider": "antigravity"}
+
+        result = supervisor.classify_worker_failure(
+            config,
+            worker,
+            "Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 34m24s.",
+        )
+
+        self.assertEqual(result["kind"], "quota_terminal")
+        self.assertFalse(result["transient"])
+
     def test_classifies_claude_weekly_rate_limit_as_terminal_quota(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
         worker = {"provider": "claude"}
