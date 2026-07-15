@@ -7,8 +7,8 @@ Flow:
 2. Reject duplicate packets via replay protection.
 3. For each BridgeTask in the packet, call:
        python3 scripts/ai_status.py assign <task-id> <owner> <reviewer> [title]
-   using subprocess with the task's env vars for phase, artifacts, acceptance,
-   and depends_on.
+   using subprocess with a structured TASK_METADATA_JSON envelope containing
+   the exact task spec and packet/conversation/turn/document provenance.
 4. Mark packet as seen so replays are rejected in subsequent calls.
 5. Return BridgeDispatchResult with per-task records and audit refs.
 
@@ -19,6 +19,8 @@ never from a raw HTTP request handler.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -34,7 +36,13 @@ from .dev_bridge_models import (
     DevTaskPacket,
     TaskDispatchRecord,
 )
-from .dev_bridge_signer import has_seen_packet, mark_packet_seen, verify_packet
+from .dev_bridge_signer import (
+    mark_packet_seen,
+    packet_digest,
+    packet_replay_lock,
+    replay_record,
+    verify_packet,
+)
 
 
 def _now() -> str:
@@ -63,8 +71,11 @@ def _ai_status_py(repo_root: str) -> str:
     return str(Path(repo_root) / "scripts" / "ai_status.py")
 
 
-def _csv(items: List[str]) -> str:
-    return ";".join(i.strip() for i in items if i.strip())
+def _configured_allowed_repos() -> set[str]:
+    configured = str(
+        os.environ.get("PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS") or "pantheon"
+    )
+    return {item.strip() for item in configured.split(",") if item.strip()}
 
 
 # ---------------------------------------------------------------------------
@@ -80,11 +91,88 @@ def _check_constraints(packet: DevTaskPacket) -> List[str]:
             "Packet constraint noDirectShellFromWeb is False — "
             "this dispatcher requires it to be True"
         )
-    if "pantheon" not in c.allowed_repos:
+    if not c.requires_branch_pr_merge:
+        violations.append(
+            "Packet constraint requiresBranchPrMerge is False — task branches and reviewed PR merge are required"
+        )
+    requested_repos = {
+        str(item or "").strip()
+        for item in c.allowed_repos
+        if str(item or "").strip()
+    }
+    configured_repos = _configured_allowed_repos()
+    if not requested_repos:
+        violations.append("Packet constraint allowedRepos must not be empty")
+    if "pantheon" not in requested_repos:
         violations.append(
             f"Packet constraint allowedRepos={c.allowed_repos!r} does not include 'pantheon'"
         )
+    unconfigured = sorted(requested_repos - configured_repos)
+    if unconfigured:
+        violations.append(
+            "Packet constraint allowedRepos contains unconfigured repositories: "
+            + ", ".join(unconfigured)
+        )
     return violations
+
+
+def _task_spec(task: BridgeTask) -> Dict[str, object]:
+    return {
+        "id": task.id,
+        "title": task.title,
+        "owner": task.owner,
+        "reviewer": task.reviewer,
+        "phase": task.phase,
+        "depends_on": list(task.depends_on),
+        "artifacts": list(task.artifacts),
+        "acceptance": list(task.acceptance),
+        "summary": task.summary,
+    }
+
+
+def _task_spec_hash(task: BridgeTask) -> str:
+    encoded = json.dumps(
+        _task_spec(task),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _task_metadata(packet: DevTaskPacket, task: BridgeTask) -> Dict[str, object]:
+    return {
+        "dev_bridge": {
+            "packet_id": packet.packet_id,
+            "packet_digest": packet_digest(packet),
+            "task_spec_hash": _task_spec_hash(task),
+            "task_spec": _task_spec(task),
+            "conversation_id": packet.source_conversation_id,
+            "source_turn_ids": list(packet.source_turn_ids),
+            "documents": [
+                document.model_dump(mode="json", by_alias=True)
+                for document in packet.documents
+            ],
+            "audit_conversation_href": packet.audit_conversation_href,
+            "emitted_at": packet.emitted_at,
+            "intent": packet.intent,
+            "mode": packet.mode,
+            "actor": packet.actor.model_dump(mode="json", by_alias=True),
+        }
+    }
+
+
+def _audit_refs(packet: DevTaskPacket, dispatched_at: str) -> Dict[str, object]:
+    return {
+        "packetId": packet.packet_id,
+        "packetDigest": packet_digest(packet),
+        "conversationId": packet.source_conversation_id,
+        "sourceTurnIds": packet.source_turn_ids,
+        "documents": [d.path for d in packet.documents],
+        "taskIds": [t.id for t in packet.tasks],
+        "auditConversationHref": packet.audit_conversation_href,
+        "dispatchedAt": dispatched_at,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +182,7 @@ def _check_constraints(packet: DevTaskPacket) -> List[str]:
 def _dispatch_task(
     task: BridgeTask,
     *,
+    packet: DevTaskPacket,
     repo_root: str,
     actor_id: str,
     dry_run: bool,
@@ -121,16 +210,12 @@ def _dispatch_task(
 
     env = {**os.environ}
     env["AI_NAME"] = actor_id
-    if task.phase:
-        env["TASK_PHASE"] = task.phase
-    if task.artifacts:
-        env["TASK_ARTIFACTS"] = _csv(task.artifacts)
-    if task.acceptance:
-        env["TASK_ACCEPTANCE"] = _csv(task.acceptance)
-    if task.depends_on:
-        env["TASK_DEPENDS_ON"] = _csv(task.depends_on)
-    if task.summary:
-        env["TASK_SUMMARY_ZH"] = task.summary[:200]
+    env["TASK_METADATA_JSON"] = json.dumps(
+        _task_metadata(packet, task),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
 
     cmd = [
         sys.executable,
@@ -196,40 +281,60 @@ def dispatch_task_packet(
     if violations:
         raise ValueError("Packet constraint violation: " + "; ".join(violations))
 
-    # 3. Replay protection
-    if has_seen_packet(packet.packet_id, repo_root=repo_root):
-        return BridgeDispatchResult(
-            packetId=packet.packet_id,
-            dispatchedAt=dispatched_at,
-            replayRejected=True,
-            dryRun=dry_run,
-        )
+    digest = packet_digest(packet)
+    audit_refs = _audit_refs(packet, dispatched_at)
 
-    # 4. Materialise each task
-    task_records: List[TaskDispatchRecord] = []
-    errors: List[str] = []
-    actor_id = packet.actor.id
+    # Replay check and successful terminal mark share one cross-process lock.
+    # A failed/partial packet remains retryable; already successful tasks are
+    # made no-ops by the bridge assignment metadata in scripts/ai_status.py.
+    with packet_replay_lock(repo_root=repo_root):
+        replay = replay_record(packet.packet_id, repo_root=repo_root, lock_held=True)
+        if replay is not None:
+            recorded_digest = str(replay.get("digest") or "").strip() or None
+            if recorded_digest and recorded_digest != digest:
+                raise ValueError(
+                    f"Packet id {packet.packet_id!r} is already bound to a different payload"
+                )
+            return BridgeDispatchResult(
+                packetId=packet.packet_id,
+                dispatchedAt=dispatched_at,
+                taskRecords=[
+                    TaskDispatchRecord(
+                        taskId=task.id,
+                        owner=task.owner,
+                        reviewer=task.reviewer,
+                        status="already_dispatched",
+                    )
+                    for task in packet.tasks
+                ],
+                replayRejected=True,
+                dryRun=dry_run,
+                auditRefs=audit_refs,
+            )
 
-    for task in packet.tasks:
-        rec = _dispatch_task(task, repo_root=repo_root, actor_id=actor_id, dry_run=dry_run)
-        task_records.append(rec)
-        if rec.status == "error" and rec.error:
-            errors.append(f"{task.id}: {rec.error}")
+        task_records: List[TaskDispatchRecord] = []
+        errors: List[str] = []
+        actor_id = packet.actor.id
 
-    # 5. Mark packet as seen (even on partial failure — prevents partial replay)
-    if not dry_run:
-        mark_packet_seen(packet.packet_id, repo_root=repo_root)
+        for task in packet.tasks:
+            rec = _dispatch_task(
+                task,
+                packet=packet,
+                repo_root=repo_root,
+                actor_id=actor_id,
+                dry_run=dry_run,
+            )
+            task_records.append(rec)
+            if rec.status == "error" and rec.error:
+                errors.append(f"{task.id}: {rec.error}")
 
-    # 6. Build audit refs
-    audit_refs = {
-        "packetId": packet.packet_id,
-        "conversationId": packet.source_conversation_id,
-        "sourceTurnIds": packet.source_turn_ids,
-        "documents": [d.path for d in packet.documents],
-        "taskIds": [t.id for t in packet.tasks],
-        "auditConversationHref": packet.audit_conversation_href,
-        "dispatchedAt": dispatched_at,
-    }
+        if not dry_run and not errors:
+            mark_packet_seen(
+                packet.packet_id,
+                repo_root=repo_root,
+                digest=digest,
+                lock_held=True,
+            )
 
     return BridgeDispatchResult(
         packetId=packet.packet_id,

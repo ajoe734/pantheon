@@ -58,9 +58,7 @@ def _write_fake_repo(tmp_path: Path) -> Path:
                 "record = {",
                 "    'argv': sys.argv[1:],",
                 "    'ai_name': os.environ.get('AI_NAME'),",
-                "    'phase': os.environ.get('TASK_PHASE'),",
-                "    'artifacts': os.environ.get('TASK_ARTIFACTS'),",
-                "    'acceptance': os.environ.get('TASK_ACCEPTANCE'),",
+                "    'metadata': json.loads(os.environ.get('TASK_METADATA_JSON', '{}')),",
                 "}",
                 "with Path('calls.jsonl').open('a', encoding='utf-8') as fh:",
                 "    fh.write(json.dumps(record, sort_keys=True) + '\\n')",
@@ -105,7 +103,17 @@ def test_queue_and_drain_packet_inbox_materializes_tasks(tmp_path: Path, monkeyp
         "Materialize queued assistant task",
     ]
     assert record["ai_name"] == "management-ai"
-    assert record["artifacts"] == "execute-plans/src/agora/pages/AskPersonas.tsx"
+    bridge = record["metadata"]["dev_bridge"]
+    assert bridge["packet_id"] == "pkt_inbox_live"
+    assert bridge["conversation_id"] == "mgmt-nl-inbox"
+    assert bridge["source_turn_ids"] == ["turn-user", "turn-assistant"]
+    assert bridge["task_spec"]["phase"] == "Sprint Inbox / Dev bridge"
+    assert bridge["task_spec"]["artifacts"] == [
+        "execute-plans/src/agora/pages/AskPersonas.tsx"
+    ]
+    assert bridge["task_spec"]["acceptance"] == [
+        "Task is queued then assigned through supervisor drain"
+    ]
 
 
 def test_queue_accepts_dev_docs_response_envelope_and_rejects_duplicates(

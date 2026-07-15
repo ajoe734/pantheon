@@ -14,12 +14,14 @@ Security guarantees:
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import hmac
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Iterator, Optional
 
 from .dev_bridge_models import DevTaskPacket, PacketSignature
 
@@ -73,6 +75,12 @@ def _canonical_payload(packet: DevTaskPacket) -> bytes:
     data = packet.model_dump(by_alias=False, mode="json")
     data.pop("signature", None)
     return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+
+
+def packet_digest(packet: DevTaskPacket) -> str:
+    """Return the stable SHA-256 digest used to detect packet-id collisions."""
+
+    return hashlib.sha256(_canonical_payload(packet)).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -134,18 +142,117 @@ def _replay_store_path(repo_root: Optional[str] = None) -> Path:
     return Path(_DEFAULT_REPLAY_STORE)
 
 
-def has_seen_packet(packet_id: str, *, repo_root: Optional[str] = None) -> bool:
-    """Return True if *packet_id* was already dispatched (replay detected)."""
+def _replay_lock_path(repo_root: Optional[str] = None) -> Path:
+    store = _replay_store_path(repo_root)
+    return store.with_name(f"{store.name}.lock")
+
+
+def _fsync_directory(path: Path) -> None:
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def packet_replay_lock(*, repo_root: Optional[str] = None) -> Iterator[None]:
+    """Serialize packet replay check-and-mark across processes."""
+
+    lock_path = _replay_lock_path(repo_root)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _replay_records_unlocked(repo_root: Optional[str] = None) -> Dict[str, Optional[str]]:
     store = _replay_store_path(repo_root)
     if not store.exists():
-        return False
-    seen = store.read_text(encoding="utf-8").splitlines()
-    return packet_id in set(seen)
+        return {}
+    records: Dict[str, Optional[str]] = {}
+    for raw_line in store.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("{"):
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict):
+                packet_id = str(payload.get("packet_id") or "").strip()
+                digest = str(payload.get("digest") or "").strip() or None
+                if packet_id:
+                    records.setdefault(packet_id, digest)
+                continue
+        # Backward compatibility for the original one-id-per-line store.
+        records.setdefault(line, None)
+    return records
 
 
-def mark_packet_seen(packet_id: str, *, repo_root: Optional[str] = None) -> None:
-    """Append *packet_id* to the replay store so future dispatches are rejected."""
-    store = _replay_store_path(repo_root)
-    store.parent.mkdir(parents=True, exist_ok=True)
-    with store.open("a", encoding="utf-8") as fh:
-        fh.write(packet_id + "\n")
+def replay_record(
+    packet_id: str,
+    *,
+    repo_root: Optional[str] = None,
+    lock_held: bool = False,
+) -> Optional[Dict[str, Optional[str]]]:
+    def _read() -> Optional[Dict[str, Optional[str]]]:
+        records = _replay_records_unlocked(repo_root)
+        if packet_id not in records:
+            return None
+        return {"packet_id": packet_id, "digest": records[packet_id]}
+
+    if lock_held:
+        return _read()
+    with packet_replay_lock(repo_root=repo_root):
+        return _read()
+
+
+def has_seen_packet(packet_id: str, *, repo_root: Optional[str] = None) -> bool:
+    """Return True if *packet_id* was already dispatched (replay detected)."""
+    return replay_record(packet_id, repo_root=repo_root) is not None
+
+
+def mark_packet_seen(
+    packet_id: str,
+    *,
+    repo_root: Optional[str] = None,
+    digest: Optional[str] = None,
+    lock_held: bool = False,
+) -> None:
+    """Durably record a successful packet dispatch exactly once.
+
+    Reusing a packet id for a different payload fails closed when both sides
+    carry a digest. Legacy id-only replay rows remain readable.
+    """
+
+    def _mark() -> None:
+        existing = replay_record(packet_id, repo_root=repo_root, lock_held=True)
+        if existing is not None:
+            existing_digest = str(existing.get("digest") or "").strip() or None
+            if existing_digest and digest and existing_digest != digest:
+                raise ValueError(
+                    f"Packet id {packet_id!r} is already bound to a different payload"
+                )
+            return
+        store = _replay_store_path(repo_root)
+        store.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"packet_id": packet_id, "digest": digest}
+        with store.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        _fsync_directory(store.parent)
+
+    if lock_held:
+        _mark()
+        return
+    with packet_replay_lock(repo_root=repo_root):
+        _mark()
