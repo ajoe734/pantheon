@@ -1,0 +1,38 @@
+[
+  {
+    "persona_id": "persona-20260528-597cbad2",
+    "mutation_entry_id": "evo-pm-candidate_artifact-paper-artifact-persona-20260528-597cbad2-v2-v2-incident_cluster-inc-threshold",
+    "evolution_href": "/management/evolution-journal?persona=persona-20260528-597cbad2&mutation_review=evo-pm-candidate_artifact-paper-artifact-persona-20260528-597cbad2-v2-v2-incident_cluster-inc-threshold",
+    "mutation_confidence": "formal"
+  },
+  {
+    "persona_id": "persona-20260528-cfedeed5",
+    "mutation_entry_id": "evo-pm-candidate_artifact-paper-artifact-persona-20260528-cfedeed5-v2-incident_cluster-inc-threshold-30",
+    "evolution_href": "/management/evolution-journal?persona=persona-20260528-cfedeed5&mutation_review=evo-pm-candidate_artifact-paper-artifact-persona-20260528-cfedeed5-v2-incident_cluster-inc-threshold-30",
+    "mutation_confidence": "formal"
+  },
+  {
+    "persona_id": "persona-20260528-5937dea1",
+    "mutation_entry_id": "evo-sweep-inc-threshold-719818cd7f22",
+    "evolution_href": "/management/evolution-journal?persona=persona-20260528-5937dea1&mutation_review=evo-sweep-inc-threshold-719818cd7f22",
+    "mutation_confidence": "formal"
+  },
+  {
+    "persona_id": "persona-20260528-81c9e6b9",
+    "mutation_entry_id": "evo-sweep-inc-threshold-dae307120b85",
+    "evolution_href": "/management/evolution-journal?persona=persona-20260528-81c9e6b9&mutation_review=evo-sweep-inc-threshold-dae307120b85",
+    "mutation_confidence": "formal"
+  },
+  {
+    "persona_id": "persona-20260528-949a890a",
+    "mutation_entry_id": "evo-pm-candidate_artifact-paper-artifact-persona-20260528-949a890a-v2-incident_cluster-inc-threshold-89",
+    "evolution_href": "/management/evolution-journal?persona=persona-20260528-949a890a&mutation_review=evo-pm-candidate_artifact-paper-artifact-persona-20260528-949a890a-v2-incident_cluster-inc-threshold-89",
+    "mutation_confidence": "formal"
+  },
+  {
+    "persona_id": "persona-tw-equity",
+    "mutation_entry_id": "evo-sweep-inc-threshold-50f2e21f161c",
+    "evolution_href": "/management/evolution-journal?persona=persona-tw-equity&mutation_review=evo-sweep-inc-threshold-50f2e21f161c",
+    "mutation_confidence": "formal"
+  }
+]
