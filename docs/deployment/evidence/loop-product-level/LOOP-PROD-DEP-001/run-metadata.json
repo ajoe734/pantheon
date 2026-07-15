@@ -1,0 +1,9 @@
+{
+  "compose_dir": "/home/lupin/pantheon-ci-deploy/dev-root",
+  "deploy_run_id": "",
+  "deploy_run_url": "",
+  "expected_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+  "mode": "run",
+  "started_at": "2026-07-15T00:10:13Z",
+  "task_id": "LOOP-PROD-DEP-001"
+}

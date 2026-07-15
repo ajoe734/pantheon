@@ -1,0 +1,73 @@
+{
+  "bff_version": {
+    "build_time": "unknown",
+    "commit": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+    "config_posture": {
+      "assistant_kernel_enabled": true,
+      "auth_mode": "permissive",
+      "auth_stub": true,
+      "dev_login_enabled": false,
+      "mfa_required": false
+    },
+    "environment": "dev",
+    "image_digest": "unknown",
+    "service": "operator-bff",
+    "source_commit_known": true,
+    "source_commit_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+    "version": "0.2.0"
+  },
+  "compose_ps_stdout_sha256": "95f5f9c9933ffe16078ae5dff87a39bcbbd2d6ef0a1811bccf3ca336aa9a1ff8",
+  "containers": {
+    "broker": {
+      "container_id": "54fa58cf1ab69f0db6121f58a9075b647cd648f6ccdd96c4b86dc8ff48e1f0e0",
+      "container_name": "pantheon-broker-1",
+      "image_id": "sha256:3713e23f8294b62bf0b07fd039b03d82233330dd934365bb0088d95f393a14c7",
+      "image_name": "pantheon-broker",
+      "oci_revision": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "state": "running"
+    },
+    "deployment": {
+      "container_id": "7a67a81e8e9cba5c45c5f6a80a595caaace7c72e2209eae894a306180dfe5cde",
+      "container_name": "pantheon-deployment-1",
+      "image_id": "sha256:804f32e8d44116caa1a5437ea156d05025524480aadc84e59d66f8b09018c4d6",
+      "image_name": "pantheon-deployment",
+      "oci_revision": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "state": "running"
+    },
+    "deployment-outbox-consumer": {
+      "container_id": "5f7eb6e06427b61b911c9d1779bbf2f8f762a0bbda6e56494a758965acc0b907",
+      "container_name": "pantheon-deployment-outbox-consumer-1",
+      "image_id": "sha256:dfe33273c249709e9b98eacb7cacb359c8d60cf38909af684a19abd709010ace",
+      "image_name": "pantheon-deployment-outbox-consumer",
+      "oci_revision": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "state": "running"
+    },
+    "operator-bff": {
+      "container_id": "f2af96cbbf5a314b8ad6120be114d342139785b9724b88e0a7bc0ab77521cfb2",
+      "container_name": "pantheon-operator-bff-1",
+      "image_id": "sha256:02fc238a219533252c5a8b06d6e5ef0d43b2ee1617564dda338d0bb67bb46033",
+      "image_name": "pantheon-operator-bff",
+      "oci_revision": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "state": "running"
+    },
+    "paper-fleet-reconciler": {
+      "container_id": "e2e1b7d582c09cfdd85a3229198358b3a82b61c5fa9ed6b3d46b98e25555bf15",
+      "container_name": "pantheon-paper-fleet-reconciler-1",
+      "image_id": "sha256:6f2d47d1bc14d88d643869d000be60fc22847f0370ae1d7ebca770ec7f340f25",
+      "image_name": "pantheon-paper-fleet-reconciler",
+      "oci_revision": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "state": "running"
+    },
+    "runtime-manager": {
+      "container_id": "4d27573826cf37301f0755af0e0f0a37126a539e6a2a0fbcc771023f21fee174",
+      "container_name": "pantheon-runtime-manager-1",
+      "image_id": "sha256:cfa972d44b5b5d6d10fe4e1353597d5c08d5309f040ecd1e2771c339f95905ba",
+      "image_name": "pantheon-runtime-manager",
+      "oci_revision": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "state": "running"
+    }
+  },
+  "expected_sha": null,
+  "managed_worktree_head": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+  "observed_at": "2026-07-15T00:06:39Z"
+}
