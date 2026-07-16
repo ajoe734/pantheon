@@ -22,6 +22,7 @@ Examples:
     python3 scripts/loop_done_guardrail.py --status-file /path/to/ai-status.json
 """
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -31,6 +32,11 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_STATUS_FILE = ROOT / "ai-status.json"
+DEFAULT_ARCHIVE_EXCLUDED_TASK_IDS = {
+    "LOOP-PROD-000",
+    "LOOP-PROD-001",
+    "LOOP-PROD-002",
+}
 
 # Canonical non-goals that trigger loop guardrail checks.
 LOOP_AUTOPILOT_NON_GOALS = {
@@ -101,6 +107,14 @@ def _display_path(path: Path) -> str:
         return str(path.resolve().relative_to(ROOT))
     except ValueError:
         return str(path)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _is_blocking_residual(value: Any) -> bool:
@@ -187,6 +201,7 @@ def check_task(task: dict[str, Any]) -> list[str]:
     non_goals: set[str] = set(task.get("non_goals") or [])
     proof_required: list[str] = task.get("proof_required") or []
     review_file_path = str(task.get("review_file") or "").strip()
+    product_level_required = bool(task.get("product_level_required"))
 
     # Gap 1: panel-only closure prohibited but no review_file.
     if "No panel-only closure" in non_goals and not review_file_path:
@@ -215,6 +230,14 @@ def check_task(task: dict[str, Any]) -> list[str]:
         gaps.append(
             f"proof_required ({sample}{suffix}) but no review_file was recorded — "
             "reviewer must set REVIEW_FILE=<evidence-path> during approve"
+        )
+
+    if product_level_required and not review_file_path:
+        gaps.append("product-level closeout requires a review_file evidence manifest")
+    elif product_level_required and not review_file_path.endswith("evidence.json"):
+        gaps.append(
+            "product-level closeout review_file must be an evidence.json manifest: "
+            f"{review_file_path}"
         )
 
     # Deep product evidence manifest checks if review_file is provided and is evidence.json.
@@ -549,6 +572,185 @@ def audit_evidence_root(evidence_root: Path) -> dict[str, Any]:
     }
 
 
+def _task_from_archive_snapshot(
+    snapshot_path: Path,
+    snapshot_data: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    task = snapshot_data.get("task")
+    if not isinstance(task, dict):
+        return None, "archive snapshot task object is missing"
+    task_id = str(task.get("id") or snapshot_data.get("task_id") or "").strip()
+    if not task_id:
+        return None, "archive snapshot task.id is missing"
+
+    replay_task = dict(task)
+    replay_task["id"] = task_id
+    replay_task["status"] = task.get("status") or snapshot_data.get("terminal_status") or "done"
+    replay_task["loop_ids"] = task.get("loop_ids") or ["loop_product_archive_replay"]
+    replay_task["product_level_required"] = True
+    return replay_task, None
+
+
+def _classify_archive_replay_result(gaps: list[str]) -> str:
+    if not gaps:
+        return "valid_closure"
+
+    false_closure_signals = (
+        "overall admission is not done-eligible",
+        "overall admission is not an accepted closeout state",
+        "blocking acceptance requirement",
+        "blocking residual risk",
+        "missing reviewer verdict",
+        "missing reviewer:",
+        "invalid reviewer:",
+    )
+    if any(any(signal in gap for signal in false_closure_signals) for gap in gaps):
+        return "false_closure"
+    return "stale_evidence"
+
+
+def _follow_up_task_id(task_id: str, classification: str) -> str | None:
+    if classification == "valid_closure":
+        return None
+    suffix = "FALSE-CLOSEOUT" if classification == "false_closure" else "STALE-EVIDENCE"
+    return f"{task_id}-{suffix}-REPAIR"
+
+
+def audit_archive_root(
+    archive_root: Path,
+    excluded_task_ids: set[str],
+) -> dict[str, Any]:
+    snapshot_paths = sorted(archive_root.glob("LOOP-PROD*.json"))
+    results: list[dict[str, Any]] = []
+    excluded: list[dict[str, str]] = []
+
+    for snapshot_path in snapshot_paths:
+        task_id_from_path = snapshot_path.stem
+        display_path = _display_path(snapshot_path)
+        if task_id_from_path in excluded_task_ids:
+            excluded.append(
+                {
+                    "task_id": task_id_from_path,
+                    "snapshot": display_path,
+                    "reason": "governance/meta task excluded from frozen product-closure replay set",
+                }
+            )
+            continue
+
+        before_hash = _sha256_file(snapshot_path)
+        try:
+            with open(snapshot_path, encoding="utf-8") as fh:
+                snapshot_data = json.load(fh)
+        except Exception as exc:
+            after_hash = _sha256_file(snapshot_path)
+            classification = "stale_evidence"
+            results.append(
+                {
+                    "task_id": task_id_from_path,
+                    "snapshot": display_path,
+                    "snapshot_sha256_before": before_hash,
+                    "snapshot_sha256_after": after_hash,
+                    "snapshot_hash_unchanged": before_hash == after_hash,
+                    "review_file": None,
+                    "result": "fail",
+                    "classification": classification,
+                    "gap_count": 1,
+                    "gaps": [f"failed to parse archive snapshot JSON: {exc}"],
+                    "required_follow_up_task_id": _follow_up_task_id(
+                        task_id_from_path,
+                        classification,
+                    ),
+                }
+            )
+            continue
+
+        task, excluded_reason = _task_from_archive_snapshot(snapshot_path, snapshot_data)
+        after_hash = _sha256_file(snapshot_path)
+        if task is None:
+            classification = "stale_evidence"
+            results.append(
+                {
+                    "task_id": task_id_from_path,
+                    "snapshot": display_path,
+                    "snapshot_sha256_before": before_hash,
+                    "snapshot_sha256_after": after_hash,
+                    "snapshot_hash_unchanged": before_hash == after_hash,
+                    "review_file": None,
+                    "result": "fail",
+                    "classification": classification,
+                    "gap_count": 1,
+                    "gaps": [excluded_reason or "archive snapshot is not replayable"],
+                    "required_follow_up_task_id": _follow_up_task_id(
+                        task_id_from_path,
+                        classification,
+                    ),
+                }
+            )
+            continue
+
+        gaps = check_task(task)
+        classification = _classify_archive_replay_result(gaps)
+        results.append(
+            {
+                "task_id": task["id"],
+                "snapshot": display_path,
+                "snapshot_sha256_before": before_hash,
+                "snapshot_sha256_after": after_hash,
+                "snapshot_hash_unchanged": before_hash == after_hash,
+                "owner": task.get("owner"),
+                "reviewer": task.get("reviewer"),
+                "status": task.get("status"),
+                "terminal_status": snapshot_data.get("terminal_status"),
+                "terminal_outcome": snapshot_data.get("terminal_outcome"),
+                "review_file": task.get("review_file"),
+                "result": "pass" if not gaps else "fail",
+                "classification": classification,
+                "gap_count": len(gaps),
+                "gaps": gaps,
+                "required_follow_up_task_id": _follow_up_task_id(
+                    str(task["id"]),
+                    classification,
+                ),
+            }
+        )
+
+    failed = [result for result in results if result["result"] == "fail"]
+    classification_counts: dict[str, int] = {}
+    for result in results:
+        classification = str(result["classification"])
+        classification_counts[classification] = classification_counts.get(classification, 0) + 1
+
+    return {
+        "audit_id": "closeout-truth-audit-2026-07-16",
+        "generated_at": (
+            datetime.now(UTC)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        ),
+        "mode": "read_only_archive_snapshot_replay",
+        "source_root": str(archive_root),
+        "selection": {
+            "frozen_rule": (
+                "all live-root LOOP-PROD archive snapshots except governance/meta "
+                "LOOP-PROD-000, LOOP-PROD-001, and LOOP-PROD-002"
+            ),
+            "included_task_ids": [result["task_id"] for result in results],
+            "included_snapshots": len(results),
+            "excluded_task_ids": sorted(excluded_task_ids),
+            "excluded_snapshots": excluded,
+            "archive_mutation": "none",
+        },
+        "summary": {
+            "passed": len(results) - len(failed),
+            "failed": len(failed),
+            "scanned": len(results),
+            "classification_counts": classification_counts,
+        },
+        "results": results,
+    }
+
+
 def write_audit_json(audit: dict[str, Any], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as fh:
@@ -572,25 +774,32 @@ def write_audit_markdown(audit: dict[str, Any], output_path: Path) -> None:
         "",
         "## Results",
         "",
-        "| Task | Admission | Verdict | Gaps |",
-        "|---|---|---:|---|",
+        "| Task | Verdict | Classification | Follow-up | Gaps |",
+        "|---|---:|---|---|---|",
     ]
 
     for result in audit["results"]:
         gaps = "<br>".join(result["gaps"]) if result["gaps"] else "none"
         lines.append(
-            "| `{task_id}` | `{admission}` | `{verdict}` | {gaps} |".format(
+            "| `{task_id}` | `{verdict}` | `{classification}` | `{follow_up}` | {gaps} |".format(
                 task_id=result["task_id"],
-                admission=result.get("overall_admission") or "",
                 verdict=result["result"],
+                classification=result.get("classification") or "",
+                follow_up=result.get("required_follow_up_task_id") or "",
                 gaps=gaps,
             )
         )
 
-    if audit["selection"]["excluded_manifests"]:
-        lines.extend(["", "## Excluded Manifests", ""])
-        for excluded in audit["selection"]["excluded_manifests"]:
-            lines.append(f"- `{excluded['manifest']}`: {excluded['reason']}")
+    excluded_items = (
+        audit["selection"].get("excluded_manifests")
+        or audit["selection"].get("excluded_snapshots")
+        or []
+    )
+    if excluded_items:
+        lines.extend(["", "## Excluded Sources", ""])
+        for excluded in excluded_items:
+            label = excluded.get("manifest") or excluded.get("snapshot") or excluded.get("task_id")
+            lines.append(f"- `{label}`: {excluded['reason']}")
 
     lines.append("")
     output_path.write_text("\n".join(lines), encoding="utf-8")
@@ -657,6 +866,17 @@ def main() -> None:
         help="Replay guardrail against evidence.json manifests under PATH",
     )
     parser.add_argument(
+        "--archive-root",
+        metavar="PATH",
+        help="Replay guardrail against archived task snapshots under PATH",
+    )
+    parser.add_argument(
+        "--exclude-task-id",
+        action="append",
+        default=[],
+        help="Task ID to exclude from --archive-root replay; may be passed multiple times",
+    )
+    parser.add_argument(
         "--audit-json",
         metavar="PATH",
         help="Write evidence replay audit JSON to PATH",
@@ -674,20 +894,29 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.evidence_root:
-        audit = audit_evidence_root(Path(args.evidence_root))
+    if args.evidence_root and args.archive_root:
+        raise SystemExit("Use only one of --evidence-root or --archive-root")
+
+    if args.evidence_root or args.archive_root:
+        if args.archive_root:
+            excluded_task_ids = set(DEFAULT_ARCHIVE_EXCLUDED_TASK_IDS)
+            excluded_task_ids.update(args.exclude_task_id or [])
+            audit = audit_archive_root(Path(args.archive_root), excluded_task_ids)
+        else:
+            audit = audit_evidence_root(Path(args.evidence_root))
         if args.audit_json:
             write_audit_json(audit, Path(args.audit_json))
         if args.audit_md:
             write_audit_markdown(audit, Path(args.audit_md))
         for result in audit["results"]:
             label = "OK" if result["result"] == "pass" else "FAIL"
-            print(f"[{label}] {result['task_id']} ({result['overall_admission']})")
+            detail = result.get("classification") or result.get("overall_admission") or ""
+            print(f"[{label}] {result['task_id']} ({detail})")
             for gap in result["gaps"]:
                 print(f"       ✗ {gap}")
         summary = audit["summary"]
         print(
-            f"\n{summary['passed']}/{summary['scanned']} evidence manifest(s) "
+            f"\n{summary['passed']}/{summary['scanned']} replay source(s) "
             "passed closeout truth replay."
         )
         sys.exit(1 if summary["failed"] else 0)

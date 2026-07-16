@@ -151,6 +151,21 @@ class TestCheckTask(unittest.TestCase):
         gaps = guardrail.check_task(t)
         self.assertEqual(gaps, [])
 
+    def test_product_level_task_without_review_file_is_gap(self):
+        t = _task(loop_ids=["source_ingestion"])
+        t["product_level_required"] = True
+        gaps = guardrail.check_task(t)
+        self.assertTrue(any("product-level closeout requires" in g for g in gaps), gaps)
+
+    def test_product_level_task_with_non_manifest_review_file_is_gap(self):
+        t = _task(
+            loop_ids=["source_ingestion"],
+            review_file="docs/deployment/evidence/summary.md",
+        )
+        t["product_level_required"] = True
+        gaps = guardrail.check_task(t)
+        self.assertTrue(any("must be an evidence.json manifest" in g for g in gaps), gaps)
+
     def test_panel_only_signal_in_notes_case_insensitive(self):
         t = _task(
             loop_ids=["capital_pool_execution"],
