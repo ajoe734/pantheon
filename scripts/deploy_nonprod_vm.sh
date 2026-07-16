@@ -80,6 +80,52 @@ ALLOW_DIRTY="${PANTHEON_ALLOW_DIRTY_DEPLOY:-false}"
 ALLOW_EXAMPLE_ENV="${PANTHEON_ALLOW_EXAMPLE_ENV:-false}"
 DRY_RUN=false
 
+verify_dev_environment_lease_contract() {
+  if [[ "${DEPLOY_ENV}" != "dev" ]]; then
+    return
+  fi
+
+  local lease_state_file="${PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE:-}"
+  local guarded_lease_id="${PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID:-}"
+
+  [[ -n "${guarded_lease_id}" ]] \
+    || error "dev deployment requires the pinned lease guard lease ID"
+  [[ -f "${lease_state_file}" && ! -L "${lease_state_file}" ]] \
+    || error "dev deployment requires a regular lease state file"
+
+  python3 - "${lease_state_file}" "${guarded_lease_id}" "${DEPLOY_SHA}" <<'PY'
+import json
+import re
+import sys
+
+state_path, guarded_lease_id, deploy_sha = sys.argv[1:]
+with open(state_path, encoding="utf-8") as handle:
+    state = json.load(handle)
+
+expected = {
+    "schemaVersion": 1,
+    "repository": "ajoe734/execute-plans",
+    "branch": "environment-coordination",
+    "path": ".pantheon/environment-leases/pantheon-dev-environment.json",
+    "resource": "pantheon-dev-environment",
+    "mode": "deployment",
+    "leaseId": guarded_lease_id,
+    "expectedBackendSha": deploy_sha,
+}
+for key, expected_value in expected.items():
+    if state.get(key) != expected_value:
+        actual = state.get(key)
+        raise SystemExit(
+            f"dev environment lease {key} mismatch: "
+            f"expected {expected_value!r}, got {actual!r}"
+        )
+if not re.fullmatch(r"[0-9a-f]{40}", deploy_sha):
+    raise SystemExit("dev deployment SHA must be a full lowercase commit SHA")
+PY
+
+  info "dev environment lease contract verified: ${guarded_lease_id} -> ${DEPLOY_SHA}"
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -320,6 +366,12 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "staging_bff_cors_origins=${STAGING_BFF_CORS_ORIGINS}"
   exit 0
 fi
+
+# The shared dev lease is verified before any other dev gate so a stale or
+# mismatched lease is rejected first, before any dev bucket, SSH, checkout,
+# compose, or smoke mutation.  Staging-live is an independent environment and must not
+# depend on the shared dev lease.
+verify_dev_environment_lease_contract
 
 if [[ "$DEPLOY_ENV" == "dev" && "$DEV_BFF_AUTH_MODE" == "strict" && "$DEV_BFF_AUTH_STUB" != "true" ]]; then
   if [[ -z "$DEV_BFF_JWT_SECRET" || -z "$DEV_BFF_OIDC_CLIENT_ID" || -z "$DEV_BFF_OIDC_CLIENT_SECRET" ]]; then
