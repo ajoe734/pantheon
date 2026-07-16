@@ -776,6 +776,15 @@ class TestArchiveReplayAudit(unittest.TestCase):
             "LOOP-PROD-TEL-001",
         ]
         self.assertEqual(list(guardrail.FROZEN_ARCHIVE_REPLAY_TASK_IDS), expected)
+        self.assertEqual(
+            guardrail.DEFAULT_ARCHIVE_EXCLUDED_TASK_IDS,
+            {
+                "LOOP-PROD-000",
+                "LOOP-PROD-001",
+                "LOOP-PROD-002",
+                "LOOP-PROD-PLANNING-BRIEFS-001",
+            },
+        )
 
     def test_archive_replay_rejects_missing_and_extra_sources(self):
         with tempfile.TemporaryDirectory() as td:

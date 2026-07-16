@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -9,7 +10,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 DEPLOY = ROOT / "scripts" / "deploy_nonprod_vm.sh"
-CONTROLLER_SHA = "65a1d653222ab378c994df6c40349139cd429831"
+CONTROLLER_SHA = "ddf4d0d5d33a848b3c86e3be2f6713e2ad9c0524"
+CONTROLLER_SCRIPT_SHA256 = (
+    "52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048"
+)
 CHECKOUT_SHA = "34e114876b0b11c390a56381ad16ebd13914f8d5"
 AUTH_SHA = "c200f3691d83b41bf9bbd8638997a462592937ed"
 GCLOUD_SHA = "e427ad8a34f8676edf47cf7d7925499adf3eb74f"
@@ -41,7 +45,7 @@ def test_controller_checkout_is_an_exact_immutable_separate_trust_root() -> None
     assert "CONTROLLER_REF" not in dev
     assert (
         dev.count(
-            "5e72d6a4d2c945d79a9a1fcc2e205584b9a1f06cc53c973c7ba3ae76205db102"
+            CONTROLLER_SCRIPT_SHA256
         )
         >= 7
     )
@@ -115,11 +119,24 @@ def test_heartbeat_and_guard_paths_are_bound_to_acquire_step_outputs() -> None:
         assert f"${{{{ steps.lease.outputs.{name} }}}}" in dev
     assert '--identity-json-out "${LEASE_IDENTITY_FILE}"' in dev
     assert '--token-stdin' in dev
-    assert 'initial_verify_log="${LEASE_HEARTBEAT_LOG}.initial-verify"' in dev
-    assert "for attempt in $(seq 1 50)" in dev
-    assert 'sleep 0.2' in dev
     assert "PANTHEON_DEV_ENVIRONMENT_LEASE_TOKEN_FD" not in dev
     assert ">> \"${GITHUB_ENV}\"" not in dev
+
+
+def test_initial_visibility_retry_is_only_on_immediate_post_acquire_verify() -> None:
+    dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
+    heartbeat_start = dev.index("      - name: Start identity-bound lease heartbeat")
+    next_step = dev.index("      - name: Deploy dev VM stack under lease", heartbeat_start)
+    initial_verify = dev[heartbeat_start:next_step]
+
+    assert dev.count("--initial-visibility-wait-seconds") == 1
+    assert dev.count("--initial-visibility-poll-seconds") == 1
+    assert "--initial-visibility-wait-seconds 15" in initial_verify
+    assert "--initial-visibility-poll-seconds 1" in initial_verify
+    assert "for attempt in $(seq 1 50)" not in dev
+    assert initial_verify.index("verify-heartbeat-identity") < initial_verify.index(
+        "--initial-visibility-wait-seconds 15"
+    )
 
 
 def test_all_dev_mutations_and_public_proofs_use_pinned_wrapper() -> None:
@@ -160,6 +177,13 @@ def test_token_steps_use_a_fixed_sanitized_path_and_clear_shell_git_injection() 
     assert dev.count('PYTHONPATH: ""') >= 7
     assert dev.count('PYTHONNOUSERSITE: "1"') >= 7
     assert dev.count('PYTHONSAFEPATH: "1"') >= 7
+    pythoninspect_yaml_values = re.findall(
+        r"(?m)^\s*PYTHONINSPECT:\s*(.+?)\s*$", dev
+    )
+    pythoninspect_shell_values = re.findall(r"\bPYTHONINSPECT=([^\s\\]*)", dev)
+    assert len(pythoninspect_yaml_values) >= 7
+    assert set(pythoninspect_yaml_values) == {'""'}
+    assert pythoninspect_shell_values == [""]
     assert dev.count('LD_PRELOAD: ""') >= 7
     assert dev.count('GIT_CONFIG_COUNT: "0"') >= 7
     assert dev.count('GIT_CONFIG_PARAMETERS: ""') >= 7

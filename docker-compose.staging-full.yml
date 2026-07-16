@@ -96,6 +96,11 @@ services:
     ports: !override
       - "${RESEARCH_WORKER_GATEWAY_PORT:-38103}:8103"
 
+  openclaw-data-init:
+    extends:
+      file: docker-compose.yml
+      service: openclaw-data-init
+
   openclaw-gateway:
     extends:
       file: docker-compose.yml
@@ -198,6 +203,7 @@ services:
 
 volumes:
   consultation-data:
+  openclaw-data:
   policy-learning-data:
   reconciliation-drift-data:
   research-orchestrator-data:

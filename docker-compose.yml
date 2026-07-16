@@ -610,6 +610,10 @@ services:
       # provider degrades with OPENCLAW_GATEWAY_TOKEN_not_set even when the CLI is baked.
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
       OPENCLAW_AGENT_ID: ${OPENCLAW_AGENT_ID:-main}
+      # Agent ensure/reconcile runs in this authenticated adapter container but
+      # must mutate the exact gateway-owned state and workspace volume.
+      PANTHEON_OPENCLAW_GATEWAY_STATE_DIR: /home/node/.openclaw
+      PANTHEON_OPENCLAW_AGENT_IDEMPOTENCY_DB: /root/.openclaw/pantheon-agent-ensure.sqlite3
       # Per-turn budget for `openclaw agent` (used as the CLI --timeout AND the
       # subprocess timeout). A real agent turn (gpt-5.5 + medium thinking + the
       # full management context pack) runs ~60-90s+, so the default 90 was too
@@ -660,6 +664,20 @@ services:
       # connects to the gateway as a paired device; a fresh state dir re-pairs).
       # See docs/runbooks/openclaw-adapter-device-pairing.md.
       - openclaw-adapter-data:/root/.openclaw
+      # Shared only for the governed internal agent ensure surface. The adapter
+      # validates an exact /workspaces/<persona-id> target before every write.
+      - openclaw-data:/home/node/.openclaw:rw
+    depends_on:
+      # Hosted/root deployments enable the openclaw profile and must not admit
+      # agent writes until the shared volume owner and gateway are ready. These
+      # stay optional so a profile-less local stack can expose honest degraded
+      # adapter health without Compose rejecting the graph.
+      openclaw-data-init:
+        condition: service_completed_successfully
+        required: false
+      openclaw-gateway:
+        condition: service_healthy
+        required: false
     ports:
       - "127.0.0.1:${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"
     healthcheck:
