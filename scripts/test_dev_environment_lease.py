@@ -432,6 +432,33 @@ class LeaseManagerTests(unittest.TestCase):
             )
         self.assertGreater(client.get_content_calls, 1)
 
+    def test_initial_verify_fails_immediately_for_wrong_predecessor_sha(self) -> None:
+        client = FakeClient()
+        local_state = state_for(
+            owner="execute-plans:current",
+            mode="deployment",
+            lease_id="33333333-3333-4333-8333-333333333333",
+        )
+        local_state["previousContentSha"] = "1" * 40
+        local = lease.public_state(local_state, content_sha="2" * 40)
+        client.state = state_for(
+            owner="execute-plans:previous",
+            mode="deployment",
+            lease_id="22222222-2222-4222-8222-222222222222",
+            heartbeat=NOW - timedelta(minutes=6),
+            expires=NOW - timedelta(seconds=1),
+        )
+        client.content_sha = "9" * 40
+
+        with self.assertRaisesRegex(lease.LeaseLost, "leaseId changed"):
+            manager(client).verify(
+                local,
+                max_heartbeat_age_seconds=120,
+                initial_visibility_wait_seconds=10,
+                initial_visibility_poll_seconds=1,
+            )
+        self.assertEqual(client.get_content_calls, 1)
+
     def test_initial_verify_does_not_retry_predecessor_without_opt_in(self) -> None:
         client = FakeClient()
         local_state = state_for(
@@ -453,6 +480,47 @@ class LeaseManagerTests(unittest.TestCase):
         with self.assertRaisesRegex(lease.LeaseLost, "leaseId changed"):
             manager(client).verify(local, max_heartbeat_age_seconds=120)
         self.assertEqual(client.get_content_calls, 1)
+
+    def test_initial_visibility_bounds_fail_closed(self) -> None:
+        client = FakeClient()
+        local = lease.public_state(state_for(), content_sha="blob-current")
+
+        invalid_args = (
+            {
+                "initial_visibility_wait_seconds": -0.1,
+                "initial_visibility_poll_seconds": 1,
+                "message": "wait-seconds must be between 0 and 30",
+            },
+            {
+                "initial_visibility_wait_seconds": 31,
+                "initial_visibility_poll_seconds": 1,
+                "message": "wait-seconds must be between 0 and 30",
+            },
+            {
+                "initial_visibility_wait_seconds": 1,
+                "initial_visibility_poll_seconds": 0,
+                "message": "poll-seconds must be greater than 0 and at most 5",
+            },
+            {
+                "initial_visibility_wait_seconds": 1,
+                "initial_visibility_poll_seconds": 6,
+                "message": "poll-seconds must be greater than 0 and at most 5",
+            },
+        )
+        for case in invalid_args:
+            with self.subTest(case=case):
+                with self.assertRaisesRegex(lease.LeaseError, case["message"]):
+                    manager(client).verify(
+                        local,
+                        max_heartbeat_age_seconds=120,
+                        initial_visibility_wait_seconds=case[
+                            "initial_visibility_wait_seconds"
+                        ],
+                        initial_visibility_poll_seconds=case[
+                            "initial_visibility_poll_seconds"
+                        ],
+                    )
+                self.assertEqual(client.get_content_calls, 0)
 
     def test_heartbeat_renews_with_current_blob_sha(self) -> None:
         client = FakeClient()
