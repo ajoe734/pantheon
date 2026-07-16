@@ -1,12 +1,347 @@
 # PINT-010-R2 hosted integration evidence
 
-Date: 2026-07-14 UTC
+Date: 2026-07-16 UTC
 Owner: Codex2
-Reviewer: Claude
-Status: implementation, authority, durability, a current merged exact BFF/FE
-pair, both task-specific hosted gates, and their immutable artifact are
-complete. The evidence PR and distinct Claude review remain. This task is not
-`done`; only `review_approved` permits owner closeout.
+Reviewer: Codex
+Status: accepted. The canonical Persona eligibility and OpenClaw adapter
+repairs, exact #381 candidate, clean 6/0 hosted write proof, independently
+restored same-pair read-only frontend, and fresh final strict BFF restore are
+complete. Superseded failures remain recorded as diagnostic history.
+
+## 2026-07-16 closure record
+
+This section supersedes the completion posture of the historical 2026-07-14
+record below. The older record remains useful provenance, but its exact pair
+and permissive-stub posture are not acceptance evidence for the current
+candidate.
+
+### Current delivery lineage
+
+#### Pantheon
+
+| PR | Head SHA | Merge SHA | Evidence role |
+| --- | --- | --- | --- |
+| [#3751](https://github.com/ajoe734/pantheon/pull/3751) | `e5fb548caf67f6859ffc91cfe15685393b837843` | `33afc82e54469a70a77f7dc1df2c8178d3f339d2` | Canonical tenant ownership and capability snapshots; deterministic, write-authorized, paper-only Servant ensure; fail-closed Persona eligibility |
+| [#3752](https://github.com/ajoe734/pantheon/pull/3752) | `2733a30209fc0afda029514d969768d831efe40f` | `9637455aa55638d518bde8f31fb3827ba0ec8471` | Strict hosted-auth posture verifier syntax repair and executable contract coverage |
+| [#3754](https://github.com/ajoe734/pantheon/pull/3754) | `b9ba936dabf9cc15e5888fe12459a43a5304a4e0` | `ddf4d0d5d33a848b3c86e3be2f6713e2ad9c0524` | Bounded exact-predecessor retry for initial lease visibility after successful CAS |
+| [#3757](https://github.com/ajoe734/pantheon/pull/3757) | `d963586c9803744a5745104e9b490c2aeae651cc` | `87c2f7e50bc66b23e16436aa32775fcf2fedd8bb` | Trust-pin the protected lease controller and checksums; scope bounded retry to immediate verification |
+| [#3761](https://github.com/ajoe734/pantheon/pull/3761) | `f5ec1aac9e10baa7d7c7d83f905e5df0a9cd4096` | `9967ce47fb826f782f3b84be1f08e6aefef88091` | Clear `PYTHONINSPECT` at every sanitized deploy boundary so successful remote commands cannot enter Python inspect mode |
+| [#3765](https://github.com/ajoe734/pantheon/pull/3765) | `c05603df65b3a4e2010a793c550be235b17bd367` | `aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748` | Route Servant reconciliation through the authenticated OpenClaw adapter with exact canonical admission, durable idempotency, and no execution authority |
+
+All six PRs are merged into `dev`. Their visible branch checks concluded
+successfully. PR #3751 recorded `48 passed` for its focused Agora regression
+and `273 passed, 4 skipped, 1 pre-existing failure` for the broad
+Agora/read-store/provisioning regression. The sole broad failure reproduced on
+clean baseline `5a02825edd229aebfdd567e26233dac88697fe62`.
+
+The deployment-reliability chain recorded these focused validations:
+
+- #3752: 24 deployment-contract tests passed.
+- #3754: 26 tests and 13 subtests passed; retry remains exact-predecessor,
+  expired-predecessor, opt-in, and bounded to 30 seconds.
+- #3757: 50 focused tests and 13 subtests passed; controller SHA256 is
+  `52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048`
+  and wrapper SHA256 is
+  `f3995a2baedc2ff47178a0de8ad1952096df4de508d5a47c8e0042a151ab7ea8`.
+- #3761: 24 deployment-contract tests passed, workflow YAML parsed, both
+  deploy shell scripts passed `bash -n`, and `git diff --check` passed.
+- #3765: 167 tests and 18 subtests passed, including built-adapter OpenClaw CLI
+  create/replay/collision/UID ownership proof, running-gateway visibility, and
+  dev/split-staging topology validation.
+
+#### execute-plans
+
+| PR | Head SHA | Merge SHA | Evidence role |
+| --- | --- | --- | --- |
+| [#379](https://github.com/ajoe734/execute-plans/pull/379) | `eb48ebe2e69e335516c5ac1841b84795878f21f5` | `1816ece7c77813b5b5c6098155776ad14a6991da` | Deterministic ensured-Persona selection, stable tenant/operator idempotency, exact preflight checks, viewer-negative ensure, and retry-free 6/0 hosted gate contract |
+| [#380](https://github.com/ajoe734/execute-plans/pull/380) | `29e0b11ca6eb1351e2713c3764db188666624e84` | `88d3d0acf1a2a3db6810c2d2b51c09cafe456b09` | Emit only allowlisted HTTP status, error code, and failed-precondition evidence for non-2xx Servant proof responses |
+| [#381](https://github.com/ajoe734/execute-plans/pull/381) | `cd1162686c7eb8c72ed2d33b28b114510b077105` | `b13635514618ad46e3855772e9ed1a0fa1fce3d4` | Gate Persona interaction submission on Workshop readiness and keep the composer disabled until the surface can emit the governed POST |
+
+All three PRs are merged. PR #379's integration gate run `29502685625` attempt
+3 and required branch checks succeeded. PR #380 ensures that a failed Servant
+preflight cannot print a raw response, arbitrary message, Authorization value,
+or token material. PR #381 repairs the readiness race exposed by the #380
+candidate's rejected 4/6 diagnostic attempt.
+
+### Canonical Persona authority properties
+
+The merged BFF behavior does not infer Persona eligibility from lifecycle or
+deployment stage. Admission requires exact tenant truth, supported lifecycle,
+environment ceiling, matching Persona/snapshot identity, and an explicit
+owner-backed `persona_opinion` capability snapshot. Servant ensure is
+write-authorized and cannot be mutated by a viewer. It remains deterministic,
+paper-only, and fail-closed until OpenClaw synchronization and exact snapshot
+admission succeed.
+
+The Persona and Servant surfaces retain `execution_authority=none`. No order,
+broker, live-capital, capital-binding, runtime-binding, or memory authority is
+granted by this repair.
+
+### Successful strict BFF baseline
+
+Pantheon Nonprod Deploy run
+[`29507925706`](https://github.com/ajoe734/pantheon/actions/runs/29507925706),
+attempt 1, job
+[`87653469276`](https://github.com/ajoe734/pantheon/actions/runs/29507925706/job/87653469276),
+completed successfully from `14:44:09Z` through `14:47:14Z`. It deployed only
+the dev BFF from exact merged SHA
+`9967ce47fb826f782f3b84be1f08e6aefef88091`, with `allow_dirty=false` and
+`dev_auth_profile=strict`.
+
+The successful job established:
+
+- trusted lease controller
+  `ddf4d0d5d33a848b3c86e3be2f6713e2ad9c0524` and the pinned controller and
+  wrapper digests above;
+- exact deployment-complete payload SHA
+  `9967ce47fb826f782f3b84be1f08e6aefef88091`;
+- hosted posture `auth_stub=false`, `auth_mode=strict`;
+- successful public BFF smoke and exact `/bff/version` proof;
+- successful Agora Postgres restart persistence for workshop
+  `deploy-restart-29507925706-1` and proposal
+  `proposal-deploy-restart-29507925706-1`, including completed-outbox replay
+  and pending-outbox recovery;
+- six expected transient HTTP 502 responses during the intentional BFF
+  restart, followed by readiness recovery and successful verification; and
+- clean lease release at `14:47:08Z`, lease ID
+  `cdf8e16b-92a9-4cef-b08d-f1c2b2996d02`.
+
+This is a verified strict baseline, not the final closeout restore. The bounded
+write-proof window may temporarily require a different dev auth profile; a
+fresh deployment of the final exact BFF lineage back to strict, with exact
+hosted proof, must be recorded after that window.
+
+### Superseded #380 candidate and initial read-only deployment
+
+execute-plans push gate
+[`29517392064`](https://github.com/ajoe734/execute-plans/actions/runs/29517392064),
+attempt 1, completed successfully for exact frontend SHA
+`88d3d0acf1a2a3db6810c2d2b51c09cafe456b09` and exact BFF SHA
+`aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748`. Its pair ID is
+`f58b10450aec28b638916d57b3291c5a9c7a954f85fc89a527d61313a76a0555`.
+
+This pair is superseded diagnostic history. It is not the accepted candidate
+for the next write proof.
+
+| Artifact | ID | GitHub artifact digest |
+| --- | ---: | --- |
+| `pantheon-fe-release-candidate-attempt-1` | `8383559811` | `sha256:617debcc60aa05a20d90e208251a7040cc3d3ad002dd1162e54f7488af8e12c4` |
+| `pantheon-integration-evidence-attempt-1` | `8383560278` | `sha256:21877e6dd23ec79361f3d86850508f94459c90c65585d29779a7eb97d45790bf` |
+| `pantheon-release-identity-attempt-1` | `8383560618` | `sha256:4110f380d7f5d910c3e36cda939dff1030d151bc68d447985c0a719eebc61a1f` |
+
+The candidate binds read-only digest
+`2797b8765556b9f6899ccaa5c88cda28f9f1ff87a09f50da3ff3db56e27815ee`
+and write-proof digest
+`7194d70e42e1c956db3a623e2736818a3856def998c331bc9d140f650891b356`.
+
+Automatic workflow-run deploy
+[`29518247457`](https://github.com/ajoe734/execute-plans/actions/runs/29518247457),
+attempt 1, accepted that exact pair in read-only mode. Artifact
+`pantheon-dev-fe-deploy-evidence-attempt-1` ID `8383846424`, digest
+`sha256:1cb9c32f2f18e48067c9c65f0a36f247c2416cc90e295831ab706f49c2c8714d`,
+records live/strict transport, real writes false, stub writes false, embedded
+bearer false, candidate/post-switch probes passed, and
+`rollbackRequired=false`.
+
+Its post-switch hosted scan fetched 65 bundle assets with zero fetch failures
+and scanned 66 HTML/JS/CSS sources with zero sensitive findings. The browser
+made five intended BFF requests, all GET/HEAD, with zero Authorization headers,
+zero write requests, zero old-host hits, and successful desktop/mobile hosted
+UX profiles. These preliminary counts remain supporting history; the structured
+scan file now records the fresh #381 candidate below.
+
+### Superseded #380 bounded write-proof attempt and safe recovery
+
+Pantheon run
+[`29518975266`](https://github.com/ajoe734/pantheon/actions/runs/29518975266),
+attempt 1, successfully deployed exact BFF
+`aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748` with the explicitly bounded
+`permissive-stub` profile (`auth_stub=true`, `auth_mode=permissive`). Public
+exact-version and Agora restart-persistence smokes passed, and lease
+`4d2ef39b-bc23-4122-8d2b-441085d5b4a8` was cleanly released.
+
+The fresh attempt-1 parent
+[`29519185869`](https://github.com/ajoe734/execute-plans/actions/runs/29519185869)
+used correlation ID `e06ae26b-d52b-4e6c-aa13-1601d92d0b60`. It deployed the
+exact write-proof profile and dispatched independently authorized child
+[`29520132313`](https://github.com/ajoe734/execute-plans/actions/runs/29520132313)
+plus watchdog
+[`29519934947`](https://github.com/ajoe734/execute-plans/actions/runs/29519934947).
+
+This attempt is classified as failed and is not final proof. Child artifact
+`pantheon-authorized-write-proof-attempt-1` ID `8384570109`, digest
+`sha256:c72cc9baabf5d819c888fb0b3ae3b6a21744bde347b736cc91889c3a1e3009a5`,
+shows four expected Playwright cases passed and two interaction cases timed out
+waiting for the `/bff/agora/interactions` POST, one on desktop and one on
+mobile. There were zero skips, zero retries/flaky cases, and two unexpected
+timeouts; this does not satisfy the required 6/0 gate.
+
+The failure is narrower than backend admission or governance:
+
+- Servant ensure passed for exact Persona
+  `agora-servant-b996f46bc40c4764690a`, class `agora_servant`, owner scope
+  `user_private`, memory scope `private_user`, registry-backed, and
+  `executionAuthority=none`.
+- The governed proposal probe passed: unauthenticated create 401
+  `AUTH_REQUIRED`, viewer create/modify 403, operator create 201, modify 200,
+  validate 200, revisions `1,2,3`, audit `create,modify,validate`, replay at
+  revision 3, no downstream execution, and no recorded token.
+- Before/after manifests remained the exact same pair and write-proof digest,
+  with embedded bearer false.
+
+The watchdog completed all three jobs successfully and restored the exact pair
+to read-only before any successor mutable action. The parent restore-confirm
+job also passed. The restored browser probe had zero failures, zero write
+requests, zero Authorization headers, zero sensitive findings, and explicitly
+reported the paired read-only release restored.
+
+Pantheon safety-restore run
+[`29521081353`](https://github.com/ajoe734/pantheon/actions/runs/29521081353),
+attempt 1, job `87698032121`, then completed successfully from `17:45:20Z` to
+`17:48:57Z` for exact BFF SHA
+`aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748`. Three `/bff/version` reads
+returned the exact known SHA with build time `2026-07-16T17:47:09Z`,
+`auth_stub=false`, and `auth_mode=strict`; three `/healthz` reads returned
+`live=true`, `ready=true`, with all dependencies healthy. This is a safety
+restore after the failed proof, not the final strict restore required after a
+future successful 6/0 proof.
+
+Both deploy workflows were active during recovery: Pantheon Nonprod Deploy ID
+`269991390` and Pantheon Dev FE Deploy ID `292028803`. Pantheon run
+`29469158508` was observed as an old GitHub-queued platform ghost on
+`task/EVOCHAIN-011`: it had zero jobs, had not updated since `03:31:02Z`, and
+held no lease. Both normal cancel and force cancel returned GitHub HTTP 500.
+It remains recorded transparently as historical, non-executing diagnostic
+state rather than being hidden as a clean queue.
+
+### Fresh accepted #381 candidate
+
+execute-plans PR #381 supersedes the rejected #380 proof pair. Push gate
+[`29522604349`](https://github.com/ajoe734/execute-plans/actions/runs/29522604349),
+attempt 1, job `87703016409`, completed successfully for exact frontend SHA
+`b13635514618ad46e3855772e9ed1a0fa1fce3d4` and exact BFF SHA
+`aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748`. Branch CI run `29522610098`
+also succeeded.
+
+The accepted pair ID is
+`433a21fe127a3bde0020b9444869f565e99ed4b36b7ade2c3ea89aa5185a8d36`,
+with read-only digest
+`61dfc0986f57cb696b0a6aa7b21af6d3eb8aa25fe8b5b63f7f3ad556afd47360`
+and write-proof digest
+`db21014d4c69404aeb23987012cff1d54dd1eaa5f33d10700a9a2cae6d53e660`.
+
+| Artifact | ID | GitHub artifact digest |
+| --- | ---: | --- |
+| `pantheon-fe-release-candidate-attempt-1` | `8385576520` | `sha256:2bae2da1b7f8acdb91d54f41786ba64ba6c747b56da8c3d62d3bd221b90e9b36` |
+| `pantheon-integration-evidence-attempt-1` | `8385577029` | `sha256:3f0cd967d8f4260d472fa0490ef962d525a69b5fb6516cde8f1865ef1d03b96c` |
+| `pantheon-release-identity-attempt-1` | `8385577374` | `sha256:15d8f777a3b70ba7cdfa394408a5f151596493775d1613c106f68de96dc27fff` |
+
+Automatic read-only deploy
+[`29523324214`](https://github.com/ajoe734/execute-plans/actions/runs/29523324214),
+attempt 1, job `87705406096`, accepted the exact pair at
+`2026-07-16T18:28:45Z`. Its
+`pantheon-dev-fe-deploy-evidence-attempt-1` artifact ID is `8385901699`,
+digest
+`sha256:d471f1232982174c15ad54458fd08d14b9e8d20278c33e80c95b96cfcdd78b02`.
+Three independent manifest reads were exact and safe: read-only profile,
+live/strict transport, real writes false, stub writes false, and embedded bearer
+false.
+
+A fresh independent same-origin scan captured at
+`2026-07-16T18:31:20.105Z` and completed at
+`2026-07-16T18:31:23.272Z`. It classified 811 HTTP 200 responses: 48 HTML
+responses (the root plus 47 SPA fallbacks), 763 JavaScript responses totaling
+27,433,340 bytes, zero other responses, and zero failures. Both forbidden
+viewer and operator literal counts were zero, and pre/post manifest identity
+remained stable. These are the authoritative counts in
+`PINT-010-R2-BUNDLE-SCAN-2026-07-16.json`.
+
+### Accepted #381 write proof and final restoration
+
+The first permissive-profile dispatch
+[`29525959905`](https://github.com/ajoe734/pantheon/actions/runs/29525959905)
+was rejected before deployment. Its lease acquire/read-after-write path received
+GitHub API HTTP 400 while reading an expired predecessor owner. No deploy step
+ran, the BFF remained unchanged, and no write-proof window opened. This is an
+infrastructure coordination failure, not application or proof evidence.
+
+Replacement Pantheon run
+[`29526445708`](https://github.com/ajoe734/pantheon/actions/runs/29526445708),
+attempt 1, job `87715949316`, completed successfully for exact BFF SHA
+`aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748`. Three `/bff/version` reads and
+three `/healthz` reads confirmed the exact known SHA, `auth_stub=true`,
+`auth_mode=permissive`, live/ready true, and all dependencies healthy.
+
+Fresh parent run
+[`29526662869`](https://github.com/ajoe734/execute-plans/actions/runs/29526662869),
+attempt 1, used correlation ID
+`5baa7d49-394a-43a5-8ea4-ade765313277`. All three jobs succeeded:
+
+- deploy exact gated candidate: job `87716670643`;
+- coordinate bounded authenticated Persona proof: job `87718210667`;
+- confirm independent same-pair read-only restore: job `87720081823`.
+
+Its immutable artifacts were:
+
+| Artifact | ID | GitHub artifact digest |
+| --- | ---: | --- |
+| `pantheon-dev-fe-deploy-evidence-attempt-1` | `8387096770` | `sha256:7d6e3fbc78d3e902b9fb6d38e2c23b6aa16b697ef9702c5fe7d9e4965db655b5` |
+| `pantheon-proof-binding-attempt-1` | `8387165728` | `sha256:0536a99c7c1f171cb82f6914d052fc6ec0dc59208ab1766a5de50af30b8da962` |
+| `pantheon-proof-child-claim-attempt-1` | `8387231666` | `sha256:a1373dc2c64d2ed93be463ad39b0080a43ad2714aa586d94ece49ba6981c0ba9` |
+
+Independent watchdog
+[`29527293543`](https://github.com/ajoe734/execute-plans/actions/runs/29527293543),
+attempt 1, passed exact-parent authentication (`87718776813`), bounded proof
+watching (`87718876632`), and exact read-only restore (`87720078613`).
+
+Independently authorized child
+[`29527452120`](https://github.com/ajoe734/execute-plans/actions/runs/29527452120),
+attempt 1, passed authorization job `87719310624` and proof job `87719347860`.
+Artifact `pantheon-authorized-write-proof-attempt-1` ID `8387313123`, digest
+`sha256:3999572b0c5ff0d4e9682427320ce0bb61ce12256fb383a007bdb59c17489fad`,
+contains the accepted proof.
+
+The focused Playwright result was exactly six expected cases in
+`71935.323ms`: three desktop and three mobile, with zero skipped, unexpected,
+or flaky cases and no retry. Servant preflight resolved exact Persona
+`agora-servant-b996f46bc40c4764690a`, class `agora_servant`, owner scope
+`user_private`, memory scope `private_user`, registry-backed, and
+`executionAuthority=none`.
+
+The governed proposal proof returned unauthenticated 401 `AUTH_REQUIRED`,
+viewer create/modify 403, operator create 201, modify 200, and validate 200.
+Canonical readback contained revisions `1,2,3`, audit actions
+`create,modify,validate`, final and replay revision 3,
+`downstreamExecutionAttempted=false`, and `tokensRecorded=false`.
+
+Before and after proof manifests remained exact pair
+`433a21fe127a3bde0020b9444869f565e99ed4b36b7ade2c3ea89aa5185a8d36`
+with write-proof digest
+`db21014d4c69404aeb23987012cff1d54dd1eaa5f33d10700a9a2cae6d53e660`;
+the accepted write-proof manifest time was `2026-07-16T19:18:01Z`.
+
+The watchdog restored that same pair with read-only digest
+`61dfc0986f57cb696b0a6aa7b21af6d3eb8aa25fe8b5b63f7f3ad556afd47360`.
+Three independent manifest reads matched, the accepted restore timestamp was
+`2026-07-16T19:25:04.844Z`, `safeRestore` passed, and
+`rollbackRequired=false`.
+
+Final Pantheon strict run
+[`29527966606`](https://github.com/ajoe734/pantheon/actions/runs/29527966606),
+attempt 1, job `87721031182`, completed successfully from `19:26:09Z` through
+`19:28:45Z`. Three `/bff/version` reads returned exact known SHA
+`aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748`, build time
+`2026-07-16T19:27:37Z`, `auth_stub=false`, and `auth_mode=strict`. Three
+`/healthz` reads returned live/ready true with every dependency healthy.
+
+At final verification both deploy workflows were active and no executing,
+lease-holding, or conflicting Pantheon or execute-plans deployment remained.
+The historical GitHub-queued run `29469158508` was still nonterminal but had
+zero jobs and no lease, as recorded above. The final runtime evidence is
+complete and accepted; no live-capital, broker, order, capital-binding,
+runtime-binding, or memory authority was granted or exercised.
+
+## Historical 2026-07-14 record
 
 ## Delivery lineage
 

@@ -3454,7 +3454,7 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
         state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = self._outbox([event])
         self._write_state(state)
         archive = self.root / "archive" / "logs" / (
-            f"{self.log_file.name}-duplicate.gz"
+            f"{self.log_file.name}-2026-07-16T1130Z.gz"
         )
         archive.parent.mkdir(parents=True)
         with gzip.open(archive, "wt", encoding="utf-8") as handle:

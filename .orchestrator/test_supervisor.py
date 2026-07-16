@@ -138,27 +138,29 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 4)
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex2"), 4)
 
-    def test_claude_concurrency_is_explicitly_capped_at_three(self) -> None:
+    def test_claude_and_copilot_lanes_are_disabled_with_zero_capacity(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
 
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude"], 3)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude"], 3)
-        self.assertEqual(supervisor.agent_dispatch_capacity(config, "claude"), 3)
+        self.assertEqual(ready_dispatcher["disabled_agents"], ["Claude", "Claude2", "Antigravity", "Antigravity2", "Copilot"])
+        self.assertEqual(ready_dispatcher["target_workload"]["Claude"], 0)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude"], 0)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude"], 0)
+        self.assertEqual(ready_dispatcher["target_workload"]["Copilot"], 0)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Copilot"], 0)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["copilot"], 0)
 
-    def test_claude2_new_work_target_and_concurrency_are_capped(self) -> None:
+    def test_claude2_lane_is_disabled_with_zero_capacity(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
 
-        self.assertEqual(ready_dispatcher["target_workload"]["Claude2"], 5)
-        # Raised 1 -> 2 (OPS-CLAUDE2-CONCURRENCY) so Claude2 is not a single-worker
-        # bottleneck when the dependency-chain tail is owned solely by Claude2.
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 2)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude2"], 2)
+        self.assertEqual(ready_dispatcher["target_workload"]["Claude2"], 0)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 0)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude2"], 0)
 
-    def test_antigravity_workers_are_in_dispatcher_pool(self) -> None:
+    def test_antigravity_lanes_are_disabled_with_zero_capacity(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
@@ -167,15 +169,12 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertIn("antigravity2", config["agents"])
         self.assertEqual(config["providers"]["antigravity"]["delivery_mode"], "antigravity")
         self.assertEqual(config["providers"]["antigravity2"]["delivery_mode"], "antigravity")
-        self.assertEqual(ready_dispatcher["target_workload"]["Antigravity"], 5)
-        self.assertEqual(ready_dispatcher["target_workload"]["Antigravity2"], 5)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity"], 1)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity2"], 1)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["antigravity"], 1)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["antigravity2"], 1)
-        self.assertEqual(ready_dispatcher["disabled_agents"], ["Claude", "Claude2"])
-        self.assertIn("Antigravity", config["worker_reassignment"]["owner_fallbacks"]["Codex2"])
-        self.assertIn("Antigravity2", config["worker_reassignment"]["owner_fallbacks"]["Codex2"])
+        self.assertEqual(ready_dispatcher["target_workload"]["Antigravity"], 0)
+        self.assertEqual(ready_dispatcher["target_workload"]["Antigravity2"], 0)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity"], 0)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity2"], 0)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["antigravity"], 0)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["antigravity2"], 0)
 
 
 class DetectWorkerFailureTests(unittest.TestCase):
@@ -5585,6 +5584,7 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
             "display_name": "Qwen",
             "provider": "qwen",
         }
+        self.config["ready_dispatcher"]["worker_os_duplicate_guard"] = False
         status = {
             "agents": [
                 {"name": "Codex"},
@@ -5604,6 +5604,29 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
 
         self.assertEqual(agents, ["Codex", "Claude", "Gemini"])
         self.assertNotIn("Qwen", agents)
+
+    def test_configured_disabled_agent_is_not_eligible_for_sidecars(self) -> None:
+        self.config["ready_dispatcher"]["worker_os_duplicate_guard"] = False
+        self.config["ready_dispatcher"]["disabled_agents"] = ["Claude"]
+        status = {
+            "agents": [
+                {"name": "Codex"},
+                {"name": "Claude"},
+                {"name": "Gemini"},
+            ],
+            "tasks": [],
+        }
+
+        agents = supervisor.eligible_idle_agents_for_sidecars(
+            self.config,
+            {"queue": {"events": {}}, "workers": {}},
+            status,
+            max_active_sidecars_per_agent=1,
+            provider_report={"providers": {}},
+        )
+
+        self.assertEqual(agents, ["Codex", "Gemini"])
+        self.assertNotIn("Claude", agents)
 
     def test_waits_full_window_before_creating_sidecars(self) -> None:
         state = {"queue": {"events": {}}, "workers": {}, "underutilization": {}}
