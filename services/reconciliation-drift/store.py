@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import json
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -84,6 +85,14 @@ class ReconciliationDriftStore:
                 f"{path}: non-standard JSON constant {value!r} is not allowed"
             )
 
+        def parse_finite_float(value: str) -> float:
+            parsed = float(value)
+            if not math.isfinite(parsed):
+                raise ReconciliationStoreError(
+                    f"{path}: JSON number {value!r} is outside the finite float range"
+                )
+            return parsed
+
         def reject_duplicate_keys(pairs):
             payload: Dict[str, Any] = {}
             for key, value in pairs:
@@ -96,6 +105,7 @@ class ReconciliationDriftStore:
 
         return json.JSONDecoder(
             parse_constant=reject_constant,
+            parse_float=parse_finite_float,
             object_pairs_hook=reject_duplicate_keys,
         )
 

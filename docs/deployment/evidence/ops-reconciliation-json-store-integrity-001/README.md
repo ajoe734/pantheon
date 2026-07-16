@@ -24,7 +24,14 @@ live dev volume.
   transaction in `_put_record`, and the read path in `_read_map`.
 - `_read_map_locked` fails closed (`ReconciliationStoreError`) instead of
   returning `{}` on a read error, non-UTF-8 bytes, or a non-object top-level
-  payload.
+  payload. Only a missing path represents a new empty store; an existing
+  zero-byte or JSON-whitespace-only file is treated as truncated input and
+  left unchanged.
+- Store decoding accepts only JSON-defined whitespace, rejects duplicate
+  keys within one document, rejects `NaN`/`Infinity`, and rejects finite JSON
+  number tokens such as `1e400` when they overflow the runtime float range.
+  New puts use `allow_nan=False`, so a successful write cannot introduce a
+  non-standard numeric value.
 - `_validate_map` fails closed when any record value is not a JSON object,
   instead of silently dropping it.
 - `_read_concatenated_maps` only recovers a historical concatenated-map file
@@ -61,23 +68,45 @@ All added to
 - `test_json_store_fails_closed_on_malformed_suffix`,
   `test_json_store_fails_closed_on_truncated_json`,
   `test_json_store_fails_closed_on_invalid_utf8`,
-  `test_json_store_fails_closed_on_invalid_map_values`, and
-  `test_json_store_treats_unrecoverable_map_as_fail_closed_error` each
+  and `test_json_store_fails_closed_on_invalid_map_values` each
   prove the read and the put both raise `ReconciliationStoreError`, and
   that the original bytes and SHA-256 are unchanged afterward.
+- Additional strict-source regressions cover existing empty/whitespace-only
+  files, non-JSON whitespace suffixes, an invalid later concatenated map,
+  duplicate keys within one document, non-standard numeric constants, and
+  numeric overflow. They prove read and put both fail while bytes, SHA-256,
+  and task-created temporary files remain unchanged. A separate put test
+  proves a proposed non-finite record cannot alter a valid source.
+- `test_json_store_treats_unrecoverable_map_as_fail_closed_error` is an
+  additional byte-for-byte preservation check for a generic invalid source.
 - `test_json_store_simulated_replace_failure_keeps_original_and_cleans_tmp`
   monkeypatches `os.replace` to fail and proves the original file and its
   SHA-256 are unchanged and no `.tmp` file is left behind.
 - `test_json_store_simulated_fsync_failure_keeps_original_and_cleans_tmp`
   separately monkeypatches `os.fsync` to fail on the temp file, before
   `os.replace` is ever reached, and proves the same: original bytes and
-  SHA-256 unchanged, no `.tmp` file left behind.
+  SHA-256 unchanged, no `.tmp` file left behind, and zero calls to
+  `os.replace`.
+
+## Delivery gate incident
+
+PR #3758 head `e0af5510000f346877ea9d508f6d84554d38407e` was manually
+merged at 2026-07-16T21:18:23Z as
+`aed6ec306da73bce7d19cc0bad2c1559ea3e6ae6`. Its required checks passed
+and auto-merge was not enabled, but GitHub recorded no review and there was
+no task-scoped Antigravity approval of that exact head. The merge therefore
+does not satisfy this task's governed approval gate and is not treated here
+as accepted closeout. The stricter follow-up remains on the same task branch;
+its exact post-compose head is recorded in the governed status handoff and
+must be approved before any further merge.
 
 ## Verification
 
+Captured from the follow-up candidate tree at 2026-07-16T21:35:20Z:
+
 ```text
 python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py -q
-11 passed
+22 passed
 
 python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py -q
 6 passed
@@ -86,7 +115,7 @@ python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_
 20 passed
 
 python3 -m pytest services/reconciliation-drift/tests/ -q
-68 passed
+79 passed
 
 git diff --check
 (no output; clean)
@@ -99,9 +128,6 @@ git diff --check
 - Not changing: the Postgres-backed store path, the reconciliation-drift
   HTTP surface, the scheduler/consumer/incident-listener code, the shared
   deploy workflow guard, or any live dev-volume data file.
-- Follow-up owned elsewhere: after this corrective merges,
-  `OPS-DEPLOY-WORKFLOW-GUARD-001` (or its successor) must rerun the
-  Pantheon deploy and confirm `reconciliation-drift-svc` and
-  `loop-run-projector-scheduler` become healthy against the still-corrupt
-  live `drift_evaluations.json`, which this task intentionally leaves
-  untouched.
+- Deployment workflow and hosted-probe acceptance remain owned by their
+  separate deploy task. This evidence makes no claim that a live corrupt
+  volume was rewritten or that hosted services recovered.

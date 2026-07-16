@@ -255,14 +255,14 @@ def test_json_store_fails_closed_when_later_concatenated_map_is_invalid(tmp_path
     _assert_alert_source_fails_closed(module, store, original)
 
 
-@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
-def test_json_store_fails_closed_on_non_standard_numeric_constant(
-    tmp_path: Path, constant: str
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_json_store_fails_closed_on_non_finite_numeric_value(
+    tmp_path: Path, number: str
 ) -> None:
     module = _load_store_module()
     store = module.ReconciliationDriftStore(tmp_path)
     original = (
-        '{"alert-a":{"alert_id":"alert-a","score":' + constant + "}}"
+        '{"alert-a":{"alert_id":"alert-a","score":' + number + "}}"
     ).encode("utf-8")
 
     _assert_alert_source_fails_closed(module, store, original)
