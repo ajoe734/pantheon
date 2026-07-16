@@ -45,9 +45,12 @@ import hmac
 import json
 import os
 import re
+import sqlite3
+import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
 import httpx
@@ -100,6 +103,7 @@ from assistant_provider_runtime import (
     ProviderInvocationRequest,
 )
 from assistant_repair_workflow import AssistantRepairWorkflow, AssistantRepairWorkflowError
+from integrations.openclaw.adapter.agora_servant import ensure_agora_servant_agent
 
 from services.foundation.health import (
     health_payload,
@@ -112,6 +116,7 @@ OPENCLAW_GATEWAY_URL = os.getenv("OPENCLAW_GATEWAY_URL", "")
 _UPSTREAM_TIMEOUT = int(os.getenv("OPENCLAW_UPSTREAM_TIMEOUT", "3"))
 _UPSTREAM_RETRIES = int(os.getenv("OPENCLAW_UPSTREAM_RETRIES", "1"))
 _ASSISTANT_API_PREFIX = "/api/openclaw-adapter/assistant"
+_AGENTS_API_PREFIX = "/api/openclaw-adapter/agents"
 _CRON_API_PATH = "/api/openclaw-adapter/gateway/cron"
 _ASSISTANT_SERVICE_TOKEN = os.getenv("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", "")
 _ASSISTANT_SERVICE_AUTH_REQUIRED = os.getenv(
@@ -637,14 +642,17 @@ app = FastAPI(
 
 @app.middleware("http")
 async def require_assistant_service_token(request: Request, call_next):
-    """Authenticate BFF-to-adapter assistant and cron control calls."""
+    """Authenticate BFF-to-adapter assistant, agent, and cron control calls."""
 
     path = request.url.path.rstrip("/")
     is_assistant_api = path == _ASSISTANT_API_PREFIX or path.startswith(
         f"{_ASSISTANT_API_PREFIX}/"
     )
     is_cron_api = path == _CRON_API_PATH
-    if not is_assistant_api and not is_cron_api:
+    is_agents_api = path == _AGENTS_API_PREFIX or path.startswith(
+        f"{_AGENTS_API_PREFIX}/"
+    )
+    if not is_assistant_api and not is_agents_api and not is_cron_api:
         return await call_next(request)
 
     if not _ASSISTANT_SERVICE_TOKEN:
@@ -652,7 +660,7 @@ async def require_assistant_service_token(request: Request, call_next):
         # so they always fail closed when the shared service token is absent.
         # The wider assistant boundary retains its existing opt-in requirement
         # for local development compatibility.
-        if is_cron_api or _ASSISTANT_SERVICE_AUTH_REQUIRED:
+        if is_cron_api or is_agents_api or _ASSISTANT_SERVICE_AUTH_REQUIRED:
             return JSONResponse(
                 status_code=503,
                 content={
@@ -660,6 +668,8 @@ async def require_assistant_service_token(request: Request, call_next):
                     "error_code": (
                         "CRON_SERVICE_AUTH_MISCONFIGURED"
                         if is_cron_api
+                        else "AGENT_SERVICE_AUTH_MISCONFIGURED"
+                        if is_agents_api
                         else "ASSISTANT_SERVICE_AUTH_MISCONFIGURED"
                     ),
                     "message": (
@@ -679,6 +689,8 @@ async def require_assistant_service_token(request: Request, call_next):
                 "error_code": (
                     "CRON_SERVICE_AUTH_DENIED"
                     if is_cron_api
+                    else "AGENT_SERVICE_AUTH_DENIED"
+                    if is_agents_api
                     else "ASSISTANT_SERVICE_AUTH_DENIED"
                 ),
                 "message": "A valid X-Pantheon-Service-Token header is required.",
@@ -1855,6 +1867,295 @@ def invoke_claude_provider(
         context_pack=req.context_pack,
     )
     return JSONResponse(status_code=200, content=result.to_dict())
+
+
+# ---------------------------------------------------------------------------
+# Governed Persona agent reconciliation
+# ---------------------------------------------------------------------------
+
+
+_OPENCLAW_AGENT_STATE_DIR = Path(
+    os.getenv("PANTHEON_OPENCLAW_GATEWAY_STATE_DIR", "/home/node/.openclaw")
+).resolve()
+_OPENCLAW_AGENT_WORKSPACE_ROOT = (_OPENCLAW_AGENT_STATE_DIR / "workspaces").resolve()
+_OPENCLAW_AGENT_IDEMPOTENCY_DB = Path(
+    os.getenv(
+        "PANTHEON_OPENCLAW_AGENT_IDEMPOTENCY_DB",
+        "/root/.openclaw/pantheon-agent-ensure.sqlite3",
+    )
+).resolve()
+_FORBIDDEN_SERVANT_CAPABILITIES = frozenset(
+    {"runtimebinding", "brokerorder", "capitalbinding"}
+)
+_ALLOWED_SERVANT_CAPABILITIES = frozenset({"personaopinion"})
+
+
+class OpenClawAgentCapabilitySnapshot(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    allowed_capabilities: List[str]
+    persona_class: str
+
+
+class OpenClawAgentEnsureRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    persona_registry_ref: str
+    workspace_ref: str
+    capability_snapshot: OpenClawAgentCapabilitySnapshot
+
+
+def _normalized_capability(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def _servant_agent_request(req: OpenClawAgentEnsureRequest) -> Dict[str, Any]:
+    registry_ref = str(req.persona_registry_ref or "").strip()
+    if not registry_ref.startswith("persona:"):
+        raise ValueError("persona_registry_ref must use the persona:<id> form")
+    persona_id = registry_ref.removeprefix("persona:").strip()
+    if not re.fullmatch(r"agora-servant-[0-9a-f]{20}", persona_id):
+        raise ValueError("persona_registry_ref is not a canonical Agora servant id")
+    if req.capability_snapshot.persona_class != "agora_servant":
+        raise ValueError("agent ensure is restricted to agora_servant personas")
+
+    requested_capabilities = req.capability_snapshot.allowed_capabilities
+    capabilities = {
+        _normalized_capability(capability) for capability in requested_capabilities
+    }
+    if capabilities & _FORBIDDEN_SERVANT_CAPABILITIES:
+        raise ValueError(
+            "servant capability snapshot cannot grant runtime, broker, or capital binding"
+        )
+    if (
+        requested_capabilities != ["persona_opinion"]
+        or capabilities != _ALLOWED_SERVANT_CAPABILITIES
+    ):
+        raise ValueError("servant capability snapshot must be exactly persona_opinion")
+
+    expected_workspace = (_OPENCLAW_AGENT_WORKSPACE_ROOT / persona_id).resolve()
+    workspace = Path(str(req.workspace_ref or "").strip()).resolve()
+    if workspace != expected_workspace or _OPENCLAW_AGENT_WORKSPACE_ROOT not in workspace.parents:
+        raise ValueError("workspace_ref is outside the governed Persona workspace root")
+
+    return {
+        "persona_id": persona_id,
+        "name": "Agora Servant",
+        "archetype": "agora_servant",
+        "mandate": "user_private_agora_servant",
+        "strategy_family": "agora_servant",
+        "lifecycle_state": "draft",
+        "risk_level": "low",
+        "traits": {
+            "decision_style": "operator-guided",
+            "hard_rules": "no runtime binding, broker order, or capital binding authority",
+            "persona_voice": "concise, evidence-grounded",
+        },
+        "workspace_ref": str(workspace),
+        "metadata": {
+            "persona_class": "agora_servant",
+            "execution_authority": "none",
+            "allowed_capabilities": ["persona_opinion"],
+        },
+    }
+
+
+def _gateway_state_agent_runner(args: List[str]) -> "subprocess.CompletedProcess[str]":
+    env = dict(os.environ)
+    env["OPENCLAW_STATE_DIR"] = str(_OPENCLAW_AGENT_STATE_DIR)
+    env["HOME"] = str(_OPENCLAW_AGENT_STATE_DIR.parent)
+    return subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+        user=1000,
+        group=1000,
+        check=False,
+    )
+
+
+def _gateway_state_soul_writer(workspace: str, soul: str) -> None:
+    workspace_path = Path(str(workspace or "").strip()).resolve()
+    if (
+        workspace_path.parent != _OPENCLAW_AGENT_WORKSPACE_ROOT
+        or _OPENCLAW_AGENT_WORKSPACE_ROOT not in workspace_path.parents
+    ):
+        raise ValueError("SOUL workspace is outside the governed Persona workspace root")
+    writer = (
+        "import pathlib,sys; "
+        "workspace=pathlib.Path(sys.argv[1]); "
+        "workspace.mkdir(parents=True,exist_ok=True); "
+        "(workspace/'SOUL.md').write_text(sys.stdin.read(),encoding='utf-8')"
+    )
+    proc = subprocess.run(
+        ["python3", "-c", writer, str(workspace_path)],
+        input=soul,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env={**os.environ, "HOME": str(_OPENCLAW_AGENT_STATE_DIR.parent)},
+        user=1000,
+        group=1000,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or "SOUL write failed")[:300])
+
+
+def _sync_servant_agent(req: OpenClawAgentEnsureRequest) -> Dict[str, Any]:
+    persona = _servant_agent_request(req)
+    return ensure_agora_servant_agent(
+        persona,
+        runner=_gateway_state_agent_runner,
+        soul_writer=_gateway_state_soul_writer,
+    )
+
+
+class _AgentEnsureIdempotencyConflict(RuntimeError):
+    pass
+
+
+def _agent_ensure_fingerprint(req: OpenClawAgentEnsureRequest) -> str:
+    canonical = json.dumps(
+        req.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _ensure_agent_idempotently(
+    req: OpenClawAgentEnsureRequest,
+    *,
+    idempotency_key: str,
+    request_id: str,
+) -> tuple[int, Dict[str, Any]]:
+    """Serialize reconciliation and durably replay an exact request.
+
+    The write transaction spans the CLI reconcile. SQLite's writer lock keeps
+    list/add/set-identity sequences from racing across request threads or
+    adapter workers. A crash rolls back the replay row; the underlying
+    reconcile safely observes any agent created before that crash.
+    """
+
+    fingerprint = _agent_ensure_fingerprint(req)
+    _OPENCLAW_AGENT_IDEMPOTENCY_DB.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(
+        str(_OPENCLAW_AGENT_IDEMPOTENCY_DB),
+        timeout=130.0,
+        isolation_level=None,
+    )
+    try:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_ensure_replays (
+                idempotency_key TEXT PRIMARY KEY,
+                request_fingerprint TEXT NOT NULL,
+                http_status INTEGER NOT NULL,
+                response_json TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute("BEGIN IMMEDIATE")
+        replay = connection.execute(
+            """
+            SELECT request_fingerprint, http_status, response_json
+            FROM agent_ensure_replays
+            WHERE idempotency_key = ?
+            """,
+            (idempotency_key,),
+        ).fetchone()
+        if replay is not None:
+            replay_fingerprint, replay_status, replay_json = replay
+            if replay_fingerprint != fingerprint:
+                raise _AgentEnsureIdempotencyConflict(
+                    "Idempotency-Key was already used with a different agent request"
+                )
+            payload = json.loads(str(replay_json))
+            connection.commit()
+            return int(replay_status), payload
+
+        agent = _sync_servant_agent(req)
+        status_code = 201 if agent.get("status") == "created" else 200
+        payload = {
+            "status": "ok",
+            "request_id": request_id,
+            "idempotency_key": idempotency_key,
+            "agent": agent,
+        }
+        response_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        connection.execute(
+            """
+            INSERT INTO agent_ensure_replays (
+                idempotency_key,
+                request_fingerprint,
+                http_status,
+                response_json
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (idempotency_key, fingerprint, status_code, response_json),
+        )
+        connection.commit()
+        return status_code, payload
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+@app.post("/api/openclaw-adapter/agents/ensure")
+def ensure_servant_agent(
+    req: OpenClawAgentEnsureRequest,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+) -> JSONResponse:
+    if not str(idempotency_key or "").strip() or not str(x_request_id or "").strip():
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "invalid_request",
+                "error_code": "AGENT_SYNC_HEADERS_REQUIRED",
+                "message": "Idempotency-Key and X-Request-Id are required.",
+            },
+        )
+    try:
+        status_code, payload = _ensure_agent_idempotently(
+            req,
+            idempotency_key=str(idempotency_key).strip(),
+            request_id=str(x_request_id).strip(),
+        )
+    except _AgentEnsureIdempotencyConflict as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "status": "conflict",
+                "error_code": "AGENT_SYNC_IDEMPOTENCY_CONFLICT",
+                "message": str(exc),
+            },
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "invalid_request",
+                "error_code": "AGENT_SYNC_POLICY_DENIED",
+                "message": str(exc),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "upstream_unavailable",
+                "error_code": "OPENCLAW_AGENT_SYNC_FAILED",
+                "message": str(exc)[:300],
+            },
+        )
+    return JSONResponse(status_code=status_code, content=payload)
 
 
 # ---------------------------------------------------------------------------

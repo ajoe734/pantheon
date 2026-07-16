@@ -253,6 +253,7 @@ def test_agora_servant_ensure_provisions_profile(monkeypatch, tmp_path):
     assert stored["metadata"]["persona_class"] == "agora_servant"
     assert stored["metadata"]["openclaw_agent"]["agent_id"] == data["persona_id"]
     assert calls and calls[0]["metadata"]["persona_class"] == "agora_servant"
+    assert calls[0]["_agent_sync_idempotency_key"] == "agora-servant-ensure-001"
 
 
 def test_agora_servant_ensure_reconciles_existing_profile(monkeypatch, tmp_path):
@@ -292,6 +293,9 @@ def test_agora_servant_ensure_reconciles_existing_profile(monkeypatch, tmp_path)
     ]
     assert len(servants) == 1
     assert len(calls) == 2
+    assert {call["_agent_sync_idempotency_key"] for call in calls} == {
+        "agora-servant-ensure-replay"
+    }
 
 
 def test_ensured_servant_is_exactly_eligible_for_paper_persona_opinion(monkeypatch, tmp_path):
