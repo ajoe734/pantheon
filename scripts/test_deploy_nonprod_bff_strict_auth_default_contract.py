@@ -1,11 +1,43 @@
+import json
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "deploy_nonprod_vm.sh"
 DEPLOY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
+
+_TEST_SHA = "0" * 40
+_TEST_LEASE_ID = "11111111-1111-4111-8111-111111111111"
+
+
+def _valid_lease_env(sha: str = _TEST_SHA) -> dict:
+    """Dev deploys sit behind the shared environment lease guard, which is the
+    outermost dev gate; give these auth-contract tests a valid lease so they
+    exercise the strict-auth gates behind it."""
+    state = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, encoding="utf-8"
+    )
+    json.dump(
+        {
+            "schemaVersion": 1,
+            "repository": "ajoe734/execute-plans",
+            "branch": "environment-coordination",
+            "path": ".pantheon/environment-leases/pantheon-dev-environment.json",
+            "resource": "pantheon-dev-environment",
+            "mode": "deployment",
+            "leaseId": _TEST_LEASE_ID,
+            "expectedBackendSha": sha,
+        },
+        state,
+    )
+    state.close()
+    return {
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE": state.name,
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID": _TEST_LEASE_ID,
+    }
 
 
 def test_nonprod_deploy_defaults_to_strict_bff_auth() -> None:
@@ -30,7 +62,7 @@ def test_workflow_rejects_refs_that_predate_the_strict_auth_contract() -> None:
     workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
 
     gate = workflow.index("- name: Enforce dev auth deployment floor")
-    deploy = workflow.index("- name: Deploy requested VM stack")
+    deploy = workflow.index("- name: Deploy dev VM stack under lease")
     assert gate < deploy
 
     for secret in (
@@ -65,7 +97,11 @@ def test_nonprod_workflow_has_bounded_dev_permissive_stub_profile() -> None:
     assert "export DEV_BFF_AUTH_MODE=strict" in workflow
     assert "export DEV_BFF_AUTH_STUB=true" in workflow
     assert "export DEV_BFF_AUTH_MODE=permissive" in workflow
-    assert "Auth profile permissive-stub is valid only for dev deployments." in workflow
+    # The auth profile is a dev-job concern only: the independent staging job
+    # must not read it, so a permissive-stub selection can never leak into
+    # staging deployments.
+    staging = workflow[workflow.index("  deploy-staging-live:"):]
+    assert "DEV_AUTH_PROFILE" not in staging
 
 
 def _run_deploy_script(
@@ -75,8 +111,11 @@ def _run_deploy_script(
     env = {
         k: v
         for k, v in os.environ.items()
-        if not k.startswith("DEV_BFF_") and not k.startswith("DEV_OPENCLAW_ADAPTER_")
+        if not k.startswith("DEV_BFF_")
+        and not k.startswith("DEV_OPENCLAW_ADAPTER_")
+        and not k.startswith("PANTHEON_DEV_ENVIRONMENT_LEASE")
     }
+    env.update(_valid_lease_env())
     env.update(extra_env)
     return subprocess.run(
         [
