@@ -63,3 +63,16 @@ rewrite either merged history.
 - `OPS-DEPLOY-WORKFLOW-GUARD-001` may rerun Pantheon only after this task and
   `OPS-RECONCILIATION-JSON-STORE-INTEGRITY-001` have both been reviewed and
   merged.
+
+## Unreviewed merge handling
+
+PR #3757 merged as `87c2f7e50bc66b23e16436aa32775fcf2fedd8bb` at
+2026-07-16T14:10:04Z without any GitHub or governed Claude review; its commit
+still says `Reviewer: pending`. Do not treat that merge as task completion and
+do not dispatch a deploy proof from it.
+
+Claude must independently audit that exact merge and rerun every named
+controller and workflow negative test. If any defect is found, return the task
+to owner Codex2 for a corrective PR; the reviewer must not implement the fix.
+Even if the code is clean, preserve the premature merge as a process failure
+in the task evidence.

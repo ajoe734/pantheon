@@ -459,6 +459,36 @@ class LeaseManagerTests(unittest.TestCase):
             )
         self.assertEqual(client.get_content_calls, 1)
 
+    def test_initial_verify_fails_immediately_without_valid_predecessor_sha(self) -> None:
+        for previous_content_sha in (None, "not-a-sha"):
+            with self.subTest(previousContentSha=previous_content_sha):
+                client = FakeClient()
+                local_state = state_for(
+                    owner="execute-plans:current",
+                    mode="deployment",
+                    lease_id="33333333-3333-4333-8333-333333333333",
+                )
+                local = lease.public_state(local_state, content_sha="2" * 40)
+                if previous_content_sha is not None:
+                    local["previousContentSha"] = previous_content_sha
+                client.state = state_for(
+                    owner="execute-plans:previous",
+                    mode="deployment",
+                    lease_id="22222222-2222-4222-8222-222222222222",
+                    heartbeat=NOW - timedelta(minutes=6),
+                    expires=NOW - timedelta(seconds=1),
+                )
+                client.content_sha = "1" * 40
+
+                with self.assertRaisesRegex(lease.LeaseLost, "leaseId changed"):
+                    manager(client).verify(
+                        local,
+                        max_heartbeat_age_seconds=120,
+                        initial_visibility_wait_seconds=10,
+                        initial_visibility_poll_seconds=1,
+                    )
+                self.assertEqual(client.get_content_calls, 1)
+
     def test_initial_verify_does_not_retry_predecessor_without_opt_in(self) -> None:
         client = FakeClient()
         local_state = state_for(

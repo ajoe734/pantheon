@@ -26,6 +26,17 @@ Implemented behavior:
   strict.
 - No Pantheon proof deployment was dispatched from this task.
 
+## Process Failure Record
+
+PR #3757 merged as `87c2f7e50bc66b23e16436aa32775fcf2fedd8bb` at
+2026-07-16T14:10:04Z without GitHub or governed Claude review, and its
+implementation commit still recorded `Reviewer: pending`. This evidence treats
+that merge as incident history only, not task completion.
+
+Claude must audit merge `87c2f7e50bc66b23e16436aa32775fcf2fedd8bb` and rerun
+the named controller/workflow negative tests before approval. No deploy proof
+should be dispatched from this corrective task.
+
 ## Acceptance Coverage
 
 Controller unit tests cover:
@@ -33,6 +44,8 @@ Controller unit tests cover:
 - exact expired predecessor, then current blob succeeds;
 - foreign active replacement fails on the first read;
 - wrong predecessor SHA fails on the first read;
+- missing or malformed predecessor SHA fails on the first read, even with
+  initial visibility opt-in;
 - missing initial-visibility opt-in fails on the first read;
 - bounded visibility timeout fails closed;
 - invalid initial wait/poll bounds fail before remote reads.
@@ -51,8 +64,8 @@ Workflow contract tests cover:
 Run locally on `task/OPS-LEASE-READ-AFTER-WRITE-PIN-001`:
 
 ```text
-python3 -m pytest -q scripts/test_dev_environment_lease.py scripts/test_dev_environment_lease_guard.py scripts/test_dev_environment_lease_deploy_contract.py scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py
-# 54 passed, 17 subtests passed
+python3 -m pytest -q scripts/test_dev_environment_lease.py scripts/test_dev_environment_lease_guard.py scripts/test_dev_environment_lease_deploy_contract.py scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_check_shared_deploy_workflow_disabled.py
+# 63 passed, 19 subtests passed
 
 python3 -m py_compile scripts/dev_environment_lease.py
 
