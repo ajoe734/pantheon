@@ -3,8 +3,8 @@
 Date: 2026-07-16
 Owner: Codex2
 Reviewer: Antigravity
-Final task head: `d194d04585f7e4bde3fbf53f9e3ccf807bcc4098`
-Composed `origin/dev`: `9967ce47fb826f782f3b84be1f08e6aefef88091`
+Final task head: `1391ba8650ee5b034b8e7ad0fd4d6f078f611cbf`
+Composed `origin/dev`: `135d266b8de855c187d3307d41d86376833d728c`
 
 ## Delivered Behavior
 
@@ -106,7 +106,7 @@ mismatches outside this task's touched behavior:
 This task does not modify `.orchestrator/config.json` or sidecar eligibility
 policy.
 The same four failures also reproduce on exact `origin/dev` baseline commit
-`9967ce47fb826f782f3b84be1f08e6aefef88091`:
+`135d266b8de855c187d3307d41d86376833d728c`:
 
 ```bash
 env -u GH_CONFIG_DIR -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PYTHONPATH=.orchestrator \
