@@ -1,0 +1,84 @@
+{
+  "schema_version": "1.0",
+  "task_id": "OPS-DEPLOY-WORKFLOW-GUARD-001",
+  "captured_at": "2026-07-16T13:30:51Z",
+  "dispatch_started_at": "2026-07-16T13:03:45Z",
+  "shared_workflow_disable_attempted": false,
+  "run_cancel_attempted_during_proof": false,
+  "force_cancel_attempted_during_proof": false,
+  "workflow_states": {
+    "ajoe734/pantheon#269991390": "active",
+    "ajoe734/execute-plans#292028803": "active"
+  },
+  "pantheon_proof_run": {
+    "repo": "ajoe734/pantheon",
+    "workflow_id": 269991390,
+    "run_id": 29500642280,
+    "url": "https://github.com/ajoe734/pantheon/actions/runs/29500642280",
+    "event": "workflow_dispatch",
+    "head_branch": "dev",
+    "head_sha": "cd842177612c3f92ca0c92cb42e522431dc70b75",
+    "target_ref_input": "0a97b57f7f9d90aca7b940df67a5016494700bc0",
+    "created_at": "2026-07-16T13:03:59Z",
+    "updated_at": "2026-07-16T13:28:02Z",
+    "status": "completed",
+    "conclusion": "failure",
+    "job": {
+      "name": "Deploy dev under shared environment lease",
+      "job_id": 87628428239,
+      "started_at": "2026-07-16T13:04:08Z",
+      "completed_at": "2026-07-16T13:28:01Z",
+      "conclusion": "failure",
+      "key_steps": {
+        "Acquire shared dev environment lease": "success",
+        "Start identity-bound lease heartbeat": "success",
+        "Deploy dev VM stack under lease": "failure",
+        "Stop heartbeat and release only after complete success": "success"
+      },
+      "failure_summary": "Remote dev deploy ran through gcloud compute ssh, then googlecloudsdk/surface/compute/ssh.py returned SystemExit: 1 and the GitHub step exited 75."
+    }
+  },
+  "execute_plans_proof_run": {
+    "repo": "ajoe734/execute-plans",
+    "workflow_id": 292028803,
+    "run_id": 29500642299,
+    "url": "https://github.com/ajoe734/execute-plans/actions/runs/29500642299",
+    "event": "workflow_dispatch",
+    "head_branch": "dev",
+    "head_sha": "62a9bb03b17037b40153ccb1a150974cf188779b",
+    "candidate_sha": "62a9bb03b17037b40153ccb1a150974cf188779b",
+    "gate_run_id": 29497751979,
+    "deployment_profile": "read-only",
+    "created_at": "2026-07-16T13:03:59Z",
+    "updated_at": "2026-07-16T13:18:32Z",
+    "status": "completed",
+    "conclusion": "success",
+    "job": {
+      "name": "Deploy exact gated candidate to Pantheon dev VM",
+      "job_id": 87628707780,
+      "started_at": "2026-07-16T13:05:21Z",
+      "completed_at": "2026-07-16T13:18:31Z",
+      "conclusion": "success"
+    }
+  },
+  "coexistence_evidence": {
+    "prior_execute_plans_run": {
+      "run_id": 29499287883,
+      "status": "completed",
+      "conclusion": "failure",
+      "created_at": "2026-07-16T12:43:55Z",
+      "updated_at": "2026-07-16T13:05:18Z",
+      "note": "Task run 29500642299 queued behind this existing workflow_dispatch and then ran; this task did not cancel it."
+    },
+    "stale_pantheon_run": {
+      "run_id": 29469158508,
+      "status": "queued",
+      "conclusion": null,
+      "updated_at": "2026-07-16T03:31:02Z",
+      "note": "Still queued; this proof did not cancel or force-cancel it."
+    }
+  },
+  "proof_status": "partial",
+  "acceptance_status": "blocked",
+  "blocker": "execute-plans deploy proof succeeded, but Pantheon deploy proof failed in the dev VM deploy step. Rerun after Pantheon dev deploy-path failure is fixed or adjudicated."
+}
