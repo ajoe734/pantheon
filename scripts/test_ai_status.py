@@ -508,9 +508,29 @@ class CanonicalWriterGuardTests(unittest.TestCase):
 
 class ProgramActivityOutboxGuardTests(unittest.TestCase):
     @staticmethod
+    def _sequencing_source_ref(task_id: str) -> dict:
+        return {
+            "program_id": sequencing_gate.PROGRAM_ID,
+            "catalog_sha256": sequencing_gate.EFFECTIVE_CATALOG_SHA256,
+            "source_catalog_sha256": sequencing_gate.SOURCE_CATALOG_SHA256,
+            "sequencing_addendum_sha256": (
+                sequencing_gate.SEQUENCING_ADDENDUM_SHA256
+            ),
+            "merge_pr_3737_sha": sequencing_gate.MERGE_PR_3737_SHA,
+            "sequencing_overlay_sha256": (
+                sequencing_gate.SEQUENCING_OVERLAY_SHA256
+            ),
+            "release_gate_id": sequencing_gate.RELEASE_GATE_ID,
+            "sequencing_classification": (
+                sequencing_gate.EXPECTED_CLASSIFICATION_BY_TASK_ID[task_id]
+            ),
+        }
+
+    @staticmethod
     def _sequencing_task(*, marker: bool = True) -> dict:
+        task_id = "LOOP-PROD-AUTH-001"
         task = {
-            "id": "LOOP-PROD-AUTH-001",
+            "id": task_id,
             "title": "Sequencing guarded task",
             "owner": "Codex",
             "reviewer": "Claude",
@@ -521,12 +541,9 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
             "next": "Awaiting G2",
             "last_update": "2026-07-16T00:00:00Z",
             "review_notes_zh": ["prior review"],
-            "source_ref": {
-                "program_id": "loop-product-level-remediation-2026-07-13",
-                "sequencing_classification": (
-                    "deferred strict-auth/security/governance work"
-                ),
-            },
+            "source_ref": ProgramActivityOutboxGuardTests._sequencing_source_ref(
+                task_id
+            ),
         }
         if marker:
             task["sequencing_release_gate"] = {"state": "parked"}
@@ -543,8 +560,7 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
     @classmethod
     def _released_sequencing_state(cls) -> dict:
         null_sha256 = sequencing_gate.canonical_sha256(None)
-        ungated_ids = [f"PRE-G2-{index:03d}" for index in range(29)]
-        ordered_ids = [*ungated_ids, *sequencing_gate.EXPECTED_GATED_TASK_IDS]
+        ordered_ids = list(sequencing_gate.EXPECTED_TASK_IDS)
         epoch_transitions = []
         for index, task_id in enumerate(ordered_ids, start=1):
             gated = task_id in sequencing_gate.EXPECTED_GATED_TASK_IDS
@@ -556,7 +572,9 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
                     "before_task_contract_sha256": "1" * 64,
                     "after_task_contract_sha256": "2" * 64,
                     "before_source_ref_sha256": null_sha256,
-                    "after_source_ref_sha256": "3" * 64,
+                    "after_source_ref_sha256": sequencing_gate.canonical_sha256(
+                        cls._sequencing_source_ref(task_id)
+                    ),
                     "before_status": "absent",
                     "after_status": "blocked" if gated else "todo",
                     "acceptance_deferral_sha256": "4" * 64,
@@ -578,7 +596,7 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
             "applied_at": "2026-07-16T00:00:00Z",
             "source_graph_projection_sha256": "6" * 64,
             "effective_graph_projection_sha256": "7" * 64,
-            "task_count": 48,
+            "task_count": sequencing_gate.EXPECTED_TASK_COUNT,
             "task_transitions": epoch_transitions,
             "task_transition_set_sha256": sequencing_gate.canonical_sha256(
                 epoch_transitions
@@ -629,15 +647,6 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
         }
         task = cls._sequencing_task(marker=False)
         task["status"] = "todo"
-        task["source_ref"].update(
-            {
-                "catalog_sha256": sequencing_gate.EFFECTIVE_CATALOG_SHA256,
-                "sequencing_overlay_sha256": (
-                    sequencing_gate.SEQUENCING_OVERLAY_SHA256
-                ),
-                "release_gate_id": sequencing_gate.RELEASE_GATE_ID,
-            }
-        )
         task["sequencing_release_admission_sha256"] = release_admission_sha256
         return {
             "tasks": [task],
@@ -790,6 +799,72 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
 
         self.assertEqual(task["status"], "in_progress")
         self.assertEqual(task["next"], "released by exact shared admission")
+
+    def test_reordered_or_replaced_epoch_identity_keeps_release_parked(
+        self,
+    ) -> None:
+        for mutation in ("swapped", "replaced"):
+            with self.subTest(mutation=mutation):
+                state = self._released_sequencing_state()
+                epoch = state["program_sequencing_epochs"][
+                    sequencing_gate.PROGRAM_ID
+                ]
+                transitions = epoch["task_transitions"]
+                if mutation == "swapped":
+                    transitions[0], transitions[1] = transitions[1], transitions[0]
+                else:
+                    transitions[0]["task_id"] = "LOOP-PROD-REPLACED-001"
+                epoch["task_transition_set_sha256"] = (
+                    sequencing_gate.canonical_sha256(transitions)
+                )
+                task = state["tasks"][0]
+                before = deepcopy(state)
+
+                self.assertTrue(ai_status.task_is_sequencing_parked(task, state))
+                with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+                    with self.assertRaisesRegex(
+                        SystemExit,
+                        "start rejected for sequencing-parked task",
+                    ):
+                        ai_status.command_start(
+                            state,
+                            [task["id"], "must retain the exact epoch identity"],
+                        )
+                self.assertEqual(state, before)
+
+    def test_pre_g2_member_authority_and_classification_drift_fail_closed(
+        self,
+    ) -> None:
+        mutations = {
+            "source_catalog_sha256": "0" * 64,
+            "sequencing_classification": "part of the G2 proof path",
+            "unbound_extra_field": "forged",
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                state = self._released_sequencing_state()
+                task = state["tasks"][0]
+                task_id = "LOOP-PROD-000"
+                task["id"] = task_id
+                task["status"] = "todo"
+                task["source_ref"] = self._sequencing_source_ref(task_id)
+                task.pop("sequencing_release_admission_sha256", None)
+                self.assertFalse(
+                    ai_status.task_is_sequencing_parked(task, state)
+                )
+
+                task["source_ref"][field] = value
+                before = deepcopy(state)
+                with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+                    with self.assertRaisesRegex(
+                        SystemExit,
+                        "note rejected for sequencing-parked task LOOP-PROD-000",
+                    ):
+                        ai_status.command_note(
+                            state,
+                            [task_id, "must retain exact sequencing authority"],
+                        )
+                self.assertEqual(state, before)
 
 
 class ReviewApprovedWorkflowTests(unittest.TestCase):

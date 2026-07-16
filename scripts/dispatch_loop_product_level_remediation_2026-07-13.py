@@ -7,6 +7,7 @@ from collections import Counter
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+import errno
 import gzip
 import hashlib
 import importlib.util
@@ -320,6 +321,20 @@ PROGRAM_SEQUENCING_EPOCHS_STATE_KEY = "program_sequencing_epochs"
 PROGRAM_SEQUENCING_RELEASES_STATE_KEY = "program_sequencing_releases"
 SEQUENCING_EPOCH_SCHEMA_VERSION = 1
 SEQUENCING_GATE_MARKER_SCHEMA_VERSION = 1
+SEQUENCING_RELEASE_ADMISSION_FIELDS = frozenset(
+    {
+        "g2_evidence_sha256",
+        "canonical_record_bundle_sha256",
+        "hosted_probe_sha256",
+        "product_manifest_sha256",
+        "product_manifest_sidecar_sha256",
+        "target_task_snapshot_sha256",
+        "reviewer",
+        "review_verdict_sha256",
+        "g2_issued_at",
+        "closeout_at",
+    }
+)
 ACTIVITY_EVENT_TYPES = {
     "assign",
     "catalog_migration",
@@ -1097,6 +1112,8 @@ def read_rooted_regular_bytes(
                 return None
             raise DispatchError(f"{label} cannot be opened safely") from None
         except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise DispatchError(f"{label} must be a regular file") from exc
             raise DispatchError(f"{label} cannot be opened safely") from exc
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
@@ -3074,7 +3091,7 @@ def enqueue_activity_outbox(
     catalog_digest: str,
 ) -> None:
     pending = state.get("program_activity_outbox")
-    if pending not in (None, {}, []):
+    if pending is not None:
         raise DispatchError("program_activity_outbox must be recovered before enqueue")
     if not entries:
         raise DispatchError("cannot enqueue an empty activity transaction")
@@ -3390,13 +3407,15 @@ def flush_activity_outbox(
     catalog_digest: str,
 ) -> bool:
     pending = state.get("program_activity_outbox")
-    if pending in (None, {}, []):
+    if pending is None:
         return False
-    pending = validate_activity_outbox(
+    # Keep the semantic recovery gate at the side-effect boundary.  Callers may
+    # preflight a transaction earlier, but no sequencing audit may be appended
+    # or cleared without revalidating the committed epoch/release snapshot.
+    pending = validate_pending_sequencing_recovery(
         state,
         catalog,
         catalog_digest,
-        require_current_catalog=False,
     )
     events = pending["events"]
     earliest_event = min(parse_activity_timestamp(entry["ts"]) for entry in events)
@@ -4894,6 +4913,11 @@ def validate_sequencing_epoch_record(
             and record.get("install_mode") == "base_epoch_migration"
             else canonical_json_sha256(None)
         )
+        expected_before_task_snapshot_sha256 = (
+            canonical_json_sha256(None)
+            if record.get("install_mode") == "fresh_materialization"
+            else None
+        )
         if (
             not isinstance(row, dict)
             or set(row) != transition_fields
@@ -4903,6 +4927,11 @@ def validate_sequencing_epoch_record(
             != task_contract_sha256(source_by_id[task_id])
             or row.get("before_source_ref_sha256")
             != expected_source_ref_sha256
+            or (
+                expected_before_task_snapshot_sha256 is not None
+                and row.get("before_task_snapshot_sha256")
+                != expected_before_task_snapshot_sha256
+            )
             or row.get("after_task_contract_sha256")
             != task_contract_sha256(by_id[task_id])
             or not isinstance(expected_runtime, dict)
@@ -5388,92 +5417,31 @@ def validate_sequencing_release_record(
     ):
         raise DispatchError("program sequencing release transition set is not exact")
 
-    contract = catalog["g2_evidence_contract"]
-    evidence, evidence_raw, _ = _read_g2_artifact(
-        contract, "evidence_path", label="persisted G2 evidence manifest"
-    )
-    bundle_raw = read_rooted_regular_bytes(
-        REPO_ROOT,
-        contract["canonical_record_bundle_path"],
-        label="persisted G2 canonical record bundle",
-    )
-    probe_raw = read_rooted_regular_bytes(
-        REPO_ROOT,
-        contract["hosted_probe_path"],
-        label="persisted G2 hosted probe",
-    )
-    product_raw = read_rooted_regular_bytes(
-        REPO_ROOT,
-        contract["closeout_manifest_path"],
-        label="persisted G2 product manifest",
-    )
-    sidecar_relative = str(
-        Path(str(contract["closeout_manifest_path"])).with_name("evidence.sha256")
-    )
-    sidecar_raw = read_rooted_regular_bytes(
-        REPO_ROOT,
-        sidecar_relative,
-        label="persisted G2 product sidecar",
-    )
-    closeout_task, _ = _resolve_g2_closeout_task(state, catalog, contract)
-    admission = evidence.get("closeout_admission") if isinstance(evidence, dict) else None
-    bundle_reference = evidence.get("record_bundle") if isinstance(evidence, dict) else None
-    probe_reference = evidence.get("hosted_probe") if isinstance(evidence, dict) else None
+    # G2 freshness and canonical artifact resolution are admission-time checks.
+    # Once that exact byte decision is committed, the release is a one-way,
+    # content-addressed fact: recovery must not depend on mutable artifact paths
+    # or on a later rendering of the closeout task.  Explicit revocation, if it
+    # is ever needed, requires its own governed state transition.
+    admission = {
+        field: deepcopy(record.get(field))
+        for field in SEQUENCING_RELEASE_ADMISSION_FIELDS
+    }
+    digest_fields = SEQUENCING_RELEASE_ADMISSION_FIELDS - {
+        "reviewer",
+        "g2_issued_at",
+        "closeout_at",
+    }
+    reviewer = record.get("reviewer")
     if (
-        record.get("g2_evidence_sha256") != sha256_bytes(evidence_raw)
-        or not isinstance(bundle_raw, bytes)
-        or record.get("canonical_record_bundle_sha256") != sha256_bytes(bundle_raw)
-        or not isinstance(probe_raw, bytes)
-        or record.get("hosted_probe_sha256") != sha256_bytes(probe_raw)
-        or not isinstance(product_raw, bytes)
-        or record.get("product_manifest_sha256") != sha256_bytes(product_raw)
-        or not isinstance(sidecar_raw, bytes)
-        or record.get("product_manifest_sidecar_sha256") != sha256_bytes(sidecar_raw)
-        or record.get("target_task_snapshot_sha256")
-        != canonical_json_sha256(closeout_task)
-        or not isinstance(admission, dict)
-        or record.get("reviewer") != admission.get("reviewer")
-        or record.get("review_verdict_sha256")
-        != admission.get("review_verdict_sha256")
-        or record.get("g2_issued_at") != evidence.get("issued_at")
-        or not isinstance(bundle_reference, dict)
-        or bundle_reference.get("sha256")
-        != record.get("canonical_record_bundle_sha256")
-        or not isinstance(probe_reference, dict)
-        or probe_reference.get("sha256") != record.get("hosted_probe_sha256")
-        or admission.get("review_manifest_sha256")
-        != record.get("product_manifest_sha256")
-        or admission.get("review_manifest_sidecar_sha256")
-        != record.get("product_manifest_sidecar_sha256")
-        or admission.get("task_snapshot_sha256")
-        != record.get("target_task_snapshot_sha256")
+        any(not _is_lower_hex(record.get(field), 64) for field in digest_fields)
+        or not isinstance(reviewer, str)
+        or not reviewer.strip()
+        or reviewer not in set(catalog.get("allowed_owners") or [])
+        or not _is_lower_hex(record.get("release_admission_sha256"), 64)
         or record.get("release_admission_sha256")
-        != canonical_json_sha256(
-            {
-                "g2_evidence_sha256": record.get("g2_evidence_sha256"),
-                "canonical_record_bundle_sha256": record.get(
-                    "canonical_record_bundle_sha256"
-                ),
-                "hosted_probe_sha256": record.get("hosted_probe_sha256"),
-                "product_manifest_sha256": record.get(
-                    "product_manifest_sha256"
-                ),
-                "product_manifest_sidecar_sha256": record.get(
-                    "product_manifest_sidecar_sha256"
-                ),
-                "target_task_snapshot_sha256": record.get(
-                    "target_task_snapshot_sha256"
-                ),
-                "reviewer": record.get("reviewer"),
-                "review_verdict_sha256": record.get(
-                    "review_verdict_sha256"
-                ),
-                "g2_issued_at": record.get("g2_issued_at"),
-                "closeout_at": record.get("closeout_at"),
-            }
-        )
+        != canonical_json_sha256(admission)
     ):
-        raise DispatchError("persisted G2 release admission drifted")
+        raise DispatchError("persisted G2 release admission snapshot is not exact")
     audits = _release_activity_records(state, catalog)
     if len(audits) != 1:
         raise DispatchError(
@@ -5509,19 +5477,7 @@ def _build_sequencing_release_record(
     admission: Mapping[str, Any],
 ) -> dict[str, Any]:
     gate = catalog["release_gate"]
-    admission_fields = {
-        "g2_evidence_sha256",
-        "canonical_record_bundle_sha256",
-        "hosted_probe_sha256",
-        "product_manifest_sha256",
-        "product_manifest_sidecar_sha256",
-        "target_task_snapshot_sha256",
-        "reviewer",
-        "review_verdict_sha256",
-        "g2_issued_at",
-        "closeout_at",
-    }
-    if set(admission) != admission_fields:
+    if set(admission) != SEQUENCING_RELEASE_ADMISSION_FIELDS:
         raise DispatchError("G2 release admission snapshot is not exact")
     gated_ids = set((catalog.get("release_gate") or {}).get("gated_task_ids") or [])
     if (
@@ -5541,7 +5497,10 @@ def _build_sequencing_release_record(
         "release_predicate": str(gate["release_predicate"]),
         "released_at": timestamp,
         "release_admission_sha256": canonical_json_sha256(dict(admission)),
-        **{field: deepcopy(admission[field]) for field in sorted(admission_fields)},
+        **{
+            field: deepcopy(admission[field])
+            for field in sorted(SEQUENCING_RELEASE_ADMISSION_FIELDS)
+        },
         "released_task_transitions": transitions,
         "released_task_transition_set_sha256": canonical_json_sha256(transitions),
     }
@@ -7484,7 +7443,7 @@ def main() -> int:
         original_signature = file_signature(STATUS_PATH)
         state = read_json(STATUS_PATH)
         pending = state.get("program_activity_outbox")
-        if pending not in (None, {}, []):
+        if pending is not None:
             validated_pending = validate_pending_sequencing_recovery(
                 state,
                 catalog,

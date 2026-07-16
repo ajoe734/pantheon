@@ -426,6 +426,89 @@ class PlanningStateTests(unittest.TestCase):
             ["lock-enter", "body:phase-test:ignored", "lock-exit"],
         )
 
+    def test_materialize_rejects_non_null_program_activity_outbox_before_writes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="planning-state-outbox-guard-") as temp_dir:
+            root = Path(temp_dir)
+            with self.patch_paths(root), self.patch_ai_status_paths(root):
+                session = planning_state.default_session("phase-test", "phase3")
+                session["document_reconciliation_status"] = "not_needed"
+                session["human_gate_status"] = "approved"
+                session["proposed_execution_tasks"] = [
+                    {
+                        "id": "PLAN-TEST-001",
+                        "title": "Must not materialize",
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                        "phase": "Phase 3",
+                        "summary_zh": "outbox 尚未恢復時不可寫入。",
+                        "depends_on": [],
+                        "artifacts": [],
+                        "acceptance": [],
+                    }
+                ]
+                state = planning_state.ai_status.default_state()
+                state["program_activity_outbox"] = {}
+                status_file = root / "ai-status.json"
+                status_file.write_text(
+                    json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                before = status_file.read_bytes()
+
+                with (
+                    mock.patch.object(planning_state, "save_derived_state") as save_derived,
+                    mock.patch.object(planning_state, "save_session") as save_session,
+                    mock.patch.object(planning_state.ai_status, "sync_all") as sync_status,
+                    self.assertRaisesRegex(SystemExit, "program_activity_outbox"),
+                ):
+                    planning_state.command_materialize(session, [])
+
+                save_derived.assert_not_called()
+                save_session.assert_not_called()
+                sync_status.assert_not_called()
+                self.assertEqual(status_file.read_bytes(), before)
+
+    def test_materialize_rejects_sequencing_parked_task_before_upsert(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="planning-state-sequencing-guard-") as temp_dir:
+            root = Path(temp_dir)
+            with self.patch_paths(root), self.patch_ai_status_paths(root):
+                session = planning_state.default_session("phase-test", "phase3")
+                session["document_reconciliation_status"] = "not_needed"
+                session["human_gate_status"] = "approved"
+                session["proposed_execution_tasks"] = [
+                    {
+                        "id": "LOOP-PROD-AUTH-001",
+                        "title": "Sequencing-owned task",
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                        "phase": "Phase 3",
+                        "summary_zh": "只能由 authoritative dispatcher 釋放。",
+                        "depends_on": [],
+                        "artifacts": [],
+                        "acceptance": [],
+                    }
+                ]
+                state = planning_state.ai_status.default_state()
+                status_file = root / "ai-status.json"
+                status_file.write_text(
+                    json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                before = status_file.read_bytes()
+
+                with (
+                    mock.patch.object(planning_state, "save_derived_state") as save_derived,
+                    mock.patch.object(planning_state, "save_session") as save_session,
+                    mock.patch.object(planning_state.ai_status, "sync_all") as sync_status,
+                    self.assertRaisesRegex(SystemExit, "sequencing-parked task"),
+                ):
+                    planning_state.command_materialize(session, [])
+
+                save_derived.assert_not_called()
+                save_session.assert_not_called()
+                sync_status.assert_not_called()
+                self.assertEqual(status_file.read_bytes(), before)
+
     def test_materialize_preserves_existing_execution_truth_and_only_backfills_source_refs(self) -> None:
         with tempfile.TemporaryDirectory(prefix="planning-state-backfill-") as temp_dir:
             root = Path(temp_dir)

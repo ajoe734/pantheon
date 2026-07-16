@@ -18,6 +18,21 @@ import supervisor
 import runtime_state
 
 
+def _sequencing_source_ref(authority, task_id: str) -> dict:
+    return {
+        "program_id": authority.PROGRAM_ID,
+        "catalog_sha256": authority.EFFECTIVE_CATALOG_SHA256,
+        "source_catalog_sha256": authority.SOURCE_CATALOG_SHA256,
+        "sequencing_addendum_sha256": authority.SEQUENCING_ADDENDUM_SHA256,
+        "merge_pr_3737_sha": authority.MERGE_PR_3737_SHA,
+        "sequencing_overlay_sha256": authority.SEQUENCING_OVERLAY_SHA256,
+        "release_gate_id": authority.RELEASE_GATE_ID,
+        "sequencing_classification": (
+            authority.EXPECTED_CLASSIFICATION_BY_TASK_ID[task_id]
+        ),
+    }
+
+
 def _sequencing_release_status(*, released: bool) -> dict:
     authority = supervisor.sequencing_gate
     program_id = authority.PROGRAM_ID
@@ -32,15 +47,7 @@ def _sequencing_release_status(*, released: bool) -> dict:
         "reviewer": "Claude",
         "depends_on": [],
         "last_update": "2026-07-16T00:00:00Z",
-        "source_ref": {
-            "program_id": program_id,
-            "catalog_sha256": catalog_sha,
-            "sequencing_overlay_sha256": overlay_sha,
-            "release_gate_id": gate_id,
-            "sequencing_classification": (
-                "deferred strict-auth/security/governance work"
-            ),
-        },
+        "source_ref": _sequencing_source_ref(authority, task_id),
     }
     admission = {
         "g2_evidence_sha256": "c" * 64,
@@ -54,11 +61,8 @@ def _sequencing_release_status(*, released: bool) -> dict:
         "g2_issued_at": "2026-07-16T00:02:00Z",
         "closeout_at": "2026-07-16T00:01:00Z",
     }
-    release_admission_sha = supervisor._sequencing_canonical_sha256(admission)
-    all_task_ids = [
-        *authority.EXPECTED_GATED_TASK_IDS,
-        *(f"TEST-UNGATED-{index:03d}" for index in range(29)),
-    ]
+    release_admission_sha = authority.canonical_sha256(admission)
+    all_task_ids = list(authority.EXPECTED_TASK_IDS)
     epoch_transitions = []
     for epoch_task_id in all_task_ids:
         blocked = epoch_task_id in authority.EXPECTED_GATED_TASK_IDS
@@ -74,7 +78,9 @@ def _sequencing_release_status(*, released: bool) -> dict:
                 "before_task_contract_sha256": "8" * 64,
                 "after_task_contract_sha256": "9" * 64,
                 "before_source_ref_sha256": "a" * 64,
-                "after_source_ref_sha256": "b" * 64,
+                "after_source_ref_sha256": authority.canonical_sha256(
+                    _sequencing_source_ref(authority, epoch_task_id)
+                ),
                 "before_status": "todo",
                 "after_status": "blocked" if blocked else "todo",
                 "acceptance_deferral_sha256": "c" * 64,
@@ -110,7 +116,7 @@ def _sequencing_release_status(*, released: bool) -> dict:
         "release_admission_sha256": release_admission_sha,
         "released_task_transitions": release_transitions,
         "released_task_transition_set_sha256": (
-            supervisor._sequencing_canonical_sha256(release_transitions)
+            authority.canonical_sha256(release_transitions)
         ),
     }
     epoch = {
@@ -126,7 +132,7 @@ def _sequencing_release_status(*, released: bool) -> dict:
         "effective_graph_projection_sha256": "1" * 64,
         "task_count": authority.EXPECTED_TASK_COUNT,
         "task_transitions": epoch_transitions,
-        "task_transition_set_sha256": supervisor._sequencing_canonical_sha256(
+        "task_transition_set_sha256": authority.canonical_sha256(
             epoch_transitions
         ),
     }
@@ -1546,6 +1552,80 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             released_task["id"],
         )
 
+    def test_epoch_requires_the_exact_ordered_48_task_identity(self) -> None:
+        authority = supervisor.sequencing_gate
+        for mutation in ("swapped", "replaced"):
+            with self.subTest(mutation=mutation):
+                status = _sequencing_release_status(released=True)
+                epoch = status["program_sequencing_epochs"][authority.PROGRAM_ID]
+                transitions = epoch["task_transitions"]
+                if mutation == "swapped":
+                    transitions[0], transitions[1] = transitions[1], transitions[0]
+                else:
+                    transitions[0]["task_id"] = "LOOP-PROD-REPLACED-001"
+                epoch["task_transition_set_sha256"] = authority.canonical_sha256(
+                    transitions
+                )
+                task = status["tasks"][0]
+
+                self.assertFalse(
+                    supervisor.task_has_valid_sequencing_release_admission(
+                        task, status
+                    )
+                )
+                self.assertTrue(
+                    supervisor.task_is_sequencing_parked(task, status)
+                )
+
+    def test_every_epoch_member_requires_exact_authority_source_ref(self) -> None:
+        authority = supervisor.sequencing_gate
+
+        def pre_g2_status() -> tuple[dict, dict]:
+            status = _sequencing_release_status(released=False)
+            task = status["tasks"][0]
+            task_id = "LOOP-PROD-000"
+            task["id"] = task_id
+            task["source_ref"] = _sequencing_source_ref(authority, task_id)
+            task.pop("sequencing_release_admission_sha256", None)
+            return status, task
+
+        status, task = pre_g2_status()
+        self.assertFalse(supervisor.task_is_sequencing_parked(task, status))
+
+        mutations = {
+            "program_id": "foreign-program",
+            "catalog_sha256": "0" * 64,
+            "source_catalog_sha256": "1" * 64,
+            "sequencing_addendum_sha256": "2" * 64,
+            "merge_pr_3737_sha": "3" * 40,
+            "sequencing_overlay_sha256": "4" * 64,
+            "release_gate_id": "foreign-gate",
+            "sequencing_classification": "part of the G2 proof path",
+            "unbound_extra_field": "forged",
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                status, task = pre_g2_status()
+                task["source_ref"][field] = value
+                self.assertTrue(
+                    supervisor.task_is_sequencing_parked(task, status)
+                )
+
+    def test_every_present_non_null_program_outbox_is_pending(self) -> None:
+        self.assertFalse(supervisor.status_has_pending_program_activity_outbox({}))
+        self.assertFalse(
+            supervisor.status_has_pending_program_activity_outbox(
+                {"program_activity_outbox": None}
+            )
+        )
+        for value in ({}, [], "", 0, {"schema_version": 5}):
+            with self.subTest(value=value):
+                self.assertTrue(
+                    supervisor.status_has_pending_program_activity_outbox(
+                        {"program_activity_outbox": value}
+                    )
+                )
+
     def test_forged_release_transition_fails_closed_in_both_consumers(self) -> None:
         auto_unblock = _load_auto_unblock_module()
         for mutation in (
@@ -1745,6 +1825,141 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(worker["status"], "superseded")
         terminate.assert_called_once_with(4242)
         finalize.assert_called_once()
+
+    def test_parked_retry_worker_is_quiesced_before_retry_launch(self) -> None:
+        status = _sequencing_release_status(released=False)
+        task = status["tasks"][0]
+        task["status"] = "blocked"
+        task["sequencing_release_gate"] = {"state": "parked"}
+        worker = {
+            "run_id": "run-gated-retry",
+            "task_id": task["id"],
+            "status": "retry_backoff",
+            "pid": None,
+            "queue_event_id": "evt-gated-retry",
+            "provider": "codex",
+            "next_retry_at": "2026-07-16T00:00:00Z",
+        }
+        state = {
+            "queue": {"events": {"evt-gated-retry": {"status": "retry_backoff"}}},
+            "workers": {worker["run_id"]: worker},
+        }
+
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "finalize_queue_event_record"),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.quiesce_sequencing_parked_workers(
+                self.config,
+                state,
+                status=status,
+                task_map={task["id"]: task},
+                pending_program_outbox=False,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "superseded")
+        with mock.patch.object(
+            supervisor,
+            "start_worker_for_request",
+            side_effect=AssertionError("parked retry must never relaunch"),
+        ):
+            self.assertFalse(
+                supervisor.retry_due_workers(
+                    self.config,
+                    state,
+                    self.provider_report,
+                    datetime(2026, 7, 16, 1, 0, tzinfo=timezone.utc),
+                )
+            )
+
+    def test_central_launch_and_approval_resume_recheck_sequencing_state(self) -> None:
+        parked = _sequencing_release_status(released=False)
+        task = parked["tasks"][0]
+        task["status"] = "blocked"
+        task["sequencing_release_gate"] = {"state": "parked"}
+        request = mock.Mock(task_id=task["id"])
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=parked),
+            mock.patch.object(
+                supervisor,
+                "build_adapter",
+                side_effect=AssertionError("parked launch reached provider adapter"),
+            ),
+        ):
+            ok, error, delivery = supervisor.start_worker_for_request(
+                self.config,
+                {"workers": {}},
+                self.provider_report,
+                request,
+                queue_event_id="evt-parked-launch",
+                attempt_count=1,
+                event_id_for_log="evt-parked-launch",
+            )
+
+        self.assertFalse(ok)
+        self.assertIn("parked behind the G2 gate", error or "")
+        self.assertIsNone(delivery)
+
+        suspended_worker = {
+            "run_id": "run-gated-approval",
+            "task_id": task["id"],
+            "status": "suspended_approval",
+            "session_id": "session-gated",
+            "provider": "claude",
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=parked),
+            mock.patch.object(
+                supervisor,
+                "spawn_background_process",
+                side_effect=AssertionError("parked approval resume spawned a process"),
+            ),
+        ):
+            self.assertIsNone(
+                supervisor.resume_claude_worker(
+                    self.config,
+                    suspended_worker,
+                    self.provider_report,
+                    approval={"approval_id": "approval-gated"},
+                )
+            )
+
+    def test_valid_released_gated_queue_event_survives_prune(self) -> None:
+        released = _sequencing_release_status(released=True)
+        task = released["tasks"][0]
+        event = {
+            "event_id": "evt-released-gated",
+            "task_id": task["id"],
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "reason": supervisor.REASON_OWNED_READY,
+        }
+        state = {
+            "queue": {"events": {event["event_id"]: {"status": "queued"}}},
+            "workers": {},
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
+            mock.patch.object(supervisor, "load_status", return_value=released),
+            mock.patch.object(
+                supervisor,
+                "queue_event_is_orphaned",
+                return_value=False,
+            ),
+            mock.patch.object(supervisor, "save_event_queue") as save_event_queue,
+        ):
+            changed = supervisor.prune_event_queue(self.config, state)
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            state["queue"]["events"][event["event_id"]]["status"],
+            "queued",
+        )
+        save_event_queue.assert_not_called()
 
     def test_worker_tree_guard_warns_without_blocking(self) -> None:
         config = {

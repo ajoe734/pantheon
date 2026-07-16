@@ -17,8 +17,12 @@ THIS_DIR = Path(__file__).resolve().parent
 ROOT = THIS_DIR.parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
+ORCHESTRATOR_DIR = ROOT / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 import ai_status
+import sequencing_gate
 
 DEFAULT_PHASE = "phase1"
 ROUND_GLOB = "review-round-*.md"
@@ -1933,6 +1937,12 @@ def upsert_materialized_task(
 ) -> str:
     task_id = str(payload.get("id") or "").strip()
     existing = ai_status.get_task(state, task_id)
+    task_for_admission = existing if isinstance(existing, dict) else payload
+    if sequencing_gate.task_is_sequencing_parked(task_for_admission, state):
+        raise SystemExit(
+            f"Planning materialization rejected for sequencing-parked task {task_id}; "
+            "only the authoritative dispatcher may release the sequencing gate."
+        )
     archived = ai_status.archived_task_snapshot(task_id)
     timestamp = iso_now()
     task_payload = {
@@ -1985,8 +1995,12 @@ def _command_materialize_locked(session: dict[str, Any], _args: list[str]) -> No
     if derived.get("human_gate_status") != "approved":
         raise SystemExit("Human gate must be approved before materializing proposed execution tasks.")
 
-    save_derived_state(derived)
     state = ai_status.load_state()
+    if state.get("program_activity_outbox") is not None:
+        raise SystemExit(
+            "Planning materialization is paused while program_activity_outbox is "
+            "pending or malformed; recover it with the authoritative dispatcher."
+        )
     created = 0
     updated = 0
     archived = 0
@@ -2000,6 +2014,17 @@ def _command_materialize_locked(session: dict[str, Any], _args: list[str]) -> No
         for payload in derived.get("proposed_execution_tasks", [])
         if not selected_task_ids or str(payload.get("id") or "").strip() in selected_task_ids
     ]
+    for payload in selected_payloads:
+        task_id = str(payload.get("id") or "").strip()
+        existing = ai_status.get_task(state, task_id)
+        task_for_admission = existing if isinstance(existing, dict) else payload
+        if sequencing_gate.task_is_sequencing_parked(task_for_admission, state):
+            raise SystemExit(
+                f"Planning materialization rejected for sequencing-parked task {task_id}; "
+                "only the authoritative dispatcher may release the sequencing gate."
+            )
+
+    save_derived_state(derived)
     materialization_ref = {
         "materialized_at": iso_now(),
         "session_id": str(derived.get("session_id") or "").strip(),

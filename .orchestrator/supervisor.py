@@ -2167,6 +2167,12 @@ def start_worker_for_request(
     activity_type: str = "worker_started",
     activity_message: str | None = None,
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
+    launch_allowed, launch_error = worker_launch_admission(
+        config,
+        task_id=str(request.task_id or ""),
+    )
+    if not launch_allowed:
+        return False, launch_error, None
     agent = agent_config_for(config, request.agent_id)
     adapter_name = delivery_mode_override or agent.get("adapter", "file_inbox")
     adapter = build_adapter(adapter_name, config=config, provider_capabilities=provider_report)
@@ -2291,6 +2297,36 @@ def start_worker_for_request(
         },
     )
     return True, worker_run_id, result.as_dict()
+
+
+def worker_launch_admission(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+) -> tuple[bool, str | None]:
+    """Recheck sequencing state at the last boundary before provider launch.
+
+    Production callers hold the canonical runtime-admission lock for the full
+    supervisor cycle.  The dispatcher acquires that same lock before the task
+    state lock, so this final read is serialized with an epoch/release commit.
+    Keeping the check in the central launch path also covers retries and
+    fallbacks, rather than relying only on queue construction.
+    """
+
+    try:
+        status = load_status(config)
+    except KeyError:
+        # Minimal unit-test/control configurations without a canonical status
+        # path cannot participate in sequencing admission.
+        return True, None
+    if status_has_pending_program_activity_outbox(status):
+        return False, "Worker launch paused while program activity outbox is pending."
+    task = task_index_from_status(config, status).get(task_id)
+    if isinstance(task, dict) and task_is_sequencing_parked(task, status):
+        return False, "Worker launch denied while task is parked behind the G2 gate."
+    if task is None and task_id in sequencing_gate.EXPECTED_GATED_TASK_IDS:
+        return False, "Worker launch denied because the governed gated task is missing."
+    return True, None
 
 
 def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any]) -> bool:
@@ -6819,6 +6855,12 @@ def resume_claude_worker(
     *,
     approval: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    launch_allowed, _launch_error = worker_launch_admission(
+        config,
+        task_id=str(worker.get("task_id") or ""),
+    )
+    if not launch_allowed:
+        return None
     session_id = worker.get("session_id") or worker.get("resume_token")
     if not session_id:
         return None
@@ -6919,55 +6961,97 @@ def resume_claude_worker(
     }
 
 
+def quiesce_sequencing_parked_workers(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    status: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    pending_program_outbox: bool,
+) -> bool:
+    """Stop governed workers before any retry or approval-resume path runs."""
+
+    changed = False
+    terminal_statuses = {
+        "completed",
+        "failed",
+        "superseded",
+        "reassigned",
+        "retried",
+        "done",
+    }
+    for worker in state.setdefault("workers", {}).values():
+        if not isinstance(worker, dict) or worker.get("status") in terminal_statuses:
+            continue
+        task_id = str(worker.get("task_id") or "")
+        task = task_map.get(task_id)
+        if pending_program_outbox:
+            must_quiesce = (
+                task_id in sequencing_gate.EXPECTED_GATED_TASK_IDS
+                or (
+                    isinstance(task, dict)
+                    and task_is_sequencing_parked(task, status)
+                )
+            )
+            reason = (
+                "Worker quiesced while the dispatcher sequencing audit is pending."
+            )
+        else:
+            must_quiesce = (
+                (
+                    isinstance(task, dict)
+                    and task_is_sequencing_parked(task, status)
+                )
+                or (
+                    task is None
+                    and task_id in sequencing_gate.EXPECTED_GATED_TASK_IDS
+                )
+            )
+            reason = "Worker quiesced because its task is parked behind the G2 gate."
+        if not must_quiesce:
+            continue
+        if pid_is_alive(worker.get("pid")):
+            terminate_worker_pid(worker.get("pid"))
+        worker["status"] = "superseded"
+        worker["last_event_at"] = utc_now()
+        worker["last_error"] = reason
+        finalize_queue_event_record(
+            config,
+            state,
+            worker,
+            "completed",
+            reason,
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "worker_superseded",
+                "provider": worker.get("provider"),
+                "task_id": task_id,
+                "message": reason,
+                "worker_run_id": worker.get("run_id"),
+            },
+        )
+        changed = True
+    return changed
+
+
 def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any] | None = None) -> bool:
     changed = False
     status = load_status(config)
-    if status_has_pending_program_activity_outbox(status):
-        task_map = task_index_from_status(config, status)
-        for worker in state.setdefault("workers", {}).values():
-            task_id = str(worker.get("task_id") or "")
-            task = task_map.get(task_id)
-            must_quiesce = (
-                task_id in sequencing_gate.EXPECTED_GATED_TASK_IDS
-                or isinstance(task, dict)
-                and task_is_sequencing_parked(task, status)
-            )
-            if not must_quiesce or worker.get("status") in {
-                "completed",
-                "failed",
-                "superseded",
-                "reassigned",
-            }:
-                continue
-            if pid_is_alive(worker.get("pid")):
-                terminate_worker_pid(worker.get("pid"))
-            worker["status"] = "superseded"
-            worker["last_event_at"] = utc_now()
-            worker["last_error"] = (
-                "Worker quiesced while the dispatcher sequencing audit is pending."
-            )
-            finalize_queue_event_record(
-                config,
-                state,
-                worker,
-                "completed",
-                worker["last_error"],
-            )
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_superseded",
-                    "provider": worker.get("provider"),
-                    "task_id": task_id,
-                    "message": worker["last_error"],
-                    "worker_run_id": worker.get("run_id"),
-                },
-            )
-            changed = True
+    pending_program_outbox = status_has_pending_program_activity_outbox(status)
+    task_map = task_index_from_status(config, status)
+    changed = quiesce_sequencing_parked_workers(
+        config,
+        state,
+        status=status,
+        task_map=task_map,
+        pending_program_outbox=pending_program_outbox,
+    ) or changed
+    if pending_program_outbox:
         return changed
     approval_state = load_approval_state(config)
     program_mutations_suspended = False
-    task_map = task_index_from_status(config, status)
     valid_queue_event_ids = set(state.get("queue", {}).get("events", {}))
     redispatch_statuses = redispatch_candidate_statuses(config)
     active_worker_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
@@ -8371,8 +8455,10 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         "stale_queue_records_completed": 0,
     }
     try:
-        task_map = task_index_from_status(config, load_status(config))
+        status = load_status(config)
+        task_map = task_index_from_status(config, status)
     except KeyError:
+        status = {}
         task_map = {}
     workers = state.setdefault("workers", {})
 
@@ -8553,7 +8639,12 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         ]
         if related_active:
             continue
-        skip_message = stale_dispatch_skip_message(config, event, task_map)
+        skip_message = stale_dispatch_skip_message(
+            config,
+            event,
+            task_map,
+            status,
+        )
         if skip_message:
             record["status"] = "completed"
             record["processed_at"] = utc_now()
@@ -8746,86 +8837,13 @@ def task_is_sidecar(task: dict[str, Any]) -> bool:
     return str(task.get("task_class") or "").strip().lower() == "sidecar"
 
 
-SEQUENCING_GATED_CLASSIFICATIONS = {
-    "deferred strict-auth/security/governance work",
-    "final verification/closeout after the appropriate gate",
-}
-SEQUENCING_RELEASE_PREDICATE = "g2_evidence_contract_v2_valid"
-SEQUENCING_RELEASE_RECORD_FIELDS = {
-    "schema_version",
-    "program_id",
-    "effective_catalog_sha256",
-    "sequencing_overlay_sha256",
-    "release_gate_id",
-    "release_predicate",
-    "released_at",
-    "g2_issued_at",
-    "closeout_at",
-    "g2_evidence_sha256",
-    "canonical_record_bundle_sha256",
-    "hosted_probe_sha256",
-    "product_manifest_sha256",
-    "product_manifest_sidecar_sha256",
-    "target_task_snapshot_sha256",
-    "reviewer",
-    "review_verdict_sha256",
-    "release_admission_sha256",
-    "released_task_transitions",
-    "released_task_transition_set_sha256",
-}
-SEQUENCING_RELEASE_ADMISSION_FIELDS = {
-    "g2_evidence_sha256",
-    "canonical_record_bundle_sha256",
-    "hosted_probe_sha256",
-    "product_manifest_sha256",
-    "product_manifest_sidecar_sha256",
-    "target_task_snapshot_sha256",
-    "reviewer",
-    "review_verdict_sha256",
-    "g2_issued_at",
-    "closeout_at",
-}
-SEQUENCING_RELEASE_TRANSITION_FIELDS = {
-    "task_id",
-    "before_task_snapshot_sha256",
-    "after_task_snapshot_sha256",
-    "before_status",
-    "after_status",
-}
-SEQUENCING_EPOCH_FIELDS = {
-    "schema_version",
-    "program_id",
-    "source_catalog_sha256",
-    "effective_catalog_sha256",
-    "sequencing_overlay_sha256",
-    "release_gate_id",
-    "install_mode",
-    "applied_at",
-    "source_graph_projection_sha256",
-    "effective_graph_projection_sha256",
-    "task_count",
-    "task_transitions",
-    "task_transition_set_sha256",
-}
-SEQUENCING_EPOCH_TRANSITION_FIELDS = {
-    "task_id",
-    "before_task_snapshot_sha256",
-    "after_task_snapshot_sha256",
-    "before_task_contract_sha256",
-    "after_task_contract_sha256",
-    "before_source_ref_sha256",
-    "after_source_ref_sha256",
-    "before_status",
-    "after_status",
-    "acceptance_deferral_sha256",
-    "gate_marker_sha256",
-}
-
-
-def status_has_pending_program_activity_outbox(status: dict[str, Any]) -> bool:
-    """Pause every supervisor-owned task mutation until dispatcher audit drains."""
-
-    return status.get("program_activity_outbox") not in (None, {}, [])
+status_has_pending_program_activity_outbox = (
+    sequencing_gate.status_has_pending_program_activity_outbox
+)
+task_has_valid_sequencing_release_admission = (
+    sequencing_gate.task_has_valid_sequencing_release_admission
+)
+task_is_sequencing_parked = sequencing_gate.task_is_sequencing_parked
 
 
 def config_has_pending_program_activity_outbox(config: dict[str, Any]) -> bool:
@@ -8834,228 +8852,6 @@ def config_has_pending_program_activity_outbox(config: dict[str, Any]) -> bool:
     except KeyError:
         return False
     return status_has_pending_program_activity_outbox(status)
-
-
-def _sequencing_canonical_sha256(value: Any) -> str:
-    body = json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-    return hashlib.sha256(body).hexdigest()
-
-
-def _sequencing_sha256(value: Any) -> bool:
-    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
-
-
-def _sequencing_source_ref(task: dict[str, Any]) -> dict[str, Any]:
-    source_ref = task.get("source_ref")
-    return source_ref if isinstance(source_ref, dict) else {}
-
-
-def _sequencing_classification(task: dict[str, Any]) -> str:
-    return str(_sequencing_source_ref(task).get("sequencing_classification") or "")
-
-
-def task_has_valid_sequencing_release_admission(
-    task: dict[str, Any],
-    status: dict[str, Any],
-) -> bool:
-    """Validate a released task against the complete durable release snapshot."""
-
-    source_ref = _sequencing_source_ref(task)
-    program_id = str(source_ref.get("program_id") or "").strip()
-    task_id = str(task.get("id") or "").strip()
-    task_admission = task.get("sequencing_release_admission_sha256")
-    releases = status.get("program_sequencing_releases")
-    record = releases.get(program_id) if isinstance(releases, dict) else None
-    transitions = (
-        record.get("released_task_transitions")
-        if isinstance(record, dict)
-        else None
-    )
-    if (
-        not program_id
-        or not task_id
-        or _sequencing_classification(task)
-        not in SEQUENCING_GATED_CLASSIFICATIONS
-        or not _sequencing_sha256(task_admission)
-        or not isinstance(record, dict)
-        or set(record) != SEQUENCING_RELEASE_RECORD_FIELDS
-        or record.get("schema_version") != 1
-        or record.get("program_id") != program_id
-        or record.get("effective_catalog_sha256")
-        != source_ref.get("catalog_sha256")
-        or record.get("sequencing_overlay_sha256")
-        != source_ref.get("sequencing_overlay_sha256")
-        or record.get("release_gate_id") != source_ref.get("release_gate_id")
-        or record.get("release_predicate") != SEQUENCING_RELEASE_PREDICATE
-        or record.get("release_admission_sha256") != task_admission
-        or not isinstance(record.get("reviewer"), str)
-        or not str(record.get("reviewer") or "").strip()
-        or not isinstance(transitions, list)
-        or not transitions
-    ):
-        return False
-    hash_fields = {
-        "effective_catalog_sha256",
-        "sequencing_overlay_sha256",
-        "g2_evidence_sha256",
-        "canonical_record_bundle_sha256",
-        "hosted_probe_sha256",
-        "product_manifest_sha256",
-        "product_manifest_sidecar_sha256",
-        "target_task_snapshot_sha256",
-        "review_verdict_sha256",
-        "release_admission_sha256",
-        "released_task_transition_set_sha256",
-    }
-    if any(not _sequencing_sha256(record.get(field)) for field in hash_fields):
-        return False
-    released_at = _parse_iso_utc(str(record.get("released_at") or ""))
-    g2_issued_at = _parse_iso_utc(str(record.get("g2_issued_at") or ""))
-    closeout_at = _parse_iso_utc(str(record.get("closeout_at") or ""))
-    if (
-        released_at is None
-        or g2_issued_at is None
-        or closeout_at is None
-        or closeout_at > g2_issued_at
-        or g2_issued_at > released_at
-    ):
-        return False
-    admission = {
-        field: record.get(field)
-        for field in SEQUENCING_RELEASE_ADMISSION_FIELDS
-    }
-    if record.get("release_admission_sha256") != _sequencing_canonical_sha256(
-        admission
-    ):
-        return False
-    transition_ids: list[str] = []
-    for transition in transitions:
-        if (
-            not isinstance(transition, dict)
-            or set(transition) != SEQUENCING_RELEASE_TRANSITION_FIELDS
-            or transition.get("before_status") != "blocked"
-            or transition.get("after_status") != "todo"
-            or not _sequencing_sha256(
-                transition.get("before_task_snapshot_sha256")
-            )
-            or not _sequencing_sha256(
-                transition.get("after_task_snapshot_sha256")
-            )
-        ):
-            return False
-        transition_id = str(transition.get("task_id") or "").strip()
-        if not transition_id:
-            return False
-        transition_ids.append(transition_id)
-    epochs = status.get("program_sequencing_epochs")
-    epoch = epochs.get(program_id) if isinstance(epochs, dict) else None
-    epoch_transitions = (
-        epoch.get("task_transitions") if isinstance(epoch, dict) else None
-    )
-    if (
-        not isinstance(epoch, dict)
-        or set(epoch) != SEQUENCING_EPOCH_FIELDS
-        or epoch.get("schema_version") != 1
-        or epoch.get("program_id") != program_id
-        or epoch.get("effective_catalog_sha256")
-        != record.get("effective_catalog_sha256")
-        or epoch.get("sequencing_overlay_sha256")
-        != record.get("sequencing_overlay_sha256")
-        or epoch.get("release_gate_id") != record.get("release_gate_id")
-        or epoch.get("install_mode")
-        not in {"base_epoch_migration", "fresh_materialization"}
-        or _parse_iso_utc(str(epoch.get("applied_at") or "")) is None
-        or any(
-            not _sequencing_sha256(epoch.get(field))
-            for field in (
-                "source_catalog_sha256",
-                "effective_catalog_sha256",
-                "sequencing_overlay_sha256",
-                "source_graph_projection_sha256",
-                "effective_graph_projection_sha256",
-                "task_transition_set_sha256",
-            )
-        )
-        or not isinstance(epoch_transitions, list)
-        or not epoch_transitions
-        or epoch.get("task_count") != len(epoch_transitions)
-        or epoch.get("task_transition_set_sha256")
-        != _sequencing_canonical_sha256(epoch_transitions)
-    ):
-        return False
-    epoch_ids: list[str] = []
-    gated_epoch_transitions: list[dict[str, Any]] = []
-    for transition in epoch_transitions:
-        if (
-            not isinstance(transition, dict)
-            or set(transition) != SEQUENCING_EPOCH_TRANSITION_FIELDS
-            or transition.get("before_status") not in {"absent", "todo"}
-            or transition.get("after_status") not in {"blocked", "todo"}
-            or any(
-                not _sequencing_sha256(transition.get(field))
-                for field in SEQUENCING_EPOCH_TRANSITION_FIELDS
-                if field.endswith("sha256")
-            )
-        ):
-            return False
-        epoch_task_id = str(transition.get("task_id") or "").strip()
-        if not epoch_task_id:
-            return False
-        epoch_ids.append(epoch_task_id)
-        if transition.get("after_status") == "blocked":
-            gated_epoch_transitions.append(transition)
-    if len(epoch_ids) != len(set(epoch_ids)):
-        return False
-    if (
-        not gated_epoch_transitions
-        or transition_ids
-        != [str(row["task_id"]) for row in gated_epoch_transitions]
-        or len(transition_ids) != len(set(transition_ids))
-        or task_id not in transition_ids
-        or any(
-            release_transition["before_task_snapshot_sha256"]
-            != epoch_transition["after_task_snapshot_sha256"]
-            for release_transition, epoch_transition in zip(
-                transitions, gated_epoch_transitions
-            )
-        )
-        or record.get("released_task_transition_set_sha256")
-        != _sequencing_canonical_sha256(transitions)
-    ):
-        return False
-    return True
-
-
-def task_is_sequencing_parked(
-    task: dict[str, Any],
-    status: dict[str, Any] | None = None,
-) -> bool:
-    """Fail closed for gated classifications, including a missing park marker."""
-
-    if "sequencing_release_gate" in task:
-        return True
-    if _sequencing_classification(task) not in SEQUENCING_GATED_CLASSIFICATIONS:
-        return False
-    return status is None or not task_has_valid_sequencing_release_admission(
-        task, status
-    )
-
-
-# Keep one consumer implementation across supervisor, ai_status, and
-# auto-unblock. These aliases intentionally replace the legacy-local helpers
-# above while preserving the supervisor's public helper names for callers.
-status_has_pending_program_activity_outbox = (
-    sequencing_gate.status_has_pending_program_activity_outbox
-)
-task_has_valid_sequencing_release_admission = (
-    sequencing_gate.task_has_valid_sequencing_release_admission
-)
-task_is_sequencing_parked = sequencing_gate.task_is_sequencing_parked
 
 
 def task_is_human_gate(task: dict[str, Any]) -> bool:
@@ -9831,7 +9627,8 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
     events = load_event_queue(config)
     if not events:
         return False
-    task_map = task_index_from_status(config, load_status(config))
+    status = load_status(config)
+    task_map = task_index_from_status(config, status)
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     redispatch_statuses = redispatch_candidate_statuses(config)
     queue_events = state.setdefault("queue", {}).setdefault("events", {})
@@ -9866,7 +9663,12 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
             )
             changed = True
             continue
-        skip_message = stale_dispatch_skip_message(config, event, task_map)
+        skip_message = stale_dispatch_skip_message(
+            config,
+            event,
+            task_map,
+            status,
+        )
 
         if skip_message and not has_active_worker:
             completed = queue_status(state, event_id)
@@ -10889,8 +10691,7 @@ def dispatch_underutilization_sidecars(
     state: dict[str, Any],
     provider_report: dict[str, Any] | None = None,
 ) -> bool:
-    status = load_status(config)
-    if status_has_pending_program_activity_outbox(status):
+    if config_has_pending_program_activity_outbox(config):
         return False
     settings = underutilization_settings(config)
     tracking = state.setdefault("underutilization", {})

@@ -13,6 +13,10 @@ PROGRAM_ID = "loop-product-level-remediation-2026-07-13"
 SOURCE_CATALOG_SHA256 = (
     "44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357"
 )
+SEQUENCING_ADDENDUM_SHA256 = (
+    "9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519"
+)
+MERGE_PR_3737_SHA = "a4b5df9a51bc3da6df0d39d422d9db4edc553aba"
 EFFECTIVE_CATALOG_SHA256 = (
     "147ae747179f3c78fc9de1c62c823a72307a3f8028a92088eb9ccc0c49a85412"
 )
@@ -21,7 +25,57 @@ SEQUENCING_OVERLAY_SHA256 = (
 )
 RELEASE_GATE_ID = "hardening-after-g2-paper-trade-v1"
 RELEASE_PREDICATE = "g2_evidence_contract_v2_valid"
-EXPECTED_TASK_COUNT = 48
+EXPECTED_TASK_IDS = (
+    "LOOP-PROD-000",
+    "LOOP-PROD-001",
+    "LOOP-PROD-002",
+    "LOOP-PROD-AUTH-001",
+    "LOOP-PROD-FE-001",
+    "LOOP-PROD-REC-001",
+    "LOOP-PROD-SRC-001",
+    "LOOP-PROD-DIST-001",
+    "LOOP-PROD-ALPHA-001",
+    "LOOP-PROD-TEACH-001",
+    "LOOP-PROD-AGORA-001",
+    "LOOP-PROD-CONS-001",
+    "LOOP-PROD-AGORA-002",
+    "LOOP-PROD-AGORA-003",
+    "LOOP-PROD-IMIT-001",
+    "LOOP-PROD-DEP-001",
+    "LOOP-PROD-CAP-001",
+    "LOOP-PROD-TEL-001",
+    "LOOP-PROD-TEL-002",
+    "LOOP-PROD-EVO-001",
+    "LOOP-PROD-BFF-001",
+    "LOOP-PROD-OODA-001",
+    "LOOP-PROD-PER-001",
+    "LOOP-PROD-TJ-001",
+    "LOOP-PROD-TJ-002",
+    "LOOP-PROD-MAI-001",
+    "LOOP-PROD-MAI-002",
+    "LOOP-PROD-VERIFY-KNOW-001",
+    "LOOP-PROD-VERIFY-EXEC-001",
+    "LOOP-PROD-VERIFY-HUMAN-001",
+    "LOOP-PROD-VERIFY-OODA-001",
+    "LOOP-PROD-PPL-001",
+    "LOOP-PROD-TJ-003",
+    "LOOP-PROD-PINT-001",
+    "LOOP-PROD-MAI-003",
+    "LOOP-PROD-CLOSE-001",
+    "LOOP-PROD-DELIVERY-001",
+    "LOOP-PROD-AUTH-BOOT-001",
+    "LOOP-PROD-WORKER-001",
+    "LOOP-PROD-LEASE-001",
+    "LOOP-PROD-BROWSER-AUTH-001",
+    "LOOP-PROD-FLEET-001",
+    "LOOP-PROD-ATTEST-001",
+    "LOOP-PROD-AUTH-OPS-001",
+    "LOOP-PROD-FE-EVID-001",
+    "LOOP-PROD-FE-BUILD-001",
+    "LOOP-PROD-SIGNOFF-001",
+    "LOOP-PROD-CLOSE-002",
+)
+EXPECTED_TASK_COUNT = len(EXPECTED_TASK_IDS)
 EXPECTED_GATED_TASK_IDS = (
     "LOOP-PROD-AUTH-001",
     "LOOP-PROD-FE-001",
@@ -50,6 +104,56 @@ GATED_CLASSIFICATIONS = {
 PRE_G2_CLASSIFICATIONS = {
     "permitted before the paper-trade proof",
     "part of the G2 proof path",
+}
+EXPECTED_CLASSIFICATION_BY_TASK_ID = {
+    "LOOP-PROD-000": "permitted before the paper-trade proof",
+    "LOOP-PROD-001": "permitted before the paper-trade proof",
+    "LOOP-PROD-002": "permitted before the paper-trade proof",
+    "LOOP-PROD-AUTH-001": "deferred strict-auth/security/governance work",
+    "LOOP-PROD-FE-001": "deferred strict-auth/security/governance work",
+    "LOOP-PROD-REC-001": "permitted before the paper-trade proof",
+    "LOOP-PROD-SRC-001": "part of the G2 proof path",
+    "LOOP-PROD-DIST-001": "part of the G2 proof path",
+    "LOOP-PROD-ALPHA-001": "part of the G2 proof path",
+    "LOOP-PROD-TEACH-001": "permitted before the paper-trade proof",
+    "LOOP-PROD-AGORA-001": "permitted before the paper-trade proof",
+    "LOOP-PROD-CONS-001": "permitted before the paper-trade proof",
+    "LOOP-PROD-AGORA-002": "permitted before the paper-trade proof",
+    "LOOP-PROD-AGORA-003": "permitted before the paper-trade proof",
+    "LOOP-PROD-IMIT-001": "permitted before the paper-trade proof",
+    "LOOP-PROD-DEP-001": "part of the G2 proof path",
+    "LOOP-PROD-CAP-001": "part of the G2 proof path",
+    "LOOP-PROD-TEL-001": "part of the G2 proof path",
+    "LOOP-PROD-TEL-002": "part of the G2 proof path",
+    "LOOP-PROD-EVO-001": "permitted before the paper-trade proof",
+    "LOOP-PROD-BFF-001": "permitted before the paper-trade proof",
+    "LOOP-PROD-OODA-001": "permitted before the paper-trade proof",
+    "LOOP-PROD-PER-001": "permitted before the paper-trade proof",
+    "LOOP-PROD-TJ-001": "permitted before the paper-trade proof",
+    "LOOP-PROD-TJ-002": "permitted before the paper-trade proof",
+    "LOOP-PROD-MAI-001": "deferred strict-auth/security/governance work",
+    "LOOP-PROD-MAI-002": "final verification/closeout after the appropriate gate",
+    "LOOP-PROD-VERIFY-KNOW-001": "permitted before the paper-trade proof",
+    "LOOP-PROD-VERIFY-EXEC-001": "part of the G2 proof path",
+    "LOOP-PROD-VERIFY-HUMAN-001": "permitted before the paper-trade proof",
+    "LOOP-PROD-VERIFY-OODA-001": "final verification/closeout after the appropriate gate",
+    "LOOP-PROD-PPL-001": "permitted before the paper-trade proof",
+    "LOOP-PROD-TJ-003": "permitted before the paper-trade proof",
+    "LOOP-PROD-PINT-001": "permitted before the paper-trade proof",
+    "LOOP-PROD-MAI-003": "final verification/closeout after the appropriate gate",
+    "LOOP-PROD-CLOSE-001": "final verification/closeout after the appropriate gate",
+    "LOOP-PROD-DELIVERY-001": "deferred strict-auth/security/governance work",
+    "LOOP-PROD-AUTH-BOOT-001": "deferred strict-auth/security/governance work",
+    "LOOP-PROD-WORKER-001": "deferred strict-auth/security/governance work",
+    "LOOP-PROD-LEASE-001": "deferred strict-auth/security/governance work",
+    "LOOP-PROD-BROWSER-AUTH-001": "deferred strict-auth/security/governance work",
+    "LOOP-PROD-FLEET-001": "deferred strict-auth/security/governance work",
+    "LOOP-PROD-ATTEST-001": "deferred strict-auth/security/governance work",
+    "LOOP-PROD-AUTH-OPS-001": "deferred strict-auth/security/governance work",
+    "LOOP-PROD-FE-EVID-001": "final verification/closeout after the appropriate gate",
+    "LOOP-PROD-FE-BUILD-001": "final verification/closeout after the appropriate gate",
+    "LOOP-PROD-SIGNOFF-001": "final verification/closeout after the appropriate gate",
+    "LOOP-PROD-CLOSE-002": "final verification/closeout after the appropriate gate",
 }
 
 RELEASE_RECORD_FIELDS = {
@@ -153,9 +257,9 @@ def parse_utc(value: Any) -> datetime | None:
 
 
 def status_has_pending_program_activity_outbox(status: dict[str, Any]) -> bool:
-    """Treat every non-empty or malformed dispatcher transaction as pending."""
+    """Treat every present non-null dispatcher transaction as pending."""
 
-    return status.get("program_activity_outbox") not in (None, {}, [])
+    return status.get("program_activity_outbox") is not None
 
 
 def _source_ref(task: dict[str, Any]) -> dict[str, Any]:
@@ -165,6 +269,37 @@ def _source_ref(task: dict[str, Any]) -> dict[str, Any]:
 
 def _classification(task: dict[str, Any]) -> str:
     return str(_source_ref(task).get("sequencing_classification") or "")
+
+
+def _has_exact_authority_source_ref(task: dict[str, Any]) -> bool:
+    task_id = str(task.get("id") or "").strip()
+    source_ref = _source_ref(task)
+    return bool(
+        task_id in EXPECTED_CLASSIFICATION_BY_TASK_ID
+        and source_ref.get("program_id") == PROGRAM_ID
+        and source_ref.get("catalog_sha256") == EFFECTIVE_CATALOG_SHA256
+        and source_ref.get("source_catalog_sha256") == SOURCE_CATALOG_SHA256
+        and source_ref.get("sequencing_addendum_sha256")
+        == SEQUENCING_ADDENDUM_SHA256
+        and source_ref.get("merge_pr_3737_sha") == MERGE_PR_3737_SHA
+        and source_ref.get("sequencing_overlay_sha256")
+        == SEQUENCING_OVERLAY_SHA256
+        and source_ref.get("release_gate_id") == RELEASE_GATE_ID
+        and source_ref.get("sequencing_classification")
+        == EXPECTED_CLASSIFICATION_BY_TASK_ID[task_id]
+    )
+
+
+def _task_matches_epoch_authority(
+    task: dict[str, Any],
+    transition: dict[str, Any],
+) -> bool:
+    source_ref = _source_ref(task)
+    return bool(
+        _has_exact_authority_source_ref(task)
+        and transition.get("after_source_ref_sha256")
+        == canonical_sha256(source_ref)
+    )
 
 
 def _validated_epoch(status: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
@@ -242,7 +377,7 @@ def _validated_epoch(status: dict[str, Any]) -> tuple[dict[str, Any], list[dict[
         task_ids.append(task_id)
         if transition["after_status"] == "blocked":
             gated_ids.append(task_id)
-    if len(task_ids) != len(set(task_ids)) or tuple(gated_ids) != EXPECTED_GATED_TASK_IDS:
+    if tuple(task_ids) != EXPECTED_TASK_IDS or tuple(gated_ids) != EXPECTED_GATED_TASK_IDS:
         return None
     return epoch, transitions
 
@@ -254,7 +389,6 @@ def task_has_valid_sequencing_release_admission(
     """Accept only the task-scoped tag from the exact immutable 19-task release."""
 
     task_id = str(task.get("id") or "").strip()
-    source_ref = _source_ref(task)
     epoch_result = _validated_epoch(status)
     if epoch_result is None:
         return False
@@ -262,12 +396,7 @@ def task_has_valid_sequencing_release_admission(
     epoch_by_id = {str(row["task_id"]): row for row in epoch_transitions}
     if (
         task_id not in EXPECTED_GATED_TASK_IDS
-        or _classification(task) not in GATED_CLASSIFICATIONS
-        or source_ref.get("program_id") != PROGRAM_ID
-        or source_ref.get("catalog_sha256") != EFFECTIVE_CATALOG_SHA256
-        or source_ref.get("sequencing_overlay_sha256")
-        != SEQUENCING_OVERLAY_SHA256
-        or source_ref.get("release_gate_id") != RELEASE_GATE_ID
+        or not _task_matches_epoch_authority(task, epoch_by_id[task_id])
     ):
         return False
 
@@ -390,6 +519,8 @@ def task_is_sequencing_parked(
     epoch_transition = epoch_by_id.get(task_id)
     if epoch_transition is None:
         return definitely_gated or overlay_bound
+    if not _task_matches_epoch_authority(task, epoch_transition):
+        return True
     epoch_gated = epoch_transition.get("after_status") == "blocked"
     if epoch_gated:
         return not task_has_valid_sequencing_release_admission(task, status)

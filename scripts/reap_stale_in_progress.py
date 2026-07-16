@@ -34,6 +34,7 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 from runtime_state import canonical_task_state_lock_file  # noqa: E402
+import sequencing_gate  # noqa: E402
 
 STATUS_FILE = ROOT / "ai-status.json"
 STATE_FILE = ROOT / ".orchestrator" / "reap-in-progress-state.json"
@@ -99,6 +100,12 @@ def main() -> int:
             print("reap: refusing to act on empty status file", file=sys.stderr)
             return 1
         data = json.loads(raw)
+        if data.get("program_activity_outbox") is not None and not DRY_RUN:
+            print(
+                "reap: task mutations paused while program_activity_outbox is "
+                "pending or malformed"
+            )
+            return 0
 
         running = _running_task_ids()
         now = time.time()
@@ -110,6 +117,8 @@ def main() -> int:
         reaped, loop_capped = [], []
         for task in data.get("tasks", []):
             if task.get("status") != "in_progress":
+                continue
+            if sequencing_gate.task_is_sequencing_parked(task, data):
                 continue
             tid = task["id"]
             if tid in running:

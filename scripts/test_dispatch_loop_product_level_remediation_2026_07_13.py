@@ -2747,6 +2747,30 @@ def test_dry_run_rejects_corrupt_pending_outbox_without_writes() -> None:
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
 
+@pytest.mark.parametrize("malformed_outbox", [{}, [], "", 0])
+def test_present_nonnull_malformed_program_outbox_fails_closed_without_writes(
+    malformed_outbox: object,
+) -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        state["program_activity_outbox"] = malformed_outbox
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        result = run_dispatch(root, "--dry-run")
+
+        assert result.returncode == 2
+        assert "program_activity_outbox transaction schema is not exact" in result.stderr
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
 def test_legacy_v4_pending_outbox_requires_supervisor_signed_recovery() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
@@ -4661,6 +4685,35 @@ def test_sequencing_epoch_outbox_recovers_exactly_once_after_status_commit() -> 
         assert len(overlay_events) == 1
 
 
+def test_fresh_sequencing_epoch_rejects_nonnull_before_task_snapshot(
+    g2_v2_fixture: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    _park_complete_g2_catalog(g2_v2_fixture, monkeypatch)
+    epoch = g2_v2_fixture["state"]["program_sequencing_epochs"][
+        g2_v2_fixture["catalog"]["program_id"]
+    ]
+    assert epoch["install_mode"] == "fresh_materialization"
+    assert epoch["task_transitions"][0][
+        "before_task_snapshot_sha256"
+    ] == canonical_sha256(None)
+    epoch["task_transitions"][0]["before_task_snapshot_sha256"] = "f" * 64
+    epoch["task_transition_set_sha256"] = canonical_sha256(
+        epoch["task_transitions"]
+    )
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="program sequencing epoch transition is not exact",
+    ):
+        dispatcher.validate_sequencing_epoch_record(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            g2_v2_fixture["catalog_digest"],
+        )
+
+
 def test_valid_g2_release_is_durable_and_does_not_recheck_wall_clock(
     g2_v2_fixture: dict,
     monkeypatch: pytest.MonkeyPatch,
@@ -4745,9 +4798,10 @@ def test_valid_g2_release_is_durable_and_does_not_recheck_wall_clock(
     assert changed_again is False
 
 
-def test_pending_release_recovery_keeps_outbox_when_admission_bytes_drift(
+def test_pending_release_recovery_uses_committed_admission_after_artifact_drift(
     g2_v2_fixture: dict,
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     dispatcher = g2_v2_fixture["dispatcher"]
     tasks, _ = _park_complete_g2_catalog(g2_v2_fixture, monkeypatch)
@@ -4778,21 +4832,113 @@ def test_pending_release_recovery_keeps_outbox_when_admission_bytes_drift(
     pending_before = deepcopy(
         g2_v2_fixture["state"]["program_activity_outbox"]
     )
+    status_path = tmp_path / "ai-status.json"
+    monkeypatch.setattr(dispatcher, "STATUS_PATH", status_path)
+    dispatcher.atomic_write_json(status_path, g2_v2_fixture["state"])
+
     product = _read_artifact(g2_v2_fixture["paths"]["product"])
     product["tampered_after_status_commit"] = True
     _write_json_artifact(g2_v2_fixture["paths"]["product"], product)
+    for key in ("g2", "bundle", "probe", "sidecar"):
+        g2_v2_fixture["paths"][key].unlink()
 
+    def forbidden_live_evidence_read(*args, **kwargs):
+        raise AssertionError("persisted release reread mutable G2 evidence")
+
+    monkeypatch.setattr(dispatcher, "_read_g2_artifact", forbidden_live_evidence_read)
+    monkeypatch.setattr(
+        dispatcher,
+        "_resolve_g2_closeout_task",
+        forbidden_live_evidence_read,
+    )
+    monkeypatch.setenv("LOOP_PRODUCT_DISPATCH_FAIL_AFTER_ACTIVITY_APPEND", "1")
     with pytest.raises(
         dispatcher.DispatchError,
-        match="persisted G2 release admission drifted",
+        match="injected failure after activity append",
     ):
-        dispatcher.validate_pending_sequencing_recovery(
+        dispatcher.flush_activity_outbox(
             g2_v2_fixture["state"],
             g2_v2_fixture["catalog"],
             g2_v2_fixture["catalog_digest"],
         )
 
-    assert g2_v2_fixture["state"]["program_activity_outbox"] == pending_before
+    interrupted = json.loads(status_path.read_text(encoding="utf-8"))
+    assert interrupted["program_activity_outbox"] == pending_before
+    activity_records = [
+        json.loads(line)
+        for line in dispatcher.LOG_PATH.read_text(encoding="utf-8").splitlines()
+    ]
+    release_events = [
+        row for row in activity_records if row.get("type") == "sequencing_gate_release"
+    ]
+    assert len(release_events) == 1
+
+    monkeypatch.delenv("LOOP_PRODUCT_DISPATCH_FAIL_AFTER_ACTIVITY_APPEND")
+    assert dispatcher.flush_activity_outbox(
+        interrupted,
+        g2_v2_fixture["catalog"],
+        g2_v2_fixture["catalog_digest"],
+    )
+    assert interrupted["program_activity_outbox"] is None
+    assert not dispatcher.flush_activity_outbox(
+        interrupted,
+        g2_v2_fixture["catalog"],
+        g2_v2_fixture["catalog_digest"],
+    )
+    activity_records = [
+        json.loads(line)
+        for line in dispatcher.LOG_PATH.read_text(encoding="utf-8").splitlines()
+    ]
+    release_events = [
+        row for row in activity_records if row.get("type") == "sequencing_gate_release"
+    ]
+    assert len(release_events) == 1
+
+
+def test_persisted_release_admission_tamper_fails_closed(
+    g2_v2_fixture: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    tasks, _ = _park_complete_g2_catalog(g2_v2_fixture, monkeypatch)
+    admission = dispatcher._validate_g2_evidence(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "resolve_g2_evidence_admission",
+        lambda state, catalog: deepcopy(admission),
+    )
+    _, _, _, release_logs, changed = dispatcher.materialize(
+        state=g2_v2_fixture["state"],
+        tasks=tasks,
+        catalog=g2_v2_fixture["catalog"],
+        catalog_digest=g2_v2_fixture["catalog_digest"],
+        timestamp=G2_ISSUED_AT,
+    )
+    assert changed is True
+    dispatcher.enqueue_activity_outbox(
+        g2_v2_fixture["state"],
+        release_logs,
+        catalog=g2_v2_fixture["catalog"],
+        catalog_digest=g2_v2_fixture["catalog_digest"],
+    )
+    release = g2_v2_fixture["state"]["program_sequencing_releases"][
+        g2_v2_fixture["catalog"]["program_id"]
+    ]
+    release["g2_evidence_sha256"] = "0" * 64
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="persisted G2 release admission snapshot is not exact",
+    ):
+        dispatcher.validate_sequencing_release_record(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            g2_v2_fixture["catalog_digest"],
+        )
 
 
 def test_auto_unblock_cannot_reopen_sequencing_park_marker() -> None:
