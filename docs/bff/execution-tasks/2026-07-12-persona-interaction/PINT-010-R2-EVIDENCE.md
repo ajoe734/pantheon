@@ -5,10 +5,10 @@ Owner: Codex2
 Reviewer: pending final evidence review
 Status: in progress. The canonical Persona eligibility repair, deployment
 reliability repairs, governed OpenClaw adapter repair, exact merged frontend
-candidate gate, read-only deployment, bundle scan, and safe recovery from one
-failed hosted proof are recorded. A clean 6/0 hosted write proof, its subsequent
-fresh final strict BFF restore, and final evidence review remain. This task is
-not `done`.
+candidate gate, read-only deployment, independent bundle scan, and safe
+recovery from one superseded failed hosted proof are recorded. A clean 6/0
+hosted write proof against the fresh #381 pair, its subsequent fresh final
+strict BFF restore, and final evidence review remain. This task is not `done`.
 
 ## 2026-07-16 closure record
 
@@ -57,11 +57,13 @@ The deployment-reliability chain recorded these focused validations:
 | --- | --- | --- | --- |
 | [#379](https://github.com/ajoe734/execute-plans/pull/379) | `eb48ebe2e69e335516c5ac1841b84795878f21f5` | `1816ece7c77813b5b5c6098155776ad14a6991da` | Deterministic ensured-Persona selection, stable tenant/operator idempotency, exact preflight checks, viewer-negative ensure, and retry-free 6/0 hosted gate contract |
 | [#380](https://github.com/ajoe734/execute-plans/pull/380) | `29e0b11ca6eb1351e2713c3764db188666624e84` | `88d3d0acf1a2a3db6810c2d2b51c09cafe456b09` | Emit only allowlisted HTTP status, error code, and failed-precondition evidence for non-2xx Servant proof responses |
+| [#381](https://github.com/ajoe734/execute-plans/pull/381) | `cd1162686c7eb8c72ed2d33b28b114510b077105` | `b13635514618ad46e3855772e9ed1a0fa1fce3d4` | Gate Persona interaction submission on Workshop readiness and keep the composer disabled until the surface can emit the governed POST |
 
-Both PRs are merged. PR #379's integration gate run `29502685625` attempt 3
-and required branch checks succeeded. PR #380 preserves the same proof behavior
-while ensuring that a failed Servant preflight cannot print a raw response,
-arbitrary message, Authorization value, or token material.
+All three PRs are merged. PR #379's integration gate run `29502685625` attempt
+3 and required branch checks succeeded. PR #380 ensures that a failed Servant
+preflight cannot print a raw response, arbitrary message, Authorization value,
+or token material. PR #381 repairs the readiness race exposed by the #380
+candidate's rejected 4/6 diagnostic attempt.
 
 ### Canonical Persona authority properties
 
@@ -111,7 +113,7 @@ write-proof window may temporarily require a different dev auth profile; a
 fresh deployment of the final exact BFF lineage back to strict, with exact
 hosted proof, must be recorded after that window.
 
-### Exact candidate gate and initial read-only deployment
+### Superseded #380 candidate and initial read-only deployment
 
 execute-plans push gate
 [`29517392064`](https://github.com/ajoe734/execute-plans/actions/runs/29517392064),
@@ -119,6 +121,9 @@ attempt 1, completed successfully for exact frontend SHA
 `88d3d0acf1a2a3db6810c2d2b51c09cafe456b09` and exact BFF SHA
 `aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748`. Its pair ID is
 `f58b10450aec28b638916d57b3291c5a9c7a954f85fc89a527d61313a76a0555`.
+
+This pair is superseded diagnostic history. It is not the accepted candidate
+for the next write proof.
 
 | Artifact | ID | GitHub artifact digest |
 | --- | ---: | --- |
@@ -144,10 +149,10 @@ Its post-switch hosted scan fetched 65 bundle assets with zero fetch failures
 and scanned 66 HTML/JS/CSS sources with zero sensitive findings. The browser
 made five intended BFF requests, all GET/HEAD, with zero Authorization headers,
 zero write requests, zero old-host hits, and successful desktop/mobile hosted
-UX profiles. The structured counts are in
-`PINT-010-R2-BUNDLE-SCAN-2026-07-16.json`.
+UX profiles. These preliminary counts remain supporting history; the structured
+scan file now records the fresh #381 candidate below.
 
-### First bounded write-proof attempt and safe recovery
+### Superseded #380 bounded write-proof attempt and safe recovery
 
 Pantheon run
 [`29518975266`](https://github.com/ajoe734/pantheon/actions/runs/29518975266),
@@ -210,13 +215,56 @@ not updated since `03:31:02Z`, and holds no lease. Both normal cancel and force
 cancel returned GitHub HTTP 500. It is recorded transparently as non-executing
 and non-conflicting, not hidden as a clean queue.
 
+### Fresh accepted #381 candidate
+
+execute-plans PR #381 supersedes the rejected #380 proof pair. Push gate
+[`29522604349`](https://github.com/ajoe734/execute-plans/actions/runs/29522604349),
+attempt 1, job `87703016409`, completed successfully for exact frontend SHA
+`b13635514618ad46e3855772e9ed1a0fa1fce3d4` and exact BFF SHA
+`aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748`. Branch CI run `29522610098`
+also succeeded.
+
+The accepted pair ID is
+`433a21fe127a3bde0020b9444869f565e99ed4b36b7ade2c3ea89aa5185a8d36`,
+with read-only digest
+`61dfc0986f57cb696b0a6aa7b21af6d3eb8aa25fe8b5b63f7f3ad556afd47360`
+and write-proof digest
+`db21014d4c69404aeb23987012cff1d54dd1eaa5f33d10700a9a2cae6d53e660`.
+
+| Artifact | ID | GitHub artifact digest |
+| --- | ---: | --- |
+| `pantheon-fe-release-candidate-attempt-1` | `8385576520` | `sha256:2bae2da1b7f8acdb91d54f41786ba64ba6c747b56da8c3d62d3bd221b90e9b36` |
+| `pantheon-integration-evidence-attempt-1` | `8385577029` | `sha256:3f0cd967d8f4260d472fa0490ef962d525a69b5fb6516cde8f1865ef1d03b96c` |
+| `pantheon-release-identity-attempt-1` | `8385577374` | `sha256:15d8f777a3b70ba7cdfa394408a5f151596493775d1613c106f68de96dc27fff` |
+
+Automatic read-only deploy
+[`29523324214`](https://github.com/ajoe734/execute-plans/actions/runs/29523324214),
+attempt 1, job `87705406096`, accepted the exact pair at
+`2026-07-16T18:28:45Z`. Its
+`pantheon-dev-fe-deploy-evidence-attempt-1` artifact ID is `8385901699`,
+digest
+`sha256:d471f1232982174c15ad54458fd08d14b9e8d20278c33e80c95b96cfcdd78b02`.
+Three independent manifest reads were exact and safe: read-only profile,
+live/strict transport, real writes false, stub writes false, and embedded bearer
+false.
+
+A fresh independent same-origin scan captured at
+`2026-07-16T18:31:20.105Z` and completed at
+`2026-07-16T18:31:23.272Z`. It classified 811 HTTP 200 responses: 48 HTML
+responses (the root plus 47 SPA fallbacks), 763 JavaScript responses totaling
+27,433,340 bytes, zero other responses, and zero failures. Both forbidden
+viewer and operator literal counts were zero, and pre/post manifest identity
+remained stable. These are the authoritative counts in
+`PINT-010-R2-BUNDLE-SCAN-2026-07-16.json`.
+
 ### Pending final hosted evidence — do not treat as passed
 
 The following fields are intentionally unresolved. They must be replaced with
 terminal run IDs, attempt numbers, artifact IDs and SHA256 digests, exact pair
 identity, timestamps, and inspected result values before review:
 
-1. A replacement fresh attempt-1 parent write-proof deployment, its new
+1. A fresh attempt-1 parent write-proof deployment for pair
+   `433a21fe127a3bde0020b9444869f565e99ed4b36b7ade2c3ea89aa5185a8d36`, its new
    correlation ID, independently authorized child proof, and watchdog run.
 2. Child artifact inspection proving six expected desktop/mobile cases, zero
    skipped, unexpected, or flaky cases; unauthenticated 401 `AUTH_REQUIRED`;
