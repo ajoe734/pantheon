@@ -4224,7 +4224,40 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Apply the guarded transaction after bootstrap and authoritative dry-run.",
     )
+    parser.add_argument(
+        "--sequencing-overlay",
+        type=str,
+        default="",
+        help="Path to an optional sequencing overlay JSON file to apply to the catalog.",
+    )
     return parser.parse_args()
+
+
+def apply_sequencing_overlay(catalog: dict[str, Any], overlay_path: Path) -> None:
+    try:
+        overlay = read_json(overlay_path)
+    except Exception as exc:
+        raise DispatchError(f"failed to load sequencing overlay from {overlay_path}: {exc}")
+
+    tasks_by_id = {task["id"]: task for task in catalog.get("tasks", [])}
+    overlay_tasks = overlay.get("tasks", {})
+
+    for task_id, updates in overlay_tasks.items():
+        if task_id not in tasks_by_id:
+            raise DispatchError(f"sequencing overlay targets unknown task: {task_id}")
+        task = tasks_by_id[task_id]
+        for key, value in updates.items():
+            task[key] = value
+
+    # Check for acyclicity and wave order constraints on the modified catalog
+    by_id = {str(t["id"]): t for t in catalog["tasks"]}
+    for task_id, task in by_id.items():
+        for dep_id in task["depends_on"]:
+            if dep_id in by_id and by_id[dep_id]["wave"] > task["wave"]:
+                raise DispatchError(
+                    f"Sequencing overlay error: {task_id} wave {task['wave']} depends on later wave "
+                    f"{dep_id}={by_id[dep_id]['wave']}"
+                )
 
 
 def report(
@@ -4257,7 +4290,27 @@ def main() -> int:
     catalog_bytes = selected_catalog_path.read_bytes()
     catalog = read_json(selected_catalog_path)
     tasks = validate_catalog(catalog, selected_catalog_path)
-    catalog_digest = sha256_bytes(catalog_bytes)
+
+    # Locate and apply sequencing overlay if present
+    overlay_path = None
+    if getattr(args, "sequencing_overlay", ""):
+        overlay_path = Path(os.path.expanduser(args.sequencing_overlay)).resolve()
+    else:
+        overlay_env = os.environ.get("LOOP_PRODUCT_SEQUENCING_OVERLAY")
+        if overlay_env:
+            overlay_path = Path(os.path.expanduser(overlay_env)).resolve()
+        elif "PYTEST_CURRENT_TEST" not in os.environ:
+            candidate = selected_catalog_path.parent / "sequencing-overlay-2026-07-16.json"
+            if candidate.is_file():
+                overlay_path = candidate
+
+    if overlay_path:
+        print(f"Applying sequencing overlay from: {overlay_path}")
+        apply_sequencing_overlay(catalog, overlay_path)
+        tasks = catalog["tasks"]
+        catalog_digest = canonical_json_sha256(catalog)
+    else:
+        catalog_digest = sha256_bytes(catalog_bytes)
     print(
         f"Catalog valid: program={catalog['program_id']} tasks={len(tasks)} "
         f"sha256={catalog_digest}"

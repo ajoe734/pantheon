@@ -1,179 +1,332 @@
 {
   "audit_id": "closeout-truth-audit-2026-07-16",
-  "generated_at": "2026-07-16T12:32:58Z",
-  "mode": "read_only_evidence_replay",
-  "source_root": "docs/deployment/evidence/loop-product-level",
+  "generated_at": "2026-07-16T12:54:59Z",
+  "mode": "read_only_archive_snapshot_replay",
+  "source_root": "/home/lupin/code/pantheon/ai-task-archive/tasks",
   "selection": {
-    "included_manifests": 18,
-    "excluded_manifests": [
+    "frozen_rule": "all live-root LOOP-PROD archive snapshots except governance/meta LOOP-PROD-000, LOOP-PROD-001, and LOOP-PROD-002",
+    "frozen_task_ids": [
+      "LOOP-PROD-AGORA-001",
+      "LOOP-PROD-AGORA-002",
+      "LOOP-PROD-ALPHA-001",
+      "LOOP-PROD-AUTH-001",
+      "LOOP-PROD-CAP-001",
+      "LOOP-PROD-CONS-001",
+      "LOOP-PROD-DEP-001",
+      "LOOP-PROD-DIST-001",
+      "LOOP-PROD-GAP-ADDENDUM-001",
+      "LOOP-PROD-GAP-ADDENDUM-002",
+      "LOOP-PROD-IMIT-001",
+      "LOOP-PROD-MAI-001",
+      "LOOP-PROD-OODA-001",
+      "LOOP-PROD-REC-001",
+      "LOOP-PROD-RUNTIME-BOOT-001",
+      "LOOP-PROD-SRC-001",
+      "LOOP-PROD-TEACH-001",
+      "LOOP-PROD-TEL-001"
+    ],
+    "included_task_ids": [
+      "LOOP-PROD-AGORA-001",
+      "LOOP-PROD-AGORA-002",
+      "LOOP-PROD-ALPHA-001",
+      "LOOP-PROD-AUTH-001",
+      "LOOP-PROD-CAP-001",
+      "LOOP-PROD-CONS-001",
+      "LOOP-PROD-DEP-001",
+      "LOOP-PROD-DIST-001",
+      "LOOP-PROD-GAP-ADDENDUM-001",
+      "LOOP-PROD-GAP-ADDENDUM-002",
+      "LOOP-PROD-IMIT-001",
+      "LOOP-PROD-MAI-001",
+      "LOOP-PROD-OODA-001",
+      "LOOP-PROD-REC-001",
+      "LOOP-PROD-RUNTIME-BOOT-001",
+      "LOOP-PROD-SRC-001",
+      "LOOP-PROD-TEACH-001",
+      "LOOP-PROD-TEL-001"
+    ],
+    "included_snapshots": 18,
+    "excluded_task_ids": [
+      "LOOP-PROD-000",
+      "LOOP-PROD-001",
+      "LOOP-PROD-002"
+    ],
+    "excluded_snapshots": [
       {
-        "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-002/evidence.json",
-        "reason": "manifest task.id is missing"
+        "task_id": "LOOP-PROD-000",
+        "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-000.json",
+        "reason": "governance/meta task excluded from frozen product-closure replay set"
+      },
+      {
+        "task_id": "LOOP-PROD-001",
+        "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-001.json",
+        "reason": "governance/meta task excluded from frozen product-closure replay set"
+      },
+      {
+        "task_id": "LOOP-PROD-002",
+        "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-002.json",
+        "reason": "governance/meta task excluded from frozen product-closure replay set"
       }
     ],
+    "source_set_errors": [],
     "archive_mutation": "none"
   },
   "summary": {
-    "passed": 3,
-    "failed": 15,
-    "scanned": 18
+    "passed": 2,
+    "failed": 16,
+    "failed_results": 16,
+    "source_set_error_count": 0,
+    "scanned": 18,
+    "classification_counts": {
+      "false_closure": 12,
+      "stale_evidence": 4,
+      "valid_closure": 2
+    }
   },
   "results": [
     {
-      "task_id": "LOOP-PROD-000",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.json",
-      "owner": "Antigravity",
-      "reviewer": "Claude",
-      "overall_admission": "review_required_follow_up_merge_and_scope_split",
-      "result": "fail",
-      "gap_count": 9,
-      "gaps": [
-        "evidence overall admission is not done-eligible: review_required_follow_up_merge_and_scope_split",
-        "blocking acceptance requirement ID 'AC-05': status is 'pending_independent_review'",
-        "blocking acceptance requirement ID 'AC-06': status is 'pending_independent_provenance_and_scope_split_acceptance'",
-        "blocking acceptance requirement ID 'AC-07': status is 'pass_with_explicit_read_only_not_applicable'",
-        "blocking acceptance requirement ID 'AC-09': status is 'pending_independent_auth_scope_split_acceptance'",
-        "blocking residual risk 'RISK-POST-CUT-ADMISSION-HARDENING' remains open",
-        "blocking residual risk 'RISK-NORMALIZED-READBACK-PROVENANCE' remains open",
-        "missing security evidence: rbac status is not pass/not_applicable",
-        "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
-      ]
-    },
-    {
-      "task_id": "LOOP-PROD-001",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-001/evidence.json",
-      "owner": "Antigravity",
-      "reviewer": "Claude",
-      "overall_admission": "review_required_evidence_only",
-      "result": "fail",
-      "gap_count": 3,
-      "gaps": [
-        "evidence overall admission is not done-eligible: review_required_evidence_only",
-        "blocking acceptance requirement ID 'AC-05': status is 'pending_independent_review'",
-        "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
-      ]
-    },
-    {
-      "task_id": "LOOP-PROD-002",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-002/evidence.json",
-      "owner": "Antigravity",
-      "reviewer": "Claude",
-      "overall_admission": "pass",
-      "result": "pass",
-      "gap_count": 0,
-      "gaps": []
-    },
-    {
       "task_id": "LOOP-PROD-AGORA-001",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-001/evidence.json",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-AGORA-001.json",
+      "snapshot_sha256_before": "16fddeca0129031a393421ec0b280092f610b161c64e3262f33aea66cc663ff3",
+      "snapshot_sha256_after": "16fddeca0129031a393421ec0b280092f610b161c64e3262f33aea66cc663ff3",
+      "snapshot_hash_unchanged": true,
       "owner": "Antigravity",
       "reviewer": "Claude",
-      "overall_admission": "approved",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-001/evidence.json",
       "result": "fail",
+      "classification": "false_closure",
       "gap_count": 1,
       "gaps": [
         "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
-      ]
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-AGORA-001-FALSE-CLOSEOUT-REPAIR"
     },
     {
       "task_id": "LOOP-PROD-AGORA-002",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-002/evidence.json",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-AGORA-002.json",
+      "snapshot_sha256_before": "d2fefb8807de4a6e0ea59e49a2e6488a4fd10a6fb1a47f275f51234c97930982",
+      "snapshot_sha256_after": "d2fefb8807de4a6e0ea59e49a2e6488a4fd10a6fb1a47f275f51234c97930982",
+      "snapshot_hash_unchanged": true,
       "owner": "Codex2",
       "reviewer": "Claude",
-      "overall_admission": "review_required_evidence_only",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-002/evidence.json",
       "result": "fail",
+      "classification": "false_closure",
       "gap_count": 2,
       "gaps": [
         "evidence overall admission is not done-eligible: review_required_evidence_only",
         "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
-      ]
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-AGORA-002-FALSE-CLOSEOUT-REPAIR"
     },
     {
       "task_id": "LOOP-PROD-ALPHA-001",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.json",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-ALPHA-001.json",
+      "snapshot_sha256_before": "aae98fcd1867e2f862a7237f8967685b45d4daa022ad7618e4e18a4ca38befd6",
+      "snapshot_sha256_after": "aae98fcd1867e2f862a7237f8967685b45d4daa022ad7618e4e18a4ca38befd6",
+      "snapshot_hash_unchanged": true,
       "owner": "Antigravity",
       "reviewer": "Claude",
-      "overall_admission": "pass",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.json",
       "result": "fail",
+      "classification": "false_closure",
       "gap_count": 1,
       "gaps": [
         "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
-      ]
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-ALPHA-001-FALSE-CLOSEOUT-REPAIR"
     },
     {
       "task_id": "LOOP-PROD-AUTH-001",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AUTH-001/evidence.json",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-AUTH-001.json",
+      "snapshot_sha256_before": "b3a3bf44f699481f53e0d981341254d7b5df5e695011277dafb6546baff6aa6e",
+      "snapshot_sha256_after": "b3a3bf44f699481f53e0d981341254d7b5df5e695011277dafb6546baff6aa6e",
+      "snapshot_hash_unchanged": true,
       "owner": "Antigravity",
       "reviewer": "Claude",
-      "overall_admission": "blocked_pending_human_provisioned_deploy_secrets_and_hosted_redeploy",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AUTH-001/evidence.json",
       "result": "fail",
+      "classification": "false_closure",
       "gap_count": 4,
       "gaps": [
         "evidence overall admission is not done-eligible: blocked_pending_human_provisioned_deploy_secrets_and_hosted_redeploy",
         "blocking residual risk 'RISK-LOOP-PROD-AUTH-001-REDEPLOY-PENDING' remains open",
         "blocking residual risk 'RISK-LOOP-PROD-AUTH-001-DEV-LOGIN-CREDENTIALS' remains open",
         "blocking residual risk 'RISK-LOOP-PROD-AUTH-001-IMAGE-DIGEST' remains open"
-      ]
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-AUTH-001-FALSE-CLOSEOUT-REPAIR"
     },
     {
       "task_id": "LOOP-PROD-CAP-001",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CAP-001/evidence.json",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-CAP-001.json",
+      "snapshot_sha256_before": "edbb0a985ee73aa7386e35b95b4996741cf8957731a22c38310eb3f4d8cb4675",
+      "snapshot_sha256_after": "edbb0a985ee73aa7386e35b95b4996741cf8957731a22c38310eb3f4d8cb4675",
+      "snapshot_hash_unchanged": true,
       "owner": "Antigravity",
       "reviewer": "Claude",
-      "overall_admission": "pass",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CAP-001/evidence.json",
       "result": "fail",
+      "classification": "false_closure",
       "gap_count": 2,
       "gaps": [
         "product evidence schema validation failed: 'mutation_rule' is a required property",
         "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
-      ]
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-CAP-001-FALSE-CLOSEOUT-REPAIR"
     },
     {
       "task_id": "LOOP-PROD-CONS-001",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CONS-001/evidence.json",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-CONS-001.json",
+      "snapshot_sha256_before": "85558b3dbfbfde846408ba3f704f143c198894bdbda8645356dc9d5ac97e313f",
+      "snapshot_sha256_after": "85558b3dbfbfde846408ba3f704f143c198894bdbda8645356dc9d5ac97e313f",
+      "snapshot_hash_unchanged": true,
       "owner": "Antigravity",
       "reviewer": "Claude",
-      "overall_admission": "review_required_evidence_only",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CONS-001/evidence.json",
       "result": "fail",
+      "classification": "false_closure",
       "gap_count": 1,
       "gaps": [
         "evidence overall admission is not done-eligible: review_required_evidence_only"
-      ]
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-CONS-001-FALSE-CLOSEOUT-REPAIR"
+    },
+    {
+      "task_id": "LOOP-PROD-DEP-001",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-DEP-001.json",
+      "snapshot_sha256_before": "838cb844a662873f21c98dbe9350efb915c96720ef04175b644839e37e4775ff",
+      "snapshot_sha256_after": "838cb844a662873f21c98dbe9350efb915c96720ef04175b644839e37e4775ff",
+      "snapshot_hash_unchanged": true,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DEP-001/artifact-index.json",
+      "result": "fail",
+      "classification": "stale_evidence",
+      "gap_count": 1,
+      "gaps": [
+        "product-level closeout review_file must be an evidence.json manifest: docs/deployment/evidence/loop-product-level/LOOP-PROD-DEP-001/artifact-index.json"
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-DEP-001-STALE-EVIDENCE-REPAIR"
     },
     {
       "task_id": "LOOP-PROD-DIST-001",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DIST-001/evidence.json",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-DIST-001.json",
+      "snapshot_sha256_before": "cccea13c08069f45b42beb670401966e8c02e6fdbaeb4fb31b321f9aaeacaa15",
+      "snapshot_sha256_after": "cccea13c08069f45b42beb670401966e8c02e6fdbaeb4fb31b321f9aaeacaa15",
+      "snapshot_hash_unchanged": true,
       "owner": "Antigravity",
       "reviewer": "Claude",
-      "overall_admission": "review_required_evidence_only",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DIST-001/evidence.json",
       "result": "fail",
+      "classification": "false_closure",
       "gap_count": 1,
       "gaps": [
         "evidence overall admission is not done-eligible: review_required_evidence_only"
-      ]
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-DIST-001-FALSE-CLOSEOUT-REPAIR"
+    },
+    {
+      "task_id": "LOOP-PROD-GAP-ADDENDUM-001",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-GAP-ADDENDUM-001.json",
+      "snapshot_sha256_before": "1e5f9dd3207330fc333f5a5369933c561ef46d2307cd7aff6e7d3f68feace7ea",
+      "snapshot_sha256_after": "1e5f9dd3207330fc333f5a5369933c561ef46d2307cd7aff6e7d3f68feace7ea",
+      "snapshot_hash_unchanged": true,
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": null,
+      "result": "fail",
+      "classification": "stale_evidence",
+      "gap_count": 1,
+      "gaps": [
+        "product-level closeout requires a review_file evidence manifest"
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-GAP-ADDENDUM-001-STALE-EVIDENCE-REPAIR"
+    },
+    {
+      "task_id": "LOOP-PROD-GAP-ADDENDUM-002",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-GAP-ADDENDUM-002.json",
+      "snapshot_sha256_before": "3d77464b5cfa5fbd83e9c0cb70c90d7bf291cbc88fde2a7728fc1c77cb1b7c11",
+      "snapshot_sha256_after": "3d77464b5cfa5fbd83e9c0cb70c90d7bf291cbc88fde2a7728fc1c77cb1b7c11",
+      "snapshot_hash_unchanged": true,
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": null,
+      "result": "fail",
+      "classification": "stale_evidence",
+      "gap_count": 1,
+      "gaps": [
+        "product-level closeout requires a review_file evidence manifest"
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-GAP-ADDENDUM-002-STALE-EVIDENCE-REPAIR"
     },
     {
       "task_id": "LOOP-PROD-IMIT-001",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-IMIT-001/evidence.json",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-IMIT-001.json",
+      "snapshot_sha256_before": "ca130618c43f8b1f9994e4b91d08cf7e8b71a074ae1c33fd0c94752dcae865dc",
+      "snapshot_sha256_after": "ca130618c43f8b1f9994e4b91d08cf7e8b71a074ae1c33fd0c94752dcae865dc",
+      "snapshot_hash_unchanged": true,
       "owner": "Antigravity",
       "reviewer": "Claude",
-      "overall_admission": "review_required_evidence_only",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-IMIT-001/evidence.json",
       "result": "fail",
+      "classification": "false_closure",
       "gap_count": 2,
       "gaps": [
         "evidence overall admission is not done-eligible: review_required_evidence_only",
         "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
-      ]
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-IMIT-001-FALSE-CLOSEOUT-REPAIR"
     },
     {
       "task_id": "LOOP-PROD-MAI-001",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/evidence.json",
-      "owner": "Codex",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-MAI-001.json",
+      "snapshot_sha256_before": "b8f47bcc4ad354879d6293e9982f92b25dda096d7f31125e990005f5bcd3db30",
+      "snapshot_sha256_after": "b8f47bcc4ad354879d6293e9982f92b25dda096d7f31125e990005f5bcd3db30",
+      "snapshot_hash_unchanged": true,
+      "owner": "Antigravity",
       "reviewer": "Claude",
-      "overall_admission": "blocked_strict_auth_posture_and_hosted_proof_not_available",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/evidence.json",
       "result": "fail",
-      "gap_count": 22,
+      "classification": "false_closure",
+      "gap_count": 23,
       "gaps": [
+        "evidence manifest owner mismatch: expected Antigravity, got Codex",
         "evidence overall admission is not done-eligible: blocked_strict_auth_posture_and_hosted_proof_not_available",
         "blocking acceptance requirement ID 'AC-01': status is 'blocked_hosted_not_run'",
         "blocking acceptance requirement ID 'AC-02': status is 'blocked_local_contract_only'",
@@ -196,97 +349,128 @@
         "missing security evidence: no_live_capital status is not pass/not_applicable",
         "missing security evidence: two_person_approval status is not pass/not_applicable",
         "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
-      ]
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-MAI-001-FALSE-CLOSEOUT-REPAIR"
     },
     {
       "task_id": "LOOP-PROD-OODA-001",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-OODA-001/evidence.json",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-OODA-001.json",
+      "snapshot_sha256_before": "032c0c60a52b4764da55a997f210396f31e7dcb424307b88e65f7825c935d103",
+      "snapshot_sha256_after": "032c0c60a52b4764da55a997f210396f31e7dcb424307b88e65f7825c935d103",
+      "snapshot_hash_unchanged": true,
       "owner": "Antigravity",
       "reviewer": "Claude",
-      "overall_admission": "pass",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-OODA-001/evidence.json",
       "result": "fail",
+      "classification": "false_closure",
       "gap_count": 1,
       "gaps": [
         "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
-      ]
-    },
-    {
-      "task_id": "LOOP-PROD-PER-001",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
-      "owner": "Codex2",
-      "reviewer": "Antigravity",
-      "overall_admission": "blocked",
-      "result": "fail",
-      "gap_count": 21,
-      "gaps": [
-        "product evidence schema validation failed: Additional properties are not allowed ('raw_evidence_ref' was unexpected)",
-        "evidence overall admission is not done-eligible: blocked",
-        "blocking acceptance requirement ID 'AC1': status is 'partial'",
-        "blocking acceptance requirement ID 'AC2': status is 'partial'",
-        "blocking acceptance requirement ID 'AC3': status is 'partial'",
-        "blocking acceptance requirement ID 'AC4': status is 'partial'",
-        "blocking acceptance requirement ID 'AC5': status is 'partial'",
-        "blocking acceptance requirement ID 'AC6': status is 'partial'",
-        "blocking acceptance requirement ID 'AC7': status is 'partial'",
-        "blocking acceptance requirement ID 'AC8': status is 'blocked'",
-        "blocking acceptance requirement ID 'AC9': status is 'blocked'",
-        "blocking acceptance requirement ID 'AC10': status is 'partial'",
-        "blocking residual risk 'RISK-001' remains open",
-        "blocking residual risk 'RISK-002' remains open",
-        "blocking residual risk 'RISK-003' remains open",
-        "blocking residual risk 'RISK-004' remains open",
-        "missing security evidence: rbac status is not pass/not_applicable",
-        "missing security evidence: tenant_isolation status is not pass/not_applicable",
-        "missing security evidence: mfa status is not pass/not_applicable",
-        "missing security evidence: no_live_capital status is not pass/not_applicable",
-        "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
-      ]
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-OODA-001-FALSE-CLOSEOUT-REPAIR"
     },
     {
       "task_id": "LOOP-PROD-REC-001",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/evidence.json",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-REC-001.json",
+      "snapshot_sha256_before": "3b2833e940cb77d12f516ba627ca8c7588131cf16e4f95bd8001fe546b566bb7",
+      "snapshot_sha256_after": "3b2833e940cb77d12f516ba627ca8c7588131cf16e4f95bd8001fe546b566bb7",
+      "snapshot_hash_unchanged": true,
       "owner": "Antigravity",
       "reviewer": "Claude",
-      "overall_admission": "accepted_contract_evidence",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/evidence.json",
       "result": "pass",
+      "classification": "valid_closure",
       "gap_count": 0,
-      "gaps": []
+      "gaps": [],
+      "required_follow_up_task_id": null
+    },
+    {
+      "task_id": "LOOP-PROD-RUNTIME-BOOT-001",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-RUNTIME-BOOT-001.json",
+      "snapshot_sha256_before": "c99dc16eb84b84ea179c4c2585b9b64a9be8399a68b40eaadca0971289e5c60f",
+      "snapshot_sha256_after": "c99dc16eb84b84ea179c4c2585b9b64a9be8399a68b40eaadca0971289e5c60f",
+      "snapshot_hash_unchanged": true,
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001/evidence.premerge.json",
+      "result": "fail",
+      "classification": "stale_evidence",
+      "gap_count": 1,
+      "gaps": [
+        "product-level closeout review_file must be an evidence.json manifest: docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001/evidence.premerge.json"
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-RUNTIME-BOOT-001-STALE-EVIDENCE-REPAIR"
     },
     {
       "task_id": "LOOP-PROD-SRC-001",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/evidence.json",
-      "owner": "Codex2",
-      "reviewer": "Codex",
-      "overall_admission": "review_required_evidence_only",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-SRC-001.json",
+      "snapshot_sha256_before": "261443d55221b5882aa7b7b83a2c4d86777ecb876b574bbc9a60d7c95b44a8dc",
+      "snapshot_sha256_after": "261443d55221b5882aa7b7b83a2c4d86777ecb876b574bbc9a60d7c95b44a8dc",
+      "snapshot_hash_unchanged": true,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/evidence.json",
       "result": "fail",
-      "gap_count": 3,
+      "classification": "false_closure",
+      "gap_count": 5,
       "gaps": [
+        "evidence manifest owner mismatch: expected Antigravity, got Codex2",
+        "evidence manifest reviewer mismatch: expected Claude, got Codex",
         "evidence overall admission is not done-eligible: review_required_evidence_only",
         "blocking acceptance requirement ID 'AC-05': status is 'pending_independent_review_and_merge'",
         "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
-      ]
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-SRC-001-FALSE-CLOSEOUT-REPAIR"
     },
     {
       "task_id": "LOOP-PROD-TEACH-001",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-TEACH-001.json",
+      "snapshot_sha256_before": "423a94aa92c6159a3b4a824e7c39c279b42825d2a6df585208de969f26584346",
+      "snapshot_sha256_after": "423a94aa92c6159a3b4a824e7c39c279b42825d2a6df585208de969f26584346",
+      "snapshot_hash_unchanged": true,
       "owner": "Codex2",
       "reviewer": "Claude",
-      "overall_admission": "review_approved_owner_closeout_ready",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
       "result": "pass",
+      "classification": "valid_closure",
       "gap_count": 0,
-      "gaps": []
+      "gaps": [],
+      "required_follow_up_task_id": null
     },
     {
       "task_id": "LOOP-PROD-TEL-001",
-      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001/evidence.json",
+      "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-TEL-001.json",
+      "snapshot_sha256_before": "a1d8f1c658a140c673719daaa1fb900492fca0f83e9675f3448e2b5a7167e648",
+      "snapshot_sha256_after": "a1d8f1c658a140c673719daaa1fb900492fca0f83e9675f3448e2b5a7167e648",
+      "snapshot_hash_unchanged": true,
       "owner": "Antigravity",
       "reviewer": "Claude",
-      "overall_admission": "pass",
+      "status": "done",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001/evidence.json",
       "result": "fail",
+      "classification": "false_closure",
       "gap_count": 1,
       "gaps": [
         "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
-      ]
+      ],
+      "required_follow_up_task_id": "LOOP-PROD-TEL-001-FALSE-CLOSEOUT-REPAIR"
     }
   ]
 }
