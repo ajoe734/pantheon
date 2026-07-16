@@ -62,7 +62,7 @@ Workflow contract tests cover:
 ## Validation
 
 Run locally on `task/OPS-LEASE-READ-AFTER-WRITE-PIN-001` after composing
-`origin/dev` `135d266b8de855c187d3307d41d86376833d728c`. The exact PR head
+`origin/dev` `d4d0f693ec40e2196c47f2601380e1e0fc8b2fb9`. The exact PR head
 for governed Claude approval is recorded in PR #3760 and the owner handoff,
 so this evidence file does not try to self-reference a commit that changes
 when evidence text is updated:
