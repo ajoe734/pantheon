@@ -9,6 +9,21 @@
 > Do not use the task-worktree wrapper for state. Git and tests stay in the
 > task worktree. Verify the result with the central `show` command.
 
+## Final merge gate
+
+Do not enable auto-merge. Claude's first approval covered only
+`b60a8d84481ea08233cc4fc6486c84ef57c93dc9`. Any merge with current `dev`,
+review-document commit, or later branch update creates a new head that is not
+covered by that approval. On the final current-dev head:
+
+1. rerun all 59 guard tests and the frozen 18-task read-only replay;
+2. hand the exact head back to Claude through the central status wrapper;
+3. wait for Claude to record a fresh governed approval naming that head;
+4. only then merge and finalize.
+
+The owner has already enabled auto-merge twice before this gate was satisfied.
+Treat another enablement as a stop condition rather than completion.
+
 ## Responsibility
 
 Owner Codex2 implements. Reviewer Claude performs the independent review.
