@@ -65,3 +65,7 @@ At capture time:
 Next required action: fix or clear the Pantheon dev deploy-path failure, then
 rerun the Pantheon proof to terminal success while preserving the no
 disable/cancel rule.
+
+Publication note: PR publication may require a follow-up evidence-only push if
+branch protection reports a stale push check from unrelated dev history merged
+into the task branch.
