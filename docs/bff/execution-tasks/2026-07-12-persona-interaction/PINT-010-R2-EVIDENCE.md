@@ -334,8 +334,10 @@ attempt 1, job `87721031182`, completed successfully from `19:26:09Z` through
 `2026-07-16T19:27:37Z`, `auth_stub=false`, and `auth_mode=strict`. Three
 `/healthz` reads returned live/ready true with every dependency healthy.
 
-At final verification both deploy workflows were active and no nonterminal
-Pantheon or execute-plans deployment remained. The final runtime evidence is
+At final verification both deploy workflows were active and no executing,
+lease-holding, or conflicting Pantheon or execute-plans deployment remained.
+The historical GitHub-queued run `29469158508` was still nonterminal but had
+zero jobs and no lease, as recorded above. The final runtime evidence is
 complete and accepted; no live-capital, broker, order, capital-binding,
 runtime-binding, or memory authority was granted or exercised.
 

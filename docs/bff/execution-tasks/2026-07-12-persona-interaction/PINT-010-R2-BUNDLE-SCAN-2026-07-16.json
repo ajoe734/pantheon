@@ -374,7 +374,8 @@
       "workflow_id": 292028803,
       "state": "active"
     },
-    "no_nonterminal_deploy": true,
+    "no_nonterminal_deploy": false,
+    "no_executing_lease_holding_or_conflicting_deploy": true,
     "historical_nonexecuting_platform_ghost": {
       "run_id": 29469158508,
       "observed_status": "queued",
@@ -384,7 +385,7 @@
       "job_count": 0,
       "lease_held": false,
       "conflicting": false,
-      "present_in_final_nonterminal_deploy_list": false,
+      "present_in_final_nonterminal_deploy_list": true,
       "normal_cancel_result": "GitHub HTTP 500",
       "force_cancel_result": "GitHub HTTP 500"
     }
