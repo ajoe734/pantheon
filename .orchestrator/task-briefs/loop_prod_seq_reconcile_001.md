@@ -1,8 +1,17 @@
 # Task Brief: LOOP-PROD-SEQ-RECONCILE-001
 
+> Temporary coordination routing: until
+> `OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-001` is accepted, every owner or
+> reviewer working this task must run governed state, review, handoff and
+> closeout commands through `/home/lupin/code/pantheon/scripts/ai-status.sh`
+> with its own real identity (`AI_NAME=Codex` for the fleet owner or
+> `AI_NAME=Codex2` for the reviewer). Do not use the task-worktree wrapper for state. Git
+> and tests stay in the task worktree. Verify with central `show`.
+
 ## Responsibility
 
-Owner Antigravity implements. Reviewer Codex2 independently reviews.
+Fleet owner Codex implements after the 2026-07-16 chair reassignment from
+Antigravity. Reviewer Codex2 independently reviews.
 The planner does not implement product code.
 
 ## Authoritative inputs
@@ -57,3 +66,34 @@ Tests must cover 48/48 classification, hash mismatch, missing/extra/duplicate
 IDs, cycles, pre-G2 denial, invalid G2 evidence, and post-G2 release. Submit
 the overlay, matrix, dispatcher changes and tests through a PR, then hand
 off to Codex2 for independent review and merged-candidate verification.
+
+## PR #3746 post-merge rejection (2026-07-16)
+
+PR #3746 head `5f51574df2791d7cb1c4551e46571ae5f06ea71a`
+merged as `aae333959e0566759a4e7eb955f860d280fa5e3d` after the owner
+re-enabled auto-merge. It had no Codex2 independent review and does not
+satisfy this task. Preserve it as failed/interim evidence and open a new
+corrective PR from current `dev`; do not materialize the 48 tasks.
+
+The corrective PR must fix all of these exact defects:
+
+- move the current hard-coded `wave >= 5` release rule into the versioned
+  overlay contract, including the exact gated classifications/task set and
+  release predicate;
+- resolve every signal, order, fill, telemetry and loop-run projection ID
+  against authoritative canonical records, recompute/compare their digests,
+  and bind status, tenant, environment, loop/run identity and event ordering;
+  digest-shaped strings and linked-looking IDs alone are fabricated evidence;
+- require accepted closeout-truth admission for the target task. An active
+  `status: done` task without source/approval evidence and a minimal archived
+  `done` snapshot without reviewer verdict/admitted evidence must both fail;
+- enforce evidence freshness and ordering, not only parse `issued_at`;
+- validate the exact PR #3737 merge SHA, allowed classification vocabulary,
+  exact per-entry keys, non-empty rationale, explicit amended dependencies,
+  and duplicate JSON task IDs;
+- add negative tests for wrong merge SHA, extra and duplicate IDs, stale
+  evidence, false-closed active/archive tasks, missing canonical records,
+  digest mismatch, wrong status/tenant/environment/run, and mismatched event
+  ordering;
+- keep auto-merge disabled and hand the exact final head to Codex2 before
+  merge.
