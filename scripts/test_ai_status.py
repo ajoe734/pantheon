@@ -111,6 +111,8 @@ class StatusRootRoutingTests(unittest.TestCase):
         (path / ".gitkeep").write_text("fixture\n", encoding="utf-8")
         subprocess.run(["git", "add", ".gitkeep"], cwd=path, check=True)
         subprocess.run(["git", "commit", "-q", "-m", "fixture"], cwd=path, check=True)
+        subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=path, check=True)
+        subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=path, check=True)
 
     def _write_status_state(self, root: Path, *, owner: str, next_value: str) -> None:
         state = ai_status.default_state()
@@ -150,6 +152,12 @@ class StatusRootRoutingTests(unittest.TestCase):
             target = destination / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+
+    def _commit_all(self, repo: Path, message: str = "install status tooling") -> str:
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", message], cwd=repo, check=True)
+        subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=repo, check=True)
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
 
     def test_load_local_coordination_payload_tolerates_missing_yaml(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ai-status-no-yaml-") as temp_dir:
@@ -210,8 +218,14 @@ class StatusRootRoutingTests(unittest.TestCase):
             central = root / "central"
             worktree = root / "task-worktree"
             self._init_repo(central)
+            self._copy_status_tooling(central)
             self._init_repo(worktree)
             self._copy_status_tooling(worktree)
+            stale_local_ai_status = worktree / "scripts" / "ai_status.py"
+            stale_local_ai_status.write_text(
+                "raise SystemExit('stale worktree-local ai_status.py executed')\n",
+                encoding="utf-8",
+            )
             self._write_status_state(
                 central,
                 owner="Codex2",
@@ -228,6 +242,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                 json.dumps({"event_id": "central-seed", "type": "seed"}) + "\n",
                 encoding="utf-8",
             )
+            command_sha = self._commit_all(central)
             worktree_log.write_text(
                 json.dumps({"event_id": "stale-seed", "type": "stale"}) + "\n",
                 encoding="utf-8",
@@ -280,6 +295,10 @@ class StatusRootRoutingTests(unittest.TestCase):
                     "ORCH_TASK_ID": "CENTRAL-ROOT-001",
                     "ORCH_RUNNER_STATUS_PATH": str(central_runner_status),
                     "ORCH_HEARTBEAT_PATH": str(central_heartbeat),
+                    "PANTHEON_STATUS_COMMAND_ROOT": str(central),
+                    "PANTHEON_STATUS_COMMAND_SHA": command_sha,
+                    "PANTHEON_STATUS_COMMAND_REMOTE": "ajoe734/pantheon",
+                    "PANTHEON_STATUS_COMMAND_BASE_REF": "origin/dev",
                 }
             )
 
@@ -366,6 +385,25 @@ class StatusRootRoutingTests(unittest.TestCase):
                     {event.get("type") for event in central_events}
                 )
             )
+            mutating_events = [
+                event
+                for event in central_events
+                if event.get("type") in {"progress", "done"}
+            ]
+            self.assertTrue(mutating_events)
+            for event in mutating_events:
+                self.assertEqual(event["status_command"]["command_root"], str(central.resolve()))
+                self.assertEqual(event["status_command"]["source_sha"], command_sha)
+                self.assertEqual(event["status_command"]["status_root"], str(central.resolve()))
+                self.assertEqual(event["status_command"]["delivery_root"], str(worktree.resolve()))
+            self.assertEqual(
+                archived["task"]["delivery"]["repository_path"],
+                str(worktree.resolve()),
+            )
+            self.assertEqual(
+                archived["task"]["delivery"]["status_command_runtime"]["command_root"],
+                str(central.resolve()),
+            )
             self.assertTrue((central / ".orchestrator" / "task-state.lock").exists())
             self.assertTrue((central / ".orchestrator" / "activity-audit.lock").exists())
             self.assertTrue((central / "current-work.md").exists())
@@ -391,6 +429,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                 owner="Gemini",
                 next_value="stale task worktree root",
             )
+            command_sha = self._commit_all(code_root)
             valid = root / "central"
             self._init_repo(valid)
             self._write_status_state(valid, owner="Codex2", next_value="valid")
@@ -419,6 +458,10 @@ class StatusRootRoutingTests(unittest.TestCase):
                     "ORCH_RUN_ID": "codex-test-run",
                     "ORCH_RUNNER_STATUS_PATH": str(runner_status),
                     "ORCH_HEARTBEAT_PATH": str(heartbeat),
+                    "PANTHEON_STATUS_COMMAND_ROOT": str(code_root),
+                    "PANTHEON_STATUS_COMMAND_SHA": command_sha,
+                    "PANTHEON_STATUS_COMMAND_REMOTE": "ajoe734/pantheon",
+                    "PANTHEON_STATUS_COMMAND_BASE_REF": "origin/dev",
                 }
             )
             cases = [
@@ -429,6 +472,13 @@ class StatusRootRoutingTests(unittest.TestCase):
                 ({"PANTHEON_STATUS_ROOT": str(component_symlink_root)}, "symlink component"),
                 ({"PANTHEON_STATUS_ROOT": str(code_root)}, "not the isolated task worktree"),
                 ({"PANTHEON_STATUS_ROOT": str(other_valid)}, "does not match"),
+                (
+                    {
+                        "PANTHEON_STATUS_ROOT": str(valid),
+                        "ORCH_WORKSPACE_PATH": str(other_valid),
+                    },
+                    "disagree on delivery worktree root",
+                ),
                 (
                     {
                         "PANTHEON_STATUS_ROOT": str(root),

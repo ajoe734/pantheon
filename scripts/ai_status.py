@@ -27,6 +27,10 @@ YAML_ERROR_TYPES = (yaml.YAMLError,) if yaml is not None else ()
 
 ROOT = Path(__file__).resolve().parents[1]
 STATUS_ROOT_ENV = "PANTHEON_STATUS_ROOT"
+STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
+STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
+STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
+STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_STATUS_COMMAND_BASE_REF"
 AUTO_WORKER_ENV_MARKERS = (
     "ORCH_RUN_ID",
     "PANTHEON_WORKTREE_ROOT",
@@ -153,14 +157,30 @@ def _auto_worker_requires_explicit_status_root() -> bool:
 
 
 def _worker_workspace_root() -> Path | None:
-    raw = str(
-        os.environ.get("PANTHEON_WORKTREE_ROOT")
-        or os.environ.get("ORCH_WORKSPACE_PATH")
-        or ""
-    ).strip()
-    if not raw:
+    roots: list[tuple[str, Path]] = []
+    for env_name in ("PANTHEON_WORKTREE_ROOT", "ORCH_WORKSPACE_PATH"):
+        raw = str(os.environ.get(env_name) or "").strip()
+        if not raw:
+            continue
+        expanded = Path(os.path.expanduser(raw))
+        if not expanded.is_absolute():
+            raise RuntimeError(f"{env_name} must be an absolute path when set")
+        symlink_component = _first_symlink_component(expanded)
+        if symlink_component is not None:
+            raise RuntimeError(
+                f"{env_name} cannot include a symlink component: {symlink_component}"
+            )
+        roots.append((env_name, expanded.resolve()))
+    if not roots:
         return None
-    return Path(os.path.expanduser(raw)).resolve()
+    first_name, first_root = roots[0]
+    for env_name, root in roots[1:]:
+        if root != first_root:
+            raise RuntimeError(
+                f"{first_name} and {env_name} disagree on delivery worktree root: "
+                f"{first_root} != {root}"
+            )
+    return first_root
 
 
 def _first_symlink_component(path: Path) -> Path | None:
@@ -225,6 +245,124 @@ def _git_toplevel(path: Path) -> Path | None:
     if not top:
         return None
     return Path(top).resolve()
+
+
+def _git_stdout(path: Path, args: list[str]) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(path), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "git command failed").strip()
+        raise RuntimeError(detail)
+    return proc.stdout.strip()
+
+
+def _normalize_github_repo_slug(value: str | None) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    if candidate.endswith(".git"):
+        candidate = candidate[:-4]
+    for prefix in (
+        "git@github.com:",
+        "ssh://git@github.com/",
+        "https://github.com/",
+        "http://github.com/",
+    ):
+        if candidate.startswith(prefix):
+            candidate = candidate[len(prefix) :]
+            break
+    return candidate.strip("/")
+
+
+def validate_status_command_runtime_binding() -> None:
+    """Ensure auto-worker status commands run from the installed command root."""
+
+    raw_root = str(os.environ.get(STATUS_COMMAND_ROOT_ENV) or "").strip()
+    if not raw_root:
+        if _auto_worker_requires_explicit_status_root():
+            raise RuntimeError(
+                "PANTHEON_STATUS_COMMAND_ROOT is required for auto-worker status commands"
+            )
+        return
+
+    expanded_root = Path(os.path.expanduser(raw_root))
+    if not expanded_root.is_absolute():
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be an absolute path")
+    symlink_component = _first_symlink_component(expanded_root)
+    if symlink_component is not None:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} cannot include a symlink component: {symlink_component}"
+        )
+    command_root = expanded_root.resolve()
+    if not command_root.exists() or not command_root.is_dir():
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} does not exist or is not a directory: {command_root}"
+        )
+    if _git_toplevel(command_root) != command_root:
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be a git repository root: {command_root}")
+
+    source_sha = _git_stdout(command_root, ["rev-parse", "HEAD"])
+    expected_sha = str(os.environ.get(STATUS_COMMAND_SHA_ENV) or "").strip()
+    if not expected_sha:
+        raise RuntimeError("PANTHEON_STATUS_COMMAND_SHA is required for auto-worker status commands")
+    if source_sha != expected_sha:
+        raise RuntimeError(
+            f"PANTHEON_STATUS_COMMAND_SHA mismatch: command root is {source_sha}, expected {expected_sha}"
+        )
+
+    current_root = ROOT.resolve()
+    if current_root != command_root:
+        raise RuntimeError(
+            "auto-worker status command must execute the installed command runtime: "
+            f"running {current_root}, expected {command_root}"
+        )
+
+    expected_remote = _normalize_github_repo_slug(
+        os.environ.get(STATUS_COMMAND_REMOTE_ENV) or "ajoe734/pantheon"
+    )
+    remote_url = _git_stdout(command_root, ["remote", "get-url", "origin"])
+    actual_remote = _normalize_github_repo_slug(remote_url)
+    if expected_remote and actual_remote != expected_remote:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} remote mismatch: {actual_remote or remote_url} != {expected_remote}"
+        )
+
+    base_ref = str(os.environ.get(STATUS_COMMAND_BASE_REF_ENV) or "origin/dev").strip() or "origin/dev"
+    _git_stdout(command_root, ["rev-parse", "--verify", base_ref])
+    proc = subprocess.run(
+        ["git", "-C", str(command_root), "merge-base", "--is-ancestor", source_sha, base_ref],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} source SHA {source_sha} is not merged into {base_ref}{suffix}"
+        )
+
+
+def status_command_metadata() -> dict[str, Any] | None:
+    raw_root = str(os.environ.get(STATUS_COMMAND_ROOT_ENV) or "").strip()
+    raw_sha = str(os.environ.get(STATUS_COMMAND_SHA_ENV) or "").strip()
+    if not raw_root and not raw_sha:
+        return None
+    delivery_root = _worker_workspace_root()
+    payload: dict[str, Any] = {
+        "command_root": str(Path(os.path.expanduser(raw_root)).resolve()) if raw_root else None,
+        "source_sha": raw_sha or None,
+        "base_ref": str(os.environ.get(STATUS_COMMAND_BASE_REF_ENV) or "").strip() or None,
+        "remote": _normalize_github_repo_slug(os.environ.get(STATUS_COMMAND_REMOTE_ENV) or ""),
+        "status_root": str(STATUS_ROOT),
+        "delivery_root": str(delivery_root) if delivery_root is not None else None,
+        "wrapper_root": str(os.environ.get("PANTHEON_STATUS_COMMAND_WRAPPER_ROOT") or "").strip() or None,
+    }
+    return {key: value for key, value in payload.items() if value not in (None, "")}
 
 
 def _path_parent_under_root(path: Path, root: Path) -> bool:
@@ -932,6 +1070,19 @@ def load_config() -> dict[str, Any]:
                 "provider_capabilities": str(STATUS_ROOT / ".orchestrator" / "provider_capabilities.json"),
             }
         )
+    delivery_root = _worker_workspace_root()
+    if delivery_root is not None:
+        coordination = payload.setdefault("coordination", {})
+        if isinstance(coordination, dict):
+            repositories = coordination.setdefault("repositories", {})
+            if isinstance(repositories, dict):
+                pantheon_repo = repositories.setdefault("pantheon", {})
+                if isinstance(pantheon_repo, dict):
+                    pantheon_repo["local_path"] = str(delivery_root)
+                    pantheon_repo.setdefault(
+                        "repo",
+                        str(((payload.get("github_bus") or {}).get("repo")) or "ajoe734/pantheon"),
+                    )
     return payload
 
 
@@ -1313,6 +1464,9 @@ def _canonical_json_sha256(value: Any) -> str:
 
 def _activity_event(entry: dict[str, Any]) -> dict[str, Any]:
     event = deepcopy(entry)
+    command_metadata = status_command_metadata()
+    if command_metadata and "status_command" not in event:
+        event["status_command"] = command_metadata
     if not str(event.get("event_id") or "").strip():
         event["event_id"] = "ai-status-event-" + _canonical_json_sha256(event)
     return event
@@ -1971,6 +2125,9 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
         "branch": branch,
         "git_clean_required": settings["require_git_clean"],
     }
+    command_metadata = status_command_metadata()
+    if command_metadata:
+        delivery["status_command_runtime"] = command_metadata
     if repository_fallback is not None:
         delivery["repository_fallback"] = repository_fallback
 
@@ -4822,6 +4979,7 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
 
 
 def main(argv: list[str]) -> int:
+    validate_status_command_runtime_binding()
     validate_status_root_binding()
 
     command = argv[1] if len(argv) > 1 else "sync"

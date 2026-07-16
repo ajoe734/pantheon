@@ -20,6 +20,7 @@
 如果原因是 `owned_finalize_dispatch`，或 task 已是 `review_approved`，請先依 `.orchestrator/skills/task-closeout-finalization.md` 做 closeout：整理必要 task artifact / docs、建立 task-scoped commit、再用 `scripts/ai-status.sh done` 收尾。不要把 `done` 當成單純改狀態。
 
 狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。
+auto worker 的狀態命令會由 supervisor 提供的 `PANTHEON_STATUS_COMMAND_ROOT` / exact SHA 執行；不要自行改用其他 checkout。
 不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。
 你在 background auto worker 裡執行，請不要使用 `git add -p`、`git add -i`、`git commit --interactive`、`git rebase -i` 或其他需要人工輸入的互動式命令。
 {{sidecar_guardrails}}

@@ -13,6 +13,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
+STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
+STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
+STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_STATUS_COMMAND_BASE_REF"
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -46,6 +51,35 @@ def _git_toplevel(path: Path) -> Path | None:
         return None
     top = proc.stdout.strip()
     return Path(top).resolve() if top else None
+
+
+def _git_stdout(path: Path, args: list[str]) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(path), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "git command failed").strip()
+        raise RuntimeError(detail)
+    return proc.stdout.strip()
+
+
+def _normalize_github_slug(value: str | None) -> str:
+    candidate = str(value or "").strip()
+    if candidate.endswith(".git"):
+        candidate = candidate[:-4]
+    for prefix in (
+        "git@github.com:",
+        "ssh://git@github.com/",
+        "https://github.com/",
+        "http://github.com/",
+    ):
+        if candidate.startswith(prefix):
+            candidate = candidate[len(prefix) :]
+            break
+    return candidate.strip("/")
 
 
 def _first_symlink_component(path: Path) -> Path | None:
@@ -168,6 +202,67 @@ def validate_coordination_root(
     return root
 
 
+def validate_status_command_runtime() -> dict[str, str]:
+    raw = str(os.environ.get(STATUS_COMMAND_ROOT_ENV) or "").strip()
+    if not raw:
+        raise RuntimeError(
+            "PANTHEON_STATUS_COMMAND_ROOT is required when worker_runner launches an auto worker"
+        )
+    expanded = Path(os.path.expanduser(raw))
+    if not expanded.is_absolute():
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be an absolute path")
+    symlink_component = _first_symlink_component(expanded)
+    if symlink_component is not None:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} cannot include a symlink component: {symlink_component}"
+        )
+    root = expanded.resolve()
+    if not root.exists() or not root.is_dir():
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} does not exist or is not a directory: {root}")
+    if _git_toplevel(root) != root:
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be a git repository root: {root}")
+
+    source_sha = _git_stdout(root, ["rev-parse", "HEAD"])
+    expected_sha = str(os.environ.get(STATUS_COMMAND_SHA_ENV) or "").strip()
+    if not expected_sha:
+        raise RuntimeError("PANTHEON_STATUS_COMMAND_SHA is required when worker_runner launches an auto worker")
+    if source_sha != expected_sha:
+        raise RuntimeError(
+            f"PANTHEON_STATUS_COMMAND_SHA mismatch: command root is {source_sha}, expected {expected_sha}"
+        )
+
+    expected_remote = _normalize_github_slug(
+        os.environ.get(STATUS_COMMAND_REMOTE_ENV) or "ajoe734/pantheon"
+    )
+    remote_url = _git_stdout(root, ["remote", "get-url", "origin"])
+    actual_remote = _normalize_github_slug(remote_url)
+    if expected_remote and actual_remote != expected_remote:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} remote mismatch: {actual_remote or remote_url} != {expected_remote}"
+        )
+
+    base_ref = str(os.environ.get(STATUS_COMMAND_BASE_REF_ENV) or "origin/dev").strip() or "origin/dev"
+    _git_stdout(root, ["rev-parse", "--verify", base_ref])
+    proc = subprocess.run(
+        ["git", "-C", str(root), "merge-base", "--is-ancestor", source_sha, base_ref],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} source SHA {source_sha} is not merged into {base_ref}{suffix}"
+        )
+    return {
+        "command_root": str(root),
+        "source_sha": source_sha,
+        "remote": expected_remote or actual_remote,
+        "base_ref": base_ref,
+    }
+
+
 import re as _re
 
 
@@ -211,6 +306,7 @@ def main(argv: list[str] | None = None) -> int:
         heartbeat_path=heartbeat_path,
         status_path=status_path,
     )
+    command_runtime = validate_status_command_runtime()
     if workspace_path:
         try:
             os.chdir(workspace_path)
@@ -236,6 +332,7 @@ def main(argv: list[str] | None = None) -> int:
         "finished_at": None,
         "exit_code": None,
         "signal": None,
+        "status_command_runtime": command_runtime,
     }
 
     def publish(next_status: str) -> None:
@@ -250,6 +347,7 @@ def main(argv: list[str] | None = None) -> int:
             "pid": os.getpid(),
             "child_pid": status.get("child_pid"),
             "updated_at": now,
+            "status_command_runtime": command_runtime,
         })
         write_json(status_path, status)
 

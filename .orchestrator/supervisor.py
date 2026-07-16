@@ -49,6 +49,7 @@ from common import (
     shell_quote,
     snapshot_task,
     spawn_background_process,
+    status_command_runtime_env,
     summarize_failure_reason,
     utc_now,
     write_failure_evidence,
@@ -1811,8 +1812,8 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
                 "Generated in the worker workspace because the supervisor root did not have a task brief file.",
                 "",
                 "## Coordination Root",
-                "- Auto workers inherit `PANTHEON_STATUS_ROOT` from the supervisor.",
-                "- Run `./scripts/ai-status.sh` normally from this worktree; governed status, activity, archive and lock writes are routed to the validated central root.",
+                "- Auto workers inherit `PANTHEON_STATUS_ROOT` and `PANTHEON_STATUS_COMMAND_ROOT` from the supervisor.",
+                "- Run `./scripts/ai-status.sh` normally from this worktree; the wrapper execs the validated command runtime, while governed status, activity, archive and lock writes are routed to the validated central root.",
                 "",
             ]
         )
@@ -1833,8 +1834,8 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
             str(task.get("summary_zh") or "-"),
             "",
             "## Coordination Root",
-            "- Auto workers inherit `PANTHEON_STATUS_ROOT` from the supervisor.",
-            "- Run `./scripts/ai-status.sh` normally from this worktree; governed status, activity, archive and lock writes are routed to the validated central root.",
+            "- Auto workers inherit `PANTHEON_STATUS_ROOT` and `PANTHEON_STATUS_COMMAND_ROOT` from the supervisor.",
+            "- Run `./scripts/ai-status.sh` normally from this worktree; the wrapper execs the validated command runtime, while governed status, activity, archive and lock writes are routed to the validated central root.",
             "",
         ]
     )
@@ -6861,6 +6862,7 @@ def resume_claude_worker(
             "ORCH_WORKSPACE_PATH": str(workspace_root),
         }
     )
+    env.update(status_command_runtime_env(config))
     runtime_paths = worker_runtime_paths(config, worker["run_id"])
     process, _ = spawn_background_process(
         command,
