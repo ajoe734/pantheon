@@ -1,0 +1,83 @@
+{
+  "schema_version": "1.0",
+  "task_id": "OPS-DEPLOY-WORKFLOW-GUARD-001",
+  "captured_at": "2026-07-16T13:41:00Z",
+  "source": "read-only live Docker inspection on dev VM plus GitHub Actions failed-job metadata",
+  "workflow_states": {
+    "ajoe734/pantheon#269991390": "active",
+    "ajoe734/execute-plans#292028803": "active"
+  },
+  "pantheon_proof_run": {
+    "repo": "ajoe734/pantheon",
+    "workflow_id": 269991390,
+    "run_id": 29500642280,
+    "url": "https://github.com/ajoe734/pantheon/actions/runs/29500642280",
+    "event": "workflow_dispatch",
+    "head_branch": "dev",
+    "head_sha": "cd842177612c3f92ca0c92cb42e522431dc70b75",
+    "created_at": "2026-07-16T13:03:59Z",
+    "updated_at": "2026-07-16T13:28:02Z",
+    "status": "completed",
+    "conclusion": "failure",
+    "failed_job": {
+      "job_id": 87628428239,
+      "name": "Deploy dev under shared environment lease",
+      "failed_step": "Deploy dev VM stack under lease",
+      "exit_code": 75,
+      "key_log_lines": [
+        "Container pantheon-reconciliation-drift-svc-1 Error",
+        "Container pantheon-loop-run-projector-scheduler-1 Error",
+        "dependency failed to start: container pantheon-reconciliation-drift-svc-1 is unhealthy",
+        "pantheon-loop-run-projector-scheduler-1 ... Up 2 minutes (unhealthy)",
+        "pantheon-reconciliation-drift-svc-1 ... Up 2 minutes (unhealthy)",
+        "SystemExit: 1",
+        "Process completed with exit code 75."
+      ]
+    }
+  },
+  "live_docker_ps": {
+    "captured_at": "2026-07-16T13:41:00Z",
+    "reconciliation-drift-svc": {
+      "container": "pantheon-reconciliation-drift-svc-1",
+      "status": "Up 15 minutes (unhealthy)",
+      "ports": "0.0.0.0:18102->8102/tcp, [::]:18102->8102/tcp"
+    },
+    "loop-run-projector-scheduler": {
+      "container": "pantheon-loop-run-projector-scheduler-1",
+      "status": "Up 15 minutes (unhealthy)",
+      "ports": "8083/tcp"
+    }
+  },
+  "service_health": {
+    "reconciliation-drift-svc": {
+      "docker_health_status": "unhealthy",
+      "docker_health_failing_streak": 86,
+      "healthcheck_error": "urllib.error.HTTPError: HTTP Error 500: Internal Server Error",
+      "application_exception": {
+        "type": "json.decoder.JSONDecodeError",
+        "message": "Extra data: line 20379 column 4 (char 635016)",
+        "path": [
+          "services/foundation/health.py:107 readyz",
+          "services/foundation/health.py:68 health_payload resolves metrics",
+          "services/reconciliation-drift/main.py:602 evaluation_count calls store.list_evaluations()",
+          "services/reconciliation-drift/store.py:50 list_evaluations",
+          "services/reconciliation-drift/store.py:26 json.loads(text)"
+        ]
+      }
+    },
+    "loop-run-projector-scheduler": {
+      "docker_health_status": "unhealthy",
+      "docker_health_failing_streak": 67,
+      "container_log_tail_lines": 0,
+      "healthcheck_errors": [
+        "lifecycle projector unhealthy: last poll is stale (30.831s)",
+        "lifecycle projector unhealthy: invalid controller status: degraded",
+        "lifecycle projector unhealthy: last poll is stale (37.613s)",
+        "lifecycle projector unhealthy: invalid controller status: degraded",
+        "lifecycle projector unhealthy: last poll is stale (39.375s)"
+      ]
+    }
+  },
+  "interpretation": "Pantheon proof run 29500642280 failed because the dev stack stayed unhealthy. The first concrete application exception is reconciliation-drift-svc failing readiness while parsing its evaluations JSON map; loop-run-projector-scheduler is also unhealthy, but the deploy log's final dependency failure points at reconciliation-drift-svc.",
+  "next_action": "Route a scoped service/data-path repair through reviewed PR, then rerun only the Pantheon deploy proof with the shared workflow still active and without cross-run cancellation."
+}
