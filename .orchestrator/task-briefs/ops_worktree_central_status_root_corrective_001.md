@@ -57,6 +57,15 @@ Deliver code, tests, runbook and exact regression evidence through a reviewed
 PR to `dev`. Do not edit live coordination state by hand and do not claim the
 runtime is repaired until the separate post-merge install task passes.
 
+## Final merge gate
+
+Keep auto-merge disabled. If `origin/dev` advances after any review starts,
+the owner must compose the latest `origin/dev` into the task branch and rerun
+the required suites on that final tree. Antigravity must then record approval
+for that exact final head through the central status command. A reviewer note
+or review-document commit that changes the PR head invalidates the preceding
+exact-head approval; do not merge until the new head is named and approved.
+
 ## First implementation pre-review (2026-07-16)
 
 Commit `7d3d01e2c` is an anchor only. Before opening or handing off a PR, the
