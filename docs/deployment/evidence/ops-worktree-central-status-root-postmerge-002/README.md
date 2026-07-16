@@ -188,14 +188,31 @@ File "scripts/ai_status.py", line 1415, in _activity_event_index_unlocked
 RuntimeError: activity event_id duplicate across sources: worker-commit-deb673789747a71068bff9f2578ad9f41d7b8253
 ```
 
-This is a pre-existing, fleet-wide outage (first observed fleet-wide
-2026-07-16 ~04:05 UTC, an `Antigravity worker_commit` event for
-`EVOCHAIN-011` present in both the live activity log and a rotated archive).
-It affects every agent and every task on the fleet identically and is
-unrelated to, and unaffected by, the `PANTHEON_STATUS_ROOT` binding fix
-installed here (`.orchestrator/common.py`, which owns the duplicate-event
-index, was not touched by the `CORRECTIVE-001` PR -- its hash is identical
-before and after this install, §1 vs §3).
+**Corrected characterization (per Codex2/Planner review of the first
+version of this evidence):** this is not an arbitrary duplicate-event bug,
+and the offending `worker-commit-deb673...` event ID is present across two
+*rotated* archives (`2026-07-16T0358Z.gz` -> `2026-07-16T1130Z.gz`), not
+across the live log and one archive as originally stated here. The
+`OPS-ACTIVITY-AUDIT-RECOVERY-PLAN-001` planning task ran a complete
+read-only incident inventory: 411 source files, 1,157,457 total rows, 537
+rows carrying an event ID, 437 unique event IDs, 100 duplicate IDs, zero
+payload mismatches, and zero within-source duplicates. The 100 duplicates
+resolve to exactly four adjacent legacy timestamp-rotation suffix/prefix
+pairs, each overlapping by exactly 1,000 byte-identical lines:
+
+- `0358Z.gz` -> `1130Z.gz`
+- `1301Z.gz` -> `1404Z.gz`
+- `1404Z.gz` -> `1450Z.gz`
+- `1450Z.gz` -> active `ai-activity-log.jsonl`
+
+This is the legacy timestamp-named rotation's `keep_lines=1000` tail-retention
+contract working as designed; the newer reader treats every rotation source
+as disjoint and incorrectly flags the legal overlap as corruption. It affects
+every agent and every task on the fleet identically and is unrelated to, and
+unaffected by, the `PANTHEON_STATUS_ROOT` binding fix installed here
+(`.orchestrator/common.py`, which owns the duplicate-event index, was not
+touched by the `CORRECTIVE-001` PR -- its hash is identical before and after
+this install, §1 vs §3).
 
 Because of this outage, the task brief's requirement to "run governed `show`,
 `note` and owner-to-reviewer `handoff`" and "prove the central board and
@@ -206,8 +223,15 @@ accepts the correct central root and rejects the isolated-worktree/missing-root
 cases, with the crash trace showing it always gets past validation before
 hitting the unrelated outage.
 
-**Recommendation:** file/track a dedicated fix for the activity-log
-duplicate-`event_id` recovery bug in `.orchestrator/common.py` /
-`scripts/ai_status.py`, then re-run the full governed `show`/`note`/`handoff`
-isolation proof once that lands. Until then this task cannot reach a full
-`done` closeout against its original acceptance criteria.
+**Dedicated recovery task:** `OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001`
+(owner `Antigravity`, reviewer `Claude`, auto-merge disabled) carries the
+actual fix -- a shared streaming logical activity reader that folds verified
+legacy adjacent-source overlaps into a single logical view without touching
+raw archive bytes, then re-validates `recover_status_activity_outbox()`
+idempotency against that view. Per Planner/Codex2 review of this PR, this
+task (`POSTMERGE-002`) stays open and unmerged until that recovery task
+lands, at which point the full governed `show`/`note`/`handoff` isolation
+proof (exactly-once central mutation, unchanged worktree sentinel bytes)
+must be rerun here and resubmitted for Codex2 exact-head review. Until then
+this task cannot reach a full `done` closeout against its original
+acceptance criteria.
