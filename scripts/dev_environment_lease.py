@@ -74,6 +74,10 @@ class LeaseLost(LeaseError):
     """Raised when the caller no longer owns the remote lease."""
 
 
+class InitialLeaseVisibilityPending(LeaseLost):
+    """Raised only when GitHub still serves the exact stale predecessor blob."""
+
+
 class LeaseConflict(LeaseError):
     """Raised for a GitHub compare-and-swap conflict."""
 
@@ -204,6 +208,11 @@ def public_state(state: Mapping[str, Any], *, content_sha: str) -> dict[str, Any
     for key in ("expectedBackendSha", "runUrl"):
         if state.get(key):
             result[key] = state[key]
+    previous_content_sha = state.get("previousContentSha")
+    if previous_content_sha:
+        if not SHA40_RE.fullmatch(str(previous_content_sha)):
+            raise LeaseError("previousContentSha must be a 40-character SHA")
+        result["previousContentSha"] = str(previous_content_sha).lower()
     return result
 
 
@@ -709,16 +718,49 @@ class LeaseManager:
                     )
                 time.sleep(min(poll_seconds, random.uniform(0.25, 1.0)))
                 continue
+            if expected_sha:
+                # Local-only evidence binds a bounded initial visibility retry
+                # to the exact stale blob replaced by this successful CAS.
+                candidate["previousContentSha"] = expected_sha.lower()
             return candidate, content_sha, written_at
 
+    def _is_exact_stale_predecessor(
+        self,
+        local_state: Mapping[str, Any],
+        state: Mapping[str, Any],
+        remote: RemoteContent,
+    ) -> bool:
+        previous_content_sha = local_state.get("previousContentSha")
+        if not isinstance(previous_content_sha, str) or not SHA40_RE.fullmatch(
+            previous_content_sha
+        ):
+            return False
+        if remote.content_sha.lower() != previous_content_sha.lower():
+            return False
+        local_acquired = parse_utc_iso(local_state.get("acquiredAt"), "acquiredAt")
+        remote_acquired = parse_utc_iso(state.get("acquiredAt"), "acquiredAt")
+        remote_expires = parse_utc_iso(state.get("expiresAt"), "expiresAt")
+        return remote_acquired < local_acquired and remote_expires <= local_acquired
+
     def _matching_remote(
-        self, local_state: Mapping[str, Any], *, require_active: bool
+        self,
+        local_state: Mapping[str, Any],
+        *,
+        require_active: bool,
+        allow_exact_stale_predecessor: bool = False,
     ) -> tuple[dict[str, Any], RemoteContent]:
         remote = self.client.get_content(self.repository, self.branch, self.path)
         if remote is None:
             raise LeaseLost("remote dev environment lease is missing")
         for key in ACQUISITION_IMMUTABLE_FIELDS:
             if remote.state.get(key) != local_state.get(key):
+                if allow_exact_stale_predecessor:
+                    state = self._validated(remote)
+                    if self._is_exact_stale_predecessor(local_state, state, remote):
+                        raise InitialLeaseVisibilityPending(
+                            "GitHub still serves the exact expired predecessor blob "
+                            f"{remote.content_sha} after acquisition"
+                        )
                 raise LeaseLost(
                     f"remote dev environment lease immutable field {key} changed from "
                     f"{local_state.get(key)!r} to {remote.state.get(key)!r}"
@@ -729,9 +771,40 @@ class LeaseManager:
         return state, remote
 
     def verify(
-        self, local_state: Mapping[str, Any], *, max_heartbeat_age_seconds: int
+        self,
+        local_state: Mapping[str, Any],
+        *,
+        max_heartbeat_age_seconds: int,
+        initial_visibility_wait_seconds: float = 0.0,
+        initial_visibility_poll_seconds: float = 0.5,
     ) -> dict[str, Any]:
-        state, remote = self._matching_remote(local_state, require_active=True)
+        if initial_visibility_wait_seconds < 0 or initial_visibility_wait_seconds > 30:
+            raise LeaseError(
+                "initial-visibility-wait-seconds must be between 0 and 30"
+            )
+        if initial_visibility_poll_seconds <= 0 or initial_visibility_poll_seconds > 5:
+            raise LeaseError(
+                "initial-visibility-poll-seconds must be greater than 0 and at most 5"
+            )
+        deadline = time.monotonic() + initial_visibility_wait_seconds
+        while True:
+            try:
+                state, remote = self._matching_remote(
+                    local_state,
+                    require_active=True,
+                    allow_exact_stale_predecessor=(
+                        initial_visibility_wait_seconds > 0
+                    ),
+                )
+                break
+            except InitialLeaseVisibilityPending as exc:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise LeaseLost(
+                        "initial lease visibility remained on the exact stale "
+                        "predecessor until the bounded timeout"
+                    ) from exc
+                time.sleep(min(initial_visibility_poll_seconds, remaining))
         heartbeat = parse_utc_iso(state["heartbeatAt"], "heartbeatAt")
         age = (remote.server_now - heartbeat).total_seconds()
         if max_heartbeat_age_seconds <= 0:
@@ -826,6 +899,8 @@ def build_parser() -> argparse.ArgumentParser:
     common_parser(verify)
     verify.add_argument("--state-file", required=True)
     verify.add_argument("--max-heartbeat-age-seconds", type=int, default=120)
+    verify.add_argument("--initial-visibility-wait-seconds", type=float, default=0.0)
+    verify.add_argument("--initial-visibility-poll-seconds", type=float, default=0.5)
 
     heartbeat = subparsers.add_parser(
         "heartbeat-loop", help="renew the lease until signalled; fail closed on ownership loss"
@@ -1002,6 +1077,8 @@ def run(argv: Sequence[str] | None = None) -> int:
             manager.verify(
                 local,
                 max_heartbeat_age_seconds=args.max_heartbeat_age_seconds,
+                initial_visibility_wait_seconds=args.initial_visibility_wait_seconds,
+                initial_visibility_poll_seconds=args.initial_visibility_poll_seconds,
             ),
             args.json_out,
         )
