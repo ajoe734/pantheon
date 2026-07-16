@@ -48,8 +48,8 @@ from common import (
     activity_audit_source_paths_unlocked,
     append_activity_log_entries_unlocked,
     assert_activity_audit_stable_unlocked,
+    find_activity_audit_records_unlocked,
     prepare_activity_audit_unlocked,
-    read_activity_audit_records_unlocked,
 )
 
 _ACTIVITY_AUDIT_LOCK_HELD: ContextVar[bool] = ContextVar(
@@ -7552,21 +7552,28 @@ def _validate_g2_reviewer_binding(
         <= _parse_g2_timestamp(closeout_at, label="G2 closeout timestamp")
     ):
         raise DispatchError("G2 reviewer binding chronology is invalid")
+    def is_exact_review_event(record: dict[str, Any]) -> bool:
+        return (
+            record.get("type") == "review_approved"
+            and record.get("task_id") == closeout_task.get("id")
+            and record.get("agent") == closeout_task.get("reviewer")
+            and record.get("review_binding") == binding
+        )
+
     if review_audit_records is None:
         try:
-            records = read_activity_audit_records_unlocked(LOG_PATH)
+            matches = find_activity_audit_records_unlocked(
+                LOG_PATH,
+                predicate=is_exact_review_event,
+            )
         except RuntimeError as exc:
             raise DispatchError("G2 reviewer approval audit is unreadable") from exc
     else:
-        records = review_audit_records
-    matches = [
-        record
-        for record in records
-        if record.get("type") == "review_approved"
-        and record.get("task_id") == closeout_task.get("id")
-        and record.get("agent") == closeout_task.get("reviewer")
-        and record.get("review_binding") == binding
-    ]
+        matches = [
+            record
+            for record in review_audit_records
+            if is_exact_review_event(record)
+        ]
     event_fields = {
         "event_id",
         "ts",
@@ -8984,12 +8991,10 @@ def resolve_g2_evidence_admission(
     try:
         validation_now = now or datetime.now(timezone.utc)
         if _ACTIVITY_AUDIT_LOCK_HELD.get():
-            review_audit_records = read_activity_audit_records_unlocked(LOG_PATH)
             return _validate_g2_evidence(
                 state,
                 catalog,
                 now=validation_now,
-                review_audit_records=review_audit_records,
             )
         _validate_g2_status_root_authority()
         with activity_audit_lock_file(
@@ -9003,12 +9008,10 @@ def resolve_g2_evidence_admission(
             shared=True,
             nonblocking=False,
         ):
-            review_audit_records = read_activity_audit_records_unlocked(LOG_PATH)
             return _validate_g2_evidence(
                 state,
                 catalog,
                 now=validation_now,
-                review_audit_records=review_audit_records,
             )
     except Exception:
         return None

@@ -759,7 +759,7 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
             log_path = Path(tmpdir) / "ai-activity-log.jsonl"
             archive_dir = log_path.parent / "archive" / "logs"
             archive_dir.mkdir(parents=True)
-            archived = archive_dir / f"{log_path.name}-0001.gz"
+            archived = archive_dir / f"{log_path.name}-2026-07-16T0001Z.gz"
             with gzip.open(archived, "wt", encoding="utf-8") as handle:
                 handle.write('{"event_id":"archived-event","type":"old"}\n')
             log_path.write_text(
@@ -779,7 +779,7 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
             log_path = Path(tmpdir) / "ai-activity-log.jsonl"
             archive_dir = log_path.parent / "archive" / "logs"
             archive_dir.mkdir(parents=True)
-            archived = archive_dir / f"{log_path.name}-0001.gz"
+            archived = archive_dir / f"{log_path.name}-2026-07-16T0001Z.gz"
             row = '{"event_id":"duplicate-event","type":"test"}\n'
             with gzip.open(archived, "wt", encoding="utf-8") as handle:
                 handle.write(row)
@@ -804,7 +804,7 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
                 log_path.write_text(row, encoding="utf-8")
                 with self.assertRaisesRegex(
                     RuntimeError,
-                    "malformed|digest mismatch",
+                    "Bad JSON|malformed|digest mismatch",
                 ):
                     common.read_activity_audit_records(log_path)
 
@@ -865,6 +865,49 @@ class LogicalActivityReaderTests(unittest.TestCase):
         self.assertEqual(len(collapsed_info), 1)
         self.assertEqual(collapsed_info[0]["prev_source"], str(f1))
         self.assertEqual(collapsed_info[0]["next_source"], str(f2))
+
+    def test_strict_snapshot_uses_logical_overlap_fold(self):
+        entries1 = self._make_entries(0, 1500)
+        entries2 = self._make_entries(500, 1500)
+
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        self._write_gz(f1, entries1)
+        self._write_gz(f2, entries2)
+
+        records = common.read_activity_audit_records(self.log_path)
+
+        self.assertEqual(len(records), 2000)
+        self.assertEqual(
+            [record["event_id"] for record in records],
+            [f"event-{index}" for index in range(2000)],
+        )
+
+    def test_selective_strict_scan_folds_and_validates_all_rows(self):
+        entries1 = self._make_entries(0, 1500)
+        entries2 = self._make_entries(500, 1500)
+
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        self._write_gz(f1, entries1)
+        self._write_gz(f2, entries2)
+
+        matches = common.find_activity_audit_records_unlocked(
+            self.log_path,
+            predicate=lambda entry: entry.get("event_id") == "event-1999",
+        )
+        self.assertEqual(
+            [entry["event_id"] for entry in matches],
+            ["event-1999"],
+        )
+
+        with self.log_path.open("w", encoding="utf-8") as handle:
+            handle.write('{"event_id":"event-2000","broken":1,"broken":2}\n')
+        with self.assertRaisesRegex(RuntimeError, "Bad JSON"):
+            common.find_activity_audit_records_unlocked(
+                self.log_path,
+                predicate=lambda entry: entry.get("event_id") == "event-1999",
+            )
 
     def test_three_consecutive_legacy_overlaps(self):
         entries1 = self._make_entries(0, 1500)

@@ -1510,8 +1510,11 @@ def _stream_logical_activity_unlocked(
                         except UnicodeError as exc:
                             raise RuntimeError(f"Bad UTF-8 in {source}:{l_num}: {exc}")
                         try:
-                            entry = json.loads(decoded)
-                        except json.JSONDecodeError as exc:
+                            entry = json.loads(
+                                decoded,
+                                object_pairs_hook=_strict_activity_json_pairs,
+                            )
+                        except (json.JSONDecodeError, RuntimeError) as exc:
                             raise RuntimeError(f"Bad JSON in {source}:{l_num}: {exc}")
                         if not isinstance(entry, dict):
                             raise RuntimeError(f"activity audit row is not an object: {source}:{l_num}")
@@ -1531,8 +1534,15 @@ def _stream_logical_activity_unlocked(
                                 cursor.execute("SELECT digest FROM seen_events WHERE event_id = ?", (event_id,))
                                 row = cursor.fetchone()
                                 if row:
-                                    detail = "payload mismatch" if row[0] != digest else "duplicate across sources"
-                                    raise RuntimeError(f"activity event_id {detail}: {event_id}")
+                                    if row[0] != digest:
+                                        raise RuntimeError(
+                                            "activity event_id payload mismatch: "
+                                            f"{event_id}"
+                                        )
+                                    raise RuntimeError(
+                                        "duplicate activity audit event_id; "
+                                        f"duplicate across sources: {event_id}"
+                                    )
                                 cursor.execute("INSERT INTO seen_events (event_id, digest) VALUES (?, ?)", (event_id, digest))
                         return entry
 
@@ -1726,75 +1736,93 @@ def read_activity_audit_records_unlocked(
 ) -> list[dict[str, Any]]:
     """Return a strict snapshot while the caller holds the activity SH/EX lock."""
 
-    assert_activity_audit_stable_unlocked(log_path)
     records: list[dict[str, Any]] = []
-    event_ids: set[str] = set()
-    sources = activity_audit_source_paths_unlocked(log_path)
-    if stop_after is not None:
-        sources = list(reversed(sources))
-    for source in sources:
-        source_matched = False
-        try:
-            if source.suffix == ".gz":
-                with gzip.open(
-                    source,
-                    "rt",
-                    encoding="utf-8",
-                    errors="strict",
-                ) as handle:
-                    body = handle.read()
-            else:
-                body = source.read_text(encoding="utf-8", errors="strict")
-        except (OSError, EOFError, UnicodeError, gzip.BadGzipFile) as exc:
-            raise RuntimeError(
-                f"activity audit source is unreadable: {source}"
-            ) from exc
-        for line_number, line in enumerate(body.splitlines(), start=1):
-            if not line.strip():
-                continue
-            try:
-                entry = json.loads(
-                    line,
-                    object_pairs_hook=_strict_activity_json_pairs,
-                )
-            except (json.JSONDecodeError, RuntimeError) as exc:
-                raise RuntimeError(
-                    f"activity audit row is malformed: {source}:{line_number}"
-                ) from exc
-            if not isinstance(entry, dict):
-                raise RuntimeError(
-                    f"activity audit row is not an object: {source}:{line_number}"
-                )
-            if "event_id" in entry:
-                event_id = entry.get("event_id")
-                if not isinstance(event_id, str) or not event_id.strip():
-                    raise RuntimeError(
-                        f"activity audit event_id is invalid: {source}:{line_number}"
-                    )
-                if event_id in event_ids:
-                    raise RuntimeError(
-                        f"duplicate activity audit event_id: {event_id}"
-                    )
-                event_ids.add(event_id)
-                if event_id.startswith("loop-product-event-"):
-                    unsigned = {
-                        key: value
-                        for key, value in entry.items()
-                        if key != "event_id"
-                    }
-                    expected = "loop-product-event-" + _canonical_json_sha256(
-                        unsigned
-                    )
-                    if event_id != expected:
-                        raise RuntimeError(
-                            f"activity audit event_id digest mismatch: {event_id}"
-                        )
+    source_groups: list[list[dict[str, Any]]] = []
+    current_source: Path | None = None
+    current_group: list[dict[str, Any]] = []
+    current_source_matched = False
+
+    def finish_source_group() -> None:
+        nonlocal current_group, current_source_matched
+        if current_source is None:
+            return
+        if current_source_matched:
+            # A newer matching source supersedes every older group.  Keep
+            # streaming so corruption, invalid duplicates, and a still newer
+            # match cannot be hidden behind the optimization predicate.
+            source_groups.clear()
+        source_groups.append(current_group)
+        current_group = []
+        current_source_matched = False
+
+    for entry, source, _ in _stream_strict_activity_audit_records_unlocked(
+        log_path
+    ):
+        if current_source is None:
+            current_source = source
+        elif source != current_source:
+            finish_source_group()
+            current_source = source
+
+        if stop_after is None:
             records.append(entry)
-            if stop_after is not None and stop_after(entry):
-                source_matched = True
-        if source_matched:
-            break
-    return records
+        else:
+            current_group.append(entry)
+            if stop_after(entry):
+                current_source_matched = True
+
+    if stop_after is None:
+        return records
+
+    finish_source_group()
+    return [
+        entry
+        for source_group in reversed(source_groups)
+        for entry in source_group
+    ]
+
+
+def _stream_strict_activity_audit_records_unlocked(
+    log_path: Path,
+) -> Generator[tuple[dict[str, Any], Path, int], None, None]:
+    """Validate the complete logical audit plane and yield one row at a time."""
+
+    assert_activity_audit_stable_unlocked(log_path)
+    for entry, source, line_number in _stream_logical_activity_unlocked(log_path):
+        if "event_id" in entry:
+            event_id = entry.get("event_id")
+            if not isinstance(event_id, str) or not event_id.strip():
+                raise RuntimeError(
+                    f"activity audit event_id is invalid: {source}:{line_number}"
+                )
+            if event_id.startswith("loop-product-event-"):
+                unsigned = {
+                    key: value
+                    for key, value in entry.items()
+                    if key != "event_id"
+                }
+                expected = "loop-product-event-" + _canonical_json_sha256(
+                    unsigned
+                )
+                if event_id != expected:
+                    raise RuntimeError(
+                        f"activity audit event_id digest mismatch: {event_id}"
+                    )
+        yield entry, source, line_number
+
+
+def find_activity_audit_records_unlocked(
+    log_path: Path,
+    *,
+    predicate: Callable[[dict[str, Any]], bool],
+) -> list[dict[str, Any]]:
+    """Validate every logical row while retaining only predicate matches."""
+
+    matches: list[dict[str, Any]] = []
+    for entry, _, _ in _stream_strict_activity_audit_records_unlocked(log_path):
+        if predicate(entry):
+            matches.append(entry)
+    return matches
 
 
 def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
