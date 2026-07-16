@@ -3241,8 +3241,16 @@ G2_ISSUED_AT = "2026-07-15T00:03:00Z"
 G2_EXPIRES_AT = "2026-07-16T00:03:00Z"
 G2_NOW = datetime(2026, 7, 15, 0, 3, 1, tzinfo=timezone.utc)
 G2_DEPLOYMENT_SHA = "d" * 40
-G2_FINAL_MERGE_SHA = "e" * 40
-G2_FINAL_HEAD_SHA = "f" * 40
+
+
+def _fixture_git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
 
 def _product_evidence_payload(
@@ -3250,6 +3258,8 @@ def _product_evidence_payload(
     contract: dict,
     closeout_task: dict,
     verdict: dict,
+    implementation_head_sha: str,
+    implementation_merge_sha: str,
 ) -> dict:
     task_id = contract["target_task"]
     review_file = contract["closeout_manifest_path"]
@@ -3306,17 +3316,17 @@ def _product_evidence_payload(
         "implementation_delivery": {
             "anchor_commits": [
                 {
-                    "sha": G2_FINAL_HEAD_SHA,
+                    "sha": implementation_head_sha,
                     "subject": f"{task_id}: canonical G2 delivery",
                 }
             ],
             "pull_request": {
                 "number": 4001,
                 "url": "https://github.com/ajoe734/pantheon/pull/4001",
-                "head_sha": G2_FINAL_HEAD_SHA,
+                "head_sha": implementation_head_sha,
                 "base": "dev",
                 "merged_at": G2_MERGED_AT,
-                "merge_sha": G2_FINAL_MERGE_SHA,
+                "merge_sha": implementation_merge_sha,
             },
             "required_checks": [
                 {
@@ -3331,8 +3341,8 @@ def _product_evidence_payload(
                 {"command": "canonical lifecycle hosted probe", "result": "pass"}
             ],
             "validated_at": G2_VALIDATED_AT,
-            "validated_base_sha": "c" * 40,
-            "validated_head_sha": G2_FINAL_HEAD_SHA,
+            "validated_base_sha": implementation_merge_sha,
+            "validated_head_sha": implementation_head_sha,
         },
         "deployment": {
             "applicable": True,
@@ -3444,9 +3454,10 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
             "review_file": contract["closeout_manifest_path"],
             "review_notes_zh": ["Codex2 approved the canonical G2 evidence."],
             "delivery": {
-                "commit": G2_FINAL_MERGE_SHA,
+                "commit": "0" * 40,
                 "head_merged_to_target": True,
                 "merge_target_branch": "dev",
+                "merge_target_sha": "0" * 40,
                 "push_status": "in_sync",
             },
         }
@@ -3461,6 +3472,46 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     schema_path = tmp_path / "schemas" / "product-evidence.schema.json"
     schema_path.parent.mkdir(parents=True)
     schema_path.write_bytes(PRODUCT_EVIDENCE_SCHEMA.read_bytes())
+
+    _fixture_git(tmp_path, "init", "-b", "dev")
+    _fixture_git(tmp_path, "config", "user.name", "G2 Fixture")
+    _fixture_git(tmp_path, "config", "user.email", "g2-fixture@example.invalid")
+    _fixture_git(
+        tmp_path,
+        "add",
+        str(schema_path.relative_to(tmp_path)),
+        str(activity_log.relative_to(tmp_path)),
+    )
+    _fixture_git(tmp_path, "commit", "-m", "fixture: canonical base")
+    implementation_branch = "task/LOOP-PROD-VERIFY-EXEC-001-implementation"
+    _fixture_git(tmp_path, "checkout", "-b", implementation_branch)
+    implementation_marker = tmp_path / "g2-implementation-marker.txt"
+    implementation_marker.write_text(
+        "canonical paper execution spine\n", encoding="utf-8"
+    )
+    _fixture_git(
+        tmp_path,
+        "add",
+        str(implementation_marker.relative_to(tmp_path)),
+    )
+    _fixture_git(tmp_path, "commit", "-m", "fixture: G2 implementation")
+    implementation_head_sha = _fixture_git(tmp_path, "rev-parse", "HEAD")
+    _fixture_git(tmp_path, "checkout", "dev")
+    _fixture_git(
+        tmp_path,
+        "merge",
+        "--no-ff",
+        implementation_branch,
+        "-m",
+        "fixture: merge G2 implementation",
+    )
+    implementation_merge_sha = _fixture_git(tmp_path, "rev-parse", "HEAD")
+    _fixture_git(
+        tmp_path,
+        "checkout",
+        "-b",
+        "task/LOOP-PROD-VERIFY-EXEC-001-evidence",
+    )
 
     rows = _natural_lifecycle_rows()
     projection_root = tmp_path / "projection"
@@ -3510,6 +3561,27 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
             "loop_runs": loops,
         },
     }
+    authoritative_snapshot = {
+        "source_high_watermark": bundle["source"]["source_high_watermark"],
+        "rows": deepcopy(rows),
+        "projection": deepcopy(bundle["projection"]),
+    }
+
+    def resolve_authoritative_snapshot(
+        _contract: dict, event_ids: list[str]
+    ) -> dict:
+        requested = set(event_ids)
+        snapshot = deepcopy(authoritative_snapshot)
+        snapshot["rows"] = [
+            row for row in snapshot["rows"] if row["event_id"] in requested
+        ]
+        return snapshot
+
+    monkeypatch.setattr(
+        dispatcher,
+        "_resolve_authoritative_g2_snapshot",
+        resolve_authoritative_snapshot,
+    )
 
     def repo_path(relative: str) -> Path:
         return tmp_path / relative
@@ -3533,6 +3605,8 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         contract=contract,
         closeout_task=closeout_task,
         verdict=verdict,
+        implementation_head_sha=implementation_head_sha,
+        implementation_merge_sha=implementation_merge_sha,
     )
     product_digest = _write_json_artifact(product_path, product)
     sidecar_path = product_path.with_name("evidence.sha256")
@@ -3543,7 +3617,7 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     role_types = contract["record_event_types"]
     loop_record = loops["records"][identity["loop_run_id"]]
     evidence = {
-        "schema_version": "pantheon.loop-prod-g2-evidence.v2",
+        "schema_version": "pantheon.loop-prod-g2-evidence.v3",
         "task_id": contract["target_task"],
         "program_id": catalog["program_id"],
         "target_environment": contract["required_target_environment"],
@@ -3593,7 +3667,7 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
                 sidecar_raw
             ).hexdigest(),
             "task_snapshot_sha256": dispatcher.canonical_json_sha256(
-                closeout_task
+                dispatcher._g2_closeout_task_projection(closeout_task)
             ),
             "reviewer": closeout_task["reviewer"],
             "review_verdict_sha256": dispatcher.canonical_json_sha256(verdict),
@@ -3606,6 +3680,53 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         "last_canonical_event_id": rows[-1]["event_id"],
     }
     _write_json_artifact(g2_path, evidence)
+
+    artifact_relatives = [
+        str(path.relative_to(tmp_path))
+        for path in (g2_path, bundle_path, probe_path, product_path, sidecar_path)
+    ]
+    artifact_commit_counter = 0
+
+    def commit_artifacts() -> tuple[str, str]:
+        nonlocal artifact_commit_counter
+        artifact_commit_counter += 1
+        branch = _fixture_git(tmp_path, "branch", "--show-current")
+        if branch == "dev":
+            branch = f"task/g2-evidence-update-{artifact_commit_counter}"
+            _fixture_git(tmp_path, "checkout", "-b", branch)
+        _fixture_git(tmp_path, "add", *artifact_relatives)
+        _fixture_git(
+            tmp_path,
+            "commit",
+            "-m",
+            f"fixture: commit G2 artifacts {artifact_commit_counter}",
+        )
+        artifact_head_sha = _fixture_git(tmp_path, "rev-parse", "HEAD")
+        _fixture_git(tmp_path, "checkout", "dev")
+        _fixture_git(
+            tmp_path,
+            "merge",
+            "--no-ff",
+            branch,
+            "-m",
+            f"fixture: merge G2 artifacts {artifact_commit_counter}",
+        )
+        merge_target_sha = _fixture_git(tmp_path, "rev-parse", "HEAD")
+        _fixture_git(
+            tmp_path,
+            "update-ref",
+            "refs/remotes/origin/dev",
+            merge_target_sha,
+        )
+        closeout_task["delivery"].update(
+            {
+                "commit": artifact_head_sha,
+                "merge_target_sha": merge_target_sha,
+            }
+        )
+        return artifact_head_sha, merge_target_sha
+
+    artifact_head_sha, artifact_merge_target_sha = commit_artifacts()
     return {
         "dispatcher": dispatcher,
         "catalog": catalog,
@@ -3613,6 +3734,12 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         "contract": contract,
         "state": {"tasks": [closeout_task]},
         "closeout_task": closeout_task,
+        "authoritative_snapshot": authoritative_snapshot,
+        "commit_artifacts": commit_artifacts,
+        "artifact_head_sha": artifact_head_sha,
+        "artifact_merge_target_sha": artifact_merge_target_sha,
+        "implementation_head_sha": implementation_head_sha,
+        "implementation_merge_sha": implementation_merge_sha,
         "now": G2_NOW,
         "paths": {
             "g2": g2_path,
@@ -3694,6 +3821,60 @@ def test_g2_v2_accepts_real_canonical_projector_probe_and_closeout(
         g2_v2_fixture["catalog"],
         now=g2_v2_fixture["now"],
     )
+
+
+def test_g2_v3_rejects_bundle_not_resolved_by_authoritative_source(
+    g2_v2_fixture: dict,
+) -> None:
+    snapshot = g2_v2_fixture["authoritative_snapshot"]
+    snapshot["rows"][0]["payload"]["signal_id"] = "canonical-source-drift"
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="does not resolve against authoritative stores",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v3_rejects_uncommitted_admitted_artifact_bytes(
+    g2_v2_fixture: dict,
+) -> None:
+    evidence_path = g2_v2_fixture["paths"]["g2"]
+    evidence_path.write_bytes(evidence_path.read_bytes() + b"\n")
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="admitted artifact is not the committed blob",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v3_rejects_delivery_outside_origin_dev(
+    g2_v2_fixture: dict,
+) -> None:
+    repo = g2_v2_fixture["dispatcher"].REPO_ROOT
+    _fixture_git(repo, "update-ref", "refs/remotes/origin/dev", "HEAD^")
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="runtime lock capability git verification failed",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
 
 
 def test_g2_v2_rejects_stale_evidence(g2_v2_fixture: dict) -> None:
@@ -4288,6 +4469,14 @@ def test_g2_v2_accepts_declared_chain_when_bundle_has_later_complete_lifecycle(
         }
     )
     _rewrite_g2(g2_v2_fixture, evidence)
+    g2_v2_fixture["authoritative_snapshot"].update(
+        {
+            "source_high_watermark": len(combined_rows),
+            "rows": deepcopy(combined_rows),
+            "projection": deepcopy(bundle["projection"]),
+        }
+    )
+    g2_v2_fixture["commit_artifacts"]()
 
     dispatcher._validate_g2_evidence(
         g2_v2_fixture["state"],

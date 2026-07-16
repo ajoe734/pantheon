@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 from collections import Counter
 from contextlib import contextmanager
 from copy import deepcopy
@@ -66,7 +67,7 @@ EXPECTED_SEQUENCING_SOURCE_HASHES = {
     "merge_pr_3737_sha": "a4b5df9a51bc3da6df0d39d422d9db4edc553aba",
 }
 EXPECTED_SEQUENCING_OVERLAY_SHA256 = (
-    "f175df35de77bedff674896b60510defcec7a4794ac2f5856eef966ef989d22b"
+    "463e20275e28cf2b6154520456ed11f88319d830dae510d3e350d79ad881f8d5"
 )
 EXPECTED_PRODUCT_EVIDENCE_SCHEMA_SHA256 = (
     "5340d8394a31fa9badf4519b2cdbac4f02317e9d930ddd250c8b7374015d3a73"
@@ -132,6 +133,11 @@ G2_EVIDENCE_CONTRACT_KEYS = {
     "closeout_manifest_path",
     "hosted_probe_path",
     "canonical_record_bundle_path",
+    "canonical_source_resolution",
+    "canonical_telemetry_dsn_env",
+    "canonical_projection_root_env",
+    "artifact_commit_binding",
+    "required_git_remote_ref",
     "bundle_digest_algorithm",
     "record_digest_algorithm",
     "record_bundle_schema",
@@ -325,7 +331,10 @@ SEQUENCING_RELEASE_ADMISSION_FIELDS = frozenset(
     {
         "g2_evidence_sha256",
         "canonical_record_bundle_sha256",
+        "canonical_source_snapshot_sha256",
         "hosted_probe_sha256",
+        "g2_artifact_commit_sha",
+        "g2_artifact_merge_target_sha",
         "product_manifest_sha256",
         "product_manifest_sidecar_sha256",
         "target_task_snapshot_sha256",
@@ -5329,7 +5338,10 @@ def validate_sequencing_release_record(
         "closeout_at",
         "g2_evidence_sha256",
         "canonical_record_bundle_sha256",
+        "canonical_source_snapshot_sha256",
         "hosted_probe_sha256",
+        "g2_artifact_commit_sha",
+        "g2_artifact_merge_target_sha",
         "product_manifest_sha256",
         "product_manifest_sidecar_sha256",
         "target_task_snapshot_sha256",
@@ -5430,10 +5442,16 @@ def validate_sequencing_release_record(
         "reviewer",
         "g2_issued_at",
         "closeout_at",
+        "g2_artifact_commit_sha",
+        "g2_artifact_merge_target_sha",
     }
     reviewer = record.get("reviewer")
     if (
         any(not _is_lower_hex(record.get(field), 64) for field in digest_fields)
+        or not _is_lower_hex(record.get("g2_artifact_commit_sha"), 40)
+        or not _is_lower_hex(
+            record.get("g2_artifact_merge_target_sha"), 40
+        )
         or not isinstance(reviewer, str)
         or not reviewer.strip()
         or reviewer not in set(catalog.get("allowed_owners") or [])
@@ -5938,6 +5956,7 @@ def _resolve_g2_closeout_task(
         or delivery.get("push_status") != "in_sync"
         or delivery.get("merge_target_branch") != "dev"
         or not _is_lower_hex(delivery.get("commit"), 40)
+        or not _is_lower_hex(delivery.get("merge_target_sha"), 40)
     ):
         raise DispatchError("G2 closeout delivery truth is not accepted")
     source_ref = task.get("source_ref")
@@ -5999,6 +6018,116 @@ def _resolve_g2_closeout_task(
     return task, closeout_at
 
 
+def _g2_closeout_task_projection(task: Mapping[str, Any]) -> dict[str, Any]:
+    """Bind reviewed closeout truth without a self-referential Git SHA."""
+
+    review_notes = task.get("review_notes_zh", task.get("review_notes"))
+    return {
+        "id": task.get("id"),
+        "status": task.get("status"),
+        "terminal_outcome": task.get("terminal_outcome"),
+        "owner": task.get("owner"),
+        "reviewer": task.get("reviewer"),
+        "review_file": task.get("review_file"),
+        "review_notes": deepcopy(review_notes),
+        "acceptance": deepcopy(task.get("acceptance")),
+        "source_ref": deepcopy(task.get("source_ref")),
+        "acceptance_deferral": deepcopy(task.get("acceptance_deferral")),
+        "task_contract_sha256": task_contract_sha256(dict(task)),
+    }
+
+
+def _validate_g2_implementation_git_delivery(
+    pull_request: Mapping[str, Any],
+    closeout_task: Mapping[str, Any],
+) -> None:
+    head_sha = str(pull_request.get("head_sha") or "")
+    merge_sha = str(pull_request.get("merge_sha") or "")
+    evidence_head_sha = str((closeout_task.get("delivery") or {}).get("commit") or "")
+    if not all(
+        _is_lower_hex(value, 40)
+        for value in (head_sha, merge_sha, evidence_head_sha)
+    ):
+        raise DispatchError("G2 implementation Git delivery identity is invalid")
+    _git_output(REPO_ROOT, "cat-file", "-e", f"{head_sha}^{{commit}}")
+    _git_output(REPO_ROOT, "cat-file", "-e", f"{merge_sha}^{{commit}}")
+    parents = (
+        _git_output(REPO_ROOT, "show", "-s", "--format=%P", merge_sha)
+        .decode("utf-8")
+        .strip()
+        .split()
+    )
+    if len(parents) != 2 or parents[1] != head_sha:
+        raise DispatchError("G2 implementation merge does not contain its exact head")
+    _git_output(
+        REPO_ROOT,
+        "merge-base",
+        "--is-ancestor",
+        merge_sha,
+        evidence_head_sha,
+    )
+
+
+def _validate_g2_committed_artifacts(
+    closeout_task: Mapping[str, Any],
+    contract: Mapping[str, Any],
+    artifact_bytes: Mapping[str, bytes],
+) -> dict[str, str]:
+    delivery = closeout_task.get("delivery")
+    if not isinstance(delivery, Mapping):
+        raise DispatchError("G2 artifact delivery metadata is missing")
+    artifact_commit = str(delivery.get("commit") or "")
+    merge_target = str(delivery.get("merge_target_sha") or "")
+    required_ref = str(contract.get("required_git_remote_ref") or "")
+    if (
+        contract.get("artifact_commit_binding")
+        != "closeout_delivery_commit_git_tree_v1"
+        or not _is_lower_hex(artifact_commit, 40)
+        or not _is_lower_hex(merge_target, 40)
+        or required_ref != "refs/remotes/origin/dev"
+    ):
+        raise DispatchError("G2 artifact commit binding policy is invalid")
+    for commit in (artifact_commit, merge_target):
+        _git_output(REPO_ROOT, "cat-file", "-e", f"{commit}^{{commit}}")
+    _git_output(
+        REPO_ROOT,
+        "merge-base",
+        "--is-ancestor",
+        artifact_commit,
+        merge_target,
+    )
+    _git_output(
+        REPO_ROOT,
+        "merge-base",
+        "--is-ancestor",
+        merge_target,
+        required_ref,
+    )
+    expected_paths = {
+        str(contract["evidence_path"]),
+        str(contract["canonical_record_bundle_path"]),
+        str(contract["hosted_probe_path"]),
+        str(contract["closeout_manifest_path"]),
+        str(Path(str(contract["closeout_manifest_path"])).with_name("evidence.sha256")),
+    }
+    if set(artifact_bytes) != expected_paths:
+        raise DispatchError("G2 committed artifact set is not exact")
+    for relative_path, expected_raw in artifact_bytes.items():
+        committed_raw = _git_output(
+            REPO_ROOT,
+            "show",
+            f"{artifact_commit}:{relative_path}",
+        )
+        if committed_raw != expected_raw:
+            raise DispatchError(
+                f"G2 admitted artifact is not the committed blob: {relative_path}"
+            )
+    return {
+        "g2_artifact_commit_sha": artifact_commit,
+        "g2_artifact_merge_target_sha": merge_target,
+    }
+
+
 def _validate_g2_product_evidence(
     *,
     closeout_task: dict[str, Any],
@@ -6036,8 +6165,9 @@ def _validate_g2_product_evidence(
         "review_manifest_sidecar_sha256"
     ) != sha256_bytes(sidecar_raw):
         raise DispatchError("G2 product evidence sidecar mismatch")
+    closeout_projection = _g2_closeout_task_projection(closeout_task)
     if admission.get("task_snapshot_sha256") != canonical_json_sha256(
-        closeout_task
+        closeout_projection
     ):
         raise DispatchError("G2 closeout task snapshot mismatch")
 
@@ -6205,11 +6335,11 @@ def _validate_g2_product_evidence(
         row
         for row in pull_requests
         if row.get("base") == "dev"
-        and row.get("merge_sha") == closeout_task["delivery"]["commit"]
     ]
     if (
         len(matching_pull_requests) != 1
         or not _is_lower_hex(matching_pull_requests[0].get("head_sha"), 40)
+        or not _is_lower_hex(matching_pull_requests[0].get("merge_sha"), 40)
         or not isinstance(matching_pull_requests[0].get("merged_at"), str)
     ):
         raise DispatchError("G2 product evidence lacks one exact merged delivery")
@@ -6251,6 +6381,10 @@ def _validate_g2_product_evidence(
         )
     ):
         raise DispatchError("G2 product validation is not exact")
+    _validate_g2_implementation_git_delivery(
+        delivery_pull_request,
+        closeout_task,
+    )
 
     deployment = manifest.get("deployment")
     if (
@@ -6345,10 +6479,154 @@ def _validate_g2_product_evidence(
     return {
         "product_manifest_sha256": manifest_sha256,
         "product_manifest_sidecar_sha256": sha256_bytes(sidecar_raw),
-        "target_task_snapshot_sha256": canonical_json_sha256(closeout_task),
+        "target_task_snapshot_sha256": canonical_json_sha256(
+            closeout_projection
+        ),
         "reviewer": reviewer,
         "review_verdict_sha256": canonical_json_sha256(verdict),
         "closeout_at": closeout_at.isoformat().replace("+00:00", "Z"),
+    }
+
+
+def _normalized_authoritative_g2_timestamp(value: Any) -> str:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            raise DispatchError("G2 canonical source timestamp is naive")
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    parsed = _parse_g2_timestamp(value, label="G2 canonical source timestamp")
+    return parsed.isoformat().replace("+00:00", "Z")
+
+
+async def _query_authoritative_g2_rows(
+    dsn: str,
+    event_ids: list[str],
+) -> tuple[int, list[dict[str, Any]]]:
+    try:
+        import asyncpg  # type: ignore[import]
+
+        connection = await asyncpg.connect(dsn)
+        try:
+            async with connection.transaction(
+                isolation="repeatable_read",
+                readonly=True,
+            ):
+                isolation = str(
+                    await connection.fetchval("SHOW transaction_isolation") or ""
+                ).strip().lower()
+                read_only = str(
+                    await connection.fetchval("SHOW transaction_read_only") or ""
+                ).strip().lower()
+                high_watermark = int(
+                    await connection.fetchval(
+                        "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events"
+                    )
+                    or 0
+                )
+                records = await connection.fetch(
+                    "SELECT ingested_seq, ingested_at, event_id, event_type, "
+                    "created_at, payload FROM telemetry_events "
+                    "WHERE event_id = ANY($1::text[]) ORDER BY ingested_seq",
+                    event_ids,
+                )
+                if isolation != "repeatable read" or read_only not in {
+                    "on",
+                    "true",
+                    "1",
+                }:
+                    raise DispatchError(
+                        "G2 canonical telemetry transaction is not read-only repeatable-read"
+                    )
+        finally:
+            await connection.close()
+    except DispatchError:
+        raise
+    except Exception as exc:
+        raise DispatchError(
+            "G2 authoritative canonical telemetry query failed"
+        ) from exc
+
+    rows: list[dict[str, Any]] = []
+    try:
+        for record in records:
+            payload = record["payload"]
+            if isinstance(payload, str):
+                payload = strict_json_loads(
+                    payload.encode("utf-8"),
+                    source="G2 canonical telemetry payload",
+                )
+            if not isinstance(payload, Mapping):
+                raise DispatchError("G2 canonical telemetry payload is not an object")
+            rows.append(
+                {
+                    "ingested_seq": int(record["ingested_seq"]),
+                    "ingested_at": _normalized_authoritative_g2_timestamp(
+                        record["ingested_at"]
+                    ),
+                    "event_id": str(record["event_id"]),
+                    "event_type": str(record["event_type"]),
+                    "created_at": _normalized_authoritative_g2_timestamp(
+                        record["created_at"]
+                    ),
+                    "payload": dict(payload),
+                }
+            )
+    except DispatchError:
+        raise
+    except Exception as exc:
+        raise DispatchError(
+            "G2 authoritative canonical telemetry decode failed"
+        ) from exc
+    return high_watermark, rows
+
+
+def _resolve_authoritative_g2_snapshot(
+    contract: Mapping[str, Any],
+    event_ids: list[str],
+) -> dict[str, Any]:
+    """Re-resolve evidence from live canonical stores, never from its bundle."""
+
+    if (
+        contract.get("canonical_source_resolution")
+        != "live_read_only_postgres_and_projection_root_v1"
+    ):
+        raise DispatchError("G2 canonical source resolution policy mismatch")
+    dsn_env = str(contract.get("canonical_telemetry_dsn_env") or "")
+    projection_env = str(contract.get("canonical_projection_root_env") or "")
+    dsn = str(os.environ.get(dsn_env) or "").strip()
+    projection_root_value = str(os.environ.get(projection_env) or "").strip()
+    if not dsn or not projection_root_value:
+        raise DispatchError("G2 authoritative canonical source configuration is missing")
+    try:
+        source_high_watermark, rows = asyncio.run(
+            _query_authoritative_g2_rows(dsn, event_ids)
+        )
+    except RuntimeError as exc:
+        raise DispatchError("G2 authoritative canonical query runtime is unavailable") from exc
+    try:
+        from services.trade_journey import hosted_lifecycle_probe
+
+        projection_root = Path(projection_root_value).expanduser().resolve(strict=True)
+        journeys, loops, _ = hosted_lifecycle_probe._current_projection(
+            projection_root
+        )
+        generation = (projection_root / "current").resolve(strict=True)
+        generation.relative_to((projection_root / "generations").resolve(strict=True))
+        manifest, _ = read_regular_json(
+            generation / "manifest.json",
+            label="G2 authoritative projection manifest",
+        )
+    except Exception as exc:
+        raise DispatchError(
+            "G2 authoritative canonical projection read failed"
+        ) from exc
+    return {
+        "source_high_watermark": source_high_watermark,
+        "rows": rows,
+        "projection": {
+            "manifest": manifest,
+            "trade_journey_events": journeys,
+            "loop_runs": loops,
+        },
     }
 
 
@@ -6361,7 +6639,7 @@ def _validate_g2_projection_bundle(
     hosted_probe: Mapping[str, Any],
     issued_at: datetime,
     observed_at: datetime,
-) -> tuple[list[dict[str, Any]], dict[str, Any], datetime, datetime]:
+) -> tuple[list[dict[str, Any]], dict[str, Any], datetime, datetime, str]:
     if set(bundle) != G2_RECORD_BUNDLE_KEYS:
         raise DispatchError("G2 canonical record bundle schema is not exact")
     if bundle.get("schema_version") != contract.get("record_bundle_schema"):
@@ -6733,7 +7011,30 @@ def _validate_g2_projection_bundle(
         raise DispatchError("G2 hosted proof cannot be recomputed") from exc
     if proof != recomputed_proof:
         raise DispatchError("G2 hosted proof does not match canonical records")
-    return list(selected_rows_by_id.values()), loop_record, captured_at, projection_at
+    authoritative = _resolve_authoritative_g2_snapshot(contract, event_ids)
+    if (
+        not isinstance(authoritative, dict)
+        or set(authoritative)
+        != {"source_high_watermark", "rows", "projection"}
+        or type(authoritative.get("source_high_watermark")) is not int
+        or authoritative["source_high_watermark"]
+        < source["source_high_watermark"]
+        or canonical_json_sha256(authoritative.get("rows"))
+        != canonical_json_sha256(rows)
+        or canonical_json_sha256(authoritative.get("projection"))
+        != canonical_json_sha256(bundle.get("projection"))
+    ):
+        raise DispatchError(
+            "G2 canonical bundle does not resolve against authoritative stores"
+        )
+    canonical_source_snapshot_sha256 = canonical_json_sha256(authoritative)
+    return (
+        list(selected_rows_by_id.values()),
+        loop_record,
+        captured_at,
+        projection_at,
+        canonical_source_snapshot_sha256,
+    )
 
 
 def _validate_g2_evidence(
@@ -6752,7 +7053,7 @@ def _validate_g2_evidence(
         G2_EVIDENCE_CONTRACT_KEYS,
         label="G2 evidence contract",
     )
-    if contract.get("version") != 2:
+    if contract.get("version") != 3:
         raise DispatchError("G2 evidence contract version mismatch")
     evidence, evidence_raw, _ = _read_g2_artifact(
         contract, "evidence_path", label="G2 evidence manifest"
@@ -6760,7 +7061,7 @@ def _validate_g2_evidence(
     if set(evidence) != G2_EVIDENCE_KEYS:
         raise DispatchError("G2 evidence manifest schema is not exact")
     if (
-        evidence.get("schema_version") != "pantheon.loop-prod-g2-evidence.v2"
+        evidence.get("schema_version") != "pantheon.loop-prod-g2-evidence.v3"
         or evidence.get("task_id") != contract.get("target_task")
         or evidence.get("program_id") != catalog.get("program_id")
         or evidence.get("target_environment")
@@ -6863,7 +7164,13 @@ def _validate_g2_evidence(
     records = _require_exact_keys(
         evidence.get("records"), G2_RECORDS_KEYS, label="G2 evidence records"
     )
-    rows, _, captured_at, projection_at = _validate_g2_projection_bundle(
+    (
+        rows,
+        _,
+        captured_at,
+        projection_at,
+        canonical_source_snapshot_sha256,
+    ) = _validate_g2_projection_bundle(
         bundle=bundle,
         contract=contract,
         identity=identity,
@@ -6892,11 +7199,50 @@ def _validate_g2_evidence(
         expected_deployment_sha=str(hosted["expected_deployment_sha"]),
         closeout_at=closeout_at,
     )
+    product_raw = read_rooted_regular_bytes(
+        REPO_ROOT,
+        contract["closeout_manifest_path"],
+        label="G2 committed product manifest",
+    )
+    sidecar_relative = str(
+        Path(str(contract["closeout_manifest_path"])).with_name(
+            "evidence.sha256"
+        )
+    )
+    sidecar_raw = read_rooted_regular_bytes(
+        REPO_ROOT,
+        sidecar_relative,
+        label="G2 committed product manifest sidecar",
+    )
+    if (
+        product_raw is None
+        or sidecar_raw is None
+        or sha256_bytes(product_raw)
+        != product_admission["product_manifest_sha256"]
+        or sha256_bytes(sidecar_raw)
+        != product_admission["product_manifest_sidecar_sha256"]
+    ):
+        raise DispatchError("G2 product artifact changed before Git admission")
+    artifact_binding = _validate_g2_committed_artifacts(
+        closeout_task,
+        contract,
+        {
+            str(contract["evidence_path"]): evidence_raw,
+            str(contract["canonical_record_bundle_path"]): bundle_raw,
+            str(contract["hosted_probe_path"]): hosted_raw,
+            str(contract["closeout_manifest_path"]): product_raw,
+            sidecar_relative: sidecar_raw,
+        },
+    )
     return {
         "g2_evidence_sha256": sha256_bytes(evidence_raw),
         "canonical_record_bundle_sha256": sha256_bytes(bundle_raw),
         "hosted_probe_sha256": sha256_bytes(hosted_raw),
+        "canonical_source_snapshot_sha256": (
+            canonical_source_snapshot_sha256
+        ),
         "g2_issued_at": issued_at.isoformat().replace("+00:00", "Z"),
+        **artifact_binding,
         **product_admission,
     }
 
@@ -7012,8 +7358,8 @@ def _validate_g2_overlay_contract(
     value = _require_exact_keys(
         contract, G2_EVIDENCE_CONTRACT_KEYS, label="G2 evidence contract"
     )
-    if type(value.get("version")) is not int or value.get("version") != 2:
-        raise DispatchError("G2 evidence contract version must be 2")
+    if type(value.get("version")) is not int or value.get("version") != 3:
+        raise DispatchError("G2 evidence contract version must be 3")
     target_id = value.get("target_task")
     if (
         not isinstance(target_id, str)
@@ -7036,11 +7382,11 @@ def _validate_g2_overlay_contract(
         "docs/deployment/evidence/loop-product-level/" + target_id + "/"
     )
     expected_paths = {
-        "evidence_path": expected_root + "g2-paper-trade-chain.v2.json",
+        "evidence_path": expected_root + "g2-paper-trade-chain.v3.json",
         "closeout_manifest_path": expected_root + "evidence.json",
         "hosted_probe_path": expected_root + "hosted-lifecycle-proof.v1.json",
         "canonical_record_bundle_path": expected_root
-        + "g2-canonical-records.v2.json",
+        + "g2-canonical-records.v3.json",
     }
     for key, expected in expected_paths.items():
         if value.get(key) != expected:
@@ -7049,7 +7395,7 @@ def _validate_g2_overlay_contract(
     exact_scalars = {
         "bundle_digest_algorithm": "sha256(bytes)",
         "record_digest_algorithm": "sha256(canonical-json)",
-        "record_bundle_schema": "pantheon.g2-canonical-record-bundle.v2",
+        "record_bundle_schema": "pantheon.g2-canonical-record-bundle.v3",
         "hosted_probe_schema": "pantheon.loop-prod-tel-002-hosted-proof.v1",
         "projection_manifest_schema": "pantheon.lifecycle-projection-bundle.v1",
         "journey_projection_schema": "pantheon.trade-journey-projection.v1",
@@ -7060,6 +7406,13 @@ def _validate_g2_overlay_contract(
         "required_source_mode": "live",
         "required_projection_stage_status": "succeeded",
         "required_loop_run_status": "completed",
+        "canonical_source_resolution": (
+            "live_read_only_postgres_and_projection_root_v1"
+        ),
+        "canonical_telemetry_dsn_env": "TELEMETRY_DB_DSN",
+        "canonical_projection_root_env": "LIFECYCLE_PROJECTION_ROOT",
+        "artifact_commit_binding": "closeout_delivery_commit_git_tree_v1",
+        "required_git_remote_ref": "refs/remotes/origin/dev",
     }
     if any(value.get(key) != expected for key, expected in exact_scalars.items()):
         raise DispatchError("G2 evidence contract scalar policy mismatch")
@@ -7230,7 +7583,7 @@ def apply_sequencing_overlay(catalog: dict[str, Any], overlay_path: Path) -> Non
         or release_gate.get("gated_classifications")
         != sorted(GATED_SEQUENCING_CLASSIFICATIONS)
         or release_gate.get("release_predicate")
-        != "g2_evidence_contract_v2_valid"
+        != "g2_evidence_contract_v3_valid"
         or release_gate.get("pre_gate_action")
         != "park_new_and_existing_gated_tasks_allow_ungated"
         or release_gate.get("post_gate_action")

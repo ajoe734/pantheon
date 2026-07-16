@@ -15,7 +15,7 @@ This reconciliation describes all 48 immutable catalog tasks exactly once. It do
 | Merged addendum authority | PR #3737 merge `a4b5df9a51bc3da6df0d39d422d9db4edc553aba` |
 | Rejected interim delivery | PR #3746 head `5f51574df2791d7cb1c4551e46571ae5f06ea71a`, merged as `aae333959e0566759a4e7eb955f860d280fa5e3d`; retained as failed evidence, never as release authority |
 | Overlay schema | `schema_version: 2` |
-| Canonical overlay raw SHA-256 | `f175df35de77bedff674896b60510defcec7a4794ac2f5856eef966ef989d22b` |
+| Canonical overlay raw SHA-256 | `463e20275e28cf2b6154520456ed11f88319d830dae510d3e350d79ad881f8d5` |
 
 The overlay and this derived view enforce these invariants:
 
@@ -56,7 +56,7 @@ Wave 4 is intentionally empty. That gap is descriptive only: release is controll
 |---|---|
 | `version` | `1` |
 | `gate_id` | `hardening-after-g2-paper-trade-v1` |
-| `release_predicate` | `g2_evidence_contract_v2_valid` |
+| `release_predicate` | `g2_evidence_contract_v3_valid` |
 | `pre_gate_action` | `park_new_and_existing_gated_tasks_allow_ungated` |
 | `post_gate_action` | `allow_dependency_governed_materialization` |
 | `gated_classifications` | `deferred strict-auth/security/governance work`; `final verification/closeout after the appropriate gate` |
@@ -83,7 +83,7 @@ The exact gated task set is:
 - `LOOP-PROD-SIGNOFF-001`
 - `LOOP-PROD-CLOSE-002`
 
-Before `g2_evidence_contract_v2_valid` is true, the dispatcher parks new and existing members of that exact 19-task set while continuing eligible ungated work. Once the predicate is true, normal amended-dependency admission governs them. Classification or membership, not a hard-coded wave comparison, determines release.
+Before `g2_evidence_contract_v3_valid` is true, the dispatcher parks new and existing members of that exact 19-task set while continuing eligible ungated work. Once the predicate is true, normal amended-dependency admission governs them. Classification or membership, not a hard-coded wave comparison, determines release.
 
 ## 3. Pre-G2 acceptance deferral
 

@@ -19,13 +19,13 @@ SEQUENCING_ADDENDUM_SHA256 = (
 )
 MERGE_PR_3737_SHA = "a4b5df9a51bc3da6df0d39d422d9db4edc553aba"
 EFFECTIVE_CATALOG_SHA256 = (
-    "147ae747179f3c78fc9de1c62c823a72307a3f8028a92088eb9ccc0c49a85412"
+    "9b3e8cf9cd8360a1c74e54db30574412ec40398b520b0c6dc4eb4e8002ffd134"
 )
 SEQUENCING_OVERLAY_SHA256 = (
-    "f175df35de77bedff674896b60510defcec7a4794ac2f5856eef966ef989d22b"
+    "463e20275e28cf2b6154520456ed11f88319d830dae510d3e350d79ad881f8d5"
 )
 RELEASE_GATE_ID = "hardening-after-g2-paper-trade-v1"
-RELEASE_PREDICATE = "g2_evidence_contract_v2_valid"
+RELEASE_PREDICATE = "g2_evidence_contract_v3_valid"
 TARGET_TASK_ID = "LOOP-PROD-VERIFY-EXEC-001"
 EXPECTED_TASK_IDS = (
     "LOOP-PROD-000",
@@ -170,7 +170,10 @@ RELEASE_RECORD_FIELDS = {
     "closeout_at",
     "g2_evidence_sha256",
     "canonical_record_bundle_sha256",
+    "canonical_source_snapshot_sha256",
     "hosted_probe_sha256",
+    "g2_artifact_commit_sha",
+    "g2_artifact_merge_target_sha",
     "product_manifest_sha256",
     "product_manifest_sidecar_sha256",
     "target_task_snapshot_sha256",
@@ -183,7 +186,10 @@ RELEASE_RECORD_FIELDS = {
 RELEASE_ADMISSION_FIELDS = {
     "g2_evidence_sha256",
     "canonical_record_bundle_sha256",
+    "canonical_source_snapshot_sha256",
     "hosted_probe_sha256",
+    "g2_artifact_commit_sha",
+    "g2_artifact_merge_target_sha",
     "product_manifest_sha256",
     "product_manifest_sidecar_sha256",
     "target_task_snapshot_sha256",
@@ -455,6 +461,7 @@ def _validated_release_record(
         for field in (
             "g2_evidence_sha256",
             "canonical_record_bundle_sha256",
+            "canonical_source_snapshot_sha256",
             "hosted_probe_sha256",
             "product_manifest_sha256",
             "product_manifest_sidecar_sha256",
@@ -462,6 +469,13 @@ def _validated_release_record(
             "review_verdict_sha256",
             "release_admission_sha256",
             "released_task_transition_set_sha256",
+        )
+    ) or any(
+        not isinstance(record.get(field), str)
+        or re.fullmatch(r"[0-9a-f]{40}", record[field]) is None
+        for field in (
+            "g2_artifact_commit_sha",
+            "g2_artifact_merge_target_sha",
         )
     ):
         return None

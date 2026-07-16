@@ -619,7 +619,10 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
         admission = {
             "g2_evidence_sha256": "9" * 64,
             "canonical_record_bundle_sha256": "a" * 64,
+            "canonical_source_snapshot_sha256": "0" * 64,
             "hosted_probe_sha256": "b" * 64,
+            "g2_artifact_commit_sha": "1" * 40,
+            "g2_artifact_merge_target_sha": "2" * 40,
             "product_manifest_sha256": "c" * 64,
             "product_manifest_sidecar_sha256": "d" * 64,
             "target_task_snapshot_sha256": "e" * 64,
