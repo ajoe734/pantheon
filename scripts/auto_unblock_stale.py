@@ -65,6 +65,10 @@ def main() -> int:
     for t in tasks:
         if t.get("status") != "blocked":
             continue
+        # Sequencing gates are released only by the catalog-bound G2 verifier.
+        # A malformed marker also fails closed for supervisor/operator repair.
+        if "sequencing_release_gate" in t:
+            continue
         tid = t["id"]
         deps = t.get("depends_on") or []
         if [d for d in deps if d not in done]:

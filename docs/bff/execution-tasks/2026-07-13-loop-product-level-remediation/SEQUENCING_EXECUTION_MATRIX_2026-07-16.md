@@ -13,7 +13,9 @@ This reconciliation describes all 48 immutable catalog tasks exactly once. It do
 | Sequencing addendum | `docs/04/pantheon_loop_product_level_remediation_2026-07-13/REMEDIATION_SEQUENCING_ADDENDUM_2026-07-16.md` |
 | Addendum SHA-256 | `9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519` |
 | Merged addendum authority | PR #3737 merge `a4b5df9a51bc3da6df0d39d422d9db4edc553aba` |
+| Rejected interim delivery | PR #3746 head `5f51574df2791d7cb1c4551e46571ae5f06ea71a`, merged as `aae333959e0566759a4e7eb955f860d280fa5e3d`; retained as failed evidence, never as release authority |
 | Overlay schema | `schema_version: 2` |
+| Canonical overlay raw SHA-256 | `f175df35de77bedff674896b60510defcec7a4794ac2f5856eef966ef989d22b` |
 
 The overlay and this derived view enforce these invariants:
 

@@ -8690,6 +8690,8 @@ def task_is_human_gate(task: dict[str, Any]) -> bool:
 def chair_blocked_owner_rescue_allowed(task: dict[str, Any]) -> bool:
     if str(task.get("status") or "").strip().lower() != "blocked":
         return False
+    if "sequencing_release_gate" in task:
+        return False
     if task_is_human_gate(task) or task_is_sidecar(task) or bool(task.get("non_dispatchable")):
         return False
     context = " ".join(

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
+from datetime import datetime, timezone
 import fcntl
 import gzip
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -24,6 +27,15 @@ CATALOG = (
     / "2026-07-13-loop-product-level-remediation"
     / "tasks.json"
 )
+SEQUENCING_OVERLAY = CATALOG.with_name("sequencing-overlay-2026-07-16.json")
+SEQUENCING_ADDENDUM = (
+    ROOT
+    / "docs"
+    / "04"
+    / "pantheon_loop_product_level_remediation_2026-07-13"
+    / "REMEDIATION_SEQUENCING_ADDENDUM_2026-07-16.md"
+)
+PRODUCT_EVIDENCE_SCHEMA = ROOT / "schemas" / "product-evidence.schema.json"
 HISTORICAL_CATALOG_COMMIT = "9ad17546abc0573c8a362aa8ee1e864d1b04c711"
 HISTORICAL_CATALOG_SHA256 = (
     "2b5183712e7e0d4dbdf21214aaa215b4d16fe186b8c83a7cea5420dea0022b91"
@@ -2983,271 +2995,1071 @@ def test_every_immutable_migration_contract_field_is_bound(field: str) -> None:
         assert (root / "ai-status.json").read_bytes() == before
 
 
-def test_sequencing_overlay_checks() -> None:
-    # 1. 48/48 classification - correct overlay should pass
-    with tempfile.TemporaryDirectory() as temp:
-        root = Path(temp)
-        state, _ = prepare_baseline_program(root)
-        
-        overlay_src = ROOT / "docs" / "bff" / "execution-tasks" / "2026-07-13-loop-product-level-remediation" / "sequencing-overlay-2026-07-16.json"
-        overlay_dest = root / "sequencing-overlay-2026-07-16.json"
-        overlay_dest.parent.mkdir(parents=True, exist_ok=True)
-        overlay_dest.write_text(overlay_src.read_text(encoding="utf-8"), encoding="utf-8")
-        
-        result = run_dispatch(root, "--validate-only", "--sequencing-overlay", str(overlay_dest))
-        assert result.returncode == 0, result.stderr
-
-    # 2. Hash mismatch
-    with tempfile.TemporaryDirectory() as temp:
-        root = Path(temp)
-        state, _ = prepare_baseline_program(root)
-        
-        overlay_src = ROOT / "docs" / "bff" / "execution-tasks" / "2026-07-13-loop-product-level-remediation" / "sequencing-overlay-2026-07-16.json"
-        overlay_data = json.loads(overlay_src.read_text(encoding="utf-8"))
-        overlay_data["source_hashes"]["tasks_catalog_sha256"] = "invalid_hash"
-        
-        overlay_dest = root / "sequencing-overlay-2026-07-16.json"
-        overlay_dest.write_text(json.dumps(overlay_data, indent=2), encoding="utf-8")
-        
-        result = run_dispatch(root, "--validate-only", "--sequencing-overlay", str(overlay_dest))
-        assert result.returncode == 2
-        assert "tasks_catalog_sha256 hash mismatch" in result.stderr
-
-    # 3. Missing / extra ID
-    with tempfile.TemporaryDirectory() as temp:
-        root = Path(temp)
-        state, _ = prepare_baseline_program(root)
-        
-        overlay_src = ROOT / "docs" / "bff" / "execution-tasks" / "2026-07-13-loop-product-level-remediation" / "sequencing-overlay-2026-07-16.json"
-        overlay_data = json.loads(overlay_src.read_text(encoding="utf-8"))
-        del overlay_data["tasks"]["LOOP-PROD-000"]
-        
-        overlay_dest = root / "sequencing-overlay-2026-07-16.json"
-        overlay_dest.write_text(json.dumps(overlay_data, indent=2), encoding="utf-8")
-        
-        result = run_dispatch(root, "--validate-only", "--sequencing-overlay", str(overlay_dest))
-        assert result.returncode == 2
-        assert "sequencing overlay is missing tasks" in result.stderr
-
-    # 4. Cycle detection
-    with tempfile.TemporaryDirectory() as temp:
-        root = Path(temp)
-        state, _ = prepare_baseline_program(root)
-        
-        overlay_src = ROOT / "docs" / "bff" / "execution-tasks" / "2026-07-13-loop-product-level-remediation" / "sequencing-overlay-2026-07-16.json"
-        overlay_data = json.loads(overlay_src.read_text(encoding="utf-8"))
-        overlay_data["tasks"]["LOOP-PROD-000"]["depends_on"] = ["LOOP-PROD-001"]
-        
-        overlay_dest = root / "sequencing-overlay-2026-07-16.json"
-        overlay_dest.write_text(json.dumps(overlay_data, indent=2), encoding="utf-8")
-        
-        result = run_dispatch(root, "--validate-only", "--sequencing-overlay", str(overlay_dest))
-        assert result.returncode == 2
-        assert "dependency cycle detected" in result.stderr
+def _load_dispatcher_module():
+    spec = importlib.util.spec_from_file_location("loop_product_dispatcher", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-def test_g2_evidence_validation() -> None:
-    # Dynamically import dispatcher
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "dispatcher",
-        str(ROOT / "scripts" / "dispatch_loop_product_level_remediation_2026-07-13.py")
-    )
-    dispatcher = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(dispatcher)
+def _json_bytes(payload: object) -> bytes:
+    return (
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
 
+
+def _write_json_artifact(path: Path, payload: object) -> str:
+    raw = _json_bytes(payload)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _overlay_payload() -> dict:
+    return json.loads(SEQUENCING_OVERLAY.read_text(encoding="utf-8"))
+
+
+def _write_mutated_overlay(dispatcher, path: Path, payload: dict) -> Path:
+    digest = _write_json_artifact(path, payload)
+    dispatcher.EXPECTED_SEQUENCING_OVERLAY_SHA256 = digest
+    dispatcher.catalog_path = lambda: CATALOG
+    return path
+
+
+def test_sequencing_overlay_v2_is_exact_and_partitions_all_48_tasks() -> None:
+    dispatcher = _load_dispatcher_module()
+    dispatcher.catalog_path = lambda: CATALOG
     catalog = load_catalog()
-    catalog["g2_evidence_contract"] = {
-        "version": 1,
-        "target_task": "LOOP-PROD-CLOSE-001",
-        "tasks_catalog_sha256": "44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357",
-        "sequencing_addendum_sha256": "9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519",
-        "merge_pr_3737_sha": "a4b5df9a51bc3da6df0d39d422d9db4edc553aba"
+
+    assert hashlib.sha256(CATALOG.read_bytes()).hexdigest() == (
+        "44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357"
+    )
+    assert hashlib.sha256(SEQUENCING_ADDENDUM.read_bytes()).hexdigest() == (
+        "9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519"
+    )
+
+    dispatcher.apply_sequencing_overlay(catalog, SEQUENCING_OVERLAY)
+
+    entries = catalog["sequencing_entries"]
+    assert catalog["overlay_applied"] is True
+    assert len(entries) == 48
+    assert set(entries) == {task["id"] for task in catalog["tasks"]}
+    assert all(
+        set(entry)
+        == {
+            "wave",
+            "classification",
+            "rationale",
+            "original_depends_on",
+            "amended_depends_on",
+        }
+        for entry in entries.values()
+    )
+    gated = {
+        task_id
+        for task_id, entry in entries.items()
+        if entry["classification"]
+        in dispatcher.GATED_SEQUENCING_CLASSIFICATIONS
+    }
+    assert set(catalog["release_gate"]["gated_task_ids"]) == gated
+    assert catalog["g2_evidence_contract"]["version"] == 2
+    assert (
+        catalog["g2_evidence_contract"]["target_task"]
+        == "LOOP-PROD-VERIFY-EXEC-001"
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["wrong_merge_sha", "missing_id", "extra_id", "extra_entry_key"],
+)
+def test_sequencing_overlay_v2_rejects_authority_set_and_schema_mutations(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    dispatcher = _load_dispatcher_module()
+    catalog = load_catalog()
+    original = deepcopy(catalog)
+    payload = _overlay_payload()
+    if mutation == "wrong_merge_sha":
+        payload["source_hashes"]["merge_pr_3737_sha"] = "0" * 40
+        payload["g2_evidence_contract"]["merge_pr_3737_sha"] = "0" * 40
+    elif mutation == "missing_id":
+        del payload["tasks"]["LOOP-PROD-000"]
+    elif mutation == "extra_id":
+        payload["tasks"]["LOOP-PROD-EXTRA-001"] = deepcopy(
+            payload["tasks"]["LOOP-PROD-000"]
+        )
+    else:
+        payload["tasks"]["LOOP-PROD-000"]["unbound"] = True
+    overlay = _write_mutated_overlay(
+        dispatcher, tmp_path / f"{mutation}.json", payload
+    )
+
+    with pytest.raises(dispatcher.DispatchError):
+        dispatcher.apply_sequencing_overlay(catalog, overlay)
+
+    assert catalog == original
+
+
+def test_sequencing_overlay_v2_rejects_duplicate_task_id_json_key(
+    tmp_path: Path,
+) -> None:
+    dispatcher = _load_dispatcher_module()
+    dispatcher.catalog_path = lambda: CATALOG
+    catalog = load_catalog()
+    original = deepcopy(catalog)
+    raw = SEQUENCING_OVERLAY.read_text(encoding="utf-8").replace(
+        '"tasks": {',
+        '"tasks": {\n    "LOOP-PROD-000": {},',
+        1,
+    )
+    overlay = tmp_path / "duplicate-task-id.json"
+    overlay.write_text(raw, encoding="utf-8")
+
+    with pytest.raises(dispatcher.DispatchError, match="duplicate JSON key"):
+        dispatcher.apply_sequencing_overlay(catalog, overlay)
+
+    assert catalog == original
+
+
+def test_sequencing_overlay_v2_rejects_dependency_cycle_atomically(
+    tmp_path: Path,
+) -> None:
+    dispatcher = _load_dispatcher_module()
+    catalog = load_catalog()
+    original = deepcopy(catalog)
+    payload = _overlay_payload()
+    payload["tasks"]["LOOP-PROD-000"]["amended_depends_on"] = [
+        "LOOP-PROD-001"
+    ]
+    overlay = _write_mutated_overlay(dispatcher, tmp_path / "cycle.json", payload)
+
+    with pytest.raises(dispatcher.DispatchError, match="dependency cycle"):
+        dispatcher.apply_sequencing_overlay(catalog, overlay)
+
+    assert catalog == original
+
+
+G2_PROJECTED_AT = "2026-07-15T00:02:00Z"
+G2_CAPTURED_AT = "2026-07-15T00:02:05Z"
+G2_PROBE_AT = "2026-07-15T00:02:10Z"
+G2_EVIDENCE_CUT_AT = "2026-07-15T00:02:20Z"
+G2_VALIDATED_AT = "2026-07-15T00:02:20Z"
+G2_VERDICT_AT = "2026-07-15T00:02:30Z"
+G2_MERGED_AT = "2026-07-15T00:02:40Z"
+G2_ISSUED_AT = "2026-07-15T00:03:00Z"
+G2_EXPIRES_AT = "2026-07-16T00:03:00Z"
+G2_NOW = datetime(2026, 7, 15, 0, 3, 1, tzinfo=timezone.utc)
+G2_DEPLOYMENT_SHA = "d" * 40
+G2_FINAL_MERGE_SHA = "e" * 40
+G2_FINAL_HEAD_SHA = "f" * 40
+
+
+def _product_evidence_payload(
+    *,
+    contract: dict,
+    closeout_task: dict,
+    verdict: dict,
+) -> dict:
+    task_id = contract["target_task"]
+    review_file = contract["closeout_manifest_path"]
+    sidecar = str(Path(review_file).with_name("evidence.sha256"))
+    return {
+        "schema_version": "loop_product_evidence.v1",
+        "schema_status": {
+            "formal_schema_owner": "LOOP-PROD-002",
+            "formalization_trigger": "LOOP-PROD-002 product evidence schema",
+            "note": "Canonical G2 execution-spine closeout evidence.",
+            "status": "formalized",
+        },
+        "evidence_policy": {
+            "checksum_file": sidecar,
+            "missing_or_contradicted_proof_fails_closed": True,
+            "mutation_rule": "Immutable closeout evidence with checksummed records.",
+            "recording_mode": "append_only",
+            "redacted": True,
+            "self_hashing": False,
+        },
+        "task": {
+            "base_branch": "dev",
+            "evidence_cut_at": G2_EVIDENCE_CUT_AT,
+            "evidence_cut_semantics": "Merged canonical paper lifecycle proof.",
+            "id": task_id,
+            "overall_admission": "review_approved_owner_closeout_ready",
+            "owner": closeout_task["owner"],
+            "phase": "Loop Product-Level Remediation / Wave 2",
+            "product_level_required": True,
+            "repository": "ajoe734/pantheon",
+            "review_file": review_file,
+            "reviewer": closeout_task["reviewer"],
+            "target_environment": "dev",
+            "target_maturity": "product-level",
+            "task_branch": f"task/{task_id}",
+            "title": "Target-dev Execution spine product verifier",
+        },
+        "authorities": {
+            "actual_state": ["telemetry_events", "canonical lifecycle projector"],
+            "desired_state": ["Scenario B canonical paper execution spine"],
+            "task_packet": (
+                "docs/bff/execution-tasks/2026-07-13-loop-product-level-"
+                f"remediation/{task_id}.md"
+            ),
+        },
+        "scope": {
+            "authoritative_write_owner": closeout_task["owner"],
+            "composes_with": ["LOOP-PROD-TEL-002"],
+            "evidence_changed_files": [review_file, sidecar],
+            "implementation_changed_files": [],
+            "not_changing": "Live broker or live capital authority",
+            "owned_layer": "Canonical G2 evidence and independent closeout",
+        },
+        "implementation_delivery": {
+            "anchor_commits": [
+                {
+                    "sha": G2_FINAL_HEAD_SHA,
+                    "subject": f"{task_id}: canonical G2 delivery",
+                }
+            ],
+            "pull_request": {
+                "number": 4001,
+                "url": "https://github.com/ajoe734/pantheon/pull/4001",
+                "head_sha": G2_FINAL_HEAD_SHA,
+                "base": "dev",
+                "merged_at": G2_MERGED_AT,
+                "merge_sha": G2_FINAL_MERGE_SHA,
+            },
+            "required_checks": [
+                {
+                    "workflow": "Branch CI Gate",
+                    "event": "pull_request",
+                    "conclusion": "success",
+                }
+            ],
+        },
+        "validation": {
+            "commands": [
+                {"command": "canonical lifecycle hosted probe", "result": "pass"}
+            ],
+            "validated_at": G2_VALIDATED_AT,
+            "validated_base_sha": "c" * 40,
+            "validated_head_sha": G2_FINAL_HEAD_SHA,
+        },
+        "deployment": {
+            "applicable": True,
+            "environment": "dev",
+            "public_bff_base_url": "https://pantheon-dev.invalid",
+            "publish_cut": {
+                "conclusion": "success",
+                "deployment_sha": G2_DEPLOYMENT_SHA,
+            },
+            "canonical_root_deploy": {
+                "conclusion": "success",
+                "deployment_sha": G2_DEPLOYMENT_SHA,
+            },
+            "identity_admission": {"deployment_sha": G2_DEPLOYMENT_SHA},
+        },
+        "hosted_readback": {
+            "pre_deploy": {"status": "pass"},
+            "capture_time_hosted_readback": {"status": "pass"},
+        },
+        "behavioral_proof": {
+            "duplicate_safety": {"proof": ["canonical IDs"], "status": "pass"},
+            "failure_and_degraded_behavior": {
+                "proof": ["fail closed"],
+                "status": "pass",
+            },
+            "request_receipt_downstream_correlation": {
+                "proof": ["stable identity"],
+                "status": "pass",
+            },
+            "restart_and_recovery": {
+                "proof": ["projector restart recovery"],
+                "status": "pass",
+            },
+            "rollback_or_compensation": {
+                "proof": ["paper-only rollback"],
+                "status": "pass",
+            },
+        },
+        "security_and_safety": {
+            "environment_boundary": {"status": "pass"},
+            "hosted_frontend": {"status": "not_applicable"},
+            "mfa": {"status": "not_applicable"},
+            "no_live_capital": {"status": "pass"},
+            "rbac": {"status": "pass"},
+            "tenant_isolation": {"status": "pass"},
+            "two_person_approval": {"status": "not_applicable"},
+        },
+        "acceptance": [
+            {
+                "evidence_refs": ["canonical lifecycle bundle"],
+                "id": f"AC-G2-{index:02d}",
+                "statement": statement,
+                "status": "pass",
+            }
+            for index, statement in enumerate(closeout_task["acceptance"], start=1)
+        ],
+        "residual_risks": {
+            "RISK-PAPER-ONLY": {
+                "blocking_for_this_task": False,
+                "containment": "No live capital or broker authority.",
+                "description": "This proof is intentionally paper-only.",
+                "expiry": "2026-08-31T00:00:00Z",
+                "owner": closeout_task["owner"],
+                "recheck_trigger": "Live-capital program",
+                "severity": "low",
+            }
+        },
+        "integrity": {
+            "algorithm": "sha256",
+            "checksum_coverage": [review_file],
+            "companion_checksum_path": sidecar,
+            "hosted_semantic_sha256": {},
+            "manifest_path": review_file,
+            "normalized_hosted_readback": {},
+            "self_hash_omitted": True,
+            "self_hash_reason": "Companion checksum avoids recursive self-hash.",
+            "source_artifact_sha256_by_epoch": {},
+        },
+        "record_log": [verdict],
     }
 
-    # 1. check_g2_evidence_valid: no evidence (no CLOSE-001 at all)
-    state = {"tasks": []}
-    assert dispatcher.check_g2_evidence_valid(state, catalog) is False
 
-    # 2. check_g2_evidence_valid: CLOSE-001 done, but evidence.json missing
-    with tempfile.TemporaryDirectory() as temp:
-        temp_path = Path(temp)
-        dispatcher.REPO_ROOT = temp_path
-        dispatcher.ARCHIVE_ROOT = temp_path / "ai-task-archive" / "tasks"
-        
-        state = {
-            "tasks": [
-                {
-                    "id": "LOOP-PROD-CLOSE-001",
-                    "status": "done"
-                }
-            ]
-        }
-        assert dispatcher.check_g2_evidence_valid(state, catalog) is False
+@pytest.fixture
+def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
+    from services.trade_journey import hosted_lifecycle_probe as probe
+    from services.trade_journey.lifecycle_projector import LifecycleProjector
+    from services.trade_journey.test_hosted_lifecycle_probe import (
+        FakeSource,
+        _natural_lifecycle_rows,
+    )
 
-        # 3. check_g2_evidence_valid: invalid evidence schema (missing telemetry)
-        evidence_dir = temp_path / "docs" / "deployment" / "evidence" / "loop-product-level" / "LOOP-PROD-CLOSE-001"
-        evidence_dir.mkdir(parents=True, exist_ok=True)
-        
-        bad_evidence = {
-            "version": 1,
-            "task_id": "LOOP-PROD-CLOSE-001",
-            "program_id": "loop-product-level-remediation-2026-07-13",
-            "catalog_sha256": "44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357",
-            "addendum_sha256": "9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519",
-            "merge_pr_3737_sha": "a4b5df9a51bc3da6df0d39d422d9db4edc553aba",
-            "issued_at": "2026-07-16T12:00:00Z",
-            "paper_trade_chains": [
-                {
-                    "signal": {
-                        "id": "sig-123",
-                        "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                    },
-                    "order": {
-                        "id": "ord-456",
-                        "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-                        "signal_id": "sig-123"
-                    },
-                    "fill": {
-                        "id": "fil-789",
-                        "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-                        "order_id": "ord-456"
-                    },
-                    "loop_run_projection": {
-                        "id": "proj-def",
-                        "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-                        "telemetry_id": "tel-abc"
-                    }
-                }
-            ]
-        }
-        evidence_file = evidence_dir / "evidence.json"
-        evidence_file.write_text(json.dumps(bad_evidence, indent=2), encoding="utf-8")
-        assert dispatcher.check_g2_evidence_valid(state, catalog) is False
-
-        # 3b. check_g2_evidence_valid: bare/fabricated string "sig1" instead of dict
-        bad_evidence_bare = {
-            "version": 1,
-            "task_id": "LOOP-PROD-CLOSE-001",
-            "program_id": "loop-product-level-remediation-2026-07-13",
-            "catalog_sha256": "44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357",
-            "addendum_sha256": "9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519",
-            "merge_pr_3737_sha": "a4b5df9a51bc3da6df0d39d422d9db4edc553aba",
-            "issued_at": "2026-07-16T12:00:00Z",
-            "paper_trade_chains": [
-                {
-                    "signal": "sig1",
-                    "order": "ord1",
-                    "fill": "fil1",
-                    "telemetry": "tel1",
-                    "loop_run_projection": "proj1"
-                }
-            ]
-        }
-        evidence_file.write_text(json.dumps(bad_evidence_bare, indent=2), encoding="utf-8")
-        assert dispatcher.check_g2_evidence_valid(state, catalog) is False
-
-        # 4. check_g2_evidence_valid: valid evidence
-        good_evidence = {
-            "version": 1,
-            "task_id": "LOOP-PROD-CLOSE-001",
-            "program_id": "loop-product-level-remediation-2026-07-13",
-            "catalog_sha256": "44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357",
-            "addendum_sha256": "9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519",
-            "merge_pr_3737_sha": "a4b5df9a51bc3da6df0d39d422d9db4edc553aba",
-            "issued_at": "2026-07-16T12:00:00Z",
-            "paper_trade_chains": [
-                {
-                    "signal": {
-                        "id": "sig-123",
-                        "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                    },
-                    "order": {
-                        "id": "ord-456",
-                        "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-                        "signal_id": "sig-123"
-                    },
-                    "fill": {
-                        "id": "fil-789",
-                        "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-                        "order_id": "ord-456"
-                    },
-                    "telemetry": {
-                        "id": "tel-abc",
-                        "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-                        "fill_id": "fil-789"
-                    },
-                    "loop_run_projection": {
-                        "id": "proj-def",
-                        "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-                        "telemetry_id": "tel-abc"
-                    }
-                }
-            ]
-        }
-        evidence_file.write_text(json.dumps(good_evidence, indent=2), encoding="utf-8")
-        assert dispatcher.check_g2_evidence_valid(state, catalog) is True
-
-        # 5. check_g2_evidence_valid: CLOSE-001 from archive instead of active list
-        state = {"tasks": []}
-        assert dispatcher.check_g2_evidence_valid(state, catalog) is False
-        
-        archive_dir = temp_path / "ai-task-archive" / "tasks"
-        archive_dir.mkdir(parents=True, exist_ok=True)
-        archive_payload = {
-            "version": 1,
-            "task_id": "LOOP-PROD-CLOSE-001",
-            "archived_at": "2026-07-16T12:00:00Z",
-            "terminal_status": "done",
+    dispatcher = _load_dispatcher_module()
+    dispatcher.catalog_path = lambda: CATALOG
+    catalog = load_catalog()
+    dispatcher.apply_sequencing_overlay(catalog, SEQUENCING_OVERLAY)
+    catalog_digest = dispatcher.canonical_json_sha256(catalog)
+    contract = catalog["g2_evidence_contract"]
+    task_spec = next(
+        task for task in catalog["tasks"] if task["id"] == contract["target_task"]
+    )
+    closeout_task = dispatcher.build_task(
+        task_spec, catalog, catalog_digest, G2_ISSUED_AT
+    )
+    closeout_task.update(
+        {
+            "status": "done",
             "terminal_outcome": "completed",
-            "task": {
-                "id": "LOOP-PROD-CLOSE-001",
-                "status": "done",
-                "source_ref": {
-                    "program_id": "loop-product-level-remediation-2026-07-13",
-                    "catalog_sha256": "44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357",
-                    "task_contract_sha256": "dummy"
-                }
+            "review_file": contract["closeout_manifest_path"],
+            "review_notes_zh": ["Codex2 approved the canonical G2 evidence."],
+            "delivery": {
+                "commit": G2_FINAL_MERGE_SHA,
+                "head_merged_to_target": True,
+                "merge_target_branch": "dev",
+                "push_status": "in_sync",
             },
-            "handoffs": [],
-            "blockers": []
         }
-        (archive_dir / "LOOP-PROD-CLOSE-001.json").write_text(json.dumps(archive_payload, indent=2), encoding="utf-8")
-        assert dispatcher.check_g2_evidence_valid(state, catalog) is True
+    )
 
-        # 6. pre-G2 denial: wave >= 5 task fails closed when evidence is invalid
-        evidence_file.write_text(json.dumps(bad_evidence, indent=2), encoding="utf-8")
-        
-        catalog["overlay_applied"] = True
-        auth_task = next(t for t in catalog["tasks"] if t["id"] == "LOOP-PROD-AUTH-001")
-        task_to_materialize = deepcopy(auth_task)
-        task_to_materialize["wave"] = 5
-        tasks_to_materialize = [task_to_materialize]
-        
-        # Patch check_g2_evidence_valid mock behavior by passing catalog or patching env
-        os.environ["LOOP_PRODUCT_TASK_CATALOG"] = str(CATALOG)
-        # Write temporary catalog with g2_evidence_contract to match
-        temp_catalog_file = temp_path / "tasks.json"
-        temp_catalog_file.write_text(json.dumps(catalog, indent=2), encoding="utf-8")
-        dispatcher.catalog_path = lambda: temp_catalog_file
-        
-        with pytest.raises(dispatcher.DispatchError, match="G2 paper-trade evidence not found or invalid"):
-            dispatcher.materialize(
-                state=state,
-                tasks=tasks_to_materialize,
-                catalog=catalog,
-                catalog_digest="dummy",
-                timestamp="2026-07-16T12:00:00Z"
-            )
+    monkeypatch.setattr(dispatcher, "REPO_ROOT", tmp_path)
+    activity_log = tmp_path / "ai-activity-log.jsonl"
+    activity_log.write_text("", encoding="utf-8")
+    monkeypatch.setattr(dispatcher, "LOG_PATH", activity_log)
+    archive_root = tmp_path / "ai-task-archive" / "tasks"
+    archive_root.mkdir(parents=True)
+    monkeypatch.setattr(dispatcher, "ARCHIVE_ROOT", archive_root)
+    schema_path = tmp_path / "schemas" / "product-evidence.schema.json"
+    schema_path.parent.mkdir(parents=True)
+    schema_path.write_bytes(PRODUCT_EVIDENCE_SCHEMA.read_bytes())
 
-        # 7. post-G2 release: wave >= 5 task materializes successfully when evidence is valid
-        evidence_file.write_text(json.dumps(good_evidence, indent=2), encoding="utf-8")
-        created, preserved, archived, logs, changed = dispatcher.materialize(
-            state=state,
-            tasks=tasks_to_materialize,
-            catalog=catalog,
-            catalog_digest="dummy",
-            timestamp="2026-07-16T12:00:00Z"
+    rows = _natural_lifecycle_rows()
+    projection_root = tmp_path / "projection"
+    projector = LifecycleProjector(
+        state_path=projection_root / "controller_state.json",
+        bundle_root=projection_root,
+        deployment_sha=G2_DEPLOYMENT_SHA,
+        clock=lambda: G2_PROJECTED_AT,
+    )
+    projector.project_records(rows, mode="live", source_high_watermark=len(rows))
+    current = projection_root / "current"
+    manifest = json.loads((current / "manifest.json").read_text(encoding="utf-8"))
+    journeys = json.loads(
+        (current / "trade_journey_events.json").read_text(encoding="utf-8")
+    )
+    loops = json.loads((current / "loop_runs.json").read_text(encoding="utf-8"))
+
+    monkeypatch.setattr(probe, "_utc_now", lambda: G2_PROBE_AT)
+    hosted = asyncio.run(
+        probe.run_probe(
+            source=FakeSource(len(rows), rows),
+            projection_root=projection_root,
+            expected_sha=G2_DEPLOYMENT_SHA,
+            timeout_seconds=1.0,
+            poll_seconds=0.001,
         )
-        assert "LOOP-PROD-AUTH-001" in created
+    )
+    candidate = probe._complete_candidates(rows)[0]
+    identity = candidate["identity"]
+    bundle = {
+        "schema_version": contract["record_bundle_schema"],
+        "captured_at": G2_CAPTURED_AT,
+        "source": {
+            "store": "telemetry_events",
+            "snapshot_isolation": "repeatable_read",
+            "baseline_high_watermark": hosted["proof"]["source"][
+                "baseline_high_watermark"
+            ],
+            "source_high_watermark": hosted["proof"]["source"][
+                "source_high_watermark"
+            ],
+        },
+        "rows": rows,
+        "projection": {
+            "manifest": manifest,
+            "trade_journey_events": journeys,
+            "loop_runs": loops,
+        },
+    }
 
+    def repo_path(relative: str) -> Path:
+        return tmp_path / relative
+
+    bundle_path = repo_path(contract["canonical_record_bundle_path"])
+    probe_path = repo_path(contract["hosted_probe_path"])
+    product_path = repo_path(contract["closeout_manifest_path"])
+    g2_path = repo_path(contract["evidence_path"])
+    bundle_digest = _write_json_artifact(bundle_path, bundle)
+    probe_digest = _write_json_artifact(probe_path, hosted)
+
+    verdict = {
+        "sequence": 1,
+        "recorded_at": G2_VERDICT_AT,
+        "kind": "reviewer_approval_verdict",
+        "status": "approved",
+        "actor": closeout_task["reviewer"],
+        "reference": f"ai-status.json#{contract['target_task']}",
+    }
+    product = _product_evidence_payload(
+        contract=contract,
+        closeout_task=closeout_task,
+        verdict=verdict,
+    )
+    product_digest = _write_json_artifact(product_path, product)
+    sidecar_path = product_path.with_name("evidence.sha256")
+    sidecar_raw = f"{product_digest}  evidence.json\n".encode("utf-8")
+    sidecar_path.write_bytes(sidecar_raw)
+
+    rows_by_type = {row["event_type"]: row for row in rows}
+    role_types = contract["record_event_types"]
+    loop_record = loops["records"][identity["loop_run_id"]]
+    evidence = {
+        "schema_version": "pantheon.loop-prod-g2-evidence.v2",
+        "task_id": contract["target_task"],
+        "program_id": catalog["program_id"],
+        "target_environment": contract["required_target_environment"],
+        "issued_at": G2_ISSUED_AT,
+        "expires_at": G2_EXPIRES_AT,
+        "authority": {
+            "tasks_catalog_sha256": catalog["source_hashes"][
+                "tasks_catalog_sha256"
+            ],
+            "sequencing_addendum_sha256": catalog["source_hashes"][
+                "sequencing_addendum_sha256"
+            ],
+            "merge_pr_3737_sha": catalog["source_hashes"][
+                "merge_pr_3737_sha"
+            ],
+            "overlay_sha256": catalog["sequencing_overlay_sha256"],
+            "target_task_original_contract_sha256": contract[
+                "target_task_original_contract_sha256"
+            ],
+            "target_task_amended_contract_sha256": contract[
+                "target_task_amended_contract_sha256"
+            ],
+        },
+        "identity": identity,
+        "record_bundle": {
+            "path": contract["canonical_record_bundle_path"],
+            "sha256": bundle_digest,
+        },
+        "hosted_probe": {
+            "path": contract["hosted_probe_path"],
+            "sha256": probe_digest,
+        },
+        "records": {
+            role: {
+                "event_id": rows_by_type[event_type]["event_id"],
+                "event_type": event_type,
+                "sha256": dispatcher.canonical_json_sha256(
+                    rows_by_type[event_type]
+                ),
+            }
+            for role, event_type in role_types.items()
+        },
+        "closeout_admission": {
+            "review_file": contract["closeout_manifest_path"],
+            "review_manifest_sha256": product_digest,
+            "review_manifest_sidecar_sha256": hashlib.sha256(
+                sidecar_raw
+            ).hexdigest(),
+            "task_snapshot_sha256": dispatcher.canonical_json_sha256(
+                closeout_task
+            ),
+            "reviewer": closeout_task["reviewer"],
+            "review_verdict_sha256": dispatcher.canonical_json_sha256(verdict),
+        },
+    }
+    evidence["records"]["loop_run_projection"] = {
+        "id": loop_record["id"],
+        "sha256": dispatcher.canonical_json_sha256(loop_record),
+        "generation": loops["generation"],
+        "last_canonical_event_id": rows[-1]["event_id"],
+    }
+    _write_json_artifact(g2_path, evidence)
+    return {
+        "dispatcher": dispatcher,
+        "catalog": catalog,
+        "catalog_digest": catalog_digest,
+        "contract": contract,
+        "state": {"tasks": [closeout_task]},
+        "closeout_task": closeout_task,
+        "now": G2_NOW,
+        "paths": {
+            "g2": g2_path,
+            "bundle": bundle_path,
+            "probe": probe_path,
+            "product": product_path,
+            "sidecar": sidecar_path,
+            "archive": archive_root / f"{contract['target_task']}.json",
+        },
+    }
+
+
+def _read_artifact(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _rewrite_g2(fixture: dict, evidence: dict) -> None:
+    _write_json_artifact(fixture["paths"]["g2"], evidence)
+
+
+def _rewrite_bundle(fixture: dict, bundle: dict) -> None:
+    digest = _write_json_artifact(fixture["paths"]["bundle"], bundle)
+    evidence = _read_artifact(fixture["paths"]["g2"])
+    evidence["record_bundle"]["sha256"] = digest
+    _rewrite_g2(fixture, evidence)
+
+
+def _rewrite_product(fixture: dict, product: dict) -> None:
+    digest = _write_json_artifact(fixture["paths"]["product"], product)
+    sidecar_raw = f"{digest}  evidence.json\n".encode("utf-8")
+    fixture["paths"]["sidecar"].write_bytes(sidecar_raw)
+    evidence = _read_artifact(fixture["paths"]["g2"])
+    admission = evidence["closeout_admission"]
+    admission["review_manifest_sha256"] = digest
+    admission["review_manifest_sidecar_sha256"] = hashlib.sha256(
+        sidecar_raw
+    ).hexdigest()
+    reviewer = fixture["closeout_task"]["reviewer"]
+    admitted_verdict = next(
+        row
+        for row in product["record_log"]
+        if row.get("actor") == reviewer
+        and row.get("kind") == "reviewer_approval_verdict"
+    )
+    admission["review_verdict_sha256"] = fixture[
+        "dispatcher"
+    ].canonical_json_sha256(admitted_verdict)
+    _rewrite_g2(fixture, evidence)
+
+
+def _archive_closeout(fixture: dict, *, outcome: str = "completed") -> None:
+    task = fixture["state"]["tasks"].pop()
+    _write_json_artifact(
+        fixture["paths"]["archive"],
+        {
+            "version": 1,
+            "task_id": task["id"],
+            "archived_at": G2_ISSUED_AT,
+            "terminal_status": "done",
+            "terminal_outcome": outcome,
+            "task": task,
+            "handoffs": [],
+            "blockers": [],
+        },
+    )
+
+
+@pytest.mark.parametrize("closeout_source", ["active", "archive"])
+def test_g2_v2_accepts_real_canonical_projector_probe_and_closeout(
+    g2_v2_fixture: dict,
+    closeout_source: str,
+) -> None:
+    if closeout_source == "archive":
+        _archive_closeout(g2_v2_fixture)
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    dispatcher._validate_g2_evidence(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
+
+
+def test_g2_v2_rejects_stale_evidence(g2_v2_fixture: dict) -> None:
+    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
+    evidence["issued_at"] = "2026-07-13T00:03:00Z"
+    evidence["expires_at"] = "2026-07-14T00:03:00Z"
+    _rewrite_g2(g2_v2_fixture, evidence)
+
+    assert not g2_v2_fixture["dispatcher"].check_g2_evidence_valid(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
+
+
+def test_g2_v2_rejects_wrong_merge_sha_authority(g2_v2_fixture: dict) -> None:
+    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
+    evidence["authority"]["merge_pr_3737_sha"] = "0" * 40
+    _rewrite_g2(g2_v2_fixture, evidence)
+
+    assert not g2_v2_fixture["dispatcher"].check_g2_evidence_valid(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
+
+
+@pytest.mark.parametrize("closeout_source", ["active", "archive"])
+def test_g2_v2_rejects_false_active_or_archive_closeout(
+    g2_v2_fixture: dict,
+    closeout_source: str,
+) -> None:
+    if closeout_source == "active":
+        g2_v2_fixture["state"]["tasks"][0]["status"] = "review_approved"
+    else:
+        _archive_closeout(g2_v2_fixture, outcome="superseded")
+
+    assert not g2_v2_fixture["dispatcher"].check_g2_evidence_valid(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
+
+
+def test_g2_v2_rejects_missing_canonical_row(g2_v2_fixture: dict) -> None:
+    bundle = _read_artifact(g2_v2_fixture["paths"]["bundle"])
+    bundle["rows"] = [
+        row for row in bundle["rows"] if row["event_type"] != "position_snapshot"
+    ]
+    _rewrite_bundle(g2_v2_fixture, bundle)
+
+    assert not g2_v2_fixture["dispatcher"].check_g2_evidence_valid(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
+
+
+def test_g2_v2_rejects_canonical_record_digest_mismatch(
+    g2_v2_fixture: dict,
+) -> None:
+    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
+    evidence["records"]["fill"]["sha256"] = "0" * 64
+    _rewrite_g2(g2_v2_fixture, evidence)
+
+    assert not g2_v2_fixture["dispatcher"].check_g2_evidence_valid(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["status", "tenant", "environment", "run", "order"],
+)
+def test_g2_v2_rejects_status_identity_environment_run_and_order_mutations(
+    g2_v2_fixture: dict,
+    mutation: str,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
+    if mutation in {"environment", "run"}:
+        key = "environment" if mutation == "environment" else "run_id"
+        evidence["identity"][key] = f"wrong-{mutation}"
+        _rewrite_g2(g2_v2_fixture, evidence)
+    else:
+        bundle = _read_artifact(g2_v2_fixture["paths"]["bundle"])
+        if mutation == "status":
+            loops = bundle["projection"]["loop_runs"]
+            loop = next(iter(loops["records"].values()))
+            loop["status"] = "failed"
+            from services.trade_journey.lifecycle_projector import _fingerprint
+
+            bundle["projection"]["manifest"]["loop_runs_sha256"] = _fingerprint(
+                loops
+            )
+            evidence["records"]["loop_run_projection"][
+                "sha256"
+            ] = dispatcher.canonical_json_sha256(loop)
+        elif mutation == "tenant":
+            row = bundle["rows"][0]
+            row["payload"]["correlation_envelope"]["tenant_id"] = "other-tenant"
+            evidence["records"]["signal"][
+                "sha256"
+            ] = dispatcher.canonical_json_sha256(row)
+        else:
+            order = next(
+                row
+                for row in bundle["rows"]
+                if row["event_type"] == "order_submitted"
+            )
+            order["payload"]["sequence_no"] = 4
+            order["payload"]["metadata"]["sequence_no"] = 4
+            evidence["records"]["order"][
+                "sha256"
+            ] = dispatcher.canonical_json_sha256(order)
+        digest = _write_json_artifact(g2_v2_fixture["paths"]["bundle"], bundle)
+        evidence["record_bundle"]["sha256"] = digest
+        _rewrite_g2(g2_v2_fixture, evidence)
+
+    assert not dispatcher.check_g2_evidence_valid(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
+
+
+def test_release_gate_is_exact_set_not_wave_and_runs_once_while_closed(
+    g2_v2_fixture: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
+    evidence["issued_at"] = "2026-07-13T00:03:00Z"
+    evidence["expires_at"] = "2026-07-14T00:03:00Z"
+    _rewrite_g2(g2_v2_fixture, evidence)
+    real_check = dispatcher.check_g2_evidence_valid
+    calls = 0
+
+    def counted_check(state, catalog):
+        nonlocal calls
+        calls += 1
+        return real_check(state, catalog, now=g2_v2_fixture["now"])
+
+    monkeypatch.setattr(dispatcher, "check_g2_evidence_valid", counted_check)
+    by_id = {task["id"]: task for task in g2_v2_fixture["catalog"]["tasks"]}
+    ungated = deepcopy(by_id["LOOP-PROD-PER-001"])
+    gated = deepcopy(by_id["LOOP-PROD-AUTH-001"])
+    ungated["wave"] = 99
+    gated["wave"] = 0
+
+    created, preserved, _, _, changed = dispatcher.materialize(
+        state=g2_v2_fixture["state"],
+        tasks=[ungated, gated],
+        catalog=g2_v2_fixture["catalog"],
+        catalog_digest=g2_v2_fixture["catalog_digest"],
+        timestamp=G2_ISSUED_AT,
+    )
+
+    assert calls == 1
+    assert created == [ungated["id"], gated["id"]]
+    assert preserved == []
+    parked = next(
+        task for task in g2_v2_fixture["state"]["tasks"] if task["id"] == gated["id"]
+    )
+    assert parked["status"] == "blocked"
+    assert parked["sequencing_release_gate"]["gate_id"] == (
+        g2_v2_fixture["catalog"]["release_gate"]["gate_id"]
+    )
+    assert changed is True
+
+
+def test_explicit_sequencing_overlay_migrates_and_parks_complete_base_board() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        base_apply = run_dispatch(root, "--apply")
+        assert base_apply.returncode == 0, base_apply.stderr
+        before = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        before_migrations = deepcopy(before.get("program_catalog_migrations") or [])
+
+        applied = run_dispatch(
+            root,
+            "--apply",
+            "--sequencing-overlay",
+            str(SEQUENCING_OVERLAY),
+        )
+        assert applied.returncode == 0, applied.stderr
+        state_after_first = (root / "ai-status.json").read_bytes()
+        log_after_first = (root / "ai-activity-log.jsonl").read_bytes()
+        after = json.loads(state_after_first)
+        catalog = load_catalog()
+        dispatcher = _load_dispatcher_module()
+        dispatcher.catalog_path = lambda: CATALOG
+        dispatcher.apply_sequencing_overlay(catalog, SEQUENCING_OVERLAY)
+        gated_ids = set(catalog["release_gate"]["gated_task_ids"])
+        catalog_ids = {task["id"] for task in catalog["tasks"]}
+        program = [task for task in after["tasks"] if task.get("id") in catalog_ids]
+        assert len(program) == 48
+        assert {task["id"] for task in program if task["status"] == "blocked"} == gated_ids
+        assert {
+            task["id"] for task in program if task["status"] == "todo"
+        } == {task["id"] for task in catalog["tasks"]} - gated_ids
+        for task in program:
+            assert task["source_ref"]["sequencing_overlay_sha256"] == (
+                catalog["sequencing_overlay_sha256"]
+            )
+            if task["id"] in gated_ids:
+                assert task["sequencing_release_gate"]["state"] == "parked"
+        epoch = after["program_sequencing_epochs"][catalog["program_id"]]
+        assert epoch["task_count"] == 48
+        assert len(epoch["task_transitions"]) == 48
+        assert after.get("program_catalog_migrations", []) == before_migrations
+
+        rerun = run_dispatch(
+            root,
+            "--apply",
+            "--sequencing-overlay",
+            str(SEQUENCING_OVERLAY),
+        )
+        assert rerun.returncode == 0, rerun.stderr
+        assert "No state changes required." in rerun.stdout
+        assert (root / "ai-status.json").read_bytes() == state_after_first
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_after_first
+
+
+def test_explicit_sequencing_overlay_fresh_apply_creates_parked_gate_tasks() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+
+        applied = run_dispatch(
+            root,
+            "--apply",
+            "--sequencing-overlay",
+            str(SEQUENCING_OVERLAY),
+        )
+
+        assert applied.returncode == 0, applied.stderr
+        after = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        catalog = load_catalog()
+        dispatcher = _load_dispatcher_module()
+        dispatcher.catalog_path = lambda: CATALOG
+        dispatcher.apply_sequencing_overlay(catalog, SEQUENCING_OVERLAY)
+        gated_ids = set(catalog["release_gate"]["gated_task_ids"])
+        by_id = {task["id"]: task for task in after["tasks"] if task.get("id") in gated_ids}
+        assert set(by_id) == gated_ids
+        assert all(task["status"] == "blocked" for task in by_id.values())
+        assert all("sequencing_release_gate" in task for task in by_id.values())
+        assert "program_sequencing_epochs" not in after
+
+
+def test_explicit_sequencing_overlay_rejects_nonpristine_base_epoch_atomically() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        base_apply = run_dispatch(root, "--apply")
+        assert base_apply.returncode == 0, base_apply.stderr
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        next(task for task in state["tasks"] if task.get("id") == "LOOP-PROD-000")[
+            "status"
+        ] = "in_progress"
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        rejected = run_dispatch(
+            root,
+            "--apply",
+            "--sequencing-overlay",
+            str(SEQUENCING_OVERLAY),
+        )
+
+        assert rejected.returncode == 2
+        assert "not pristine base todo" in rejected.stderr
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
+def test_sequencing_epoch_outbox_recovers_exactly_once_after_status_commit() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        base_apply = run_dispatch(root, "--apply")
+        assert base_apply.returncode == 0, base_apply.stderr
+
+        interrupted = run_dispatch(
+            root,
+            "--apply",
+            "--sequencing-overlay",
+            str(SEQUENCING_OVERLAY),
+            extra_env={"LOOP_PRODUCT_DISPATCH_FAIL_AFTER_STATUS_COMMIT": "1"},
+        )
+        assert interrupted.returncode == 2
+        interrupted_state = json.loads(
+            (root / "ai-status.json").read_text(encoding="utf-8")
+        )
+        assert interrupted_state["program_activity_outbox"] is not None
+
+        recovered = run_dispatch(
+            root,
+            "--apply",
+            "--sequencing-overlay",
+            str(SEQUENCING_OVERLAY),
+        )
+        assert recovered.returncode == 0, recovered.stderr
+        after = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        assert after["program_activity_outbox"] is None
+        records = [
+            json.loads(line)
+            for line in (root / "ai-activity-log.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        overlay_events = [
+            row for row in records if row.get("type") == "sequencing_overlay_install"
+        ]
+        assert len(overlay_events) == 1
+
+
+def test_valid_g2_release_is_durable_and_does_not_recheck_wall_clock(
+    g2_v2_fixture: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    gated = deepcopy(
+        next(
+            task
+            for task in g2_v2_fixture["catalog"]["tasks"]
+            if task["id"] == "LOOP-PROD-AUTH-001"
+        )
+    )
+    real_check = dispatcher.check_g2_evidence_valid
+    monkeypatch.setattr(
+        dispatcher,
+        "check_g2_evidence_valid",
+        lambda state, catalog: real_check(
+            state, catalog, now=g2_v2_fixture["now"]
+        ),
+    )
+    created, _, _, logs, changed = dispatcher.materialize(
+        state=g2_v2_fixture["state"],
+        tasks=[gated],
+        catalog=g2_v2_fixture["catalog"],
+        catalog_digest=g2_v2_fixture["catalog_digest"],
+        timestamp=G2_ISSUED_AT,
+    )
+    assert created == [gated["id"]]
+    assert changed is True
+    assert any(row["type"] == "sequencing_gate_release" for row in logs)
+    dispatcher.enqueue_activity_outbox(
+        g2_v2_fixture["state"],
+        logs,
+        catalog=g2_v2_fixture["catalog"],
+        catalog_digest=g2_v2_fixture["catalog_digest"],
+    )
+
+    calls = 0
+
+    def forbidden_recheck(state, catalog):
+        nonlocal calls
+        calls += 1
+        return False
+
+    monkeypatch.setattr(dispatcher, "check_g2_evidence_valid", forbidden_recheck)
+    created_again, preserved, _, _, changed_again = dispatcher.materialize(
+        state=g2_v2_fixture["state"],
+        tasks=[gated],
+        catalog=g2_v2_fixture["catalog"],
+        catalog_digest=g2_v2_fixture["catalog_digest"],
+        timestamp="2026-07-20T00:00:00Z",
+    )
+
+    assert calls == 0
+    assert created_again == []
+    assert preserved == [f"{gated['id']}:todo"]
+    assert changed_again is False
+
+
+def test_auto_unblock_cannot_reopen_sequencing_park_marker() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        (root / "ai-task-archive" / "tasks").mkdir(parents=True)
+        (root / ".orchestrator").mkdir(parents=True)
+        (root / "ai-status.json").write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {"id": "DEP-001", "status": "done"},
+                        {
+                            "id": "LOOP-PROD-AUTH-001",
+                            "status": "blocked",
+                            "owner": "Codex",
+                            "depends_on": ["DEP-001"],
+                            "last_update": "2026-01-01T00:00:00Z",
+                            "sequencing_release_gate": {
+                                "state": "parked",
+                            },
+                        },
+                    ]
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        result = subprocess.run(
+            ["python3", str(ROOT / "scripts" / "auto_unblock_stale.py"), "--dry-run"],
+            env={**os.environ, "PANTHEON_STATUS_ROOT": str(root)},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "WOULD reopen" not in result.stdout
+        assert "reopened=none" in result.stdout
+
+
+def test_release_gate_opens_once_for_valid_g2_even_at_low_wave(
+    g2_v2_fixture: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    real_check = dispatcher.check_g2_evidence_valid
+    calls = 0
+
+    def counted_check(state, catalog):
+        nonlocal calls
+        calls += 1
+        return real_check(state, catalog, now=g2_v2_fixture["now"])
+
+    monkeypatch.setattr(dispatcher, "check_g2_evidence_valid", counted_check)
+    gated = deepcopy(
+        next(
+            task
+            for task in g2_v2_fixture["catalog"]["tasks"]
+            if task["id"] == "LOOP-PROD-AUTH-001"
+        )
+    )
+    gated["wave"] = 0
+
+    created, preserved, _, _, changed = dispatcher.materialize(
+        state=g2_v2_fixture["state"],
+        tasks=[gated],
+        catalog=g2_v2_fixture["catalog"],
+        catalog_digest=g2_v2_fixture["catalog_digest"],
+        timestamp=G2_ISSUED_AT,
+    )
+
+    assert calls == 1
+    assert created == [gated["id"]]
+    assert preserved == []
+    assert changed is True
