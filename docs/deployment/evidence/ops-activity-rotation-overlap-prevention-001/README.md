@@ -60,7 +60,7 @@ Commands run from the task worktree:
 python3 -m py_compile .orchestrator/common.py .orchestrator/test_common.py scripts/ai_status.py scripts/test_ai_status.py
 python3 .orchestrator/test_common.py
 python3 -m unittest scripts.test_activity_audit_logical_inventory
-python3 -m unittest scripts.test_ai_status
+env -u ORCH_RUN_ID -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PANTHEON_STATUS_ROOT=/tmp/pantheon-ops-activity-rotation-test-status-root python3 -m unittest scripts.test_ai_status
 git diff --check
 ```
 
@@ -69,8 +69,12 @@ Results:
 - `py_compile`: passed.
 - `.orchestrator/test_common.py`: 58 tests passed.
 - `scripts.test_activity_audit_logical_inventory`: 19 tests passed.
-- `scripts.test_ai_status`: 74 tests passed.
+- isolated `scripts.test_ai_status`: 74 tests passed.
 - `git diff --check`: passed.
+
+A plain inherited-env `scripts.test_ai_status` run was interrupted after it
+attempted to use the central `PANTHEON_STATUS_ROOT`; the accepted validation is
+the isolated-root command listed above.
 
 ## Status Command Note
 
