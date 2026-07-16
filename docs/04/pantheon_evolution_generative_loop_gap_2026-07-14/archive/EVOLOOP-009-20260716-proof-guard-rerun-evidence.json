@@ -1,0 +1,78 @@
+{
+  "schema_version": "1.0",
+  "task_id": "EVOLOOP-009",
+  "captured_at": "2026-07-16T02:06:10Z",
+  "outcome": "blocked_pre_closeout",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "resolved_since_previous_evidence": {
+    "deploy_guard_blocker_fix_pr": {
+      "pr": "https://github.com/ajoe734/pantheon/pull/3732",
+      "state": "MERGED",
+      "merge_sha": "35d805940d1c21d1077689413c7f4f25add80d84",
+      "head_sha": "b8f7b71ea80cd09655d986d8b474829f346924ef",
+      "summary": "Nonprod deploy now preserves untracked paths that the target commit tracks before checkout, so target-tracked residue does not require allow_dirty."
+    },
+    "local_validation": {
+      "syntax": "bash -n scripts/deploy_nonprod_vm.sh",
+      "pytest": "python3 -m pytest -q scripts/test_deploy_runtime_state_contract.py scripts/test_management_ai_postgres_bootstrap_contract.py scripts/test_deploy_nonprod_bff_source_sha_contract.py scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_evolution_daily_sweep_deploy_contract.py",
+      "pytest_result": "23 passed"
+    }
+  },
+  "latest_dev_deploy_attempts": [
+    {
+      "run": "https://github.com/ajoe734/pantheon/actions/runs/29465115954",
+      "target_sha": "c12bcaa403afd0ca7ee7fdb6f481e78191793d42",
+      "conclusion": "failure",
+      "failed_step": "Deploy requested VM stack",
+      "failure": "managed deploy worktree dirty before checkout",
+      "dirty_paths": [
+        "?? scripts/reap_hung_workers.py"
+      ],
+      "accepted_as_closeout_evidence": false
+    },
+    {
+      "run": "https://github.com/ajoe734/pantheon/actions/runs/29465456181",
+      "target_sha": "35d805940d1c21d1077689413c7f4f25add80d84",
+      "conclusion": "cancelled",
+      "failed_step": "Set up Cloud SDK",
+      "cancellation": "external proof guard / @ajoe734 cancellation",
+      "accepted_as_closeout_evidence": false
+    },
+    {
+      "run": "https://github.com/ajoe734/pantheon/actions/runs/29465639316",
+      "target_sha": "35d805940d1c21d1077689413c7f4f25add80d84",
+      "conclusion": "cancelled",
+      "failed_step": "Deploy requested VM stack",
+      "cancellation": "external proof guard / @ajoe734 cancellation",
+      "accepted_as_closeout_evidence": false
+    }
+  ],
+  "proof_guard_observations": [
+    {
+      "observed_at": "2026-07-16T01:59Z",
+      "command_summary": "local proof guard disables Pantheon and execute-plans deploy workflows, cancels Pantheon deploys except allow_deploy=29465476610, and cancels execute-plans deploy / sibling integration runs except allow_gate=29462768277",
+      "allowlisted_pantheon_run": "https://github.com/ajoe734/pantheon/actions/runs/29465476610",
+      "allowlisted_head_branch": "publish/v2026.07.15.2",
+      "allowlisted_head_sha": "be105af5f1b381f518d767efb9f72813139d5077",
+      "allowlisted_conclusion": "success",
+      "allowlisted_auth_profile": "permissive-stub",
+      "allowlisted_evolution_dispatch_probe": "skipped",
+      "allowlisted_canonical_lifecycle_probe": "skipped",
+      "accepted_as_closeout_evidence": false
+    },
+    {
+      "observed_at": "2026-07-16T02:05Z",
+      "command_summary": "local proof guard respawned with no Pantheon allow_deploy and allow_gate=29462768277 only; it cancels every queued or in-progress Pantheon Nonprod Deploy run",
+      "cancelled_pantheon_run": "https://github.com/ajoe734/pantheon/actions/runs/29465639316",
+      "accepted_as_closeout_evidence": false
+    }
+  ],
+  "workflow_state_after_probe": {
+    "pantheon_nonprod_deploy": "disabled_manually"
+  },
+  "closeout_decision": {
+    "mark_done": false,
+    "reason": "The task-branch deploy hygiene fix merged, but latest-dev strict root deploy still cannot complete because an external proof guard repeatedly cancels Pantheon deploy runs before the required evolution, canonical lifecycle, OpenClaw, BFF, browser, and telemetry gates can run."
+  }
+}
