@@ -38,6 +38,27 @@ DEFAULT_ARCHIVE_EXCLUDED_TASK_IDS = {
     "LOOP-PROD-002",
 }
 
+FROZEN_ARCHIVE_REPLAY_TASK_IDS = (
+    "LOOP-PROD-AGORA-001",
+    "LOOP-PROD-AGORA-002",
+    "LOOP-PROD-ALPHA-001",
+    "LOOP-PROD-AUTH-001",
+    "LOOP-PROD-CAP-001",
+    "LOOP-PROD-CONS-001",
+    "LOOP-PROD-DEP-001",
+    "LOOP-PROD-DIST-001",
+    "LOOP-PROD-GAP-ADDENDUM-001",
+    "LOOP-PROD-GAP-ADDENDUM-002",
+    "LOOP-PROD-IMIT-001",
+    "LOOP-PROD-MAI-001",
+    "LOOP-PROD-OODA-001",
+    "LOOP-PROD-REC-001",
+    "LOOP-PROD-RUNTIME-BOOT-001",
+    "LOOP-PROD-SRC-001",
+    "LOOP-PROD-TEACH-001",
+    "LOOP-PROD-TEL-001",
+)
+
 # Canonical non-goals that trigger loop guardrail checks.
 LOOP_AUTOPILOT_NON_GOALS = {
     "No panel-only closure",
@@ -619,23 +640,46 @@ def _follow_up_task_id(task_id: str, classification: str) -> str | None:
 def audit_archive_root(
     archive_root: Path,
     excluded_task_ids: set[str],
+    frozen_task_ids: tuple[str, ...] = FROZEN_ARCHIVE_REPLAY_TASK_IDS,
 ) -> dict[str, Any]:
     snapshot_paths = sorted(archive_root.glob("LOOP-PROD*.json"))
+    snapshot_paths_by_id = {path.stem: path for path in snapshot_paths}
+    frozen_task_id_set = set(frozen_task_ids)
     results: list[dict[str, Any]] = []
     excluded: list[dict[str, str]] = []
+    source_set_errors: list[str] = []
 
-    for snapshot_path in snapshot_paths:
-        task_id_from_path = snapshot_path.stem
-        display_path = _display_path(snapshot_path)
-        if task_id_from_path in excluded_task_ids:
+    missing_task_ids = [
+        task_id for task_id in frozen_task_ids if task_id not in snapshot_paths_by_id
+    ]
+    for task_id in missing_task_ids:
+        source_set_errors.append(f"missing frozen archive snapshot: {task_id}.json")
+
+    unexpected_task_ids = sorted(
+        set(snapshot_paths_by_id) - frozen_task_id_set - excluded_task_ids
+    )
+    for task_id in unexpected_task_ids:
+        source_set_errors.append(f"unexpected LOOP-PROD archive snapshot: {task_id}.json")
+
+    for task_id in sorted(excluded_task_ids):
+        snapshot_path = snapshot_paths_by_id.get(task_id)
+        if snapshot_path:
             excluded.append(
                 {
-                    "task_id": task_id_from_path,
-                    "snapshot": display_path,
+                    "task_id": task_id,
+                    "snapshot": _display_path(snapshot_path),
                     "reason": "governance/meta task excluded from frozen product-closure replay set",
                 }
             )
+
+    seen_replay_task_ids: dict[str, str] = {}
+    for frozen_task_id in frozen_task_ids:
+        snapshot_path = snapshot_paths_by_id.get(frozen_task_id)
+        if snapshot_path is None:
             continue
+
+        task_id_from_path = snapshot_path.stem
+        display_path = _display_path(snapshot_path)
 
         before_hash = _sha256_file(snapshot_path)
         try:
@@ -688,7 +732,22 @@ def audit_archive_root(
             )
             continue
 
-        gaps = check_task(task)
+        precheck_gaps: list[str] = []
+        replay_task_id = str(task["id"])
+        if replay_task_id != task_id_from_path:
+            precheck_gaps.append(
+                "archive filename/task ID mismatch: "
+                f"file {task_id_from_path}.json contains task.id {replay_task_id}"
+            )
+        if replay_task_id in seen_replay_task_ids:
+            precheck_gaps.append(
+                "duplicate archive task id: "
+                f"{replay_task_id} also appears in {seen_replay_task_ids[replay_task_id]}"
+            )
+        else:
+            seen_replay_task_ids[replay_task_id] = display_path
+
+        gaps = precheck_gaps + check_task(task)
         classification = _classify_archive_replay_result(gaps)
         results.append(
             {
@@ -720,6 +779,7 @@ def audit_archive_root(
         classification = str(result["classification"])
         classification_counts[classification] = classification_counts.get(classification, 0) + 1
 
+    failed_count = len(failed) + len(source_set_errors)
     return {
         "audit_id": "closeout-truth-audit-2026-07-16",
         "generated_at": (
@@ -735,15 +795,19 @@ def audit_archive_root(
                 "all live-root LOOP-PROD archive snapshots except governance/meta "
                 "LOOP-PROD-000, LOOP-PROD-001, and LOOP-PROD-002"
             ),
+            "frozen_task_ids": list(frozen_task_ids),
             "included_task_ids": [result["task_id"] for result in results],
             "included_snapshots": len(results),
             "excluded_task_ids": sorted(excluded_task_ids),
             "excluded_snapshots": excluded,
+            "source_set_errors": source_set_errors,
             "archive_mutation": "none",
         },
         "summary": {
             "passed": len(results) - len(failed),
-            "failed": len(failed),
+            "failed": failed_count,
+            "failed_results": len(failed),
+            "source_set_error_count": len(source_set_errors),
             "scanned": len(results),
             "classification_counts": classification_counts,
         },
@@ -800,6 +864,12 @@ def write_audit_markdown(audit: dict[str, Any], output_path: Path) -> None:
         for excluded in excluded_items:
             label = excluded.get("manifest") or excluded.get("snapshot") or excluded.get("task_id")
             lines.append(f"- `{label}`: {excluded['reason']}")
+
+    source_set_errors = audit["selection"].get("source_set_errors") or []
+    if source_set_errors:
+        lines.extend(["", "## Source Set Errors", ""])
+        for error in source_set_errors:
+            lines.append(f"- {error}")
 
     lines.append("")
     output_path.write_text("\n".join(lines), encoding="utf-8")
@@ -919,7 +989,7 @@ def main() -> None:
             f"\n{summary['passed']}/{summary['scanned']} replay source(s) "
             "passed closeout truth replay."
         )
-        sys.exit(1 if summary["failed"] else 0)
+        sys.exit(1 if summary["failed"] or summary.get("source_set_error_count") else 0)
 
     status_path = Path(args.status_file)
     rc = run(status_path, args.task_id)
