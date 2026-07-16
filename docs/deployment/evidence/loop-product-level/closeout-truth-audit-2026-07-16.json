@@ -1,6 +1,6 @@
 {
   "audit_id": "closeout-truth-audit-2026-07-16",
-  "generated_at": "2026-07-16T13:18:31Z",
+  "generated_at": "2026-07-16T13:22:59Z",
   "mode": "read_only_archive_snapshot_replay",
   "source_root": "/home/lupin/code/pantheon/ai-task-archive/tasks",
   "selection": {
