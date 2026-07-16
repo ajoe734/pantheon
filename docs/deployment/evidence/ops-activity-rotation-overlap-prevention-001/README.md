@@ -76,8 +76,17 @@ Results:
 
 `AI_NAME=Codex2 ./scripts/ai-status.sh start
 OPS-ACTIVITY-ROTATION-OVERLAP-PREVENTION-001 ...` was attempted through the
-governed status command path with a 20-second timeout and did not acquire the
-central task-state lock. No manual edit was made to `ai-status.json`.
+governed status command path with a 20-second timeout. Readback later showed
+the task did move to `in_progress` with the intended start message, but the
+CLI did not return before timeout because central locks were held by another
+worker status command. No manual edit was made to `ai-status.json`.
+
+Lock holder readback at the time:
+
+- task-state lock: PID `3080733`,
+  `/tmp/pantheon-reconciliation-json-store-integrity/scripts/ai_status.py
+  approve OPS-RECONCILIATION-JSON-STORE-INTEGRITY-001 ...`
+- activity-audit lock: supervisor PID `2963491` and PID `3080733`
 
 `scripts/git/worker_commit.py` created anchor commit `f3157e33a`, then blocked
 on the post-commit central activity audit append. The wrapper was interrupted
