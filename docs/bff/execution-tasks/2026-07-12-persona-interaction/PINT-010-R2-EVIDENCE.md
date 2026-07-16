@@ -1,12 +1,145 @@
 # PINT-010-R2 hosted integration evidence
 
-Date: 2026-07-14 UTC
+Date: 2026-07-16 UTC
 Owner: Codex2
-Reviewer: Claude
-Status: implementation, authority, durability, a current merged exact BFF/FE
-pair, both task-specific hosted gates, and their immutable artifact are
-complete. The evidence PR and distinct Claude review remain. This task is not
-`done`; only `review_approved` permits owner closeout.
+Reviewer: pending final evidence review
+Status: in progress. The canonical Persona eligibility repair, deployment
+reliability repairs, exact merged frontend candidate, and a successful strict
+BFF baseline deploy are complete. The final candidate gate, bounded hosted
+write proof, independent read-only restore, final strict BFF restore, bundle
+scan, and evidence review are not yet recorded. This task is not `done`.
+
+## 2026-07-16 closure record
+
+This section supersedes the completion posture of the historical 2026-07-14
+record below. The older record remains useful provenance, but its exact pair
+and permissive-stub posture are not acceptance evidence for the current
+candidate.
+
+### Current delivery lineage
+
+#### Pantheon
+
+| PR | Head SHA | Merge SHA | Evidence role |
+| --- | --- | --- | --- |
+| [#3751](https://github.com/ajoe734/pantheon/pull/3751) | `e5fb548caf67f6859ffc91cfe15685393b837843` | `33afc82e54469a70a77f7dc1df2c8178d3f339d2` | Canonical tenant ownership and capability snapshots; deterministic, write-authorized, paper-only Servant ensure; fail-closed Persona eligibility |
+| [#3752](https://github.com/ajoe734/pantheon/pull/3752) | `2733a30209fc0afda029514d969768d831efe40f` | `9637455aa55638d518bde8f31fb3827ba0ec8471` | Strict hosted-auth posture verifier syntax repair and executable contract coverage |
+| [#3754](https://github.com/ajoe734/pantheon/pull/3754) | `b9ba936dabf9cc15e5888fe12459a43a5304a4e0` | `ddf4d0d5d33a848b3c86e3be2f6713e2ad9c0524` | Bounded exact-predecessor retry for initial lease visibility after successful CAS |
+| [#3757](https://github.com/ajoe734/pantheon/pull/3757) | `d963586c9803744a5745104e9b490c2aeae651cc` | `87c2f7e50bc66b23e16436aa32775fcf2fedd8bb` | Trust-pin the protected lease controller and checksums; scope bounded retry to immediate verification |
+| [#3761](https://github.com/ajoe734/pantheon/pull/3761) | `f5ec1aac9e10baa7d7c7d83f905e5df0a9cd4096` | `9967ce47fb826f782f3b84be1f08e6aefef88091` | Clear `PYTHONINSPECT` at every sanitized deploy boundary so successful remote commands cannot enter Python inspect mode |
+
+All five PRs are merged into `dev`. Their visible branch checks concluded
+successfully. PR #3751 recorded `48 passed` for its focused Agora regression
+and `273 passed, 4 skipped, 1 pre-existing failure` for the broad
+Agora/read-store/provisioning regression. The sole broad failure reproduced on
+clean baseline `5a02825edd229aebfdd567e26233dac88697fe62`.
+
+The deployment-reliability chain recorded these focused validations:
+
+- #3752: 24 deployment-contract tests passed.
+- #3754: 26 tests and 13 subtests passed; retry remains exact-predecessor,
+  expired-predecessor, opt-in, and bounded to 30 seconds.
+- #3757: 50 focused tests and 13 subtests passed; controller SHA256 is
+  `52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048`
+  and wrapper SHA256 is
+  `f3995a2baedc2ff47178a0de8ad1952096df4de508d5a47c8e0042a151ab7ea8`.
+- #3761: 24 deployment-contract tests passed, workflow YAML parsed, both
+  deploy shell scripts passed `bash -n`, and `git diff --check` passed.
+
+#### execute-plans
+
+| PR | Head SHA | Merge SHA | Evidence role |
+| --- | --- | --- | --- |
+| [#379](https://github.com/ajoe734/execute-plans/pull/379) | `eb48ebe2e69e335516c5ac1841b84795878f21f5` | `1816ece7c77813b5b5c6098155776ad14a6991da` | Deterministic ensured-Persona selection, stable tenant/operator idempotency, exact preflight checks, viewer-negative ensure, and retry-free 6/0 hosted gate contract |
+
+PR #379 is merged. Its PR integration gate run `29502685625` attempt 3 and
+required branch checks succeeded. The post-merge push gate and immutable
+candidate artifact are deliberately left pending below until their terminal
+run result and digests are supplied.
+
+### Canonical Persona authority properties
+
+The merged BFF behavior does not infer Persona eligibility from lifecycle or
+deployment stage. Admission requires exact tenant truth, supported lifecycle,
+environment ceiling, matching Persona/snapshot identity, and an explicit
+owner-backed `persona_opinion` capability snapshot. Servant ensure is
+write-authorized and cannot be mutated by a viewer. It remains deterministic,
+paper-only, and fail-closed until OpenClaw synchronization and exact snapshot
+admission succeed.
+
+The Persona and Servant surfaces retain `execution_authority=none`. No order,
+broker, live-capital, capital-binding, runtime-binding, or memory authority is
+granted by this repair.
+
+### Successful strict BFF baseline
+
+Pantheon Nonprod Deploy run
+[`29507925706`](https://github.com/ajoe734/pantheon/actions/runs/29507925706),
+attempt 1, job
+[`87653469276`](https://github.com/ajoe734/pantheon/actions/runs/29507925706/job/87653469276),
+completed successfully from `14:44:09Z` through `14:47:14Z`. It deployed only
+the dev BFF from exact merged SHA
+`9967ce47fb826f782f3b84be1f08e6aefef88091`, with `allow_dirty=false` and
+`dev_auth_profile=strict`.
+
+The successful job established:
+
+- trusted lease controller
+  `ddf4d0d5d33a848b3c86e3be2f6713e2ad9c0524` and the pinned controller and
+  wrapper digests above;
+- exact deployment-complete payload SHA
+  `9967ce47fb826f782f3b84be1f08e6aefef88091`;
+- hosted posture `auth_stub=false`, `auth_mode=strict`;
+- successful public BFF smoke and exact `/bff/version` proof;
+- successful Agora Postgres restart persistence for workshop
+  `deploy-restart-29507925706-1` and proposal
+  `proposal-deploy-restart-29507925706-1`, including completed-outbox replay
+  and pending-outbox recovery;
+- six expected transient HTTP 502 responses during the intentional BFF
+  restart, followed by readiness recovery and successful verification; and
+- clean lease release at `14:47:08Z`, lease ID
+  `cdf8e16b-92a9-4cef-b08d-f1c2b2996d02`.
+
+This is a verified strict baseline, not the final closeout restore. The bounded
+write-proof window may temporarily require a different dev auth profile; a
+fresh deployment of this same BFF SHA back to strict, with exact hosted proof,
+must be recorded after that window.
+
+### Pending final hosted evidence — do not treat as passed
+
+The following fields are intentionally unresolved. They must be replaced with
+terminal run IDs, attempt numbers, artifact IDs and SHA256 digests, exact pair
+identity, timestamps, and inspected result values before review:
+
+1. Post-merge push integration gate for frontend
+   `1816ece7c77813b5b5c6098155776ad14a6991da`, including release-candidate,
+   integration-evidence, and release-identity artifact digests.
+2. Automatic same-pair read-only FE deployment and live manifest checks:
+   `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`, real writes false, stub
+   writes false, and embedded bearer false.
+3. Exact same-SHA BFF transition used for the bounded write-proof window, if
+   required, including its successful deployment run and hosted auth posture.
+4. Fresh attempt-1 parent write-proof deployment, its correlation ID,
+   independently authorized child proof, and watchdog run.
+5. Child artifact inspection proving six expected desktop/mobile cases, zero
+   skipped, unexpected, or flaky cases; unauthenticated 401 `AUTH_REQUIRED`;
+   viewer ensure/create/modify 403; operator create 201, modify 200, validate
+   200; revisions `1,2,3`; audit `create,modify,validate`; replay at revision
+   3; `executionAuthority=none`; no downstream execution; and no recorded
+   bearer value.
+6. Before/after write-proof manifests proving the same FE/BFF pair, pair ID,
+   and deployment digest throughout the bounded proof.
+7. Independent same-pair read-only FE restore, three live manifest reads, and
+   final bundle scan recorded in
+   `PINT-010-R2-BUNDLE-SCAN-2026-07-16.json`.
+8. Final exact-SHA strict BFF restore run, three live `/health` and
+   `/bff/version` reads, and `auth_stub=false`, `auth_mode=strict`.
+9. Confirmation that both deployment workflows are active and no conflicting
+   nonterminal deploy remains.
+
+No closeout or `done` claim is permitted while any item above is unresolved.
+
+## Historical 2026-07-14 record
 
 ## Delivery lineage
 
