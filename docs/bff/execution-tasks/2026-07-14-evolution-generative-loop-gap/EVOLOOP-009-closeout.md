@@ -2,28 +2,41 @@
 
 Status: **blocked pre-closeout — do not mark `done`**
 
-Evidence captured: 2026-07-15 13:16-13:25 UTC
+Initial evidence captured: 2026-07-15 13:16-13:25 UTC
+Latest recheck: 2026-07-16 01:35 UTC
 
-Owner: Codex
-Reviewer: Antigravity
+Owner: Codex2
+Reviewer: Claude
 
 ## Outcome
 
 All EVOLOOP implementation and follow-up PRs listed below are merged into
 `dev`, and the currently hosted APIs contain a real executed mutation chain,
 a formal Persona Fleet mutation reference, and an active artifact-v2 binding.
-The task is nevertheless **not closeable**:
+The task is nevertheless **not closeable**. The 2026-07-16 recheck resolved
+the original missing secret floor (`DEV_BFF_JWT_SECRET`,
+`DEV_BFF_OIDC_CLIENT_ID`, `DEV_BFF_OIDC_CLIENT_SECRET`, and
+`DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN` are present) and merged the runtime
+dependency fix needed by `policy-learning-svc`. The remaining blockers are:
 
-1. the current `dev` root stack cannot be deployed because the governed deploy
-   fails closed when `DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN` is absent;
-2. hosted BFF is an older `permissive-stub` build and hosted FE is an older,
-   unaccepted candidate;
-3. the current execute-plans integration gate is red and the governed browser
-   session cannot render the focused Persona Fleet row;
-4. the active artifact-v2 runtime readback does not contain numeric PnL or
-   drawdown, so the packet-level telemetry/threshold acceptance is not proven;
-5. the UI does not yet visibly tie the active binding identity to its artifact
-   id/version.
+1. latest `dev` root deploy at merge commit
+   `f43e10a3d288ca19aa6651b0d73aa3d44f1289db` could not complete because an
+   active local deploy guard cancels all Pantheon nonprod deploy runs except
+   allowlisted run `29464403186`;
+2. the allowlisted run targets `publish/v2026.07.15.2`
+   (`be105af5f1b381f518d767efb9f72813139d5077`), which is not latest `dev`
+   and does not contain `services/policy-learning/requirements.txt`
+   `jsonschema`;
+3. hosted BFF/FE/browser/telemetry gates have not been re-proven against the
+   latest `dev` merge commit;
+4. the current execute-plans integration gate remains red in the prior
+   evidence, and the governed browser session could not render the focused
+   Persona Fleet row;
+5. the active artifact-v2 runtime readback in prior evidence did not contain
+   numeric PnL or drawdown, so packet-level telemetry/threshold acceptance is
+   not proven;
+6. the UI still lacks accepted hosted evidence visibly tying the active
+   binding identity to its artifact id/version.
 
 Per the babysit rule, a green historical workflow or API-only evidence is not
 a substitute for the missing deploy and browser readback. No `done` transition
@@ -33,6 +46,9 @@ Machine-readable excerpts are archived in
 `docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/archive/EVOLOOP-009-live-evidence.json`.
 The adjacent `EVOLOOP-009-live-evidence.sha256` manifest covers that JSON and
 the hosted-browser failure screenshot.
+
+The 2026-07-16 deploy-guard recheck is archived separately in
+`docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/archive/EVOLOOP-009-20260716-deploy-guard-evidence.json`.
 
 ## Integrated PR ledger
 
@@ -62,6 +78,7 @@ Every row was re-read from GitHub on 2026-07-15 and reported `MERGED` into
 | EVOLOOP-008 review remediation | [#3686](https://github.com/ajoe734/pantheon/pull/3686) | `c6bb48fcb8627ca76577e96aedd9afbb00d349d6` |
 | EVOLOOP-010 | [#3647](https://github.com/ajoe734/pantheon/pull/3647) | `503d8da96aa581ec0b2cd253c4fea3e90309819d` |
 | EVOLOOP-011 | [#3663](https://github.com/ajoe734/pantheon/pull/3663) | `0a244c48651055af7889eeae5ddabbba316be326` |
+| EVOLOOP-009 dependency/dispatch recheck | [#3728](https://github.com/ajoe734/pantheon/pull/3728) | `f43e10a3d288ca19aa6651b0d73aa3d44f1289db` |
 
 ## Deployment readback
 
@@ -73,6 +90,10 @@ Every row was re-read from GitHub on 2026-07-15 and reported `MERGED` into
 | Hosted BFF identity | `a10f752b3ea4420f271535e255f2d4e7d3d498b2`; `auth_stub=true`, `auth_mode=permissive`, `mfa_required=false`. The successful run [29416809292](https://github.com/ajoe734/pantheon/actions/runs/29416809292) was BFF-only and did not run the evolution dispatch probe. |
 | Hosted FE identity | `b352faa087e6e1bd6087c619d6e9d99a35fbca41`; manifest points to BFF `a10f752...`. Safe write defaults are false, but the manifest has no accepted-candidate/gate identity. |
 | Current execute-plans `dev` | `b8167c47a7f33fa7daf5a42f19f623e006520e8b`; integration run [29416149529](https://github.com/ajoe734/execute-plans/actions/runs/29416149529) failed Gate 4 browser responses, Gate 5 F13/F16, Gate 6 focus, and Gate 7 release decision. No candidate was accepted for deployment. |
+| 2026-07-16 strict secret floor | GitHub environment `dev` contains `DEV_BFF_JWT_SECRET`, `DEV_BFF_OIDC_CLIENT_ID`, `DEV_BFF_OIDC_CLIENT_SECRET`, and `DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN`; strict deploy runs pass the auth/secret floor. |
+| 2026-07-16 dependency fix | Strict deploy run [29462890670](https://github.com/ajoe734/pantheon/actions/runs/29462890670) passed the secret floor but failed in VM deploy because `policy-learning-svc` missed `jsonschema`. PR [#3727](https://github.com/ajoe734/pantheon/pull/3727) added the missing dependency on `dev`; PR [#3728](https://github.com/ajoe734/pantheon/pull/3728) merged bounded alignment and this task handoff. |
+| 2026-07-16 latest-dev deploy attempt | Runs [29464312537](https://github.com/ajoe734/pantheon/actions/runs/29464312537) and [29464359888](https://github.com/ajoe734/pantheon/actions/runs/29464359888), targeting `55b2202bb...` and then `f43e10a3d...`, were canceled before deploy. A local deploy guard process was observed canceling every Pantheon deploy run except allowlisted run `29464403186`, while restoring workflow `269991390` to `disabled_manually`. |
+| 2026-07-16 allowlisted deploy | [29464403186](https://github.com/ajoe734/pantheon/actions/runs/29464403186) succeeded but targets `publish/v2026.07.15.2` / `be105af5...`, not latest `dev`; `f43e10a3d...` is not an ancestor of that publish SHA, that publish SHA lacks `jsonschema` in `services/policy-learning/requirements.txt`, and the evolution dispatch, canonical lifecycle, and OpenClaw assistant probes were skipped. It cannot satisfy EVOLOOP-009 closeout. |
 
 The most recent successful root deployment (`29390952944`, SHA
 `1fef00eb7f23da05fd964087db85426863331540`) predates the final EVOLOOP-007,
@@ -174,9 +195,9 @@ must not be hidden by the list-level success.
 
 | ID | Blocker / risk | Owner | Expiry / recheck |
 |---|---|---|---|
-| `EVOLOOP-009-B1` | Provision `DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN` in the governed dev environment; do not weaken `DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED`. | Human/Ops | 2026-07-16 12:00 UTC |
-| `EVOLOOP-009-B2` | Re-enable once, deploy current Pantheon `dev` root with strict auth and evolution probe, verify exact hosted SHA, then restore the workflow control state. | Codex after B1 | within 4 hours of B1 |
-| `EVOLOOP-009-B3` | Hosted BFF is an old permissive-stub build. Restore strict auth/MFA posture; synthetic source tokens must stop reading privileged routes. | Human/Ops + Codex | 2026-07-16 12:00 UTC |
+| `EVOLOOP-009-B1` | Original secret floor resolved on 2026-07-16: required dev secrets are present and strict deploy runs pass the auth/secret floor. Keep `DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED` strict. | Human/Ops | resolved; recheck on next deploy |
+| `EVOLOOP-009-B2` | Clear or retarget the active deploy guard so a single latest `dev` strict deploy can run at `f43e10a3d...` or newer with evolution and canonical probes enabled. Do not accept the current allowlisted `publish/v2026.07.15.2` run as EVOLOOP-009 evidence. | Human/Ops + deploy owner | 2026-07-16 12:00 UTC |
+| `EVOLOOP-009-B3` | Hosted BFF strict-auth/MFA posture must be re-proven after the latest `dev` deploy; synthetic source tokens must stop reading privileged routes. | Human/Ops + Codex | 2026-07-16 12:00 UTC |
 | `EVOLOOP-009-B4` | Repair and rerun execute-plans Gate 4/5/6/7; only deploy an immutable candidate from the successful exact-SHA gate. | Gate owners: Gemini, Codex, Codex2 | 2026-07-17 12:00 UTC |
 | `EVOLOOP-009-B5` | Make the hosted browser governed session load Persona Fleet and Evolution Journal, and visibly tie active binding id to artifact id/version. | execute-plans owner (Codex) | 2026-07-17 12:00 UTC |
 | `EVOLOOP-009-B6` | Produce hosted numeric, moving PnL + drawdown with field timestamps and complete governed `rolling_pnl_floor` activation, or explicitly reopen EVOLOOP-002/005. | Antigravity | 2026-07-17 12:00 UTC |
