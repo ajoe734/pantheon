@@ -339,7 +339,7 @@ DEFAULT_VALID_EVIDENCE = {
         "evidence_cut_at": "2026-07-13T22:40:16Z",
         "evidence_cut_semantics": "Test semantics",
         "review_file": "docs/deployment/evidence/temp_test_evidence.json",
-        "overall_admission": "review_required_evidence_only"
+        "overall_admission": "pass"
     },
     "authorities": {
         "actual_state": ["GET /test"],
@@ -529,6 +529,80 @@ class TestDeepEvidenceChecks(unittest.TestCase):
         gaps = guardrail.check_task(self.default_task)
         self.assertTrue(any("blocking acceptance requirement" in g for g in gaps), gaps)
 
+    def test_blocked_overall_admission_fails(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["task"] = data["task"].copy()
+        data["task"]["overall_admission"] = "blocked_pending_human_deploy"
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("overall admission" in g and "not done-eligible" in g for g in gaps), gaps)
+
+    def test_pending_overall_admission_fails(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["task"] = data["task"].copy()
+        data["task"]["overall_admission"] = "pending_independent_review"
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("overall admission" in g and "not done-eligible" in g for g in gaps), gaps)
+
+    def test_review_required_overall_admission_fails(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["task"] = data["task"].copy()
+        data["task"]["overall_admission"] = "review_required_evidence_only"
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("overall admission" in g and "not done-eligible" in g for g in gaps), gaps)
+
+    def test_unknown_overall_admission_fails(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["task"] = data["task"].copy()
+        data["task"]["overall_admission"] = "evidence_only"
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("overall admission" in g and "not an accepted closeout state" in g for g in gaps), gaps)
+
+    def test_review_approved_overall_admission_passes(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["task"] = data["task"].copy()
+        data["task"]["overall_admission"] = "review_approved_owner_closeout_ready"
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertEqual(gaps, [])
+
+    def test_blocking_residual_risk_fails(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["residual_risks"] = {
+            "RISK-BLOCKING": {
+                "blocking_for_this_task": True,
+                "containment": "Containment",
+                "description": "Blocking risk",
+                "expiry": "2026-07-31T00:00:00Z",
+                "owner": "Antigravity",
+                "recheck_trigger": "Recheck",
+                "severity": "high"
+            }
+        }
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("blocking residual risk 'RISK-BLOCKING'" in g for g in gaps), gaps)
+
+    def test_nonblocking_residual_risk_passes(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["residual_risks"] = {
+            "RISK-NONBLOCKING": {
+                "blocking_for_this_task": False,
+                "containment": "Containment",
+                "description": "Nonblocking risk",
+                "expiry": "2026-07-31T00:00:00Z",
+                "owner": "Antigravity",
+                "recheck_trigger": "Recheck",
+                "severity": "low"
+            }
+        }
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertEqual(gaps, [])
+
     def test_mock_only_live_claim_fails(self):
         data = DEFAULT_VALID_EVIDENCE.copy()
         data["task"] = data["task"].copy()
@@ -581,11 +655,54 @@ class TestDeepEvidenceChecks(unittest.TestCase):
         ]
         self.write_evidence(data)
 
-        # Test when task status is done
-        task_done = self.default_task.copy()
-        task_done["status"] = "done"
-        gaps = guardrail.check_task(task_done)
+        gaps = guardrail.check_task(self.default_task)
         self.assertTrue(any("missing reviewer verdict" in g for g in gaps), gaps)
+
+    def test_review_ready_record_does_not_count_as_verdict(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["record_log"] = [
+            {
+                "sequence": 1,
+                "recorded_at": "2026-07-14T00:00:00Z",
+                "kind": "evidence_ready_for_independent_review",
+                "status": "pass",
+                "actor": "Antigravity",
+                "reviewer": "Claude"
+            }
+        ]
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("missing reviewer verdict" in g for g in gaps), gaps)
+
+    def test_owner_review_record_does_not_count_as_verdict(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["record_log"] = [
+            {
+                "sequence": 1,
+                "recorded_at": "2026-07-14T00:00:00Z",
+                "kind": "implementation_review",
+                "status": "pass",
+                "actor": "Antigravity"
+            }
+        ]
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertTrue(any("missing reviewer verdict" in g for g in gaps), gaps)
+
+    def test_reviewer_approval_verdict_counts(self):
+        data = DEFAULT_VALID_EVIDENCE.copy()
+        data["record_log"] = [
+            {
+                "sequence": 1,
+                "recorded_at": "2026-07-14T00:00:00Z",
+                "kind": "reviewer_approval_verdict",
+                "status": "approved",
+                "actor": "Claude"
+            }
+        ]
+        self.write_evidence(data)
+        gaps = guardrail.check_task(self.default_task)
+        self.assertEqual(gaps, [])
 
     def test_missing_jsonschema_dependency_returns_graceful_gap(self):
         import sys

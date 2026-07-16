@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,113 @@ _FIXTURE_ONLY_SIGNALS = (
     "route-only",
     "route_only",
 )
+
+_BLOCKING_ADMISSION_SIGNALS = (
+    "blocked",
+    "pending",
+    "review_required",
+    "review required",
+    "review-required",
+    "change_requested",
+    "changes_requested",
+    "change-requested",
+    "changes-requested",
+)
+
+_ACCEPTED_ADMISSION_PREFIXES = (
+    "pass",
+    "approved",
+    "accepted",
+    "review_approved",
+    "complete",
+    "completed",
+    "done",
+)
+
+_APPROVED_REVIEW_STATUSES = {"approved", "pass", "review_approved"}
+
+_NON_VERDICT_REVIEW_KIND_SIGNALS = (
+    "ready_for_review",
+    "ready_for_independent_review",
+    "evidence_ready",
+    "owner_evidence_ready",
+    "owner_closeout_gate",
+)
+
+
+def _as_lower(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _is_blocking_residual(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "yes", "y", "1", "blocking"}
+    return False
+
+
+def _blocking_residual_risk_ids(residual_risks: Any) -> list[str]:
+    if not isinstance(residual_risks, dict):
+        return []
+
+    blocking: list[str] = []
+    for risk_id, risk in residual_risks.items():
+        if isinstance(risk, dict) and _is_blocking_residual(
+            risk.get("blocking_for_this_task")
+        ):
+            blocking.append(str(risk_id))
+    return blocking
+
+
+def _has_positive_overall_admission(overall_admission: str) -> bool:
+    normalized = overall_admission.strip().lower()
+    return any(normalized.startswith(prefix) for prefix in _ACCEPTED_ADMISSION_PREFIXES)
+
+
+def _is_formal_reviewer_verdict(
+    log_item: Any,
+    *,
+    expected_reviewer: str,
+    owner: str,
+) -> bool:
+    if not isinstance(log_item, dict):
+        return False
+
+    kind = _as_lower(log_item.get("kind"))
+    status = _as_lower(log_item.get("status"))
+    actor = str(log_item.get("actor") or "").strip()
+
+    if status not in _APPROVED_REVIEW_STATUSES:
+        return False
+    if any(signal in kind for signal in _NON_VERDICT_REVIEW_KIND_SIGNALS):
+        return False
+
+    verdict_like = (
+        "verdict" in kind
+        or "approval" in kind
+        or "approved" in kind
+        or kind == "review"
+        or kind == "implementation_review"
+        or kind.startswith("independent_review")
+        or kind.startswith("review_")
+        or kind.endswith("_review")
+    )
+    if not verdict_like:
+        return False
+
+    if expected_reviewer:
+        return actor == expected_reviewer
+    if owner and actor:
+        return actor != owner
+    return bool(actor)
 
 
 def is_loop_autopilot_task(task: dict[str, Any]) -> bool:
@@ -137,36 +245,73 @@ def check_task(task: dict[str, Any]) -> list[str]:
                     schema_data = json.load(sfh)
                 jsonschema.validate(instance=evidence_data, schema=schema_data)
             except Exception as e:
-                gaps.append(f"product evidence schema validation failed: {e}")
+                message = getattr(e, "message", str(e).splitlines()[0])
+                gaps.append(f"product evidence schema validation failed: {message}")
         else:
             gaps.append("missing product evidence schema file at schemas/product-evidence.schema.json")
 
         # 2. Task consistency checks
         ev_task = evidence_data.get("task", {})
         if ev_task.get("id") != task.get("id"):
-            gaps.append(f"evidence manifest task ID mismatch: expected {task.get('id')}, got {ev_task.get('id')}")
+            gaps.append(
+                f"evidence manifest task ID mismatch: expected {task.get('id')}, "
+                f"got {ev_task.get('id')}"
+            )
         if task.get("owner") and ev_task.get("owner") != task.get("owner"):
-            gaps.append(f"evidence manifest owner mismatch: expected {task.get('owner')}, got {ev_task.get('owner')}")
+            gaps.append(
+                f"evidence manifest owner mismatch: expected {task.get('owner')}, "
+                f"got {ev_task.get('owner')}"
+            )
         if task.get("reviewer") and ev_task.get("reviewer") != task.get("reviewer"):
-            gaps.append(f"evidence manifest reviewer mismatch: expected {task.get('reviewer')}, got {ev_task.get('reviewer')}")
+            gaps.append(
+                f"evidence manifest reviewer mismatch: expected {task.get('reviewer')}, "
+                f"got {ev_task.get('reviewer')}"
+            )
         if ev_task.get("review_file") != review_file_path:
-            gaps.append(f"evidence manifest review_file path mismatch: expected {review_file_path}, got {ev_task.get('review_file')}")
+            gaps.append(
+                "evidence manifest review_file path mismatch: "
+                f"expected {review_file_path}, got {ev_task.get('review_file')}"
+            )
 
         # 3. Overall admission and acceptance checks
         overall_adm = str(ev_task.get("overall_admission") or "").lower()
-        if "reject" in overall_adm or "fail" in overall_adm:
-            gaps.append(f"evidence overall admission rejected or failed: {ev_task.get('overall_admission')}")
+        if not overall_adm:
+            gaps.append("missing evidence overall admission")
+        elif (
+            any(signal in overall_adm for signal in _BLOCKING_ADMISSION_SIGNALS)
+            or "reject" in overall_adm
+            or "fail" in overall_adm
+        ):
+            gaps.append(
+                "evidence overall admission is not done-eligible: "
+                f"{ev_task.get('overall_admission')}"
+            )
+        elif not _has_positive_overall_admission(overall_adm):
+            gaps.append(
+                "evidence overall admission is not an accepted closeout state: "
+                f"{ev_task.get('overall_admission')}"
+            )
 
         target_maturity = str(ev_task.get("target_maturity") or "").lower()
         if target_maturity == "live" and "evidence_only" in overall_adm:
-            gaps.append("unsupported maturity: 'live' target maturity cannot be accepted with 'evidence_only' admission constraint")
+            gaps.append(
+                "unsupported maturity: 'live' target maturity cannot be accepted "
+                "with 'evidence_only' admission constraint"
+            )
 
         acceptance_items = evidence_data.get("acceptance") or []
         for ac in acceptance_items:
             ac_id = ac.get("id", "?")
             ac_status = str(ac.get("status") or "").lower()
             if ac_status not in ("pass", "not_applicable"):
-                gaps.append(f"blocking acceptance requirement ID '{ac_id}': status is '{ac.get('status')}'")
+                gaps.append(
+                    f"blocking acceptance requirement ID '{ac_id}': "
+                    f"status is '{ac.get('status')}'"
+                )
+
+        blocking_risk_ids = _blocking_residual_risk_ids(evidence_data.get("residual_risks"))
+        for risk_id in blocking_risk_ids:
+            gaps.append(f"blocking residual risk '{risk_id}' remains open")
 
         # 4. Mock-only live claim check
         if target_maturity == "live":
@@ -184,7 +329,9 @@ def check_task(task: dict[str, Any]) -> list[str]:
 
             if bp_flagged or notes_flagged:
                 gaps.append(
-                    f"mock-only live claim detected (flagged: '{bp_flagged or notes_flagged}') violating live maturity target"
+                    "mock-only live claim detected "
+                    f"(flagged: '{bp_flagged or notes_flagged}') "
+                    "violating live maturity target"
                 )
 
         # 5. Missing core properties checks
@@ -211,28 +358,51 @@ def check_task(task: dict[str, Any]) -> list[str]:
         else:
             combined_restart = " ".join(str(p) for p in restart_proof).lower()
             if "mock" in combined_restart or "stub" in combined_restart:
-                gaps.append("restart proof contains mock or stub claims violating restart guardrail")
+                gaps.append(
+                    "restart proof contains mock or stub claims violating restart guardrail"
+                )
 
         # 5.3 Hosted check for frontend tasks
         is_frontend = (
             task.get("repository") == "execute-plans" or
-            any("execute-plans/" in str(f) or str(f).startswith("src/") for f in (task.get("artifacts") or [])) or
-            any("execute-plans/" in str(f) or str(f).startswith("src/") for f in (evidence_data.get("scope", {}).get("implementation_changed_files") or []))
+            any(
+                "execute-plans/" in str(f) or str(f).startswith("src/")
+                for f in (task.get("artifacts") or [])
+            ) or
+            any(
+                "execute-plans/" in str(f) or str(f).startswith("src/")
+                for f in (
+                    evidence_data.get("scope", {}).get("implementation_changed_files")
+                    or []
+                )
+            )
         )
         if is_frontend:
             sec_safety = evidence_data.get("security_and_safety") or {}
             hosted_fe = sec_safety.get("hosted_frontend") or {}
             fe_status = str(hosted_fe.get("status") or "").lower()
             if fe_status == "not_applicable":
-                gaps.append("missing hosted evidence: frontend tasks require explicit hosted desktop/mobile proof")
+                gaps.append(
+                    "missing hosted evidence: frontend tasks require explicit "
+                    "hosted desktop/mobile proof"
+                )
 
         # 5.4 Security checks
         sec_safety = evidence_data.get("security_and_safety") or {}
-        for sec_req in ("rbac", "tenant_isolation", "mfa", "no_live_capital", "two_person_approval"):
+        for sec_req in (
+            "rbac",
+            "tenant_isolation",
+            "mfa",
+            "no_live_capital",
+            "two_person_approval",
+        ):
             req_sec = sec_safety.get(sec_req) or {}
             req_status = str(req_sec.get("status") or "").lower()
             if req_status not in ("pass", "not_applicable"):
-                gaps.append(f"missing security evidence: {sec_req} status is not pass/not_applicable")
+                gaps.append(
+                    f"missing security evidence: {sec_req} "
+                    "status is not pass/not_applicable"
+                )
 
         # 5.5 Reviewer checks
         if not task.get("reviewer"):
@@ -241,15 +411,21 @@ def check_task(task: dict[str, Any]) -> list[str]:
             gaps.append("invalid reviewer: reviewer cannot be the owner")
 
         record_log = evidence_data.get("record_log") or []
-        reviewer_approved = False
-        for log_item in record_log:
-            log_kind = str(log_item.get("kind") or "").lower()
-            log_status = str(log_item.get("status") or "").lower()
-            if ("review" in log_kind or "approved" in log_kind) and log_status in ("pass", "approved"):
-                reviewer_approved = True
-                break
-        if not reviewer_approved and task.get("status") == "done":
-            gaps.append("missing reviewer verdict: no approved review verdict recorded in record_log")
+        reviewer_approved = any(
+            _is_formal_reviewer_verdict(
+                log_item,
+                expected_reviewer=str(
+                    ev_task.get("reviewer") or task.get("reviewer") or ""
+                ).strip(),
+                owner=str(ev_task.get("owner") or task.get("owner") or "").strip(),
+            )
+            for log_item in record_log
+        )
+        if not reviewer_approved:
+            gaps.append(
+                "missing reviewer verdict: no approved formal reviewer verdict "
+                "recorded in record_log"
+            )
 
         # 6. Phantom cross-repo delivery & merge-target ancestry
         impl_delivery = evidence_data.get("implementation_delivery") or {}
@@ -272,11 +448,152 @@ def check_task(task: dict[str, Any]) -> list[str]:
                         capture_output=True
                     )
                     if res.returncode != 0:
-                        gaps.append(f"merge-target ancestry validation failed: {merge_sha} is not an ancestor of HEAD")
+                        gaps.append(
+                            "merge-target ancestry validation failed: "
+                            f"{merge_sha} is not an ancestor of HEAD"
+                        )
                 except Exception:
                     pass
 
     return gaps
+
+
+def _task_from_evidence_manifest(
+    manifest_path: Path,
+    evidence_data: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    ev_task = evidence_data.get("task") if isinstance(evidence_data.get("task"), dict) else {}
+    task_id = str(ev_task.get("id") or "").strip()
+    if not task_id:
+        return None, "manifest task.id is missing"
+
+    review_file = _display_path(manifest_path)
+    task = {
+        "id": task_id,
+        "status": "done",
+        "loop_ids": ["loop_product_level_replay"],
+        "owner": ev_task.get("owner"),
+        "reviewer": ev_task.get("reviewer"),
+        "repository": ev_task.get("repository"),
+        "review_file": review_file,
+        "artifacts": (
+            evidence_data.get("scope", {}).get("implementation_changed_files")
+            if isinstance(evidence_data.get("scope"), dict)
+            else []
+        ),
+    }
+    return task, None
+
+
+def audit_evidence_root(evidence_root: Path) -> dict[str, Any]:
+    manifest_paths = sorted(evidence_root.rglob("evidence.json"))
+    results: list[dict[str, Any]] = []
+    excluded: list[dict[str, str]] = []
+
+    for manifest_path in manifest_paths:
+        display_path = _display_path(manifest_path)
+        try:
+            with open(manifest_path, encoding="utf-8") as fh:
+                evidence_data = json.load(fh)
+        except Exception as exc:
+            excluded.append({"manifest": display_path, "reason": f"failed to parse JSON: {exc}"})
+            continue
+
+        task, excluded_reason = _task_from_evidence_manifest(manifest_path, evidence_data)
+        if task is None:
+            excluded.append(
+                {
+                    "manifest": display_path,
+                    "reason": excluded_reason or "not a task evidence manifest",
+                }
+            )
+            continue
+
+        gaps = check_task(task)
+        ev_task = evidence_data.get("task") if isinstance(evidence_data.get("task"), dict) else {}
+        results.append(
+            {
+                "task_id": task["id"],
+                "manifest": display_path,
+                "owner": ev_task.get("owner"),
+                "reviewer": ev_task.get("reviewer"),
+                "overall_admission": ev_task.get("overall_admission"),
+                "result": "pass" if not gaps else "fail",
+                "gap_count": len(gaps),
+                "gaps": gaps,
+            }
+        )
+
+    failed = [result for result in results if result["result"] == "fail"]
+    return {
+        "audit_id": "closeout-truth-audit-2026-07-16",
+        "generated_at": (
+            datetime.now(UTC)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        ),
+        "mode": "read_only_evidence_replay",
+        "source_root": _display_path(evidence_root),
+        "selection": {
+            "included_manifests": len(results),
+            "excluded_manifests": excluded,
+            "archive_mutation": "none",
+        },
+        "summary": {
+            "passed": len(results) - len(failed),
+            "failed": len(failed),
+            "scanned": len(results),
+        },
+        "results": results,
+    }
+
+
+def write_audit_json(audit: dict[str, Any], output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as fh:
+        json.dump(audit, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+
+
+def write_audit_markdown(audit: dict[str, Any], output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# Loop Product Closeout Truth Audit",
+        "",
+        f"- Audit ID: `{audit['audit_id']}`",
+        f"- Generated at: `{audit['generated_at']}`",
+        f"- Mode: `{audit['mode']}`",
+        f"- Source root: `{audit['source_root']}`",
+        f"- Archive mutation: `{audit['selection']['archive_mutation']}`",
+        f"- Scanned: {audit['summary']['scanned']}",
+        f"- Passed: {audit['summary']['passed']}",
+        f"- Failed: {audit['summary']['failed']}",
+        "",
+        "## Results",
+        "",
+        "| Task | Admission | Verdict | Gaps |",
+        "|---|---|---:|---|",
+    ]
+
+    for result in audit["results"]:
+        gaps = "<br>".join(result["gaps"]) if result["gaps"] else "none"
+        lines.append(
+            "| `{task_id}` | `{admission}` | `{verdict}` | {gaps} |".format(
+                task_id=result["task_id"],
+                admission=result.get("overall_admission") or "",
+                verdict=result["result"],
+                gaps=gaps,
+            )
+        )
+
+    if audit["selection"]["excluded_manifests"]:
+        lines.extend(["", "## Excluded Manifests", ""])
+        for excluded in audit["selection"]["excluded_manifests"]:
+            lines.append(f"- `{excluded['manifest']}`: {excluded['reason']}")
+
+    lines.append("")
+    output_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def load_status(status_file: Path) -> dict[str, Any]:
@@ -329,8 +646,26 @@ def run(status_file: Path, task_id: str | None) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--task-id", metavar="ID", help="Check only this task ID")
+    parser.add_argument(
+        "--evidence-root",
+        metavar="PATH",
+        help="Replay guardrail against evidence.json manifests under PATH",
+    )
+    parser.add_argument(
+        "--audit-json",
+        metavar="PATH",
+        help="Write evidence replay audit JSON to PATH",
+    )
+    parser.add_argument(
+        "--audit-md",
+        metavar="PATH",
+        help="Write evidence replay audit Markdown to PATH",
+    )
     parser.add_argument(
         "--status-file",
         metavar="PATH",
@@ -338,6 +673,24 @@ def main() -> None:
         help=f"Path to ai-status.json (default: {DEFAULT_STATUS_FILE})",
     )
     args = parser.parse_args()
+
+    if args.evidence_root:
+        audit = audit_evidence_root(Path(args.evidence_root))
+        if args.audit_json:
+            write_audit_json(audit, Path(args.audit_json))
+        if args.audit_md:
+            write_audit_markdown(audit, Path(args.audit_md))
+        for result in audit["results"]:
+            label = "OK" if result["result"] == "pass" else "FAIL"
+            print(f"[{label}] {result['task_id']} ({result['overall_admission']})")
+            for gap in result["gaps"]:
+                print(f"       ✗ {gap}")
+        summary = audit["summary"]
+        print(
+            f"\n{summary['passed']}/{summary['scanned']} evidence manifest(s) "
+            "passed closeout truth replay."
+        )
+        sys.exit(1 if summary["failed"] else 0)
 
     status_path = Path(args.status_file)
     rc = run(status_path, args.task_id)
