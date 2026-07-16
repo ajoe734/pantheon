@@ -3045,6 +3045,56 @@ def _write_json_artifact(path: Path, payload: object) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _install_content_addressed_projection(
+    projection_root: Path,
+) -> tuple[str, dict, dict, dict]:
+    """Package runtime-shaped projection output as an immutable G2 fixture.
+
+    Product code owns publication semantics.  The sequencing verifier tests need
+    an independently constructed content-addressed snapshot without changing the
+    runtime producer merely to satisfy this task's evidence contract.
+    """
+
+    current = projection_root / "current"
+    manifest = json.loads((current / "manifest.json").read_text(encoding="utf-8"))
+    journeys = json.loads(
+        (current / "trade_journey_events.json").read_text(encoding="utf-8")
+    )
+    loops = json.loads((current / "loop_runs.json").read_text(encoding="utf-8"))
+    projection = {
+        "manifest": manifest,
+        "trade_journey_events": journeys,
+        "loop_runs": loops,
+    }
+    generation = manifest["generation"]
+    assert type(generation) is int
+    bundle_sha256 = hashlib.sha256(
+        json.dumps(
+            projection,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    generation_name = f"g{generation:012d}-{bundle_sha256}"
+    generations_root = projection_root / "generations"
+    generations_root.chmod(0o755)
+    generation_path = generations_root / generation_name
+    generation_path.mkdir()
+    for filename, payload in {
+        "manifest.json": manifest,
+        "trade_journey_events.json": journeys,
+        "loop_runs.json": loops,
+    }.items():
+        path = generation_path / filename
+        _write_json_artifact(path, payload)
+        path.chmod(0o444)
+    generation_path.chmod(0o555)
+    current.unlink()
+    current.symlink_to(Path("generations") / generation_name)
+    return generation_name, manifest, journeys, loops
+
+
 def _overlay_payload() -> dict:
     return json.loads(SEQUENCING_OVERLAY.read_text(encoding="utf-8"))
 
@@ -3608,6 +3658,7 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     )
     projector.project_records(rows, mode="live", source_high_watermark=len(rows))
     projection_root.chmod(0o755)
+    _install_content_addressed_projection(projection_root)
     current = projection_root / "current"
     manifest = json.loads((current / "manifest.json").read_text(encoding="utf-8"))
     journeys = json.loads(
@@ -4279,6 +4330,7 @@ def test_g2_v4_rejects_divergent_current_target_projection(
         journeys,
         loops,
     )
+    _install_content_addressed_projection(projection_root)
 
     with pytest.raises(
         dispatcher.DispatchError,
@@ -5319,6 +5371,7 @@ def test_g2_v4_rejects_bundle_with_a_second_complete_lifecycle(
         mode="live",
         source_high_watermark=len(combined_rows),
     )
+    _install_content_addressed_projection(projection_root)
     current = projection_root / "current"
     manifest = _read_artifact(current / "manifest.json")
     journeys = _read_artifact(current / "trade_journey_events.json")
