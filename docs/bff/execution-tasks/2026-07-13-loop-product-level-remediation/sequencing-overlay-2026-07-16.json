@@ -115,8 +115,16 @@
         "sha256": "43473f121f5bde17435dbd401697ac99455eb1ebdc534ee93b29318df8cb496f"
       },
       {
+        "path": "services/trade_journey/materializer.py",
+        "sha256": "67a80db49c605cc3e156fa043d6f986ef570e2554446c4d2dffb14272c320366"
+      },
+      {
         "path": "services/trade_journey/correlation_envelope.py",
         "sha256": "60c6877fa558640ee91570fc430f8b3ab935c3d2905d4ce55027fe8e04b5c4b1"
+      },
+      {
+        "path": "services/control-plane/specs/trade_journey/correlation_envelope.py",
+        "sha256": "021780084935bac8de07f70be09e91df09ab500adc511fc12c396a674616ff9c"
       }
     ],
     "canonical_telemetry_dsn_env": "TELEMETRY_DB_DSN",

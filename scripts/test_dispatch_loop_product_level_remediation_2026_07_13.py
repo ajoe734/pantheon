@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import fcntl
@@ -13,6 +14,7 @@ from pathlib import Path
 import re
 import runpy
 import subprocess
+import sys
 import tempfile
 
 import pytest
@@ -3032,6 +3034,17 @@ def _load_dispatcher_module():
     return module
 
 
+def _load_sequencing_gate_module():
+    module_name = "loop_product_sequencing_gate_test"
+    path = ROOT / ".orchestrator" / "sequencing_gate.py"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def _json_bytes(payload: object) -> bytes:
     return (
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -3142,6 +3155,28 @@ def test_sequencing_overlay_v2_is_exact_and_partitions_all_48_tasks() -> None:
         in dispatcher.GATED_SEQUENCING_CLASSIFICATIONS
     }
     assert set(catalog["release_gate"]["gated_task_ids"]) == gated
+    assert Counter(
+        entry["classification"] for entry in entries.values()
+    ) == {
+        "permitted before the paper-trade proof": 21,
+        "part of the G2 proof path": 8,
+        "deferred strict-auth/security/governance work": 11,
+        "final verification/closeout after the appropriate gate": 8,
+    }
+    assert Counter(entry["wave"] for entry in entries.values()) == {
+        0: 4,
+        1: 16,
+        2: 6,
+        3: 3,
+        5: 11,
+        6: 4,
+        7: 1,
+        8: 1,
+        9: 1,
+        10: 1,
+    }
+    assert len(gated) == 19
+    assert len(set(entries) - gated) == 29
     assert catalog["g2_evidence_contract"]["version"] == 4
     assert (
         catalog["g2_evidence_contract"]["target_task"]
@@ -3159,6 +3194,34 @@ def test_sequencing_execution_matrix_matches_all_48_overlay_entries() -> None:
     assert len(ids) == 48
     assert len(ids) == len(set(ids))
     assert set(ids) == set(overlay["tasks"])
+    dispatcher = _load_dispatcher_module()
+    dispatcher.catalog_path = lambda: CATALOG
+    effective = load_catalog()
+    dispatcher.apply_sequencing_overlay(effective, SEQUENCING_OVERLAY)
+    effective_digest = dispatcher.canonical_json_sha256(effective)
+    effective_graph_digest = dispatcher.canonical_json_sha256(
+        dispatcher.catalog_graph_projection(effective, effective_digest)
+    )
+    raw_overlay_digest = hashlib.sha256(SEQUENCING_OVERLAY.read_bytes()).hexdigest()
+    for digest in (
+        raw_overlay_digest,
+        effective_digest,
+        effective_graph_digest,
+    ):
+        assert f"`{digest}`" in matrix
+    classifications = Counter(
+        entry["classification"] for entry in overlay["tasks"].values()
+    )
+    assert classifications == {
+        "permitted before the paper-trade proof": 21,
+        "part of the G2 proof path": 8,
+        "deferred strict-auth/security/governance work": 11,
+        "final verification/closeout after the appropriate gate": 8,
+    }
+    assert "keeps all 19 gated contracts absent" in matrix
+    assert "materializes only the 29 ungated tasks" in matrix
+    for row in overlay["g2_evidence_contract"]["verifier_source_files"]:
+        assert f"`{row['path']}`=`{row['sha256']}`" in matrix
 
     for index, match in enumerate(headings):
         task_id = match.group(1)
@@ -3190,6 +3253,13 @@ def test_sequencing_execution_matrix_matches_all_48_overlay_entries() -> None:
         "extra_id",
         "extra_entry_key",
         "wave_inversion",
+        "invalid_classification",
+        "empty_rationale",
+        "missing_amended_dependencies",
+        "non_list_amended_dependencies",
+        "wrong_catalog_source_hash",
+        "wrong_addendum_source_hash",
+        "wrong_verifier_source_hash",
     ],
 )
 def test_sequencing_overlay_v2_rejects_authority_set_and_schema_mutations(
@@ -3211,6 +3281,24 @@ def test_sequencing_overlay_v2_rejects_authority_set_and_schema_mutations(
         )
     elif mutation == "wave_inversion":
         payload["tasks"]["LOOP-PROD-000"]["wave"] = 1
+    elif mutation == "invalid_classification":
+        payload["tasks"]["LOOP-PROD-000"]["classification"] = "unclassified"
+    elif mutation == "empty_rationale":
+        payload["tasks"]["LOOP-PROD-000"]["rationale"] = ""
+    elif mutation == "missing_amended_dependencies":
+        payload["tasks"]["LOOP-PROD-000"].pop("amended_depends_on")
+    elif mutation == "non_list_amended_dependencies":
+        payload["tasks"]["LOOP-PROD-000"]["amended_depends_on"] = "none"
+    elif mutation == "wrong_catalog_source_hash":
+        payload["source_hashes"]["tasks_catalog_sha256"] = "0" * 64
+        payload["g2_evidence_contract"]["tasks_catalog_sha256"] = "0" * 64
+    elif mutation == "wrong_addendum_source_hash":
+        payload["source_hashes"]["sequencing_addendum_sha256"] = "0" * 64
+        payload["g2_evidence_contract"]["sequencing_addendum_sha256"] = "0" * 64
+    elif mutation == "wrong_verifier_source_hash":
+        payload["g2_evidence_contract"]["verifier_source_files"][0][
+            "sha256"
+        ] = "0" * 64
     else:
         payload["tasks"]["LOOP-PROD-000"]["unbound"] = True
     overlay = _write_mutated_overlay(
@@ -4844,6 +4932,73 @@ def test_g2_v4_rejects_drifted_verifier_source_bytes(
         )
 
 
+def test_g2_v4_uses_pinned_source_bytes_not_preloaded_modules(
+    g2_v2_fixture: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.trade_journey import hosted_lifecycle_probe
+    from services.trade_journey import lifecycle_projector
+
+    monkeypatch.setattr(hosted_lifecycle_probe, "_complete_candidates", lambda rows: [])
+    monkeypatch.setattr(lifecycle_projector, "_fingerprint", lambda value: "0" * 64)
+    admission = g2_v2_fixture["dispatcher"]._validate_g2_evidence(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
+
+    assert admission["g2_evidence_sha256"] == hashlib.sha256(
+        g2_v2_fixture["paths"]["g2"].read_bytes()
+    ).hexdigest()
+
+
+def test_g2_v4_rejects_authoritative_remote_transitive_source_drift(
+    g2_v2_fixture: dict,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    relative = "services/control-plane/specs/trade_journey/correlation_envelope.py"
+    source = dispatcher.REPO_ROOT / relative
+    original = source.read_bytes()
+    source.write_bytes(original + b"\n# remote drift\n")
+    _fixture_git(dispatcher.REPO_ROOT, "add", relative)
+    _fixture_git(
+        dispatcher.REPO_ROOT,
+        "commit",
+        "-m",
+        "fixture: drift authoritative verifier source",
+    )
+    drifted_commit = _fixture_git(dispatcher.REPO_ROOT, "rev-parse", "HEAD")
+    source.write_bytes(original)
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="authoritative verifier source bytes drifted",
+    ):
+        dispatcher._validate_g2_verifier_sources(
+            g2_v2_fixture["contract"],
+            authoritative_commit_sha=drifted_commit,
+        )
+
+
+@pytest.mark.parametrize("field", ["owner", "reviewer"])
+def test_g2_v4_rejects_closeout_actor_outside_fleet(
+    g2_v2_fixture: dict,
+    field: str,
+) -> None:
+    g2_v2_fixture["closeout_task"][field] = "Mallory"
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="closeout owner and reviewer must be distinct",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
 def test_g2_v2_rejects_stale_evidence(g2_v2_fixture: dict) -> None:
     evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
     evidence["issued_at"] = "2026-07-13T00:03:00Z"
@@ -5925,14 +6080,26 @@ def test_explicit_sequencing_overlay_fresh_apply_defers_gate_tasks() -> None:
             if row["task_id"] in gated_ids
         }
         assert set(gated_transitions) == gated_ids
-        assert all(
-            row["after_status"] == "absent"
-            and row["after_task_snapshot_sha256"] == canonical_sha256(None)
-            and row["after_task_contract_sha256"] == canonical_sha256(None)
-            and row["after_source_ref_sha256"] == canonical_sha256(None)
-            and row["gate_marker_sha256"] == canonical_sha256(None)
-            for row in gated_transitions.values()
-        )
+        catalog_by_id = {task["id"]: task for task in catalog["tasks"]}
+        for task_id, row in gated_transitions.items():
+            planned = dispatcher.build_task(
+                catalog_by_id[task_id],
+                catalog,
+                dispatcher.canonical_json_sha256(catalog),
+                epoch["applied_at"],
+            )
+            assert row["after_status"] == "absent"
+            assert row["after_task_snapshot_sha256"] == canonical_sha256(None)
+            assert row["after_task_contract_sha256"] == (
+                dispatcher.task_contract_sha256(planned)
+            )
+            assert row["after_source_ref_sha256"] == canonical_sha256(
+                planned["source_ref"]
+            )
+            assert row["acceptance_deferral_sha256"] == canonical_sha256(
+                planned.get("acceptance_deferral")
+            )
+            assert row["gate_marker_sha256"] == canonical_sha256(None)
 
 
 def test_documented_default_apply_uses_authoritative_sequencing_overlay() -> None:
@@ -6244,6 +6411,102 @@ def test_valid_g2_release_is_durable_and_does_not_recheck_wall_clock(
     assert changed_again is False
 
 
+def test_fresh_dispatch_release_is_consumed_with_exact_task_authority(
+    g2_v2_fixture: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    tasks, _ = _park_complete_g2_catalog(g2_v2_fixture, monkeypatch)
+    admission = dispatcher._validate_g2_evidence(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "resolve_g2_evidence_admission",
+        lambda state, catalog: deepcopy(admission),
+    )
+    created, _, _, logs, changed = dispatcher.materialize(
+        state=g2_v2_fixture["state"],
+        tasks=tasks,
+        catalog=g2_v2_fixture["catalog"],
+        catalog_digest=g2_v2_fixture["catalog_digest"],
+        timestamp=G2_RELEASED_AT,
+    )
+    assert changed is True
+    assert set(created) == set(
+        g2_v2_fixture["catalog"]["release_gate"]["gated_task_ids"]
+    )
+    dispatcher.enqueue_activity_outbox(
+        g2_v2_fixture["state"],
+        logs,
+        catalog=g2_v2_fixture["catalog"],
+        catalog_digest=g2_v2_fixture["catalog_digest"],
+    )
+    durable_events = deepcopy(
+        g2_v2_fixture["state"]["program_activity_outbox"]["events"]
+    )
+    g2_v2_fixture["state"]["program_activity_outbox"] = None
+
+    sequencing_gate = _load_sequencing_gate_module()
+    proof = sequencing_gate.build_sequencing_release_audit_proof(
+        g2_v2_fixture["state"], durable_events
+    )
+    assert proof is not None
+    by_id = {
+        task["id"]: task for task in g2_v2_fixture["state"]["tasks"]
+    }
+    gated_ids = set(sequencing_gate.EXPECTED_GATED_TASK_IDS)
+    assert gated_ids == set(created)
+    assert all(
+        not sequencing_gate.task_is_sequencing_parked(
+            by_id[task_id],
+            g2_v2_fixture["state"],
+            release_audit_proof=proof,
+        )
+        for task_id in gated_ids
+    )
+
+    target = by_id["LOOP-PROD-AUTH-001"]
+
+    def mutate_contract(task: dict) -> None:
+        task["title"] += " forged"
+        task["source_ref"]["task_contract_sha256"] = (
+            sequencing_gate._task_contract_sha256(task)
+        )
+
+    def mutate_source_ref(task: dict) -> None:
+        task["source_ref"]["unbound"] = "forged"
+
+    def mutate_runtime_authority(task: dict) -> None:
+        task["formal_review_required"] = False
+
+    def mutate_reviewer(task: dict) -> None:
+        task["reviewer"] = task["owner"]
+
+    def mutate_acceptance_deferral(task: dict) -> None:
+        task["acceptance_deferral"] = {"policy_id": "forged"}
+        task["source_ref"]["acceptance_deferral_sha256"] = (
+            sequencing_gate.canonical_sha256(task["acceptance_deferral"])
+        )
+
+    for mutate in (
+        mutate_contract,
+        mutate_source_ref,
+        mutate_runtime_authority,
+        mutate_reviewer,
+        mutate_acceptance_deferral,
+    ):
+        forged = deepcopy(target)
+        mutate(forged)
+        assert sequencing_gate.task_is_sequencing_parked(
+            forged,
+            g2_v2_fixture["state"],
+            release_audit_proof=proof,
+        )
+
+
 def test_new_g2_release_rechecks_freshness_immediately_before_commit(
     g2_v2_fixture: dict,
     monkeypatch: pytest.MonkeyPatch,
@@ -6300,6 +6563,35 @@ def test_new_g2_release_rechecks_freshness_immediately_before_commit(
             g2_v2_fixture["catalog_digest"],
             now=expired,
         )
+
+
+def test_atomic_status_write_aborts_when_pre_replace_freshness_fails(
+    tmp_path: Path,
+) -> None:
+    dispatcher = _load_dispatcher_module()
+    status_path = tmp_path / "ai-status.json"
+    status_path.write_text('{"sentinel":"old"}\n', encoding="utf-8")
+    before = status_path.read_bytes()
+    callback_calls = 0
+
+    def reject_expired_release() -> None:
+        nonlocal callback_calls
+        callback_calls += 1
+        raise dispatcher.DispatchError("expired at replace boundary")
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="expired at replace boundary",
+    ):
+        dispatcher.atomic_write_json(
+            status_path,
+            {"sentinel": "new"},
+            before_replace=reject_expired_release,
+        )
+
+    assert callback_calls == 1
+    assert status_path.read_bytes() == before
+    assert list(tmp_path.glob(".ai-status.json.*.tmp")) == []
 
 
 def test_pending_release_recovery_uses_committed_admission_after_artifact_drift(

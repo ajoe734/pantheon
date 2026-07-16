@@ -23,7 +23,7 @@ import subprocess
 import sys
 import tempfile
 from types import ModuleType
-from typing import Any, Iterator, Mapping
+from typing import Any, Callable, Iterator, Mapping
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
@@ -88,7 +88,7 @@ EXPECTED_SEQUENCING_SOURCE_HASHES = {
     "merge_pr_3737_sha": "a4b5df9a51bc3da6df0d39d422d9db4edc553aba",
 }
 EXPECTED_SEQUENCING_OVERLAY_SHA256 = (
-    "7596b40ac4a0cd25b801196798c8eb54706f6a9cecfa764ff5f751165f0db11e"
+    "bd116cd9eadaded175611eda55a89c93b9e0f064f3f7736c719ac83ada989432"
 )
 EXPECTED_PRODUCT_EVIDENCE_SCHEMA_SHA256 = (
     "5340d8394a31fa9badf4519b2cdbac4f02317e9d930ddd250c8b7374015d3a73"
@@ -249,8 +249,16 @@ G2_VERIFIER_SOURCE_FILES = (
         "sha256": "43473f121f5bde17435dbd401697ac99455eb1ebdc534ee93b29318df8cb496f",
     },
     {
+        "path": "services/trade_journey/materializer.py",
+        "sha256": "67a80db49c605cc3e156fa043d6f986ef570e2554446c4d2dffb14272c320366",
+    },
+    {
         "path": "services/trade_journey/correlation_envelope.py",
         "sha256": "60c6877fa558640ee91570fc430f8b3ab935c3d2905d4ce55027fe8e04b5c4b1",
+    },
+    {
+        "path": "services/control-plane/specs/trade_journey/correlation_envelope.py",
+        "sha256": "021780084935bac8de07f70be09e91df09ab500adc511fc12c396a674616ff9c",
     },
 )
 G2_EVIDENCE_KEYS = {
@@ -495,6 +503,7 @@ SEQUENCING_RELEASE_ADMISSION_FIELDS = frozenset(
         "product_manifest_sha256",
         "product_manifest_sidecar_sha256",
         "target_task_snapshot_sha256",
+        "owner",
         "reviewer",
         "review_binding_sha256",
         "review_approval_event_sha256",
@@ -3238,7 +3247,12 @@ def shared_dispatch_locks(
         ) from exc
 
 
-def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+def atomic_write_json(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    before_replace: Callable[[], None] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temp_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
@@ -3252,6 +3266,8 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             os.fsync(handle.fileno())
         if path.exists():
             os.chmod(temp_path, path.stat().st_mode)
+        if before_replace is not None:
+            before_replace()
         os.replace(temp_path, path)
         directory_fd = os.open(path.parent, os.O_RDONLY)
         try:
@@ -4981,6 +4997,10 @@ def validate_program_graph_sources(
                 catalog,
                 str(projection["catalog_sha256"]),
             )
+            if epoch is None:
+                raise DispatchError(
+                    "current sequencing graph is missing its immutable epoch record"
+                )
             transitions = {
                 str(row.get("task_id") or ""): row
                 for row in (epoch or {}).get("task_transitions") or []
@@ -5698,10 +5718,20 @@ def validate_sequencing_epoch_record(
             # until the exact G2 release is admitted.
             after = None
             marker = None
-            after_contract_sha256 = canonical_json_sha256(None)
-            after_source_ref_sha256 = canonical_json_sha256(None)
+            planned = build_task(
+                by_id[task_id],
+                catalog,
+                catalog_digest,
+                applied_at,
+            )
+            after_contract_sha256 = task_contract_sha256(planned)
+            after_source_ref_sha256 = canonical_json_sha256(
+                planned.get("source_ref")
+            )
             after_status = "absent"
-            acceptance_deferral_sha256 = canonical_json_sha256(None)
+            acceptance_deferral_sha256 = canonical_json_sha256(
+                planned.get("acceptance_deferral")
+            )
         else:
             after, marker = _sequencing_epoch_after_task(
                 preimage if isinstance(preimage, dict) else None,
@@ -5953,6 +5983,12 @@ def install_fresh_sequencing_epoch(
     transitions: list[dict[str, Any]] = []
     for task_id in expected_ids:
         if task_id in gated_ids:
+            planned = build_task(
+                effective_by_id[task_id],
+                catalog,
+                catalog_digest,
+                timestamp,
+            )
             transitions.append(
                 {
                     "task_id": task_id,
@@ -5960,12 +5996,16 @@ def install_fresh_sequencing_epoch(
                     "before_task_snapshot_sha256": canonical_json_sha256(None),
                     "after_task_snapshot_sha256": canonical_json_sha256(None),
                     "before_task_contract_sha256": canonical_json_sha256(None),
-                    "after_task_contract_sha256": canonical_json_sha256(None),
+                    "after_task_contract_sha256": task_contract_sha256(planned),
                     "before_source_ref_sha256": canonical_json_sha256(None),
-                    "after_source_ref_sha256": canonical_json_sha256(None),
+                    "after_source_ref_sha256": canonical_json_sha256(
+                        planned.get("source_ref")
+                    ),
                     "before_status": "absent",
                     "after_status": "absent",
-                    "acceptance_deferral_sha256": canonical_json_sha256(None),
+                    "acceptance_deferral_sha256": canonical_json_sha256(
+                        planned.get("acceptance_deferral")
+                    ),
                     "gate_marker_sha256": canonical_json_sha256(None),
                 }
             )
@@ -6139,6 +6179,7 @@ def validate_sequencing_release_record(
         "product_manifest_sha256",
         "product_manifest_sidecar_sha256",
         "target_task_snapshot_sha256",
+        "owner",
         "reviewer",
         "review_binding_sha256",
         "review_approval_event_sha256",
@@ -6157,6 +6198,8 @@ def validate_sequencing_release_record(
         "task_id",
         "before_task_snapshot_sha256",
         "after_task_snapshot_sha256",
+        "after_task_contract_sha256",
+        "after_source_ref_sha256",
         "before_status",
         "after_status",
     }
@@ -6201,6 +6244,9 @@ def validate_sequencing_release_record(
         for row in epoch.get("task_transitions") or []
         if isinstance(row, dict)
     }
+    effective_by_id = {
+        str(task["id"]): task for task in catalog.get("tasks") or []
+    }
     gated_ids = set(gate.get("gated_task_ids") or [])
     expected_transition_ids = [
         str(task["id"])
@@ -6212,6 +6258,16 @@ def validate_sequencing_release_record(
         task_id = str(transition.get("task_id") or "") if isinstance(transition, dict) else ""
         epoch_transition = epoch_transitions.get(task_id) or {}
         expected_before_status = epoch_transition.get("after_status")
+        expected_runtime = (
+            build_task(
+                effective_by_id[task_id],
+                catalog,
+                catalog_digest,
+                str(record["released_at"]),
+            )
+            if task_id in effective_by_id
+            else None
+        )
         if (
             not isinstance(transition, dict)
             or set(transition) != transition_fields
@@ -6220,6 +6276,15 @@ def validate_sequencing_release_record(
             or transition.get("before_status") != expected_before_status
             or transition.get("after_status") != "todo"
             or task_id not in epoch_transitions
+            or not isinstance(expected_runtime, dict)
+            or transition.get("after_task_contract_sha256")
+            != task_contract_sha256(expected_runtime)
+            or transition.get("after_task_contract_sha256")
+            != epoch_transition.get("after_task_contract_sha256")
+            or transition.get("after_source_ref_sha256")
+            != canonical_json_sha256(expected_runtime.get("source_ref"))
+            or transition.get("after_source_ref_sha256")
+            != epoch_transition.get("after_source_ref_sha256")
             or transition.get("before_task_snapshot_sha256")
             != epoch_transition.get("after_task_snapshot_sha256")
             or any(
@@ -6227,6 +6292,8 @@ def validate_sequencing_release_record(
                 for field in (
                     "before_task_snapshot_sha256",
                     "after_task_snapshot_sha256",
+                    "after_task_contract_sha256",
+                    "after_source_ref_sha256",
                 )
             )
         ):
@@ -6248,6 +6315,7 @@ def validate_sequencing_release_record(
         for field in SEQUENCING_RELEASE_ADMISSION_FIELDS
     }
     digest_fields = SEQUENCING_RELEASE_ADMISSION_FIELDS - {
+        "owner",
         "reviewer",
         "g2_issued_at",
         "g2_expires_at",
@@ -6262,6 +6330,8 @@ def validate_sequencing_release_record(
     attestation = record.get("canonical_source_attestation")
     contract = catalog.get("g2_evidence_contract") or {}
     reviewer = record.get("reviewer")
+    owner = record.get("owner")
+    allowed_owners = set(catalog.get("allowed_owners") or [])
     if (
         any(not _is_lower_hex(record.get(field), 64) for field in digest_fields)
         or not _is_lower_hex(record.get("g2_artifact_commit_sha"), 40)
@@ -6274,7 +6344,11 @@ def validate_sequencing_release_record(
         or not _g2_source_attestation_is_exact(attestation, contract)
         or not isinstance(reviewer, str)
         or not reviewer.strip()
-        or reviewer not in set(catalog.get("allowed_owners") or [])
+        or not isinstance(owner, str)
+        or not owner.strip()
+        or owner == reviewer
+        or owner not in allowed_owners
+        or reviewer not in allowed_owners
         or not _is_lower_hex(record.get("release_admission_sha256"), 64)
         or record.get("release_admission_sha256")
         != canonical_json_sha256(admission)
@@ -6556,6 +6630,10 @@ def materialize(
                         "task_id": task_id,
                         "before_task_snapshot_sha256": canonical_json_sha256(before),
                         "after_task_snapshot_sha256": canonical_json_sha256(existing),
+                        "after_task_contract_sha256": task_contract_sha256(existing),
+                        "after_source_ref_sha256": canonical_json_sha256(
+                            existing.get("source_ref")
+                        ),
                         "before_status": "blocked",
                         "after_status": str(existing["status"]),
                     }
@@ -6589,6 +6667,12 @@ def materialize(
                     "before_task_snapshot_sha256": canonical_json_sha256(None),
                     "after_task_snapshot_sha256": canonical_json_sha256(
                         materialized
+                    ),
+                    "after_task_contract_sha256": task_contract_sha256(
+                        materialized
+                    ),
+                    "after_source_ref_sha256": canonical_json_sha256(
+                        materialized.get("source_ref")
                     ),
                     "before_status": "absent",
                     "after_status": "todo",
@@ -6786,7 +6870,14 @@ def _resolve_g2_closeout_task(
         raise DispatchError("G2 target is not done with completed outcome")
     owner = str(task.get("owner") or "").strip()
     reviewer = str(task.get("reviewer") or "").strip()
-    if not owner or not reviewer or owner == reviewer:
+    allowed_owners = set(catalog.get("allowed_owners") or [])
+    if (
+        not owner
+        or not reviewer
+        or owner == reviewer
+        or owner not in allowed_owners
+        or reviewer not in allowed_owners
+    ):
         raise DispatchError("G2 closeout owner and reviewer must be distinct")
     if task.get("review_file") != contract.get("closeout_manifest_path"):
         raise DispatchError("G2 closeout review_file mismatch")
@@ -6890,10 +6981,11 @@ def _validate_g2_verifier_sources(
     contract: Mapping[str, Any],
     *,
     authoritative_commit_sha: str | None = None,
-) -> None:
+) -> dict[str, bytes]:
     expected = [dict(row) for row in G2_VERIFIER_SOURCE_FILES]
     if contract.get("verifier_source_files") != expected:
         raise DispatchError("G2 verifier source contract is not exact")
+    validated: dict[str, bytes] = {}
     for row in expected:
         relative_path = _safe_repo_relative_path(
             row["path"],
@@ -6906,6 +6998,7 @@ def _validate_g2_verifier_sources(
         )
         if sha256_bytes(local_raw) != row["sha256"]:
             raise DispatchError("G2 verifier source bytes drifted")
+        validated[row["path"]] = local_raw
         if authoritative_commit_sha is not None:
             committed_raw = _git_output(
                 REPO_ROOT,
@@ -6916,6 +7009,81 @@ def _validate_g2_verifier_sources(
                 raise DispatchError(
                     "G2 authoritative verifier source bytes drifted"
                 )
+    return validated
+
+
+def _load_pinned_g2_verifier_modules(
+    contract: Mapping[str, Any],
+) -> tuple[ModuleType, ModuleType]:
+    """Compile the exact pinned source bytes without import-cache/pyc trust."""
+
+    source_bytes = _validate_g2_verifier_sources(contract)
+    correlation_path = (
+        "services/control-plane/specs/trade_journey/correlation_envelope.py"
+    )
+    module_sources = (
+        (
+            "services.trade_journey.correlation_envelope",
+            correlation_path,
+        ),
+        (
+            "services.trade_journey.materializer",
+            "services/trade_journey/materializer.py",
+        ),
+        (
+            "services.trade_journey.lifecycle_projector",
+            "services/trade_journey/lifecycle_projector.py",
+        ),
+        (
+            "services.trade_journey.hosted_lifecycle_probe",
+            "services/trade_journey/hosted_lifecycle_probe.py",
+        ),
+    )
+    managed_names = [
+        "services",
+        "services.trade_journey",
+        *(name for name, _ in module_sources),
+    ]
+    missing = object()
+    previous = {name: sys.modules.get(name, missing) for name in managed_names}
+    loaded: dict[str, ModuleType] = {}
+    try:
+        services_package = ModuleType("services")
+        services_package.__path__ = []  # type: ignore[attr-defined]
+        trade_journey_package = ModuleType("services.trade_journey")
+        trade_journey_package.__path__ = []  # type: ignore[attr-defined]
+        sys.modules["services"] = services_package
+        sys.modules["services.trade_journey"] = trade_journey_package
+        setattr(services_package, "trade_journey", trade_journey_package)
+        for module_name, relative_path in module_sources:
+            raw = source_bytes[relative_path]
+            module = ModuleType(module_name)
+            module.__file__ = str(REPO_ROOT / relative_path)
+            module.__package__ = "services.trade_journey"
+            sys.modules[module_name] = module
+            setattr(
+                trade_journey_package,
+                module_name.rsplit(".", 1)[-1],
+                module,
+            )
+            exec(
+                compile(raw, module.__file__, "exec", dont_inherit=True),
+                module.__dict__,
+            )
+            loaded[module_name] = module
+    except Exception as exc:
+        raise DispatchError("canonical lifecycle verifier is unavailable") from exc
+    finally:
+        for name in reversed(managed_names):
+            prior = previous[name]
+            if prior is missing:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = prior  # type: ignore[assignment]
+    return (
+        loaded["services.trade_journey.hosted_lifecycle_probe"],
+        loaded["services.trade_journey.lifecycle_projector"],
+    )
 
 
 def _validate_g2_implementation_git_delivery(
@@ -7673,6 +7841,7 @@ def _validate_g2_product_evidence(
             "target_task_snapshot_sha256": canonical_json_sha256(
                 closeout_projection
             ),
+            "owner": owner,
             "reviewer": reviewer,
             "g2_github_pr_snapshot_sha256": github_pr_snapshot_sha256,
             "review_verdict_sha256": canonical_json_sha256(verdict),
@@ -8276,14 +8445,12 @@ def _resolve_authoritative_g2_snapshot(
     if not dsn or not projection_root_value:
         raise DispatchError("G2 authoritative canonical source configuration is missing")
     try:
-        from services.trade_journey.lifecycle_projector import (
-            LIFECYCLE_EVENT_TYPES,
-        )
-
+        _, lifecycle_projector = _load_pinned_g2_verifier_modules(contract)
+        lifecycle_event_types = lifecycle_projector.LIFECYCLE_EVENT_TYPES
         event_types = contract.get("canonical_query_event_types")
         if (
             event_types != list(G2_CANONICAL_QUERY_EVENT_TYPES)
-            or tuple(sorted(LIFECYCLE_EVENT_TYPES))
+            or tuple(sorted(lifecycle_event_types))
             != G2_CANONICAL_QUERY_EVENT_TYPES
         ):
             raise DispatchError("G2 canonical lifecycle event inventory drifted")
@@ -8642,11 +8809,10 @@ def _validate_g2_projection_bundle(
         or observed_at > issued_at
     ):
         raise DispatchError("G2 bundle capture time is outside the evidence window")
-    try:
-        from services.trade_journey import hosted_lifecycle_probe as lifecycle_probe
-        from services.trade_journey.lifecycle_projector import _fingerprint
-    except Exception as exc:
-        raise DispatchError("canonical lifecycle verifier is unavailable") from exc
+    lifecycle_probe, lifecycle_projector = _load_pinned_g2_verifier_modules(
+        contract
+    )
+    fingerprint = lifecycle_projector._fingerprint
     all_candidates = lifecycle_probe._complete_candidates(rows)
     resolved_row_ids = {
         event["event_id"]
@@ -8737,8 +8903,8 @@ def _validate_g2_projection_bundle(
         or journeys.get("accepted_live") is not True
         or loops.get("accepted_live") is not True
         or journeys.get("controller") != loops.get("controller")
-        or manifest.get("journey_sha256") != _fingerprint(journeys)
-        or manifest.get("loop_runs_sha256") != _fingerprint(loops)
+        or manifest.get("journey_sha256") != fingerprint(journeys)
+        or manifest.get("loop_runs_sha256") != fingerprint(loops)
     ):
         raise DispatchError("G2 projection bundle integrity mismatch")
     controller = loops.get("controller")
@@ -10060,20 +10226,6 @@ def main() -> int:
             )
         )
         preflight_activity_events(transaction, existing_events)
-        proposed_releases = (
-            proposed.get(PROGRAM_SEQUENCING_RELEASES_STATE_KEY) or {}
-        )
-        if (
-            not original_release_present
-            and isinstance(proposed_releases, dict)
-            and str(catalog["program_id"]) in proposed_releases
-        ):
-            validate_g2_release_fresh_at_commit(
-                proposed,
-                catalog,
-                catalog_digest,
-                now=datetime.now(timezone.utc),
-            )
         if file_signature(STATUS_PATH) != original_signature:
             raise DispatchError(
                 "ai-status.json changed concurrently; no write performed, rerun dispatch"
@@ -10082,7 +10234,33 @@ def main() -> int:
             print("Proposed outbox and audit sources validated; zero writes performed.")
             return 0
 
-        atomic_write_json(STATUS_PATH, proposed)
+        proposed_releases = (
+            proposed.get(PROGRAM_SEQUENCING_RELEASES_STATE_KEY) or {}
+        )
+        new_release = bool(
+            not original_release_present
+            and isinstance(proposed_releases, dict)
+            and str(catalog["program_id"]) in proposed_releases
+        )
+
+        def before_status_replace() -> None:
+            if file_signature(STATUS_PATH) != original_signature:
+                raise DispatchError(
+                    "ai-status.json changed before atomic replace; rerun dispatch"
+                )
+            if new_release:
+                validate_g2_release_fresh_at_commit(
+                    proposed,
+                    catalog,
+                    catalog_digest,
+                    now=datetime.now(timezone.utc),
+                )
+
+        atomic_write_json(
+            STATUS_PATH,
+            proposed,
+            before_replace=before_status_replace,
+        )
         if os.environ.get("LOOP_PRODUCT_DISPATCH_FAIL_AFTER_STATUS_COMMIT") == "1":
             raise DispatchError(
                 "injected failure after status commit; activity audit remains in outbox"

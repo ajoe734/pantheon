@@ -15,9 +15,9 @@ This reconciliation describes all 48 immutable catalog tasks exactly once. It do
 | Merged addendum authority | PR #3737 merge `a4b5df9a51bc3da6df0d39d422d9db4edc553aba` |
 | Rejected interim delivery | PR #3746 head `5f51574df2791d7cb1c4551e46571ae5f06ea71a`, merged as `aae333959e0566759a4e7eb955f860d280fa5e3d`; retained as failed evidence, never as release authority |
 | Overlay schema | `schema_version: 2` |
-| Canonical overlay raw SHA-256 | `7596b40ac4a0cd25b801196798c8eb54706f6a9cecfa764ff5f751165f0db11e` |
-| Effective catalog SHA-256 | `44914a3590c3c750dee6d74565ec96b3f1b67f1ae6a1e3804d3d2ae8ae202bc4` |
-| Effective graph projection SHA-256 | `899c24e25c8c5a713b81be650ce847dc1a032fff2205ac73876a1ebfd82d1d9a` |
+| Canonical overlay raw SHA-256 | `bd116cd9eadaded175611eda55a89c93b9e0f064f3f7736c719ac83ada989432` |
+| Effective catalog SHA-256 | `50ed78df1fcff819bbe9f9eaebd5b45cdc9954b2153d9ef4d253c1bc8b472a47` |
+| Effective graph projection SHA-256 | `5b0f3048f196e5c34a57827e57c8c1d28482f5a93c113be3fc857ef33ca01b04` |
 
 The overlay and this derived view enforce these invariants:
 
@@ -85,11 +85,11 @@ The exact gated task set is:
 - `LOOP-PROD-SIGNOFF-001`
 - `LOOP-PROD-CLOSE-002`
 
-Before `g2_evidence_contract_v4_valid` is true, the dispatcher parks new and existing members of that exact 19-task set while continuing eligible ungated work. Once the predicate is true, normal amended-dependency admission governs them. Classification or membership, not a hard-coded wave comparison, determines release.
+Before `g2_evidence_contract_v4_valid` is true, a base board preserves and blocks already materialized members of that exact 19-task set, while a fresh board materializes only the 29 ungated tasks and keeps all 19 gated contracts absent. The fresh epoch records `absent → absent` plus the planned contract/source digests; first release records `absent → todo`, while a migrated base board records `blocked → todo`. Once the predicate is true, normal amended-dependency admission governs them. Classification or membership, not a hard-coded wave comparison, determines release.
 
 ### Sequencing epoch and release binding
 
-- Every overlay installation writes a schema-v2 sequencing epoch. A base migration embeds each exact pristine pre-overlay task snapshot; a fresh materialization embeds `null`. Canonical hashes bind the preimage, its contract and source reference, and the resulting post-overlay task.
+- Every overlay installation writes a schema-v2 sequencing epoch. A base migration embeds each exact pristine pre-overlay task snapshot; a fresh materialization embeds a `null` preimage and, for the gated set, a `null` post-state snapshot while retaining the planned catalog contract/source digests. Canonical hashes bind the preimage, its contract and source reference, and the resulting or future post-overlay task.
 - Epoch validation reconstructs every post-overlay task from its embedded preimage and rejects missing, extra, reordered, changed, non-pristine, or temporally invalid transitions. It never consults mutable runtime state as the historical preimage authority.
 - A schema-v2 release record binds the canonical SHA-256 of the exact validated epoch. Rehashing or replacing an epoch after release therefore invalidates the release admission and keeps all 19 tasks parked.
 - The release is also content-addressed in the program activity audit; consumer paths fail closed unless the epoch, release, per-task admission digest, and audit event all agree.
@@ -161,7 +161,7 @@ The Hardening Wave opens only when the exact target `LOOP-PROD-VERIFY-EXEC-001` 
 | `hosted_probe_path` | `docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/hosted-lifecycle-proof.v1.json` |
 | `canonical_record_bundle_path` | `docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/g2-canonical-records.v4.json` |
 | `canonical_source_resolution` | `live_read_only_canonical_identity_and_projection_generation_v2` |
-| Verifier source authority | `hosted_lifecycle_probe.py`=`c3f098e8…7c07`; `lifecycle_projector.py`=`43473f12…496f`; `correlation_envelope.py`=`60c6877f…c4b1`; both local bytes and the authoritative `dev` Git blobs must match |
+| Verifier source authority | `services/trade_journey/hosted_lifecycle_probe.py`=`c3f098e8034ff4040bd8859066844e5e2681cbdbd26946584c5b6bab7e5f7c07`; `services/trade_journey/lifecycle_projector.py`=`43473f121f5bde17435dbd401697ac99455eb1ebdc534ee93b29318df8cb496f`; `services/trade_journey/materializer.py`=`67a80db49c605cc3e156fa043d6f986ef570e2554446c4d2dffb14272c320366`; `services/trade_journey/correlation_envelope.py`=`60c6877fa558640ee91570fc430f8b3ab935c3d2905d4ce55027fe8e04b5c4b1`; `services/control-plane/specs/trade_journey/correlation_envelope.py`=`021780084935bac8de07f70be09e91df09ab500adc511fc12c396a674616ff9c`; all local bytes and authoritative `dev` Git blobs must match |
 | Canonical database identity | database `pantheon`; role `pantheon_app`; schema/table `public.telemetry_events`; host `postgres`; port `5432`; TLS `verify-full` with `/etc/ssl/certs/ca-certificates.crt` |
 | Canonical query timeouts | connect `5s`; statement `5s`; total `15s` per read |
 | Canonical projection root | `/data/bff/lifecycle-projection` |

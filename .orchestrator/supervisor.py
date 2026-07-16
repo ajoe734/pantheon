@@ -2363,8 +2363,8 @@ def worker_launch_admission(
     task = task_index_from_status(config, status).get(task_id)
     if isinstance(task, dict) and task_is_sequencing_parked(task, status):
         return False, "Worker launch denied while task is parked behind the G2 gate."
-    if task is None and task_id in sequencing_gate.EXPECTED_GATED_TASK_IDS:
-        return False, "Worker launch denied because the governed gated task is missing."
+    if task is None and task_id in sequencing_gate.EXPECTED_TASK_IDS:
+        return False, "Worker launch denied because the governed sequencing task is missing."
     return True, None
 
 
@@ -7024,29 +7024,31 @@ def quiesce_sequencing_parked_workers(
             continue
         task_id = str(worker.get("task_id") or "")
         task = task_map.get(task_id)
+        missing_governed_task = (
+            task is None
+            and task_id in sequencing_gate.EXPECTED_TASK_IDS
+        )
         if pending_program_outbox:
             must_quiesce = (
-                task_id in sequencing_gate.EXPECTED_GATED_TASK_IDS
+                missing_governed_task
+                or task_id in sequencing_gate.EXPECTED_GATED_TASK_IDS
                 or (
                     isinstance(task, dict)
                     and task_is_sequencing_parked(task, status)
                 )
             )
-            reason = (
-                "Worker quiesced while the dispatcher sequencing audit is pending."
-            )
+            reason = "Worker quiesced while the dispatcher sequencing audit is pending."
         else:
             must_quiesce = (
                 (
                     isinstance(task, dict)
                     and task_is_sequencing_parked(task, status)
                 )
-                or (
-                    task is None
-                    and task_id in sequencing_gate.EXPECTED_GATED_TASK_IDS
-                )
+                or missing_governed_task
             )
             reason = "Worker quiesced because its task is parked behind the G2 gate."
+        if missing_governed_task:
+            reason = "Worker quiesced because its governed sequencing task is missing."
         if not must_quiesce:
             continue
         if pid_is_alive(worker.get("pid")):

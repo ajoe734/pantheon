@@ -19,14 +19,15 @@ SEQUENCING_ADDENDUM_SHA256 = (
 )
 MERGE_PR_3737_SHA = "a4b5df9a51bc3da6df0d39d422d9db4edc553aba"
 EFFECTIVE_CATALOG_SHA256 = (
-    "44914a3590c3c750dee6d74565ec96b3f1b67f1ae6a1e3804d3d2ae8ae202bc4"
+    "50ed78df1fcff819bbe9f9eaebd5b45cdc9954b2153d9ef4d253c1bc8b472a47"
 )
 SEQUENCING_OVERLAY_SHA256 = (
-    "7596b40ac4a0cd25b801196798c8eb54706f6a9cecfa764ff5f751165f0db11e"
+    "bd116cd9eadaded175611eda55a89c93b9e0f064f3f7736c719ac83ada989432"
 )
 RELEASE_GATE_ID = "hardening-after-g2-paper-trade-v1"
 RELEASE_PREDICATE = "g2_evidence_contract_v4_valid"
 TARGET_TASK_ID = "LOOP-PROD-VERIFY-EXEC-001"
+ALLOWED_FLEET_ACTORS = {"Codex", "Codex2"}
 CANONICAL_DATABASE_NAME = "pantheon"
 CANONICAL_DATABASE_ROLE = "pantheon_app"
 CANONICAL_DATABASE_SCHEMA = "public"
@@ -39,7 +40,7 @@ SOURCE_GRAPH_PROJECTION_SHA256 = (
     "163f6686624e41120ba752de938e0283202026695358d7e4eca274fbad671cea"
 )
 EFFECTIVE_GRAPH_PROJECTION_SHA256 = (
-    "899c24e25c8c5a713b81be650ce847dc1a032fff2205ac73876a1ebfd82d1d9a"
+    "5b0f3048f196e5c34a57827e57c8c1d28482f5a93c113be3fc857ef33ca01b04"
 )
 BASE_SOURCE_REF_FIELDS = {
     "plan",
@@ -285,6 +286,7 @@ RELEASE_RECORD_FIELDS = {
     "product_manifest_sha256",
     "product_manifest_sidecar_sha256",
     "target_task_snapshot_sha256",
+    "owner",
     "reviewer",
     "review_binding_sha256",
     "review_approval_event_sha256",
@@ -309,6 +311,7 @@ RELEASE_ADMISSION_FIELDS = {
     "product_manifest_sha256",
     "product_manifest_sidecar_sha256",
     "target_task_snapshot_sha256",
+    "owner",
     "reviewer",
     "review_binding_sha256",
     "review_approval_event_sha256",
@@ -346,6 +349,8 @@ RELEASE_TRANSITION_FIELDS = {
     "task_id",
     "before_task_snapshot_sha256",
     "after_task_snapshot_sha256",
+    "after_task_contract_sha256",
+    "after_source_ref_sha256",
     "before_status",
     "after_status",
 }
@@ -544,18 +549,34 @@ def _task_matches_epoch_authority(
     transition: dict[str, Any],
 ) -> bool:
     source_ref = _source_ref(task)
-    if transition.get("after_status") == "absent":
-        return bool(
-            _has_exact_authority_source_ref(task)
-            and transition.get("after_source_ref_sha256")
-            == canonical_sha256(None)
-            and source_ref.get("task_contract_sha256")
-            == _task_contract_sha256(task)
-        )
     return bool(
         _has_exact_authority_source_ref(task)
+        and all(
+            task.get(field) == value
+            for field, value in BASE_RUNTIME_AUTHORITY.items()
+        )
+        and task.get("completion_role") == _expected_completion_role(
+            str(task.get("id") or "")
+        )
+        and isinstance(task.get("owner"), str)
+        and task["owner"].strip()
+        and isinstance(task.get("reviewer"), str)
+        and task["reviewer"].strip()
+        and task["owner"] != task["reviewer"]
+        and transition.get("after_task_contract_sha256")
+        == _task_contract_sha256(task)
         and transition.get("after_source_ref_sha256")
         == canonical_sha256(source_ref)
+        and source_ref.get("task_contract_sha256")
+        == transition.get("after_task_contract_sha256")
+        and canonical_sha256(task.get("acceptance_deferral"))
+        == transition.get("acceptance_deferral_sha256")
+        and source_ref.get("acceptance_deferral_sha256")
+        == (
+            transition.get("acceptance_deferral_sha256")
+            if task.get("acceptance_deferral") is not None
+            else None
+        )
     )
 
 
@@ -669,14 +690,10 @@ def _validated_epoch(status: dict[str, Any]) -> tuple[dict[str, Any], list[dict[
             )
             or (
                 fresh_deferred
-                and any(
-                    transition.get(field) != null_sha256
-                    for field in (
-                        "after_task_snapshot_sha256",
-                        "after_task_contract_sha256",
-                        "after_source_ref_sha256",
-                        "acceptance_deferral_sha256",
-                    )
+                and (
+                    transition.get("after_task_snapshot_sha256") != null_sha256
+                    or transition.get("after_task_contract_sha256") == null_sha256
+                    or transition.get("after_source_ref_sha256") == null_sha256
                 )
             )
             or (
@@ -725,6 +742,9 @@ def _validated_release_record(
         or record.get("release_gate_id") != RELEASE_GATE_ID
         or record.get("release_predicate") != RELEASE_PREDICATE
         or record.get("sequencing_epoch_sha256") != canonical_sha256(epoch)
+        or record.get("owner") not in ALLOWED_FLEET_ACTORS
+        or record.get("reviewer") not in ALLOWED_FLEET_ACTORS
+        or record.get("owner") == record.get("reviewer")
         or not isinstance(record.get("reviewer"), str)
         or not record["reviewer"].strip()
         or not isinstance(transitions, list)
@@ -858,8 +878,14 @@ def _validated_release_record(
             or transition.get("after_status") != "todo"
             or not is_sha256(transition.get("before_task_snapshot_sha256"))
             or not is_sha256(transition.get("after_task_snapshot_sha256"))
+            or not is_sha256(transition.get("after_task_contract_sha256"))
+            or not is_sha256(transition.get("after_source_ref_sha256"))
             or transition.get("before_task_snapshot_sha256")
             != epoch_transition.get("after_task_snapshot_sha256")
+            or transition.get("after_task_contract_sha256")
+            != epoch_transition.get("after_task_contract_sha256")
+            or transition.get("after_source_ref_sha256")
+            != epoch_transition.get("after_source_ref_sha256")
         ):
             return None
         transition_ids.append(task_id_value)

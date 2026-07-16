@@ -509,8 +509,13 @@ class CanonicalWriterGuardTests(unittest.TestCase):
 
 class ProgramActivityOutboxGuardTests(unittest.TestCase):
     @staticmethod
-    def _sequencing_source_ref(task_id: str) -> dict:
-        return {
+    def _sequencing_source_ref(
+        task_id: str,
+        *,
+        task_contract_sha256: str | None = None,
+        acceptance_deferral_sha256: str | None = None,
+    ) -> dict:
+        source_ref = {
             "program_id": sequencing_gate.PROGRAM_ID,
             "catalog_sha256": sequencing_gate.EFFECTIVE_CATALOG_SHA256,
             "source_catalog_sha256": sequencing_gate.SOURCE_CATALOG_SHA256,
@@ -526,6 +531,12 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
                 sequencing_gate.EXPECTED_CLASSIFICATION_BY_TASK_ID[task_id]
             ),
         }
+        if task_contract_sha256 is not None:
+            source_ref["task_contract_sha256"] = task_contract_sha256
+            source_ref["acceptance_deferral_sha256"] = (
+                acceptance_deferral_sha256
+            )
+        return source_ref
 
     @staticmethod
     def _sequencing_task(*, marker: bool = True) -> dict:
@@ -534,7 +545,7 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
             "id": task_id,
             "title": "Sequencing guarded task",
             "owner": "Codex",
-            "reviewer": "Claude",
+            "reviewer": "Codex2",
             "status": "blocked",
             "depends_on": [],
             "artifacts": [],
@@ -542,10 +553,13 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
             "next": "Awaiting G2",
             "last_update": "2026-07-16T00:00:00Z",
             "review_notes_zh": ["prior review"],
-            "source_ref": ProgramActivityOutboxGuardTests._sequencing_source_ref(
-                task_id
-            ),
+            "completion_role": "ordinary",
+            **sequencing_gate.BASE_RUNTIME_AUTHORITY,
         }
+        task["source_ref"] = ProgramActivityOutboxGuardTests._sequencing_source_ref(
+            task_id,
+            task_contract_sha256=sequencing_gate._task_contract_sha256(task),
+        )
         if marker:
             task["sequencing_release_gate"] = {"state": "parked"}
         return task
@@ -563,43 +577,39 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
         null_sha256 = sequencing_gate.canonical_sha256(None)
         ordered_ids = list(sequencing_gate.EXPECTED_TASK_IDS)
         epoch_transitions = []
+        released_task = cls._sequencing_task(marker=False)
         for index, task_id in enumerate(ordered_ids, start=1):
             gated = task_id in sequencing_gate.EXPECTED_GATED_TASK_IDS
-            gate_marker = (
-                {
-                    "schema_version": 1,
-                    "gate_id": sequencing_gate.RELEASE_GATE_ID,
-                    "release_predicate": sequencing_gate.RELEASE_PREDICATE,
-                    "sequencing_overlay_sha256": (
-                        sequencing_gate.SEQUENCING_OVERLAY_SHA256
-                    ),
-                    "state": "parked",
-                    "previous_status": "todo",
-                    "parked_at": "2026-07-16T00:00:00Z",
-                }
-                if gated
-                else None
+            source_ref = (
+                released_task["source_ref"]
+                if task_id == released_task["id"]
+                else cls._sequencing_source_ref(task_id)
+            )
+            contract_sha256 = (
+                sequencing_gate._task_contract_sha256(released_task)
+                if task_id == released_task["id"]
+                else "2" * 64
             )
             epoch_transitions.append(
                 {
                     "task_id": task_id,
                     "before_task_snapshot": None,
                     "before_task_snapshot_sha256": null_sha256,
-                    "after_task_snapshot_sha256": f"{index:064x}",
+                    "after_task_snapshot_sha256": (
+                        null_sha256 if gated else f"{index:064x}"
+                    ),
                     "before_task_contract_sha256": null_sha256,
-                    "after_task_contract_sha256": "2" * 64,
+                    "after_task_contract_sha256": contract_sha256,
                     "before_source_ref_sha256": null_sha256,
                     "after_source_ref_sha256": sequencing_gate.canonical_sha256(
-                        cls._sequencing_source_ref(task_id)
+                        source_ref
                     ),
                     "before_status": "absent",
-                    "after_status": "blocked" if gated else "todo",
+                    "after_status": "absent" if gated else "todo",
                     "acceptance_deferral_sha256": (
                         null_sha256 if gated else "4" * 64
                     ),
-                    "gate_marker_sha256": sequencing_gate.canonical_sha256(
-                        gate_marker
-                    ),
+                    "gate_marker_sha256": null_sha256,
                 }
             )
         epoch = {
@@ -635,7 +645,13 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
                     "after_task_snapshot_sha256"
                 ],
                 "after_task_snapshot_sha256": "8" * 64,
-                "before_status": "blocked",
+                "after_task_contract_sha256": epoch_by_id[task_id][
+                    "after_task_contract_sha256"
+                ],
+                "after_source_ref_sha256": epoch_by_id[task_id][
+                    "after_source_ref_sha256"
+                ],
+                "before_status": "absent",
                 "after_status": "todo",
             }
             for task_id in sequencing_gate.EXPECTED_GATED_TASK_IDS
@@ -677,11 +693,15 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
             "product_manifest_sha256": "c" * 64,
             "product_manifest_sidecar_sha256": "d" * 64,
             "target_task_snapshot_sha256": "e" * 64,
+            "owner": "Codex",
             "reviewer": "Codex2",
             "review_binding_sha256": "4" * 64,
             "review_approval_event_sha256": "5" * 64,
+            "owner_closeout_event_sha256": "7" * 64,
             "review_verdict_sha256": "f" * 64,
             "g2_issued_at": "2026-07-16T00:30:00Z",
+            "g2_expires_at": "2026-07-16T04:00:00Z",
+            "g2_fresh_until": "2026-07-16T03:00:00Z",
             "closeout_at": "2026-07-16T01:00:00Z",
         }
         release_admission_sha256 = sequencing_gate.canonical_sha256(admission)
@@ -703,7 +723,7 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
                 sequencing_gate.canonical_sha256(release_transitions)
             ),
         }
-        task = cls._sequencing_task(marker=False)
+        task = released_task
         task["status"] = "todo"
         task["sequencing_release_admission_sha256"] = release_admission_sha256
         return {
@@ -905,6 +925,7 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
                 "sequencing_release_audit_proof",
                 return_value=proof,
             ),
+            mock.patch.object(ai_status, "append_log"),
         ):
             ai_status.command_start(
                 state,
@@ -1022,8 +1043,31 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
                 task_id = "LOOP-PROD-000"
                 task["id"] = task_id
                 task["status"] = "todo"
-                task["source_ref"] = self._sequencing_source_ref(task_id)
+                task["acceptance_deferral"] = {"policy_id": "pre-g2-test"}
+                contract_sha256 = sequencing_gate._task_contract_sha256(task)
+                deferral_sha256 = sequencing_gate.canonical_sha256(
+                    task["acceptance_deferral"]
+                )
+                task["source_ref"] = self._sequencing_source_ref(
+                    task_id,
+                    task_contract_sha256=contract_sha256,
+                    acceptance_deferral_sha256=deferral_sha256,
+                )
                 task.pop("sequencing_release_admission_sha256", None)
+                epoch = state["program_sequencing_epochs"][sequencing_gate.PROGRAM_ID]
+                transition = next(
+                    row
+                    for row in epoch["task_transitions"]
+                    if row["task_id"] == task_id
+                )
+                transition["after_task_contract_sha256"] = contract_sha256
+                transition["after_source_ref_sha256"] = (
+                    sequencing_gate.canonical_sha256(task["source_ref"])
+                )
+                transition["acceptance_deferral_sha256"] = deferral_sha256
+                epoch["task_transition_set_sha256"] = (
+                    sequencing_gate.canonical_sha256(epoch["task_transitions"])
+                )
                 self.assertFalse(
                     ai_status.task_is_sequencing_parked(task, state)
                 )

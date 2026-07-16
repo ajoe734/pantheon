@@ -1769,6 +1769,81 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     )
                 )
 
+    def test_missing_governed_ungated_task_is_denied_at_launch_boundary(self) -> None:
+        authority = supervisor.sequencing_gate
+        ungated_task_id = next(
+            task_id
+            for task_id in authority.EXPECTED_TASK_IDS
+            if task_id not in authority.EXPECTED_GATED_TASK_IDS
+        )
+        with mock.patch.object(
+            supervisor,
+            "load_status",
+            return_value={"tasks": []},
+        ):
+            admitted, reason = supervisor.worker_launch_admission(
+                self.config,
+                task_id=ungated_task_id,
+            )
+
+        self.assertFalse(admitted)
+        self.assertEqual(
+            reason,
+            "Worker launch denied because the governed sequencing task is missing.",
+        )
+
+    def test_missing_governed_ungated_worker_is_quiesced(self) -> None:
+        authority = supervisor.sequencing_gate
+        ungated_task_id = next(
+            task_id
+            for task_id in authority.EXPECTED_TASK_IDS
+            if task_id not in authority.EXPECTED_GATED_TASK_IDS
+        )
+        for pending_program_outbox in (False, True):
+            with self.subTest(pending_program_outbox=pending_program_outbox):
+                worker = {
+                    "run_id": "run-missing-governed-ungated",
+                    "task_id": ungated_task_id,
+                    "status": "running",
+                    "pid": 4242,
+                    "queue_event_id": "evt-missing-governed-ungated",
+                    "provider": "codex",
+                }
+                state = {
+                    "queue": {
+                        "events": {
+                            worker["queue_event_id"]: {"status": "started"},
+                        }
+                    },
+                    "workers": {worker["run_id"]: worker},
+                }
+
+                with (
+                    mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                    mock.patch.object(supervisor, "terminate_worker_pid") as terminate,
+                    mock.patch.object(
+                        supervisor,
+                        "finalize_queue_event_record",
+                    ) as finalize,
+                    mock.patch.object(supervisor, "write_activity_log"),
+                ):
+                    changed = supervisor.quiesce_sequencing_parked_workers(
+                        self.config,
+                        state,
+                        status={"tasks": []},
+                        task_map={},
+                        pending_program_outbox=pending_program_outbox,
+                    )
+
+                self.assertTrue(changed)
+                self.assertEqual(worker["status"], "superseded")
+                self.assertEqual(
+                    worker["last_error"],
+                    "Worker quiesced because its governed sequencing task is missing.",
+                )
+                terminate.assert_called_once_with(4242)
+                finalize.assert_called_once()
+
     def test_forged_release_transition_fails_closed_in_both_consumers(self) -> None:
         auto_unblock = _load_auto_unblock_module()
         for mutation in (
