@@ -18,6 +18,11 @@
     }
   ],
   "duplicate_id_lines": 110,
+  "fold_class_counts": {
+    "incident_lineage": 5,
+    "pinned_exception": 1,
+    "valid_legacy_rotation": 234
+  },
   "folds_details": [
     {
       "bytes": 5198628,
@@ -3381,16 +3386,25 @@
     }
   ],
   "identical_payload_duplicate_lines": 110,
-  "logical_entries": 1402572,
-  "logical_event_id_lines": 543,
+  "line_count_classes": {
+    "1000": 239,
+    "999": 1
+  },
+  "logical_entries": 1402603,
+  "logical_event_id_lines": 549,
   "payload_mismatch_duplicate_lines": 0,
-  "physical_event_id_lines": 653,
-  "physical_lines": 1642571,
-  "scan_time": "2026-07-16T18:35:46Z",
+  "physical_event_id_lines": 659,
+  "physical_lines": 1642602,
+  "scan_time": "2026-07-16T18:59:50Z",
+  "source_class_counts": {
+    "active": 1,
+    "legacy_ts_old": 10,
+    "legacy_ts_std": 411
+  },
   "total_byte_identical_folds": 240,
   "total_mismatch_folds": 0,
   "total_sources": 422,
-  "unique_event_ids": 543,
-  "unique_logical_event_ids": 543,
+  "unique_event_ids": 549,
+  "unique_logical_event_ids": 549,
   "within_source_duplicates": 0
 }

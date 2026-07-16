@@ -1002,7 +1002,7 @@ class LogicalActivityReaderTests(unittest.TestCase):
         mutated_raw = raw[:-10] + b"MUTATED!!!"
         self.assertEqual(len(raw), len(mutated_raw))
         f1.write_bytes(mutated_raw)
-        
+
         # Touch mtime_ns
         stat_info = f1.stat()
         os.utime(f1, ns=(stat_info.st_atime_ns, stat_info.st_mtime_ns + 1000000000))
@@ -1068,11 +1068,11 @@ class LogicalActivityReaderTests(unittest.TestCase):
     def test_overlap_failures_without_event_ids(self):
         # Generate logs with NO event_id (e.g. just raw messages)
         no_id_entries = [{"message": f"line {i}"} for i in range(1500)]
-        
+
         # 1) Exact 1000-line overlap (should succeed and collapse 1000 lines)
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
-        
+
         self._write_gz(f1, no_id_entries)
         # Suffix of f1 has lines 500 to 1499 (1000 lines). So f2 starts with lines 500 to 1499.
         f2_entries = no_id_entries[500:] + [{"message": f"extra {i}"} for i in range(500)]
@@ -1080,7 +1080,7 @@ class LogicalActivityReaderTests(unittest.TestCase):
 
         res = list(common.stream_logical_activity(self.log_path))
         self.assertEqual(len(res), 2000) # 1500 (f1) + 1000 (f2 minus 1000 collapsed)
-        
+
         f1.unlink()
         f2.unlink()
 
@@ -1128,7 +1128,7 @@ class LogicalActivityReaderTests(unittest.TestCase):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
         f3 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1301Z.gz"
-        
+
         # Write f1
         self._write_gz(f1, no_id_entries)
         # Write f2 with completely different content (no overlap with f1)
@@ -1154,41 +1154,41 @@ class LogicalActivityReaderTests(unittest.TestCase):
 
     def test_truncated_and_corrupt_gzip(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
-        
+
         # 1. Valid gzip that is then truncated
         entries = [{"message": f"line {i}"} for i in range(100)]
         self._write_gz(f1, entries)
-        
+
         # Read raw bytes and write only first half of it
         raw_bytes = f1.read_bytes()
         f1.write_bytes(raw_bytes[:len(raw_bytes)//2])
-        
+
         with self.assertRaisesRegex(RuntimeError, "Truncated or corrupt gzip/file"):
             list(common.stream_logical_activity(self.log_path))
-            
+
         f1.unlink()
 
     def test_gzip_invalid_utf8(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
-        
+
         # Write invalid UTF-8 bytes to gzip
         import gzip
         with gzip.open(f1, "wb") as f:
             f.write(b"{\"message\": \"hello\"}\n")
             f.write(b"\xff\xff\xff\n") # invalid UTF-8
-            
+
         with self.assertRaisesRegex(RuntimeError, "Bad UTF-8"):
             list(common.stream_logical_activity(self.log_path))
-            
+
         f1.unlink()
 
     def test_incident_minimized_fixture_overlap(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
-        
+
         # 500 prefix lines in f1
         entries1 = [{"message": f"prefix {i}"} for i in range(500)]
-        
+
         # 1000 lines of overlap: 100 with event_id, 900 without
         overlap = []
         for i in range(1000):
@@ -1196,35 +1196,35 @@ class LogicalActivityReaderTests(unittest.TestCase):
                 overlap.append({"event_id": f"evt-{i}", "message": f"overlap event {i}"})
             else:
                 overlap.append({"message": f"overlap non-event {i}"})
-                
+
         entries1.extend(overlap)
         self._write_gz(f1, entries1)
-        
+
         # f2 has the 1000 overlap lines plus 500 suffix lines
         entries2 = list(overlap)
         entries2.extend([{"message": f"suffix {i}"} for i in range(500)])
         self._write_gz(f2, entries2)
-        
+
         # New logical reader returns 100 event IDs exactly once and preserves all non-overlap lines
         res = list(common.stream_logical_activity(self.log_path))
-        
+
         # Total rows: 500 (prefix) + 1000 (overlap) + 500 (suffix) = 2000
         self.assertEqual(len(res), 2000)
-        
+
         # Verify the 100 event IDs are returned exactly once
         yielded_ids = [entry["event_id"] for entry, _, _ in res if "event_id" in entry]
         self.assertEqual(len(yielded_ids), 100)
         self.assertEqual(len(set(yielded_ids)), 100)
-        
-        # Demonstrate that if we don't collapse (by introducing 1-byte difference in overlap), 
+
+        # Demonstrate that if we don't collapse (by introducing 1-byte difference in overlap),
         # it fails with duplicate event ID
         # Mutate f2's overlap by 1 byte
         entries2[1]["message"] = "mutated overlap line"
         self._write_gz(f2, entries2)
-        
+
         with self.assertRaisesRegex(RuntimeError, "duplicate across sources|payload mismatch|mismatch in 1000-line candidate"):
             list(common.stream_logical_activity(self.log_path))
-            
+
         f1.unlink()
         f2.unlink()
 
@@ -1322,22 +1322,22 @@ class LogicalActivityReaderTests(unittest.TestCase):
                 "status_activity_outbox": None
             }
             status_json_path.write_text(json.dumps(dummy_state), encoding="utf-8")
-            
+
             # 1. Identical already-present payload via logical overlap is idempotent and clears
             # Create a 1000-line overlap between f1 and f2
             f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
             f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
-            
+
             no_id_entries = [{"message": f"line {i}"} for i in range(1500)]
             # Add one event with event_id in the overlap (e.g. line 500)
             target_event = {"event_id": "event-outbox-1", "message": "hello outbox"}
             no_id_entries[500] = target_event
             self._write_gz(f1, no_id_entries)
-            
+
             # Same suffix in f2 starts at 500
             f2_entries = no_id_entries[500:] + [{"message": f"extra {i}"} for i in range(500)]
             self._write_gz(f2, f2_entries)
-            
+
             # Write target_event to the outbox state
             outbox_payload = {
                 "schema_version": 1,
@@ -1346,17 +1346,17 @@ class LogicalActivityReaderTests(unittest.TestCase):
             }
             dummy_state["status_activity_outbox"] = outbox_payload
             status_json_path.write_text(json.dumps(dummy_state), encoding="utf-8")
-            
+
             # Now call recover_status_activity_outbox
             # It should return True (outbox recovered) and clear the outbox
             res = ai_status.recover_status_activity_outbox(dummy_state)
             self.assertTrue(res)
             self.assertIsNone(dummy_state["status_activity_outbox"])
-            
+
             # Read back state from disk and verify it's cleared
             disk_state = json.loads(status_json_path.read_text(encoding="utf-8"))
             self.assertIsNone(disk_state["status_activity_outbox"])
-            
+
             # 2. Mismatched payload rejects
             # Modify target_event to mismatch
             mismatched_event = {"event_id": "event-outbox-1", "message": "mismatched hello"}
@@ -1367,29 +1367,29 @@ class LogicalActivityReaderTests(unittest.TestCase):
             }
             dummy_state["status_activity_outbox"] = outbox_payload_mismatch
             status_json_path.write_text(json.dumps(dummy_state), encoding="utf-8")
-            
+
             with self.assertRaisesRegex(RuntimeError, "activity outbox payload conflict"):
                 ai_status.recover_status_activity_outbox(dummy_state)
-                
+
             # Verify outbox state is unchanged on disk
             disk_state = json.loads(status_json_path.read_text(encoding="utf-8"))
             self.assertEqual(disk_state["status_activity_outbox"], outbox_payload_mismatch)
-            
+
             # 3. Corruption/source replacement leaves outbox and state bytes unchanged
             # Let's restore the valid outbox payload
             dummy_state["status_activity_outbox"] = outbox_payload_mismatch
             status_json_path.write_text(json.dumps(dummy_state), encoding="utf-8")
-            
+
             # Truncate f1 to corrupt it
             f1.write_bytes(b"corrupt header bytes")
-            
+
             with self.assertRaisesRegex(RuntimeError, "Truncated or corrupt gzip/file"):
                 ai_status.recover_status_activity_outbox(dummy_state)
-                
+
             # Verify outbox state on disk is still unchanged
             disk_state = json.loads(status_json_path.read_text(encoding="utf-8"))
             self.assertEqual(disk_state["status_activity_outbox"], outbox_payload_mismatch)
-            
+
         finally:
             if old_env is not None:
                 os.environ["PANTHEON_STATUS_ROOT"] = old_env
@@ -1410,33 +1410,33 @@ class LogicalActivityReaderTests(unittest.TestCase):
         import glob
         import tempfile
         temp_dir = tempfile.gettempdir()
-        
+
         def get_db_files():
             return set(glob.glob(os.path.join(temp_dir, "*.db")))
 
         # Case 1: Success path
         db_before = get_db_files()
-        
+
         # Start generator
         gen = common.stream_logical_activity(self.log_path)
-        
+
         # During iteration, the temp DB file should exist
         first_item = next(gen)
         db_during = get_db_files() - db_before
         self.assertEqual(len(db_during), 1)
         db_path = list(db_during)[0]
         self.assertTrue(os.path.exists(db_path))
-        
+
         # Consume the rest
         list(gen)
-        
+
         # After success, DB file must be removed
         self.assertFalse(os.path.exists(db_path))
 
         # Case 2: Validation failure path
         # Re-write f1 to have validation failure (e.g. duplicate event_id)
         self._write_gz(f1, [{"event_id": "ev1", "message": "msg"}, {"event_id": "ev1", "message": "msg"}])
-        
+
         db_before = get_db_files()
         gen = common.stream_logical_activity(self.log_path)
         try:
@@ -1448,7 +1448,7 @@ class LogicalActivityReaderTests(unittest.TestCase):
             list(gen) # Should raise RuntimeError
         except RuntimeError:
             pass
-            
+
         # After failure, DB file must be removed
         self.assertFalse(os.path.exists(db_path))
 
@@ -1461,10 +1461,10 @@ class LogicalActivityReaderTests(unittest.TestCase):
         self.assertEqual(len(db_during), 1)
         db_path = list(db_during)[0]
         self.assertTrue(os.path.exists(db_path))
-        
+
         # Explicit close
         gen.close()
-        
+
         # After close, DB file must be removed
         self.assertFalse(os.path.exists(db_path))
 

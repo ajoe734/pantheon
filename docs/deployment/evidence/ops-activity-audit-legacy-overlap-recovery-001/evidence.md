@@ -1,23 +1,26 @@
 # Verification Evidence: OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001
 
 ## Metadata
-- **Bootstrap Run ID**: `antigravity-bootstrap-20260716T1835Z`
+- **Bootstrap Run ID**: `antigravity-bootstrap-20260716T1859Z`
 - **Worktree Path**: `/tmp/pantheon-worker-worktrees/pantheon/ops-activity-audit-legacy-overlap-recovery-001`
-- **Base HEAD SHA**: `f7810a60a0ba4bf02c83f0d1194cb330d96388d6`
+- **Base HEAD SHA**: `8be2d8a4792da6de37912f3670dbf66e6d1d9a27`
+- **Source Class Counts**: `411 std/10 old/1 active`
+- **Fold Class Counts**: `234 valid legacy/5 incident lineage/1 pinned`
+- **Line-Count Classes**: `239x1000/1x999`
 
 ## Metric Analysis
 | Metric | Count | Description |
 | :--- | :---: | :--- |
-| **Physical Lines** | 1,642,571 | Total lines scanned in all source files |
-| **Physical Event-ID Lines** | 653 | Lines with event_id in physical files |
-| **Unique Event IDs** | 543 | Distinct event_ids in physical files |
+| **Physical Lines** | 1,642,602 | Total lines scanned in all source files |
+| **Physical Event-ID Lines** | 659 | Lines with event_id in physical files |
+| **Unique Event IDs** | 549 | Distinct event_ids in physical files |
 | **Duplicate-ID Lines** | 110 | Duplicate event_id occurrences |
 | **Identical-Payload Dups** | 110 | Duplicate lines with identical payload |
 | **Payload-Mismatch Dups** | 0 | Duplicate lines with mismatching payload |
 | **Within-Source Duplicates** | 0 | Duplicate event_ids in the same file |
-| **Logical Entries** | 1,402,572 | Entries yielded by logical activity reader |
-| **Logical Event-ID Lines** | 543 | Lines with event_id in logical reader |
-| **Unique Logical Event IDs** | 543 | Distinct event_ids in logical reader |
+| **Logical Entries** | 1,402,603 | Entries yielded by logical activity reader |
+| **Logical Event-ID Lines** | 549 | Lines with event_id in logical reader |
+| **Unique Logical Event IDs** | 549 | Distinct event_ids in logical reader |
 | **Fold Counts** | 240 | Total legacy overlap folds identified |
 
 ## Summary of Legacy Log Folds
@@ -278,4 +281,3 @@ The logical activity reader scanned 422 activity log archives on the central sta
 | Predecessor Source File | Successor Source File | Folded Lines | Size (Bytes) | SHA-256 Digest | Status | Fold Type | Event IDs | Identical Dups | Mismatch Dups |
 | :--- | :--- | :---: | :---: | :--- | :--- | :--- | :---: | :---: | :---: |
 | `ai-activity-log.jsonl-2026-05-24T1237Z.gz` | `ai-activity-log.jsonl-2026-05-24T1239Z.gz` | 999 | 5,325,808 | `0a3b56f720a5aa493d8968edfff8e32e0df98e410f6334d6790f10a06019f247` | `byte_identical` | `pinned_exception` | 0 | 0 | 0 |
-

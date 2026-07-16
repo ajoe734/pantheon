@@ -252,17 +252,16 @@ def scan_physical_sources(sources: list[Path], conn: sqlite3.Connection, status_
         source_infos.append({
             "path": str(rel_path),
             "sha256_before": hash_before,
-            "sha256_after": hash_after,
             "stable": True,
             "line_count": line_count,
             "event_id_line_count": event_id_line_count,
             "unique_event_ids_within": unique_ids,
             "duplicate_ids_within": dup_ids,
             "classification": cls,
-            "st_dev": fd_stat.st_dev,
-            "st_ino": fd_stat.st_ino,
-            "st_size": fd_stat.st_size,
-            "st_mtime_ns": fd_stat.st_mtime_ns
+            "st_dev_before": fd_stat.st_dev,
+            "st_ino_before": fd_stat.st_ino,
+            "st_size_before": fd_stat.st_size,
+            "st_mtime_ns_before": fd_stat.st_mtime_ns
         })
         total_physical_lines += line_count
 
@@ -426,17 +425,24 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
             # Rehash and restat every source after logical pass to verify stability
             for info, source in zip(source_infos, sources):
                 stat_after = source.lstat()
-                if stat_after.st_dev != info["st_dev"] or stat_after.st_ino != info["st_ino"]:
+                if stat_after.st_dev != info["st_dev_before"] or stat_after.st_ino != info["st_ino_before"]:
                     raise RuntimeError(f"Source replaced between passes: {source}")
-                if stat_after.st_size != info["st_size"] or stat_after.st_mtime_ns != info["st_mtime_ns"]:
+                if stat_after.st_size != info["st_size_before"] or stat_after.st_mtime_ns != info["st_mtime_ns_before"]:
                     raise RuntimeError(f"Source metadata mutated between passes: {source}")
 
                 with open_fd_strictly(source) as (fd, fd_stat):
-                    if fd_stat.st_dev != info["st_dev"] or fd_stat.st_ino != info["st_ino"]:
+                    if fd_stat.st_dev != info["st_dev_before"] or fd_stat.st_ino != info["st_ino_before"]:
                         raise RuntimeError(f"Source file descriptor swapped: {source}")
                     hash_end = compute_hash_from_fd(fd)
                     if hash_end != info["sha256_before"]:
                         raise RuntimeError(f"Source hash unstable between passes: {source}")
+
+                    # Set final fields only after the final rehash/restat succeeds
+                    info["st_dev_after"] = fd_stat.st_dev
+                    info["st_ino_after"] = fd_stat.st_ino
+                    info["st_size_after"] = fd_stat.st_size
+                    info["st_mtime_ns_after"] = fd_stat.st_mtime_ns
+                    info["sha256_after"] = hash_end
 
             # Compute separate required metrics
             cursor = conn.cursor()
@@ -463,25 +469,35 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
 
             # Write manifest.json
             scan_time_str = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-            cleaned_sources = []
-            for src_info in source_infos:
-                cleaned = dict(src_info)
-                cleaned.pop("st_dev", None)
-                cleaned.pop("st_ino", None)
-                cleaned.pop("st_size", None)
-                cleaned.pop("st_mtime_ns", None)
-                cleaned_sources.append(cleaned)
-
             manifest = {
                 "scan_timestamp": scan_time_str,
                 "total_sources": len(sources),
-                "sources": cleaned_sources
+                "sources": source_infos
             }
+
+            # Compute classification counts
+            source_class_counts = {}
+            for src in source_infos:
+                cls = src["classification"]
+                source_class_counts[cls] = source_class_counts.get(cls, 0) + 1
+
+            fold_class_counts = {}
+            for f in folds:
+                ft = f["fold_type"]
+                fold_class_counts[ft] = fold_class_counts.get(ft, 0) + 1
+
+            line_count_classes = {}
+            for f in folds:
+                lc = str(f["lines"])
+                line_count_classes[lc] = line_count_classes.get(lc, 0) + 1
 
             # Write summary.json
             summary = {
                 "scan_time": scan_time_str,
                 "total_sources": len(sources),
+                "source_class_counts": source_class_counts,
+                "fold_class_counts": fold_class_counts,
+                "line_count_classes": line_count_classes,
                 "physical_lines": total_physical_lines,
                 "physical_event_id_lines": physical_event_id_lines,
                 "unique_event_ids": unique_event_ids,
@@ -511,12 +527,30 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
 
             run_id = os.environ.get("ORCH_RUN_ID", f"antigravity-bootstrap-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%MZ')}")
 
+            std_count = source_class_counts.get("legacy_ts_std", 0)
+            old_count = source_class_counts.get("legacy_ts_old", 0)
+            active_count = source_class_counts.get("active", 0)
+            source_class_counts_str = f"{std_count} std/{old_count} old/{active_count} active"
+
+            valid_legacy_count = fold_class_counts.get("valid_legacy_rotation", 0)
+            incident_lineage_count = fold_class_counts.get("incident_lineage", 0)
+            pinned_count = fold_class_counts.get("pinned_exception", 0)
+            fold_class_counts_str = f"{valid_legacy_count} valid legacy/{incident_lineage_count} incident lineage/{pinned_count} pinned"
+
+            line_classes_parts = []
+            for lc in sorted(line_count_classes.keys(), key=lambda x: int(x), reverse=True):
+                line_classes_parts.append(f"{line_count_classes[lc]}x{lc}")
+            line_count_classes_str = "/".join(line_classes_parts)
+
             evidence_md = []
             evidence_md.append("# Verification Evidence: OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001\n")
             evidence_md.append("## Metadata")
             evidence_md.append(f"- **Bootstrap Run ID**: `{run_id}`")
             evidence_md.append(f"- **Worktree Path**: `{ROOT}`")
-            evidence_md.append(f"- **Base HEAD SHA**: `{commit_hash}`\n")
+            evidence_md.append(f"- **Base HEAD SHA**: `{commit_hash}`")
+            evidence_md.append(f"- **Source Class Counts**: `{source_class_counts_str}`")
+            evidence_md.append(f"- **Fold Class Counts**: `{fold_class_counts_str}`")
+            evidence_md.append(f"- **Line-Count Classes**: `{line_count_classes_str}`\n")
 
             evidence_md.append("## Metric Analysis")
             evidence_md.append("| Metric | Count | Description |")

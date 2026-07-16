@@ -1461,14 +1461,14 @@ def _stream_logical_activity_unlocked(
                                     prev_hash = decompressed_hashes.get(prev_source.name)
                                     if prev_hash != "8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57":
                                         raise RuntimeError(f"Invalid predecessor hash for historical exception: {prev_hash}")
-                                    
+
                                     overlap_bytes = b"".join(current_buffer_1001[:999])
                                     if len(overlap_bytes) != 5325808:
                                         raise RuntimeError(f"Invalid overlap bytes length: {len(overlap_bytes)}")
                                     overlap_sha = hashlib.sha256(overlap_bytes).hexdigest()
                                     if overlap_sha != "0a3b56f720a5aa493d8968edfff8e32e0df98e410f6334d6790f10a06019f247":
                                         raise RuntimeError(f"Invalid overlap SHA-256: {overlap_sha}")
-                                    
+
                                     should_collapse = True
                                 else:
                                     raise RuntimeError(f"Invalid overlap length {overlap_len} between {prev_source.name} and {source.name}")
