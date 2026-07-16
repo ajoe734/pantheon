@@ -78,6 +78,7 @@ from runtime_state import (
     canonical_task_state_lock_file,
     load_runtime_state_snapshot,
 )
+from sequencing_gate import task_is_sequencing_parked
 from common import (
     activity_audit_lock_path,
     activity_audit_source_paths_unlocked,
@@ -104,6 +105,7 @@ STATUS_ACTIVITY_OUTBOX_KEY = "status_activity_outbox"
 STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION = 1
 STATUS_ARCHIVE_OUTBOX_KEY = "status_archive_outbox"
 STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = 1
+PROGRAM_ACTIVITY_OUTBOX_KEY = "program_activity_outbox"
 _ACTIVITY_TRANSACTION_LOCAL = local()
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
@@ -842,6 +844,39 @@ def load_state() -> dict[str, Any]:
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
     return state
+
+
+def assert_program_activity_outbox_clear(state: dict[str, Any]) -> None:
+    """Keep the status writer out of a dispatcher-owned transaction.
+
+    The dispatcher uses ``null`` (or an absent key) for the quiescent state.
+    Every other value is either a pending transaction or malformed state and
+    must remain untouched until the authoritative dispatcher recovers it.
+    """
+
+    if state.get(PROGRAM_ACTIVITY_OUTBOX_KEY) is None:
+        return
+    raise SystemExit(
+        "Task/status mutations are paused while program_activity_outbox is "
+        "pending or malformed; recover it with the authoritative dispatcher."
+    )
+
+
+def assert_task_lifecycle_mutation_allowed(
+    state: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    action: str,
+) -> None:
+    """Reject status-writer mutations while sequencing owns task admission."""
+
+    assert_program_activity_outbox_clear(state)
+    if task_is_sequencing_parked(task, state):
+        task_id = str(task.get("id") or "unknown task")
+        raise SystemExit(
+            f"{action} rejected for sequencing-parked task {task_id}; "
+            "only the authoritative dispatcher may release the sequencing gate."
+        )
 
 
 @contextmanager
@@ -4312,6 +4347,11 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         acceptance = parse_csv_env("TASK_ACCEPTANCE")
 
     task = get_task(state, task_id)
+    assert_task_lifecycle_mutation_allowed(
+        state,
+        task if task is not None else {**metadata, "id": task_id},
+        action="assign",
+    )
     timestamp = iso_now()
     if task is None:
         if archived_task_snapshot(task_id):
@@ -4390,6 +4430,7 @@ def command_start(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    assert_task_lifecycle_mutation_allowed(state, task, action="start")
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can start {task_id}")
     timestamp = iso_now()
@@ -4409,6 +4450,7 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    assert_task_lifecycle_mutation_allowed(state, task, action="progress")
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can progress {task_id}")
     timestamp = iso_now()
@@ -4428,6 +4470,7 @@ def command_note(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    assert_task_lifecycle_mutation_allowed(state, task, action="note")
     timestamp = iso_now()
     task["last_update"] = timestamp
     task["next"] = message
@@ -4447,6 +4490,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
                 f"Task {task_id} is archived and cannot be reopened in place. Create a new follow-up task that references {task_id}."
             )
         raise SystemExit(f"Unknown task: {task_id}")
+    assert_task_lifecycle_mutation_allowed(state, task, action="reopen")
     owner = canonical_agent_name(task.get("owner"))
     reviewer = canonical_agent_name(task.get("reviewer"))
     if actor not in {owner, reviewer}:
@@ -4482,6 +4526,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    assert_task_lifecycle_mutation_allowed(state, task, action="handoff")
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can hand off {task_id} for review")
     if task.get("reviewer") != to_agent:
@@ -4517,6 +4562,7 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    assert_task_lifecycle_mutation_allowed(state, task, action="blocker")
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can block {task_id}")
     timestamp = iso_now()
@@ -4554,6 +4600,9 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    assert_task_lifecycle_mutation_allowed(
+        state, task, action="restore_approved"
+    )
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can restore {task_id}")
     if task.get("status") != "in_progress":
@@ -4587,6 +4636,7 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    assert_task_lifecycle_mutation_allowed(state, task, action="done")
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can finalize {task_id} to done")
     if task.get("status") != "review_approved":
@@ -4630,6 +4680,7 @@ def command_supersede(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    assert_task_lifecycle_mutation_allowed(state, task, action="supersede")
     owner = canonical_agent_name(task.get("owner"))
     reviewer = canonical_agent_name(task.get("reviewer"))
     if actor not in {owner, reviewer}:
@@ -4666,6 +4717,7 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    assert_task_lifecycle_mutation_allowed(state, task, action="approve")
     if task.get("reviewer") != actor:
         raise SystemExit(f"Only the reviewer ({task.get('reviewer')}) can approve {task_id}")
     if task.get("status") != "review":
@@ -4852,11 +4904,13 @@ def main(argv: list[str]) -> int:
     if command in read_only_commands:
         # A killed terminal transition may leave durable archive/activity
         # outboxes. Complete those writer transactions under EX before taking
-        # the normal shared read snapshot.
+        # the normal shared read snapshot. A dispatcher-owned program outbox
+        # suspends even these recovery writes, while diagnostics stay readable.
         with canonical_task_state_lock(shared=False):
             recovery_state = load_state()
-            recover_status_archive_outbox(recovery_state)
-            recover_status_activity_outbox(recovery_state)
+            if recovery_state.get(PROGRAM_ACTIVITY_OUTBOX_KEY) is None:
+                recover_status_archive_outbox(recovery_state)
+                recover_status_activity_outbox(recovery_state)
         with canonical_task_state_lock(shared=True):
             state = load_state()
             read_only_commands[command](state, args)
@@ -4867,6 +4921,7 @@ def main(argv: list[str]) -> int:
 
     with canonical_task_state_lock(shared=False):
         state = load_state()
+        assert_program_activity_outbox_clear(state)
         recover_status_archive_outbox(state)
         recover_status_activity_outbox(state)
         with buffer_activity_events():

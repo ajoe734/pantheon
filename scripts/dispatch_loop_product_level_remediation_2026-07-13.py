@@ -42,6 +42,9 @@ DEFAULT_CATALOG_PATH = (
     / "2026-07-13-loop-product-level-remediation"
     / "tasks.json"
 )
+DEFAULT_SEQUENCING_OVERLAY_PATH = (
+    DEFAULT_CATALOG_PATH.parent / "sequencing-overlay-2026-07-16.json"
+)
 STATUS_ROOT = Path(
     os.path.expanduser(os.environ.get("PANTHEON_STATUS_ROOT", str(REPO_ROOT)))
 ).resolve()
@@ -3432,6 +3435,46 @@ def flush_activity_outbox(
     return True
 
 
+def validate_pending_sequencing_recovery(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    catalog_digest: str,
+) -> dict[str, Any]:
+    """Validate committed sequencing semantics before clearing its audit outbox."""
+
+    pending = validate_activity_outbox(
+        state,
+        catalog,
+        catalog_digest,
+        require_current_catalog=False,
+    )
+    if (
+        catalog.get("overlay_applied") is not True
+        or pending.get("catalog_sha256") != catalog_digest
+    ):
+        return pending
+    pending = validate_activity_outbox(
+        state,
+        catalog,
+        catalog_digest,
+        require_current_catalog=True,
+    )
+    if validate_sequencing_epoch_record(state, catalog, catalog_digest) is None:
+        raise DispatchError(
+            "pending sequencing recovery is missing its immutable epoch"
+        )
+    releases = state.get(PROGRAM_SEQUENCING_RELEASES_STATE_KEY) or {}
+    if not isinstance(releases, dict):
+        raise DispatchError("program sequencing releases must be an object")
+    if str(catalog["program_id"]) in releases and (
+        validate_sequencing_release_record(state, catalog, catalog_digest) is None
+    ):
+        raise DispatchError(
+            "pending sequencing recovery has no immutable release"
+        )
+    return pending
+
+
 def expected_completion_role(task_id: str, catalog: dict[str, Any]) -> str:
     authority = catalog.get("completion_authority") or {}
     authority_id = str(authority.get("task_id") or "")
@@ -4518,7 +4561,12 @@ def validate_program_graph_prestate(
             overlay,
         )
         if catalog.get("overlay_applied") is True:
-            validate_sequencing_epoch_record(state, catalog, catalog_digest)
+            if validate_sequencing_epoch_record(
+                state, catalog, catalog_digest
+            ) is None:
+                raise DispatchError(
+                    "current sequencing graph is missing its immutable epoch record"
+                )
         return "current"
     if source_catalog is not None and source_catalog_digest is not None:
         source_projection = catalog_graph_projection(
@@ -4747,6 +4795,7 @@ def validate_sequencing_epoch_record(
         "effective_catalog_sha256",
         "sequencing_overlay_sha256",
         "release_gate_id",
+        "install_mode",
         "applied_at",
         "source_graph_projection_sha256",
         "effective_graph_projection_sha256",
@@ -4770,16 +4819,28 @@ def validate_sequencing_epoch_record(
     }
     catalog_tasks = catalog.get("tasks") or []
     by_id = {str(task["id"]): task for task in catalog_tasks}
+    source_catalog, source_raw = read_regular_json(
+        catalog_path(), label="sequencing epoch source catalog"
+    )
+    source_digest = sha256_bytes(source_raw)
+    source_by_id = {
+        str(task["id"]): task for task in source_catalog.get("tasks") or []
+    }
     if (
         not isinstance(record, dict)
         or set(record) != required
         or record.get("schema_version") != SEQUENCING_EPOCH_SCHEMA_VERSION
         or record.get("program_id") != catalog.get("program_id")
         or record.get("effective_catalog_sha256") != catalog_digest
+        or record.get("source_catalog_sha256") != source_digest
+        or source_digest
+        != (catalog.get("source_hashes") or {}).get("tasks_catalog_sha256")
         or record.get("sequencing_overlay_sha256")
         != catalog.get("sequencing_overlay_sha256")
         or record.get("release_gate_id")
         != (catalog.get("release_gate") or {}).get("gate_id")
+        or record.get("install_mode")
+        not in {"base_epoch_migration", "fresh_materialization"}
         or record.get("task_count") != len(catalog_tasks)
         or not isinstance(transitions, list)
         or len(transitions) != len(catalog_tasks)
@@ -4787,6 +4848,10 @@ def validate_sequencing_epoch_record(
         != canonical_json_sha256(transitions)
         or record.get("effective_graph_projection_sha256")
         != canonical_json_sha256(catalog_graph_projection(catalog, catalog_digest))
+        or record.get("source_graph_projection_sha256")
+        != canonical_json_sha256(
+            catalog_graph_projection(source_catalog, source_digest)
+        )
     ):
         raise DispatchError("program sequencing epoch record is not exact")
     parse_activity_timestamp(record.get("applied_at"))
@@ -4795,20 +4860,71 @@ def validate_sequencing_epoch_record(
         raise DispatchError("program sequencing epoch transition set is not exact")
     for row in transitions:
         task_id = str(row.get("task_id") or "")
+        expected_runtime = (
+            build_task(
+                by_id[task_id],
+                catalog,
+                catalog_digest,
+                str(record.get("applied_at") or ""),
+            )
+            if task_id in by_id
+            else None
+        )
+        expected_marker = (
+            _sequencing_gate_marker(
+                catalog,
+                parked_at=str(record.get("applied_at") or ""),
+                previous_status="todo",
+            )
+            if task_id in set(
+                (catalog.get("release_gate") or {}).get("gated_task_ids") or []
+            )
+            else None
+        )
+        expected_source_ref_sha256 = (
+            canonical_json_sha256(
+                build_task(
+                    source_by_id[task_id],
+                    source_catalog,
+                    source_digest,
+                    str(record.get("applied_at") or ""),
+                ).get("source_ref")
+            )
+            if task_id in source_by_id
+            and record.get("install_mode") == "base_epoch_migration"
+            else canonical_json_sha256(None)
+        )
         if (
             not isinstance(row, dict)
             or set(row) != transition_fields
             or task_id not in by_id
+            or task_id not in source_by_id
+            or row.get("before_task_contract_sha256")
+            != task_contract_sha256(source_by_id[task_id])
+            or row.get("before_source_ref_sha256")
+            != expected_source_ref_sha256
             or row.get("after_task_contract_sha256")
             != task_contract_sha256(by_id[task_id])
+            or not isinstance(expected_runtime, dict)
+            or row.get("after_source_ref_sha256")
+            != canonical_json_sha256(expected_runtime.get("source_ref"))
+            or row.get("acceptance_deferral_sha256")
+            != canonical_json_sha256(expected_runtime.get("acceptance_deferral"))
+            or row.get("gate_marker_sha256")
+            != canonical_json_sha256(expected_marker)
             or any(
                 not _is_lower_hex(row.get(field), 64)
                 for field in transition_fields
                 if field.endswith("sha256")
             )
-            or row.get("before_status") != "todo"
+            or row.get("before_status")
+            != (
+                "todo"
+                if record.get("install_mode") == "base_epoch_migration"
+                else "absent"
+            )
             or row.get("after_status")
-            not in {"todo", "blocked"}
+            != ("blocked" if expected_marker is not None else "todo")
         ):
             raise DispatchError("program sequencing epoch transition is not exact")
     audits = _sequencing_epoch_activity_records(state, catalog)
@@ -4829,6 +4945,12 @@ def validate_sequencing_epoch_record(
         or audit.get("effective_catalog_sha256") != catalog_digest
         or audit.get("task_transition_set_sha256")
         != record["task_transition_set_sha256"]
+        or audit.get("ts") != record["applied_at"]
+        or audit.get("task_id")
+        != str(catalog["g2_evidence_contract"]["target_task"])
+        or audit.get("sequencing_overlay_sha256")
+        != record["sequencing_overlay_sha256"]
+        or audit.get("message") != "Installed exact sequencing overlay epoch"
     ):
         raise DispatchError("program sequencing epoch audit is not exact")
     return record
@@ -4876,12 +4998,20 @@ def install_sequencing_epoch(
     transitions: list[dict[str, Any]] = []
     for task_id in expected_ids:
         existing = active_by_id[task_id]
+        expected_source_runtime = build_task(
+            source_by_id[task_id],
+            source_catalog,
+            source_catalog_digest,
+            str(existing.get("created_at") or timestamp),
+        )
         if (
             existing.get("status") != "todo"
             or _has_live_admission(existing)
             or "sequencing_release_gate" in existing
             or task_contract_sha256(existing)
             != task_contract_sha256(source_by_id[task_id])
+            or existing.get("source_ref")
+            != expected_source_runtime.get("source_ref")
         ):
             raise DispatchError(
                 f"sequencing epoch task {task_id} is not pristine base todo"
@@ -4893,6 +5023,8 @@ def install_sequencing_epoch(
             or not isinstance(last_update, str)
             or parse_activity_timestamp(last_update)
             < parse_activity_timestamp(created_at)
+            or parse_activity_timestamp(last_update)
+            > parse_activity_timestamp(timestamp)
         ):
             raise DispatchError(
                 f"sequencing epoch task {task_id} timestamps are invalid"
@@ -4955,6 +5087,7 @@ def install_sequencing_epoch(
         "effective_catalog_sha256": catalog_digest,
         "sequencing_overlay_sha256": str(catalog["sequencing_overlay_sha256"]),
         "release_gate_id": str(catalog["release_gate"]["gate_id"]),
+        "install_mode": "base_epoch_migration",
         "applied_at": timestamp,
         "source_graph_projection_sha256": canonical_json_sha256(source_projection),
         "effective_graph_projection_sha256": canonical_json_sha256(
@@ -4987,6 +5120,116 @@ def install_sequencing_epoch(
         "message": "Installed exact sequencing overlay epoch",
     }
     return expected_ids, [log], True
+
+
+def install_fresh_sequencing_epoch(
+    state: dict[str, Any],
+    source_catalog: dict[str, Any],
+    source_catalog_digest: str,
+    catalog: dict[str, Any],
+    catalog_digest: str,
+    timestamp: str,
+    *,
+    graph_prestate: str,
+) -> tuple[list[dict[str, Any]], bool]:
+    if catalog.get("overlay_applied") is not True or graph_prestate != "fresh":
+        return [], False
+    if validate_sequencing_epoch_record(state, catalog, catalog_digest) is not None:
+        raise DispatchError("fresh sequencing materialization cannot reuse an epoch")
+    if validate_sequencing_release_record(state, catalog, catalog_digest) is not None:
+        raise DispatchError("fresh sequencing materialization cannot be pre-released")
+    active_by_id, archived_by_id = _program_graph_sources(state, catalog)
+    effective_tasks = catalog.get("tasks") or []
+    expected_ids = [str(task["id"]) for task in effective_tasks]
+    if set(active_by_id) != set(expected_ids) or archived_by_id:
+        raise DispatchError(
+            "fresh sequencing materialization requires all 48 tasks active"
+        )
+    source_by_id = {
+        str(task["id"]): task for task in source_catalog.get("tasks") or []
+    }
+    effective_by_id = {str(task["id"]): task for task in effective_tasks}
+    gated_ids = set((catalog.get("release_gate") or {}).get("gated_task_ids") or [])
+    transitions: list[dict[str, Any]] = []
+    for task_id in expected_ids:
+        task = active_by_id[task_id]
+        validate_existing_task_provenance(
+            task,
+            effective_by_id[task_id],
+            catalog,
+            catalog_digest,
+            source="fresh active",
+        )
+        expected_status = "blocked" if task_id in gated_ids else "todo"
+        expected_marker = None
+        if task_id in gated_ids:
+            expected_marker = _validate_sequencing_gate_marker(
+                task.get("sequencing_release_gate"), catalog
+            )
+        elif "sequencing_release_gate" in task:
+            raise DispatchError("ungated fresh task carries a sequencing marker")
+        if task.get("status") != expected_status or task.get("last_update") != timestamp:
+            raise DispatchError("fresh sequencing task state is not exact")
+        transitions.append(
+            {
+                "task_id": task_id,
+                "before_task_snapshot_sha256": canonical_json_sha256(None),
+                "after_task_snapshot_sha256": canonical_json_sha256(task),
+                "before_task_contract_sha256": task_contract_sha256(
+                    source_by_id[task_id]
+                ),
+                "after_task_contract_sha256": task_contract_sha256(task),
+                "before_source_ref_sha256": canonical_json_sha256(None),
+                "after_source_ref_sha256": canonical_json_sha256(
+                    task.get("source_ref")
+                ),
+                "before_status": "absent",
+                "after_status": expected_status,
+                "acceptance_deferral_sha256": canonical_json_sha256(
+                    task.get("acceptance_deferral")
+                ),
+                "gate_marker_sha256": canonical_json_sha256(expected_marker),
+            }
+        )
+    record = {
+        "schema_version": SEQUENCING_EPOCH_SCHEMA_VERSION,
+        "program_id": str(catalog["program_id"]),
+        "source_catalog_sha256": source_catalog_digest,
+        "effective_catalog_sha256": catalog_digest,
+        "sequencing_overlay_sha256": str(catalog["sequencing_overlay_sha256"]),
+        "release_gate_id": str(catalog["release_gate"]["gate_id"]),
+        "install_mode": "fresh_materialization",
+        "applied_at": timestamp,
+        "source_graph_projection_sha256": canonical_json_sha256(
+            catalog_graph_projection(source_catalog, source_catalog_digest)
+        ),
+        "effective_graph_projection_sha256": canonical_json_sha256(
+            catalog_graph_projection(catalog, catalog_digest)
+        ),
+        "task_count": len(transitions),
+        "task_transitions": transitions,
+        "task_transition_set_sha256": canonical_json_sha256(transitions),
+    }
+    records = state.get(PROGRAM_SEQUENCING_EPOCHS_STATE_KEY) or {}
+    if not isinstance(records, dict):
+        raise DispatchError("program sequencing epochs must be an object")
+    records[str(catalog["program_id"])] = record
+    state[PROGRAM_SEQUENCING_EPOCHS_STATE_KEY] = records
+    state["updated_at"] = timestamp
+    return [
+        {
+            "ts": timestamp,
+            "agent": str(os.environ.get("AI_NAME") or ""),
+            "type": "sequencing_overlay_install",
+            "task_id": str(catalog["g2_evidence_contract"]["target_task"]),
+            "sequencing_epoch_sha256": canonical_json_sha256(record),
+            "sequencing_overlay_sha256": str(catalog["sequencing_overlay_sha256"]),
+            "source_catalog_sha256": source_catalog_digest,
+            "effective_catalog_sha256": catalog_digest,
+            "task_transition_set_sha256": record["task_transition_set_sha256"],
+            "message": "Installed exact sequencing overlay epoch",
+        }
+    ], True
 
 
 def _validate_sequencing_gate_marker(
@@ -5053,6 +5296,8 @@ def validate_sequencing_release_record(
         "release_gate_id",
         "release_predicate",
         "released_at",
+        "g2_issued_at",
+        "closeout_at",
         "g2_evidence_sha256",
         "canonical_record_bundle_sha256",
         "hosted_probe_sha256",
@@ -5061,6 +5306,7 @@ def validate_sequencing_release_record(
         "target_task_snapshot_sha256",
         "reviewer",
         "review_verdict_sha256",
+        "release_admission_sha256",
         "released_task_transitions",
         "released_task_transition_set_sha256",
     }
@@ -5093,7 +5339,27 @@ def validate_sequencing_release_record(
     ):
         raise DispatchError("program sequencing release record is not exact")
     parse_activity_timestamp(record.get("released_at"))
+    g2_issued_at = parse_activity_timestamp(record.get("g2_issued_at"))
+    closeout_at = parse_activity_timestamp(record.get("closeout_at"))
+    released_at = parse_activity_timestamp(record.get("released_at"))
+    if closeout_at > g2_issued_at or g2_issued_at > released_at:
+        raise DispatchError("program sequencing release chronology is invalid")
+    epoch = validate_sequencing_epoch_record(state, catalog, catalog_digest)
+    if epoch is None or parse_activity_timestamp(epoch.get("applied_at")) > released_at:
+        raise DispatchError(
+            "program sequencing release is missing its preceding epoch"
+        )
+    epoch_transitions = {
+        str(row.get("task_id") or ""): row
+        for row in epoch.get("task_transitions") or []
+        if isinstance(row, dict)
+    }
     gated_ids = set(gate.get("gated_task_ids") or [])
+    expected_transition_ids = [
+        str(task["id"])
+        for task in catalog.get("tasks") or []
+        if str(task["id"]) in gated_ids
+    ]
     transition_ids: list[str] = []
     for transition in transitions:
         task_id = str(transition.get("task_id") or "") if isinstance(transition, dict) else ""
@@ -5103,6 +5369,9 @@ def validate_sequencing_release_record(
             or task_id not in gated_ids
             or transition.get("before_status") != "blocked"
             or transition.get("after_status") != "todo"
+            or task_id not in epoch_transitions
+            or transition.get("before_task_snapshot_sha256")
+            != epoch_transitions[task_id].get("after_task_snapshot_sha256")
             or any(
                 not _is_lower_hex(transition.get(field), 64)
                 for field in (
@@ -5113,8 +5382,11 @@ def validate_sequencing_release_record(
         ):
             raise DispatchError("program sequencing release transition is not exact")
         transition_ids.append(task_id)
-    if len(transition_ids) != len(set(transition_ids)):
-        raise DispatchError("program sequencing release transitions are duplicated")
+    if (
+        len(transition_ids) != len(set(transition_ids))
+        or transition_ids != expected_transition_ids
+    ):
+        raise DispatchError("program sequencing release transition set is not exact")
 
     contract = catalog["g2_evidence_contract"]
     evidence, evidence_raw, _ = _read_g2_artifact(
@@ -5145,6 +5417,8 @@ def validate_sequencing_release_record(
     )
     closeout_task, _ = _resolve_g2_closeout_task(state, catalog, contract)
     admission = evidence.get("closeout_admission") if isinstance(evidence, dict) else None
+    bundle_reference = evidence.get("record_bundle") if isinstance(evidence, dict) else None
+    probe_reference = evidence.get("hosted_probe") if isinstance(evidence, dict) else None
     if (
         record.get("g2_evidence_sha256") != sha256_bytes(evidence_raw)
         or not isinstance(bundle_raw, bytes)
@@ -5161,6 +5435,43 @@ def validate_sequencing_release_record(
         or record.get("reviewer") != admission.get("reviewer")
         or record.get("review_verdict_sha256")
         != admission.get("review_verdict_sha256")
+        or record.get("g2_issued_at") != evidence.get("issued_at")
+        or not isinstance(bundle_reference, dict)
+        or bundle_reference.get("sha256")
+        != record.get("canonical_record_bundle_sha256")
+        or not isinstance(probe_reference, dict)
+        or probe_reference.get("sha256") != record.get("hosted_probe_sha256")
+        or admission.get("review_manifest_sha256")
+        != record.get("product_manifest_sha256")
+        or admission.get("review_manifest_sidecar_sha256")
+        != record.get("product_manifest_sidecar_sha256")
+        or admission.get("task_snapshot_sha256")
+        != record.get("target_task_snapshot_sha256")
+        or record.get("release_admission_sha256")
+        != canonical_json_sha256(
+            {
+                "g2_evidence_sha256": record.get("g2_evidence_sha256"),
+                "canonical_record_bundle_sha256": record.get(
+                    "canonical_record_bundle_sha256"
+                ),
+                "hosted_probe_sha256": record.get("hosted_probe_sha256"),
+                "product_manifest_sha256": record.get(
+                    "product_manifest_sha256"
+                ),
+                "product_manifest_sidecar_sha256": record.get(
+                    "product_manifest_sidecar_sha256"
+                ),
+                "target_task_snapshot_sha256": record.get(
+                    "target_task_snapshot_sha256"
+                ),
+                "reviewer": record.get("reviewer"),
+                "review_verdict_sha256": record.get(
+                    "review_verdict_sha256"
+                ),
+                "g2_issued_at": record.get("g2_issued_at"),
+                "closeout_at": record.get("closeout_at"),
+            }
+        )
     ):
         raise DispatchError("persisted G2 release admission drifted")
     audits = _release_activity_records(state, catalog)
@@ -5178,44 +5489,49 @@ def validate_sequencing_release_record(
         or audit.get("release_record_sha256") != canonical_json_sha256(record)
         or audit.get("released_task_transition_set_sha256")
         != record["released_task_transition_set_sha256"]
+        or audit.get("ts") != record["released_at"]
+        or audit.get("task_id")
+        != str(catalog["g2_evidence_contract"]["target_task"])
+        or audit.get("sequencing_overlay_sha256")
+        != record["sequencing_overlay_sha256"]
+        or audit.get("message")
+        != "Released exact sequencing gate after G2 admission"
     ):
         raise DispatchError("program sequencing release audit is not exact")
     return record
 
 
 def _build_sequencing_release_record(
-    state: dict[str, Any],
     catalog: dict[str, Any],
     catalog_digest: str,
     timestamp: str,
     transitions: list[dict[str, Any]],
+    admission: Mapping[str, Any],
 ) -> dict[str, Any]:
-    contract = catalog["g2_evidence_contract"]
-    evidence, evidence_raw, _ = _read_g2_artifact(
-        contract, "evidence_path", label="G2 release evidence manifest"
-    )
-    bundle_raw = read_rooted_regular_bytes(
-        REPO_ROOT, contract["canonical_record_bundle_path"], label="G2 release bundle"
-    )
-    probe_raw = read_rooted_regular_bytes(
-        REPO_ROOT, contract["hosted_probe_path"], label="G2 release probe"
-    )
-    product_raw = read_rooted_regular_bytes(
-        REPO_ROOT, contract["closeout_manifest_path"], label="G2 release product"
-    )
-    sidecar_raw = read_rooted_regular_bytes(
-        REPO_ROOT,
-        str(Path(str(contract["closeout_manifest_path"])).with_name("evidence.sha256")),
-        label="G2 release product sidecar",
-    )
-    if not all(
-        isinstance(value, bytes)
-        for value in (bundle_raw, probe_raw, product_raw, sidecar_raw)
-    ):
-        raise DispatchError("G2 release artifacts are incomplete")
-    closeout_task, _ = _resolve_g2_closeout_task(state, catalog, contract)
-    admission = evidence["closeout_admission"]
     gate = catalog["release_gate"]
+    admission_fields = {
+        "g2_evidence_sha256",
+        "canonical_record_bundle_sha256",
+        "hosted_probe_sha256",
+        "product_manifest_sha256",
+        "product_manifest_sidecar_sha256",
+        "target_task_snapshot_sha256",
+        "reviewer",
+        "review_verdict_sha256",
+        "g2_issued_at",
+        "closeout_at",
+    }
+    if set(admission) != admission_fields:
+        raise DispatchError("G2 release admission snapshot is not exact")
+    gated_ids = set((catalog.get("release_gate") or {}).get("gated_task_ids") or [])
+    if (
+        len(transitions) != len(gated_ids)
+        or {str(row.get("task_id") or "") for row in transitions} != gated_ids
+    ):
+        raise DispatchError("G2 release did not transition the exact gated task set")
+    released_at = parse_activity_timestamp(timestamp)
+    if parse_activity_timestamp(admission["g2_issued_at"]) > released_at:
+        raise DispatchError("G2 release predates its admitted evidence")
     return {
         "schema_version": 1,
         "program_id": str(catalog["program_id"]),
@@ -5224,14 +5540,8 @@ def _build_sequencing_release_record(
         "release_gate_id": str(gate["gate_id"]),
         "release_predicate": str(gate["release_predicate"]),
         "released_at": timestamp,
-        "g2_evidence_sha256": sha256_bytes(evidence_raw),
-        "canonical_record_bundle_sha256": sha256_bytes(bundle_raw),
-        "hosted_probe_sha256": sha256_bytes(probe_raw),
-        "product_manifest_sha256": sha256_bytes(product_raw),
-        "product_manifest_sidecar_sha256": sha256_bytes(sidecar_raw),
-        "target_task_snapshot_sha256": canonical_json_sha256(closeout_task),
-        "reviewer": str(admission["reviewer"]),
-        "review_verdict_sha256": str(admission["review_verdict_sha256"]),
+        "release_admission_sha256": canonical_json_sha256(dict(admission)),
+        **{field: deepcopy(admission[field]) for field in sorted(admission_fields)},
         "released_task_transitions": transitions,
         "released_task_transition_set_sha256": canonical_json_sha256(transitions),
     }
@@ -5255,6 +5565,13 @@ def materialize(
     ):
         raise DispatchError("active task identities are missing or duplicated")
     active_by_id = {str(task["id"]): task for task in active_tasks}
+    if catalog.get("overlay_applied") is True:
+        task_ids = [str(task.get("id") or "") for task in tasks]
+        expected_task_ids = [str(task["id"]) for task in catalog.get("tasks") or []]
+        if task_ids != expected_task_ids:
+            raise DispatchError(
+                "sequencing materialization requires the complete ordered catalog"
+            )
     created: list[str] = []
     preserved: list[str] = []
     archived: list[str] = []
@@ -5263,6 +5580,8 @@ def materialize(
     release_gate = catalog.get("release_gate") if catalog.get("overlay_applied") else None
     gated_ids: set[str] = set()
     gate_open = True
+    release_admission: dict[str, Any] | None = None
+    persisted_release: dict[str, Any] | None = None
     if release_gate is not None:
         if not isinstance(release_gate, dict):
             raise DispatchError("sequencing release gate is malformed")
@@ -5272,7 +5591,13 @@ def materialize(
         )
         gate_open = persisted_release is not None
         if not gate_open:
-            gate_open = check_g2_evidence_valid(state, catalog)
+            release_admission = resolve_g2_evidence_admission(state, catalog)
+            gate_open = release_admission is not None
+    release_admission_sha256 = (
+        canonical_json_sha256(release_admission)
+        if release_admission is not None
+        else None
+    )
     pending_materialized: list[dict[str, Any]] = []
     released_transitions: list[dict[str, Any]] = []
 
@@ -5325,6 +5650,20 @@ def materialize(
                 preserved.append(f"{task_id}:g2-gated-blocked")
                 continue
 
+        if task_id in gated_ids and gate_open and persisted_release is None:
+            if archive_payload is not None:
+                raise DispatchError(
+                    f"gated task {task_id} reached archive before first G2 release"
+                )
+            if existing is not None:
+                if existing.get("status") != "blocked" or _has_live_admission(existing):
+                    raise DispatchError(
+                        f"gated task {task_id} bypassed its pre-G2 park"
+                    )
+                _validate_sequencing_gate_marker(
+                    existing.get("sequencing_release_gate"), catalog
+                )
+
         if archive_payload is not None:
             if task_id in additive_ids:
                 if catalog.get("overlay_applied") is True:
@@ -5351,6 +5690,15 @@ def materialize(
                     source="archive",
                 )
             archived.append(f"{task_id}:{archive_state}")
+            if (
+                task_id in gated_ids
+                and persisted_release is not None
+                and archived_task.get("sequencing_release_admission_sha256")
+                != persisted_release.get("release_admission_sha256")
+            ):
+                raise DispatchError(
+                    f"released gated archive {task_id} lost its release admission"
+                )
             continue
 
         if existing is not None:
@@ -5378,13 +5726,21 @@ def materialize(
                     catalog_digest,
                     source="active",
                 )
-            if task_id in gated_ids and gate_open and "sequencing_release_gate" in existing:
+            if (
+                task_id in gated_ids
+                and gate_open
+                and persisted_release is None
+                and "sequencing_release_gate" in existing
+            ):
                 marker = _validate_sequencing_gate_marker(
                     existing.get("sequencing_release_gate"), catalog
                 )
                 before = deepcopy(existing)
                 existing["status"] = str(marker["previous_status"])
                 existing.pop("sequencing_release_gate", None)
+                existing["sequencing_release_admission_sha256"] = (
+                    release_admission_sha256
+                )
                 existing["last_update"] = timestamp
                 released_transitions.append(
                     {
@@ -5397,6 +5753,19 @@ def materialize(
                 )
                 preserved.append(f"{task_id}:g2-released-{existing['status']}")
             else:
+                if task_id in gated_ids and "sequencing_release_gate" in existing:
+                    raise DispatchError(
+                        f"released gated task {task_id} regained a park marker"
+                    )
+                if (
+                    task_id in gated_ids
+                    and persisted_release is not None
+                    and existing.get("sequencing_release_admission_sha256")
+                    != persisted_release.get("release_admission_sha256")
+                ):
+                    raise DispatchError(
+                        f"released gated task {task_id} lost its release admission"
+                    )
                 preserved.append(f"{task_id}:{existing.get('status', 'unknown')}")
             continue
 
@@ -5407,6 +5776,10 @@ def materialize(
                 catalog,
                 parked_at=timestamp,
                 previous_status="todo",
+            )
+        elif task_id in gated_ids and gate_open and persisted_release is None:
+            raise DispatchError(
+                f"first G2 release requires a durably parked task: {task_id}"
             )
         pending_materialized.append(materialized)
         created.append(task_id)
@@ -5433,11 +5806,11 @@ def materialize(
     active_tasks.extend(pending_materialized)
     if release_gate is not None and gate_open and persisted_release is None:
         release_record = _build_sequencing_release_record(
-            state,
             catalog,
             catalog_digest,
             timestamp,
             released_transitions,
+            release_admission or {},
         )
         release_records = state.get(PROGRAM_SEQUENCING_RELEASES_STATE_KEY) or {}
         if not isinstance(release_records, dict):
@@ -5678,7 +6051,7 @@ def _validate_g2_product_evidence(
     observed_at: datetime,
     expected_deployment_sha: str,
     closeout_at: datetime,
-) -> None:
+) -> dict[str, Any]:
     if set(admission) != G2_CLOSEOUT_ADMISSION_KEYS:
         raise DispatchError("G2 closeout admission schema is not exact")
     if admission.get("review_file") != contract.get("closeout_manifest_path"):
@@ -6010,6 +6383,14 @@ def _validate_g2_product_evidence(
         != canonical_json_sha256(verdict)
     ):
         raise DispatchError("G2 reviewer verdict digest mismatch")
+    return {
+        "product_manifest_sha256": manifest_sha256,
+        "product_manifest_sidecar_sha256": sha256_bytes(sidecar_raw),
+        "target_task_snapshot_sha256": canonical_json_sha256(closeout_task),
+        "reviewer": reviewer,
+        "review_verdict_sha256": canonical_json_sha256(verdict),
+        "closeout_at": closeout_at.isoformat().replace("+00:00", "Z"),
+    }
 
 
 def _validate_g2_projection_bundle(
@@ -6401,7 +6782,7 @@ def _validate_g2_evidence(
     catalog: dict[str, Any],
     *,
     now: datetime,
-) -> None:
+) -> dict[str, Any]:
     if now.tzinfo is None:
         raise DispatchError("G2 verifier now must be timezone-aware")
     now = now.astimezone(timezone.utc)
@@ -6414,7 +6795,7 @@ def _validate_g2_evidence(
     )
     if contract.get("version") != 2:
         raise DispatchError("G2 evidence contract version mismatch")
-    evidence, _, _ = _read_g2_artifact(
+    evidence, evidence_raw, _ = _read_g2_artifact(
         contract, "evidence_path", label="G2 evidence manifest"
     )
     if set(evidence) != G2_EVIDENCE_KEYS:
@@ -6541,7 +6922,7 @@ def _validate_g2_evidence(
     closeout_task, closeout_at = _resolve_g2_closeout_task(
         state, catalog, contract
     )
-    _validate_g2_product_evidence(
+    product_admission = _validate_g2_product_evidence(
         closeout_task=closeout_task,
         contract=contract,
         admission=evidence.get("closeout_admission"),
@@ -6552,6 +6933,31 @@ def _validate_g2_evidence(
         expected_deployment_sha=str(hosted["expected_deployment_sha"]),
         closeout_at=closeout_at,
     )
+    return {
+        "g2_evidence_sha256": sha256_bytes(evidence_raw),
+        "canonical_record_bundle_sha256": sha256_bytes(bundle_raw),
+        "hosted_probe_sha256": sha256_bytes(hosted_raw),
+        "g2_issued_at": issued_at.isoformat().replace("+00:00", "Z"),
+        **product_admission,
+    }
+
+
+def resolve_g2_evidence_admission(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    """Return the exact validated byte snapshot used for one release decision."""
+
+    try:
+        return _validate_g2_evidence(
+            state,
+            catalog,
+            now=now or datetime.now(timezone.utc),
+        )
+    except Exception:
+        return None
 
 
 def check_g2_evidence_valid(
@@ -6577,12 +6983,11 @@ def check_g2_evidence_valid(
                 / "sequencing-overlay-2026-07-16.json"
             )
             apply_sequencing_overlay(catalog, overlay_path)
-        _validate_g2_evidence(
+        return resolve_g2_evidence_admission(
             state,
             catalog,
-            now=now or datetime.now(timezone.utc),
-        )
-        return True
+            now=now,
+        ) is not None
     except Exception:
         return False
 
@@ -7024,7 +7429,9 @@ def main() -> int:
     source_catalog = deepcopy(catalog)
     source_catalog_digest = sha256_bytes(catalog_bytes)
 
-    # Locate and apply sequencing overlay if present
+    # The authoritative overlay is the production default. A base-catalog
+    # opt-out exists only for isolated pytest status roots that exercise the
+    # historical dispatcher contract; it cannot disable sequencing live.
     overlay_path = None
     if getattr(args, "sequencing_overlay", ""):
         overlay_path = Path(os.path.expanduser(args.sequencing_overlay)).resolve()
@@ -7032,6 +7439,17 @@ def main() -> int:
         overlay_env = os.environ.get("LOOP_PRODUCT_SEQUENCING_OVERLAY")
         if overlay_env:
             overlay_path = Path(os.path.expanduser(overlay_env)).resolve()
+        else:
+            system_temp_root = Path(tempfile.gettempdir()).resolve()
+            test_base_catalog = (
+                os.environ.get("LOOP_PRODUCT_TEST_BASE_CATALOG") == "1"
+                and bool(os.environ.get("PYTEST_CURRENT_TEST"))
+                and STATUS_ROOT != REPO_ROOT
+                and STATUS_ROOT.parent == system_temp_root
+                and STATUS_ROOT.name.startswith("tmp")
+            )
+            if not test_base_catalog:
+                overlay_path = DEFAULT_SEQUENCING_OVERLAY_PATH.resolve()
 
     if overlay_path:
         print(f"Applying sequencing overlay from: {overlay_path}")
@@ -7067,11 +7485,10 @@ def main() -> int:
         state = read_json(STATUS_PATH)
         pending = state.get("program_activity_outbox")
         if pending not in (None, {}, []):
-            validated_pending = validate_activity_outbox(
+            validated_pending = validate_pending_sequencing_recovery(
                 state,
                 catalog,
                 catalog_digest,
-                require_current_catalog=False,
             )
             earliest = min(
                 parse_activity_timestamp(event["ts"])
@@ -7139,6 +7556,19 @@ def main() -> int:
             catalog_digest,
             timestamp,
         )
+        fresh_sequencing_logs, fresh_sequencing_changed = (
+            install_fresh_sequencing_epoch(
+                proposed,
+                source_catalog,
+                source_catalog_digest,
+                catalog,
+                catalog_digest,
+                timestamp,
+                graph_prestate=graph_prestate,
+            )
+            if overlay_path
+            else ([], False)
+        )
         overlay_logs, overlay_changed = ensure_completion_overlay(
             proposed,
             catalog,
@@ -7146,10 +7576,17 @@ def main() -> int:
             timestamp,
             graph_prestate=graph_prestate,
         )
-        logs = [*migration_logs, *sequencing_logs, *overlay_logs, *logs]
+        logs = [
+            *migration_logs,
+            *sequencing_logs,
+            *logs,
+            *fresh_sequencing_logs,
+            *overlay_logs,
+        ]
         changed = (
             migration_changed
             or sequencing_changed
+            or fresh_sequencing_changed
             or overlay_changed
             or changed
         )
@@ -7164,6 +7601,25 @@ def main() -> int:
             catalog=catalog,
             catalog_digest=catalog_digest,
         )
+        if overlay_path:
+            if validate_sequencing_epoch_record(
+                proposed, catalog, catalog_digest
+            ) is None:
+                raise DispatchError(
+                    "sequencing transaction did not produce an immutable epoch"
+                )
+            releases = proposed.get(PROGRAM_SEQUENCING_RELEASES_STATE_KEY) or {}
+            if not isinstance(releases, dict):
+                raise DispatchError("program sequencing releases must be an object")
+            if str(catalog["program_id"]) in releases and (
+                validate_sequencing_release_record(
+                    proposed, catalog, catalog_digest
+                )
+                is None
+            ):
+                raise DispatchError(
+                    "sequencing transaction did not produce an immutable release"
+                )
         transaction = validate_activity_outbox(
             proposed,
             catalog,

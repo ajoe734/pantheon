@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import runpy
 import subprocess
 import tempfile
@@ -28,6 +29,9 @@ CATALOG = (
     / "tasks.json"
 )
 SEQUENCING_OVERLAY = CATALOG.with_name("sequencing-overlay-2026-07-16.json")
+SEQUENCING_MATRIX = CATALOG.with_name(
+    "SEQUENCING_EXECUTION_MATRIX_2026-07-16.md"
+)
 SEQUENCING_ADDENDUM = (
     ROOT
     / "docs"
@@ -531,6 +535,7 @@ def run_dispatch(
         "AI_NAME": "Codex",
         "PANTHEON_STATUS_ROOT": str(root),
         "LOOP_PRODUCT_TASK_CATALOG": str(catalog),
+        "LOOP_PRODUCT_TEST_BASE_CATALOG": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
         **(extra_env or {}),
     }
@@ -3070,9 +3075,48 @@ def test_sequencing_overlay_v2_is_exact_and_partitions_all_48_tasks() -> None:
     )
 
 
+def test_sequencing_execution_matrix_matches_all_48_overlay_entries() -> None:
+    overlay = _overlay_payload()
+    matrix = SEQUENCING_MATRIX.read_text(encoding="utf-8")
+    headings = list(
+        re.finditer(r"^#### (LOOP-PROD-[^:]+):", matrix, flags=re.MULTILINE)
+    )
+    ids = [match.group(1) for match in headings]
+    assert len(ids) == 48
+    assert len(ids) == len(set(ids))
+    assert set(ids) == set(overlay["tasks"])
+
+    for index, match in enumerate(headings):
+        task_id = match.group(1)
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(matrix)
+        block = matrix[match.start():end]
+        entry = overlay["tasks"][task_id]
+
+        def rendered(dependencies: list[str]) -> str:
+            return ", ".join(f"`{item}`" for item in dependencies) or "None"
+
+        assert f"- **Wave**: {entry['wave']}" in block
+        assert f"- **Classification**: {entry['classification']}" in block
+        assert f"- **Rationale**: {entry['rationale']}" in block
+        assert (
+            f"- **Original Dependencies**: {rendered(entry['original_depends_on'])}"
+            in block
+        )
+        assert (
+            f"- **Amended Dependencies**: {rendered(entry['amended_depends_on'])}"
+            in block
+        )
+
+
 @pytest.mark.parametrize(
     "mutation",
-    ["wrong_merge_sha", "missing_id", "extra_id", "extra_entry_key"],
+    [
+        "wrong_merge_sha",
+        "missing_id",
+        "extra_id",
+        "extra_entry_key",
+        "wave_inversion",
+    ],
 )
 def test_sequencing_overlay_v2_rejects_authority_set_and_schema_mutations(
     tmp_path: Path,
@@ -3091,6 +3135,8 @@ def test_sequencing_overlay_v2_rejects_authority_set_and_schema_mutations(
         payload["tasks"]["LOOP-PROD-EXTRA-001"] = deepcopy(
             payload["tasks"]["LOOP-PROD-000"]
         )
+    elif mutation == "wave_inversion":
+        payload["tasks"]["LOOP-PROD-000"]["wave"] = 1
     else:
         payload["tasks"]["LOOP-PROD-000"]["unbound"] = True
     overlay = _write_mutated_overlay(
@@ -3098,6 +3144,24 @@ def test_sequencing_overlay_v2_rejects_authority_set_and_schema_mutations(
     )
 
     with pytest.raises(dispatcher.DispatchError):
+        dispatcher.apply_sequencing_overlay(catalog, overlay)
+
+    assert catalog == original
+
+
+def test_sequencing_overlay_rejects_raw_digest_mismatch_atomically(
+    tmp_path: Path,
+) -> None:
+    dispatcher = _load_dispatcher_module()
+    dispatcher.catalog_path = lambda: CATALOG
+    catalog = load_catalog()
+    original = deepcopy(catalog)
+    payload = _overlay_payload()
+    payload["tasks"]["LOOP-PROD-000"]["rationale"] += " tampered"
+    overlay = tmp_path / "digest-mismatch.json"
+    _write_json_artifact(overlay, payload)
+
+    with pytest.raises(dispatcher.DispatchError, match="overlay digest mismatch"):
         dispatcher.apply_sequencing_overlay(catalog, overlay)
 
     assert catalog == original
@@ -3338,6 +3402,7 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
 
     dispatcher = _load_dispatcher_module()
     dispatcher.catalog_path = lambda: CATALOG
+    monkeypatch.setattr(dispatcher, "REPO_ROOT", tmp_path)
     catalog = load_catalog()
     dispatcher.apply_sequencing_overlay(catalog, SEQUENCING_OVERLAY)
     catalog_digest = dispatcher.canonical_json_sha256(catalog)
@@ -3363,7 +3428,6 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         }
     )
 
-    monkeypatch.setattr(dispatcher, "REPO_ROOT", tmp_path)
     activity_log = tmp_path / "ai-activity-log.jsonl"
     activity_log.write_text("", encoding="utf-8")
     monkeypatch.setattr(dispatcher, "LOG_PATH", activity_log)
@@ -3679,6 +3743,270 @@ def test_g2_v2_rejects_canonical_record_digest_mismatch(
 
 
 @pytest.mark.parametrize(
+    ("mutation", "invalid_value"),
+    [("producer_revision", True), ("sequence_no", 1.0)],
+)
+def test_g2_v2_rejects_bool_revision_and_float_sequence_with_valid_digests(
+    g2_v2_fixture: dict,
+    mutation: str,
+    invalid_value: object,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    bundle = _read_artifact(g2_v2_fixture["paths"]["bundle"])
+    signal = bundle["rows"][0]
+    if mutation == "producer_revision":
+        signal["payload"]["correlation_envelope"][mutation] = invalid_value
+    else:
+        signal["payload"][mutation] = invalid_value
+        signal["payload"]["metadata"][mutation] = invalid_value
+    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
+    evidence["records"]["signal"]["sha256"] = (
+        dispatcher.canonical_json_sha256(signal)
+    )
+    evidence["record_bundle"]["sha256"] = _write_json_artifact(
+        g2_v2_fixture["paths"]["bundle"], bundle
+    )
+    _rewrite_g2(g2_v2_fixture, evidence)
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="canonical sequence number is not an exact integer",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v2_rejects_integer_one_for_controller_accepted_live(
+    g2_v2_fixture: dict,
+) -> None:
+    from services.trade_journey.lifecycle_projector import _fingerprint
+
+    bundle = _read_artifact(g2_v2_fixture["paths"]["bundle"])
+    projection = bundle["projection"]
+    projection["trade_journey_events"]["controller"]["accepted_live"] = 1
+    projection["loop_runs"]["controller"]["accepted_live"] = 1
+    projection["manifest"]["journey_sha256"] = _fingerprint(
+        projection["trade_journey_events"]
+    )
+    projection["manifest"]["loop_runs_sha256"] = _fingerprint(
+        projection["loop_runs"]
+    )
+    _rewrite_bundle(g2_v2_fixture, bundle)
+
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="projection controller is not canonical live truth",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v2_rejects_projection_before_last_canonical_ingest(
+    g2_v2_fixture: dict,
+) -> None:
+    from services.trade_journey.lifecycle_projector import _fingerprint
+
+    dispatcher = g2_v2_fixture["dispatcher"]
+    bundle = _read_artifact(g2_v2_fixture["paths"]["bundle"])
+    projection = bundle["projection"]
+    invalid_projection_at = "2026-07-15T00:01:05Z"
+    for document in (
+        projection["trade_journey_events"],
+        projection["loop_runs"],
+    ):
+        document["controller"]["last_projection_success_at"] = (
+            invalid_projection_at
+        )
+    loop_record = next(iter(projection["loop_runs"]["records"].values()))
+    loop_record["last_projected_at"] = invalid_projection_at
+    projection["manifest"]["journey_sha256"] = _fingerprint(
+        projection["trade_journey_events"]
+    )
+    projection["manifest"]["loop_runs_sha256"] = _fingerprint(
+        projection["loop_runs"]
+    )
+    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
+    evidence["records"]["loop_run_projection"]["sha256"] = (
+        dispatcher.canonical_json_sha256(loop_record)
+    )
+    evidence["record_bundle"]["sha256"] = _write_json_artifact(
+        g2_v2_fixture["paths"]["bundle"], bundle
+    )
+    _rewrite_g2(g2_v2_fixture, evidence)
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="projection controller freshness mismatch",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+@pytest.mark.parametrize("mutation", ["empty_id", "empty_evidence_refs"])
+def test_g2_v2_rejects_empty_acceptance_identity_or_evidence(
+    g2_v2_fixture: dict,
+    mutation: str,
+) -> None:
+    product = _read_artifact(g2_v2_fixture["paths"]["product"])
+    if mutation == "empty_id":
+        product["acceptance"][0]["id"] = ""
+    else:
+        product["acceptance"][0]["evidence_refs"] = []
+    _rewrite_product(g2_v2_fixture, product)
+
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="product evidence acceptance is not positive",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v2_rejects_opaque_hosted_readback_without_positive_observation(
+    g2_v2_fixture: dict,
+) -> None:
+    product = _read_artifact(g2_v2_fixture["paths"]["product"])
+    product["hosted_readback"] = {
+        "pre_deploy": {"observation": "opaque prose"}
+    }
+    _rewrite_product(g2_v2_fixture, product)
+
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="hosted readback has no positive observation",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v2_rejects_blank_behavioral_proof_reference(
+    g2_v2_fixture: dict,
+) -> None:
+    product = _read_artifact(g2_v2_fixture["paths"]["product"])
+    product["behavioral_proof"]["duplicate_safety"]["proof"] = ["   "]
+    _rewrite_product(g2_v2_fixture, product)
+
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="behavioral proof is not positive",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v2_rejects_contradictory_reviewer_verdict(
+    g2_v2_fixture: dict,
+) -> None:
+    product = _read_artifact(g2_v2_fixture["paths"]["product"])
+    product["record_log"].append(
+        {
+            "sequence": 2,
+            "recorded_at": G2_VERDICT_AT,
+            "kind": "formal_review_verdict",
+            "status": "rejected",
+            "actor": g2_v2_fixture["closeout_task"]["reviewer"],
+            "reference": "independent review contradiction",
+        }
+    )
+    _rewrite_product(g2_v2_fixture, product)
+
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="reviewer verdict is not exact",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v2_rejects_archive_closeout_before_merged_delivery(
+    g2_v2_fixture: dict,
+) -> None:
+    _archive_closeout(g2_v2_fixture)
+    archive = _read_artifact(g2_v2_fixture["paths"]["archive"])
+    archive["archived_at"] = G2_VERDICT_AT
+    _write_json_artifact(g2_v2_fixture["paths"]["archive"], archive)
+
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="closeout chronology is invalid",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v2_rejects_product_schema_raw_sha_drift(
+    g2_v2_fixture: dict,
+) -> None:
+    schema_path = (
+        g2_v2_fixture["dispatcher"].REPO_ROOT
+        / "schemas"
+        / "product-evidence.schema.json"
+    )
+    schema_path.write_bytes(schema_path.read_bytes() + b"\n")
+
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="product evidence schema digest mismatch",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v2_rejects_product_evidence_leaf_symlink(
+    g2_v2_fixture: dict,
+) -> None:
+    product_path = g2_v2_fixture["paths"]["product"]
+    external = product_path.with_name("external-product-evidence.json")
+    product_path.replace(external)
+    product_path.symlink_to(external)
+
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="G2 product evidence cannot be opened safely",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+@pytest.mark.parametrize(
     "mutation",
     ["status", "tenant", "environment", "run", "order"],
 )
@@ -3734,47 +4062,366 @@ def test_g2_v2_rejects_status_identity_environment_run_and_order_mutations(
     )
 
 
+def test_g2_v2_accepts_declared_chain_when_bundle_has_later_complete_lifecycle(
+    g2_v2_fixture: dict,
+) -> None:
+    import uuid
+
+    from services.trade_journey import hosted_lifecycle_probe as probe
+    from services.trade_journey.lifecycle_projector import LifecycleProjector
+    from services.trade_journey.test_hosted_lifecycle_probe import (
+        _natural_lifecycle_rows,
+    )
+
+    dispatcher = g2_v2_fixture["dispatcher"]
+    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
+    bundle = _read_artifact(g2_v2_fixture["paths"]["bundle"])
+    declared_rows = deepcopy(bundle["rows"])
+    replacements = {
+        "tj-paper-001": "tj-paper-002",
+        "run-paper-001": "run-paper-002",
+        "signal-paper-001": "signal-paper-002",
+        "strategy-paper-001": "strategy-paper-002",
+        "runtime-paper-001": "runtime-paper-002",
+        "10000000-0000-0000-0000-000000000001": (
+            "10000000-0000-0000-0000-000000000002"
+        ),
+        "pool-paper-001": "pool-paper-002",
+        "persona-paper-001": "persona-paper-002",
+        "pcb-paper-001": "pcb-paper-002",
+        "artifact-paper-001": "artifact-paper-002",
+        "plan-paper-001": "plan-paper-002",
+        "20000000-0000-0000-0000-000000000001": (
+            "20000000-0000-0000-0000-000000000002"
+        ),
+        "decision-paper-001": "decision-paper-002",
+        "client-order-paper-001": "client-order-paper-002",
+        "order-paper-001": "order-paper-002",
+        "reconciliation-paper-001": "reconciliation-paper-002",
+        "evaluation-paper-001": "evaluation-paper-002",
+        "signal:signal-paper-001": "signal:signal-paper-002",
+    }
+
+    def replace_identity(value):
+        if isinstance(value, dict):
+            return {key: replace_identity(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [replace_identity(item) for item in value]
+        return replacements.get(value, value)
+
+    later_rows = replace_identity(_natural_lifecycle_rows())
+    signal_event_id = "30000000-0000-0000-0000-000000000001"
+    fill_event_id = "30000000-0000-0000-0000-000000000006"
+    evaluation_id = "evaluation-paper-002"
+    event_ids = [
+        signal_event_id,
+        str(
+            uuid.uuid5(
+                probe.PAPER_LIFECYCLE_UUID_NAMESPACE,
+                f"{signal_event_id}:trade_decision",
+            )
+        ),
+        str(
+            uuid.uuid5(
+                probe.PAPER_LIFECYCLE_UUID_NAMESPACE,
+                f"{fill_event_id}:order_submitted",
+            )
+        ),
+        fill_event_id,
+        str(
+            uuid.uuid5(
+                probe.PAPER_LIFECYCLE_UUID_NAMESPACE,
+                f"{fill_event_id}:position_snapshot",
+            )
+        ),
+        str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"pantheon:scheduled-reconciliation:{evaluation_id}",
+            )
+        ),
+    ]
+    causal_parent = "signal:signal-paper-002"
+    for ordinal, (row, event_id) in enumerate(
+        zip(later_rows, event_ids), start=1
+    ):
+        created_at = f"2026-07-15T00:00:{10 + ordinal:02d}Z"
+        row.update(
+            {
+                "ingested_seq": 6 + ordinal,
+                "ingested_at": f"2026-07-15T00:01:{10 + ordinal:02d}Z",
+                "event_id": event_id,
+                "created_at": created_at,
+            }
+        )
+        payload = row["payload"]
+        payload.update(
+            {
+                "event_id": event_id,
+                "created_at": created_at,
+                "sequence_no": ordinal,
+                "causal_parent_id": causal_parent,
+            }
+        )
+        payload["metadata"].update(
+            {"sequence_no": ordinal, "causal_parent_id": causal_parent}
+        )
+        if payload["event_type"] == "reconciliation_completed":
+            payload["metadata"]["reconciliation_evaluation_id"] = evaluation_id
+        payload["correlation_envelope"].update(
+            {
+                "event_id": event_id,
+                "causation_event_id": causal_parent,
+                "event_time": created_at,
+                "received_at": created_at,
+            }
+        )
+        causal_parent = event_id
+    for index, row in enumerate(later_rows):
+        payload = row["payload"]
+        if payload["event_type"] == "reconciliation_completed":
+            metadata_envelope = payload["correlation_envelope"]
+        elif index == 0:
+            metadata_envelope = {"event_id": "signal:signal-paper-002"}
+        else:
+            metadata_envelope = later_rows[index - 1]["payload"][
+                "correlation_envelope"
+            ]
+        payload["metadata"]["correlation_envelope"] = deepcopy(
+            metadata_envelope
+        )
+
+    combined_rows = [*declared_rows, *later_rows]
+    projection_root = dispatcher.REPO_ROOT / "multi-lifecycle-projection"
+    projector = LifecycleProjector(
+        state_path=projection_root / "controller_state.json",
+        bundle_root=projection_root,
+        deployment_sha=G2_DEPLOYMENT_SHA,
+        clock=lambda: G2_PROJECTED_AT,
+    )
+    projector.project_records(
+        combined_rows,
+        mode="live",
+        source_high_watermark=len(combined_rows),
+    )
+    current = projection_root / "current"
+    manifest = _read_artifact(current / "manifest.json")
+    journeys = _read_artifact(current / "trade_journey_events.json")
+    loops = _read_artifact(current / "loop_runs.json")
+    candidates = probe._complete_candidates(combined_rows)
+    assert [candidate["identity"]["journey_id"] for candidate in candidates] == [
+        "tj-paper-002",
+        evidence["identity"]["journey_id"],
+    ]
+    declared_candidate = next(
+        candidate
+        for candidate in candidates
+        if candidate["identity"] == evidence["identity"]
+    )
+    proof = probe._correlate(
+        candidate=declared_candidate,
+        baseline_high_watermark=0,
+        high_watermark=len(combined_rows),
+        journeys=journeys,
+        loops=loops,
+        generation_name=current.resolve().name,
+        expected_sha=G2_DEPLOYMENT_SHA,
+    )
+    hosted = _read_artifact(g2_v2_fixture["paths"]["probe"])
+    hosted["proof"] = proof
+    probe_digest = _write_json_artifact(
+        g2_v2_fixture["paths"]["probe"], hosted
+    )
+    bundle.update(
+        {
+            "rows": combined_rows,
+            "source": {
+                "store": "telemetry_events",
+                "snapshot_isolation": "repeatable_read",
+                "baseline_high_watermark": 0,
+                "source_high_watermark": len(combined_rows),
+            },
+            "projection": {
+                "manifest": manifest,
+                "trade_journey_events": journeys,
+                "loop_runs": loops,
+            },
+        }
+    )
+    bundle_digest = _write_json_artifact(
+        g2_v2_fixture["paths"]["bundle"], bundle
+    )
+    evidence["record_bundle"]["sha256"] = bundle_digest
+    evidence["hosted_probe"]["sha256"] = probe_digest
+    declared_loop = loops["records"][evidence["identity"]["loop_run_id"]]
+    evidence["records"]["loop_run_projection"].update(
+        {
+            "sha256": dispatcher.canonical_json_sha256(declared_loop),
+            "generation": manifest["generation"],
+            "last_canonical_event_id": declared_candidate["selected_events"][-1][
+                "event_id"
+            ],
+        }
+    )
+    _rewrite_g2(g2_v2_fixture, evidence)
+
+    dispatcher._validate_g2_evidence(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
+
+
+def test_g2_v2_rejects_cross_chain_record_reference_splice(
+    g2_v2_fixture: dict,
+) -> None:
+    from services.trade_journey import hosted_lifecycle_probe as probe
+
+    test_g2_v2_accepts_declared_chain_when_bundle_has_later_complete_lifecycle(
+        g2_v2_fixture
+    )
+    dispatcher = g2_v2_fixture["dispatcher"]
+    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
+    bundle = _read_artifact(g2_v2_fixture["paths"]["bundle"])
+    other_candidate = next(
+        candidate
+        for candidate in probe._complete_candidates(bundle["rows"])
+        if candidate["identity"] != evidence["identity"]
+    )
+    other_fill_id = next(
+        event["event_id"]
+        for event in other_candidate["selected_events"]
+        if event["event_type"] == "paper_fill_simulated"
+    )
+    other_fill = next(
+        row for row in bundle["rows"] if row["event_id"] == other_fill_id
+    )
+    evidence["records"]["fill"] = {
+        "event_id": other_fill["event_id"],
+        "event_type": other_fill["event_type"],
+        "sha256": dispatcher.canonical_json_sha256(other_fill),
+    }
+    _rewrite_g2(g2_v2_fixture, evidence)
+
+    assert not dispatcher.check_g2_evidence_valid(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
+
+
+def _park_complete_g2_catalog(
+    fixture: dict,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    tasks: list[dict] | None = None,
+) -> tuple[list[dict], tuple[list[str], list[str], list[str], list[dict], bool]]:
+    dispatcher = fixture["dispatcher"]
+    materialized_tasks = tasks or deepcopy(fixture["catalog"]["tasks"])
+    closeout_done = fixture["state"]["tasks"][0]
+    target_spec = next(
+        task
+        for task in materialized_tasks
+        if task["id"] == fixture["contract"]["target_task"]
+    )
+    fixture["state"]["tasks"][0] = dispatcher.build_task(
+        target_spec,
+        fixture["catalog"],
+        fixture["catalog_digest"],
+        G2_ISSUED_AT,
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "resolve_g2_evidence_admission",
+        lambda state, catalog: None,
+    )
+    result = dispatcher.materialize(
+        state=fixture["state"],
+        tasks=materialized_tasks,
+        catalog=fixture["catalog"],
+        catalog_digest=fixture["catalog_digest"],
+        timestamp=G2_ISSUED_AT,
+    )
+    source_catalog = load_catalog()
+    epoch_logs, epoch_changed = dispatcher.install_fresh_sequencing_epoch(
+        fixture["state"],
+        source_catalog,
+        hashlib.sha256(CATALOG.read_bytes()).hexdigest(),
+        fixture["catalog"],
+        fixture["catalog_digest"],
+        G2_ISSUED_AT,
+        graph_prestate="fresh",
+    )
+    assert epoch_changed is True
+    dispatcher.enqueue_activity_outbox(
+        fixture["state"],
+        [*result[3], *epoch_logs],
+        catalog=fixture["catalog"],
+        catalog_digest=fixture["catalog_digest"],
+    )
+    pending = fixture["state"]["program_activity_outbox"]
+    dispatcher.append_logs(pending["events"])
+    fixture["state"]["program_activity_outbox"] = None
+    fixture["state"]["tasks"] = [
+        closeout_done if task["id"] == closeout_done["id"] else task
+        for task in fixture["state"]["tasks"]
+    ]
+    return materialized_tasks, result
+
+
 def test_release_gate_is_exact_set_not_wave_and_runs_once_while_closed(
     g2_v2_fixture: dict,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dispatcher = g2_v2_fixture["dispatcher"]
-    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
-    evidence["issued_at"] = "2026-07-13T00:03:00Z"
-    evidence["expires_at"] = "2026-07-14T00:03:00Z"
-    _rewrite_g2(g2_v2_fixture, evidence)
-    real_check = dispatcher.check_g2_evidence_valid
     calls = 0
 
-    def counted_check(state, catalog):
+    def counted_resolver(state, catalog):
         nonlocal calls
         calls += 1
-        return real_check(state, catalog, now=g2_v2_fixture["now"])
+        return None
 
-    monkeypatch.setattr(dispatcher, "check_g2_evidence_valid", counted_check)
-    by_id = {task["id"]: task for task in g2_v2_fixture["catalog"]["tasks"]}
-    ungated = deepcopy(by_id["LOOP-PROD-PER-001"])
-    gated = deepcopy(by_id["LOOP-PROD-AUTH-001"])
-    ungated["wave"] = 99
-    gated["wave"] = 0
+    monkeypatch.setattr(
+        dispatcher, "resolve_g2_evidence_admission", counted_resolver
+    )
+    tasks = deepcopy(g2_v2_fixture["catalog"]["tasks"])
+    by_id = {task["id"]: task for task in tasks}
+    by_id["LOOP-PROD-PER-001"]["wave"] = 99
+    by_id["LOOP-PROD-AUTH-001"]["wave"] = 0
 
     created, preserved, _, _, changed = dispatcher.materialize(
         state=g2_v2_fixture["state"],
-        tasks=[ungated, gated],
+        tasks=tasks,
         catalog=g2_v2_fixture["catalog"],
         catalog_digest=g2_v2_fixture["catalog_digest"],
         timestamp=G2_ISSUED_AT,
     )
 
     assert calls == 1
-    assert created == [ungated["id"], gated["id"]]
-    assert preserved == []
-    parked = next(
-        task for task in g2_v2_fixture["state"]["tasks"] if task["id"] == gated["id"]
+    assert len(created) == 47
+    assert preserved == [
+        f"{g2_v2_fixture['contract']['target_task']}:done"
+    ]
+    gated_ids = set(
+        g2_v2_fixture["catalog"]["release_gate"]["gated_task_ids"]
     )
-    assert parked["status"] == "blocked"
-    assert parked["sequencing_release_gate"]["gate_id"] == (
-        g2_v2_fixture["catalog"]["release_gate"]["gate_id"]
+    state_by_id = {
+        task["id"]: task for task in g2_v2_fixture["state"]["tasks"]
+    }
+    assert {
+        task_id
+        for task_id, task in state_by_id.items()
+        if task.get("status") == "blocked"
+    } == gated_ids
+    assert state_by_id["LOOP-PROD-AUTH-001"]["wave"] == 0
+    assert state_by_id["LOOP-PROD-PER-001"]["wave"] == 99
+    assert all(
+        state_by_id[task_id]["sequencing_release_gate"]["gate_id"]
+        == g2_v2_fixture["catalog"]["release_gate"]["gate_id"]
+        for task_id in gated_ids
+    )
+    assert g2_v2_fixture["catalog"]["program_id"] not in (
+        g2_v2_fixture["state"].get("program_sequencing_releases") or {}
     )
     assert changed is True
 
@@ -3856,7 +4503,91 @@ def test_explicit_sequencing_overlay_fresh_apply_creates_parked_gate_tasks() -> 
         assert set(by_id) == gated_ids
         assert all(task["status"] == "blocked" for task in by_id.values())
         assert all("sequencing_release_gate" in task for task in by_id.values())
-        assert "program_sequencing_epochs" not in after
+        epoch = after["program_sequencing_epochs"][catalog["program_id"]]
+        assert epoch["install_mode"] == "fresh_materialization"
+        assert epoch["task_count"] == 48
+        assert len(epoch["task_transitions"]) == 48
+
+
+def test_documented_default_apply_uses_authoritative_sequencing_overlay() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+
+        applied = run_dispatch(
+            root,
+            "--apply",
+            extra_env={"LOOP_PRODUCT_TEST_BASE_CATALOG": "0"},
+        )
+
+        assert applied.returncode == 0, applied.stderr
+        after = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        catalog = load_catalog()
+        dispatcher = _load_dispatcher_module()
+        dispatcher.catalog_path = lambda: CATALOG
+        dispatcher.apply_sequencing_overlay(catalog, SEQUENCING_OVERLAY)
+        gated_ids = set(catalog["release_gate"]["gated_task_ids"])
+        by_id = {task["id"]: task for task in program_tasks(after)}
+        assert set(by_id) == {task["id"] for task in catalog["tasks"]}
+        assert {
+            task_id for task_id, task in by_id.items() if task["status"] == "blocked"
+        } == gated_ids
+        assert after["program_sequencing_epochs"][catalog["program_id"]][
+            "install_mode"
+        ] == "fresh_materialization"
+
+
+def test_test_base_opt_out_cannot_disable_overlay_for_live_shaped_status_root() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp) / "live-status-root"
+        prepare_status(root)
+
+        applied = run_dispatch(root, "--apply")
+
+        assert applied.returncode == 0, applied.stderr
+        after = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        catalog = load_catalog()
+        dispatcher = _load_dispatcher_module()
+        dispatcher.catalog_path = lambda: CATALOG
+        dispatcher.apply_sequencing_overlay(catalog, SEQUENCING_OVERLAY)
+        gated_ids = set(catalog["release_gate"]["gated_task_ids"])
+        assert {
+            task["id"]
+            for task in program_tasks(after)
+            if task.get("status") == "blocked"
+        } == gated_ids
+        assert catalog["program_id"] in after["program_sequencing_epochs"]
+
+
+def test_current_sequencing_graph_rejects_deleted_epoch_atomically() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        first = run_dispatch(
+            root,
+            "--apply",
+            extra_env={"LOOP_PRODUCT_TEST_BASE_CATALOG": "0"},
+        )
+        assert first.returncode == 0, first.stderr
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        state.pop("program_sequencing_epochs")
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        rejected = run_dispatch(
+            root,
+            "--apply",
+            extra_env={"LOOP_PRODUCT_TEST_BASE_CATALOG": "0"},
+        )
+
+        assert rejected.returncode == 2
+        assert "missing its immutable epoch record" in rejected.stderr
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
 
 
 def test_explicit_sequencing_overlay_rejects_nonpristine_base_epoch_atomically() -> None:
@@ -3935,31 +4666,47 @@ def test_valid_g2_release_is_durable_and_does_not_recheck_wall_clock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dispatcher = g2_v2_fixture["dispatcher"]
-    gated = deepcopy(
-        next(
-            task
-            for task in g2_v2_fixture["catalog"]["tasks"]
-            if task["id"] == "LOOP-PROD-AUTH-001"
-        )
+    tasks, (_, _, _, _, parked_changed) = _park_complete_g2_catalog(
+        g2_v2_fixture, monkeypatch
     )
-    real_check = dispatcher.check_g2_evidence_valid
+    assert parked_changed is True
+    admission = dispatcher._validate_g2_evidence(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
     monkeypatch.setattr(
         dispatcher,
-        "check_g2_evidence_valid",
-        lambda state, catalog: real_check(
-            state, catalog, now=g2_v2_fixture["now"]
-        ),
+        "resolve_g2_evidence_admission",
+        lambda state, catalog: deepcopy(admission),
     )
-    created, _, _, logs, changed = dispatcher.materialize(
+    created, preserved, _, logs, changed = dispatcher.materialize(
         state=g2_v2_fixture["state"],
-        tasks=[gated],
+        tasks=tasks,
         catalog=g2_v2_fixture["catalog"],
         catalog_digest=g2_v2_fixture["catalog_digest"],
         timestamp=G2_ISSUED_AT,
     )
-    assert created == [gated["id"]]
+    assert created == []
+    assert len(preserved) == 48
     assert changed is True
-    assert any(row["type"] == "sequencing_gate_release" for row in logs)
+    release_log = next(
+        row for row in logs if row["type"] == "sequencing_gate_release"
+    )
+    release = g2_v2_fixture["state"]["program_sequencing_releases"][
+        g2_v2_fixture["catalog"]["program_id"]
+    ]
+    gated_ids = set(
+        g2_v2_fixture["catalog"]["release_gate"]["gated_task_ids"]
+    )
+    assert {
+        row["task_id"] for row in release["released_task_transitions"]
+    } == gated_ids
+    assert all(
+        row["before_status"] == "blocked" and row["after_status"] == "todo"
+        for row in release["released_task_transitions"]
+    )
+    assert release_log["release_record_sha256"] == canonical_sha256(release)
     dispatcher.enqueue_activity_outbox(
         g2_v2_fixture["state"],
         logs,
@@ -3972,12 +4719,14 @@ def test_valid_g2_release_is_durable_and_does_not_recheck_wall_clock(
     def forbidden_recheck(state, catalog):
         nonlocal calls
         calls += 1
-        return False
+        return None
 
-    monkeypatch.setattr(dispatcher, "check_g2_evidence_valid", forbidden_recheck)
+    monkeypatch.setattr(
+        dispatcher, "resolve_g2_evidence_admission", forbidden_recheck
+    )
     created_again, preserved, _, _, changed_again = dispatcher.materialize(
         state=g2_v2_fixture["state"],
-        tasks=[gated],
+        tasks=tasks,
         catalog=g2_v2_fixture["catalog"],
         catalog_digest=g2_v2_fixture["catalog_digest"],
         timestamp="2026-07-20T00:00:00Z",
@@ -3985,8 +4734,65 @@ def test_valid_g2_release_is_durable_and_does_not_recheck_wall_clock(
 
     assert calls == 0
     assert created_again == []
-    assert preserved == [f"{gated['id']}:todo"]
+    assert len(preserved) == 48
+    assert all(
+        task["status"] == "todo"
+        and task["sequencing_release_admission_sha256"]
+        == release["release_admission_sha256"]
+        for task in g2_v2_fixture["state"]["tasks"]
+        if task["id"] in gated_ids
+    )
     assert changed_again is False
+
+
+def test_pending_release_recovery_keeps_outbox_when_admission_bytes_drift(
+    g2_v2_fixture: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    tasks, _ = _park_complete_g2_catalog(g2_v2_fixture, monkeypatch)
+    admission = dispatcher._validate_g2_evidence(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "resolve_g2_evidence_admission",
+        lambda state, catalog: deepcopy(admission),
+    )
+    _, _, _, release_logs, changed = dispatcher.materialize(
+        state=g2_v2_fixture["state"],
+        tasks=tasks,
+        catalog=g2_v2_fixture["catalog"],
+        catalog_digest=g2_v2_fixture["catalog_digest"],
+        timestamp=G2_ISSUED_AT,
+    )
+    assert changed is True
+    dispatcher.enqueue_activity_outbox(
+        g2_v2_fixture["state"],
+        release_logs,
+        catalog=g2_v2_fixture["catalog"],
+        catalog_digest=g2_v2_fixture["catalog_digest"],
+    )
+    pending_before = deepcopy(
+        g2_v2_fixture["state"]["program_activity_outbox"]
+    )
+    product = _read_artifact(g2_v2_fixture["paths"]["product"])
+    product["tampered_after_status_commit"] = True
+    _write_json_artifact(g2_v2_fixture["paths"]["product"], product)
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="persisted G2 release admission drifted",
+    ):
+        dispatcher.validate_pending_sequencing_recovery(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            g2_v2_fixture["catalog_digest"],
+        )
+
+    assert g2_v2_fixture["state"]["program_activity_outbox"] == pending_before
 
 
 def test_auto_unblock_cannot_reopen_sequencing_park_marker() -> None:
@@ -4028,38 +4834,152 @@ def test_auto_unblock_cannot_reopen_sequencing_park_marker() -> None:
         assert "reopened=none" in result.stdout
 
 
-def test_release_gate_opens_once_for_valid_g2_even_at_low_wave(
+@pytest.mark.parametrize("release_record", [{}, {"schema_version": 1}])
+def test_auto_unblock_missing_marker_rejects_malformed_release_record(
+    release_record: dict,
+) -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        (root / "ai-task-archive" / "tasks").mkdir(parents=True)
+        (root / ".orchestrator").mkdir(parents=True)
+        program_id = "loop-product-level-remediation-2026-07-13"
+        (root / "ai-status.json").write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {"id": "DEP-001", "status": "done"},
+                        {
+                            "id": "LOOP-PROD-AUTH-001",
+                            "status": "blocked",
+                            "owner": "Codex",
+                            "depends_on": ["DEP-001"],
+                            "last_update": "2026-01-01T00:00:00Z",
+                            "sequencing_release_admission_sha256": "0" * 64,
+                            "source_ref": {
+                                "program_id": program_id,
+                                "catalog_sha256": "a" * 64,
+                                "sequencing_overlay_sha256": "b" * 64,
+                                "release_gate_id": "loop-product-g2-release-v1",
+                                "sequencing_classification": (
+                                    "deferred strict-auth/security/governance work"
+                                ),
+                            },
+                        },
+                    ],
+                    "program_sequencing_releases": {
+                        program_id: release_record
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = subprocess.run(
+            [
+                "python3",
+                str(ROOT / "scripts" / "auto_unblock_stale.py"),
+                "--dry-run",
+            ],
+            env={**os.environ, "PANTHEON_STATUS_ROOT": str(root)},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "WOULD reopen" not in result.stdout
+        assert "reopened=none" in result.stdout
+
+
+def test_auto_unblock_pending_program_outbox_performs_zero_mutation() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        (root / "ai-task-archive" / "tasks").mkdir(parents=True)
+        orchestrator = root / ".orchestrator"
+        orchestrator.mkdir(parents=True)
+        status_path = root / "ai-status.json"
+        state_path = orchestrator / "auto-unblock-state.json"
+        status_path.write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {"id": "DEP-001", "status": "done"},
+                        {
+                            "id": "READY-BUT-PAUSED-001",
+                            "status": "blocked",
+                            "owner": "Codex",
+                            "depends_on": ["DEP-001"],
+                            "last_update": "2026-01-01T00:00:00Z",
+                        },
+                    ],
+                    "program_activity_outbox": {
+                        "schema_version": 5,
+                        "events": [{"event_id": "pending-program-audit"}],
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        state_path.write_text('{"sentinel":"unchanged"}\n', encoding="utf-8")
+        status_before = status_path.read_bytes()
+        state_before = state_path.read_bytes()
+
+        result = subprocess.run(
+            ["python3", str(ROOT / "scripts" / "auto_unblock_stale.py")],
+            env={**os.environ, "PANTHEON_STATUS_ROOT": str(root)},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "program_activity_outbox is pending" in result.stdout
+        assert status_path.read_bytes() == status_before
+        assert state_path.read_bytes() == state_before
+
+
+def test_release_gate_opens_once_for_valid_g2_exact_set(
     g2_v2_fixture: dict,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dispatcher = g2_v2_fixture["dispatcher"]
-    real_check = dispatcher.check_g2_evidence_valid
+    tasks = deepcopy(g2_v2_fixture["catalog"]["tasks"])
+    tasks, _ = _park_complete_g2_catalog(
+        g2_v2_fixture, monkeypatch, tasks=tasks
+    )
+    admission = dispatcher._validate_g2_evidence(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
     calls = 0
 
-    def counted_check(state, catalog):
+    def counted_resolver(state, catalog):
         nonlocal calls
         calls += 1
-        return real_check(state, catalog, now=g2_v2_fixture["now"])
+        return deepcopy(admission)
 
-    monkeypatch.setattr(dispatcher, "check_g2_evidence_valid", counted_check)
-    gated = deepcopy(
-        next(
-            task
-            for task in g2_v2_fixture["catalog"]["tasks"]
-            if task["id"] == "LOOP-PROD-AUTH-001"
-        )
+    monkeypatch.setattr(
+        dispatcher, "resolve_g2_evidence_admission", counted_resolver
     )
-    gated["wave"] = 0
 
     created, preserved, _, _, changed = dispatcher.materialize(
         state=g2_v2_fixture["state"],
-        tasks=[gated],
+        tasks=tasks,
         catalog=g2_v2_fixture["catalog"],
         catalog_digest=g2_v2_fixture["catalog_digest"],
         timestamp=G2_ISSUED_AT,
     )
 
     assert calls == 1
-    assert created == [gated["id"]]
-    assert preserved == []
+    assert created == []
+    assert len(preserved) == 48
+    by_id = {task["id"]: task for task in g2_v2_fixture["state"]["tasks"]}
+    assert by_id["LOOP-PROD-AUTH-001"]["status"] == "todo"
+    gated_ids = set(
+        g2_v2_fixture["catalog"]["release_gate"]["gated_task_ids"]
+    )
+    assert all(by_id[task_id]["status"] == "todo" for task_id in gated_ids)
     assert changed is True

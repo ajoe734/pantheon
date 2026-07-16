@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import inspect
 import multiprocessing
 import tempfile
@@ -15,6 +16,138 @@ from unittest import mock
 
 import supervisor
 import runtime_state
+
+
+def _sequencing_release_status(*, released: bool) -> dict:
+    authority = supervisor.sequencing_gate
+    program_id = authority.PROGRAM_ID
+    task_id = "LOOP-PROD-AUTH-001"
+    catalog_sha = authority.EFFECTIVE_CATALOG_SHA256
+    overlay_sha = authority.SEQUENCING_OVERLAY_SHA256
+    gate_id = authority.RELEASE_GATE_ID
+    task = {
+        "id": task_id,
+        "status": "todo",
+        "owner": "Codex",
+        "reviewer": "Claude",
+        "depends_on": [],
+        "last_update": "2026-07-16T00:00:00Z",
+        "source_ref": {
+            "program_id": program_id,
+            "catalog_sha256": catalog_sha,
+            "sequencing_overlay_sha256": overlay_sha,
+            "release_gate_id": gate_id,
+            "sequencing_classification": (
+                "deferred strict-auth/security/governance work"
+            ),
+        },
+    }
+    admission = {
+        "g2_evidence_sha256": "c" * 64,
+        "canonical_record_bundle_sha256": "d" * 64,
+        "hosted_probe_sha256": "e" * 64,
+        "product_manifest_sha256": "f" * 64,
+        "product_manifest_sidecar_sha256": "1" * 64,
+        "target_task_snapshot_sha256": "2" * 64,
+        "reviewer": "Codex2",
+        "review_verdict_sha256": "3" * 64,
+        "g2_issued_at": "2026-07-16T00:02:00Z",
+        "closeout_at": "2026-07-16T00:01:00Z",
+    }
+    release_admission_sha = supervisor._sequencing_canonical_sha256(admission)
+    all_task_ids = [
+        *authority.EXPECTED_GATED_TASK_IDS,
+        *(f"TEST-UNGATED-{index:03d}" for index in range(29)),
+    ]
+    epoch_transitions = []
+    for epoch_task_id in all_task_ids:
+        blocked = epoch_task_id in authority.EXPECTED_GATED_TASK_IDS
+        epoch_transitions.append(
+            {
+                "task_id": epoch_task_id,
+                "before_task_snapshot_sha256": authority.canonical_sha256(
+                    {"before": epoch_task_id}
+                ),
+                "after_task_snapshot_sha256": authority.canonical_sha256(
+                    {"parked": epoch_task_id}
+                ),
+                "before_task_contract_sha256": "8" * 64,
+                "after_task_contract_sha256": "9" * 64,
+                "before_source_ref_sha256": "a" * 64,
+                "after_source_ref_sha256": "b" * 64,
+                "before_status": "todo",
+                "after_status": "blocked" if blocked else "todo",
+                "acceptance_deferral_sha256": "c" * 64,
+                "gate_marker_sha256": (
+                    "d" * 64 if blocked else authority.canonical_sha256(None)
+                ),
+            }
+        )
+    epoch_by_id = {row["task_id"]: row for row in epoch_transitions}
+    release_transitions = [
+        {
+            "task_id": released_task_id,
+            "before_task_snapshot_sha256": epoch_by_id[released_task_id][
+                "after_task_snapshot_sha256"
+            ],
+            "after_task_snapshot_sha256": authority.canonical_sha256(
+                {"released": released_task_id}
+            ),
+            "before_status": "blocked",
+            "after_status": "todo",
+        }
+        for released_task_id in authority.EXPECTED_GATED_TASK_IDS
+    ]
+    release = {
+        "schema_version": 1,
+        "program_id": program_id,
+        "effective_catalog_sha256": catalog_sha,
+        "sequencing_overlay_sha256": overlay_sha,
+        "release_gate_id": gate_id,
+        "release_predicate": "g2_evidence_contract_v2_valid",
+        "released_at": "2026-07-16T00:03:00Z",
+        **admission,
+        "release_admission_sha256": release_admission_sha,
+        "released_task_transitions": release_transitions,
+        "released_task_transition_set_sha256": (
+            supervisor._sequencing_canonical_sha256(release_transitions)
+        ),
+    }
+    epoch = {
+        "schema_version": 1,
+        "program_id": program_id,
+        "source_catalog_sha256": authority.SOURCE_CATALOG_SHA256,
+        "effective_catalog_sha256": catalog_sha,
+        "sequencing_overlay_sha256": overlay_sha,
+        "release_gate_id": gate_id,
+        "install_mode": "base_epoch_migration",
+        "applied_at": "2026-07-16T00:00:00Z",
+        "source_graph_projection_sha256": "f" * 64,
+        "effective_graph_projection_sha256": "1" * 64,
+        "task_count": authority.EXPECTED_TASK_COUNT,
+        "task_transitions": epoch_transitions,
+        "task_transition_set_sha256": supervisor._sequencing_canonical_sha256(
+            epoch_transitions
+        ),
+    }
+    status = {
+        "tasks": [task],
+        "program_sequencing_epochs": {program_id: epoch},
+        "program_sequencing_releases": {program_id: release if released else {}},
+    }
+    if released:
+        task["sequencing_release_admission_sha256"] = release_admission_sha
+    return status
+
+
+def _load_auto_unblock_module():
+    path = Path(__file__).resolve().parents[1] / "scripts" / "auto_unblock_stale.py"
+    spec = importlib.util.spec_from_file_location("auto_unblock_stale_test", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load auto_unblock_stale.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run_supervisor_writer_transaction_until_released(
@@ -1348,6 +1481,270 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             },
         }
         self.provider_report: dict[str, object] = {}
+
+    def test_gated_classification_without_marker_requires_exact_release(self) -> None:
+        malformed = _sequencing_release_status(released=False)
+        malformed["tasks"][0]["sequencing_release_admission_sha256"] = "0" * 64
+        task = malformed["tasks"][0]
+        self.assertTrue(supervisor.task_is_sequencing_parked(task, malformed))
+        task["source_ref"]["sequencing_classification"] = (
+            "permitted before the paper-trade proof"
+        )
+        self.assertTrue(supervisor.task_is_sequencing_parked(task, malformed))
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=malformed),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor, "normalize_mainline_task_assignment", return_value=False
+            ),
+            mock.patch.object(
+                supervisor, "queue_delivery_event", return_value=True
+            ) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                self.config,
+                {"queue": {"events": {}}, "workers": {}},
+            )
+
+        self.assertFalse(changed)
+        queue_delivery_event.assert_not_called()
+
+        released = _sequencing_release_status(released=True)
+        released_task = released["tasks"][0]
+        self.assertTrue(
+            supervisor.task_has_valid_sequencing_release_admission(
+                released_task, released
+            )
+        )
+        self.assertFalse(
+            supervisor.task_is_sequencing_parked(released_task, released)
+        )
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=released),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor, "normalize_mainline_task_assignment", return_value=False
+            ),
+            mock.patch.object(
+                supervisor, "agent_can_take_task", return_value=True
+            ),
+            mock.patch.object(
+                supervisor, "queue_delivery_event", return_value=True
+            ) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                self.config,
+                {"queue": {"events": {}}, "workers": {}},
+            )
+
+        self.assertTrue(changed)
+        queue_delivery_event.assert_called_once()
+        self.assertEqual(
+            queue_delivery_event.call_args.args[1]["task_id"],
+            released_task["id"],
+        )
+
+    def test_forged_release_transition_fails_closed_in_both_consumers(self) -> None:
+        auto_unblock = _load_auto_unblock_module()
+        for mutation in (
+            "absent_before_status",
+            "mismatched_before_hash",
+            "future_epoch",
+            "mode_status_mismatch",
+        ):
+            with self.subTest(mutation=mutation):
+                status = _sequencing_release_status(released=True)
+                program_id = status["tasks"][0]["source_ref"]["program_id"]
+                release = status["program_sequencing_releases"][program_id]
+                transition = release["released_task_transitions"][0]
+                if mutation == "absent_before_status":
+                    transition["before_status"] = "absent"
+                elif mutation == "mismatched_before_hash":
+                    transition["before_task_snapshot_sha256"] = "4" * 64
+                elif mutation == "future_epoch":
+                    status["program_sequencing_epochs"][program_id][
+                        "applied_at"
+                    ] = "2026-07-17T00:00:00Z"
+                else:
+                    status["program_sequencing_epochs"][program_id][
+                        "install_mode"
+                    ] = "fresh_materialization"
+                release["released_task_transition_set_sha256"] = (
+                    supervisor.sequencing_gate.canonical_sha256(
+                        release["released_task_transitions"]
+                    )
+                )
+                task = status["tasks"][0]
+
+                self.assertFalse(
+                    supervisor.task_has_valid_sequencing_release_admission(
+                        task, status
+                    )
+                )
+                self.assertTrue(
+                    supervisor.task_is_sequencing_parked(task, status)
+                )
+                self.assertFalse(
+                    auto_unblock._valid_release_admission(status, task)
+                )
+                self.assertTrue(
+                    auto_unblock._sequencing_parked(status, task, set())
+                )
+
+    def test_pending_program_outbox_globally_pauses_task_mutations(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            status_path = root / "ai-status.json"
+            config = json.loads(json.dumps(self.config))
+            config["paths"] = {
+                "status_file": str(status_path),
+                "event_queue": str(root / "event-queue.jsonl"),
+            }
+            status = {
+                "tasks": [
+                    {
+                        "id": "OUTBOX-001",
+                        "status": "in_progress",
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                        "depends_on": [],
+                        "last_update": "2026-07-16T00:00:00Z",
+                    }
+                ],
+                "program_activity_outbox": {
+                    "schema_version": 5,
+                    "events": [{"event_id": "pending-program-audit"}],
+                },
+            }
+            status_path.write_text(json.dumps(status), encoding="utf-8")
+            state = {"queue": {"events": {}}, "workers": {}}
+            state_before = json.loads(json.dumps(state))
+
+            with mock.patch.object(
+                supervisor, "queue_delivery_event"
+            ) as queue_delivery_event:
+                self.assertFalse(supervisor.dispatch_ready_tasks(config, state))
+            queue_delivery_event.assert_not_called()
+
+            with mock.patch.object(
+                supervisor,
+                "queue_discussion_planning_event",
+                side_effect=AssertionError("pending outbox must pause planning dispatch"),
+            ):
+                self.assertFalse(
+                    supervisor.dispatch_discussion_planning(
+                        config,
+                        state,
+                        {
+                            "status": "active",
+                            "planning_mode": "discussion_planning",
+                        },
+                    )
+                )
+            with mock.patch.object(
+                supervisor,
+                "queue_chair_review_event",
+                side_effect=AssertionError("pending outbox must pause chair dispatch"),
+            ):
+                self.assertFalse(supervisor.dispatch_chair_review(config, state))
+
+            with (
+                mock.patch.object(
+                    supervisor,
+                    "load_event_queue",
+                    return_value=[{"event_id": "queued", "task_id": "OUTBOX-001"}],
+                ),
+                mock.patch.object(
+                    supervisor,
+                    "start_worker_for_request",
+                    side_effect=AssertionError("pending outbox must not dispatch"),
+                ),
+            ):
+                self.assertFalse(
+                    supervisor.process_queue(config, state, self.provider_report)
+                )
+
+            self.assertFalse(
+                supervisor._persist_task_reassignment_locked(
+                    config,
+                    task_id="OUTBOX-001",
+                    new_owner="Claude",
+                    new_reviewer="Codex",
+                    message="must remain paused",
+                )
+            )
+            worker = {
+                "task_id": "OUTBOX-001",
+                "agent_id": "codex",
+                "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+            }
+            self.assertIsNone(
+                supervisor._prepare_preempted_task_status_locked(config, worker)
+            )
+            self.assertEqual(
+                supervisor.create_sidecar_task(
+                    config,
+                    sidecar_id="OUTBOX-SIDECAR-001",
+                    owner="Codex",
+                    reviewer="Claude",
+                    phase="Support",
+                    title="Must not be created",
+                    summary_zh="pending outbox",
+                    depends_on=[],
+                    artifacts=[],
+                    helper_parent="OUTBOX-001",
+                    helper_kind="acceptance_packet",
+                    mutates_canonical=False,
+                ),
+                (False, "program activity outbox is pending"),
+            )
+            self.assertFalse(
+                supervisor.dispatch_underutilization_sidecars(config, state)
+            )
+            self.assertEqual(state, state_before)
+            self.assertEqual(
+                json.loads(status_path.read_text(encoding="utf-8")), status
+            )
+
+    def test_pending_epoch_quiesces_already_running_gated_worker(self) -> None:
+        status = _sequencing_release_status(released=False)
+        task = status["tasks"][0]
+        task["status"] = "blocked"
+        task["sequencing_release_gate"] = {"state": "parked"}
+        status["program_activity_outbox"] = {
+            "schema_version": 5,
+            "events": [{"event_id": "pending-epoch-audit"}],
+        }
+        worker = {
+            "run_id": "run-gated-race",
+            "task_id": task["id"],
+            "status": "running",
+            "pid": 4242,
+            "queue_event_id": "evt-gated-race",
+            "provider": "codex",
+        }
+        state = {
+            "queue": {"events": {"evt-gated-race": {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(
+                self.config, state, provider_report=self.provider_report
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "superseded")
+        terminate.assert_called_once_with(4242)
+        finalize.assert_called_once()
 
     def test_worker_tree_guard_warns_without_blocking(self) -> None:
         config = {

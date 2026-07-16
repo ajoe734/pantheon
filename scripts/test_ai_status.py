@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from contextlib import nullcontext
 from copy import deepcopy
 from pathlib import Path
 from unittest import mock
@@ -18,6 +19,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ai_status
+import sequencing_gate
 import task_archive
 from canonical_writer_guard import assert_isolated_legacy_write_target
 
@@ -502,6 +504,292 @@ class CanonicalWriterGuardTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "PANTHEON_STATUS_ROOT"):
                     assert_isolated_legacy_write_target(target, tool="guard-test")
+
+
+class ProgramActivityOutboxGuardTests(unittest.TestCase):
+    @staticmethod
+    def _sequencing_task(*, marker: bool = True) -> dict:
+        task = {
+            "id": "LOOP-PROD-AUTH-001",
+            "title": "Sequencing guarded task",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "status": "blocked",
+            "depends_on": [],
+            "artifacts": [],
+            "acceptance": [],
+            "next": "Awaiting G2",
+            "last_update": "2026-07-16T00:00:00Z",
+            "review_notes_zh": ["prior review"],
+            "source_ref": {
+                "program_id": "loop-product-level-remediation-2026-07-13",
+                "sequencing_classification": (
+                    "deferred strict-auth/security/governance work"
+                ),
+            },
+        }
+        if marker:
+            task["sequencing_release_gate"] = {"state": "parked"}
+        return task
+
+    @classmethod
+    def _sequencing_state(cls, *, marker: bool = True) -> dict:
+        return {
+            "tasks": [cls._sequencing_task(marker=marker)],
+            "handoffs": [],
+            "blockers": [],
+        }
+
+    @classmethod
+    def _released_sequencing_state(cls) -> dict:
+        null_sha256 = sequencing_gate.canonical_sha256(None)
+        ungated_ids = [f"PRE-G2-{index:03d}" for index in range(29)]
+        ordered_ids = [*ungated_ids, *sequencing_gate.EXPECTED_GATED_TASK_IDS]
+        epoch_transitions = []
+        for index, task_id in enumerate(ordered_ids, start=1):
+            gated = task_id in sequencing_gate.EXPECTED_GATED_TASK_IDS
+            epoch_transitions.append(
+                {
+                    "task_id": task_id,
+                    "before_task_snapshot_sha256": null_sha256,
+                    "after_task_snapshot_sha256": f"{index:064x}",
+                    "before_task_contract_sha256": "1" * 64,
+                    "after_task_contract_sha256": "2" * 64,
+                    "before_source_ref_sha256": null_sha256,
+                    "after_source_ref_sha256": "3" * 64,
+                    "before_status": "absent",
+                    "after_status": "blocked" if gated else "todo",
+                    "acceptance_deferral_sha256": "4" * 64,
+                    "gate_marker_sha256": "5" * 64 if gated else null_sha256,
+                }
+            )
+        epoch = {
+            "schema_version": 1,
+            "program_id": sequencing_gate.PROGRAM_ID,
+            "source_catalog_sha256": sequencing_gate.SOURCE_CATALOG_SHA256,
+            "effective_catalog_sha256": (
+                sequencing_gate.EFFECTIVE_CATALOG_SHA256
+            ),
+            "sequencing_overlay_sha256": (
+                sequencing_gate.SEQUENCING_OVERLAY_SHA256
+            ),
+            "release_gate_id": sequencing_gate.RELEASE_GATE_ID,
+            "install_mode": "fresh_materialization",
+            "applied_at": "2026-07-16T00:00:00Z",
+            "source_graph_projection_sha256": "6" * 64,
+            "effective_graph_projection_sha256": "7" * 64,
+            "task_count": 48,
+            "task_transitions": epoch_transitions,
+            "task_transition_set_sha256": sequencing_gate.canonical_sha256(
+                epoch_transitions
+            ),
+        }
+        epoch_by_id = {row["task_id"]: row for row in epoch_transitions}
+        release_transitions = [
+            {
+                "task_id": task_id,
+                "before_task_snapshot_sha256": epoch_by_id[task_id][
+                    "after_task_snapshot_sha256"
+                ],
+                "after_task_snapshot_sha256": "8" * 64,
+                "before_status": "blocked",
+                "after_status": "todo",
+            }
+            for task_id in sequencing_gate.EXPECTED_GATED_TASK_IDS
+        ]
+        admission = {
+            "g2_evidence_sha256": "9" * 64,
+            "canonical_record_bundle_sha256": "a" * 64,
+            "hosted_probe_sha256": "b" * 64,
+            "product_manifest_sha256": "c" * 64,
+            "product_manifest_sidecar_sha256": "d" * 64,
+            "target_task_snapshot_sha256": "e" * 64,
+            "reviewer": "Codex2",
+            "review_verdict_sha256": "f" * 64,
+            "g2_issued_at": "2026-07-16T01:00:00Z",
+            "closeout_at": "2026-07-16T00:30:00Z",
+        }
+        release_admission_sha256 = sequencing_gate.canonical_sha256(admission)
+        release = {
+            "schema_version": 1,
+            "program_id": sequencing_gate.PROGRAM_ID,
+            "effective_catalog_sha256": sequencing_gate.EFFECTIVE_CATALOG_SHA256,
+            "sequencing_overlay_sha256": (
+                sequencing_gate.SEQUENCING_OVERLAY_SHA256
+            ),
+            "release_gate_id": sequencing_gate.RELEASE_GATE_ID,
+            "release_predicate": sequencing_gate.RELEASE_PREDICATE,
+            "released_at": "2026-07-16T02:00:00Z",
+            **admission,
+            "release_admission_sha256": release_admission_sha256,
+            "released_task_transitions": release_transitions,
+            "released_task_transition_set_sha256": (
+                sequencing_gate.canonical_sha256(release_transitions)
+            ),
+        }
+        task = cls._sequencing_task(marker=False)
+        task["status"] = "todo"
+        task["source_ref"].update(
+            {
+                "catalog_sha256": sequencing_gate.EFFECTIVE_CATALOG_SHA256,
+                "sequencing_overlay_sha256": (
+                    sequencing_gate.SEQUENCING_OVERLAY_SHA256
+                ),
+                "release_gate_id": sequencing_gate.RELEASE_GATE_ID,
+            }
+        )
+        task["sequencing_release_admission_sha256"] = release_admission_sha256
+        return {
+            "tasks": [task],
+            "handoffs": [],
+            "blockers": [],
+            "program_sequencing_epochs": {
+                sequencing_gate.PROGRAM_ID: epoch,
+            },
+            "program_sequencing_releases": {
+                sequencing_gate.PROGRAM_ID: release,
+            },
+        }
+
+    def test_only_absent_or_null_program_outbox_is_clear(self) -> None:
+        ai_status.assert_program_activity_outbox_clear({})
+        ai_status.assert_program_activity_outbox_clear(
+            {"program_activity_outbox": None}
+        )
+
+        for value in ({}, [], "", 0, {"schema_version": 5}):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    SystemExit,
+                    "program_activity_outbox is pending or malformed",
+                ):
+                    ai_status.assert_program_activity_outbox_clear(
+                        {"program_activity_outbox": value}
+                    )
+
+    def test_writer_command_rejects_pending_outbox_before_any_recovery(self) -> None:
+        state = {
+            "tasks": [],
+            "program_activity_outbox": {
+                "schema_version": 5,
+                "transaction_id": "pending-dispatcher-transaction",
+            },
+        }
+        with (
+            mock.patch.object(
+                ai_status,
+                "canonical_task_state_lock",
+                side_effect=lambda **_kwargs: nullcontext(),
+            ),
+            mock.patch.object(ai_status, "load_state", return_value=state),
+            mock.patch.object(
+                ai_status, "recover_status_archive_outbox"
+            ) as recover_archive,
+            mock.patch.object(
+                ai_status, "recover_status_activity_outbox"
+            ) as recover_activity,
+            mock.patch.object(ai_status, "command_start") as command_start,
+            mock.patch.object(ai_status, "sync_all") as sync_all,
+        ):
+            with self.assertRaisesRegex(
+                SystemExit,
+                "program_activity_outbox is pending or malformed",
+            ):
+                ai_status.main(["ai_status.py", "start", "TASK-001", "start"])
+
+        recover_archive.assert_not_called()
+        recover_activity.assert_not_called()
+        command_start.assert_not_called()
+        sync_all.assert_not_called()
+
+    def test_read_only_command_skips_recovery_writes_during_pending_outbox(
+        self,
+    ) -> None:
+        state = {
+            "tasks": [],
+            "program_activity_outbox": {"schema_version": 5},
+        }
+        with (
+            mock.patch.object(
+                ai_status,
+                "canonical_task_state_lock",
+                side_effect=lambda **_kwargs: nullcontext(),
+            ),
+            mock.patch.object(ai_status, "load_state", return_value=state),
+            mock.patch.object(
+                ai_status, "recover_status_archive_outbox"
+            ) as recover_archive,
+            mock.patch.object(
+                ai_status, "recover_status_activity_outbox"
+            ) as recover_activity,
+            mock.patch.object(ai_status, "command_show") as command_show,
+        ):
+            result = ai_status.main(["ai_status.py", "show"])
+
+        self.assertEqual(result, 0)
+        recover_archive.assert_not_called()
+        recover_activity.assert_not_called()
+        command_show.assert_called_once_with(state, [])
+
+    def test_every_task_lifecycle_writer_rejects_park_marker(self) -> None:
+        calls = (
+            ("assign", ai_status.command_assign, ["LOOP-PROD-AUTH-001", "Codex", "Claude"]),
+            ("start", ai_status.command_start, ["LOOP-PROD-AUTH-001", "start"]),
+            ("progress", ai_status.command_progress, ["LOOP-PROD-AUTH-001", "progress"]),
+            ("note", ai_status.command_note, ["LOOP-PROD-AUTH-001", "note"]),
+            ("reopen", ai_status.command_reopen, ["LOOP-PROD-AUTH-001", "reopen"]),
+            ("handoff", ai_status.command_handoff, ["LOOP-PROD-AUTH-001", "Claude", "review"]),
+            ("blocker", ai_status.command_blocker, ["LOOP-PROD-AUTH-001", "blocked", "Claude"]),
+            ("restore_approved", ai_status.command_restore_approved, ["LOOP-PROD-AUTH-001", "restore"]),
+            ("done", ai_status.command_done, ["LOOP-PROD-AUTH-001", "done"]),
+            ("supersede", ai_status.command_supersede, ["LOOP-PROD-AUTH-001", "supersede"]),
+            ("approve", ai_status.command_approve, ["LOOP-PROD-AUTH-001", "approve"]),
+        )
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            for action, command, args in calls:
+                with self.subTest(action=action):
+                    state = self._sequencing_state()
+                    before = deepcopy(state)
+                    with self.assertRaisesRegex(
+                        SystemExit,
+                        rf"{action} rejected for sequencing-parked task",
+                    ):
+                        command(state, args)
+                    self.assertEqual(state, before)
+
+    def test_missing_marker_and_drifted_classification_still_fails_closed(
+        self,
+    ) -> None:
+        state = self._sequencing_state(marker=False)
+        task = state["tasks"][0]
+        task["source_ref"]["sequencing_classification"] = "corrupted"
+        before = deepcopy(state)
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            with self.assertRaisesRegex(
+                SystemExit,
+                "note rejected for sequencing-parked task LOOP-PROD-AUTH-001",
+            ):
+                ai_status.command_note(
+                    state,
+                    ["LOOP-PROD-AUTH-001", "must not bypass G2"],
+                )
+
+        self.assertEqual(state, before)
+
+    def test_exact_shared_release_decision_allows_normal_lifecycle(self) -> None:
+        state = self._released_sequencing_state()
+        task = state["tasks"][0]
+        self.assertFalse(ai_status.task_is_sequencing_parked(task, state))
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_start(
+                state,
+                ["LOOP-PROD-AUTH-001", "released by exact shared admission"],
+            )
+
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["next"], "released by exact shared admission")
 
 
 class ReviewApprovedWorkflowTests(unittest.TestCase):

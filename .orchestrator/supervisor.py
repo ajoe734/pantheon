@@ -27,6 +27,7 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 import model_rotation
+import sequencing_gate
 from adapters import build_adapter
 from approval_queue import prune_stale_approvals, resolve_approval
 from adapters.base import DeliveryRequest
@@ -2294,7 +2295,10 @@ def start_worker_for_request(
 
 def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any]) -> bool:
     changed = False
-    task_map = task_index_from_status(config, load_status(config))
+    status = load_status(config)
+    if status_has_pending_program_activity_outbox(status):
+        return False
+    task_map = task_index_from_status(config, status)
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     for event in load_event_queue(config):
         event_id = event.get("event_id")
@@ -2352,7 +2356,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 sync_dispatched_task_status(config, event)
                 changed = True
             continue
-        skip_message = stale_dispatch_skip_message(config, event, task_map)
+        skip_message = stale_dispatch_skip_message(config, event, task_map, status)
         if skip_message:
             record["status"] = "completed"
             record["processed_at"] = utc_now()
@@ -3659,7 +3663,9 @@ def apply_chair_review_reassignment_actions(
                 handoff_from=reviewer,
             )
         elif role == "owner":
-            blocked_owner_rescue = chair_blocked_owner_rescue_allowed(task)
+            blocked_owner_rescue = chair_blocked_owner_rescue_allowed(
+                task, status
+            )
             allowed_owner_statuses = owned_statuses | finalize_statuses
             if blocked_owner_rescue:
                 allowed_owner_statuses.add("blocked")
@@ -4057,7 +4063,9 @@ def chair_review_blocked_owner_rescue_details(config: dict[str, Any], state: dic
     details: list[dict[str, Any]] = []
     owner_fallbacks = worker_reassignment_settings(config).get("owner_fallbacks", {})
     for task in status.get("tasks", []) or []:
-        if not isinstance(task, dict) or not chair_blocked_owner_rescue_allowed(task):
+        if not isinstance(task, dict) or not chair_blocked_owner_rescue_allowed(
+            task, status
+        ):
             continue
         task_id = str(task.get("id") or "").strip()
         owner = str(task.get("owner") or "").strip()
@@ -6054,7 +6062,10 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
         return False
 
     command_name, eligible_statuses = action
-    task = task_index_from_status(config, load_status(config)).get(task_id)
+    status = load_status(config)
+    if status_has_pending_program_activity_outbox(status):
+        return False
+    task = task_index_from_status(config, status).get(task_id)
     if not task:
         return False
     if str(task.get("owner") or "").strip() != target_agent:
@@ -6117,10 +6128,13 @@ def _prepare_preempted_task_status_locked(
         return None
 
     status = load_status(config)
-    if status.get("status_activity_outbox") not in (None, {}, []):
+    if (
+        status.get("status_activity_outbox") not in (None, {}, [])
+        or status_has_pending_program_activity_outbox(status)
+    ):
         return None
     task = task_index_from_status(config, status).get(task_id)
-    if not task:
+    if not task or task_is_sequencing_parked(task, status):
         return None
     if str(task.get("owner") or "").strip() != target_agent:
         return None
@@ -6196,12 +6210,15 @@ def _persist_task_reassignment_locked(
 ) -> bool:
     status_path = config_path(config, "status_file")
     status = load_status(config)
-    if status.get("status_activity_outbox") not in (None, {}, []):
+    if (
+        status.get("status_activity_outbox") not in (None, {}, [])
+        or status_has_pending_program_activity_outbox(status)
+    ):
         return False
     tasks = status.get("tasks", []) or []
     timestamp = utc_now()
     task = next((item for item in tasks if item.get("id") == task_id), None)
-    if task is None:
+    if task is None or task_is_sequencing_parked(task, status):
         return False
 
     old_owner = str(task.get("owner") or "")
@@ -6904,8 +6921,53 @@ def resume_claude_worker(
 
 def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any] | None = None) -> bool:
     changed = False
+    status = load_status(config)
+    if status_has_pending_program_activity_outbox(status):
+        task_map = task_index_from_status(config, status)
+        for worker in state.setdefault("workers", {}).values():
+            task_id = str(worker.get("task_id") or "")
+            task = task_map.get(task_id)
+            must_quiesce = (
+                task_id in sequencing_gate.EXPECTED_GATED_TASK_IDS
+                or isinstance(task, dict)
+                and task_is_sequencing_parked(task, status)
+            )
+            if not must_quiesce or worker.get("status") in {
+                "completed",
+                "failed",
+                "superseded",
+                "reassigned",
+            }:
+                continue
+            if pid_is_alive(worker.get("pid")):
+                terminate_worker_pid(worker.get("pid"))
+            worker["status"] = "superseded"
+            worker["last_event_at"] = utc_now()
+            worker["last_error"] = (
+                "Worker quiesced while the dispatcher sequencing audit is pending."
+            )
+            finalize_queue_event_record(
+                config,
+                state,
+                worker,
+                "completed",
+                worker["last_error"],
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_superseded",
+                    "provider": worker.get("provider"),
+                    "task_id": task_id,
+                    "message": worker["last_error"],
+                    "worker_run_id": worker.get("run_id"),
+                },
+            )
+            changed = True
+        return changed
     approval_state = load_approval_state(config)
-    task_map = task_index_from_status(config, load_status(config))
+    program_mutations_suspended = False
+    task_map = task_index_from_status(config, status)
     valid_queue_event_ids = set(state.get("queue", {}).get("events", {}))
     redispatch_statuses = redispatch_candidate_statuses(config)
     active_worker_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
@@ -7051,7 +7113,10 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             continue
         if (
             worker.get("queue_event_id")
-            and not worker_matches_current_assignment(config, worker, task_map)
+            and not program_mutations_suspended
+            and not worker_matches_current_assignment(
+                config, worker, task_map, status
+            )
         ):
             if worker.get("status") == "superseded":
                 continue
@@ -7086,6 +7151,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         if (
             worker.get("queue_event_id")
             and worker.get("status") in active_worker_statuses
+            and not program_mutations_suspended
             and higher_priority_ready_task_exists(config, worker, task_map, state)
         ):
             if alive:
@@ -7120,8 +7186,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         if (
             not alive
             and worker.get("queue_event_id")
+            and not program_mutations_suspended
             and worker.get("status") in {"fallback", "manual_pending", "retry_backoff", "stalled", "waiting_approval", "suspended_approval"}
-            and not worker_matches_current_assignment(config, worker, task_map)
+            and not worker_matches_current_assignment(
+                config, worker, task_map, status
+            )
         ):
             workers.pop(run_id, None)
             finalize_queue_event_record(
@@ -8677,6 +8746,318 @@ def task_is_sidecar(task: dict[str, Any]) -> bool:
     return str(task.get("task_class") or "").strip().lower() == "sidecar"
 
 
+SEQUENCING_GATED_CLASSIFICATIONS = {
+    "deferred strict-auth/security/governance work",
+    "final verification/closeout after the appropriate gate",
+}
+SEQUENCING_RELEASE_PREDICATE = "g2_evidence_contract_v2_valid"
+SEQUENCING_RELEASE_RECORD_FIELDS = {
+    "schema_version",
+    "program_id",
+    "effective_catalog_sha256",
+    "sequencing_overlay_sha256",
+    "release_gate_id",
+    "release_predicate",
+    "released_at",
+    "g2_issued_at",
+    "closeout_at",
+    "g2_evidence_sha256",
+    "canonical_record_bundle_sha256",
+    "hosted_probe_sha256",
+    "product_manifest_sha256",
+    "product_manifest_sidecar_sha256",
+    "target_task_snapshot_sha256",
+    "reviewer",
+    "review_verdict_sha256",
+    "release_admission_sha256",
+    "released_task_transitions",
+    "released_task_transition_set_sha256",
+}
+SEQUENCING_RELEASE_ADMISSION_FIELDS = {
+    "g2_evidence_sha256",
+    "canonical_record_bundle_sha256",
+    "hosted_probe_sha256",
+    "product_manifest_sha256",
+    "product_manifest_sidecar_sha256",
+    "target_task_snapshot_sha256",
+    "reviewer",
+    "review_verdict_sha256",
+    "g2_issued_at",
+    "closeout_at",
+}
+SEQUENCING_RELEASE_TRANSITION_FIELDS = {
+    "task_id",
+    "before_task_snapshot_sha256",
+    "after_task_snapshot_sha256",
+    "before_status",
+    "after_status",
+}
+SEQUENCING_EPOCH_FIELDS = {
+    "schema_version",
+    "program_id",
+    "source_catalog_sha256",
+    "effective_catalog_sha256",
+    "sequencing_overlay_sha256",
+    "release_gate_id",
+    "install_mode",
+    "applied_at",
+    "source_graph_projection_sha256",
+    "effective_graph_projection_sha256",
+    "task_count",
+    "task_transitions",
+    "task_transition_set_sha256",
+}
+SEQUENCING_EPOCH_TRANSITION_FIELDS = {
+    "task_id",
+    "before_task_snapshot_sha256",
+    "after_task_snapshot_sha256",
+    "before_task_contract_sha256",
+    "after_task_contract_sha256",
+    "before_source_ref_sha256",
+    "after_source_ref_sha256",
+    "before_status",
+    "after_status",
+    "acceptance_deferral_sha256",
+    "gate_marker_sha256",
+}
+
+
+def status_has_pending_program_activity_outbox(status: dict[str, Any]) -> bool:
+    """Pause every supervisor-owned task mutation until dispatcher audit drains."""
+
+    return status.get("program_activity_outbox") not in (None, {}, [])
+
+
+def config_has_pending_program_activity_outbox(config: dict[str, Any]) -> bool:
+    try:
+        status = load_status(config)
+    except KeyError:
+        return False
+    return status_has_pending_program_activity_outbox(status)
+
+
+def _sequencing_canonical_sha256(value: Any) -> str:
+    body = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(body).hexdigest()
+
+
+def _sequencing_sha256(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _sequencing_source_ref(task: dict[str, Any]) -> dict[str, Any]:
+    source_ref = task.get("source_ref")
+    return source_ref if isinstance(source_ref, dict) else {}
+
+
+def _sequencing_classification(task: dict[str, Any]) -> str:
+    return str(_sequencing_source_ref(task).get("sequencing_classification") or "")
+
+
+def task_has_valid_sequencing_release_admission(
+    task: dict[str, Any],
+    status: dict[str, Any],
+) -> bool:
+    """Validate a released task against the complete durable release snapshot."""
+
+    source_ref = _sequencing_source_ref(task)
+    program_id = str(source_ref.get("program_id") or "").strip()
+    task_id = str(task.get("id") or "").strip()
+    task_admission = task.get("sequencing_release_admission_sha256")
+    releases = status.get("program_sequencing_releases")
+    record = releases.get(program_id) if isinstance(releases, dict) else None
+    transitions = (
+        record.get("released_task_transitions")
+        if isinstance(record, dict)
+        else None
+    )
+    if (
+        not program_id
+        or not task_id
+        or _sequencing_classification(task)
+        not in SEQUENCING_GATED_CLASSIFICATIONS
+        or not _sequencing_sha256(task_admission)
+        or not isinstance(record, dict)
+        or set(record) != SEQUENCING_RELEASE_RECORD_FIELDS
+        or record.get("schema_version") != 1
+        or record.get("program_id") != program_id
+        or record.get("effective_catalog_sha256")
+        != source_ref.get("catalog_sha256")
+        or record.get("sequencing_overlay_sha256")
+        != source_ref.get("sequencing_overlay_sha256")
+        or record.get("release_gate_id") != source_ref.get("release_gate_id")
+        or record.get("release_predicate") != SEQUENCING_RELEASE_PREDICATE
+        or record.get("release_admission_sha256") != task_admission
+        or not isinstance(record.get("reviewer"), str)
+        or not str(record.get("reviewer") or "").strip()
+        or not isinstance(transitions, list)
+        or not transitions
+    ):
+        return False
+    hash_fields = {
+        "effective_catalog_sha256",
+        "sequencing_overlay_sha256",
+        "g2_evidence_sha256",
+        "canonical_record_bundle_sha256",
+        "hosted_probe_sha256",
+        "product_manifest_sha256",
+        "product_manifest_sidecar_sha256",
+        "target_task_snapshot_sha256",
+        "review_verdict_sha256",
+        "release_admission_sha256",
+        "released_task_transition_set_sha256",
+    }
+    if any(not _sequencing_sha256(record.get(field)) for field in hash_fields):
+        return False
+    released_at = _parse_iso_utc(str(record.get("released_at") or ""))
+    g2_issued_at = _parse_iso_utc(str(record.get("g2_issued_at") or ""))
+    closeout_at = _parse_iso_utc(str(record.get("closeout_at") or ""))
+    if (
+        released_at is None
+        or g2_issued_at is None
+        or closeout_at is None
+        or closeout_at > g2_issued_at
+        or g2_issued_at > released_at
+    ):
+        return False
+    admission = {
+        field: record.get(field)
+        for field in SEQUENCING_RELEASE_ADMISSION_FIELDS
+    }
+    if record.get("release_admission_sha256") != _sequencing_canonical_sha256(
+        admission
+    ):
+        return False
+    transition_ids: list[str] = []
+    for transition in transitions:
+        if (
+            not isinstance(transition, dict)
+            or set(transition) != SEQUENCING_RELEASE_TRANSITION_FIELDS
+            or transition.get("before_status") != "blocked"
+            or transition.get("after_status") != "todo"
+            or not _sequencing_sha256(
+                transition.get("before_task_snapshot_sha256")
+            )
+            or not _sequencing_sha256(
+                transition.get("after_task_snapshot_sha256")
+            )
+        ):
+            return False
+        transition_id = str(transition.get("task_id") or "").strip()
+        if not transition_id:
+            return False
+        transition_ids.append(transition_id)
+    epochs = status.get("program_sequencing_epochs")
+    epoch = epochs.get(program_id) if isinstance(epochs, dict) else None
+    epoch_transitions = (
+        epoch.get("task_transitions") if isinstance(epoch, dict) else None
+    )
+    if (
+        not isinstance(epoch, dict)
+        or set(epoch) != SEQUENCING_EPOCH_FIELDS
+        or epoch.get("schema_version") != 1
+        or epoch.get("program_id") != program_id
+        or epoch.get("effective_catalog_sha256")
+        != record.get("effective_catalog_sha256")
+        or epoch.get("sequencing_overlay_sha256")
+        != record.get("sequencing_overlay_sha256")
+        or epoch.get("release_gate_id") != record.get("release_gate_id")
+        or epoch.get("install_mode")
+        not in {"base_epoch_migration", "fresh_materialization"}
+        or _parse_iso_utc(str(epoch.get("applied_at") or "")) is None
+        or any(
+            not _sequencing_sha256(epoch.get(field))
+            for field in (
+                "source_catalog_sha256",
+                "effective_catalog_sha256",
+                "sequencing_overlay_sha256",
+                "source_graph_projection_sha256",
+                "effective_graph_projection_sha256",
+                "task_transition_set_sha256",
+            )
+        )
+        or not isinstance(epoch_transitions, list)
+        or not epoch_transitions
+        or epoch.get("task_count") != len(epoch_transitions)
+        or epoch.get("task_transition_set_sha256")
+        != _sequencing_canonical_sha256(epoch_transitions)
+    ):
+        return False
+    epoch_ids: list[str] = []
+    gated_epoch_transitions: list[dict[str, Any]] = []
+    for transition in epoch_transitions:
+        if (
+            not isinstance(transition, dict)
+            or set(transition) != SEQUENCING_EPOCH_TRANSITION_FIELDS
+            or transition.get("before_status") not in {"absent", "todo"}
+            or transition.get("after_status") not in {"blocked", "todo"}
+            or any(
+                not _sequencing_sha256(transition.get(field))
+                for field in SEQUENCING_EPOCH_TRANSITION_FIELDS
+                if field.endswith("sha256")
+            )
+        ):
+            return False
+        epoch_task_id = str(transition.get("task_id") or "").strip()
+        if not epoch_task_id:
+            return False
+        epoch_ids.append(epoch_task_id)
+        if transition.get("after_status") == "blocked":
+            gated_epoch_transitions.append(transition)
+    if len(epoch_ids) != len(set(epoch_ids)):
+        return False
+    if (
+        not gated_epoch_transitions
+        or transition_ids
+        != [str(row["task_id"]) for row in gated_epoch_transitions]
+        or len(transition_ids) != len(set(transition_ids))
+        or task_id not in transition_ids
+        or any(
+            release_transition["before_task_snapshot_sha256"]
+            != epoch_transition["after_task_snapshot_sha256"]
+            for release_transition, epoch_transition in zip(
+                transitions, gated_epoch_transitions
+            )
+        )
+        or record.get("released_task_transition_set_sha256")
+        != _sequencing_canonical_sha256(transitions)
+    ):
+        return False
+    return True
+
+
+def task_is_sequencing_parked(
+    task: dict[str, Any],
+    status: dict[str, Any] | None = None,
+) -> bool:
+    """Fail closed for gated classifications, including a missing park marker."""
+
+    if "sequencing_release_gate" in task:
+        return True
+    if _sequencing_classification(task) not in SEQUENCING_GATED_CLASSIFICATIONS:
+        return False
+    return status is None or not task_has_valid_sequencing_release_admission(
+        task, status
+    )
+
+
+# Keep one consumer implementation across supervisor, ai_status, and
+# auto-unblock. These aliases intentionally replace the legacy-local helpers
+# above while preserving the supervisor's public helper names for callers.
+status_has_pending_program_activity_outbox = (
+    sequencing_gate.status_has_pending_program_activity_outbox
+)
+task_has_valid_sequencing_release_admission = (
+    sequencing_gate.task_has_valid_sequencing_release_admission
+)
+task_is_sequencing_parked = sequencing_gate.task_is_sequencing_parked
+
+
 def task_is_human_gate(task: dict[str, Any]) -> bool:
     task_class = str(task.get("task_class") or "").strip().lower()
     gate_status = str(task.get("gate_status") or "").strip().lower()
@@ -8687,10 +9068,13 @@ def task_is_human_gate(task: dict[str, Any]) -> bool:
     )
 
 
-def chair_blocked_owner_rescue_allowed(task: dict[str, Any]) -> bool:
+def chair_blocked_owner_rescue_allowed(
+    task: dict[str, Any],
+    status: dict[str, Any] | None = None,
+) -> bool:
     if str(task.get("status") or "").strip().lower() != "blocked":
         return False
-    if "sequencing_release_gate" in task:
+    if task_is_sequencing_parked(task, status):
         return False
     if task_is_human_gate(task) or task_is_sidecar(task) or bool(task.get("non_dispatchable")):
         return False
@@ -8785,7 +9169,12 @@ def task_phase_priority(
     return 9
 
 
-def dynamic_sidecar_kind(task: dict[str, Any]) -> str | None:
+def dynamic_sidecar_kind(
+    task: dict[str, Any],
+    status: dict[str, Any] | None = None,
+) -> str | None:
+    if task_is_sequencing_parked(task, status):
+        return None
     phase = str(task.get("phase") or "").lower()
     title = str(task.get("title") or "").lower()
     artifacts = " ".join(str(item).lower() for item in (task.get("artifacts") or []))
@@ -8810,8 +9199,9 @@ def normalize_mainline_task_assignment(
     task: dict[str, Any],
     *,
     state: dict[str, Any] | None = None,
+    status_snapshot: dict[str, Any] | None = None,
 ) -> bool:
-    if task_is_sidecar(task):
+    if task_is_sidecar(task) or task_is_sequencing_parked(task, status_snapshot):
         return False
     settings = worker_reassignment_settings(config)
     task_id = str(task.get("id") or "").strip()
@@ -8914,7 +9304,7 @@ def agent_has_dispatchable_primary_work(
     finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
     for task in status.get("tasks", []) or []:
-        if task_is_sidecar(task):
+        if task_is_sidecar(task) or task_is_sequencing_parked(task, status):
             continue
         if not agent_can_take_task(config, agent_name, task):
             continue
@@ -9110,7 +9500,7 @@ def build_catalog_sidecar_candidates(
         phase_match = str(template.get("parent_phase_match") or "").strip()
         activation_dependencies = [str(item).strip() for item in template.get("activation_dependencies", []) if str(item).strip()]
         for parent in status.get("tasks", []) or []:
-            if task_is_sidecar(parent):
+            if task_is_sidecar(parent) or task_is_sequencing_parked(parent, status):
                 continue
             parent_id = str(parent.get("id") or "").strip()
             if not parent_id:
@@ -9176,12 +9566,12 @@ def build_dynamic_sidecar_candidates(
     resolver = task_resolver_for_config(config, task_map)
     candidates: list[dict[str, Any]] = []
     for parent in status.get("tasks", []) or []:
-        if task_is_sidecar(parent):
+        if task_is_sidecar(parent) or task_is_sequencing_parked(parent, status):
             continue
         parent_id = str(parent.get("id") or "").strip()
         if not parent_id or str(parent.get("status") or "").lower() == "done":
             continue
-        kind = dynamic_sidecar_kind(parent)
+        kind = dynamic_sidecar_kind(parent, status)
         if kind not in {"review_packet", "acceptance_packet", "bff_handoff_packet"}:
             continue
         signature = f"{parent_id}:{kind}"
@@ -9246,6 +9636,8 @@ def create_sidecar_task(
     helper_kind: str,
     mutates_canonical: bool,
 ) -> tuple[bool, str]:
+    if config_has_pending_program_activity_outbox(config):
+        return False, "program activity outbox is pending"
     script = config_path(config, "status_file").parent / "scripts" / "ai_status.py"
     metadata = {
         "task_class": "sidecar",
@@ -9531,14 +9923,19 @@ def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> di
     }
 
 
-def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
+def current_dispatch_event_key(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    status: dict[str, Any] | None = None,
+) -> str | None:
     reason = str(event.get("reason") or "")
     if not is_execution_dispatch_reason(reason):
         return None
 
     task_id = str(event.get("task_id") or "")
     task = task_map.get(task_id)
-    if not task:
+    if not task or task_is_sequencing_parked(task, status):
         return None
 
     schema = config.get("schema", {})
@@ -9574,6 +9971,8 @@ def dispatch_priority_for_task(
     *,
     dependencies_done_statuses: set[str] | None = None,
 ) -> int | None:
+    if task_is_sequencing_parked(task):
+        return None
     settings = ready_dispatch_settings(config)
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
     finalize_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
@@ -9653,7 +10052,10 @@ def choose_helper_claim_agent(
     agent_loads: dict[str, list[int]],
     helper_settings: dict[str, Any],
     owner_paused: bool = False,
+    status_snapshot: dict[str, Any] | None = None,
 ) -> bool:
+    if task_is_sequencing_parked(task, status_snapshot):
+        return False
     if not helper_settings.get("enabled", True):
         return False
     if not agent_can_take_task(config, idle_agent_name, task):
@@ -9858,6 +10260,7 @@ def worker_matches_current_assignment(
     config: dict[str, Any],
     worker: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
+    status: dict[str, Any] | None = None,
 ) -> bool:
     if worker_is_discussion_planning(worker):
         return True
@@ -9867,7 +10270,7 @@ def worker_matches_current_assignment(
         return True
     task_id = str(worker.get("task_id") or "")
     task = task_map.get(task_id)
-    if not task:
+    if not task or task_is_sequencing_parked(task, status):
         return False
     agent_name = display_name_for(config, str(worker.get("agent_id") or ""))
     settings = ready_dispatch_settings(config)
@@ -9890,12 +10293,17 @@ def worker_matches_current_assignment(
     return False
 
 
-def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
+def stale_dispatch_skip_message(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    status: dict[str, Any] | None = None,
+) -> str | None:
     reason = str(event.get("reason") or "")
     if not is_execution_dispatch_reason(reason):
         return None
 
-    expected_key = current_dispatch_event_key(config, event, task_map)
+    expected_key = current_dispatch_event_key(config, event, task_map, status)
     task_id = str(event.get("task_id") or "unknown task")
     if expected_key is None:
         return f"Skipped stale queued wake event for {task_id}: task is no longer eligible for {reason}."
@@ -9961,6 +10369,8 @@ def dispatch_discussion_planning(
     planning_state: dict[str, Any] | None = None,
     provider_report: dict[str, Any] | None = None,
 ) -> bool:
+    if config_has_pending_program_activity_outbox(config):
+        return False
     planning_state = planning_state or load_discussion_planning_state()
     if not discussion_planning_is_active(planning_state):
         return False
@@ -10012,6 +10422,8 @@ def dispatch_ready_tasks(
         return False
 
     status = load_status(config)
+    if status_has_pending_program_activity_outbox(status):
+        return False
     schema = config.get("schema", {})
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
@@ -10047,7 +10459,12 @@ def dispatch_ready_tasks(
         task_id = str(task.get(task_id_field) or "")
         if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
             continue
-        normalized = normalize_mainline_task_assignment(config, task, state=state) or normalized
+        normalized = normalize_mainline_task_assignment(
+            config,
+            task,
+            state=state,
+            status_snapshot=status,
+        ) or normalized
 
     if normalized:
         changed = True
@@ -10128,7 +10545,7 @@ def dispatch_ready_tasks(
         helper_candidates: list[tuple[int, int, dict[str, Any], str, str, str, bool]] = []
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
-            if not task_id:
+            if not task_id or task_is_sequencing_parked(task, status):
                 continue
             if task_id in active_task_ids or task_id in pending_task_ids:
                 continue
@@ -10196,6 +10613,7 @@ def dispatch_ready_tasks(
                     agent_loads=agent_loads,
                     helper_settings=helper_settings,
                     owner_paused=owner_paused,
+                    status_snapshot=status,
                 )
             )
 
@@ -10367,6 +10785,9 @@ def dispatch_chair_review(
     planning_state: dict[str, Any] | None = None,
     provider_report: dict[str, Any] | None = None,
 ) -> bool:
+    status = load_status(config)
+    if status_has_pending_program_activity_outbox(status):
+        return False
     settings = chair_review_settings(config)
     if not settings.get("enabled", True):
         return False
@@ -10422,7 +10843,6 @@ def dispatch_chair_review(
             )
             return False
     seen = state.setdefault("seen_event_keys", {})
-    status = load_status(config)
     task_map = task_index_from_status(config, status)
     task_resolver = task_resolver_for_config(config, task_map)
     rotation = chair_rotation_state(state)
@@ -10469,6 +10889,9 @@ def dispatch_underutilization_sidecars(
     state: dict[str, Any],
     provider_report: dict[str, Any] | None = None,
 ) -> bool:
+    status = load_status(config)
+    if status_has_pending_program_activity_outbox(status):
+        return False
     settings = underutilization_settings(config)
     tracking = state.setdefault("underutilization", {})
     rotation = chair_rotation_state(state)
@@ -10513,7 +10936,6 @@ def dispatch_underutilization_sidecars(
     if last_wave_at is not None and (current_dt - last_wave_at).total_seconds() < float(settings.get("cooldown_seconds", 900)):
         return changed
 
-    status = load_status(config)
     task_map = task_index_from_status(config, status)
     idle_agents = eligible_idle_agents_for_sidecars(
         config,
