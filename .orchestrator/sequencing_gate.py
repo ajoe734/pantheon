@@ -19,14 +19,56 @@ SEQUENCING_ADDENDUM_SHA256 = (
 )
 MERGE_PR_3737_SHA = "a4b5df9a51bc3da6df0d39d422d9db4edc553aba"
 EFFECTIVE_CATALOG_SHA256 = (
-    "9b3e8cf9cd8360a1c74e54db30574412ec40398b520b0c6dc4eb4e8002ffd134"
+    "d494e625c13b1792f1c2b163194d785fad2be8b891098cd77af752189f558eb1"
 )
 SEQUENCING_OVERLAY_SHA256 = (
-    "463e20275e28cf2b6154520456ed11f88319d830dae510d3e350d79ad881f8d5"
+    "e506f62930bf0cb4f8cf6c3d1661b07ed638ad0903b8e640df3e178d7e9e7602"
 )
 RELEASE_GATE_ID = "hardening-after-g2-paper-trade-v1"
-RELEASE_PREDICATE = "g2_evidence_contract_v3_valid"
+RELEASE_PREDICATE = "g2_evidence_contract_v4_valid"
 TARGET_TASK_ID = "LOOP-PROD-VERIFY-EXEC-001"
+CANONICAL_DATABASE_NAME = "pantheon"
+CANONICAL_DATABASE_ROLE = "pantheon_app"
+CANONICAL_DATABASE_SCHEMA = "public"
+CANONICAL_DATABASE_TABLE = "telemetry_events"
+CANONICAL_PROJECTION_ROOT = "/data/bff/lifecycle-projection"
+SOURCE_GRAPH_PROJECTION_SHA256 = (
+    "163f6686624e41120ba752de938e0283202026695358d7e4eca274fbad671cea"
+)
+EFFECTIVE_GRAPH_PROJECTION_SHA256 = (
+    "7f7a8f738d25a738895db68760a6002652c687fb25291ffe3283790cc12192dd"
+)
+BASE_SOURCE_REF_FIELDS = {
+    "plan",
+    "packet",
+    "catalog",
+    "catalog_sha256",
+    "task_contract_sha256",
+    "execution_authority_sha256",
+    "completion_authority_sha256",
+    "auth_lifecycle_sha256",
+    "contract_fixtures_sha256",
+    "program_id",
+}
+BASE_SOURCE_REF_AUTHORITY = {
+    "plan": "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md",
+    "packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/INDEX.md",
+    "catalog": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/tasks.json",
+    "catalog_sha256": SOURCE_CATALOG_SHA256,
+    "execution_authority_sha256": (
+        "4388a50f9baf36504a71e233d54efdc115d67d719c0c4a2b2cbaf24c86d60f45"
+    ),
+    "completion_authority_sha256": (
+        "d4a05ccf4d7b3becd60a05a0ff7106abed2af137687333a4a2731970a15da31f"
+    ),
+    "auth_lifecycle_sha256": (
+        "94f389bcb0cb65dbc44a00ccea0c057965bc3348fc73836ea19760df2c21500f"
+    ),
+    "contract_fixtures_sha256": (
+        "9de93f911fd255a07e3e8719ef63c05a0e8631b276725cfafc73815203f154be"
+    ),
+    "program_id": PROGRAM_ID,
+}
 EXPECTED_TASK_IDS = (
     "LOOP-PROD-000",
     "LOOP-PROD-001",
@@ -157,6 +199,61 @@ EXPECTED_CLASSIFICATION_BY_TASK_ID = {
     "LOOP-PROD-SIGNOFF-001": "final verification/closeout after the appropriate gate",
     "LOOP-PROD-CLOSE-002": "final verification/closeout after the appropriate gate",
 }
+BASE_TASK_CONTRACT_FIELDS = {
+    "id",
+    "title",
+    "summary_zh",
+    "phase",
+    "depends_on",
+    "artifacts",
+    "acceptance",
+    "wave",
+    "fleet_lane",
+    "target_repo",
+    "merge_target",
+    "loop_ids",
+    "current_maturity",
+    "target_maturity",
+    "desired_state_sources",
+    "actual_state_sources",
+    "proof_required",
+    "non_goals",
+    "dispatch_rules",
+    "product_level_required",
+    "evidence_root",
+    "task_doc",
+    "requires_human_ops_signoff",
+}
+BASE_RUNTIME_AUTHORITY = {
+    "task_class": "execution",
+    "auto_created_by": "dispatch_loop_product_level_remediation_2026-07-13",
+    "auto_generated": True,
+    "delivery_layer": "primary",
+    "mutates_canonical": True,
+    "helper_kind": "loop_product_level_execution_slice",
+    "execution_role": "supervisor_admitted_fleet_worker",
+    "review_role": "distinct_supervisor_admitted_fleet_reviewer",
+    "planner_controller_identity": "/root",
+    "planner_may_edit_declared_product_artifacts": False,
+    "formal_review_required": True,
+}
+BASE_RUNTIME_TASK_FIELDS = (
+    BASE_TASK_CONTRACT_FIELDS
+    | set(BASE_RUNTIME_AUTHORITY)
+    | {
+        "owner",
+        "reviewer",
+        "status",
+        "next",
+        "created_at",
+        "last_update",
+        "completion_role",
+        "source_ref",
+    }
+)
+CHECKPOINT_TASK_IDS = {"LOOP-PROD-CLOSE-001"}
+GUARD_INSTALL_TASK_ID = "LOOP-PROD-SIGNOFF-001"
+FINAL_AUTHORITY_TASK_ID = "LOOP-PROD-CLOSE-002"
 
 RELEASE_RECORD_FIELDS = {
     "schema_version",
@@ -165,19 +262,25 @@ RELEASE_RECORD_FIELDS = {
     "sequencing_overlay_sha256",
     "release_gate_id",
     "release_predicate",
+    "sequencing_epoch_sha256",
     "released_at",
     "g2_issued_at",
     "closeout_at",
     "g2_evidence_sha256",
     "canonical_record_bundle_sha256",
     "canonical_source_snapshot_sha256",
+    "canonical_source_attestation",
     "hosted_probe_sha256",
     "g2_artifact_commit_sha",
     "g2_artifact_merge_target_sha",
+    "g2_authoritative_remote_head_sha",
+    "g2_github_pr_snapshot_sha256",
     "product_manifest_sha256",
     "product_manifest_sidecar_sha256",
     "target_task_snapshot_sha256",
     "reviewer",
+    "review_binding_sha256",
+    "review_approval_event_sha256",
     "review_verdict_sha256",
     "release_admission_sha256",
     "released_task_transitions",
@@ -187,16 +290,34 @@ RELEASE_ADMISSION_FIELDS = {
     "g2_evidence_sha256",
     "canonical_record_bundle_sha256",
     "canonical_source_snapshot_sha256",
+    "canonical_source_attestation",
     "hosted_probe_sha256",
     "g2_artifact_commit_sha",
     "g2_artifact_merge_target_sha",
+    "g2_authoritative_remote_head_sha",
+    "g2_github_pr_snapshot_sha256",
     "product_manifest_sha256",
     "product_manifest_sidecar_sha256",
     "target_task_snapshot_sha256",
     "reviewer",
+    "review_binding_sha256",
+    "review_approval_event_sha256",
     "review_verdict_sha256",
     "g2_issued_at",
     "closeout_at",
+}
+SOURCE_ATTESTATION_FIELDS = {
+    "database",
+    "role",
+    "schema",
+    "table",
+    "projection_root",
+    "live_source_high_watermark",
+    "captured_generation_name",
+    "current_generation_name",
+    "current_projection_checkpoint",
+    "rows_sha256",
+    "projection_sha256",
 }
 RELEASE_TRANSITION_FIELDS = {
     "task_id",
@@ -243,6 +364,7 @@ EPOCH_FIELDS = {
 }
 EPOCH_TRANSITION_FIELDS = {
     "task_id",
+    "before_task_snapshot",
     "before_task_snapshot_sha256",
     "after_task_snapshot_sha256",
     "before_task_contract_sha256",
@@ -290,6 +412,67 @@ def _is_exact_utc_z(value: Any) -> bool:
         isinstance(value, str)
         and value.endswith("Z")
         and parse_utc(value) is not None
+    )
+
+
+def _task_contract_sha256(task: dict[str, Any]) -> str:
+    return canonical_sha256(
+        {field: task.get(field) for field in BASE_TASK_CONTRACT_FIELDS}
+    )
+
+
+def _expected_completion_role(task_id: str) -> str:
+    if task_id == FINAL_AUTHORITY_TASK_ID:
+        return "final_authority"
+    if task_id == GUARD_INSTALL_TASK_ID:
+        return "guard_installer"
+    if task_id in CHECKPOINT_TASK_IDS:
+        return "checkpoint_only"
+    return "ordinary"
+
+
+def _base_preimage_is_exact(
+    preimage: Any,
+    task_id: str,
+    applied_at: datetime,
+) -> bool:
+    if (
+        not isinstance(preimage, dict)
+        or set(preimage) != BASE_RUNTIME_TASK_FIELDS
+        or preimage.get("id") != task_id
+        or preimage.get("status") != "todo"
+        or preimage.get("completion_role") != _expected_completion_role(task_id)
+        or any(
+            preimage.get(field) != value
+            for field, value in BASE_RUNTIME_AUTHORITY.items()
+        )
+        or not isinstance(preimage.get("owner"), str)
+        or not preimage["owner"].strip()
+        or not isinstance(preimage.get("reviewer"), str)
+        or not preimage["reviewer"].strip()
+        or preimage["owner"] == preimage["reviewer"]
+        or not isinstance(preimage.get("next"), str)
+        or not preimage["next"].strip()
+    ):
+        return False
+    source_ref = preimage.get("source_ref")
+    if (
+        not isinstance(source_ref, dict)
+        or set(source_ref) != BASE_SOURCE_REF_FIELDS
+        or any(
+            source_ref.get(field) != value
+            for field, value in BASE_SOURCE_REF_AUTHORITY.items()
+        )
+        or source_ref.get("task_contract_sha256")
+        != _task_contract_sha256(preimage)
+    ):
+        return False
+    created_at = parse_utc(preimage.get("created_at"))
+    last_update = parse_utc(preimage.get("last_update"))
+    return bool(
+        created_at is not None
+        and last_update is not None
+        and created_at <= last_update <= applied_at
     )
 
 
@@ -349,10 +532,11 @@ def _validated_epoch(status: dict[str, Any]) -> tuple[dict[str, Any], list[dict[
     epochs = status.get("program_sequencing_epochs")
     epoch = epochs.get(PROGRAM_ID) if isinstance(epochs, dict) else None
     transitions = epoch.get("task_transitions") if isinstance(epoch, dict) else None
+    applied_at = parse_utc(epoch.get("applied_at")) if isinstance(epoch, dict) else None
     if (
         not isinstance(epoch, dict)
         or set(epoch) != EPOCH_FIELDS
-        or epoch.get("schema_version") != 1
+        or epoch.get("schema_version") != 2
         or epoch.get("program_id") != PROGRAM_ID
         or epoch.get("source_catalog_sha256") != SOURCE_CATALOG_SHA256
         or epoch.get("effective_catalog_sha256") != EFFECTIVE_CATALOG_SHA256
@@ -360,15 +544,13 @@ def _validated_epoch(status: dict[str, Any]) -> tuple[dict[str, Any], list[dict[
         or epoch.get("release_gate_id") != RELEASE_GATE_ID
         or epoch.get("install_mode")
         not in {"base_epoch_migration", "fresh_materialization"}
-        or parse_utc(epoch.get("applied_at")) is None
-        or any(
-            not is_sha256(epoch.get(field))
-            for field in (
-                "source_graph_projection_sha256",
-                "effective_graph_projection_sha256",
-                "task_transition_set_sha256",
-            )
-        )
+        or applied_at is None
+        or not _is_exact_utc_z(epoch.get("applied_at"))
+        or epoch.get("source_graph_projection_sha256")
+        != SOURCE_GRAPH_PROJECTION_SHA256
+        or epoch.get("effective_graph_projection_sha256")
+        != EFFECTIVE_GRAPH_PROJECTION_SHA256
+        or not is_sha256(epoch.get("task_transition_set_sha256"))
         or not isinstance(transitions, list)
         or len(transitions) != EXPECTED_TASK_COUNT
         or epoch.get("task_count") != EXPECTED_TASK_COUNT
@@ -386,11 +568,23 @@ def _validated_epoch(status: dict[str, Any]) -> tuple[dict[str, Any], list[dict[
     task_ids: list[str] = []
     gated_ids: list[str] = []
     for transition in transitions:
+        task_id = (
+            str(transition.get("task_id") or "").strip()
+            if isinstance(transition, dict)
+            else ""
+        )
+        preimage = (
+            transition.get("before_task_snapshot")
+            if isinstance(transition, dict)
+            else None
+        )
         if (
             not isinstance(transition, dict)
             or set(transition) != EPOCH_TRANSITION_FIELDS
+            or not task_id
             or transition.get("before_status") != expected_before_status
-            or transition.get("after_status") not in {"blocked", "todo"}
+            or transition.get("after_status")
+            != ("blocked" if task_id in EXPECTED_GATED_TASK_IDS else "todo")
             or any(
                 not is_sha256(transition.get(field))
                 for field in EPOCH_TRANSITION_FIELDS
@@ -398,24 +592,54 @@ def _validated_epoch(status: dict[str, Any]) -> tuple[dict[str, Any], list[dict[
             )
             or (
                 epoch["install_mode"] == "fresh_materialization"
-                and transition.get("before_task_snapshot_sha256") != null_sha256
+                and (
+                    preimage is not None
+                    or transition.get("before_task_snapshot_sha256")
+                    != null_sha256
+                    or transition.get("before_task_contract_sha256")
+                    != null_sha256
+                    or transition.get("before_source_ref_sha256") != null_sha256
+                )
             )
             or (
-                epoch["install_mode"] == "fresh_materialization"
-                and transition.get("before_source_ref_sha256") != null_sha256
+                epoch["install_mode"] == "base_epoch_migration"
+                and (
+                    not _base_preimage_is_exact(preimage, task_id, applied_at)
+                    or canonical_sha256(preimage)
+                    != transition.get("before_task_snapshot_sha256")
+                    or transition.get("before_task_contract_sha256")
+                    != _task_contract_sha256(preimage)
+                    or canonical_sha256(preimage.get("source_ref"))
+                    != transition.get("before_source_ref_sha256")
+                )
             )
             or (
-                transition.get("after_status") == "blocked"
-                and transition.get("gate_marker_sha256") == null_sha256
+                transition.get("gate_marker_sha256")
+                != canonical_sha256(
+                    {
+                        "schema_version": 1,
+                        "gate_id": RELEASE_GATE_ID,
+                        "release_predicate": RELEASE_PREDICATE,
+                        "sequencing_overlay_sha256": SEQUENCING_OVERLAY_SHA256,
+                        "state": "parked",
+                        "previous_status": "todo",
+                        "parked_at": epoch.get("applied_at"),
+                    }
+                    if task_id in EXPECTED_GATED_TASK_IDS
+                    else None
+                )
             )
             or (
-                transition.get("after_status") == "todo"
-                and transition.get("gate_marker_sha256") != null_sha256
+                transition.get("acceptance_deferral_sha256") == null_sha256
+                and EXPECTED_CLASSIFICATION_BY_TASK_ID.get(task_id)
+                in PRE_G2_CLASSIFICATIONS
+            )
+            or (
+                transition.get("acceptance_deferral_sha256") != null_sha256
+                and EXPECTED_CLASSIFICATION_BY_TASK_ID.get(task_id)
+                not in PRE_G2_CLASSIFICATIONS
             )
         ):
-            return None
-        task_id = str(transition.get("task_id") or "").strip()
-        if not task_id:
             return None
         task_ids.append(task_id)
         if transition["after_status"] == "blocked":
@@ -444,12 +668,13 @@ def _validated_release_record(
     if (
         not isinstance(record, dict)
         or set(record) != RELEASE_RECORD_FIELDS
-        or record.get("schema_version") != 1
+        or record.get("schema_version") != 2
         or record.get("program_id") != PROGRAM_ID
         or record.get("effective_catalog_sha256") != EFFECTIVE_CATALOG_SHA256
         or record.get("sequencing_overlay_sha256") != SEQUENCING_OVERLAY_SHA256
         or record.get("release_gate_id") != RELEASE_GATE_ID
         or record.get("release_predicate") != RELEASE_PREDICATE
+        or record.get("sequencing_epoch_sha256") != canonical_sha256(epoch)
         or not isinstance(record.get("reviewer"), str)
         or not record["reviewer"].strip()
         or not isinstance(transitions, list)
@@ -462,11 +687,15 @@ def _validated_release_record(
             "g2_evidence_sha256",
             "canonical_record_bundle_sha256",
             "canonical_source_snapshot_sha256",
+            "g2_github_pr_snapshot_sha256",
             "hosted_probe_sha256",
             "product_manifest_sha256",
             "product_manifest_sidecar_sha256",
             "target_task_snapshot_sha256",
+            "review_binding_sha256",
+            "review_approval_event_sha256",
             "review_verdict_sha256",
+            "sequencing_epoch_sha256",
             "release_admission_sha256",
             "released_task_transition_set_sha256",
         )
@@ -476,7 +705,35 @@ def _validated_release_record(
         for field in (
             "g2_artifact_commit_sha",
             "g2_artifact_merge_target_sha",
+            "g2_authoritative_remote_head_sha",
         )
+    ):
+        return None
+    attestation = record.get("canonical_source_attestation")
+    if (
+        not isinstance(attestation, dict)
+        or set(attestation) != SOURCE_ATTESTATION_FIELDS
+        or attestation.get("database") != CANONICAL_DATABASE_NAME
+        or attestation.get("role") != CANONICAL_DATABASE_ROLE
+        or attestation.get("schema") != CANONICAL_DATABASE_SCHEMA
+        or attestation.get("table") != CANONICAL_DATABASE_TABLE
+        or attestation.get("projection_root") != CANONICAL_PROJECTION_ROOT
+        or type(attestation.get("live_source_high_watermark")) is not int
+        or type(attestation.get("current_projection_checkpoint")) is not int
+        or attestation["current_projection_checkpoint"]
+        < attestation["live_source_high_watermark"]
+        or not is_sha256(attestation.get("rows_sha256"))
+        or not is_sha256(attestation.get("projection_sha256"))
+        or re.fullmatch(
+            r"g[0-9]{12}-[0-9a-f]{12}",
+            str(attestation.get("captured_generation_name") or ""),
+        )
+        is None
+        or re.fullmatch(
+            r"g[0-9]{12}-[0-9a-f]{12}",
+            str(attestation.get("current_generation_name") or ""),
+        )
+        is None
     ):
         return None
 

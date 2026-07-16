@@ -15,7 +15,7 @@ This reconciliation describes all 48 immutable catalog tasks exactly once. It do
 | Merged addendum authority | PR #3737 merge `a4b5df9a51bc3da6df0d39d422d9db4edc553aba` |
 | Rejected interim delivery | PR #3746 head `5f51574df2791d7cb1c4551e46571ae5f06ea71a`, merged as `aae333959e0566759a4e7eb955f860d280fa5e3d`; retained as failed evidence, never as release authority |
 | Overlay schema | `schema_version: 2` |
-| Canonical overlay raw SHA-256 | `463e20275e28cf2b6154520456ed11f88319d830dae510d3e350d79ad881f8d5` |
+| Canonical overlay raw SHA-256 | `e506f62930bf0cb4f8cf6c3d1661b07ed638ad0903b8e640df3e178d7e9e7602` |
 
 The overlay and this derived view enforce these invariants:
 
@@ -56,7 +56,7 @@ Wave 4 is intentionally empty. That gap is descriptive only: release is controll
 |---|---|
 | `version` | `1` |
 | `gate_id` | `hardening-after-g2-paper-trade-v1` |
-| `release_predicate` | `g2_evidence_contract_v3_valid` |
+| `release_predicate` | `g2_evidence_contract_v4_valid` |
 | `pre_gate_action` | `park_new_and_existing_gated_tasks_allow_ungated` |
 | `post_gate_action` | `allow_dependency_governed_materialization` |
 | `gated_classifications` | `deferred strict-auth/security/governance work`; `final verification/closeout after the appropriate gate` |
@@ -83,7 +83,14 @@ The exact gated task set is:
 - `LOOP-PROD-SIGNOFF-001`
 - `LOOP-PROD-CLOSE-002`
 
-Before `g2_evidence_contract_v3_valid` is true, the dispatcher parks new and existing members of that exact 19-task set while continuing eligible ungated work. Once the predicate is true, normal amended-dependency admission governs them. Classification or membership, not a hard-coded wave comparison, determines release.
+Before `g2_evidence_contract_v4_valid` is true, the dispatcher parks new and existing members of that exact 19-task set while continuing eligible ungated work. Once the predicate is true, normal amended-dependency admission governs them. Classification or membership, not a hard-coded wave comparison, determines release.
+
+### Sequencing epoch and release binding
+
+- Every overlay installation writes a schema-v2 sequencing epoch. A base migration embeds each exact pristine pre-overlay task snapshot; a fresh materialization embeds `null`. Canonical hashes bind the preimage, its contract and source reference, and the resulting post-overlay task.
+- Epoch validation reconstructs every post-overlay task from its embedded preimage and rejects missing, extra, reordered, changed, non-pristine, or temporally invalid transitions. It never consults mutable runtime state as the historical preimage authority.
+- A schema-v2 release record binds the canonical SHA-256 of the exact validated epoch. Rehashing or replacing an epoch after release therefore invalidates the release admission and keeps all 19 tasks parked.
+- The release is also content-addressed in the program activity audit; consumer paths fail closed unless the epoch, release, per-task admission digest, and audit event all agree.
 
 ## 3. Pre-G2 acceptance deferral
 
@@ -132,7 +139,7 @@ The policy applies to this exact 29-task set:
 
 This is a sequencing/admission policy, not an acceptance-clause rewrite. Before G2, it defers only strict auth, browser dev-bearer removal, MFA, two-person, and negative-identity proof. Tenant isolation, environment binding, paper execution, and no-live-capital controls remain mandatory.
 
-## 4. G2 evidence contract v2
+## 4. G2 evidence contract v4
 
 The Hardening Wave opens only when the exact target `LOOP-PROD-VERIFY-EXEC-001` has accepted closeout truth and its canonical paper-trade chain validates. A bare `done` status, digest-shaped strings, self-linked identifiers, or a minimal archive snapshot is not evidence.
 
@@ -140,27 +147,35 @@ The Hardening Wave opens only when the exact target `LOOP-PROD-VERIFY-EXEC-001` 
 
 | Field | Exact contract value |
 |---|---|
-| `version` | `2` |
+| `version` | `4` |
 | `target_task` | `LOOP-PROD-VERIFY-EXEC-001` |
 | `target_task_original_contract_sha256` | `71ecc377427ef5ff539dff896e243bf9ac4a4017bd8554378fcf8ee8856e9235` |
 | `target_task_amended_contract_sha256` | `71ecc377427ef5ff539dff896e243bf9ac4a4017bd8554378fcf8ee8856e9235` |
 | `tasks_catalog_sha256` | `44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357` |
 | `sequencing_addendum_sha256` | `9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519` |
 | `merge_pr_3737_sha` | `a4b5df9a51bc3da6df0d39d422d9db4edc553aba` |
-| `evidence_path` | `docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/g2-paper-trade-chain.v2.json` |
+| `evidence_path` | `docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/g2-paper-trade-chain.v4.json` |
 | `closeout_manifest_path` | `docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/evidence.json` |
 | `hosted_probe_path` | `docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/hosted-lifecycle-proof.v1.json` |
-| `canonical_record_bundle_path` | `docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/g2-canonical-records.v2.json` |
+| `canonical_record_bundle_path` | `docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/g2-canonical-records.v4.json` |
+| `canonical_source_resolution` | `live_read_only_canonical_identity_and_projection_generation_v2` |
+| Canonical database identity | database `pantheon`; role `pantheon_app`; schema/table `public.telemetry_events` |
+| Canonical projection root | `/data/bff/lifecycle-projection` |
+| `artifact_commit_binding` | `reviewer_and_github_bound_git_tree_v2` |
+| Authoritative Git ref | `https://github.com/ajoe734/pantheon.git` at `refs/heads/dev` |
+| Authoritative GitHub repository | API `https://api.github.com`; repository `ajoe734/pantheon` |
+| `review_binding_schema` | `pantheon.g2-review-binding.v1` |
 | `bundle_digest_algorithm` | `sha256(bytes)` |
 | `record_digest_algorithm` | `sha256(canonical-json)` |
 
 ### Canonical-record resolution and linked chain
 
-- The record bundle must use `pantheon.g2-canonical-record-bundle.v2`; its byte digest is recomputed with `sha256(bytes)`. Each referenced signal, order, fill, telemetry, and loop-run record digest is independently recomputed with `sha256(canonical-json)`.
-- Signal, order, fill, and telemetry IDs must resolve to authoritative committed lifecycle rows from one repeatable-read snapshot. The loop-run ID must resolve to the canonical projection derived from those rows. Missing records, extra/malformed manifest fields, digest mismatches, or unresolvable links fail closed.
+- The record bundle must use `pantheon.g2-canonical-record-bundle.v4`; its byte digest is recomputed with `sha256(bytes)`. Each referenced signal, order, fill, telemetry, and loop-run record digest is independently recomputed with `sha256(canonical-json)`.
+- Signal, order, fill, and telemetry IDs must resolve in a read-only repeatable-read transaction against the pinned `pantheon` / `pantheon_app` / `public.telemetry_events` identity. The query is scoped by the full stable natural identity and returns the complete lifecycle chain, not caller-selected evidence IDs. The loop-run ID resolves from one immutable, regular-file projection generation captured under the pinned root.
 - Event order is exactly prefix `signal_generation`, `trade_decision`, then at least 1 occurrence of repeat group `order_submitted`, `paper_fill_simulated`, `position_snapshot`, then suffix `reconciliation_completed`. The evidence roles bind signal=`signal_generation`, order=`order_submitted`, fill=`paper_fill_simulated`, telemetry=`reconciliation_completed`.
 - Event sequence numbers, ingestion timestamps, creation timestamps, causality links, deterministic event identities, projection source offsets, and source high-water marks must agree. Reordered events or a projection ahead of/behind its claimed chain fail closed.
 - Every record and projection must agree on all stable identity fields: `tenant_id`, `environment`, `journey_id`, `run_id`, `loop_run_id`, `signal_id`, `strategy_id`, `runtime_id`, `binding_id`, `capital_pool_id`, `persona_id`, `persona_capital_binding_id`, `artifact_id`, `artifact_version`, `plan_id`, `trace_id`. This binds tenant, paper environment, journey/run/loop-run, signal, strategy/runtime/binding/capital/persona/artifact/plan, and trace identity.
+- The durable source attestation binds the database identity, projection root, source high-water mark, captured/current generation names, current projection checkpoint, and canonical row/projection digests into the release admission.
 
 ### Environment, projection, and freshness
 
@@ -176,15 +191,17 @@ The Hardening Wave opens only when the exact target `LOOP-PROD-VERIFY-EXEC-001` 
 | Maximum chain span | `3600 seconds` |
 | Maximum future skew | `300 seconds` |
 
-The hosted proof must use `pantheon.loop-prod-tel-002-hosted-proof.v1`. Projection artifacts must use `pantheon.lifecycle-projection-bundle.v1`, `pantheon.trade-journey-projection.v1`, and `pantheon.loop-run-projection.v1`. The projection controller must be exactly `mode=live`, `accepted_live=true`, `truth_level=canonical_live`, `status=ready`, `backlog=0`. Bundle capture, evidence issue/expiry, event creation/ingestion, hosted observation, and projection checkpoint timestamps/offsets must be fresh and monotonically ordered within these limits.
+The hosted proof must use `pantheon.loop-prod-tel-002-hosted-proof.v1`. Projection artifacts must use `pantheon.lifecycle-projection-bundle.v1`, `pantheon.trade-journey-projection.v1`, and `pantheon.loop-run-projection.v1`. The projection controller must be exactly `mode=live`, `accepted_live=true`, `truth_level=canonical_live`, `status=ready`, `backlog=0`; its current checkpoint must cover the live database high-water mark. Bundle capture, evidence issue/expiry, event creation/ingestion, hosted observation, and projection checkpoint timestamps/offsets must be fresh and monotonically ordered within these limits.
+
+Operationally, validation requires read-only access to the pinned telemetry database identity, regular-file access beneath the pinned projection root, network access to the authoritative Git remote and GitHub API, and a caught-up live projector. Missing credentials, unavailable authority, shallow/replaced/alternate Git object state, symlinked projection artifacts, or stale controller state fail closed; no evidence is fabricated or inferred.
 
 ### Accepted closeout-truth admission
 
 The verifier admits the target only when all of the following are true:
 
-- The active or safely archived task is terminal `done` with a completed outcome, exact task/program/source/addendum/PR/overlay/task-contract provenance, and a delivery commit merged to the declared `dev` target.
+- The active or safely archived task is terminal `done` with a completed outcome, exact task/program/source/addendum/PR/overlay/task-contract provenance, and a delivery commit merged through the exact GitHub pull request to the authoritative `dev` ref. Merge parents, remote ancestry, successful GitHub check run, artifact blobs, and product manifest must all agree.
 - The full product `evidence.json` validates against the repository product-evidence schema, its companion SHA-256 sidecar matches the exact bytes, and the task snapshot digest matches the admitted manifest.
-- The assigned owner and reviewer are distinct, the formal reviewer verdict is positive and digest-bound, every acceptance row is pass/not-applicable, and no blocking residual risk remains.
+- The assigned owner and reviewer are distinct. The reviewer approval is captured atomically as `pantheon.g2-review-binding.v1` and as a content-addressed program audit event; both bind the exact artifact head, five artifact digests, and implementation PR number/head/merge. The formal verdict is positive and digest-bound, every acceptance row is pass/not-applicable, and no blocking residual risk remains.
 - A false-closed active task, a minimal archived `done` record, stale evidence, wrong source authority, wrong tenant/environment/run/status, or any chain/projection mismatch keeps the gate closed.
 
 ## 5. Detailed 48-task derived matrix

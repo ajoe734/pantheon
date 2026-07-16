@@ -530,34 +530,54 @@ class PlanningStateTests(unittest.TestCase):
         transitions = []
         for index, task_id in enumerate(authority.EXPECTED_TASK_IDS, start=1):
             gated = task_id in authority.EXPECTED_GATED_TASK_IDS
+            gate_marker = (
+                {
+                    "schema_version": 1,
+                    "gate_id": authority.RELEASE_GATE_ID,
+                    "release_predicate": authority.RELEASE_PREDICATE,
+                    "sequencing_overlay_sha256": authority.SEQUENCING_OVERLAY_SHA256,
+                    "state": "parked",
+                    "previous_status": "todo",
+                    "parked_at": "2026-07-16T00:00:00Z",
+                }
+                if gated
+                else None
+            )
             transitions.append(
                 {
                     "task_id": task_id,
-                    "before_task_snapshot_sha256": f"{index:064x}",
+                    "before_task_snapshot": None,
+                    "before_task_snapshot_sha256": null_sha256,
                     "after_task_snapshot_sha256": f"{index + 100:064x}",
-                    "before_task_contract_sha256": "1" * 64,
+                    "before_task_contract_sha256": null_sha256,
                     "after_task_contract_sha256": "2" * 64,
-                    "before_source_ref_sha256": "3" * 64,
+                    "before_source_ref_sha256": null_sha256,
                     "after_source_ref_sha256": authority.canonical_sha256(
                         source_ref(task_id)
                     ),
-                    "before_status": "todo",
+                    "before_status": "absent",
                     "after_status": "blocked" if gated else "todo",
-                    "acceptance_deferral_sha256": "4" * 64,
-                    "gate_marker_sha256": "5" * 64 if gated else null_sha256,
+                    "acceptance_deferral_sha256": (
+                        null_sha256 if gated else "4" * 64
+                    ),
+                    "gate_marker_sha256": authority.canonical_sha256(gate_marker),
                 }
             )
         epoch = {
-            "schema_version": 1,
+            "schema_version": 2,
             "program_id": authority.PROGRAM_ID,
             "source_catalog_sha256": authority.SOURCE_CATALOG_SHA256,
             "effective_catalog_sha256": authority.EFFECTIVE_CATALOG_SHA256,
             "sequencing_overlay_sha256": authority.SEQUENCING_OVERLAY_SHA256,
             "release_gate_id": authority.RELEASE_GATE_ID,
-            "install_mode": "base_epoch_migration",
+            "install_mode": "fresh_materialization",
             "applied_at": "2026-07-16T00:00:00Z",
-            "source_graph_projection_sha256": "6" * 64,
-            "effective_graph_projection_sha256": "7" * 64,
+            "source_graph_projection_sha256": (
+                authority.SOURCE_GRAPH_PROJECTION_SHA256
+            ),
+            "effective_graph_projection_sha256": (
+                authority.EFFECTIVE_GRAPH_PROJECTION_SHA256
+            ),
             "task_count": authority.EXPECTED_TASK_COUNT,
             "task_transitions": transitions,
             "task_transition_set_sha256": authority.canonical_sha256(transitions),

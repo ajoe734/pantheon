@@ -11,6 +11,7 @@ import os
 import json
 import subprocess
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 from unittest import mock
 
@@ -35,6 +36,14 @@ def _sequencing_source_ref(authority, task_id: str) -> dict:
 
 def _sequencing_release_status(*, released: bool, audited: bool = True) -> dict:
     authority = supervisor.sequencing_gate
+    dispatcher = _load_loop_product_dispatcher_module()
+    source_catalog_path = (
+        Path(__file__).resolve().parents[1]
+        / "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/tasks.json"
+    )
+    source_catalog_raw = source_catalog_path.read_bytes()
+    source_catalog = json.loads(source_catalog_raw)
+    source_catalog_digest = dispatcher.sha256_bytes(source_catalog_raw)
     program_id = authority.PROGRAM_ID
     task_id = "LOOP-PROD-AUTH-001"
     catalog_sha = authority.EFFECTIVE_CATALOG_SHA256
@@ -53,13 +62,30 @@ def _sequencing_release_status(*, released: bool, audited: bool = True) -> dict:
         "g2_evidence_sha256": "c" * 64,
         "canonical_record_bundle_sha256": "d" * 64,
         "canonical_source_snapshot_sha256": "0" * 64,
+        "canonical_source_attestation": {
+            "database": authority.CANONICAL_DATABASE_NAME,
+            "role": authority.CANONICAL_DATABASE_ROLE,
+            "schema": authority.CANONICAL_DATABASE_SCHEMA,
+            "table": authority.CANONICAL_DATABASE_TABLE,
+            "projection_root": authority.CANONICAL_PROJECTION_ROOT,
+            "live_source_high_watermark": 6,
+            "captured_generation_name": "g000000000001-abcdef123456",
+            "current_generation_name": "g000000000001-abcdef123456",
+            "current_projection_checkpoint": 6,
+            "rows_sha256": "4" * 64,
+            "projection_sha256": "5" * 64,
+        },
         "hosted_probe_sha256": "e" * 64,
         "g2_artifact_commit_sha": "1" * 40,
         "g2_artifact_merge_target_sha": "2" * 40,
+        "g2_authoritative_remote_head_sha": "3" * 40,
+        "g2_github_pr_snapshot_sha256": "6" * 64,
         "product_manifest_sha256": "f" * 64,
         "product_manifest_sidecar_sha256": "1" * 64,
         "target_task_snapshot_sha256": "2" * 64,
         "reviewer": "Codex2",
+        "review_binding_sha256": "7" * 64,
+        "review_approval_event_sha256": "8" * 64,
         "review_verdict_sha256": "3" * 64,
         "g2_issued_at": "2026-07-16T00:02:00Z",
         "closeout_at": "2026-07-16T00:01:00Z",
@@ -69,27 +95,54 @@ def _sequencing_release_status(*, released: bool, audited: bool = True) -> dict:
     epoch_transitions = []
     for epoch_task_id in all_task_ids:
         blocked = epoch_task_id in authority.EXPECTED_GATED_TASK_IDS
+        source_task = next(
+            task for task in source_catalog["tasks"] if task["id"] == epoch_task_id
+        )
+        before_snapshot = dispatcher.build_task(
+            source_task,
+            source_catalog,
+            source_catalog_digest,
+            "2026-07-15T00:00:00Z",
+        )
+        gate_marker = (
+            {
+                "schema_version": 1,
+                "gate_id": authority.RELEASE_GATE_ID,
+                "release_predicate": authority.RELEASE_PREDICATE,
+                "sequencing_overlay_sha256": authority.SEQUENCING_OVERLAY_SHA256,
+                "state": "parked",
+                "previous_status": "todo",
+                "parked_at": "2026-07-16T00:00:00Z",
+            }
+            if blocked
+            else None
+        )
         epoch_transitions.append(
             {
                 "task_id": epoch_task_id,
+                "before_task_snapshot": before_snapshot,
                 "before_task_snapshot_sha256": authority.canonical_sha256(
-                    {"before": epoch_task_id}
+                    before_snapshot
                 ),
                 "after_task_snapshot_sha256": authority.canonical_sha256(
                     {"parked": epoch_task_id}
                 ),
-                "before_task_contract_sha256": "8" * 64,
+                "before_task_contract_sha256": dispatcher.task_contract_sha256(
+                    before_snapshot
+                ),
                 "after_task_contract_sha256": "9" * 64,
-                "before_source_ref_sha256": "a" * 64,
+                "before_source_ref_sha256": authority.canonical_sha256(
+                    before_snapshot["source_ref"]
+                ),
                 "after_source_ref_sha256": authority.canonical_sha256(
                     _sequencing_source_ref(authority, epoch_task_id)
                 ),
                 "before_status": "todo",
                 "after_status": "blocked" if blocked else "todo",
-                "acceptance_deferral_sha256": "c" * 64,
-                "gate_marker_sha256": (
-                    "d" * 64 if blocked else authority.canonical_sha256(None)
+                "acceptance_deferral_sha256": (
+                    authority.canonical_sha256(None) if blocked else "c" * 64
                 ),
+                "gate_marker_sha256": authority.canonical_sha256(gate_marker),
             }
         )
     epoch_by_id = {row["task_id"]: row for row in epoch_transitions}
@@ -107,23 +160,8 @@ def _sequencing_release_status(*, released: bool, audited: bool = True) -> dict:
         }
         for released_task_id in authority.EXPECTED_GATED_TASK_IDS
     ]
-    release = {
-        "schema_version": 1,
-        "program_id": program_id,
-        "effective_catalog_sha256": catalog_sha,
-        "sequencing_overlay_sha256": overlay_sha,
-        "release_gate_id": gate_id,
-        "release_predicate": authority.RELEASE_PREDICATE,
-        "released_at": "2026-07-16T00:03:00Z",
-        **admission,
-        "release_admission_sha256": release_admission_sha,
-        "released_task_transitions": release_transitions,
-        "released_task_transition_set_sha256": (
-            authority.canonical_sha256(release_transitions)
-        ),
-    }
     epoch = {
-        "schema_version": 1,
+        "schema_version": 2,
         "program_id": program_id,
         "source_catalog_sha256": authority.SOURCE_CATALOG_SHA256,
         "effective_catalog_sha256": catalog_sha,
@@ -131,12 +169,30 @@ def _sequencing_release_status(*, released: bool, audited: bool = True) -> dict:
         "release_gate_id": gate_id,
         "install_mode": "base_epoch_migration",
         "applied_at": "2026-07-16T00:00:00Z",
-        "source_graph_projection_sha256": "f" * 64,
-        "effective_graph_projection_sha256": "1" * 64,
+        "source_graph_projection_sha256": authority.SOURCE_GRAPH_PROJECTION_SHA256,
+        "effective_graph_projection_sha256": (
+            authority.EFFECTIVE_GRAPH_PROJECTION_SHA256
+        ),
         "task_count": authority.EXPECTED_TASK_COUNT,
         "task_transitions": epoch_transitions,
         "task_transition_set_sha256": authority.canonical_sha256(
             epoch_transitions
+        ),
+    }
+    release = {
+        "schema_version": 2,
+        "program_id": program_id,
+        "effective_catalog_sha256": catalog_sha,
+        "sequencing_overlay_sha256": overlay_sha,
+        "release_gate_id": gate_id,
+        "release_predicate": authority.RELEASE_PREDICATE,
+        "sequencing_epoch_sha256": authority.canonical_sha256(epoch),
+        "released_at": "2026-07-16T00:03:00Z",
+        **admission,
+        "release_admission_sha256": release_admission_sha,
+        "released_task_transitions": release_transitions,
+        "released_task_transition_set_sha256": (
+            authority.canonical_sha256(release_transitions)
         ),
     }
     status = {
@@ -179,6 +235,23 @@ def _load_auto_unblock_module():
     spec = importlib.util.spec_from_file_location("auto_unblock_stale_test", path)
     if spec is None or spec.loader is None:
         raise RuntimeError("cannot load auto_unblock_stale.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@lru_cache(maxsize=1)
+def _load_loop_product_dispatcher_module():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts/dispatch_loop_product_level_remediation_2026-07-13.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "loop_product_dispatcher_for_supervisor_test",
+        path,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load loop product dispatcher")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -1689,6 +1762,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         for mutation in (
             "absent_before_status",
             "mismatched_before_hash",
+            "rehashed_epoch_preimage",
             "future_epoch",
             "mode_status_mismatch",
         ):
@@ -1701,6 +1775,20 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     transition["before_status"] = "absent"
                 elif mutation == "mismatched_before_hash":
                     transition["before_task_snapshot_sha256"] = "4" * 64
+                elif mutation == "rehashed_epoch_preimage":
+                    epoch = status["program_sequencing_epochs"][program_id]
+                    epoch_transition = epoch["task_transitions"][0]
+                    epoch_transition["before_task_snapshot"]["forged"] = True
+                    epoch_transition["before_task_snapshot_sha256"] = (
+                        supervisor.sequencing_gate.canonical_sha256(
+                            epoch_transition["before_task_snapshot"]
+                        )
+                    )
+                    epoch["task_transition_set_sha256"] = (
+                        supervisor.sequencing_gate.canonical_sha256(
+                            epoch["task_transitions"]
+                        )
+                    )
                 elif mutation == "future_epoch":
                     status["program_sequencing_epochs"][program_id][
                         "applied_at"
@@ -1730,6 +1818,31 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 self.assertTrue(
                     auto_unblock._sequencing_parked(status, task, set())
                 )
+
+    def test_rehashed_base_epoch_runtime_authority_fails_semantically(self) -> None:
+        status = _sequencing_release_status(released=True)
+        program_id = status["tasks"][0]["source_ref"]["program_id"]
+        epoch = status["program_sequencing_epochs"][program_id]
+        transition = epoch["task_transitions"][0]
+        transition["before_task_snapshot"]["formal_review_required"] = False
+        transition["before_task_snapshot_sha256"] = (
+            supervisor.sequencing_gate.canonical_sha256(
+                transition["before_task_snapshot"]
+            )
+        )
+        epoch["task_transition_set_sha256"] = (
+            supervisor.sequencing_gate.canonical_sha256(
+                epoch["task_transitions"]
+            )
+        )
+        status["program_sequencing_releases"][program_id][
+            "sequencing_epoch_sha256"
+        ] = supervisor.sequencing_gate.canonical_sha256(epoch)
+
+        self.assertIsNone(supervisor.sequencing_gate._validated_epoch(status))
+        self.assertTrue(
+            supervisor.task_is_sequencing_parked(status["tasks"][0], status)
+        )
 
     def test_pending_program_outbox_globally_pauses_task_mutations(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -1713,6 +1713,82 @@ def parse_bool_env(name: str) -> bool | None:
     raise SystemExit(f"{name} must be a boolean-like string")
 
 
+G2_REVIEW_TARGET_TASK_ID = "LOOP-PROD-VERIFY-EXEC-001"
+G2_REVIEW_BINDING_SCHEMA = "pantheon.g2-review-binding.v1"
+G2_REVIEW_ARTIFACT_DIGEST_FIELDS = {
+    "g2_evidence_sha256",
+    "canonical_record_bundle_sha256",
+    "hosted_probe_sha256",
+    "product_manifest_sha256",
+    "product_manifest_sidecar_sha256",
+}
+
+
+def _is_lower_hex(value: Any, length: int) -> bool:
+    return bool(
+        isinstance(value, str)
+        and len(value) == length
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def task_requires_g2_review_binding(task: dict[str, Any]) -> bool:
+    source_ref = task.get("source_ref")
+    return bool(
+        task.get("id") == G2_REVIEW_TARGET_TASK_ID
+        and isinstance(source_ref, dict)
+        and source_ref.get("g2_release_checkpoint") is True
+    )
+
+
+def collect_g2_review_binding(
+    task: dict[str, Any],
+    *,
+    reviewer: str,
+    reviewed_at: str,
+) -> dict[str, Any] | None:
+    raw = str(os.environ.get("REVIEW_BINDING_JSON") or "").strip()
+    if not raw:
+        if task_requires_g2_review_binding(task):
+            raise SystemExit(
+                "REVIEW_BINDING_JSON is required to approve the G2 release task"
+            )
+        return None
+    try:
+        supplied = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit("REVIEW_BINDING_JSON must be valid JSON") from exc
+    if not isinstance(supplied, dict) or set(supplied) != {
+        "artifact_commit_sha",
+        "artifact_sha256",
+        "implementation_pr",
+    }:
+        raise SystemExit("REVIEW_BINDING_JSON schema is not exact")
+    artifact_sha256 = supplied.get("artifact_sha256")
+    implementation_pr = supplied.get("implementation_pr")
+    if (
+        not _is_lower_hex(supplied.get("artifact_commit_sha"), 40)
+        or not isinstance(artifact_sha256, dict)
+        or set(artifact_sha256) != G2_REVIEW_ARTIFACT_DIGEST_FIELDS
+        or any(not _is_lower_hex(value, 64) for value in artifact_sha256.values())
+        or not isinstance(implementation_pr, dict)
+        or set(implementation_pr) != {"number", "head_sha", "merge_sha"}
+        or type(implementation_pr.get("number")) is not int
+        or implementation_pr["number"] <= 0
+        or not _is_lower_hex(implementation_pr.get("head_sha"), 40)
+        or not _is_lower_hex(implementation_pr.get("merge_sha"), 40)
+    ):
+        raise SystemExit("REVIEW_BINDING_JSON values are invalid")
+    return {
+        "schema_version": G2_REVIEW_BINDING_SCHEMA,
+        "reviewer": reviewer,
+        "reviewed_at": reviewed_at,
+        "artifact_commit_sha": supplied["artifact_commit_sha"],
+        "artifact_sha256": deepcopy(artifact_sha256),
+        "implementation_pr": deepcopy(implementation_pr),
+    }
+
+
 def delivery_gate_settings() -> dict[str, bool]:
     settings = dict(DEFAULT_DELIVERY_GATES)
     config = load_config()
@@ -2217,6 +2293,7 @@ ASSIGN_METADATA_RESERVED_FIELDS = frozenset(
         "review_file",
         "review_notes",
         "review_notes_zh",
+        "review_binding",
         "source_ref",
     }
 )
@@ -4791,6 +4868,11 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
 
     timestamp = iso_now()
+    review_binding = collect_g2_review_binding(
+        task,
+        reviewer=actor,
+        reviewed_at=timestamp,
+    )
     task["status"] = "review_approved"
     task["last_update"] = timestamp
     task["next"] = message
@@ -4804,6 +4886,9 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     if review_file:
         task["review_file"] = review_file
 
+    if review_binding is not None:
+        task["review_binding"] = review_binding
+
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done_for_actor(state, task_id, actor)
     ensure_review_finalize_handoff(
@@ -4813,7 +4898,19 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         timestamp=timestamp,
         message=message,
     )
-    append_log({"ts": timestamp, "agent": actor, "type": "review_approved", "task_id": task_id, "message": message})
+    event = {
+        "ts": timestamp,
+        "agent": actor,
+        "type": "review_approved",
+        "task_id": task_id,
+        "message": message,
+        **({"review_binding": review_binding} if review_binding is not None else {}),
+    }
+    if review_binding is not None:
+        event["event_id"] = "loop-product-event-" + _canonical_json_sha256(
+            event
+        )
+    append_log(event)
 
 
 def command_sync(state: dict[str, Any], _args: list[str]) -> None:

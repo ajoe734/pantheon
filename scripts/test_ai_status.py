@@ -565,12 +565,28 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
         epoch_transitions = []
         for index, task_id in enumerate(ordered_ids, start=1):
             gated = task_id in sequencing_gate.EXPECTED_GATED_TASK_IDS
+            gate_marker = (
+                {
+                    "schema_version": 1,
+                    "gate_id": sequencing_gate.RELEASE_GATE_ID,
+                    "release_predicate": sequencing_gate.RELEASE_PREDICATE,
+                    "sequencing_overlay_sha256": (
+                        sequencing_gate.SEQUENCING_OVERLAY_SHA256
+                    ),
+                    "state": "parked",
+                    "previous_status": "todo",
+                    "parked_at": "2026-07-16T00:00:00Z",
+                }
+                if gated
+                else None
+            )
             epoch_transitions.append(
                 {
                     "task_id": task_id,
+                    "before_task_snapshot": None,
                     "before_task_snapshot_sha256": null_sha256,
                     "after_task_snapshot_sha256": f"{index:064x}",
-                    "before_task_contract_sha256": "1" * 64,
+                    "before_task_contract_sha256": null_sha256,
                     "after_task_contract_sha256": "2" * 64,
                     "before_source_ref_sha256": null_sha256,
                     "after_source_ref_sha256": sequencing_gate.canonical_sha256(
@@ -578,12 +594,16 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
                     ),
                     "before_status": "absent",
                     "after_status": "blocked" if gated else "todo",
-                    "acceptance_deferral_sha256": "4" * 64,
-                    "gate_marker_sha256": "5" * 64 if gated else null_sha256,
+                    "acceptance_deferral_sha256": (
+                        null_sha256 if gated else "4" * 64
+                    ),
+                    "gate_marker_sha256": sequencing_gate.canonical_sha256(
+                        gate_marker
+                    ),
                 }
             )
         epoch = {
-            "schema_version": 1,
+            "schema_version": 2,
             "program_id": sequencing_gate.PROGRAM_ID,
             "source_catalog_sha256": sequencing_gate.SOURCE_CATALOG_SHA256,
             "effective_catalog_sha256": (
@@ -595,8 +615,12 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
             "release_gate_id": sequencing_gate.RELEASE_GATE_ID,
             "install_mode": "fresh_materialization",
             "applied_at": "2026-07-16T00:00:00Z",
-            "source_graph_projection_sha256": "6" * 64,
-            "effective_graph_projection_sha256": "7" * 64,
+            "source_graph_projection_sha256": (
+                sequencing_gate.SOURCE_GRAPH_PROJECTION_SHA256
+            ),
+            "effective_graph_projection_sha256": (
+                sequencing_gate.EFFECTIVE_GRAPH_PROJECTION_SHA256
+            ),
             "task_count": sequencing_gate.EXPECTED_TASK_COUNT,
             "task_transitions": epoch_transitions,
             "task_transition_set_sha256": sequencing_gate.canonical_sha256(
@@ -620,20 +644,37 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
             "g2_evidence_sha256": "9" * 64,
             "canonical_record_bundle_sha256": "a" * 64,
             "canonical_source_snapshot_sha256": "0" * 64,
+            "canonical_source_attestation": {
+                "database": sequencing_gate.CANONICAL_DATABASE_NAME,
+                "role": sequencing_gate.CANONICAL_DATABASE_ROLE,
+                "schema": sequencing_gate.CANONICAL_DATABASE_SCHEMA,
+                "table": sequencing_gate.CANONICAL_DATABASE_TABLE,
+                "projection_root": sequencing_gate.CANONICAL_PROJECTION_ROOT,
+                "live_source_high_watermark": 6,
+                "captured_generation_name": "g000000000001-abcdef123456",
+                "current_generation_name": "g000000000001-abcdef123456",
+                "current_projection_checkpoint": 6,
+                "rows_sha256": "1" * 64,
+                "projection_sha256": "2" * 64,
+            },
             "hosted_probe_sha256": "b" * 64,
             "g2_artifact_commit_sha": "1" * 40,
             "g2_artifact_merge_target_sha": "2" * 40,
+            "g2_authoritative_remote_head_sha": "3" * 40,
+            "g2_github_pr_snapshot_sha256": "3" * 64,
             "product_manifest_sha256": "c" * 64,
             "product_manifest_sidecar_sha256": "d" * 64,
             "target_task_snapshot_sha256": "e" * 64,
             "reviewer": "Codex2",
+            "review_binding_sha256": "4" * 64,
+            "review_approval_event_sha256": "5" * 64,
             "review_verdict_sha256": "f" * 64,
             "g2_issued_at": "2026-07-16T01:00:00Z",
             "closeout_at": "2026-07-16T00:30:00Z",
         }
         release_admission_sha256 = sequencing_gate.canonical_sha256(admission)
         release = {
-            "schema_version": 1,
+            "schema_version": 2,
             "program_id": sequencing_gate.PROGRAM_ID,
             "effective_catalog_sha256": sequencing_gate.EFFECTIVE_CATALOG_SHA256,
             "sequencing_overlay_sha256": (
@@ -641,6 +682,7 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
             ),
             "release_gate_id": sequencing_gate.RELEASE_GATE_ID,
             "release_predicate": sequencing_gate.RELEASE_PREDICATE,
+            "sequencing_epoch_sha256": sequencing_gate.canonical_sha256(epoch),
             "released_at": "2026-07-16T02:00:00Z",
             **admission,
             "release_admission_sha256": release_admission_sha256,
@@ -1040,6 +1082,67 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["from"], "Claude")
         self.assertEqual(pending[0]["to"], "Codex")
         self.assertIn("finalize", pending[0]["message"].lower())
+
+    def test_g2_approve_requires_exact_review_binding_atomically(self) -> None:
+        task = self.state["tasks"][0]
+        task["id"] = "LOOP-PROD-VERIFY-EXEC-001"
+        task["source_ref"] = {"g2_release_checkpoint": True}
+
+        with mock.patch.dict(
+            os.environ,
+            {"AI_NAME": "Claude", "REVIEW_BINDING_JSON": ""},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(SystemExit, "REVIEW_BINDING_JSON is required"):
+                ai_status.command_approve(
+                    self.state,
+                    [task["id"], "Reviewed exact G2 artifacts."],
+                )
+
+        self.assertEqual(task["status"], "review")
+        self.assertNotIn("review_binding", task)
+
+    def test_g2_approve_persists_content_addressed_review_binding(self) -> None:
+        task = self.state["tasks"][0]
+        task["id"] = "LOOP-PROD-VERIFY-EXEC-001"
+        task["source_ref"] = {"g2_release_checkpoint": True}
+        supplied = {
+            "artifact_commit_sha": "a" * 40,
+            "artifact_sha256": {
+                "g2_evidence_sha256": "1" * 64,
+                "canonical_record_bundle_sha256": "2" * 64,
+                "hosted_probe_sha256": "3" * 64,
+                "product_manifest_sha256": "4" * 64,
+                "product_manifest_sidecar_sha256": "5" * 64,
+            },
+            "implementation_pr": {
+                "number": 4001,
+                "head_sha": "b" * 40,
+                "merge_sha": "c" * 40,
+            },
+        }
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Claude",
+                "REVIEW_BINDING_JSON": json.dumps(supplied),
+            },
+            clear=False,
+        ), mock.patch.object(ai_status, "append_log") as append_log:
+            ai_status.command_approve(
+                self.state,
+                [task["id"], "Reviewed exact G2 artifacts."],
+            )
+
+        binding = task["review_binding"]
+        self.assertEqual(binding["artifact_commit_sha"], "a" * 40)
+        self.assertEqual(binding["reviewer"], "Claude")
+        event = append_log.call_args.args[0]
+        unsigned = {key: value for key, value in event.items() if key != "event_id"}
+        self.assertEqual(
+            event["event_id"],
+            "loop-product-event-" + ai_status._canonical_json_sha256(unsigned),
+        )
 
     def test_done_requires_owner_and_review_approved(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
