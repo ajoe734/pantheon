@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -17,20 +19,62 @@ class ReconciliationDriftStore:
         self.reconciliation_records_path = self.data_dir / "reconciliation_records.json"
         self.drift_reports_path = self.data_dir / "drift_reports.json"
 
-    def _read_map(self, path: Path) -> Dict[str, Dict[str, Any]]:
-        if not path.exists():
-            return {}
-        text = path.read_text(encoding="utf-8").strip()
-        if not text:
-            return {}
-        payload = json.loads(text)
+    def _coerce_map(self, payload: Any) -> Dict[str, Dict[str, Any]]:
         if not isinstance(payload, dict):
             return {}
         return {str(key): value for key, value in payload.items() if isinstance(value, dict)}
 
+    def _read_concatenated_maps(self, text: str) -> Dict[str, Dict[str, Any]]:
+        decoder = json.JSONDecoder()
+        records: Dict[str, Dict[str, Any]] = {}
+        offset = 0
+        while offset < len(text):
+            while offset < len(text) and text[offset].isspace():
+                offset += 1
+            if offset >= len(text):
+                break
+            try:
+                payload, offset = decoder.raw_decode(text, offset)
+            except json.JSONDecodeError:
+                return records
+            records.update(self._coerce_map(payload))
+        return records
+
+    def _read_map(self, path: Path) -> Dict[str, Dict[str, Any]]:
+        if not path.exists():
+            return {}
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+        except UnicodeDecodeError:
+            return {}
+        if not text:
+            return {}
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return self._read_concatenated_maps(text)
+        return self._coerce_map(payload)
+
     def _write_map(self, path: Path, payload: Dict[str, Dict[str, Any]]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        tmp_name = ""
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                tmp_name = handle.name
+                json.dump(payload, handle, indent=2, ensure_ascii=True)
+                handle.write("\n")
+            os.replace(tmp_name, path)
+        finally:
+            if tmp_name:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(tmp_name)
 
     def _put_record(self, path: Path, record_id: str, record: Dict[str, Any]) -> Dict[str, Any]:
         if not record_id:

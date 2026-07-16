@@ -17,13 +17,33 @@ class FakeReadStore:
     def list_personas(self, **kwargs):
         return [
             {"persona_id": "ready", "tenant_id": "pantheon-dev", "display_name": "Ready", "lifecycle_state": "active", "environment_ceiling": "paper"},
+            {"persona_id": "paper-running", "tenant_id": "pantheon-dev", "display_name": "Paper Running", "lifecycle_state": "paper_running", "metadata": {"deployment_stage": "paper", "environment_ceiling": "paper"}},
             {"persona_id": "draft", "tenant_id": "pantheon-dev", "display_name": "Draft", "lifecycle_state": "draft", "environment_ceiling": "paper"},
             {"persona_id": "research", "tenant_id": "pantheon-dev", "display_name": "Research", "lifecycle_state": "active", "environment_ceiling": "research"},
             {"persona_id": "unscoped", "tenant_id": None, "display_name": "Unscoped", "lifecycle_state": "active", "environment_ceiling": "paper"},
+            {"persona_id": "snapshot-missing", "tenant_id": "pantheon-dev", "display_name": "No Snapshot", "lifecycle_state": "active", "environment_ceiling": "paper"},
+            {"persona_id": "capability-missing", "tenant_id": "pantheon-dev", "display_name": "No Capability", "lifecycle_state": "active", "environment_ceiling": "paper"},
+            {"persona_id": "pointer-mismatch", "tenant_id": "pantheon-dev", "display_name": "Mismatched Snapshot", "lifecycle_state": "active", "environment_ceiling": "paper", "metadata": {"capability_snapshot_id": "snap-wrong-persona"}},
+            {"persona_id": "deployed", "tenant_id": "pantheon-dev", "display_name": "Generic Deployed", "lifecycle_state": "deployed", "metadata": {"deployment_stage": "paper"}},
+            {"persona_id": "stage-only", "tenant_id": "pantheon-dev", "display_name": "Stage Only", "lifecycle_state": "active", "metadata": {"deployment_stage": "paper"}},
+            {"persona_id": "ceiling-unknown", "tenant_id": "pantheon-dev", "display_name": "Unknown Ceiling", "lifecycle_state": "active"},
         ]
 
     def get_capability_snapshot_for_persona(self, persona_id):
+        if persona_id == "snapshot-missing":
+            return None
+        if persona_id == "capability-missing":
+            return {"snapshot_id": f"snap-{persona_id}", "capabilities": ["research_only"]}
         return {"snapshot_id": f"snap-{persona_id}", "capabilities": ["persona_opinion"]}
+
+    def get_capability_snapshot(self, snapshot_id):
+        if snapshot_id == "snap-wrong-persona":
+            return {
+                "snapshot_id": snapshot_id,
+                "persona_id": "another-persona",
+                "capabilities": ["persona_opinion"],
+            }
+        return None
 
     def list_approval_decisions(self):
         return []
@@ -131,11 +151,39 @@ def test_eligibility_includes_and_excludes_with_reasons(monkeypatch):
     })
     assert response.status_code == 200, response.text
     body = response.json()["data"]
-    assert [x["persona_id"] for x in body["included"]] == ["ready"]
+    assert [x["persona_id"] for x in body["included"]] == ["ready", "paper-running"]
     excluded = {x["persona_id"]: x["reasons"] for x in body["excluded"]}
     assert "persona_not_active" in excluded["draft"]
     assert "environment_ceiling_exceeded" in excluded["research"]
     assert "tenant_mismatch" in excluded["unscoped"]
+    assert "capability_snapshot_unavailable" in excluded["snapshot-missing"]
+    assert "required_capability_missing" in excluded["capability-missing"]
+    assert "capability_snapshot_persona_mismatch" in excluded["pointer-mismatch"]
+    assert "persona_not_active" in excluded["deployed"]
+    assert "environment_ceiling_exceeded" in excluded["stage-only"]
+    assert "environment_ceiling_exceeded" in excluded["ceiling-unknown"]
+
+
+def test_unknown_environment_ceiling_fails_closed_for_research(monkeypatch):
+    c = client(monkeypatch)
+    resolved = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": "unknown-ceiling-context"},
+        json={**context_payload(), "environment": "research"},
+    ).json()["data"]
+    response = c.post(
+        "/bff/agora/interactions/participants:eligible",
+        headers={"Authorization": AUTH["Authorization"]},
+        json={
+            "workshop_id": resolved["workshop_id"],
+            "mode": "consult",
+            "environment": "research",
+            "required_capability": "persona_opinion",
+        },
+    )
+    assert response.status_code == 200, response.text
+    excluded = {x["persona_id"]: x["reasons"] for x in response.json()["data"]["excluded"]}
+    assert "environment_ceiling_exceeded" in excluded["ceiling-unknown"]
 
 
 def test_typed_submission_is_idempotent_and_has_no_write_authority(monkeypatch):

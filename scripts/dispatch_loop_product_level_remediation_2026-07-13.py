@@ -4173,6 +4173,14 @@ def materialize(
             preserved.append(f"{task_id}:{existing.get('status', 'unknown')}")
             continue
 
+        # G2 evidence gate for deferred tasks (Wave >= 5)
+        if catalog.get("overlay_applied") and task.get("wave", 0) >= 5:
+            if not check_g2_evidence_valid(state):
+                raise DispatchError(
+                    f"G2 paper-trade evidence not found or invalid; "
+                    f"cannot dispatch deferred task {task_id}"
+                )
+
         materialized = build_task(task, catalog, catalog_digest, timestamp)
         active_tasks.append(materialized)
         active_by_id[task_id] = materialized
@@ -4233,31 +4241,256 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def check_g2_evidence_valid(state: dict[str, Any], catalog: dict[str, Any] | None = None) -> bool:
+    if catalog is None:
+        try:
+            catalog = read_json(catalog_path())
+            overlay_env = os.environ.get("LOOP_PRODUCT_SEQUENCING_OVERLAY")
+            if overlay_env:
+                overlay_path = Path(os.path.expanduser(overlay_env)).resolve()
+            else:
+                overlay_path = REPO_ROOT / "docs" / "bff" / "execution-tasks" / "2026-07-13-loop-product-level-remediation" / "sequencing-overlay-2026-07-16.json"
+            if overlay_path.is_file():
+                apply_sequencing_overlay(catalog, overlay_path)
+        except Exception:
+            return False
+
+    contract = catalog.get("g2_evidence_contract")
+    if not isinstance(contract, dict):
+        return False
+    
+    contract_version = contract.get("version")
+    if contract_version != 1:
+        return False
+
+    active_tasks = state.get("tasks") or []
+    active_by_id = {
+        str(task.get("id")): task
+        for task in active_tasks
+        if isinstance(task, dict) and str(task.get("id") or "").strip()
+    }
+    
+    target_task_id = contract.get("target_task", "LOOP-PROD-CLOSE-001")
+    close_task = active_by_id.get(target_task_id)
+    is_archived = False
+    payload = None
+    
+    if close_task is None:
+        archived_path = ARCHIVE_ROOT / f"{target_task_id}.json"
+        if archived_path.is_file():
+            try:
+                payload = read_json(archived_path)
+                archived_task = payload.get("task")
+                if not isinstance(archived_task, dict) or archived_task.get("status") != "done":
+                    return False
+                close_task = archived_task
+                is_archived = True
+            except Exception:
+                return False
+        else:
+            return False
+    else:
+        if close_task.get("status") != "done":
+            return False
+
+    if is_archived:
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("task_id") != target_task_id or payload.get("terminal_status") != "done":
+            return False
+        
+        source_ref = close_task.get("source_ref")
+        if not isinstance(source_ref, dict):
+            return False
+        if source_ref.get("program_id") != catalog.get("program_id"):
+            return False
+        if not source_ref.get("catalog_sha256"):
+            return False
+
+    evidence_path = REPO_ROOT / "docs" / "deployment" / "evidence" / "loop-product-level" / target_task_id / "evidence.json"
+    if not evidence_path.is_file():
+        return False
+        
+    try:
+        evidence_data = read_json(evidence_path)
+        
+        allowed_evidence_keys = {
+            "version",
+            "task_id",
+            "program_id",
+            "catalog_sha256",
+            "addendum_sha256",
+            "merge_pr_3737_sha",
+            "paper_trade_chains",
+            "issued_at"
+        }
+        if set(evidence_data.keys()) - allowed_evidence_keys:
+            return False
+            
+        if evidence_data.get("version") != contract_version:
+            return False
+        if evidence_data.get("task_id") != target_task_id:
+            return False
+        if evidence_data.get("program_id") != catalog.get("program_id"):
+            return False
+        if evidence_data.get("catalog_sha256") != contract.get("tasks_catalog_sha256"):
+            return False
+        if evidence_data.get("addendum_sha256") != contract.get("sequencing_addendum_sha256"):
+            return False
+        if evidence_data.get("merge_pr_3737_sha") != contract.get("merge_pr_3737_sha"):
+            return False
+            
+        issued_at = evidence_data.get("issued_at")
+        if not isinstance(issued_at, str):
+            return False
+        if issued_at.endswith("Z"):
+            clean_ts = issued_at[:-1] + "+00:00"
+        else:
+            clean_ts = issued_at
+        datetime.fromisoformat(clean_ts)
+
+        chains = evidence_data.get("paper_trade_chains")
+        if not isinstance(chains, list) or not chains:
+            return False
+        
+        chain_keys = {"signal", "order", "fill", "telemetry", "loop_run_projection"}
+        
+        def is_valid_sha256(s: Any) -> bool:
+            if not isinstance(s, str) or len(s) != 64:
+                return False
+            try:
+                int(s, 16)
+                return True
+            except ValueError:
+                return False
+
+        for chain in chains:
+            if not isinstance(chain, dict):
+                return False
+            if set(chain.keys()) != chain_keys:
+                return False
+                
+            sig = chain["signal"]
+            ord_val = chain["order"]
+            fil = chain["fill"]
+            tel = chain["telemetry"]
+            proj = chain["loop_run_projection"]
+            
+            if not (isinstance(sig, dict) and isinstance(ord_val, dict) and isinstance(fil, dict) and isinstance(tel, dict) and isinstance(proj, dict)):
+                return False
+                
+            if set(sig.keys()) != {"id", "digest"}:
+                return False
+            if set(ord_val.keys()) != {"id", "digest", "signal_id"}:
+                return False
+            if set(fil.keys()) != {"id", "digest", "order_id"}:
+                return False
+            if set(tel.keys()) != {"id", "digest", "fill_id"}:
+                return False
+            if set(proj.keys()) != {"id", "digest", "telemetry_id"}:
+                return False
+                
+            if not isinstance(sig["id"], str) or not sig["id"].startswith("sig-") or len(sig["id"]) <= 4:
+                return False
+            if not isinstance(ord_val["id"], str) or not ord_val["id"].startswith("ord-") or len(ord_val["id"]) <= 4:
+                return False
+            if not isinstance(fil["id"], str) or not fil["id"].startswith("fil-") or len(fil["id"]) <= 4:
+                return False
+            if not isinstance(tel["id"], str) or not tel["id"].startswith("tel-") or len(tel["id"]) <= 4:
+                return False
+            if not isinstance(proj["id"], str) or not proj["id"].startswith("proj-") or len(proj["id"]) <= 5:
+                return False
+                
+            if not is_valid_sha256(sig["digest"]) or not is_valid_sha256(ord_val["digest"]) or not is_valid_sha256(fil["digest"]) or not is_valid_sha256(tel["digest"]) or not is_valid_sha256(proj["digest"]):
+                return False
+                
+            if ord_val["signal_id"] != sig["id"]:
+                return False
+            if fil["order_id"] != ord_val["id"]:
+                return False
+            if tel["fill_id"] != fil["id"]:
+                return False
+            if proj["telemetry_id"] != tel["id"]:
+                return False
+                
+        return True
+    except Exception:
+        return False
+
+
 def apply_sequencing_overlay(catalog: dict[str, Any], overlay_path: Path) -> None:
     try:
         overlay = read_json(overlay_path)
     except Exception as exc:
         raise DispatchError(f"failed to load sequencing overlay from {overlay_path}: {exc}")
 
-    tasks_by_id = {task["id"]: task for task in catalog.get("tasks", [])}
-    overlay_tasks = overlay.get("tasks", {})
+    # 1. Validate source hashes
+    source_hashes = overlay.get("source_hashes", {})
+    expected_tasks_hash = "44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357"
+    expected_addendum_hash = "9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519"
+    
+    if source_hashes.get("tasks_catalog_sha256") != expected_tasks_hash:
+        raise DispatchError("sequencing overlay tasks_catalog_sha256 hash mismatch")
+    if source_hashes.get("sequencing_addendum_sha256") != expected_addendum_hash:
+        raise DispatchError("sequencing overlay sequencing_addendum_sha256 hash mismatch")
 
+    # 2. Validate complete 48-ID set coverage
+    catalog_ids = {task["id"] for task in catalog.get("tasks", [])}
+    overlay_tasks = overlay.get("tasks", {})
+    overlay_ids = set(overlay_tasks.keys())
+
+    if len(catalog_ids) != 48:
+        raise DispatchError(f"catalog must contain exactly 48 tasks, found {len(catalog_ids)}")
+    
+    missing_ids = catalog_ids - overlay_ids
+    extra_ids = overlay_ids - catalog_ids
+    
+    if missing_ids:
+        raise DispatchError(f"sequencing overlay is missing tasks: {', '.join(sorted(missing_ids))}")
+    if extra_ids:
+        raise DispatchError(f"sequencing overlay targets unknown tasks: {', '.join(sorted(extra_ids))}")
+
+    # 3. Apply updates to the catalog tasks
+    tasks_by_id = {task["id"]: task for task in catalog.get("tasks", [])}
     for task_id, updates in overlay_tasks.items():
-        if task_id not in tasks_by_id:
-            raise DispatchError(f"sequencing overlay targets unknown task: {task_id}")
         task = tasks_by_id[task_id]
         for key, value in updates.items():
             task[key] = value
 
-    # Check for acyclicity and wave order constraints on the modified catalog
+    # Apply g2 evidence contract and source hashes to catalog metadata
+    catalog["g2_evidence_contract"] = overlay.get("g2_evidence_contract")
+    catalog["source_hashes"] = overlay.get("source_hashes")
+
+    # 4. Check for cycle detection (DFS acyclicity)
     by_id = {str(t["id"]): t for t in catalog["tasks"]}
+    visiting = set()
+    visited = set()
+    def dfs(t_id):
+        if t_id in visiting:
+            raise DispatchError(f"dependency cycle detected at {t_id}")
+        if t_id in visited:
+            return
+        visiting.add(t_id)
+        if t_id in by_id:
+            for dep in by_id[t_id].get("depends_on", []):
+                if dep in by_id:
+                    dfs(dep)
+        visiting.remove(t_id)
+        visited.add(t_id)
+        
+    for t_id in by_id:
+        dfs(t_id)
+
+    # 5. Check wave order constraints on the modified catalog
     for task_id, task in by_id.items():
-        for dep_id in task["depends_on"]:
+        for dep_id in task.get("depends_on", []):
             if dep_id in by_id and by_id[dep_id]["wave"] > task["wave"]:
                 raise DispatchError(
                     f"Sequencing overlay error: {task_id} wave {task['wave']} depends on later wave "
                     f"{dep_id}={by_id[dep_id]['wave']}"
                 )
+
+    catalog["overlay_applied"] = True
 
 
 def report(
