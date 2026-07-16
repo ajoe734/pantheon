@@ -51,9 +51,12 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
     assert bff_environment["PANTHEON_BFF_LOOP_RUN_STORE"].endswith(
         ":-/data/bff/lifecycle-projection/current/loop_runs.json}"
     )
+    # service_started, not service_healthy: a degraded projector must not
+    # block BFF startup (it took down the whole console and blocked every
+    # root deploy on 2026-07-16). BFF readers tolerate a stale projection.
     assert (
         bff["depends_on"]["loop-run-projector-scheduler"]["condition"]
-        == "service_healthy"
+        == "service_started"
     )
 
 

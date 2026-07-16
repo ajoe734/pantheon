@@ -1108,7 +1108,11 @@ services:
       telemetry:
         condition: service_healthy
       loop-run-projector-scheduler:
-        condition: service_healthy
+        # service_started, not service_healthy: the lifecycle projector is a
+        # read-side consumer of committed telemetry. Gating BFF startup on its
+        # health turns any projector degradation (backlog, DB grants) into a
+        # full BFF/console outage and blocks every root deploy.
+        condition: service_started
       lineage-read:
         condition: service_healthy
       postgres:

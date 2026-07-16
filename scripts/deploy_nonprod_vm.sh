@@ -536,8 +536,13 @@ if not isinstance(posture, dict):
     # Compatibility with deployment targets that predate the canonical
     # config_posture envelope. New BFF versions publish posture only there.
     posture = payload
-assert posture.get("auth_stub") is False, f"auth_stub={posture.get(\"auth_stub\")!r}, expected False"
-assert posture.get("auth_mode") == "strict", f"auth_mode={posture.get(\"auth_mode\")!r}, expected strict"
+auth_stub = posture.get("auth_stub")
+auth_mode = posture.get("auth_mode")
+# No backslash escapes here: this script is embedded in a single-quoted shell
+# string, so \" reaches Python verbatim and is a SyntaxError inside f-string
+# expressions. That crashed the whole check and failed every strict deploy.
+assert auth_stub is False, "auth_stub=%r, expected False" % (auth_stub,)
+assert auth_mode == "strict", "auth_mode=%r, expected strict" % (auth_mode,)
 ' "$version_payload" || error "hosted BFF auth posture is not strict: ${version_payload}"
 
   if [[ -z "${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" || -z "${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" ]]; then
