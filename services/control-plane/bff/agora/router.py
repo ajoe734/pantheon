@@ -180,6 +180,7 @@ def create_agora_router(
     router.include_router(create_identity_router(**_kw))
     router.include_router(create_servant_router(
         **_kw,
+        require_write_role=require_write_role,
         get_read_store=get_read_store,
         sync_servant_agent=sync_servant_agent,
     ))

@@ -244,9 +244,65 @@ def test_auth_gate_checks_hosted_posture_and_fixed_bearer_negative() -> None:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     assert "assert_bff_auth_gate" in script
     assert 'posture = payload.get("config_posture")' in script
-    assert 'posture.get("auth_stub") is False' in script
-    assert 'posture.get("auth_mode") == "strict"' in script
+    assert 'auth_stub = posture.get("auth_stub")' in script
+    assert 'auth_mode = posture.get("auth_mode")' in script
+    assert 'assert auth_stub is False' in script
+    assert 'assert auth_mode == "strict"' in script
     assert "posture = payload" in script
     assert "/bff/auth/dev-login" in script
     assert "Bearer op-fixed:operator:mfa" in script
     assert "accepted a fixed/arbitrary bearer token" in script
+
+
+def test_auth_gate_posture_assertion_is_valid_python() -> None:
+    """Execute the exact inline verifier shipped to the VM.
+
+    Escaped quotes inside an f-string expression are a Python syntax error,
+    so static string checks alone do not protect the post-deploy gate.
+    """
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index("  python3 -c '\n", script.index("assert_bff_auth_gate()"))
+    start += len("  python3 -c '")
+    end = script.index("\n' \"$version_payload\"", start)
+    verifier = script[start:end]
+
+    strict = subprocess.run(
+        [
+            "python3",
+            "-c",
+            verifier,
+            json.dumps(
+                {
+                    "config_posture": {
+                        "auth_stub": False,
+                        "auth_mode": "strict",
+                    }
+                }
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert strict.returncode == 0, strict.stdout + strict.stderr
+
+    permissive = subprocess.run(
+        [
+            "python3",
+            "-c",
+            verifier,
+            json.dumps(
+                {
+                    "config_posture": {
+                        "auth_stub": True,
+                        "auth_mode": "permissive",
+                    }
+                }
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert permissive.returncode != 0
+    assert "auth_stub=True, expected False" in permissive.stderr
