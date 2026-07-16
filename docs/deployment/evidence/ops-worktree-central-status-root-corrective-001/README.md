@@ -3,6 +3,8 @@
 Date: 2026-07-16
 Owner: Codex2
 Reviewer: Antigravity
+Final task head: `d194d04585f7e4bde3fbf53f9e3ccf807bcc4098`
+Composed `origin/dev`: `9967ce47fb826f782f3b84be1f08e6aefef88091`
 
 ## Delivered Behavior
 
@@ -53,26 +55,26 @@ Invalid bindings covered:
 Passed:
 
 ```bash
-env -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH \
+env -u GH_CONFIG_DIR -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH \
   python3 -m py_compile scripts/ai_status.py .orchestrator/worker_runner.py .orchestrator/supervisor.py scripts/test_ai_status.py .orchestrator/test_worker_runner_heartbeat.py .orchestrator/test_supervisor.py .orchestrator/test_common.py
 
-env -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH \
+env -u GH_CONFIG_DIR -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH \
   python3 -m pytest scripts/test_ai_status.py
 # 74 passed
 
-env -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PYTHONPATH=.orchestrator \
+env -u GH_CONFIG_DIR -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PYTHONPATH=.orchestrator \
   python3 -m pytest .orchestrator/test_worker_runner_heartbeat.py .orchestrator/test_runtime_state.py
 # 49 passed
 
-env -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PYTHONPATH=.orchestrator \
+env -u GH_CONFIG_DIR -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PYTHONPATH=.orchestrator \
   python3 -m pytest .orchestrator/test_common.py
 # 34 passed
 
-env -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PYTHONPATH=.orchestrator \
+env -u GH_CONFIG_DIR -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PYTHONPATH=.orchestrator \
   python3 -m pytest .orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_prepare_worker_workspace_allocates_task_worktree_metadata .orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_generated_worker_task_brief_mentions_inherited_status_root
 # 2 passed
 
-env -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PYTHONPATH=.orchestrator \
+env -u GH_CONFIG_DIR -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PYTHONPATH=.orchestrator \
   python3 -m pytest .orchestrator/test_adapter_fallback_policy.py .orchestrator/test_supervisor_watchdog.py scripts/test_supervisor_watchdog_install.py
 # 45 passed
 
@@ -83,7 +85,7 @@ git diff --check
 Full supervisor suite result on this branch:
 
 ```bash
-env -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PYTHONPATH=.orchestrator \
+env -u GH_CONFIG_DIR -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PYTHONPATH=.orchestrator \
   python3 -m pytest .orchestrator/test_supervisor.py
 # 272 passed, 4 failed
 ```
@@ -103,5 +105,16 @@ mismatches outside this task's touched behavior:
 
 This task does not modify `.orchestrator/config.json` or sidecar eligibility
 policy.
-The same four selected tests also fail on `origin/dev` baseline commit
-`ddf4d0d5d` with the same observed values.
+The same four failures also reproduce on exact `origin/dev` baseline commit
+`9967ce47fb826f782f3b84be1f08e6aefef88091`:
+
+```bash
+env -u GH_CONFIG_DIR -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PYTHONPATH=.orchestrator \
+  python3 -m pytest .orchestrator/test_supervisor.py
+# 271 passed, 4 failed
+```
+
+Local tests may rewrite generated stale worktree mirrors such as
+`ai-activity-log.jsonl`, `dashboard-bundle.json`, and `docs-site/*`; those
+generated mirror side effects were restored and are not part of this task's
+deliverable.
