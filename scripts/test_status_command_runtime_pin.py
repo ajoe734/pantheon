@@ -55,8 +55,10 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             shutil.copy2(source, target)
 
     def _write_stub_command(self, command_root: Path) -> str:
+        wrapper = command_root / "scripts" / "ai-status.sh"
+        wrapper.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / "scripts" / "ai-status.sh", wrapper)
         script = command_root / "scripts" / "ai_status.py"
-        script.parent.mkdir(parents=True, exist_ok=True)
         script.write_text(
             "\n".join(
                 [
@@ -88,10 +90,10 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
                 "ORCH_RUN_ID": "codex-runtime-pin-test",
                 "ORCH_RUNNER_STATUS_PATH": str(status_root / ".orchestrator" / "worker-runtime" / "status" / "run.json"),
                 "ORCH_HEARTBEAT_PATH": str(status_root / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"),
-                "PANTHEON_STATUS_COMMAND_ROOT": str(command_root),
-                "PANTHEON_STATUS_COMMAND_SHA": command_sha,
-                "PANTHEON_STATUS_COMMAND_REMOTE": "ajoe734/pantheon",
-                "PANTHEON_STATUS_COMMAND_BASE_REF": "origin/dev",
+                "PANTHEON_COMMAND_ROOT": str(command_root),
+                "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
+                "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                "PANTHEON_COMMAND_BASE_REF": "origin/dev",
             }
         )
         return env
@@ -119,7 +121,7 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             )
 
             proc = subprocess.run(
-                ["bash", str(worktree / "scripts" / "ai-status.sh"), "show", "TASK-1"],
+                ["bash", str(command_root / "scripts" / "ai-status.sh"), "show", "TASK-1"],
                 cwd=worktree,
                 env=env,
                 capture_output=True,
@@ -133,7 +135,7 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
         self.assertEqual(payload["argv"], ["show", "TASK-1"])
         self.assertEqual(payload["delivery_root"], str(worktree))
         self.assertEqual(payload["status_root"], str(status_root))
-        self.assertEqual(payload["wrapper_root"], str(worktree))
+        self.assertEqual(payload["wrapper_root"], str(command_root))
 
     def test_wrapper_rejects_invalid_command_root_before_local_execution(self) -> None:
         with tempfile.TemporaryDirectory(prefix="status-command-pin-invalid-") as tmpdir:
@@ -177,28 +179,28 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
                 command_sha=command_sha,
             )
             cases = [
-                ({"PANTHEON_STATUS_COMMAND_ROOT": ""}, "PANTHEON_STATUS_COMMAND_ROOT is required"),
-                ({"PANTHEON_STATUS_COMMAND_ROOT": "relative"}, "must be an absolute path"),
-                ({"PANTHEON_STATUS_COMMAND_ROOT": str(command_link)}, "symlink component"),
+                ({"PANTHEON_COMMAND_ROOT": ""}, "PANTHEON_COMMAND_ROOT is required"),
+                ({"PANTHEON_COMMAND_ROOT": "relative"}, "must be an absolute path"),
+                ({"PANTHEON_COMMAND_ROOT": str(command_link)}, "symlink component"),
                 (
                     {
-                        "PANTHEON_STATUS_COMMAND_ROOT": str(nested_subdir),
-                        "PANTHEON_STATUS_COMMAND_SHA": nested_sha,
+                        "PANTHEON_COMMAND_ROOT": str(nested_subdir),
+                        "PANTHEON_COMMAND_RUNTIME_SHA": nested_sha,
                     },
                     "must be a git repository root",
                 ),
-                ({"PANTHEON_STATUS_COMMAND_SHA": "0" * 40}, "PANTHEON_STATUS_COMMAND_SHA mismatch"),
+                ({"PANTHEON_COMMAND_RUNTIME_SHA": "0" * 40}, "PANTHEON_COMMAND_RUNTIME_SHA mismatch"),
                 (
                     {
-                        "PANTHEON_STATUS_COMMAND_ROOT": str(wrong_remote),
-                        "PANTHEON_STATUS_COMMAND_SHA": wrong_sha,
+                        "PANTHEON_COMMAND_ROOT": str(wrong_remote),
+                        "PANTHEON_COMMAND_RUNTIME_SHA": wrong_sha,
                     },
                     "remote mismatch",
                 ),
                 (
                     {
-                        "PANTHEON_STATUS_COMMAND_ROOT": str(unmerged),
-                        "PANTHEON_STATUS_COMMAND_SHA": unmerged_sha,
+                        "PANTHEON_COMMAND_ROOT": str(unmerged),
+                        "PANTHEON_COMMAND_RUNTIME_SHA": unmerged_sha,
                     },
                     "is not merged into origin/dev",
                 ),

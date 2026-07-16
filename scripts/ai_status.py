@@ -27,10 +27,14 @@ YAML_ERROR_TYPES = (yaml.YAMLError,) if yaml is not None else ()
 
 ROOT = Path(__file__).resolve().parents[1]
 STATUS_ROOT_ENV = "PANTHEON_STATUS_ROOT"
-STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
-STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
-STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
-STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_STATUS_COMMAND_BASE_REF"
+STATUS_COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
+STATUS_COMMAND_SHA_ENV = "PANTHEON_COMMAND_RUNTIME_SHA"
+STATUS_COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
+STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
+LEGACY_STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
+LEGACY_STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
+LEGACY_STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
+LEGACY_STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_STATUS_COMMAND_BASE_REF"
 AUTO_WORKER_ENV_MARKERS = (
     "ORCH_RUN_ID",
     "PANTHEON_WORKTREE_ROOT",
@@ -278,14 +282,18 @@ def _normalize_github_repo_slug(value: str | None) -> str:
     return candidate.strip("/")
 
 
+def _command_env(primary: str, legacy: str, default: str = "") -> str:
+    return str(os.environ.get(primary) or os.environ.get(legacy) or default).strip()
+
+
 def validate_status_command_runtime_binding() -> None:
     """Ensure auto-worker status commands run from the installed command root."""
 
-    raw_root = str(os.environ.get(STATUS_COMMAND_ROOT_ENV) or "").strip()
+    raw_root = _command_env(STATUS_COMMAND_ROOT_ENV, LEGACY_STATUS_COMMAND_ROOT_ENV)
     if not raw_root:
         if _auto_worker_requires_explicit_status_root():
             raise RuntimeError(
-                "PANTHEON_STATUS_COMMAND_ROOT is required for auto-worker status commands"
+                "PANTHEON_COMMAND_ROOT is required for auto-worker status commands"
             )
         return
 
@@ -306,12 +314,12 @@ def validate_status_command_runtime_binding() -> None:
         raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be a git repository root: {command_root}")
 
     source_sha = _git_stdout(command_root, ["rev-parse", "HEAD"])
-    expected_sha = str(os.environ.get(STATUS_COMMAND_SHA_ENV) or "").strip()
+    expected_sha = _command_env(STATUS_COMMAND_SHA_ENV, LEGACY_STATUS_COMMAND_SHA_ENV)
     if not expected_sha:
-        raise RuntimeError("PANTHEON_STATUS_COMMAND_SHA is required for auto-worker status commands")
+        raise RuntimeError("PANTHEON_COMMAND_RUNTIME_SHA is required for auto-worker status commands")
     if source_sha != expected_sha:
         raise RuntimeError(
-            f"PANTHEON_STATUS_COMMAND_SHA mismatch: command root is {source_sha}, expected {expected_sha}"
+            f"PANTHEON_COMMAND_RUNTIME_SHA mismatch: command root is {source_sha}, expected {expected_sha}"
         )
 
     current_root = ROOT.resolve()
@@ -322,7 +330,7 @@ def validate_status_command_runtime_binding() -> None:
         )
 
     expected_remote = _normalize_github_repo_slug(
-        os.environ.get(STATUS_COMMAND_REMOTE_ENV) or "ajoe734/pantheon"
+        _command_env(STATUS_COMMAND_REMOTE_ENV, LEGACY_STATUS_COMMAND_REMOTE_ENV, "ajoe734/pantheon")
     )
     remote_url = _git_stdout(command_root, ["remote", "get-url", "origin"])
     actual_remote = _normalize_github_repo_slug(remote_url)
@@ -331,7 +339,7 @@ def validate_status_command_runtime_binding() -> None:
             f"{STATUS_COMMAND_ROOT_ENV} remote mismatch: {actual_remote or remote_url} != {expected_remote}"
         )
 
-    base_ref = str(os.environ.get(STATUS_COMMAND_BASE_REF_ENV) or "origin/dev").strip() or "origin/dev"
+    base_ref = _command_env(STATUS_COMMAND_BASE_REF_ENV, LEGACY_STATUS_COMMAND_BASE_REF_ENV, "origin/dev") or "origin/dev"
     _git_stdout(command_root, ["rev-parse", "--verify", base_ref])
     proc = subprocess.run(
         ["git", "-C", str(command_root), "merge-base", "--is-ancestor", source_sha, base_ref],
@@ -348,16 +356,18 @@ def validate_status_command_runtime_binding() -> None:
 
 
 def status_command_metadata() -> dict[str, Any] | None:
-    raw_root = str(os.environ.get(STATUS_COMMAND_ROOT_ENV) or "").strip()
-    raw_sha = str(os.environ.get(STATUS_COMMAND_SHA_ENV) or "").strip()
+    raw_root = _command_env(STATUS_COMMAND_ROOT_ENV, LEGACY_STATUS_COMMAND_ROOT_ENV)
+    raw_sha = _command_env(STATUS_COMMAND_SHA_ENV, LEGACY_STATUS_COMMAND_SHA_ENV)
     if not raw_root and not raw_sha:
         return None
     delivery_root = _worker_workspace_root()
     payload: dict[str, Any] = {
         "command_root": str(Path(os.path.expanduser(raw_root)).resolve()) if raw_root else None,
         "source_sha": raw_sha or None,
-        "base_ref": str(os.environ.get(STATUS_COMMAND_BASE_REF_ENV) or "").strip() or None,
-        "remote": _normalize_github_repo_slug(os.environ.get(STATUS_COMMAND_REMOTE_ENV) or ""),
+        "base_ref": _command_env(STATUS_COMMAND_BASE_REF_ENV, LEGACY_STATUS_COMMAND_BASE_REF_ENV) or None,
+        "remote": _normalize_github_repo_slug(
+            _command_env(STATUS_COMMAND_REMOTE_ENV, LEGACY_STATUS_COMMAND_REMOTE_ENV)
+        ),
         "status_root": str(STATUS_ROOT),
         "delivery_root": str(delivery_root) if delivery_root is not None else None,
         "wrapper_root": str(os.environ.get("PANTHEON_STATUS_COMMAND_WRAPPER_ROOT") or "").strip() or None,

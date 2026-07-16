@@ -1812,8 +1812,8 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
                 "Generated in the worker workspace because the supervisor root did not have a task brief file.",
                 "",
                 "## Coordination Root",
-                "- Auto workers inherit `PANTHEON_STATUS_ROOT` and `PANTHEON_STATUS_COMMAND_ROOT` from the supervisor.",
-                "- Run `./scripts/ai-status.sh` normally from this worktree; the wrapper execs the validated command runtime, while governed status, activity, archive and lock writes are routed to the validated central root.",
+                "- Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.",
+                "- Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.",
                 "",
             ]
         )
@@ -1834,8 +1834,8 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
             str(task.get("summary_zh") or "-"),
             "",
             "## Coordination Root",
-            "- Auto workers inherit `PANTHEON_STATUS_ROOT` and `PANTHEON_STATUS_COMMAND_ROOT` from the supervisor.",
-            "- Run `./scripts/ai-status.sh` normally from this worktree; the wrapper execs the validated command runtime, while governed status, activity, archive and lock writes are routed to the validated central root.",
+            "- Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.",
+            "- Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.",
             "",
         ]
     )

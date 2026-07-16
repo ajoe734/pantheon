@@ -295,10 +295,10 @@ class StatusRootRoutingTests(unittest.TestCase):
                     "ORCH_TASK_ID": "CENTRAL-ROOT-001",
                     "ORCH_RUNNER_STATUS_PATH": str(central_runner_status),
                     "ORCH_HEARTBEAT_PATH": str(central_heartbeat),
-                    "PANTHEON_STATUS_COMMAND_ROOT": str(central),
-                    "PANTHEON_STATUS_COMMAND_SHA": command_sha,
-                    "PANTHEON_STATUS_COMMAND_REMOTE": "ajoe734/pantheon",
-                    "PANTHEON_STATUS_COMMAND_BASE_REF": "origin/dev",
+                    "PANTHEON_COMMAND_ROOT": str(central),
+                    "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
+                    "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                    "PANTHEON_COMMAND_BASE_REF": "origin/dev",
                 }
             )
 
@@ -458,10 +458,10 @@ class StatusRootRoutingTests(unittest.TestCase):
                     "ORCH_RUN_ID": "codex-test-run",
                     "ORCH_RUNNER_STATUS_PATH": str(runner_status),
                     "ORCH_HEARTBEAT_PATH": str(heartbeat),
-                    "PANTHEON_STATUS_COMMAND_ROOT": str(code_root),
-                    "PANTHEON_STATUS_COMMAND_SHA": command_sha,
-                    "PANTHEON_STATUS_COMMAND_REMOTE": "ajoe734/pantheon",
-                    "PANTHEON_STATUS_COMMAND_BASE_REF": "origin/dev",
+                    "PANTHEON_COMMAND_ROOT": str(code_root),
+                    "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
+                    "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                    "PANTHEON_COMMAND_BASE_REF": "origin/dev",
                 }
             )
             cases = [

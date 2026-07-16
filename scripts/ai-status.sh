@@ -52,44 +52,44 @@ normalize_github_slug() {
 
 validate_command_root() {
   local raw_root="$1"
-  local expected_sha="${PANTHEON_STATUS_COMMAND_SHA:-}"
-  local expected_remote="${PANTHEON_STATUS_COMMAND_REMOTE:-ajoe734/pantheon}"
-  local base_ref="${PANTHEON_STATUS_COMMAND_BASE_REF:-origin/dev}"
+  local expected_sha="${PANTHEON_COMMAND_RUNTIME_SHA:-${PANTHEON_STATUS_COMMAND_SHA:-}}"
+  local expected_remote="${PANTHEON_COMMAND_REMOTE:-${PANTHEON_STATUS_COMMAND_REMOTE:-ajoe734/pantheon}}"
+  local base_ref="${PANTHEON_COMMAND_BASE_REF:-${PANTHEON_STATUS_COMMAND_BASE_REF:-origin/dev}}"
   local symlink_component command_root git_root source_sha remote_url actual_remote expected_slug
 
-  [[ -n "$raw_root" ]] || fail_closed "PANTHEON_STATUS_COMMAND_ROOT is required for auto-worker status commands"
-  [[ "$raw_root" = /* ]] || fail_closed "PANTHEON_STATUS_COMMAND_ROOT must be an absolute path"
+  [[ -n "$raw_root" ]] || fail_closed "PANTHEON_COMMAND_ROOT is required for auto-worker status commands"
+  [[ "$raw_root" = /* ]] || fail_closed "PANTHEON_COMMAND_ROOT must be an absolute path"
   if symlink_component="$(first_symlink_component "$raw_root")"; then
-    fail_closed "PANTHEON_STATUS_COMMAND_ROOT cannot include a symlink component: $symlink_component"
+    fail_closed "PANTHEON_COMMAND_ROOT cannot include a symlink component: $symlink_component"
   fi
-  [[ -d "$raw_root" ]] || fail_closed "PANTHEON_STATUS_COMMAND_ROOT does not exist or is not a directory: $raw_root"
+  [[ -d "$raw_root" ]] || fail_closed "PANTHEON_COMMAND_ROOT does not exist or is not a directory: $raw_root"
   command_root="$(cd "$raw_root" && pwd -P)"
   git_root="$(git -C "$command_root" rev-parse --show-toplevel 2>/dev/null)" \
-    || fail_closed "PANTHEON_STATUS_COMMAND_ROOT must be a git repository root: $command_root"
+    || fail_closed "PANTHEON_COMMAND_ROOT must be a git repository root: $command_root"
   git_root="$(cd "$git_root" && pwd -P)"
   [[ "$git_root" == "$command_root" ]] \
-    || fail_closed "PANTHEON_STATUS_COMMAND_ROOT must be a git repository root: $command_root"
+    || fail_closed "PANTHEON_COMMAND_ROOT must be a git repository root: $command_root"
 
   source_sha="$(git -C "$command_root" rev-parse HEAD 2>/dev/null)" \
-    || fail_closed "PANTHEON_STATUS_COMMAND_ROOT source SHA is unavailable: $command_root"
-  [[ -n "$expected_sha" ]] || fail_closed "PANTHEON_STATUS_COMMAND_SHA is required for auto-worker status commands"
+    || fail_closed "PANTHEON_COMMAND_ROOT source SHA is unavailable: $command_root"
+  [[ -n "$expected_sha" ]] || fail_closed "PANTHEON_COMMAND_RUNTIME_SHA is required for auto-worker status commands"
   [[ "$source_sha" == "$expected_sha" ]] \
-    || fail_closed "PANTHEON_STATUS_COMMAND_SHA mismatch: command root is $source_sha, expected $expected_sha"
+    || fail_closed "PANTHEON_COMMAND_RUNTIME_SHA mismatch: command root is $source_sha, expected $expected_sha"
 
   remote_url="$(git -C "$command_root" remote get-url origin 2>/dev/null)" \
-    || fail_closed "PANTHEON_STATUS_COMMAND_ROOT must have origin remote: $command_root"
+    || fail_closed "PANTHEON_COMMAND_ROOT must have origin remote: $command_root"
   actual_remote="$(normalize_github_slug "$remote_url")"
   expected_slug="$(normalize_github_slug "$expected_remote")"
   [[ "$actual_remote" == "$expected_slug" ]] \
-    || fail_closed "PANTHEON_STATUS_COMMAND_ROOT remote mismatch: $actual_remote != $expected_slug"
+    || fail_closed "PANTHEON_COMMAND_ROOT remote mismatch: $actual_remote != $expected_slug"
 
   git -C "$command_root" rev-parse --verify "$base_ref" >/dev/null 2>&1 \
-    || fail_closed "PANTHEON_STATUS_COMMAND_BASE_REF is unavailable: $base_ref"
+    || fail_closed "PANTHEON_COMMAND_BASE_REF is unavailable: $base_ref"
   git -C "$command_root" merge-base --is-ancestor "$source_sha" "$base_ref" >/dev/null 2>&1 \
-    || fail_closed "PANTHEON_STATUS_COMMAND_ROOT source SHA $source_sha is not merged into $base_ref"
+    || fail_closed "PANTHEON_COMMAND_ROOT source SHA $source_sha is not merged into $base_ref"
 
   [[ -f "$command_root/scripts/ai_status.py" ]] \
-    || fail_closed "PANTHEON_STATUS_COMMAND_ROOT is missing scripts/ai_status.py: $command_root"
+    || fail_closed "PANTHEON_COMMAND_ROOT is missing scripts/ai_status.py: $command_root"
   printf '%s\n' "$command_root"
 }
 
@@ -98,8 +98,8 @@ if is_auto_worker_status_command; then
     || fail_closed "PANTHEON_STATUS_ROOT is required for auto-worker status commands"
 fi
 
-if is_auto_worker_status_command || [[ -n "${PANTHEON_STATUS_COMMAND_ROOT:-}" ]]; then
-  COMMAND_ROOT="$(validate_command_root "${PANTHEON_STATUS_COMMAND_ROOT:-}")"
+if is_auto_worker_status_command || [[ -n "${PANTHEON_COMMAND_ROOT:-${PANTHEON_STATUS_COMMAND_ROOT:-}}" ]]; then
+  COMMAND_ROOT="$(validate_command_root "${PANTHEON_COMMAND_ROOT:-${PANTHEON_STATUS_COMMAND_ROOT:-}}")"
   export PANTHEON_STATUS_COMMAND_WRAPPER_ROOT="$ROOT_DIR"
   exec python3 "$COMMAND_ROOT/scripts/ai_status.py" "$@"
 fi

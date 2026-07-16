@@ -23,10 +23,10 @@ def _init_repo(path: Path) -> None:
 def _command_runtime_env(root: Path) -> dict[str, str]:
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     return {
-        "PANTHEON_STATUS_COMMAND_ROOT": str(root),
-        "PANTHEON_STATUS_COMMAND_SHA": sha,
-        "PANTHEON_STATUS_COMMAND_REMOTE": "ajoe734/pantheon",
-        "PANTHEON_STATUS_COMMAND_BASE_REF": "origin/dev",
+        "PANTHEON_COMMAND_ROOT": str(root),
+        "PANTHEON_COMMAND_RUNTIME_SHA": sha,
+        "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+        "PANTHEON_COMMAND_BASE_REF": "origin/dev",
     }
 
 
