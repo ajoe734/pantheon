@@ -1,27 +1,183 @@
 {
+  "schema_version": 2,
   "source_hashes": {
     "tasks_catalog_sha256": "44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357",
     "sequencing_addendum_sha256": "9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519",
     "merge_pr_3737_sha": "a4b5df9a51bc3da6df0d39d422d9db4edc553aba"
   },
-  "g2_evidence_contract": {
+  "acceptance_deferral": {
     "version": 1,
-    "target_task": "LOOP-PROD-CLOSE-001",
+    "policy_id": "pre-g2-strict-only-acceptance-deferral-v1",
+    "release_gate_id": "hardening-after-g2-paper-trade-v1",
+    "catalog_acceptance_immutable": true,
+    "applies_to_classifications": [
+      "permitted before the paper-trade proof",
+      "part of the G2 proof path"
+    ],
+    "applies_to_task_ids": [
+      "LOOP-PROD-000",
+      "LOOP-PROD-001",
+      "LOOP-PROD-002",
+      "LOOP-PROD-REC-001",
+      "LOOP-PROD-SRC-001",
+      "LOOP-PROD-DIST-001",
+      "LOOP-PROD-ALPHA-001",
+      "LOOP-PROD-TEACH-001",
+      "LOOP-PROD-AGORA-001",
+      "LOOP-PROD-CONS-001",
+      "LOOP-PROD-AGORA-002",
+      "LOOP-PROD-AGORA-003",
+      "LOOP-PROD-IMIT-001",
+      "LOOP-PROD-DEP-001",
+      "LOOP-PROD-CAP-001",
+      "LOOP-PROD-TEL-001",
+      "LOOP-PROD-TEL-002",
+      "LOOP-PROD-EVO-001",
+      "LOOP-PROD-BFF-001",
+      "LOOP-PROD-OODA-001",
+      "LOOP-PROD-PER-001",
+      "LOOP-PROD-TJ-001",
+      "LOOP-PROD-TJ-002",
+      "LOOP-PROD-VERIFY-KNOW-001",
+      "LOOP-PROD-VERIFY-EXEC-001",
+      "LOOP-PROD-VERIFY-HUMAN-001",
+      "LOOP-PROD-PPL-001",
+      "LOOP-PROD-TJ-003",
+      "LOOP-PROD-PINT-001"
+    ],
+    "deferred_dimensions": [
+      "strict_auth",
+      "browser_dev_bearer_removal",
+      "mfa",
+      "two_person",
+      "negative_identity"
+    ],
+    "retained_dimensions": [
+      "tenant_isolation",
+      "environment_binding",
+      "paper_execution",
+      "no_live_capital"
+    ],
+    "materialized_acceptance_action": "preserve_catalog_acceptance_unchanged"
+  },
+  "release_gate": {
+    "version": 1,
+    "gate_id": "hardening-after-g2-paper-trade-v1",
+    "gated_classifications": [
+      "deferred strict-auth/security/governance work",
+      "final verification/closeout after the appropriate gate"
+    ],
+    "gated_task_ids": [
+      "LOOP-PROD-MAI-001",
+      "LOOP-PROD-AUTH-001",
+      "LOOP-PROD-FE-001",
+      "LOOP-PROD-DELIVERY-001",
+      "LOOP-PROD-AUTH-BOOT-001",
+      "LOOP-PROD-WORKER-001",
+      "LOOP-PROD-LEASE-001",
+      "LOOP-PROD-FLEET-001",
+      "LOOP-PROD-ATTEST-001",
+      "LOOP-PROD-AUTH-OPS-001",
+      "LOOP-PROD-BROWSER-AUTH-001",
+      "LOOP-PROD-MAI-002",
+      "LOOP-PROD-VERIFY-OODA-001",
+      "LOOP-PROD-FE-EVID-001",
+      "LOOP-PROD-FE-BUILD-001",
+      "LOOP-PROD-MAI-003",
+      "LOOP-PROD-CLOSE-001",
+      "LOOP-PROD-SIGNOFF-001",
+      "LOOP-PROD-CLOSE-002"
+    ],
+    "release_predicate": "g2_evidence_contract_v2_valid",
+    "pre_gate_action": "park_new_and_existing_gated_tasks_allow_ungated",
+    "post_gate_action": "allow_dependency_governed_materialization"
+  },
+  "g2_evidence_contract": {
+    "version": 2,
+    "target_task": "LOOP-PROD-VERIFY-EXEC-001",
+    "target_task_original_contract_sha256": "71ecc377427ef5ff539dff896e243bf9ac4a4017bd8554378fcf8ee8856e9235",
+    "target_task_amended_contract_sha256": "71ecc377427ef5ff539dff896e243bf9ac4a4017bd8554378fcf8ee8856e9235",
     "tasks_catalog_sha256": "44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357",
     "sequencing_addendum_sha256": "9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519",
-    "merge_pr_3737_sha": "a4b5df9a51bc3da6df0d39d422d9db4edc553aba"
+    "merge_pr_3737_sha": "a4b5df9a51bc3da6df0d39d422d9db4edc553aba",
+    "evidence_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/g2-paper-trade-chain.v2.json",
+    "closeout_manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/evidence.json",
+    "hosted_probe_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/hosted-lifecycle-proof.v1.json",
+    "canonical_record_bundle_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/g2-canonical-records.v2.json",
+    "bundle_digest_algorithm": "sha256(bytes)",
+    "record_digest_algorithm": "sha256(canonical-json)",
+    "record_bundle_schema": "pantheon.g2-canonical-record-bundle.v2",
+    "hosted_probe_schema": "pantheon.loop-prod-tel-002-hosted-proof.v1",
+    "projection_manifest_schema": "pantheon.lifecycle-projection-bundle.v1",
+    "journey_projection_schema": "pantheon.trade-journey-projection.v1",
+    "loop_run_projection_schema": "pantheon.loop-run-projection.v1",
+    "required_target_environment": "dev",
+    "required_record_environment": "paper",
+    "required_execution_mode": "paper",
+    "required_source_mode": "live",
+    "required_projection_stage_status": "succeeded",
+    "required_projection_controller": {
+      "mode": "live",
+      "accepted_live": true,
+      "truth_level": "canonical_live",
+      "status": "ready",
+      "backlog": 0
+    },
+    "max_evidence_age_seconds": 86400,
+    "max_chain_span_seconds": 3600,
+    "max_future_skew_seconds": 300,
+    "stable_identity_fields": [
+      "tenant_id",
+      "environment",
+      "journey_id",
+      "run_id",
+      "loop_run_id",
+      "signal_id",
+      "strategy_id",
+      "runtime_id",
+      "binding_id",
+      "capital_pool_id",
+      "persona_id",
+      "persona_capital_binding_id",
+      "artifact_id",
+      "artifact_version",
+      "plan_id",
+      "trace_id"
+    ],
+    "event_order_contract": {
+      "prefix": [
+        "signal_generation",
+        "trade_decision"
+      ],
+      "repeat_group": [
+        "order_submitted",
+        "paper_fill_simulated",
+        "position_snapshot"
+      ],
+      "minimum_repeat_count": 1,
+      "suffix": [
+        "reconciliation_completed"
+      ]
+    },
+    "record_event_types": {
+      "signal": "signal_generation",
+      "order": "order_submitted",
+      "fill": "paper_fill_simulated",
+      "telemetry": "reconciliation_completed"
+    },
+    "required_loop_run_status": "completed"
   },
   "tasks": {
     "LOOP-PROD-000": {
       "wave": 0,
-      "depends_on": [],
+      "amended_depends_on": [],
       "classification": "permitted before the paper-trade proof",
       "rationale": "Define the 12 loops and composite OODA overlay.",
       "original_depends_on": []
     },
     "LOOP-PROD-001": {
       "wave": 0,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-000"
       ],
       "classification": "permitted before the paper-trade proof",
@@ -32,7 +188,7 @@
     },
     "LOOP-PROD-002": {
       "wave": 0,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-000",
         "LOOP-PROD-001"
       ],
@@ -45,7 +201,7 @@
     },
     "LOOP-PROD-REC-001": {
       "wave": 0,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-001",
         "LOOP-PROD-002"
       ],
@@ -58,7 +214,7 @@
     },
     "LOOP-PROD-SRC-001": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-001",
         "LOOP-PROD-002",
         "LOOP-PROD-REC-001"
@@ -74,7 +230,7 @@
     },
     "LOOP-PROD-DIST-001": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-SRC-001"
       ],
       "classification": "part of the G2 proof path",
@@ -85,7 +241,7 @@
     },
     "LOOP-PROD-ALPHA-001": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-DIST-001"
       ],
       "classification": "part of the G2 proof path",
@@ -96,7 +252,7 @@
     },
     "LOOP-PROD-TEACH-001": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-SRC-001",
         "LOOP-PROD-REC-001",
         "LOOP-PROD-ALPHA-001"
@@ -111,7 +267,7 @@
     },
     "LOOP-PROD-AGORA-001": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-001",
         "LOOP-PROD-002",
         "LOOP-PROD-REC-001",
@@ -131,7 +287,7 @@
     },
     "LOOP-PROD-CONS-001": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-001",
         "LOOP-PROD-002",
         "LOOP-PROD-REC-001",
@@ -148,7 +304,7 @@
     },
     "LOOP-PROD-AGORA-002": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-CONS-001",
         "LOOP-PROD-ALPHA-001",
         "AG-GAP-005"
@@ -164,7 +320,7 @@
     },
     "LOOP-PROD-AGORA-003": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-AGORA-002",
         "AG-GAP-013",
         "AG-GAP-014",
@@ -182,7 +338,7 @@
     },
     "LOOP-PROD-IMIT-001": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-AGORA-001",
         "LOOP-PROD-TEACH-001",
         "LOOP-PROD-REC-001",
@@ -201,7 +357,7 @@
     },
     "LOOP-PROD-DEP-001": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-001",
         "LOOP-PROD-002",
         "LOOP-PROD-REC-001",
@@ -218,7 +374,7 @@
     },
     "LOOP-PROD-CAP-001": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-DEP-001",
         "LOOP-PROD-REC-001",
         "TJ-E2E-014"
@@ -233,7 +389,7 @@
     },
     "LOOP-PROD-TEL-001": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-001",
         "LOOP-PROD-002",
         "LOOP-PROD-REC-001",
@@ -250,7 +406,7 @@
     },
     "LOOP-PROD-TEL-002": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-CAP-001",
         "LOOP-PROD-TEL-001",
         "TJ-E2E-014"
@@ -265,7 +421,7 @@
     },
     "LOOP-PROD-EVO-001": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "EVOCHAIN-011",
         "LOOP-PROD-DEP-001",
         "LOOP-PROD-TEL-001",
@@ -284,7 +440,7 @@
     },
     "LOOP-PROD-BFF-001": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-001",
         "LOOP-PROD-TEL-001",
         "LOOP-PROD-REC-001",
@@ -302,7 +458,7 @@
     },
     "LOOP-PROD-OODA-001": {
       "wave": 1,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-000",
         "LOOP-PROD-001",
         "LOOP-PROD-002",
@@ -327,7 +483,7 @@
     },
     "LOOP-PROD-PER-001": {
       "wave": 2,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-DEP-001",
         "LOOP-PROD-CAP-001",
         "LOOP-PROD-OODA-001",
@@ -346,7 +502,7 @@
     },
     "LOOP-PROD-TJ-001": {
       "wave": 2,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-DEP-001",
         "LOOP-PROD-CAP-001",
         "LOOP-PROD-TEL-002",
@@ -368,7 +524,7 @@
     },
     "LOOP-PROD-TJ-002": {
       "wave": 2,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-TJ-001",
         "MGMT-SSE-001",
         "OPS-EP-DEV-MAIN-RECONCILE-001",
@@ -385,15 +541,18 @@
       ]
     },
     "LOOP-PROD-MAI-001": {
-      "wave": 2,
-      "depends_on": [
+      "wave": 5,
+      "amended_depends_on": [
+        "LOOP-PROD-AUTH-001",
         "LOOP-PROD-001",
         "LOOP-PROD-002",
         "LOOP-PROD-REC-001",
-        "LOOP-PROD-TJ-001"
+        "LOOP-PROD-TJ-001",
+        "LOOP-PROD-WORKER-001",
+        "LOOP-PROD-BROWSER-AUTH-001"
       ],
-      "classification": "permitted before the paper-trade proof",
-      "rationale": "Dev-bridge backend verification.",
+      "classification": "deferred strict-auth/security/governance work",
+      "rationale": "Its hosted repair proof requires strict auth, exact-CAS worker integrity, and the credential-free browser cutover.",
       "original_depends_on": [
         "LOOP-PROD-AUTH-001",
         "LOOP-PROD-001",
@@ -405,15 +564,16 @@
       ]
     },
     "LOOP-PROD-MAI-002": {
-      "wave": 2,
-      "depends_on": [
+      "wave": 6,
+      "amended_depends_on": [
         "LOOP-PROD-MAI-001",
+        "LOOP-PROD-FE-001",
         "MGMT-SSE-001",
         "OPS-EP-DEV-MAIN-RECONCILE-001",
         "LOOP-PROD-TJ-002"
       ],
-      "classification": "permitted before the paper-trade proof",
-      "rationale": "Management console UI for repair.",
+      "classification": "final verification/closeout after the appropriate gate",
+      "rationale": "Verify the hosted Management AI repair UI after strict auth and credential-free browser release.",
       "original_depends_on": [
         "LOOP-PROD-MAI-001",
         "LOOP-PROD-FE-001",
@@ -424,7 +584,7 @@
     },
     "LOOP-PROD-VERIFY-KNOW-001": {
       "wave": 2,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-SRC-001",
         "LOOP-PROD-DIST-001",
         "LOOP-PROD-ALPHA-001",
@@ -453,7 +613,7 @@
     },
     "LOOP-PROD-VERIFY-EXEC-001": {
       "wave": 2,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-PER-001",
         "LOOP-PROD-DEP-001",
         "LOOP-PROD-CAP-001",
@@ -463,8 +623,8 @@
         "LOOP-PROD-BFF-001",
         "PPL-ALLOC-012"
       ],
-      "classification": "permitted before the paper-trade proof",
-      "rationale": "Verify execution routing.",
+      "classification": "part of the G2 proof path",
+      "rationale": "Verify the authoritative signal-to-order-to-fill-to-telemetry-to-loop-run execution chain.",
       "original_depends_on": [
         "LOOP-PROD-PER-001",
         "LOOP-PROD-DEP-001",
@@ -478,7 +638,7 @@
     },
     "LOOP-PROD-VERIFY-HUMAN-001": {
       "wave": 2,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-TEACH-001",
         "LOOP-PROD-AGORA-001",
         "LOOP-PROD-AGORA-003",
@@ -498,15 +658,15 @@
       ]
     },
     "LOOP-PROD-VERIFY-OODA-001": {
-      "wave": 2,
-      "depends_on": [
+      "wave": 6,
+      "amended_depends_on": [
         "LOOP-PROD-OODA-001",
         "LOOP-PROD-VERIFY-KNOW-001",
         "LOOP-PROD-VERIFY-EXEC-001",
         "LOOP-PROD-MAI-001"
       ],
-      "classification": "permitted before the paper-trade proof",
-      "rationale": "Verify OODA schedule.",
+      "classification": "final verification/closeout after the appropriate gate",
+      "rationale": "Its exact OODA closeout composes the deferred hosted Management AI proof.",
       "original_depends_on": [
         "LOOP-PROD-OODA-001",
         "LOOP-PROD-VERIFY-KNOW-001",
@@ -516,7 +676,7 @@
     },
     "LOOP-PROD-PPL-001": {
       "wave": 3,
-      "depends_on": [
+      "amended_depends_on": [
         "PPL-ALLOC-009",
         "PPL-ALLOC-010",
         "PPL-ALLOC-011",
@@ -540,7 +700,7 @@
     },
     "LOOP-PROD-TJ-003": {
       "wave": 3,
-      "depends_on": [
+      "amended_depends_on": [
         "TJ-E2E-012",
         "TJ-E2E-014",
         "LOOP-PROD-TJ-001",
@@ -559,7 +719,7 @@
     },
     "LOOP-PROD-PINT-001": {
       "wave": 3,
-      "depends_on": [
+      "amended_depends_on": [
         "OPS-EP-DEV-MAIN-RECONCILE-001",
         "PINT-010-R2",
         "LOOP-PROD-AGORA-003",
@@ -576,14 +736,14 @@
       ]
     },
     "LOOP-PROD-MAI-003": {
-      "wave": 3,
-      "depends_on": [
+      "wave": 7,
+      "amended_depends_on": [
         "LOOP-PROD-MAI-001",
         "LOOP-PROD-MAI-002",
         "LOOP-PROD-VERIFY-OODA-001"
       ],
-      "classification": "permitted before the paper-trade proof",
-      "rationale": "Reconcile management console scopes.",
+      "classification": "final verification/closeout after the appropriate gate",
+      "rationale": "Close Management AI only after its strict backend, hosted UI, and OODA verification are admitted.",
       "original_depends_on": [
         "LOOP-PROD-MAI-001",
         "LOOP-PROD-MAI-002",
@@ -591,9 +751,11 @@
       ]
     },
     "LOOP-PROD-CLOSE-001": {
-      "wave": 4,
-      "depends_on": [
+      "wave": 8,
+      "amended_depends_on": [
         "LOOP-PROD-002",
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-FE-001",
         "LOOP-PROD-REC-001",
         "LOOP-PROD-VERIFY-KNOW-001",
         "LOOP-PROD-VERIFY-EXEC-001",
@@ -604,8 +766,8 @@
         "LOOP-PROD-PINT-001",
         "LOOP-PROD-MAI-003"
       ],
-      "classification": "permitted before the paper-trade proof",
-      "rationale": "End of the permissive paper-trade loop.",
+      "classification": "final verification/closeout after the appropriate gate",
+      "rationale": "Run the global all-scenario closeout after the G2 checkpoint and restored strict-auth/browser dependencies.",
       "original_depends_on": [
         "LOOP-PROD-002",
         "LOOP-PROD-AUTH-001",
@@ -623,9 +785,9 @@
     },
     "LOOP-PROD-AUTH-001": {
       "wave": 5,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-002",
-        "LOOP-PROD-CLOSE-001"
+        "LOOP-PROD-VERIFY-EXEC-001"
       ],
       "classification": "deferred strict-auth/security/governance work",
       "rationale": "Strict dev auth cutover.",
@@ -635,7 +797,7 @@
     },
     "LOOP-PROD-FE-001": {
       "wave": 5,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-002",
         "LOOP-PROD-AUTH-001"
       ],
@@ -648,9 +810,9 @@
     },
     "LOOP-PROD-DELIVERY-001": {
       "wave": 5,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-002",
-        "LOOP-PROD-CLOSE-001"
+        "LOOP-PROD-VERIFY-EXEC-001"
       ],
       "classification": "deferred strict-auth/security/governance work",
       "rationale": "Ensure worker run/scope signing.",
@@ -660,7 +822,7 @@
     },
     "LOOP-PROD-AUTH-BOOT-001": {
       "wave": 5,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-002",
         "LOOP-PROD-DELIVERY-001"
       ],
@@ -673,7 +835,7 @@
     },
     "LOOP-PROD-WORKER-001": {
       "wave": 5,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-001",
         "LOOP-PROD-002",
         "LOOP-PROD-DELIVERY-001"
@@ -688,7 +850,7 @@
     },
     "LOOP-PROD-LEASE-001": {
       "wave": 5,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-AUTH-BOOT-001",
         "LOOP-PROD-AUTH-001",
         "LOOP-PROD-WORKER-001"
@@ -703,7 +865,7 @@
     },
     "LOOP-PROD-FLEET-001": {
       "wave": 5,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-WORKER-001"
       ],
       "classification": "deferred strict-auth/security/governance work",
@@ -714,7 +876,7 @@
     },
     "LOOP-PROD-ATTEST-001": {
       "wave": 5,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-002",
         "LOOP-PROD-WORKER-001",
         "LOOP-PROD-LEASE-001"
@@ -729,7 +891,7 @@
     },
     "LOOP-PROD-AUTH-OPS-001": {
       "wave": 5,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-AUTH-BOOT-001",
         "LOOP-PROD-AUTH-001",
         "LOOP-PROD-LEASE-001",
@@ -746,7 +908,7 @@
     },
     "LOOP-PROD-BROWSER-AUTH-001": {
       "wave": 5,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-AUTH-BOOT-001",
         "LOOP-PROD-AUTH-001",
         "LOOP-PROD-FE-001",
@@ -767,7 +929,7 @@
     },
     "LOOP-PROD-FE-EVID-001": {
       "wave": 6,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-FE-001",
         "LOOP-PROD-ATTEST-001",
         "LOOP-PROD-AGORA-003",
@@ -786,7 +948,7 @@
     },
     "LOOP-PROD-FE-BUILD-001": {
       "wave": 6,
-      "depends_on": [
+      "amended_depends_on": [
         "LOOP-PROD-FE-001",
         "LOOP-PROD-FE-EVID-001",
         "LOOP-PROD-AGORA-003",
@@ -804,8 +966,8 @@
       ]
     },
     "LOOP-PROD-SIGNOFF-001": {
-      "wave": 6,
-      "depends_on": [
+      "wave": 9,
+      "amended_depends_on": [
         "LOOP-PROD-CLOSE-001",
         "LOOP-PROD-WORKER-001",
         "LOOP-PROD-ATTEST-001"
@@ -819,8 +981,8 @@
       ]
     },
     "LOOP-PROD-CLOSE-002": {
-      "wave": 7,
-      "depends_on": [
+      "wave": 10,
+      "amended_depends_on": [
         "EVOCHAIN-011",
         "EVOLOOP-009",
         "EVOLOOP-011",

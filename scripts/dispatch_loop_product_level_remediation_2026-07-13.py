@@ -6,19 +6,21 @@ import argparse
 from collections import Counter
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import gzip
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import subprocess
 import sys
 import tempfile
 from types import ModuleType
-from typing import Any, Iterator
+from typing import Any, Iterator, Mapping
+import uuid
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +49,185 @@ STATUS_ROOT = Path(
 STATUS_PATH = STATUS_ROOT / "ai-status.json"
 LOG_PATH = STATUS_ROOT / "ai-activity-log.jsonl"
 ARCHIVE_ROOT = STATUS_ROOT / "ai-task-archive" / "tasks"
+
+SEQUENCING_ADDENDUM_PATH = (
+    REPO_ROOT
+    / "docs"
+    / "04"
+    / "pantheon_loop_product_level_remediation_2026-07-13"
+    / "REMEDIATION_SEQUENCING_ADDENDUM_2026-07-16.md"
+)
+EXPECTED_SEQUENCING_SOURCE_HASHES = {
+    "tasks_catalog_sha256": "44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357",
+    "sequencing_addendum_sha256": "9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519",
+    "merge_pr_3737_sha": "a4b5df9a51bc3da6df0d39d422d9db4edc553aba",
+}
+EXPECTED_SEQUENCING_OVERLAY_SHA256 = (
+    "f175df35de77bedff674896b60510defcec7a4794ac2f5856eef966ef989d22b"
+)
+SEQUENCING_OVERLAY_KEYS = {
+    "schema_version",
+    "source_hashes",
+    "acceptance_deferral",
+    "release_gate",
+    "g2_evidence_contract",
+    "tasks",
+}
+SEQUENCING_TASK_ENTRY_KEYS = {
+    "wave",
+    "classification",
+    "rationale",
+    "original_depends_on",
+    "amended_depends_on",
+}
+SEQUENCING_CLASSIFICATIONS = {
+    "permitted before the paper-trade proof",
+    "part of the G2 proof path",
+    "deferred strict-auth/security/governance work",
+    "final verification/closeout after the appropriate gate",
+}
+GATED_SEQUENCING_CLASSIFICATIONS = {
+    "deferred strict-auth/security/governance work",
+    "final verification/closeout after the appropriate gate",
+}
+PRE_G2_SEQUENCING_CLASSIFICATIONS = {
+    "permitted before the paper-trade proof",
+    "part of the G2 proof path",
+}
+RELEASE_GATE_KEYS = {
+    "version",
+    "gate_id",
+    "gated_classifications",
+    "gated_task_ids",
+    "release_predicate",
+    "pre_gate_action",
+    "post_gate_action",
+}
+ACCEPTANCE_DEFERRAL_KEYS = {
+    "version",
+    "policy_id",
+    "release_gate_id",
+    "catalog_acceptance_immutable",
+    "applies_to_classifications",
+    "applies_to_task_ids",
+    "deferred_dimensions",
+    "retained_dimensions",
+    "materialized_acceptance_action",
+}
+G2_EVIDENCE_CONTRACT_KEYS = {
+    "version",
+    "target_task",
+    "target_task_original_contract_sha256",
+    "target_task_amended_contract_sha256",
+    "tasks_catalog_sha256",
+    "sequencing_addendum_sha256",
+    "merge_pr_3737_sha",
+    "evidence_path",
+    "closeout_manifest_path",
+    "hosted_probe_path",
+    "canonical_record_bundle_path",
+    "bundle_digest_algorithm",
+    "record_digest_algorithm",
+    "record_bundle_schema",
+    "hosted_probe_schema",
+    "projection_manifest_schema",
+    "journey_projection_schema",
+    "loop_run_projection_schema",
+    "required_target_environment",
+    "required_record_environment",
+    "required_execution_mode",
+    "required_source_mode",
+    "required_projection_stage_status",
+    "required_projection_controller",
+    "max_evidence_age_seconds",
+    "max_chain_span_seconds",
+    "max_future_skew_seconds",
+    "stable_identity_fields",
+    "event_order_contract",
+    "record_event_types",
+    "required_loop_run_status",
+}
+G2_STABLE_IDENTITY_FIELDS = (
+    "tenant_id",
+    "environment",
+    "journey_id",
+    "run_id",
+    "loop_run_id",
+    "signal_id",
+    "strategy_id",
+    "runtime_id",
+    "binding_id",
+    "capital_pool_id",
+    "persona_id",
+    "persona_capital_binding_id",
+    "artifact_id",
+    "artifact_version",
+    "plan_id",
+    "trace_id",
+)
+G2_EVIDENCE_KEYS = {
+    "schema_version",
+    "task_id",
+    "program_id",
+    "target_environment",
+    "issued_at",
+    "expires_at",
+    "authority",
+    "identity",
+    "record_bundle",
+    "hosted_probe",
+    "records",
+    "closeout_admission",
+}
+G2_AUTHORITY_KEYS = {
+    "tasks_catalog_sha256",
+    "sequencing_addendum_sha256",
+    "merge_pr_3737_sha",
+    "overlay_sha256",
+    "target_task_original_contract_sha256",
+    "target_task_amended_contract_sha256",
+}
+G2_RECORD_REFERENCE_KEYS = {"event_id", "event_type", "sha256"}
+G2_PROJECTION_REFERENCE_KEYS = {
+    "id",
+    "sha256",
+    "generation",
+    "last_canonical_event_id",
+}
+G2_RECORDS_KEYS = {
+    "signal",
+    "order",
+    "fill",
+    "telemetry",
+    "loop_run_projection",
+}
+G2_CLOSEOUT_ADMISSION_KEYS = {
+    "review_file",
+    "review_manifest_sha256",
+    "review_manifest_sidecar_sha256",
+    "task_snapshot_sha256",
+    "reviewer",
+    "review_verdict_sha256",
+}
+G2_RECORD_BUNDLE_KEYS = {
+    "schema_version",
+    "captured_at",
+    "source",
+    "rows",
+    "projection",
+}
+G2_RECORD_BUNDLE_SOURCE_KEYS = {
+    "store",
+    "snapshot_isolation",
+    "baseline_high_watermark",
+    "source_high_watermark",
+}
+G2_RECORD_BUNDLE_PROJECTION_KEYS = {
+    "manifest",
+    "trade_journey_events",
+    "loop_runs",
+}
+G2_LIFECYCLE_UUID_NAMESPACE = uuid.UUID("1760784c-c9e0-47eb-b0aa-d37f58d892df")
 
 AUTO_BY = "dispatch_loop_product_level_remediation_2026-07-13"
 TERMINAL_STATUSES = {"done", "superseded", "cancelled"}
@@ -765,6 +946,99 @@ def read_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise DispatchError(f"expected JSON object in {path}")
     return payload
+
+
+def read_regular_bytes(path: Path, *, label: str) -> bytes:
+    """Read a regular-file leaf without accepting a symlink or inode swap."""
+
+    try:
+        before = path.lstat()
+    except FileNotFoundError as exc:
+        raise DispatchError(f"{label} is missing: {path}") from exc
+    except OSError as exc:
+        raise DispatchError(f"{label} cannot be inspected: {path}") from exc
+    if path.is_symlink() or not stat.S_ISREG(before.st_mode):
+        raise DispatchError(f"{label} must be a regular file: {path}")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise DispatchError(f"{label} cannot be opened safely: {path}") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+            or (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns)
+            != (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+        ):
+            raise DispatchError(f"{label} identity changed before read: {path}")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            raw = handle.read()
+        opened_after = os.fstat(descriptor)
+        after = path.lstat()
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(after.st_mode)
+            or (after.st_dev, after.st_ino) != (opened.st_dev, opened.st_ino)
+            or (
+                opened.st_size,
+                opened.st_mtime_ns,
+                opened.st_ctime_ns,
+            )
+            != (
+                opened_after.st_size,
+                opened_after.st_mtime_ns,
+                opened_after.st_ctime_ns,
+            )
+            or (
+                opened_after.st_size,
+                opened_after.st_mtime_ns,
+                opened_after.st_ctime_ns,
+            )
+            != (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+        ):
+            raise DispatchError(f"{label} identity changed during read: {path}")
+        return raw
+    except FileNotFoundError as exc:
+        raise DispatchError(f"{label} disappeared during read: {path}") from exc
+    finally:
+        os.close(descriptor)
+
+
+def read_regular_json(path: Path, *, label: str) -> tuple[dict[str, Any], bytes]:
+    raw = read_regular_bytes(path, label=label)
+    payload = strict_json_loads(raw, source=f"{label} {path}")
+    if not isinstance(payload, dict):
+        raise DispatchError(f"{label} must contain a JSON object: {path}")
+    return payload, raw
+
+
+def repo_artifact_path(value: Any, *, label: str) -> Path:
+    relative = _safe_repo_relative_path(value, label=label)
+    candidate = REPO_ROOT / relative
+    try:
+        root = REPO_ROOT.resolve(strict=True)
+        current = root
+        parts = Path(relative).parts
+        for index, part in enumerate(parts):
+            current = current / part
+            entry = current.lstat()
+            if stat.S_ISLNK(entry.st_mode):
+                raise DispatchError(f"{label} path contains a symlink")
+            if index < len(parts) - 1 and not stat.S_ISDIR(entry.st_mode):
+                raise DispatchError(f"{label} parent is not a directory")
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(root)
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        raise DispatchError(f"{label} is not a regular repository artifact") from exc
+    if not resolved.is_file():
+        raise DispatchError(f"{label} is not a regular repository artifact")
+    return resolved
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -2989,14 +3263,47 @@ def build_task(
             },
         }
     )
+    if catalog.get("overlay_applied") is True:
+        source_hashes = catalog.get("source_hashes") or {}
+        release_gate = catalog.get("release_gate") or {}
+        g2_contract = catalog.get("g2_evidence_contract") or {}
+        sequencing_entry = (catalog.get("sequencing_entries") or {}).get(
+            str(task["id"]), {}
+        )
+        result["source_ref"].update(
+            {
+                "source_catalog_sha256": source_hashes.get(
+                    "tasks_catalog_sha256"
+                ),
+                "sequencing_addendum_sha256": source_hashes.get(
+                    "sequencing_addendum_sha256"
+                ),
+                "merge_pr_3737_sha": source_hashes.get("merge_pr_3737_sha"),
+                "sequencing_overlay_sha256": catalog.get(
+                    "sequencing_overlay_sha256"
+                ),
+                "original_task_contract_sha256": (
+                    catalog.get("original_task_contract_sha256s") or {}
+                ).get(str(task["id"])),
+                "amended_task_contract_sha256": task_contract_sha256(task),
+                "sequencing_classification": sequencing_entry.get(
+                    "classification"
+                ),
+                "release_gate_id": release_gate.get("gate_id"),
+                "g2_release_checkpoint": (
+                    str(task["id"]) == str(g2_contract.get("target_task") or "")
+                ),
+            }
+        )
     return result
 
 
 def archived_primary_status(task_id: str) -> str | None:
     path = ARCHIVE_ROOT / f"{task_id}.json"
-    if read_canonical_archive_payload(path) is None:
+    payload = read_canonical_archive_payload(path)
+    if payload is None:
         return None
-    status = archive_status(path)
+    status = str(payload.get("terminal_status") or "")
     if status not in TERMINAL_STATUSES:
         raise DispatchError(
             f"archive collision for {task_id} has non-terminal status {status!r}"
@@ -3006,24 +3313,21 @@ def archived_primary_status(task_id: str) -> str | None:
 
 def validate_existing_task_provenance(
     existing: dict[str, Any],
-    task_id: str,
+    task: dict[str, Any],
     catalog: dict[str, Any],
+    catalog_digest: str,
     *,
     source: str,
 ) -> None:
     """Reject an existing catalog task row with missing or foreign source_ref.
 
-    This runs for every non-additive catalog task collision in both the
-    active and archive branches of ``materialize`` (additive collisions are
-    already exhaustively covered by the stricter ``validate_additive_
-    collision``). It only requires stable dispatcher provenance (the task
-    belongs to this program and carries a non-empty catalog digest); it
-    deliberately does not require the digest to equal the *current* catalog,
-    because non-additive tasks legitimately retain the source_ref recorded
-    when an earlier catalog version created them across catalog
-    addenda/migrations.
+    Base-catalog collisions retain historical compatibility. Once the
+    sequencing overlay is active, every preserved row must match the amended
+    task contract and the exact overlay epoch; an older row requires a
+    separately governed migration and cannot silently bypass this gate.
     """
 
+    task_id = str(task["id"])
     source_ref = existing.get("source_ref")
     if (
         not isinstance(source_ref, dict)
@@ -3036,6 +3340,36 @@ def validate_existing_task_provenance(
             f"task {task_id}; refusing to preserve foreign or tampered "
             "task/runtime state"
         )
+    if catalog.get("overlay_applied") is True:
+        source_hashes = catalog.get("source_hashes") or {}
+        expected_contract = task_contract_sha256(task)
+        expected_overlay_provenance = {
+            "catalog_sha256": catalog_digest,
+            "task_contract_sha256": expected_contract,
+            "source_catalog_sha256": source_hashes.get("tasks_catalog_sha256"),
+            "sequencing_addendum_sha256": source_hashes.get(
+                "sequencing_addendum_sha256"
+            ),
+            "merge_pr_3737_sha": source_hashes.get("merge_pr_3737_sha"),
+            "sequencing_overlay_sha256": catalog.get(
+                "sequencing_overlay_sha256"
+            ),
+            "original_task_contract_sha256": (
+                catalog.get("original_task_contract_sha256s") or {}
+            ).get(task_id),
+            "amended_task_contract_sha256": expected_contract,
+            "release_gate_id": (catalog.get("release_gate") or {}).get(
+                "gate_id"
+            ),
+        }
+        if task_contract_sha256(existing) != expected_contract or any(
+            source_ref.get(key) != value
+            for key, value in expected_overlay_provenance.items()
+        ):
+            raise DispatchError(
+                f"{source} catalog task {task_id} is not bound to the exact "
+                "sequencing overlay epoch"
+            )
 
 
 def validate_additive_collision(
@@ -3593,54 +3927,10 @@ def read_canonical_archive_payload(path: Path) -> dict[str, Any] | None:
     """Read one archive leaf without following or racing a symlink swap."""
 
     try:
-        path_stat = path.lstat()
+        path.lstat()
     except FileNotFoundError:
         return None
-    if path.is_symlink() or not stat.S_ISREG(path_stat.st_mode):
-        raise DispatchError(f"canonical task archive must be a regular file: {path}")
-    flags = os.O_RDONLY
-    if hasattr(os, "O_CLOEXEC"):
-        flags |= os.O_CLOEXEC
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as exc:
-        raise DispatchError(
-            f"canonical task archive cannot be opened safely: {path}: "
-            f"{type(exc).__name__}"
-        ) from exc
-    try:
-        opened_stat = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(opened_stat.st_mode)
-            or (opened_stat.st_dev, opened_stat.st_ino)
-            != (path_stat.st_dev, path_stat.st_ino)
-        ):
-            raise DispatchError(
-                f"canonical task archive identity changed before read: {path}"
-            )
-        with os.fdopen(descriptor, "rb", closefd=False) as handle:
-            raw = handle.read()
-        after_stat = path.lstat()
-        if (
-            path.is_symlink()
-            or not stat.S_ISREG(after_stat.st_mode)
-            or (after_stat.st_dev, after_stat.st_ino)
-            != (opened_stat.st_dev, opened_stat.st_ino)
-        ):
-            raise DispatchError(
-                f"canonical task archive identity changed during read: {path}"
-            )
-    except FileNotFoundError as exc:
-        raise DispatchError(
-            f"canonical task archive disappeared during read: {path}"
-        ) from exc
-    finally:
-        os.close(descriptor)
-    payload = strict_json_loads(raw, source=f"canonical task archive {path}")
-    if not isinstance(payload, dict):
-        raise DispatchError(f"canonical task archive must be an object: {path}")
+    payload, _ = read_regular_json(path, label="canonical task archive")
     return payload
 
 
@@ -4119,28 +4409,88 @@ def materialize(
     timestamp: str,
 ) -> tuple[list[str], list[str], list[str], list[dict[str, Any]], bool]:
     active_tasks = state.setdefault("tasks", [])
-    active_by_id = {
-        str(task.get("id")): task
-        for task in active_tasks
-        if isinstance(task, dict) and str(task.get("id") or "").strip()
-    }
+    if not isinstance(active_tasks, list) or any(
+        not isinstance(task, dict) for task in active_tasks
+    ):
+        raise DispatchError("materialization requires exact active task objects")
+    active_ids = [str(task.get("id") or "") for task in active_tasks]
+    if any(not task_id for task_id in active_ids) or len(active_ids) != len(
+        set(active_ids)
+    ):
+        raise DispatchError("active task identities are missing or duplicated")
+    active_by_id = {str(task["id"]): task for task in active_tasks}
     created: list[str] = []
     preserved: list[str] = []
     archived: list[str] = []
     logs: list[dict[str, Any]] = []
-    state_changed = False
     additive_ids = {str(item) for item in catalog.get("additive_task_ids") or []}
+    release_gate = catalog.get("release_gate") if catalog.get("overlay_applied") else None
+    gated_ids: set[str] = set()
+    gate_open = True
+    if release_gate is not None:
+        if not isinstance(release_gate, dict):
+            raise DispatchError("sequencing release gate is malformed")
+        gated_ids = set(release_gate.get("gated_task_ids") or [])
+        gate_open = check_g2_evidence_valid(state, catalog)
+    pending_materialized: list[dict[str, Any]] = []
 
     for task in tasks:
         task_id = task["id"]
-        archive_state = archived_primary_status(task_id)
-        if archive_state is not None:
-            archive_payload = read_json(ARCHIVE_ROOT / f"{task_id}.json")
+        archive_payload = read_canonical_archive_payload(
+            ARCHIVE_ROOT / f"{task_id}.json"
+        )
+        archive_state: str | None = None
+        archived_task: dict[str, Any] | None = None
+        if archive_payload is not None:
+            archive_state = str(archive_payload.get("terminal_status") or "")
             archived_task = archive_payload.get("task")
-            if not isinstance(archived_task, dict):
+            if (
+                archive_payload.get("task_id") != task_id
+                or archive_state not in TERMINAL_STATUSES
+                or not isinstance(archived_task, dict)
+                or archived_task.get("id") != task_id
+                or archived_task.get("status") != archive_state
+            ):
                 raise DispatchError(
-                    f"archive collision for {task_id} has no task record"
+                    f"archive collision for {task_id} is not an exact terminal record"
                 )
+        existing = active_by_id.get(task_id)
+        if existing is not None and archive_payload is not None:
+            raise DispatchError(
+                f"catalog task {task_id} exists in both active and archive state"
+            )
+
+        if task_id in gated_ids and not gate_open:
+            if archive_payload is not None:
+                raise DispatchError(
+                    f"gated task {task_id} reached terminal archive before valid G2"
+                )
+            if existing is not None:
+                if existing.get("status") not in {"todo", "blocked"}:
+                    raise DispatchError(
+                        f"gated task {task_id} is already active before valid G2"
+                    )
+                source_ref = existing.get("source_ref")
+                expected_contracts = {
+                    task_contract_sha256(task),
+                    (catalog.get("original_task_contract_sha256s") or {}).get(
+                        task_id
+                    ),
+                }
+                if (
+                    not isinstance(source_ref, dict)
+                    or source_ref.get("program_id") != catalog.get("program_id")
+                    or task_contract_sha256(existing) not in expected_contracts
+                ):
+                    raise DispatchError(
+                        f"gated task {task_id} cannot be parked from foreign state"
+                    )
+                preserved.append(f"{task_id}:g2-gated-{existing['status']}")
+            else:
+                preserved.append(f"{task_id}:g2-gated-not-materialized")
+            continue
+
+        if archive_payload is not None:
             if task_id in additive_ids:
                 validate_additive_collision(
                     archived_task,
@@ -4151,12 +4501,15 @@ def materialize(
                 )
             else:
                 validate_existing_task_provenance(
-                    archived_task, task_id, catalog, source="archive"
+                    archived_task,
+                    task,
+                    catalog,
+                    catalog_digest,
+                    source="archive",
                 )
             archived.append(f"{task_id}:{archive_state}")
             continue
 
-        existing = active_by_id.get(task_id)
         if existing is not None:
             if task_id in additive_ids:
                 validate_additive_collision(
@@ -4168,22 +4521,17 @@ def materialize(
                 )
             else:
                 validate_existing_task_provenance(
-                    existing, task_id, catalog, source="active"
+                    existing,
+                    task,
+                    catalog,
+                    catalog_digest,
+                    source="active",
                 )
             preserved.append(f"{task_id}:{existing.get('status', 'unknown')}")
             continue
 
-        # G2 evidence gate for deferred tasks (Wave >= 5)
-        if catalog.get("overlay_applied") and task.get("wave", 0) >= 5:
-            if not check_g2_evidence_valid(state):
-                raise DispatchError(
-                    f"G2 paper-trade evidence not found or invalid; "
-                    f"cannot dispatch deferred task {task_id}"
-                )
-
         materialized = build_task(task, catalog, catalog_digest, timestamp)
-        active_tasks.append(materialized)
-        active_by_id[task_id] = materialized
+        pending_materialized.append(materialized)
         created.append(task_id)
         logs.append(
             {
@@ -4204,8 +4552,9 @@ def materialize(
                 ),
             }
         )
-        state_changed = True
 
+    active_tasks.extend(pending_materialized)
+    state_changed = bool(pending_materialized)
     if state_changed:
         state["updated_at"] = timestamp
     return created, preserved, archived, logs, state_changed
@@ -4241,256 +4590,1166 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def check_g2_evidence_valid(state: dict[str, Any], catalog: dict[str, Any] | None = None) -> bool:
-    if catalog is None:
-        try:
-            catalog = read_json(catalog_path())
-            overlay_env = os.environ.get("LOOP_PRODUCT_SEQUENCING_OVERLAY")
-            if overlay_env:
-                overlay_path = Path(os.path.expanduser(overlay_env)).resolve()
-            else:
-                overlay_path = REPO_ROOT / "docs" / "bff" / "execution-tasks" / "2026-07-13-loop-product-level-remediation" / "sequencing-overlay-2026-07-16.json"
-            if overlay_path.is_file():
-                apply_sequencing_overlay(catalog, overlay_path)
-        except Exception:
-            return False
-
-    contract = catalog.get("g2_evidence_contract")
-    if not isinstance(contract, dict):
-        return False
-    
-    contract_version = contract.get("version")
-    if contract_version != 1:
-        return False
-
-    active_tasks = state.get("tasks") or []
-    active_by_id = {
-        str(task.get("id")): task
-        for task in active_tasks
-        if isinstance(task, dict) and str(task.get("id") or "").strip()
-    }
-    
-    target_task_id = contract.get("target_task", "LOOP-PROD-CLOSE-001")
-    close_task = active_by_id.get(target_task_id)
-    is_archived = False
-    payload = None
-    
-    if close_task is None:
-        archived_path = ARCHIVE_ROOT / f"{target_task_id}.json"
-        if archived_path.is_file():
-            try:
-                payload = read_json(archived_path)
-                archived_task = payload.get("task")
-                if not isinstance(archived_task, dict) or archived_task.get("status") != "done":
-                    return False
-                close_task = archived_task
-                is_archived = True
-            except Exception:
-                return False
-        else:
-            return False
-    else:
-        if close_task.get("status") != "done":
-            return False
-
-    if is_archived:
-        if not isinstance(payload, dict):
-            return False
-        if payload.get("task_id") != target_task_id or payload.get("terminal_status") != "done":
-            return False
-        
-        source_ref = close_task.get("source_ref")
-        if not isinstance(source_ref, dict):
-            return False
-        if source_ref.get("program_id") != catalog.get("program_id"):
-            return False
-        if not source_ref.get("catalog_sha256"):
-            return False
-
-    evidence_path = REPO_ROOT / "docs" / "deployment" / "evidence" / "loop-product-level" / target_task_id / "evidence.json"
-    if not evidence_path.is_file():
-        return False
-        
+def _parse_g2_timestamp(value: Any, *, label: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise DispatchError(f"{label} must be a UTC timestamp")
     try:
-        evidence_data = read_json(evidence_path)
-        
-        allowed_evidence_keys = {
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise DispatchError(f"{label} must be a UTC timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        raise DispatchError(f"{label} must be timezone-aware UTC")
+    return parsed.astimezone(timezone.utc)
+
+
+def _require_sha256(value: Any, *, label: str) -> str:
+    if not _is_lower_hex(value, 64):
+        raise DispatchError(f"{label} must be a lowercase SHA-256 digest")
+    return str(value)
+
+
+def _read_g2_artifact(
+    contract: Mapping[str, Any],
+    path_key: str,
+    *,
+    label: str,
+) -> tuple[dict[str, Any], bytes, Path]:
+    path = repo_artifact_path(contract.get(path_key), label=f"{label} path")
+    payload, raw = read_regular_json(path, label=label)
+    return payload, raw, path
+
+
+def _resolve_g2_closeout_task(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    contract: Mapping[str, Any],
+) -> dict[str, Any]:
+    target_id = str(contract["target_task"])
+    active = state.get("tasks")
+    if not isinstance(active, list) or any(not isinstance(item, dict) for item in active):
+        raise DispatchError("G2 closeout requires exact active task objects")
+    matches = [item for item in active if item.get("id") == target_id]
+    if len(matches) > 1:
+        raise DispatchError("G2 target is duplicated in active state")
+    archive_path = ARCHIVE_ROOT / f"{target_id}.json"
+    archive = read_canonical_archive_payload(archive_path)
+    if matches and archive is not None:
+        raise DispatchError("G2 target exists in both active and archive state")
+    if archive is not None:
+        expected_archive_keys = {
             "version",
             "task_id",
-            "program_id",
-            "catalog_sha256",
-            "addendum_sha256",
-            "merge_pr_3737_sha",
-            "paper_trade_chains",
-            "issued_at"
+            "archived_at",
+            "terminal_status",
+            "terminal_outcome",
+            "task",
+            "handoffs",
+            "blockers",
         }
-        if set(evidence_data.keys()) - allowed_evidence_keys:
-            return False
-            
-        if evidence_data.get("version") != contract_version:
-            return False
-        if evidence_data.get("task_id") != target_task_id:
-            return False
-        if evidence_data.get("program_id") != catalog.get("program_id"):
-            return False
-        if evidence_data.get("catalog_sha256") != contract.get("tasks_catalog_sha256"):
-            return False
-        if evidence_data.get("addendum_sha256") != contract.get("sequencing_addendum_sha256"):
-            return False
-        if evidence_data.get("merge_pr_3737_sha") != contract.get("merge_pr_3737_sha"):
-            return False
-            
-        issued_at = evidence_data.get("issued_at")
-        if not isinstance(issued_at, str):
-            return False
-        if issued_at.endswith("Z"):
-            clean_ts = issued_at[:-1] + "+00:00"
-        else:
-            clean_ts = issued_at
-        datetime.fromisoformat(clean_ts)
+        task = archive.get("task")
+        if (
+            set(archive) != expected_archive_keys
+            or archive.get("version") != 1
+            or archive.get("task_id") != target_id
+            or archive.get("terminal_status") != "done"
+            or archive.get("terminal_outcome") != "completed"
+            or not isinstance(archive.get("handoffs"), list)
+            or not isinstance(archive.get("blockers"), list)
+            or not isinstance(task, dict)
+        ):
+            raise DispatchError("G2 target archive closeout is not exact")
+        _parse_g2_timestamp(archive.get("archived_at"), label="G2 archived_at")
+    elif matches:
+        task = matches[0]
+    else:
+        raise DispatchError("G2 target has no accepted closeout task")
+    if (
+        task.get("id") != target_id
+        or task.get("status") != "done"
+        or task.get("terminal_outcome") != "completed"
+    ):
+        raise DispatchError("G2 target is not done with completed outcome")
+    owner = str(task.get("owner") or "").strip()
+    reviewer = str(task.get("reviewer") or "").strip()
+    if not owner or not reviewer or owner == reviewer:
+        raise DispatchError("G2 closeout owner and reviewer must be distinct")
+    if task.get("review_file") != contract.get("closeout_manifest_path"):
+        raise DispatchError("G2 closeout review_file mismatch")
+    review_notes = task.get("review_notes_zh", task.get("review_notes"))
+    if not (
+        isinstance(review_notes, str)
+        and review_notes.strip()
+        or isinstance(review_notes, list)
+        and review_notes
+        and all(isinstance(item, str) and item.strip() for item in review_notes)
+    ):
+        raise DispatchError("G2 closeout requires non-empty review notes")
+    delivery = task.get("delivery")
+    if (
+        not isinstance(delivery, dict)
+        or delivery.get("head_merged_to_target") is not True
+        or delivery.get("push_status") != "in_sync"
+        or delivery.get("merge_target_branch") != "dev"
+        or not _is_lower_hex(delivery.get("commit"), 40)
+    ):
+        raise DispatchError("G2 closeout delivery truth is not accepted")
+    source_ref = task.get("source_ref")
+    source_hashes = catalog.get("source_hashes") or {}
+    expected_source = {
+        "program_id": catalog.get("program_id"),
+        "catalog_sha256": canonical_json_sha256(catalog),
+        "source_catalog_sha256": source_hashes.get("tasks_catalog_sha256"),
+        "sequencing_addendum_sha256": source_hashes.get(
+            "sequencing_addendum_sha256"
+        ),
+        "merge_pr_3737_sha": source_hashes.get("merge_pr_3737_sha"),
+        "sequencing_overlay_sha256": catalog.get("sequencing_overlay_sha256"),
+        "original_task_contract_sha256": contract.get(
+            "target_task_original_contract_sha256"
+        ),
+        "amended_task_contract_sha256": contract.get(
+            "target_task_amended_contract_sha256"
+        ),
+        "task_contract_sha256": contract.get(
+            "target_task_amended_contract_sha256"
+        ),
+        "g2_release_checkpoint": True,
+    }
+    if not isinstance(source_ref, dict) or any(
+        source_ref.get(key) != expected for key, expected in expected_source.items()
+    ):
+        raise DispatchError("G2 closeout source provenance mismatch")
+    if task_contract_sha256(task) != contract.get(
+        "target_task_amended_contract_sha256"
+    ):
+        raise DispatchError("G2 closeout task contract mismatch")
+    return task
 
-        chains = evidence_data.get("paper_trade_chains")
-        if not isinstance(chains, list) or not chains:
-            return False
-        
-        chain_keys = {"signal", "order", "fill", "telemetry", "loop_run_projection"}
-        
-        def is_valid_sha256(s: Any) -> bool:
-            if not isinstance(s, str) or len(s) != 64:
-                return False
-            try:
-                int(s, 16)
-                return True
-            except ValueError:
-                return False
 
-        for chain in chains:
-            if not isinstance(chain, dict):
-                return False
-            if set(chain.keys()) != chain_keys:
-                return False
-                
-            sig = chain["signal"]
-            ord_val = chain["order"]
-            fil = chain["fill"]
-            tel = chain["telemetry"]
-            proj = chain["loop_run_projection"]
-            
-            if not (isinstance(sig, dict) and isinstance(ord_val, dict) and isinstance(fil, dict) and isinstance(tel, dict) and isinstance(proj, dict)):
-                return False
-                
-            if set(sig.keys()) != {"id", "digest"}:
-                return False
-            if set(ord_val.keys()) != {"id", "digest", "signal_id"}:
-                return False
-            if set(fil.keys()) != {"id", "digest", "order_id"}:
-                return False
-            if set(tel.keys()) != {"id", "digest", "fill_id"}:
-                return False
-            if set(proj.keys()) != {"id", "digest", "telemetry_id"}:
-                return False
-                
-            if not isinstance(sig["id"], str) or not sig["id"].startswith("sig-") or len(sig["id"]) <= 4:
-                return False
-            if not isinstance(ord_val["id"], str) or not ord_val["id"].startswith("ord-") or len(ord_val["id"]) <= 4:
-                return False
-            if not isinstance(fil["id"], str) or not fil["id"].startswith("fil-") or len(fil["id"]) <= 4:
-                return False
-            if not isinstance(tel["id"], str) or not tel["id"].startswith("tel-") or len(tel["id"]) <= 4:
-                return False
-            if not isinstance(proj["id"], str) or not proj["id"].startswith("proj-") or len(proj["id"]) <= 5:
-                return False
-                
-            if not is_valid_sha256(sig["digest"]) or not is_valid_sha256(ord_val["digest"]) or not is_valid_sha256(fil["digest"]) or not is_valid_sha256(tel["digest"]) or not is_valid_sha256(proj["digest"]):
-                return False
-                
-            if ord_val["signal_id"] != sig["id"]:
-                return False
-            if fil["order_id"] != ord_val["id"]:
-                return False
-            if tel["fill_id"] != fil["id"]:
-                return False
-            if proj["telemetry_id"] != tel["id"]:
-                return False
-                
+def _validate_g2_product_evidence(
+    *,
+    closeout_task: dict[str, Any],
+    contract: Mapping[str, Any],
+    admission: Mapping[str, Any],
+    issued_at: datetime,
+) -> None:
+    if set(admission) != G2_CLOSEOUT_ADMISSION_KEYS:
+        raise DispatchError("G2 closeout admission schema is not exact")
+    if admission.get("review_file") != contract.get("closeout_manifest_path"):
+        raise DispatchError("G2 closeout admission review_file mismatch")
+    manifest, manifest_raw, manifest_path = _read_g2_artifact(
+        contract, "closeout_manifest_path", label="G2 product evidence"
+    )
+    manifest_sha256 = sha256_bytes(manifest_raw)
+    if admission.get("review_manifest_sha256") != manifest_sha256:
+        raise DispatchError("G2 product evidence digest mismatch")
+    sidecar_path = manifest_path.with_name("evidence.sha256")
+    sidecar_raw = read_regular_bytes(sidecar_path, label="G2 evidence sidecar")
+    expected_sidecar = f"{manifest_sha256}  evidence.json\n".encode("utf-8")
+    if sidecar_raw != expected_sidecar or admission.get(
+        "review_manifest_sidecar_sha256"
+    ) != sha256_bytes(sidecar_raw):
+        raise DispatchError("G2 product evidence sidecar mismatch")
+    if admission.get("task_snapshot_sha256") != canonical_json_sha256(
+        closeout_task
+    ):
+        raise DispatchError("G2 closeout task snapshot mismatch")
+
+    schema_path = repo_artifact_path(
+        "schemas/product-evidence.schema.json",
+        label="product evidence schema",
+    )
+    schema, _ = read_regular_json(schema_path, label="product evidence schema")
+    try:
+        import jsonschema
+
+        validator = jsonschema.Draft202012Validator(schema)
+        errors = sorted(
+            validator.iter_errors(manifest),
+            key=lambda error: tuple(str(part) for part in error.path),
+        )
+    except Exception as exc:
+        raise DispatchError("product evidence schema validation is unavailable") from exc
+    if errors:
+        raise DispatchError(
+            "G2 product evidence schema failed: " + errors[0].message
+        )
+    task = manifest.get("task")
+    owner = str(closeout_task["owner"])
+    reviewer = str(closeout_task["reviewer"])
+    positive_admissions = {
+        "accepted",
+        "approved",
+        "pass",
+        "passed",
+        "accepted_product_evidence",
+        "review_approved_owner_closeout_ready",
+    }
+    if (
+        not isinstance(task, dict)
+        or task.get("id") != contract.get("target_task")
+        or task.get("owner") != owner
+        or task.get("reviewer") != reviewer
+        or task.get("review_file") != contract.get("closeout_manifest_path")
+        or task.get("target_environment")
+        != contract.get("required_target_environment")
+        or task.get("product_level_required") is not True
+        or task.get("overall_admission") not in positive_admissions
+    ):
+        raise DispatchError("G2 product evidence task admission mismatch")
+    acceptance = manifest.get("acceptance")
+    allowed_results = {"pass", "passed", "accepted", "approved", "not_applicable"}
+    if (
+        not isinstance(acceptance, list)
+        or not acceptance
+        or any(
+            not isinstance(row, dict)
+            or str(row.get("status") or "").strip().lower().replace("-", "_").replace(" ", "_")
+            not in allowed_results
+            for row in acceptance
+        )
+    ):
+        raise DispatchError("G2 product evidence acceptance is not positive")
+    risks = manifest.get("residual_risks")
+    if not isinstance(risks, dict) or any(
+        not isinstance(row, dict) or row.get("blocking_for_this_task") is not False
+        for row in risks.values()
+    ):
+        raise DispatchError("G2 product evidence has a blocking residual risk")
+    security = manifest.get("security_and_safety")
+    if not isinstance(security, dict) or not security:
+        raise DispatchError("G2 product evidence security admission is missing")
+    for row in security.values():
+        if not isinstance(row, dict):
+            raise DispatchError("G2 security evidence row is malformed")
+        status_value = str(row.get("status") or "").strip().lower().replace(
+            "-", "_"
+        ).replace(" ", "_")
+        if status_value not in allowed_results:
+            raise DispatchError("G2 security evidence is not positive")
+
+    implementation = manifest.get("implementation_delivery")
+    pull_requests: list[dict[str, Any]] = []
+    if isinstance(implementation, dict):
+        single = implementation.get("pull_request")
+        multiple = implementation.get("pull_requests")
+        if isinstance(single, dict):
+            pull_requests.append(single)
+        if isinstance(multiple, list):
+            pull_requests.extend(row for row in multiple if isinstance(row, dict))
+    if not any(
+        row.get("base") == "dev"
+        and row.get("merge_sha") == closeout_task["delivery"]["commit"]
+        and isinstance(row.get("merged_at"), str)
+        for row in pull_requests
+    ):
+        raise DispatchError("G2 product evidence lacks exact merged delivery")
+
+    records = manifest.get("record_log")
+    approved_kinds = {
+        "reviewer_approval_verdict",
+        "formal_review_verdict",
+        "independent_review_verdict",
+        "review_approved",
+        "independent_review_observed",
+    }
+    approved_statuses = {"approved", "pass", "review_approved"}
+    verdicts = [
+        row
+        for row in records or []
+        if isinstance(row, dict)
+        and row.get("actor") == reviewer
+        and row.get("kind") in approved_kinds
+        and row.get("status") in approved_statuses
+    ]
+    if len(verdicts) != 1:
+        raise DispatchError("G2 product evidence reviewer verdict is not exact")
+    verdict = verdicts[0]
+    if _parse_g2_timestamp(
+        verdict.get("recorded_at"), label="G2 reviewer verdict timestamp"
+    ) > issued_at:
+        raise DispatchError("G2 reviewer verdict postdates evidence issuance")
+    if (
+        admission.get("reviewer") != reviewer
+        or admission.get("review_verdict_sha256")
+        != canonical_json_sha256(verdict)
+    ):
+        raise DispatchError("G2 reviewer verdict digest mismatch")
+
+
+def _validate_g2_projection_bundle(
+    *,
+    bundle: Mapping[str, Any],
+    contract: Mapping[str, Any],
+    identity: Mapping[str, str],
+    evidence_records: Mapping[str, Any],
+    hosted_probe: Mapping[str, Any],
+    issued_at: datetime,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if set(bundle) != G2_RECORD_BUNDLE_KEYS:
+        raise DispatchError("G2 canonical record bundle schema is not exact")
+    if bundle.get("schema_version") != contract.get("record_bundle_schema"):
+        raise DispatchError("G2 canonical record bundle version mismatch")
+    source = _require_exact_keys(
+        bundle.get("source"), G2_RECORD_BUNDLE_SOURCE_KEYS, label="G2 bundle source"
+    )
+    if (
+        source.get("store") != "telemetry_events"
+        or source.get("snapshot_isolation") != "repeatable_read"
+        or isinstance(source.get("baseline_high_watermark"), bool)
+        or not isinstance(source.get("baseline_high_watermark"), int)
+        or isinstance(source.get("source_high_watermark"), bool)
+        or not isinstance(source.get("source_high_watermark"), int)
+        or source["baseline_high_watermark"] < 0
+        or source["source_high_watermark"] <= source["baseline_high_watermark"]
+    ):
+        raise DispatchError("G2 canonical source snapshot is invalid")
+    rows = bundle.get("rows")
+    row_keys = {
+        "ingested_seq",
+        "ingested_at",
+        "event_id",
+        "event_type",
+        "created_at",
+        "payload",
+    }
+    if (
+        not isinstance(rows, list)
+        or len(rows) < 6
+        or any(not isinstance(row, dict) or set(row) != row_keys for row in rows)
+    ):
+        raise DispatchError("G2 canonical rows are not exact")
+    event_ids = [str(row.get("event_id") or "") for row in rows]
+    ingested_sequences = [row.get("ingested_seq") for row in rows]
+    if (
+        any(not event_id for event_id in event_ids)
+        or len(event_ids) != len(set(event_ids))
+        or any(isinstance(value, bool) or not isinstance(value, int) for value in ingested_sequences)
+        or len(ingested_sequences) != len(set(ingested_sequences))
+        or ingested_sequences != sorted(ingested_sequences)
+        or any(
+            following != current + 1
+            for current, following in zip(
+                ingested_sequences, ingested_sequences[1:]
+            )
+        )
+        or ingested_sequences[0] <= source["baseline_high_watermark"]
+        or ingested_sequences[-1] > source["source_high_watermark"]
+    ):
+        raise DispatchError("G2 canonical row ordering is invalid")
+    created_times = [
+        _parse_g2_timestamp(row.get("created_at"), label="G2 row created_at")
+        for row in rows
+    ]
+    ingested_times = [
+        _parse_g2_timestamp(row.get("ingested_at"), label="G2 row ingested_at")
+        for row in rows
+    ]
+    if any(
+        current >= following
+        for current, following in zip(created_times, created_times[1:])
+    ) or any(
+        current >= following
+        for current, following in zip(ingested_times, ingested_times[1:])
+    ):
+        raise DispatchError("G2 canonical timestamps are not strictly increasing")
+    if any(created > ingested for created, ingested in zip(created_times, ingested_times)):
+        raise DispatchError("G2 canonical row was ingested before creation")
+    captured_at = _parse_g2_timestamp(
+        bundle.get("captured_at"), label="G2 bundle captured_at"
+    )
+    if max(ingested_times) > captured_at or captured_at > issued_at:
+        raise DispatchError("G2 bundle capture time is outside the evidence window")
+    if (created_times[-1] - created_times[0]).total_seconds() > contract[
+        "max_chain_span_seconds"
+    ]:
+        raise DispatchError("G2 lifecycle exceeds the maximum chain span")
+
+    try:
+        from services.trade_journey import hosted_lifecycle_probe as lifecycle_probe
+        from services.trade_journey.lifecycle_projector import _fingerprint
+    except Exception as exc:
+        raise DispatchError("canonical lifecycle verifier is unavailable") from exc
+    candidates = lifecycle_probe._complete_candidates(rows)
+    if len(candidates) != 1:
+        raise DispatchError("G2 bundle does not resolve to one natural lifecycle")
+    candidate = candidates[0]
+    selected = candidate.get("selected_events") or []
+    if (
+        [row["event_id"] for row in rows]
+        != [event["event_id"] for event in selected]
+        or selected[-1]["event_type"] != "reconciliation_completed"
+        or candidate.get("identity") != dict(identity)
+    ):
+        raise DispatchError("G2 natural lifecycle resolution mismatch")
+
+    projection = _require_exact_keys(
+        bundle.get("projection"),
+        G2_RECORD_BUNDLE_PROJECTION_KEYS,
+        label="G2 projection bundle",
+    )
+    manifest = _require_exact_keys(
+        projection.get("manifest"),
+        {"schema_version", "generation", "journey_sha256", "loop_runs_sha256"},
+        label="G2 projection manifest",
+    )
+    journeys = projection.get("trade_journey_events")
+    loops = projection.get("loop_runs")
+    journey_keys = {
+        "schema_version",
+        "projector_owned",
+        "generation",
+        "projection_mode",
+        "accepted_live",
+        "controller",
+        "events",
+    }
+    loop_keys = journey_keys - {"events"} | {"records"}
+    if (
+        not isinstance(journeys, dict)
+        or set(journeys) != journey_keys
+        or not isinstance(loops, dict)
+        or set(loops) != loop_keys
+        or manifest.get("schema_version")
+        != contract.get("projection_manifest_schema")
+        or journeys.get("schema_version")
+        != contract.get("journey_projection_schema")
+        or loops.get("schema_version") != contract.get("loop_run_projection_schema")
+        or manifest.get("generation") != journeys.get("generation")
+        or manifest.get("generation") != loops.get("generation")
+        or journeys.get("projector_owned") is not True
+        or loops.get("projector_owned") is not True
+        or journeys.get("projection_mode") != "live"
+        or loops.get("projection_mode") != "live"
+        or journeys.get("accepted_live") is not True
+        or loops.get("accepted_live") is not True
+        or journeys.get("controller") != loops.get("controller")
+        or manifest.get("journey_sha256") != _fingerprint(journeys)
+        or manifest.get("loop_runs_sha256") != _fingerprint(loops)
+    ):
+        raise DispatchError("G2 projection bundle integrity mismatch")
+    controller = loops.get("controller")
+    required_controller = contract["required_projection_controller"]
+    if (
+        not isinstance(controller, dict)
+        or any(controller.get(key) != value for key, value in required_controller.items())
+        or controller.get("deployment_sha")
+        != hosted_probe.get("expected_deployment_sha")
+        or not _is_lower_hex(controller.get("deployment_sha"), 40)
+        or int(controller.get("checkpoint") or -1)
+        < source["source_high_watermark"]
+        or controller.get("generation") != manifest.get("generation")
+    ):
+        raise DispatchError("G2 projection controller is not canonical live truth")
+    projection_times = [
+        _parse_g2_timestamp(
+            controller.get(field), label=f"G2 projection controller {field}"
+        )
+        for field in (
+            "last_poll_at",
+            "last_projection_success_at",
+            "last_live_success_at",
+        )
+    ]
+    if any(
+        value > issued_at
+        or issued_at - value
+        > timedelta(seconds=contract["max_evidence_age_seconds"])
+        for value in projection_times
+    ) or _parse_g2_timestamp(
+        controller.get("last_live_event_at"),
+        label="G2 projection controller last_live_event_at",
+    ) != created_times[-1]:
+        raise DispatchError("G2 projection controller freshness mismatch")
+
+    projected_events = journeys.get("events")
+    if not isinstance(projected_events, list) or any(
+        not isinstance(event, dict) for event in projected_events
+    ):
+        raise DispatchError("G2 journey projection events are malformed")
+    projected_ids = [str(event.get("canonical_event_id") or "") for event in projected_events]
+    if (
+        len(projected_ids) != len(set(projected_ids))
+        or set(projected_ids) != set(event_ids)
+    ):
+        raise DispatchError("G2 journey projection event set mismatch")
+    projected_by_id = {
+        str(event["canonical_event_id"]): event for event in projected_events
+    }
+    for row in rows:
+        event = projected_by_id[row["event_id"]]
+        expected_stage = lifecycle_probe.EXPECTED_STAGES[row["event_type"]]
+        if (
+            event.get("event_type") != row["event_type"]
+            or event.get("stage") != expected_stage
+            or event.get("stage_status")
+            != contract.get("required_projection_stage_status")
+            or event.get("source_mode") != contract.get("required_source_mode")
+            or event.get("accepted_live") is not True
+            or event.get("source_offset") != row["ingested_seq"]
+            or any(str(event.get(field) or "") != identity[field] for field in G2_STABLE_IDENTITY_FIELDS)
+        ):
+            raise DispatchError("G2 journey projection event mismatch")
+    loop_records = loops.get("records")
+    if not isinstance(loop_records, dict) or set(loop_records) != {
+        identity["loop_run_id"]
+    }:
+        raise DispatchError("G2 loop-run projection set mismatch")
+    loop_record = loop_records[identity["loop_run_id"]]
+    if (
+        not isinstance(loop_record, dict)
+        or loop_record.get("id") != identity["loop_run_id"]
+        or loop_record.get("status") != contract.get("required_loop_run_status")
+        or loop_record.get("source")
+        != "canonical_telemetry_lifecycle_projector"
+        or loop_record.get("source_modes") != ["live"]
+        or loop_record.get("accepted_live") is not True
+        or loop_record.get("projection_mode") != "live"
+        or loop_record.get("last_canonical_event_id") != rows[-1]["event_id"]
+        or loop_record.get("last_source_offset") != rows[-1]["ingested_seq"]
+        or loop_record.get("controller_generation") != manifest.get("generation")
+        or loop_record.get("deployment_sha") != controller.get("deployment_sha")
+        or loop_record.get("last_projected_at")
+        != controller.get("last_projection_success_at")
+        or any(str(loop_record.get(field) or "") != identity[field] for field in G2_STABLE_IDENTITY_FIELDS)
+    ):
+        raise DispatchError("G2 loop-run projection record mismatch")
+
+    record_types = contract["record_event_types"]
+    rows_by_type = {row["event_type"]: row for row in rows}
+    for role in ("signal", "order", "fill", "telemetry"):
+        reference = _require_exact_keys(
+            evidence_records.get(role),
+            G2_RECORD_REFERENCE_KEYS,
+            label=f"G2 {role} record reference",
+        )
+        source_row = rows_by_type.get(record_types[role])
+        if (
+            source_row is None
+            or reference.get("event_id") != source_row["event_id"]
+            or reference.get("event_type") != source_row["event_type"]
+            or reference.get("sha256") != canonical_json_sha256(source_row)
+        ):
+            raise DispatchError(f"G2 {role} record digest resolution mismatch")
+    loop_reference = _require_exact_keys(
+        evidence_records.get("loop_run_projection"),
+        G2_PROJECTION_REFERENCE_KEYS,
+        label="G2 loop projection reference",
+    )
+    if (
+        loop_reference.get("id") != loop_record["id"]
+        or loop_reference.get("sha256") != canonical_json_sha256(loop_record)
+        or loop_reference.get("generation") != manifest["generation"]
+        or loop_reference.get("last_canonical_event_id") != rows[-1]["event_id"]
+    ):
+        raise DispatchError("G2 loop projection digest resolution mismatch")
+
+    proof = hosted_probe.get("proof")
+    if not isinstance(proof, dict):
+        raise DispatchError("G2 hosted proof payload is missing")
+    generation_name = ((proof.get("projection") or {}).get("generation_name"))
+    if not isinstance(generation_name, str) or not re.fullmatch(
+        rf"g{manifest['generation']:012d}-[0-9a-f]{{12}}", generation_name
+    ):
+        raise DispatchError("G2 hosted projection generation name is invalid")
+    try:
+        recomputed_proof = lifecycle_probe._correlate(
+            candidate=candidate,
+            baseline_high_watermark=source["baseline_high_watermark"],
+            high_watermark=source["source_high_watermark"],
+            journeys=journeys,
+            loops=loops,
+            generation_name=generation_name,
+            expected_sha=controller["deployment_sha"],
+        )
+    except Exception as exc:
+        raise DispatchError("G2 hosted proof cannot be recomputed") from exc
+    if proof != recomputed_proof:
+        raise DispatchError("G2 hosted proof does not match canonical records")
+    return rows, loop_record
+
+
+def _validate_g2_evidence(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    *,
+    now: datetime,
+) -> None:
+    if now.tzinfo is None:
+        raise DispatchError("G2 verifier now must be timezone-aware")
+    now = now.astimezone(timezone.utc)
+    if catalog.get("overlay_applied") is not True:
+        raise DispatchError("G2 verifier requires the validated sequencing overlay")
+    contract = _require_exact_keys(
+        catalog.get("g2_evidence_contract"),
+        G2_EVIDENCE_CONTRACT_KEYS,
+        label="G2 evidence contract",
+    )
+    if contract.get("version") != 2:
+        raise DispatchError("G2 evidence contract version mismatch")
+    evidence, _, _ = _read_g2_artifact(
+        contract, "evidence_path", label="G2 evidence manifest"
+    )
+    if set(evidence) != G2_EVIDENCE_KEYS:
+        raise DispatchError("G2 evidence manifest schema is not exact")
+    if (
+        evidence.get("schema_version") != "pantheon.loop-prod-g2-evidence.v2"
+        or evidence.get("task_id") != contract.get("target_task")
+        or evidence.get("program_id") != catalog.get("program_id")
+        or evidence.get("target_environment")
+        != contract.get("required_target_environment")
+    ):
+        raise DispatchError("G2 evidence manifest authority mismatch")
+    authority = _require_exact_keys(
+        evidence.get("authority"), G2_AUTHORITY_KEYS, label="G2 evidence authority"
+    )
+    source_hashes = catalog.get("source_hashes") or {}
+    expected_authority = {
+        "tasks_catalog_sha256": source_hashes.get("tasks_catalog_sha256"),
+        "sequencing_addendum_sha256": source_hashes.get(
+            "sequencing_addendum_sha256"
+        ),
+        "merge_pr_3737_sha": source_hashes.get("merge_pr_3737_sha"),
+        "overlay_sha256": catalog.get("sequencing_overlay_sha256"),
+        "target_task_original_contract_sha256": contract.get(
+            "target_task_original_contract_sha256"
+        ),
+        "target_task_amended_contract_sha256": contract.get(
+            "target_task_amended_contract_sha256"
+        ),
+    }
+    if authority != expected_authority or any(
+        not _is_lower_hex(value, 64 if key != "merge_pr_3737_sha" else 40)
+        for key, value in authority.items()
+    ):
+        raise DispatchError("G2 evidence hash authority mismatch")
+    identity = _require_exact_keys(
+        evidence.get("identity"), set(G2_STABLE_IDENTITY_FIELDS), label="G2 identity"
+    )
+    if any(not isinstance(identity[field], str) or not identity[field].strip() for field in G2_STABLE_IDENTITY_FIELDS):
+        raise DispatchError("G2 stable identity is incomplete")
+    if identity["environment"] != contract.get("required_record_environment"):
+        raise DispatchError("G2 record environment mismatch")
+
+    issued_at = _parse_g2_timestamp(evidence.get("issued_at"), label="G2 issued_at")
+    expires_at = _parse_g2_timestamp(evidence.get("expires_at"), label="G2 expires_at")
+    max_age = timedelta(seconds=contract["max_evidence_age_seconds"])
+    max_skew = timedelta(seconds=contract["max_future_skew_seconds"])
+    if (
+        issued_at > now + max_skew
+        or now > expires_at
+        or now - issued_at > max_age
+        or expires_at <= issued_at
+        or expires_at - issued_at > max_age
+    ):
+        raise DispatchError("G2 evidence is stale, future-dated, or expired")
+
+    bundle_reference = _require_exact_keys(
+        evidence.get("record_bundle"), {"path", "sha256"}, label="G2 bundle reference"
+    )
+    probe_reference = _require_exact_keys(
+        evidence.get("hosted_probe"), {"path", "sha256"}, label="G2 probe reference"
+    )
+    if (
+        bundle_reference.get("path") != contract.get("canonical_record_bundle_path")
+        or probe_reference.get("path") != contract.get("hosted_probe_path")
+    ):
+        raise DispatchError("G2 artifact path binding mismatch")
+    bundle, bundle_raw, _ = _read_g2_artifact(
+        contract, "canonical_record_bundle_path", label="G2 canonical record bundle"
+    )
+    hosted, hosted_raw, _ = _read_g2_artifact(
+        contract, "hosted_probe_path", label="G2 hosted lifecycle proof"
+    )
+    if (
+        bundle_reference.get("sha256") != sha256_bytes(bundle_raw)
+        or probe_reference.get("sha256") != sha256_bytes(hosted_raw)
+    ):
+        raise DispatchError("G2 artifact raw digest mismatch")
+    hosted_keys = {
+        "schema_version",
+        "task_id",
+        "outcome",
+        "observed_at",
+        "expected_deployment_sha",
+        "proof",
+        "redaction",
+    }
+    if (
+        set(hosted) != hosted_keys
+        or hosted.get("schema_version") != contract.get("hosted_probe_schema")
+        or hosted.get("task_id") != "LOOP-PROD-TEL-002"
+        or hosted.get("outcome") != "passed"
+        or hosted.get("redaction")
+        != {"dsn_included": False, "payloads_included": False}
+        or not _is_lower_hex(hosted.get("expected_deployment_sha"), 40)
+    ):
+        raise DispatchError("G2 hosted lifecycle proof admission mismatch")
+    observed_at = _parse_g2_timestamp(
+        hosted.get("observed_at"), label="G2 hosted proof observed_at"
+    )
+    if observed_at > issued_at or issued_at - observed_at > max_age:
+        raise DispatchError("G2 hosted proof is outside the evidence window")
+    records = _require_exact_keys(
+        evidence.get("records"), G2_RECORDS_KEYS, label="G2 evidence records"
+    )
+    rows, _ = _validate_g2_projection_bundle(
+        bundle=bundle,
+        contract=contract,
+        identity=identity,
+        evidence_records=records,
+        hosted_probe=hosted,
+        issued_at=issued_at,
+    )
+    earliest = min(
+        _parse_g2_timestamp(row["created_at"], label="G2 row created_at")
+        for row in rows
+    )
+    if issued_at - earliest > max_age:
+        raise DispatchError("G2 canonical lifecycle is stale")
+    closeout_task = _resolve_g2_closeout_task(state, catalog, contract)
+    _validate_g2_product_evidence(
+        closeout_task=closeout_task,
+        contract=contract,
+        admission=evidence.get("closeout_admission"),
+        issued_at=issued_at,
+    )
+
+
+def check_g2_evidence_valid(
+    state: dict[str, Any],
+    catalog: dict[str, Any] | None = None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Return one fail-closed G2 decision over immutable canonical artifacts."""
+
+    try:
+        if catalog is None:
+            catalog, _ = read_regular_json(
+                catalog_path(), label="immutable sequencing catalog"
+            )
+            overlay_env = str(
+                os.environ.get("LOOP_PRODUCT_SEQUENCING_OVERLAY") or ""
+            ).strip()
+            overlay_path = (
+                Path(os.path.expanduser(overlay_env)).resolve()
+                if overlay_env
+                else DEFAULT_CATALOG_PATH.parent
+                / "sequencing-overlay-2026-07-16.json"
+            )
+            apply_sequencing_overlay(catalog, overlay_path)
+        _validate_g2_evidence(
+            state,
+            catalog,
+            now=now or datetime.now(timezone.utc),
+        )
         return True
     except Exception:
         return False
 
 
-def apply_sequencing_overlay(catalog: dict[str, Any], overlay_path: Path) -> None:
-    try:
-        overlay = read_json(overlay_path)
-    except Exception as exc:
-        raise DispatchError(f"failed to load sequencing overlay from {overlay_path}: {exc}")
+def _require_exact_keys(value: Any, expected: set[str], *, label: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != expected:
+        raise DispatchError(f"{label} schema is not exact")
+    return value
 
-    # 1. Validate source hashes
-    source_hashes = overlay.get("source_hashes", {})
-    expected_tasks_hash = "44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357"
-    expected_addendum_hash = "9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519"
-    
-    if source_hashes.get("tasks_catalog_sha256") != expected_tasks_hash:
-        raise DispatchError("sequencing overlay tasks_catalog_sha256 hash mismatch")
-    if source_hashes.get("sequencing_addendum_sha256") != expected_addendum_hash:
-        raise DispatchError("sequencing overlay sequencing_addendum_sha256 hash mismatch")
 
-    # 2. Validate complete 48-ID set coverage
-    catalog_ids = {task["id"] for task in catalog.get("tasks", [])}
-    overlay_tasks = overlay.get("tasks", {})
-    overlay_ids = set(overlay_tasks.keys())
+def _require_string_list(
+    value: Any,
+    *,
+    label: str,
+    allow_empty: bool = True,
+) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or (not allow_empty and not value)
+        or any(not isinstance(item, str) or not item.strip() for item in value)
+        or len(value) != len(set(value))
+    ):
+        raise DispatchError(f"{label} must be a unique list of non-empty strings")
+    return value
 
-    if len(catalog_ids) != 48:
-        raise DispatchError(f"catalog must contain exactly 48 tasks, found {len(catalog_ids)}")
-    
-    missing_ids = catalog_ids - overlay_ids
-    extra_ids = overlay_ids - catalog_ids
-    
-    if missing_ids:
-        raise DispatchError(f"sequencing overlay is missing tasks: {', '.join(sorted(missing_ids))}")
-    if extra_ids:
-        raise DispatchError(f"sequencing overlay targets unknown tasks: {', '.join(sorted(extra_ids))}")
 
-    # 3. Apply updates to the catalog tasks
-    tasks_by_id = {task["id"]: task for task in catalog.get("tasks", [])}
-    for task_id, updates in overlay_tasks.items():
-        task = tasks_by_id[task_id]
-        for key, value in updates.items():
-            task[key] = value
+def _validate_sequencing_dag(tasks: list[dict[str, Any]]) -> None:
+    by_id = {str(task["id"]): task for task in tasks}
+    visiting: set[str] = set()
+    visited: set[str] = set()
 
-    # Apply g2 evidence contract and source hashes to catalog metadata
-    catalog["g2_evidence_contract"] = overlay.get("g2_evidence_contract")
-    catalog["source_hashes"] = overlay.get("source_hashes")
-
-    # 4. Check for cycle detection (DFS acyclicity)
-    by_id = {str(t["id"]): t for t in catalog["tasks"]}
-    visiting = set()
-    visited = set()
-    def dfs(t_id):
-        if t_id in visiting:
-            raise DispatchError(f"dependency cycle detected at {t_id}")
-        if t_id in visited:
+    def visit(task_id: str) -> None:
+        if task_id in visiting:
+            raise DispatchError(f"sequencing overlay dependency cycle at {task_id}")
+        if task_id in visited:
             return
-        visiting.add(t_id)
-        if t_id in by_id:
-            for dep in by_id[t_id].get("depends_on", []):
-                if dep in by_id:
-                    dfs(dep)
-        visiting.remove(t_id)
-        visited.add(t_id)
-        
-    for t_id in by_id:
-        dfs(t_id)
+        visiting.add(task_id)
+        for dependency in by_id[task_id]["depends_on"]:
+            if dependency in by_id:
+                visit(dependency)
+        visiting.remove(task_id)
+        visited.add(task_id)
 
-    # 5. Check wave order constraints on the modified catalog
+    for task_id in by_id:
+        visit(task_id)
     for task_id, task in by_id.items():
-        for dep_id in task.get("depends_on", []):
-            if dep_id in by_id and by_id[dep_id]["wave"] > task["wave"]:
+        for dependency in task["depends_on"]:
+            if dependency in by_id and by_id[dependency]["wave"] > task["wave"]:
                 raise DispatchError(
-                    f"Sequencing overlay error: {task_id} wave {task['wave']} depends on later wave "
-                    f"{dep_id}={by_id[dep_id]['wave']}"
+                    f"sequencing overlay wave inversion: {task_id} wave "
+                    f"{task['wave']} depends on {dependency} wave "
+                    f"{by_id[dependency]['wave']}"
                 )
 
-    catalog["overlay_applied"] = True
+
+def _validate_g2_overlay_contract(
+    contract: Any,
+    *,
+    overlay_tasks: dict[str, Any],
+    original_by_id: dict[str, dict[str, Any]],
+    amended_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    value = _require_exact_keys(
+        contract, G2_EVIDENCE_CONTRACT_KEYS, label="G2 evidence contract"
+    )
+    if type(value.get("version")) is not int or value.get("version") != 2:
+        raise DispatchError("G2 evidence contract version must be 2")
+    target_id = value.get("target_task")
+    if (
+        not isinstance(target_id, str)
+        or target_id not in amended_by_id
+        or overlay_tasks[target_id]["classification"]
+        != "part of the G2 proof path"
+    ):
+        raise DispatchError("G2 target task is not an exact G2 task")
+    expected_original = task_contract_sha256(original_by_id[target_id])
+    expected_amended = task_contract_sha256(amended_by_id[target_id])
+    if (
+        value.get("target_task_original_contract_sha256") != expected_original
+        or value.get("target_task_amended_contract_sha256") != expected_amended
+    ):
+        raise DispatchError("G2 target task contract digest mismatch")
+    for key, expected in EXPECTED_SEQUENCING_SOURCE_HASHES.items():
+        if value.get(key) != expected:
+            raise DispatchError(f"G2 evidence contract {key} mismatch")
+    expected_root = (
+        "docs/deployment/evidence/loop-product-level/" + target_id + "/"
+    )
+    expected_paths = {
+        "evidence_path": expected_root + "g2-paper-trade-chain.v2.json",
+        "closeout_manifest_path": expected_root + "evidence.json",
+        "hosted_probe_path": expected_root + "hosted-lifecycle-proof.v1.json",
+        "canonical_record_bundle_path": expected_root
+        + "g2-canonical-records.v2.json",
+    }
+    for key, expected in expected_paths.items():
+        if value.get(key) != expected:
+            raise DispatchError(f"G2 evidence contract {key} mismatch")
+        _safe_repo_relative_path(value[key], label=f"G2 {key}")
+    exact_scalars = {
+        "bundle_digest_algorithm": "sha256(bytes)",
+        "record_digest_algorithm": "sha256(canonical-json)",
+        "record_bundle_schema": "pantheon.g2-canonical-record-bundle.v2",
+        "hosted_probe_schema": "pantheon.loop-prod-tel-002-hosted-proof.v1",
+        "projection_manifest_schema": "pantheon.lifecycle-projection-bundle.v1",
+        "journey_projection_schema": "pantheon.trade-journey-projection.v1",
+        "loop_run_projection_schema": "pantheon.loop-run-projection.v1",
+        "required_target_environment": "dev",
+        "required_record_environment": "paper",
+        "required_execution_mode": "paper",
+        "required_source_mode": "live",
+        "required_projection_stage_status": "succeeded",
+        "required_loop_run_status": "completed",
+    }
+    if any(value.get(key) != expected for key, expected in exact_scalars.items()):
+        raise DispatchError("G2 evidence contract scalar policy mismatch")
+    exact_limits = {
+        "max_evidence_age_seconds": 86400,
+        "max_chain_span_seconds": 3600,
+        "max_future_skew_seconds": 300,
+    }
+    if any(
+        isinstance(value.get(key), bool) or value.get(key) != expected
+        for key, expected in exact_limits.items()
+    ):
+        raise DispatchError("G2 evidence freshness policy mismatch")
+    if value.get("stable_identity_fields") != list(G2_STABLE_IDENTITY_FIELDS):
+        raise DispatchError("G2 stable identity contract mismatch")
+    event_order = value.get("event_order_contract")
+    if (
+        not isinstance(event_order, dict)
+        or type(event_order.get("minimum_repeat_count")) is not int
+        or event_order
+        != {
+        "prefix": ["signal_generation", "trade_decision"],
+        "repeat_group": [
+            "order_submitted",
+            "paper_fill_simulated",
+            "position_snapshot",
+        ],
+        "minimum_repeat_count": 1,
+        "suffix": ["reconciliation_completed"],
+        }
+    ):
+        raise DispatchError("G2 event order contract mismatch")
+    if value.get("record_event_types") != {
+        "signal": "signal_generation",
+        "order": "order_submitted",
+        "fill": "paper_fill_simulated",
+        "telemetry": "reconciliation_completed",
+    }:
+        raise DispatchError("G2 record role contract mismatch")
+    if value.get("required_projection_controller") != {
+        "mode": "live",
+        "accepted_live": True,
+        "truth_level": "canonical_live",
+        "status": "ready",
+        "backlog": 0,
+    }:
+        raise DispatchError("G2 projection controller contract mismatch")
+    return value
+
+
+def apply_sequencing_overlay(catalog: dict[str, Any], overlay_path: Path) -> None:
+    """Validate the complete overlay against immutable inputs, then apply atomically."""
+
+    overlay, overlay_raw = read_regular_json(
+        overlay_path, label="sequencing overlay"
+    )
+    overlay_sha256 = sha256_bytes(overlay_raw)
+    if overlay_sha256 != EXPECTED_SEQUENCING_OVERLAY_SHA256:
+        raise DispatchError("sequencing overlay digest mismatch")
+    _require_exact_keys(overlay, SEQUENCING_OVERLAY_KEYS, label="sequencing overlay")
+    if overlay.get("schema_version") != 2:
+        raise DispatchError("sequencing overlay schema_version must be 2")
+
+    source_hashes = _require_exact_keys(
+        overlay.get("source_hashes"),
+        set(EXPECTED_SEQUENCING_SOURCE_HASHES),
+        label="sequencing overlay source_hashes",
+    )
+    if source_hashes != EXPECTED_SEQUENCING_SOURCE_HASHES:
+        raise DispatchError("sequencing overlay source hash authority mismatch")
+    source_catalog, source_catalog_raw = read_regular_json(
+        catalog_path(), label="immutable sequencing catalog"
+    )
+    if sha256_bytes(source_catalog_raw) != source_hashes["tasks_catalog_sha256"]:
+        raise DispatchError("immutable sequencing catalog digest mismatch")
+    if canonical_json_sha256(source_catalog) != canonical_json_sha256(catalog):
+        raise DispatchError("catalog object diverges from immutable sequencing source")
+    addendum_raw = read_regular_bytes(
+        SEQUENCING_ADDENDUM_PATH, label="immutable sequencing addendum"
+    )
+    if sha256_bytes(addendum_raw) != source_hashes["sequencing_addendum_sha256"]:
+        raise DispatchError("immutable sequencing addendum digest mismatch")
+
+    original_tasks = catalog.get("tasks")
+    if (
+        not isinstance(original_tasks, list)
+        or len(original_tasks) != 48
+        or any(not isinstance(task, dict) for task in original_tasks)
+    ):
+        raise DispatchError("immutable sequencing catalog must contain 48 task objects")
+    original_ids = [str(task.get("id") or "") for task in original_tasks]
+    if any(not task_id for task_id in original_ids) or len(original_ids) != len(
+        set(original_ids)
+    ):
+        raise DispatchError("immutable sequencing catalog task IDs are invalid")
+    original_by_id = {
+        str(task["id"]): deepcopy(task) for task in original_tasks
+    }
+    overlay_tasks = overlay.get("tasks")
+    if not isinstance(overlay_tasks, dict):
+        raise DispatchError("sequencing overlay tasks must be an object")
+    overlay_ids = set(overlay_tasks)
+    catalog_ids = set(original_by_id)
+    if overlay_ids != catalog_ids:
+        raise DispatchError(
+            "sequencing overlay exact task set mismatch: "
+            f"missing={sorted(catalog_ids - overlay_ids)} "
+            f"extra={sorted(overlay_ids - catalog_ids)}"
+        )
+
+    candidate = deepcopy(catalog)
+    candidate_by_id = {str(task["id"]): task for task in candidate["tasks"]}
+    for task_id in original_ids:
+        entry = _require_exact_keys(
+            overlay_tasks[task_id],
+            SEQUENCING_TASK_ENTRY_KEYS,
+            label=f"sequencing entry {task_id}",
+        )
+        wave = entry.get("wave")
+        if isinstance(wave, bool) or not isinstance(wave, int) or wave < 0:
+            raise DispatchError(f"sequencing entry {task_id} wave is invalid")
+        classification = entry.get("classification")
+        rationale = entry.get("rationale")
+        if classification not in SEQUENCING_CLASSIFICATIONS:
+            raise DispatchError(
+                f"sequencing entry {task_id} classification is invalid"
+            )
+        if not isinstance(rationale, str) or not rationale.strip():
+            raise DispatchError(f"sequencing entry {task_id} rationale is empty")
+        original_dependencies = _require_string_list(
+            entry.get("original_depends_on"),
+            label=f"sequencing entry {task_id} original dependencies",
+        )
+        amended_dependencies = _require_string_list(
+            entry.get("amended_depends_on"),
+            label=f"sequencing entry {task_id} amended dependencies",
+        )
+        if original_dependencies != original_by_id[task_id].get("depends_on"):
+            raise DispatchError(
+                f"sequencing entry {task_id} original dependency mismatch"
+            )
+        if task_id in amended_dependencies:
+            raise DispatchError(f"sequencing entry {task_id} depends on itself")
+        unknown_external = {
+            dependency
+            for dependency in amended_dependencies
+            if dependency not in catalog_ids
+            and dependency not in set(original_dependencies)
+        }
+        if unknown_external:
+            raise DispatchError(
+                f"sequencing entry {task_id} adds unknown external dependencies: "
+                + ", ".join(sorted(unknown_external))
+            )
+        target = candidate_by_id[task_id]
+        target["wave"] = wave
+        target["depends_on"] = deepcopy(amended_dependencies)
+
+    _validate_sequencing_dag(candidate["tasks"])
+    amended_by_id = {str(task["id"]): task for task in candidate["tasks"]}
+    release_gate = _require_exact_keys(
+        overlay.get("release_gate"), RELEASE_GATE_KEYS, label="release gate"
+    )
+    if (
+        type(release_gate.get("version")) is not int
+        or release_gate.get("version") != 1
+        or release_gate.get("gate_id") != "hardening-after-g2-paper-trade-v1"
+        or release_gate.get("gated_classifications")
+        != sorted(GATED_SEQUENCING_CLASSIFICATIONS)
+        or release_gate.get("release_predicate")
+        != "g2_evidence_contract_v2_valid"
+        or release_gate.get("pre_gate_action")
+        != "park_new_and_existing_gated_tasks_allow_ungated"
+        or release_gate.get("post_gate_action")
+        != "allow_dependency_governed_materialization"
+    ):
+        raise DispatchError("release gate policy mismatch")
+    gated_ids = _require_string_list(
+        release_gate.get("gated_task_ids"),
+        label="release gate task IDs",
+        allow_empty=False,
+    )
+    expected_gated_ids = {
+        task_id
+        for task_id, entry in overlay_tasks.items()
+        if entry["classification"] in GATED_SEQUENCING_CLASSIFICATIONS
+    }
+    if set(gated_ids) != expected_gated_ids:
+        raise DispatchError("release gate task set does not match classifications")
+
+    deferral = _require_exact_keys(
+        overlay.get("acceptance_deferral"),
+        ACCEPTANCE_DEFERRAL_KEYS,
+        label="acceptance deferral",
+    )
+    if (
+        type(deferral.get("version")) is not int
+        or deferral.get("version") != 1
+        or deferral.get("policy_id")
+        != "pre-g2-strict-only-acceptance-deferral-v1"
+        or deferral.get("release_gate_id") != release_gate["gate_id"]
+        or deferral.get("catalog_acceptance_immutable") is not True
+        or deferral.get("applies_to_classifications")
+        != [
+            "permitted before the paper-trade proof",
+            "part of the G2 proof path",
+        ]
+        or deferral.get("deferred_dimensions")
+        != [
+            "strict_auth",
+            "browser_dev_bearer_removal",
+            "mfa",
+            "two_person",
+            "negative_identity",
+        ]
+        or deferral.get("retained_dimensions")
+        != [
+            "tenant_isolation",
+            "environment_binding",
+            "paper_execution",
+            "no_live_capital",
+        ]
+        or deferral.get("materialized_acceptance_action")
+        != "preserve_catalog_acceptance_unchanged"
+    ):
+        raise DispatchError("acceptance deferral policy mismatch")
+    pre_g2_ids = _require_string_list(
+        deferral.get("applies_to_task_ids"),
+        label="acceptance deferral task IDs",
+        allow_empty=False,
+    )
+    expected_pre_g2_ids = {
+        task_id
+        for task_id, entry in overlay_tasks.items()
+        if entry["classification"] in PRE_G2_SEQUENCING_CLASSIFICATIONS
+    }
+    if set(pre_g2_ids) != expected_pre_g2_ids:
+        raise DispatchError(
+            "acceptance deferral task set does not match classifications"
+        )
+    for task_id in original_ids:
+        if candidate_by_id[task_id].get("acceptance") != original_by_id[
+            task_id
+        ].get("acceptance"):
+            raise DispatchError("sequencing overlay changed catalog acceptance")
+
+    g2_contract = _validate_g2_overlay_contract(
+        overlay.get("g2_evidence_contract"),
+        overlay_tasks=overlay_tasks,
+        original_by_id=original_by_id,
+        amended_by_id=amended_by_id,
+    )
+    if expected_gated_ids & expected_pre_g2_ids or (
+        expected_gated_ids | expected_pre_g2_ids
+    ) != catalog_ids:
+        raise DispatchError("sequencing release partitions are not exact")
+
+    def internal_ancestors(task_id: str) -> set[str]:
+        result: set[str] = set()
+        pending = list(amended_by_id[task_id]["depends_on"])
+        while pending:
+            dependency = pending.pop()
+            if dependency not in amended_by_id or dependency in result:
+                continue
+            result.add(dependency)
+            pending.extend(amended_by_id[dependency]["depends_on"])
+        return result
+
+    for task_id in expected_pre_g2_ids:
+        if internal_ancestors(task_id) & expected_gated_ids:
+            raise DispatchError(
+                f"pre-G2 task {task_id} has a gated dependency ancestor"
+            )
+    target_id = str(g2_contract["target_task"])
+    for task_id in expected_gated_ids:
+        if target_id not in internal_ancestors(task_id):
+            raise DispatchError(
+                f"gated task {task_id} is not downstream of the G2 checkpoint"
+            )
+    candidate["source_hashes"] = deepcopy(source_hashes)
+    candidate["sequencing_entries"] = deepcopy(overlay_tasks)
+    candidate["original_task_contract_sha256s"] = {
+        task_id: task_contract_sha256(task)
+        for task_id, task in original_by_id.items()
+    }
+    candidate["release_gate"] = deepcopy(release_gate)
+    candidate["acceptance_deferral"] = deepcopy(deferral)
+    candidate["g2_evidence_contract"] = deepcopy(g2_contract)
+    candidate["sequencing_overlay_sha256"] = overlay_sha256
+    candidate["overlay_applied"] = True
+    catalog.clear()
+    catalog.update(candidate)
 
 
 def report(
@@ -4520,8 +5779,9 @@ def report(
 def main() -> int:
     args = parse_args()
     selected_catalog_path = catalog_path()
-    catalog_bytes = selected_catalog_path.read_bytes()
-    catalog = read_json(selected_catalog_path)
+    catalog, catalog_bytes = read_regular_json(
+        selected_catalog_path, label="loop product task catalog"
+    )
     tasks = validate_catalog(catalog, selected_catalog_path)
 
     # Locate and apply sequencing overlay if present
