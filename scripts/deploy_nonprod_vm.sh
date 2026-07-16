@@ -588,11 +588,39 @@ preserve_known_deploy_runtime_state() {
   git stash push --include-untracked -m "$stash_label" -- "${present_paths[@]}" >/dev/null
 }
 
+preserve_target_tracked_untracked_paths() {
+  local target_tracked_paths=()
+  local entry
+  local status
+  local path
+  local stash_label
+
+  while IFS= read -r -d '' entry; do
+    status="${entry:0:2}"
+    path="${entry:3}"
+    if [[ "$status" != "??" || -z "$path" ]]; then
+      continue
+    fi
+    if git cat-file -e "${PANTHEON_DEPLOY_SHA}:${path}" 2>/dev/null; then
+      target_tracked_paths+=("$path")
+    fi
+  done < <(git status --porcelain -z)
+
+  if [[ "${#target_tracked_paths[@]}" -eq 0 ]]; then
+    return
+  fi
+
+  stash_label="deploy-target-tracked-untracked-${PANTHEON_DEPLOY_ENV}-${PANTHEON_DEPLOY_COMPONENT}-${PANTHEON_DEPLOY_SHA:0:12}-$(date -u +%Y%m%dT%H%M%SZ)"
+  info "preserving untracked paths that target commit tracks before checkout (${stash_label})"
+  git stash push --include-untracked -m "$stash_label" -- "${target_tracked_paths[@]}" >/dev/null
+}
+
 require_clean_checkout() {
   local status
   local stash_label
 
   preserve_known_deploy_runtime_state
+  preserve_target_tracked_untracked_paths
 
   status="$(git status --porcelain)"
   if [[ -n "$status" && "${PANTHEON_ALLOW_DIRTY_DEPLOY}" != "true" ]]; then
