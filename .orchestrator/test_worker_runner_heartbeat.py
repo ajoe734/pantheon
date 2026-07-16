@@ -1,8 +1,23 @@
 """Tests for worker_runner heartbeat agent/task-id derivation (observability fix)."""
-import importlib.util, os, unittest
+import importlib.util, json, os, subprocess, sys, tempfile, unittest
+from pathlib import Path
+from unittest import mock
+
 _P = os.path.join(os.path.dirname(__file__), "worker_runner.py")
 _spec = importlib.util.spec_from_file_location("worker_runner", _P)
 wr = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(wr)
+
+
+def _init_repo(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+
+
+def _write_status(path: Path) -> None:
+    (path / "ai-status.json").write_text(
+        json.dumps({"tasks": [], "agents": [], "handoffs": [], "blockers": []}) + "\n",
+        encoding="utf-8",
+    )
 
 
 class TestDeriveAgent(unittest.TestCase):
@@ -22,6 +37,87 @@ class TestDeriveTaskId(unittest.TestCase):
         self.assertEqual(wr.derive_task_id(cmd), "CONSOLE-DATA-EVOLUTION")
     def test_none_when_absent(self):
         self.assertIsNone(wr.derive_task_id(["claude", "-p", "no task here"]))
+
+
+class TestCoordinationRootValidation(unittest.TestCase):
+    def test_requires_status_root_when_workspace_isolated(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "PANTHEON_STATUS_ROOT is required"):
+                wr.validate_coordination_root(Path("/tmp/task-worktree"))
+
+    def test_rejects_relative_status_root(self):
+        with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": "relative-root"}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "absolute path"):
+                wr.validate_coordination_root(Path("/tmp/task-worktree"))
+
+    def test_rejects_symlink_status_root(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-status-root-") as temp_dir:
+            root = Path(temp_dir)
+            target = root / "central"
+            _init_repo(target)
+            _write_status(target)
+            link = root / "central-link"
+            link.symlink_to(target, target_is_directory=True)
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(link)}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
+                    wr.validate_coordination_root(root / "task-worktree")
+
+    def test_rejects_status_root_equal_to_workspace(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-mismatched-root-") as temp_dir:
+            worktree = Path(temp_dir) / "task-worktree"
+            _init_repo(worktree)
+            _write_status(worktree)
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(worktree)}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "not the isolated task worktree"):
+                    wr.validate_coordination_root(worktree)
+
+    def test_child_command_runs_in_task_worktree_with_central_status_root(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-cwd-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            worktree = root / "task-worktree"
+            _init_repo(central)
+            _init_repo(worktree)
+            _write_status(central)
+            heartbeat = root / "heartbeat.json"
+            status = root / "runner-status.json"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PANTHEON_STATUS_ROOT": str(central),
+                    "PANTHEON_WORKTREE_ROOT": str(worktree),
+                    "ORCH_WORKSPACE_PATH": str(worktree),
+                }
+            )
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    _P,
+                    "--run-id",
+                    "codex-20260716T000000Z-test",
+                    "--heartbeat-path",
+                    str(heartbeat),
+                    "--status-path",
+                    str(status),
+                    "--",
+                    sys.executable,
+                    "-c",
+                    (
+                        "import os, subprocess; "
+                        "print(os.getcwd()); "
+                        "subprocess.run(['git', 'rev-parse', '--show-toplevel'], check=True)"
+                    ),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            self.assertIn(str(worktree), proc.stdout)
+            runner_status = json.loads(status.read_text(encoding="utf-8"))
+            self.assertEqual(runner_status["status"], "completed")
 
 
 if __name__ == "__main__":

@@ -102,6 +102,7 @@ class JsonLoadResilienceTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmpdir:
             status_root = Path(tmpdir)
+            subprocess.run(["git", "init", "-q"], cwd=status_root, check=True)
             status_file = status_root / "ai-status.json"
             status_file.write_text("", encoding="utf-8")
             env = os.environ.copy()

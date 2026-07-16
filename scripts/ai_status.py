@@ -26,11 +26,26 @@ except ModuleNotFoundError:  # pragma: no cover - exercised only in lean supervi
 YAML_ERROR_TYPES = (yaml.YAMLError,) if yaml is not None else ()
 
 ROOT = Path(__file__).resolve().parents[1]
-STATUS_ROOT = (
-    Path(os.path.expanduser(os.environ["PANTHEON_STATUS_ROOT"])).resolve()
-    if os.environ.get("PANTHEON_STATUS_ROOT")
-    else ROOT
+STATUS_ROOT_ENV = "PANTHEON_STATUS_ROOT"
+AUTO_WORKER_ENV_MARKERS = (
+    "ORCH_RUN_ID",
+    "PANTHEON_WORKTREE_ROOT",
+    "ORCH_WORKSPACE_PATH",
 )
+
+
+def _status_root_env_value() -> str:
+    return str(os.environ.get(STATUS_ROOT_ENV) or "").strip()
+
+
+def _resolve_status_root_from_env() -> Path:
+    raw = _status_root_env_value()
+    if raw:
+        return Path(os.path.expanduser(raw)).resolve()
+    return ROOT
+
+
+STATUS_ROOT = _resolve_status_root_from_env()
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
@@ -64,8 +79,10 @@ from runtime_state import (
     load_runtime_state_snapshot,
 )
 from common import (
+    activity_audit_lock_path,
     activity_audit_source_paths_unlocked,
     append_activity_log_entries_unlocked,
+    canonical_task_state_lock_path,
     durable_write_bytes,
     prepare_activity_audit_unlocked,
     read_activity_log_tail_bytes,
@@ -97,6 +114,154 @@ DASHBOARD_BUNDLE_FILE = STATUS_ROOT / "dashboard-bundle.json"
 DEFAULT_PLANNING_README = "docs/02-architecture/consensus/phase1/README.md"
 DEFAULT_PLANNING_SESSION_FILE = "docs/02-architecture/consensus/phase1/planning-session.json"
 DEFAULT_PLANNING_CHECKLIST_FILE = "docs/02-architecture/consensus/phase1/pantheon-backend-completion-checklist.md"
+
+
+def configure_status_root_paths(status_root: str | Path) -> Path:
+    """Bind every governed status/archive/audit path to one root."""
+
+    global STATUS_ROOT
+    global STATUS_FILE, LOG_FILE, CURRENT_WORK_FILE, DOCS_SITE_DIR
+    global PLANNING_STATE_FILE, ORCHESTRATOR_STATE_FILE, APPROVAL_QUEUE_FILE
+    global DASHBOARD_BUNDLE_FILE, ARCHIVE_TASKS_DIR
+
+    root = Path(status_root).expanduser().resolve()
+    STATUS_ROOT = root
+    STATUS_FILE = root / "ai-status.json"
+    LOG_FILE = root / "ai-activity-log.jsonl"
+    CURRENT_WORK_FILE = root / "current-work.md"
+    DOCS_SITE_DIR = root / "docs-site"
+    PLANNING_STATE_FILE = root / ".orchestrator" / "planning-state.json"
+    ORCHESTRATOR_STATE_FILE = root / ".orchestrator" / "state.json"
+    APPROVAL_QUEUE_FILE = root / ".orchestrator" / "approval-queue.json"
+    DASHBOARD_BUNDLE_FILE = root / "dashboard-bundle.json"
+
+    task_archive_module.STATUS_ROOT = root
+    task_archive_module.STATUS_FILE = STATUS_FILE
+    task_archive_module.ARCHIVE_DIR = root / "ai-task-archive"
+    task_archive_module.ARCHIVE_TASKS_DIR = task_archive_module.ARCHIVE_DIR / "tasks"
+    task_archive_module.ARCHIVE_INDEX_FILE = task_archive_module.ARCHIVE_DIR / "index.json"
+    ARCHIVE_TASKS_DIR = task_archive_module.ARCHIVE_TASKS_DIR
+    return root
+
+
+configure_status_root_paths(STATUS_ROOT)
+
+
+def _auto_worker_requires_explicit_status_root() -> bool:
+    return any(str(os.environ.get(marker) or "").strip() for marker in AUTO_WORKER_ENV_MARKERS)
+
+
+def _worker_workspace_root() -> Path | None:
+    raw = str(
+        os.environ.get("PANTHEON_WORKTREE_ROOT")
+        or os.environ.get("ORCH_WORKSPACE_PATH")
+        or ""
+    ).strip()
+    if not raw:
+        return None
+    return Path(os.path.expanduser(raw)).resolve()
+
+
+def _git_toplevel(path: Path) -> Path | None:
+    proc = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    top = proc.stdout.strip()
+    if not top:
+        return None
+    return Path(top).resolve()
+
+
+def _path_parent_under_root(path: Path, root: Path) -> bool:
+    try:
+        path.parent.resolve().relative_to(root)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _existing_path_is_symlink(path: Path) -> bool:
+    try:
+        return path.is_symlink()
+    except OSError:
+        return True
+
+
+def validate_status_root_binding() -> None:
+    """Fail closed before any governed status command can hit a stale worktree."""
+
+    raw_root = _status_root_env_value()
+    if not raw_root:
+        if _auto_worker_requires_explicit_status_root():
+            raise RuntimeError(
+                "PANTHEON_STATUS_ROOT is required for auto workers running outside "
+                "the supervisor coordination root"
+            )
+        return
+
+    expanded_root = Path(os.path.expanduser(raw_root))
+    if not expanded_root.is_absolute():
+        raise RuntimeError("PANTHEON_STATUS_ROOT must be an absolute path")
+    if _existing_path_is_symlink(expanded_root):
+        raise RuntimeError(f"PANTHEON_STATUS_ROOT cannot be a symlink: {expanded_root}")
+
+    root = expanded_root.resolve()
+    if root != STATUS_ROOT:
+        raise RuntimeError(
+            f"PANTHEON_STATUS_ROOT binding mismatch: env resolves to {root}, "
+            f"module is bound to {STATUS_ROOT}"
+        )
+    if not root.exists() or not root.is_dir():
+        raise RuntimeError(f"PANTHEON_STATUS_ROOT does not exist or is not a directory: {root}")
+
+    workspace_root = _worker_workspace_root()
+    if workspace_root is not None and root == workspace_root:
+        raise RuntimeError(
+            "PANTHEON_STATUS_ROOT must point at the supervisor coordination "
+            "root, not the isolated task worktree"
+        )
+
+    git_root = _git_toplevel(root)
+    if git_root != root:
+        raise RuntimeError(
+            f"PANTHEON_STATUS_ROOT must be a git repository root: {root}"
+        )
+    if not STATUS_FILE.exists() or not STATUS_FILE.is_file():
+        raise RuntimeError(
+            f"PANTHEON_STATUS_ROOT is missing required ai-status.json: {STATUS_FILE}"
+        )
+    if _existing_path_is_symlink(STATUS_FILE):
+        raise RuntimeError(f"ai-status.json cannot be a symlink: {STATUS_FILE}")
+
+    for label, path in {
+        "activity_log": LOG_FILE,
+        "current_work": CURRENT_WORK_FILE,
+        "docs_site": DOCS_SITE_DIR,
+        "dashboard_bundle": DASHBOARD_BUNDLE_FILE,
+        "planning_state": PLANNING_STATE_FILE,
+        "orchestrator_state": ORCHESTRATOR_STATE_FILE,
+        "approval_queue": APPROVAL_QUEUE_FILE,
+        "archive_dir": task_archive_module.ARCHIVE_DIR,
+        "archive_tasks_dir": task_archive_module.ARCHIVE_TASKS_DIR,
+        "archive_index": task_archive_module.ARCHIVE_INDEX_FILE,
+        "task_state_lock": canonical_task_state_lock_path(STATUS_FILE),
+        "activity_audit_lock": activity_audit_lock_path(LOG_FILE),
+    }.items():
+        if not _path_parent_under_root(Path(path), root):
+            raise RuntimeError(
+                f"PANTHEON_STATUS_ROOT path binding for {label} escapes root: {path}"
+            )
+        if Path(path).exists() and _existing_path_is_symlink(Path(path)):
+            raise RuntimeError(
+                f"PANTHEON_STATUS_ROOT path binding for {label} cannot be a symlink: {path}"
+            )
+
+    assert_task_archive_root_binding()
 
 KNOWN_AGENTS = {
     "Claude": {
@@ -4625,6 +4790,8 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
 
 
 def main(argv: list[str]) -> int:
+    validate_status_root_binding()
+
     command = argv[1] if len(argv) > 1 else "sync"
     args = argv[2:]
 
