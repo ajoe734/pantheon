@@ -73,12 +73,11 @@ env -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u 
 # 2 passed
 
 env -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PYTHONPATH=.orchestrator \
-  python3 -m pytest .orchestrator/test_adapter_fallback_policy.py
-# 14 passed
+  python3 -m pytest .orchestrator/test_adapter_fallback_policy.py .orchestrator/test_supervisor_watchdog.py scripts/test_supervisor_watchdog_install.py
+# 45 passed
 
-env -u PANTHEON_STATUS_ROOT -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUN_ID -u ORCH_TASK_ID -u AI_NAME -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PYTHONPATH=.orchestrator \
-  python3 -m pytest .orchestrator/test_supervisor_watchdog.py scripts/test_supervisor_watchdog_install.py
-# 31 passed
+git diff --check
+# no output
 ```
 
 Full supervisor suite result on this branch:
@@ -105,4 +104,4 @@ mismatches outside this task's touched behavior:
 This task does not modify `.orchestrator/config.json` or sidecar eligibility
 policy.
 The same four selected tests also fail on `origin/dev` baseline commit
-`9637455aa` with the same observed values.
+`d55a0caf7` with the same observed values.
