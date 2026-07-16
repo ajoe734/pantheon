@@ -2981,3 +2981,183 @@ def test_every_immutable_migration_contract_field_is_bound(field: str) -> None:
         result = run_dispatch(root, "--apply")
         assert result.returncode == 2
         assert (root / "ai-status.json").read_bytes() == before
+
+
+def test_sequencing_overlay_checks() -> None:
+    # 1. 48/48 classification - correct overlay should pass
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        state, _ = prepare_baseline_program(root)
+        
+        overlay_src = ROOT / "docs" / "bff" / "execution-tasks" / "2026-07-13-loop-product-level-remediation" / "sequencing-overlay-2026-07-16.json"
+        overlay_dest = root / "sequencing-overlay-2026-07-16.json"
+        overlay_dest.parent.mkdir(parents=True, exist_ok=True)
+        overlay_dest.write_text(overlay_src.read_text(encoding="utf-8"), encoding="utf-8")
+        
+        result = run_dispatch(root, "--validate-only", "--sequencing-overlay", str(overlay_dest))
+        assert result.returncode == 0, result.stderr
+
+    # 2. Hash mismatch
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        state, _ = prepare_baseline_program(root)
+        
+        overlay_src = ROOT / "docs" / "bff" / "execution-tasks" / "2026-07-13-loop-product-level-remediation" / "sequencing-overlay-2026-07-16.json"
+        overlay_data = json.loads(overlay_src.read_text(encoding="utf-8"))
+        overlay_data["source_hashes"]["tasks_catalog_sha256"] = "invalid_hash"
+        
+        overlay_dest = root / "sequencing-overlay-2026-07-16.json"
+        overlay_dest.write_text(json.dumps(overlay_data, indent=2), encoding="utf-8")
+        
+        result = run_dispatch(root, "--validate-only", "--sequencing-overlay", str(overlay_dest))
+        assert result.returncode == 2
+        assert "tasks_catalog_sha256 hash mismatch" in result.stderr
+
+    # 3. Missing / extra ID
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        state, _ = prepare_baseline_program(root)
+        
+        overlay_src = ROOT / "docs" / "bff" / "execution-tasks" / "2026-07-13-loop-product-level-remediation" / "sequencing-overlay-2026-07-16.json"
+        overlay_data = json.loads(overlay_src.read_text(encoding="utf-8"))
+        del overlay_data["tasks"]["LOOP-PROD-000"]
+        
+        overlay_dest = root / "sequencing-overlay-2026-07-16.json"
+        overlay_dest.write_text(json.dumps(overlay_data, indent=2), encoding="utf-8")
+        
+        result = run_dispatch(root, "--validate-only", "--sequencing-overlay", str(overlay_dest))
+        assert result.returncode == 2
+        assert "sequencing overlay is missing tasks" in result.stderr
+
+    # 4. Cycle detection
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        state, _ = prepare_baseline_program(root)
+        
+        overlay_src = ROOT / "docs" / "bff" / "execution-tasks" / "2026-07-13-loop-product-level-remediation" / "sequencing-overlay-2026-07-16.json"
+        overlay_data = json.loads(overlay_src.read_text(encoding="utf-8"))
+        overlay_data["tasks"]["LOOP-PROD-000"]["depends_on"] = ["LOOP-PROD-001"]
+        
+        overlay_dest = root / "sequencing-overlay-2026-07-16.json"
+        overlay_dest.write_text(json.dumps(overlay_data, indent=2), encoding="utf-8")
+        
+        result = run_dispatch(root, "--validate-only", "--sequencing-overlay", str(overlay_dest))
+        assert result.returncode == 2
+        assert "dependency cycle detected" in result.stderr
+
+
+def test_g2_evidence_validation() -> None:
+    # Dynamically import dispatcher
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "dispatcher",
+        str(ROOT / "scripts" / "dispatch_loop_product_level_remediation_2026-07-13.py")
+    )
+    dispatcher = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dispatcher)
+
+    # 1. check_g2_evidence_valid: no evidence (no CLOSE-001 at all)
+    state = {"tasks": []}
+    assert dispatcher.check_g2_evidence_valid(state) is False
+
+    # 2. check_g2_evidence_valid: CLOSE-001 done, but evidence.json missing
+    with tempfile.TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        dispatcher.REPO_ROOT = temp_path
+        dispatcher.ARCHIVE_ROOT = temp_path / "ai-task-archive" / "tasks"
+        
+        state = {
+            "tasks": [
+                {
+                    "id": "LOOP-PROD-CLOSE-001",
+                    "status": "done"
+                }
+            ]
+        }
+        assert dispatcher.check_g2_evidence_valid(state) is False
+
+        # 3. check_g2_evidence_valid: invalid evidence schema (missing telemetry)
+        evidence_dir = temp_path / "docs" / "deployment" / "evidence" / "loop-product-level" / "LOOP-PROD-CLOSE-001"
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        
+        bad_evidence = {
+            "paper_trade_chains": [
+                {
+                    "signal": "sig1",
+                    "order": "ord1",
+                    "fill": "fil1",
+                    "loop_run_projection": "proj1"
+                }
+            ]
+        }
+        evidence_file = evidence_dir / "evidence.json"
+        evidence_file.write_text(json.dumps(bad_evidence, indent=2), encoding="utf-8")
+        assert dispatcher.check_g2_evidence_valid(state) is False
+
+        # 4. check_g2_evidence_valid: valid evidence
+        good_evidence = {
+            "paper_trade_chains": [
+                {
+                    "signal": "sig1",
+                    "order": "ord1",
+                    "fill": "fil1",
+                    "telemetry": "tel1",
+                    "loop_run_projection": "proj1"
+                }
+            ]
+        }
+        evidence_file.write_text(json.dumps(good_evidence, indent=2), encoding="utf-8")
+        assert dispatcher.check_g2_evidence_valid(state) is True
+
+        # 5. check_g2_evidence_valid: CLOSE-001 from archive instead of active list
+        state = {"tasks": []}
+        assert dispatcher.check_g2_evidence_valid(state) is False
+        
+        archive_dir = temp_path / "ai-task-archive" / "tasks"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archive_payload = {
+            "version": 1,
+            "task_id": "LOOP-PROD-CLOSE-001",
+            "archived_at": "2026-07-16T12:00:00Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": {
+                "id": "LOOP-PROD-CLOSE-001",
+                "status": "done"
+            },
+            "handoffs": [],
+            "blockers": []
+        }
+        (archive_dir / "LOOP-PROD-CLOSE-001.json").write_text(json.dumps(archive_payload, indent=2), encoding="utf-8")
+        assert dispatcher.check_g2_evidence_valid(state) is True
+
+        # 6. pre-G2 denial: wave >= 5 task fails closed when evidence is invalid
+        evidence_file.write_text(json.dumps(bad_evidence, indent=2), encoding="utf-8")
+        
+        catalog = load_catalog()
+        catalog["overlay_applied"] = True
+        auth_task = next(t for t in catalog["tasks"] if t["id"] == "LOOP-PROD-AUTH-001")
+        task_to_materialize = deepcopy(auth_task)
+        task_to_materialize["wave"] = 5
+        tasks_to_materialize = [task_to_materialize]
+        
+        with pytest.raises(dispatcher.DispatchError, match="G2 paper-trade evidence not found or invalid"):
+            dispatcher.materialize(
+                state=state,
+                tasks=tasks_to_materialize,
+                catalog=catalog,
+                catalog_digest="dummy",
+                timestamp="2026-07-16T12:00:00Z"
+            )
+
+        # 7. post-G2 release: wave >= 5 task materializes successfully when evidence is valid
+        evidence_file.write_text(json.dumps(good_evidence, indent=2), encoding="utf-8")
+        created, preserved, archived, logs, changed = dispatcher.materialize(
+            state=state,
+            tasks=tasks_to_materialize,
+            catalog=catalog,
+            catalog_digest="dummy",
+            timestamp="2026-07-16T12:00:00Z"
+        )
+        assert "LOOP-PROD-AUTH-001" in created
+

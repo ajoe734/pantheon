@@ -4173,6 +4173,14 @@ def materialize(
             preserved.append(f"{task_id}:{existing.get('status', 'unknown')}")
             continue
 
+        # G2 evidence gate for deferred tasks (Wave >= 5)
+        if catalog.get("overlay_applied") and task.get("wave", 0) >= 5:
+            if not check_g2_evidence_valid(state):
+                raise DispatchError(
+                    f"G2 paper-trade evidence not found or invalid; "
+                    f"cannot dispatch deferred task {task_id}"
+                )
+
         materialized = build_task(task, catalog, catalog_digest, timestamp)
         active_tasks.append(materialized)
         active_by_id[task_id] = materialized
@@ -4233,31 +4241,125 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def check_g2_evidence_valid(state: dict[str, Any]) -> bool:
+    active_tasks = state.get("tasks") or []
+    active_by_id = {
+        str(task.get("id")): task
+        for task in active_tasks
+        if isinstance(task, dict) and str(task.get("id") or "").strip()
+    }
+    
+    # 1. Verify LOOP-PROD-CLOSE-001 is done
+    close_task = active_by_id.get("LOOP-PROD-CLOSE-001")
+    if close_task is None:
+        archived = ARCHIVE_ROOT / "LOOP-PROD-CLOSE-001.json"
+        if archived.is_file():
+            try:
+                payload = read_json(archived)
+                archived_task = payload.get("task")
+                if not (isinstance(archived_task, dict) and archived_task.get("status") == "done"):
+                    return False
+            except Exception:
+                return False
+        else:
+            return False
+    else:
+        if close_task.get("status") != "done":
+            return False
+            
+    # 2. Verify evidence.json exists and has valid paper trade chains
+    evidence_path = REPO_ROOT / "docs" / "deployment" / "evidence" / "loop-product-level" / "LOOP-PROD-CLOSE-001" / "evidence.json"
+    if not evidence_path.is_file():
+        return False
+        
+    try:
+        evidence_data = read_json(evidence_path)
+        chains = evidence_data.get("paper_trade_chains")
+        if not isinstance(chains, list) or not chains:
+            return False
+        
+        required_keys = {"signal", "order", "fill", "telemetry", "loop_run_projection"}
+        for chain in chains:
+            if not isinstance(chain, dict):
+                return False
+            if not required_keys.issubset(chain.keys()):
+                return False
+            if not all(str(chain[k]).strip() for k in required_keys):
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def apply_sequencing_overlay(catalog: dict[str, Any], overlay_path: Path) -> None:
     try:
         overlay = read_json(overlay_path)
     except Exception as exc:
         raise DispatchError(f"failed to load sequencing overlay from {overlay_path}: {exc}")
 
-    tasks_by_id = {task["id"]: task for task in catalog.get("tasks", [])}
-    overlay_tasks = overlay.get("tasks", {})
+    # 1. Validate source hashes
+    source_hashes = overlay.get("source_hashes", {})
+    expected_tasks_hash = "44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357"
+    expected_addendum_hash = "9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519"
+    
+    if source_hashes.get("tasks_catalog_sha256") != expected_tasks_hash:
+        raise DispatchError("sequencing overlay tasks_catalog_sha256 hash mismatch")
+    if source_hashes.get("sequencing_addendum_sha256") != expected_addendum_hash:
+        raise DispatchError("sequencing overlay sequencing_addendum_sha256 hash mismatch")
 
+    # 2. Validate complete 48-ID set coverage
+    catalog_ids = {task["id"] for task in catalog.get("tasks", [])}
+    overlay_tasks = overlay.get("tasks", {})
+    overlay_ids = set(overlay_tasks.keys())
+
+    if len(catalog_ids) != 48:
+        raise DispatchError(f"catalog must contain exactly 48 tasks, found {len(catalog_ids)}")
+    
+    missing_ids = catalog_ids - overlay_ids
+    extra_ids = overlay_ids - catalog_ids
+    
+    if missing_ids:
+        raise DispatchError(f"sequencing overlay is missing tasks: {', '.join(sorted(missing_ids))}")
+    if extra_ids:
+        raise DispatchError(f"sequencing overlay targets unknown tasks: {', '.join(sorted(extra_ids))}")
+
+    # 3. Apply updates to the catalog tasks
+    tasks_by_id = {task["id"]: task for task in catalog.get("tasks", [])}
     for task_id, updates in overlay_tasks.items():
-        if task_id not in tasks_by_id:
-            raise DispatchError(f"sequencing overlay targets unknown task: {task_id}")
         task = tasks_by_id[task_id]
         for key, value in updates.items():
             task[key] = value
 
-    # Check for acyclicity and wave order constraints on the modified catalog
+    # 4. Check for cycle detection (DFS acyclicity)
     by_id = {str(t["id"]): t for t in catalog["tasks"]}
+    visiting = set()
+    visited = set()
+    def dfs(t_id):
+        if t_id in visiting:
+            raise DispatchError(f"dependency cycle detected at {t_id}")
+        if t_id in visited:
+            return
+        visiting.add(t_id)
+        if t_id in by_id:
+            for dep in by_id[t_id].get("depends_on", []):
+                if dep in by_id:
+                    dfs(dep)
+        visiting.remove(t_id)
+        visited.add(t_id)
+        
+    for t_id in by_id:
+        dfs(t_id)
+
+    # 5. Check wave order constraints on the modified catalog
     for task_id, task in by_id.items():
-        for dep_id in task["depends_on"]:
+        for dep_id in task.get("depends_on", []):
             if dep_id in by_id and by_id[dep_id]["wave"] > task["wave"]:
                 raise DispatchError(
                     f"Sequencing overlay error: {task_id} wave {task['wave']} depends on later wave "
                     f"{dep_id}={by_id[dep_id]['wave']}"
                 )
+
+    catalog["overlay_applied"] = True
 
 
 def report(
