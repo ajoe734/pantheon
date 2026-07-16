@@ -202,10 +202,22 @@ deselects, `scripts/test_ai_status.py`,
 added on `dev` since the freeze).
 
 `completion.json` remains intentionally absent. Per the primary evidence
-plan above, the owner must not fabricate or self-sign it; only the distinct
-reviewer `Claude2` may create the real Ed25519-signed completion once this
+plan above, the owner must not fabricate or self-sign it; only a distinct
+reviewer may create the real Ed25519-signed completion once this
 corrective PR is reviewed. No live install/apply/canonical mutation was
 performed as part of this restoration.
+
+Reviewer identity note: this restoration's commit trailers (`f5948969a`,
+`fbfad9dbd`) name `Claude2` as reviewer, reflecting the assignment in
+effect when those commits were authored. `Claude2` is no longer the
+active reviewer for this task; the task has since been reassigned to
+`Codex2` as the current distinct reviewer. Because the commits are
+already merged into `dev` (merge commit
+`8c9bc96e5e8728a2340355b9357355d0c7368ff2`, PR #3738), their trailers are
+historical record and are not rewritten. `Codex2` must independently
+verify the exact merge diff, ancestry, and recorded test results above
+before creating `completion.json`, or leave this task open with the
+precise unavailable signing authority if it cannot.
 
 Still open and unrelated: the live canonical status root's
 `ai-status.sh` / `ai_status.py` activity-log duplicate-`event_id` outage
