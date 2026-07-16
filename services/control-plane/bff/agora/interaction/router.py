@@ -64,10 +64,26 @@ def _persona_id(persona: Dict[str, Any]) -> str:
     return str(persona.get("persona_id") or persona.get("id") or "")
 
 
+def _persona_operational(persona: Dict[str, Any]) -> bool:
+    # Only explicit Persona Registry lifecycle truth is accepted.  Generic
+    # deployment labels (for example ``deployed``) must not grant interaction
+    # eligibility.
+    lifecycle = str(persona.get("lifecycle_state") or "").strip().lower()
+    return lifecycle in {"active", "paper_running", "paper_only"}
+
+
 def _environment_allowed(persona: Dict[str, Any], environment: str) -> bool:
-    ceiling = str(persona.get("environment_ceiling") or (persona.get("metadata") or {}).get("environment_ceiling") or "research")
     order = ["research", "shadow", "paper", "canary", "live"]
-    return ceiling in order and order.index(environment) <= order.index(ceiling)
+    metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+    explicit_ceiling = str(
+        persona.get("environment_ceiling") or metadata.get("environment_ceiling") or ""
+    ).strip().lower()
+    ceiling = explicit_ceiling if explicit_ceiling in order else ""
+
+    # Missing or unrecognised ceiling truth is deliberately fail-closed even
+    # for research requests.  A deployment label alone never creates this
+    # separate interaction authority.
+    return bool(ceiling) and environment in order and order.index(environment) <= order.index(ceiling)
 
 
 def create_interaction_router(*, extract_identity: Callable[..., Any], require_read_role: Callable[..., None],
@@ -111,19 +127,36 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
     def eligibility(body: EligibilityRequest, resolved: Any) -> Dict[str, Any]:
         session_for(body.workshop_id, resolved)
         results = []
-        for persona in get_read_store().list_personas(include_market_persona_defaults=True):
+        read_store = get_read_store()
+        for persona in read_store.list_personas(include_market_persona_defaults=True):
             pid = _persona_id(persona)
             reasons = []
             if not pid:
                 continue
             if persona.get("tenant_id") != resolved.tenant_id:
                 reasons.append("tenant_mismatch")
-            if str(persona.get("lifecycle_state") or "unknown") != "active":
+            if not _persona_operational(persona):
                 reasons.append("persona_not_active")
-            snapshot = get_read_store().get_capability_snapshot_for_persona(pid)
+            metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+            declared_snapshot_id = str(
+                persona.get("capability_snapshot_id")
+                or metadata.get("capability_snapshot_id")
+                or ""
+            ).strip()
+            snapshot = None
+            if declared_snapshot_id:
+                get_snapshot = getattr(read_store, "get_capability_snapshot", None)
+                if callable(get_snapshot):
+                    snapshot = get_snapshot(declared_snapshot_id)
+                if snapshot is not None and str(snapshot.get("persona_id") or "") != pid:
+                    reasons.append("capability_snapshot_persona_mismatch")
+                    snapshot = None
+            else:
+                snapshot = read_store.get_capability_snapshot_for_persona(pid)
             caps = list((snapshot or {}).get("capabilities") or (snapshot or {}).get("allowed_capabilities") or [])
             if snapshot is None:
-                reasons.append("capability_snapshot_unavailable")
+                if "capability_snapshot_persona_mismatch" not in reasons:
+                    reasons.append("capability_snapshot_unavailable")
             elif body.required_capability not in caps:
                 reasons.append("required_capability_missing")
             if not _environment_allowed(persona, body.environment):

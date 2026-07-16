@@ -9269,8 +9269,34 @@ class ReadSurfaceStore:
                 continue
             persona_id = str(record.get("persona_id") or record.get("id") or key or "").strip()
             if persona_id:
-                local_personas[persona_id] = record
+                # Local Persona Registry writes use the same canonical projection
+                # as service-backed records.  In particular, tenant ownership is
+                # copied from canonical metadata to the top-level fields consumed
+                # by fail-closed BFF audience checks.
+                local_personas[persona_id] = self._project_service_persona(record)
         return local_personas
+
+    @staticmethod
+    def _is_bff_local_capability_snapshot(snapshot: Dict[str, Any]) -> bool:
+        metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+        return (
+            snapshot.get("persistenceMode") == "bff_local_dev_store"
+            or metadata.get("persistenceMode") == "bff_local_dev_store"
+            or snapshot.get("canonicalWriteAuthority") == "persona_capability_service"
+        )
+
+    def _local_bff_capability_snapshot_records(self) -> Dict[str, Dict[str, Any]]:
+        records = self._local_dataset("capability_snapshots")
+        if not isinstance(records, dict):
+            return {}
+        local_snapshots: Dict[str, Dict[str, Any]] = {}
+        for key, record in records.items():
+            if not isinstance(record, dict) or not self._is_bff_local_capability_snapshot(record):
+                continue
+            snapshot_id = str(record.get("snapshot_id") or record.get("id") or key or "").strip()
+            if snapshot_id:
+                local_snapshots[snapshot_id] = json.loads(json.dumps(record))
+        return local_snapshots
 
     def _market_persona_records(
         self,
@@ -11003,6 +11029,67 @@ class ReadSurfaceStore:
         personas[persona_id] = record
         self._save()
         return self._project_service_persona(record)
+
+    def upsert_persona_capability_snapshot(
+        self,
+        *,
+        snapshot_id: str,
+        persona_id: str,
+        capabilities: List[str],
+        generated_at: Optional[str] = None,
+        source_refs: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Persist an explicit Persona capability grant in the owner store.
+
+        Lifecycle and deployment metadata never imply a capability.  Callers
+        that provision an interaction-capable Persona must write this separate
+        snapshot so eligibility can remain fail-closed.
+        """
+        clean_snapshot_id = str(snapshot_id or "").strip()
+        clean_persona_id = str(persona_id or "").strip()
+        if not clean_snapshot_id or not clean_persona_id:
+            raise ValueError("snapshot_id and persona_id are required")
+        clean_capabilities = list(dict.fromkeys(
+            str(capability or "").strip()
+            for capability in capabilities
+            if str(capability or "").strip()
+        ))
+        timestamp = generated_at or _utc_now_rfc3339()
+        record = {
+            "id": clean_snapshot_id,
+            "snapshot_id": clean_snapshot_id,
+            "persona_id": clean_persona_id,
+            "capabilities": clean_capabilities,
+            "allowed_capabilities": list(clean_capabilities),
+            "generated_at": timestamp,
+            "updated_at": timestamp,
+            "source_refs": json.loads(json.dumps(source_refs or [])),
+            "metadata": json.loads(json.dumps(metadata or {})),
+            "canonicalWriteAuthority": "persona_capability_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+
+        service_store_path = self._service._resolve_path("capability_snapshots")
+        if service_store_path is not None:
+            available, service_snapshots = self._service.list_records(
+                "capability_snapshots",
+                include_snapshot_fallback=False,
+            )
+            records = {
+                str(existing.get("snapshot_id") or existing.get("id") or ""): json.loads(json.dumps(existing))
+                for existing in service_snapshots
+                if isinstance(existing, dict)
+                and str(existing.get("snapshot_id") or existing.get("id") or "").strip()
+            } if available else {}
+            records[clean_snapshot_id] = record
+            if self._service.write_records("capability_snapshots", records):
+                return json.loads(json.dumps(record))
+
+        snapshots = self._ensure_local_overlay_records("capability_snapshots")
+        snapshots[clean_snapshot_id] = record
+        self._save()
+        return json.loads(json.dumps(record))
 
     def list_capital_pools(
         self,
@@ -17915,8 +18002,13 @@ class ReadSurfaceStore:
         if not snapshot_id:
             return None
         available, raw = self._service.record("capability_snapshots", snapshot_id)
-        if available:
+        if available and raw:
             return raw
+        local_owned = self._local_bff_capability_snapshot_records().get(str(snapshot_id))
+        if local_owned:
+            return local_owned
+        if available:
+            return None
         return (self._local_fallback("capability_snapshots") or {}).get(snapshot_id)
 
     def get_capability_snapshot_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -17927,6 +18019,9 @@ class ReadSurfaceStore:
             for snapshot in snapshots:
                 if snapshot.get("persona_id") == persona_id:
                     return snapshot
+        for snapshot in self._local_bff_capability_snapshot_records().values():
+            if snapshot.get("persona_id") == persona_id:
+                return snapshot
         for snapshot in (self._local_fallback("capability_snapshots") or {}).values():
             if snapshot.get("persona_id") == persona_id:
                 return snapshot
