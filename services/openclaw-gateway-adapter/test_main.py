@@ -8,8 +8,11 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -1532,6 +1535,248 @@ class TestCapabilities(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Session stubs
 # ---------------------------------------------------------------------------
+
+
+class TestGovernedServantAgentSync(unittest.TestCase):
+    _PERSONA_ID = "agora-servant-0123456789abcdefabcd"
+    _PAYLOAD = {
+        "persona_registry_ref": f"persona:{_PERSONA_ID}",
+        "workspace_ref": f"/home/node/.openclaw/workspaces/{_PERSONA_ID}",
+        "capability_snapshot": {
+            "allowed_capabilities": ["persona_opinion"],
+            "persona_class": "agora_servant",
+        },
+    }
+    _HEADERS = {
+        "X-Pantheon-Service-Token": "adapter-secret",
+        "Idempotency-Key": "3c1c6580-746b-5816-b246-f46e14367875",
+        "X-Request-Id": "request-agent-1",
+    }
+
+    def setUp(self):
+        self._temp_dir = tempfile.TemporaryDirectory()
+        self._db_patch = patch.object(
+            adapter_main,
+            "_OPENCLAW_AGENT_IDEMPOTENCY_DB",
+            Path(self._temp_dir.name) / "agent-ensure.sqlite3",
+        )
+        self._db_patch.start()
+
+    def tearDown(self):
+        self._db_patch.stop()
+        self._temp_dir.cleanup()
+
+    def _auth_config(self, *, token: str = "adapter-secret"):
+        return patch.multiple(
+            adapter_main,
+            _ASSISTANT_SERVICE_TOKEN=token,
+            _ASSISTANT_SERVICE_AUTH_REQUIRED=True,
+        )
+
+    def test_agent_ensure_requires_the_bff_service_token(self):
+        with self._auth_config():
+            response = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=self._PAYLOAD,
+                headers={
+                    "Idempotency-Key": self._HEADERS["Idempotency-Key"],
+                    "X-Request-Id": self._HEADERS["X-Request-Id"],
+                },
+            )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertEqual(response.json()["error_code"], "AGENT_SERVICE_AUTH_DENIED")
+
+    def test_agent_ensure_reconciles_only_the_exact_governed_workspace(self):
+        expected = {
+            "status": "created",
+            "agent_id": self._PERSONA_ID,
+            "model_id": f"openclaw/{self._PERSONA_ID}",
+            "model": "anthropic/claude-opus-4-8",
+            "workspace_ref": self._PAYLOAD["workspace_ref"],
+        }
+        with (
+            self._auth_config(),
+            patch.object(
+                adapter_main,
+                "ensure_agora_servant_agent",
+                return_value=expected,
+            ) as ensure_agent,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=self._PAYLOAD,
+                headers=self._HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["agent"], expected)
+        persona = ensure_agent.call_args.args[0]
+        self.assertEqual(persona["persona_id"], self._PERSONA_ID)
+        self.assertEqual(persona["name"], "Agora Servant")
+        self.assertEqual(persona["traits"]["decision_style"], "operator-guided")
+        self.assertEqual(persona["metadata"]["execution_authority"], "none")
+
+    def test_agent_ensure_rejects_forbidden_capability_before_cli(self):
+        payload = copy.deepcopy(self._PAYLOAD)
+        payload["capability_snapshot"]["allowed_capabilities"] = [
+            "persona_opinion",
+            "capital-binding",
+        ]
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "ensure_agora_servant_agent") as ensure_agent,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=payload,
+                headers=self._HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["error_code"], "AGENT_SYNC_POLICY_DENIED")
+        ensure_agent.assert_not_called()
+
+    def test_agent_ensure_rejects_non_exact_opinion_capability_before_cli(self):
+        payload = copy.deepcopy(self._PAYLOAD)
+        payload["capability_snapshot"]["allowed_capabilities"] = [
+            "persona-opinion",
+        ]
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "ensure_agora_servant_agent") as ensure_agent,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=payload,
+                headers=self._HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["error_code"], "AGENT_SYNC_POLICY_DENIED")
+        ensure_agent.assert_not_called()
+
+    def test_agent_ensure_replays_same_key_without_a_second_reconcile(self):
+        agent = {
+            "status": "created",
+            "agent_id": self._PERSONA_ID,
+            "workspace_ref": self._PAYLOAD["workspace_ref"],
+        }
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "ensure_agora_servant_agent", return_value=agent) as ensure,
+        ):
+            first = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=self._PAYLOAD,
+                headers=self._HEADERS,
+            )
+            replay_headers = {**self._HEADERS, "X-Request-Id": "request-agent-retry"}
+            replay = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=self._PAYLOAD,
+                headers=replay_headers,
+            )
+
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(replay.status_code, 201, replay.text)
+        self.assertEqual(replay.json(), first.json())
+        ensure.assert_called_once()
+
+    def test_agent_ensure_rejects_same_key_with_a_different_payload(self):
+        agent = {
+            "status": "created",
+            "agent_id": self._PERSONA_ID,
+            "workspace_ref": self._PAYLOAD["workspace_ref"],
+        }
+        changed = copy.deepcopy(self._PAYLOAD)
+        changed["workspace_ref"] = (
+            "/home/node/.openclaw/workspaces/agora-servant-fedcba9876543210fedc"
+        )
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "ensure_agora_servant_agent", return_value=agent) as ensure,
+        ):
+            first = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=self._PAYLOAD,
+                headers=self._HEADERS,
+            )
+            conflict = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=changed,
+                headers=self._HEADERS,
+            )
+
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(conflict.status_code, 409, conflict.text)
+        self.assertEqual(
+            conflict.json()["error_code"],
+            "AGENT_SYNC_IDEMPOTENCY_CONFLICT",
+        )
+        ensure.assert_called_once()
+
+    def test_agent_ensure_serializes_different_keys(self):
+        req = adapter_main.OpenClawAgentEnsureRequest.model_validate(self._PAYLOAD)
+        active = 0
+        max_active = 0
+        state_lock = threading.Lock()
+
+        def reconcile(_req):
+            nonlocal active, max_active
+            with state_lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with state_lock:
+                active -= 1
+            return {"status": "created", "agent_id": self._PERSONA_ID}
+
+        def ensure(key):
+            return adapter_main._ensure_agent_idempotently(
+                req,
+                idempotency_key=key,
+                request_id=f"request-{key}",
+            )
+
+        with (
+            patch.object(adapter_main, "_sync_servant_agent", side_effect=reconcile),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            results = list(executor.map(ensure, ["key-a", "key-b"]))
+
+        self.assertEqual([result[0] for result in results], [201, 201])
+        self.assertEqual(max_active, 1)
+
+    def test_agent_cli_is_bound_to_the_gateway_state_dir(self):
+        completed = MagicMock(returncode=0, stdout='{"agents": []}', stderr="")
+        with patch.object(adapter_main.subprocess, "run", return_value=completed) as run:
+            result = adapter_main._gateway_state_agent_runner(
+                ["openclaw", "agents", "list", "--json"]
+            )
+
+        self.assertIs(result, completed)
+        self.assertEqual(
+            run.call_args.kwargs["env"]["OPENCLAW_STATE_DIR"],
+            "/home/node/.openclaw",
+        )
+        self.assertEqual(run.call_args.kwargs["env"]["HOME"], "/home/node")
+        self.assertEqual(run.call_args.kwargs["user"], 1000)
+        self.assertEqual(run.call_args.kwargs["group"], 1000)
+        self.assertFalse(run.call_args.kwargs["check"])
+
+    def test_agent_soul_writer_uses_the_gateway_owner(self):
+        completed = MagicMock(returncode=0, stdout="", stderr="")
+        with patch.object(adapter_main.subprocess, "run", return_value=completed) as run:
+            adapter_main._gateway_state_soul_writer(
+                f"/home/node/.openclaw/workspaces/{self._PERSONA_ID}",
+                "# governed soul",
+            )
+
+        self.assertEqual(run.call_args.kwargs["input"], "# governed soul")
+        self.assertEqual(run.call_args.kwargs["user"], 1000)
+        self.assertEqual(run.call_args.kwargs["group"], 1000)
+        self.assertEqual(run.call_args.kwargs["env"]["HOME"], "/home/node")
 
 
 class TestSessions(unittest.TestCase):

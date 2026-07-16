@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -9,7 +11,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 DEPLOY = ROOT / "scripts" / "deploy_nonprod_vm.sh"
-CONTROLLER_SHA = "65a1d653222ab378c994df6c40349139cd429831"
+CONTROLLER_SHA = "ddf4d0d5d33a848b3c86e3be2f6713e2ad9c0524"
+CONTROLLER_SCRIPT_SHA256 = (
+    "52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048"
+)
+CONTROLLER_WRAPPER_SHA256 = (
+    "f3995a2baedc2ff47178a0de8ad1952096df4de508d5a47c8e0042a151ab7ea8"
+)
 CHECKOUT_SHA = "34e114876b0b11c390a56381ad16ebd13914f8d5"
 AUTH_SHA = "c200f3691d83b41bf9bbd8638997a462592937ed"
 GCLOUD_SHA = "e427ad8a34f8676edf47cf7d7925499adf3eb74f"
@@ -26,30 +34,14 @@ def _job(text: str, name: str, next_name: str | None = None) -> str:
     return text[start : text.index(f"  {next_name}:\n", start + 1)]
 
 
-def _workflow_step_run(job_name: str, step_name: str) -> str:
-    job = _job(_workflow(), job_name, "deploy-staging-live")
-    marker = f"      - name: {step_name}\n"
-    start = job.index(marker)
-    run_marker = "\n        run: |\n"
-    run_start = job.index(run_marker, start) + len(run_marker)
-    next_step = job.find("\n      - name:", run_start)
-    block = job[run_start:] if next_step < 0 else job[run_start:next_step]
-    lines = []
-    for line in block.splitlines():
-        if line.startswith("          "):
-            lines.append(line[10:])
-        elif not line:
-            lines.append("")
-        else:
-            break
-    return "\n".join(lines) + "\n"
-
-
-def _initial_heartbeat_verify_script() -> str:
-    run = _workflow_step_run("deploy-dev", "Start identity-bound lease heartbeat")
-    start = run.index('initial_verify_log="${LEASE_HEARTBEAT_LOG}.initial-verify"')
-    end = run.index('lease_token=""', start) + len('lease_token=""')
-    return run[start:end]
+def _git_show_sha256(ref_path: str) -> str:
+    result = subprocess.run(
+        ["git", "show", ref_path],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    )
+    return hashlib.sha256(result.stdout).hexdigest()
 
 
 def test_controller_checkout_is_an_exact_immutable_separate_trust_root() -> None:
@@ -67,7 +59,7 @@ def test_controller_checkout_is_an_exact_immutable_separate_trust_root() -> None
     assert "CONTROLLER_REF" not in dev
     assert (
         dev.count(
-            "5e72d6a4d2c945d79a9a1fcc2e205584b9a1f06cc53c973c7ba3ae76205db102"
+            CONTROLLER_SCRIPT_SHA256
         )
         >= 7
     )
@@ -77,6 +69,22 @@ def test_controller_checkout_is_an_exact_immutable_separate_trust_root() -> None
         )
         >= 7
     )
+
+
+def test_controller_checksums_match_pinned_controller_files() -> None:
+    workflow = _workflow()
+    dev = _job(workflow, "deploy-dev", "deploy-staging-live")
+
+    assert (
+        _git_show_sha256(f"{CONTROLLER_SHA}:scripts/dev_environment_lease.py")
+        == CONTROLLER_SCRIPT_SHA256
+    )
+    assert (
+        _git_show_sha256(f"{CONTROLLER_SHA}:scripts/run_with_dev_environment_lease.sh")
+        == CONTROLLER_WRAPPER_SHA256
+    )
+    assert dev.count(CONTROLLER_SCRIPT_SHA256) >= 7
+    assert dev.count(CONTROLLER_WRAPPER_SHA256) >= 7
 
 
 def test_dev_and_staging_are_independent_jobs_and_staging_has_no_lease_secret() -> None:
@@ -141,128 +149,35 @@ def test_heartbeat_and_guard_paths_are_bound_to_acquire_step_outputs() -> None:
         assert f"${{{{ steps.lease.outputs.{name} }}}}" in dev
     assert '--identity-json-out "${LEASE_IDENTITY_FILE}"' in dev
     assert '--token-stdin' in dev
-    assert 'initial_verify_log="${LEASE_HEARTBEAT_LOG}.initial-verify"' in dev
-    assert "for attempt in $(seq 1 50)" in dev
-    assert 'sleep 0.2' in dev
     assert "PANTHEON_DEV_ENVIRONMENT_LEASE_TOKEN_FD" not in dev
     assert ">> \"${GITHUB_ENV}\"" not in dev
 
 
-def _write_fake_initial_verify_cli(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        """#!/usr/bin/env python3
-from __future__ import annotations
+def test_initial_visibility_retry_is_only_on_immediate_post_acquire_verify() -> None:
+    dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
+    heartbeat_start = dev.index("      - name: Start identity-bound lease heartbeat")
+    next_step = dev.index("      - name: Deploy dev VM stack under lease", heartbeat_start)
+    initial_verify = dev[heartbeat_start:next_step]
 
-import os
-import sys
-from pathlib import Path
-
-if sys.argv[1:2] != ["verify"]:
-    raise SystemExit(f"unsupported fake command: {sys.argv[1:]}")
-
-count_file = Path(os.environ["FAKE_INITIAL_VERIFY_COUNT_FILE"])
-count = int(count_file.read_text(encoding="utf-8") or "0") + 1
-count_file.write_text(f"{count}\\n", encoding="utf-8")
-failures = int(os.environ.get("FAKE_INITIAL_VERIFY_FAILURES", "0"))
-if count <= failures:
-    print("simulated stale lease visibility mismatch", file=sys.stderr)
-    raise SystemExit(75)
-print('{"status":"verified"}')
-""",
-        encoding="utf-8",
-    )
-    path.chmod(0o755)
-
-
-def _run_initial_verify_script(
-    tmp_path: Path, *, failures: int, heartbeat_pid: int, timeout: float = 15
-) -> subprocess.CompletedProcess[str]:
-    controller = tmp_path / "controller"
-    _write_fake_initial_verify_cli(controller / "scripts" / "dev_environment_lease.py")
-    count_file = tmp_path / "verify-count.txt"
-    count_file.write_text("0\n", encoding="utf-8")
-    state_file = tmp_path / "state.json"
-    state_file.write_text("{}\n", encoding="utf-8")
-    heartbeat_log = tmp_path / "heartbeat.log"
-    heartbeat_log.write_text("", encoding="utf-8")
-    script = tmp_path / "initial-verify.sh"
-    script.write_text(
-        "\n".join(
-            (
-                "set -euo pipefail",
-                f"controller={str(controller)!r}",
-                "lease_token='test-token'",
-                f"LEASE_STATE_FILE={str(state_file)!r}",
-                f"LEASE_HEARTBEAT_LOG={str(heartbeat_log)!r}",
-                f"heartbeat_pid={heartbeat_pid}",
-                _initial_heartbeat_verify_script(),
-                "",
-            )
-        ),
-        encoding="utf-8",
-    )
-    return subprocess.run(
-        ["bash", str(script)],
-        cwd=ROOT,
-        env={
-            **os.environ,
-            "FAKE_INITIAL_VERIFY_COUNT_FILE": str(count_file),
-            "FAKE_INITIAL_VERIFY_FAILURES": str(failures),
-        },
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
+    assert dev.count("--initial-visibility-wait-seconds") == 1
+    assert dev.count("--initial-visibility-poll-seconds") == 1
+    assert "--initial-visibility-wait-seconds 15" in initial_verify
+    assert "--initial-visibility-poll-seconds 1" in initial_verify
+    assert initial_verify.index("verify-heartbeat-identity") < initial_verify.index(
+        "--initial-visibility-wait-seconds 15"
     )
 
 
-def test_initial_heartbeat_verify_retries_stale_visibility_then_succeeds(
-    tmp_path: Path,
-) -> None:
-    heartbeat = subprocess.Popen(["sleep", "30"])
-    try:
-        result = _run_initial_verify_script(
-            tmp_path, failures=2, heartbeat_pid=heartbeat.pid
-        )
-    finally:
-        heartbeat.terminate()
-        heartbeat.wait(timeout=3)
+def test_broad_initial_verify_retry_loop_is_absent() -> None:
+    dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
+    heartbeat_start = dev.index("      - name: Start identity-bound lease heartbeat")
+    next_step = dev.index("      - name: Deploy dev VM stack under lease", heartbeat_start)
+    initial_verify = dev[heartbeat_start:next_step]
 
-    assert result.returncode == 0, result.stderr
-    assert (tmp_path / "verify-count.txt").read_text(encoding="utf-8") == "3\n"
-
-
-def test_initial_heartbeat_verify_permanent_mismatch_exits_75(
-    tmp_path: Path,
-) -> None:
-    heartbeat = subprocess.Popen(["sleep", "30"])
-    try:
-        result = _run_initial_verify_script(
-            tmp_path, failures=100, heartbeat_pid=heartbeat.pid, timeout=45
-        )
-    finally:
-        heartbeat.terminate()
-        heartbeat.wait(timeout=3)
-
-    assert result.returncode == 75
-    assert "simulated stale lease visibility mismatch" in result.stderr
-    assert (tmp_path / "verify-count.txt").read_text(encoding="utf-8") == "50\n"
-
-
-def test_initial_heartbeat_verify_aborts_immediately_when_heartbeat_dies(
-    tmp_path: Path,
-) -> None:
-    heartbeat = subprocess.Popen(["sleep", "30"])
-    heartbeat.terminate()
-    heartbeat.wait(timeout=3)
-
-    result = _run_initial_verify_script(
-        tmp_path, failures=100, heartbeat_pid=heartbeat.pid
-    )
-
-    assert result.returncode == 75
-    assert (tmp_path / "verify-count.txt").read_text(encoding="utf-8") == "1\n"
+    assert "initial_verify_log=" not in initial_verify
+    assert "verify_ok=false" not in initial_verify
+    assert "for attempt in $(seq 1 50)" not in initial_verify
+    assert "> /dev/null 2>" not in initial_verify
 
 
 def test_all_dev_mutations_and_public_proofs_use_pinned_wrapper() -> None:
@@ -303,6 +218,13 @@ def test_token_steps_use_a_fixed_sanitized_path_and_clear_shell_git_injection() 
     assert dev.count('PYTHONPATH: ""') >= 7
     assert dev.count('PYTHONNOUSERSITE: "1"') >= 7
     assert dev.count('PYTHONSAFEPATH: "1"') >= 7
+    pythoninspect_yaml_values = re.findall(
+        r"(?m)^\s*PYTHONINSPECT:\s*(.+?)\s*$", dev
+    )
+    pythoninspect_shell_values = re.findall(r"\bPYTHONINSPECT=([^\s\\]*)", dev)
+    assert len(pythoninspect_yaml_values) >= 7
+    assert set(pythoninspect_yaml_values) == {'""'}
+    assert pythoninspect_shell_values == [""]
     assert dev.count('LD_PRELOAD: ""') >= 7
     assert dev.count('GIT_CONFIG_COUNT: "0"') >= 7
     assert dev.count('GIT_CONFIG_PARAMETERS: ""') >= 7

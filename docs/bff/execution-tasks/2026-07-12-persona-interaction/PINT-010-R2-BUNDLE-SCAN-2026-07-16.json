@@ -1,0 +1,394 @@
+{
+  "schema_version": 1,
+  "task_id": "PINT-010-R2",
+  "evidence_state": "complete",
+  "acceptance_status": "accepted",
+  "prepared_at_utc": "2026-07-16T19:31:43Z",
+  "frontend_host": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/",
+  "source_baseline": {
+    "pantheon_branch": "dev",
+    "pantheon_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "execute_plans_candidate_commit": "b13635514618ad46e3855772e9ed1a0fa1fce3d4"
+  },
+  "merged_repairs": [
+    {
+      "repository": "ajoe734/pantheon",
+      "pull_request": 3751,
+      "head_commit": "e5fb548caf67f6859ffc91cfe15685393b837843",
+      "merge_commit": "33afc82e54469a70a77f7dc1df2c8178d3f339d2"
+    },
+    {
+      "repository": "ajoe734/pantheon",
+      "pull_request": 3752,
+      "head_commit": "2733a30209fc0afda029514d969768d831efe40f",
+      "merge_commit": "9637455aa55638d518bde8f31fb3827ba0ec8471"
+    },
+    {
+      "repository": "ajoe734/pantheon",
+      "pull_request": 3754,
+      "head_commit": "b9ba936dabf9cc15e5888fe12459a43a5304a4e0",
+      "merge_commit": "ddf4d0d5d33a848b3c86e3be2f6713e2ad9c0524"
+    },
+    {
+      "repository": "ajoe734/pantheon",
+      "pull_request": 3757,
+      "head_commit": "d963586c9803744a5745104e9b490c2aeae651cc",
+      "merge_commit": "87c2f7e50bc66b23e16436aa32775fcf2fedd8bb"
+    },
+    {
+      "repository": "ajoe734/pantheon",
+      "pull_request": 3761,
+      "head_commit": "f5ec1aac9e10baa7d7c7d83f905e5df0a9cd4096",
+      "merge_commit": "9967ce47fb826f782f3b84be1f08e6aefef88091"
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "pull_request": 379,
+      "head_commit": "eb48ebe2e69e335516c5ac1841b84795878f21f5",
+      "merge_commit": "1816ece7c77813b5b5c6098155776ad14a6991da"
+    },
+    {
+      "repository": "ajoe734/pantheon",
+      "pull_request": 3765,
+      "head_commit": "c05603df65b3a4e2010a793c550be235b17bd367",
+      "merge_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748"
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "pull_request": 380,
+      "head_commit": "29e0b11ca6eb1351e2713c3764db188666624e84",
+      "merge_commit": "88d3d0acf1a2a3db6810c2d2b51c09cafe456b09"
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "pull_request": 381,
+      "head_commit": "cd1162686c7eb8c72ed2d33b28b114510b077105",
+      "merge_commit": "b13635514618ad46e3855772e9ed1a0fa1fce3d4"
+    }
+  ],
+  "strict_bff_baseline": {
+    "workflow": "Pantheon Nonprod Deploy",
+    "workflow_id": 269991390,
+    "run_id": 29507925706,
+    "run_attempt": 1,
+    "job_id": 87653469276,
+    "conclusion": "success",
+    "target_component": "bff",
+    "payload_commit": "9967ce47fb826f782f3b84be1f08e6aefef88091",
+    "allow_dirty": false,
+    "auth_profile": "strict",
+    "hosted_posture": {
+      "auth_stub": false,
+      "auth_mode": "strict"
+    },
+    "public_smoke": "success",
+    "exact_version_proof": "success",
+    "agora_restart_persistence": {
+      "conclusion": "success",
+      "workshop_id": "deploy-restart-29507925706-1",
+      "proposal_id": "proposal-deploy-restart-29507925706-1",
+      "completed_outbox_after_restart": "replayed",
+      "recovery_outbox_after_restart": "recovered",
+      "expected_transient_502_count": 6
+    },
+    "lease": {
+      "lease_id": "cdf8e16b-92a9-4cef-b08d-f1c2b2996d02",
+      "controller_commit": "ddf4d0d5d33a848b3c86e3be2f6713e2ad9c0524",
+      "controller_sha256": "52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048",
+      "wrapper_sha256": "f3995a2baedc2ff47178a0de8ad1952096df4de508d5a47c8e0042a151ab7ea8",
+      "released_at": "2026-07-16T14:47:08Z"
+    }
+  },
+  "superseded_candidate_history": {
+    "status": "superseded_rejected_diagnostic_history",
+    "frontend_commit": "88d3d0acf1a2a3db6810c2d2b51c09cafe456b09",
+    "bff_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "pair_id": "f58b10450aec28b638916d57b3291c5a9c7a954f85fc89a527d61313a76a0555",
+    "gate_run_id": 29517392064,
+    "read_only_deploy_run_id": 29518247457,
+    "read_only_artifact_digest_sha256": "2797b8765556b9f6899ccaa5c88cda28f9f1ff87a09f50da3ff3db56e27815ee",
+    "write_proof_artifact_digest_sha256": "7194d70e42e1c956db3a623e2736818a3856def998c331bc9d140f650891b356",
+    "write_proof_parent_run_id": 29519185869,
+    "write_proof_child_run_id": 29520132313,
+    "write_proof_watchdog_run_id": 29519934947,
+    "playwright_passed": 4,
+    "playwright_unexpected": 2,
+    "permissive_bff_run_id": 29518975266,
+    "strict_safety_restore_run_id": 29521081353,
+    "replacement_pull_request": 381
+  },
+  "final_candidate_gate": {
+    "status": "success",
+    "run_id": 29522604349,
+    "run_attempt": 1,
+    "job_id": 87703016409,
+    "branch_ci_run_id": 29522610098,
+    "branch_ci_conclusion": "success",
+    "frontend_commit": "b13635514618ad46e3855772e9ed1a0fa1fce3d4",
+    "bff_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "pair_id": "433a21fe127a3bde0020b9444869f565e99ed4b36b7ade2c3ea89aa5185a8d36",
+    "read_only_artifact_digest_sha256": "61dfc0986f57cb696b0a6aa7b21af6d3eb8aa25fe8b5b63f7f3ad556afd47360",
+    "write_proof_artifact_digest_sha256": "db21014d4c69404aeb23987012cff1d54dd1eaa5f33d10700a9a2cae6d53e660",
+    "release_candidate_artifact": {
+      "id": 8385576520,
+      "name": "pantheon-fe-release-candidate-attempt-1",
+      "digest": "sha256:2bae2da1b7f8acdb91d54f41786ba64ba6c747b56da8c3d62d3bd221b90e9b36"
+    },
+    "integration_evidence_artifact": {
+      "id": 8385577029,
+      "name": "pantheon-integration-evidence-attempt-1",
+      "digest": "sha256:3f0cd967d8f4260d472fa0490ef962d525a69b5fb6516cde8f1865ef1d03b96c"
+    },
+    "release_identity_artifact": {
+      "id": 8385577374,
+      "name": "pantheon-release-identity-attempt-1",
+      "digest": "sha256:15d8f777a3b70ba7cdfa394408a5f151596493775d1613c106f68de96dc27fff"
+    }
+  },
+  "initial_read_only_deploy": {
+    "status": "success",
+    "run_id": 29523324214,
+    "run_attempt": 1,
+    "job_id": 87705406096,
+    "artifact": {
+      "id": 8385901699,
+      "name": "pantheon-dev-fe-deploy-evidence-attempt-1",
+      "digest": "sha256:d471f1232982174c15ad54458fd08d14b9e8d20278c33e80c95b96cfcdd78b02"
+    },
+    "frontend_commit": "b13635514618ad46e3855772e9ed1a0fa1fce3d4",
+    "bff_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "pair_id": "433a21fe127a3bde0020b9444869f565e99ed4b36b7ade2c3ea89aa5185a8d36",
+    "deployment_profile": "read-only",
+    "artifact_digest_sha256": "61dfc0986f57cb696b0a6aa7b21af6d3eb8aa25fe8b5b63f7f3ad556afd47360",
+    "build_mode": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_FALLBACK": "strict",
+      "VITE_BFF_REAL_WRITES": "false",
+      "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+      "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+    },
+    "candidate_pre_switch_probe": "passed",
+    "post_switch_probe": "passed",
+    "rollback_required": false,
+    "accepted_at": "2026-07-16T18:28:45Z",
+    "safe_manifest_read_count": 3
+  },
+  "permissive_bff_proof_window": {
+    "status": "success",
+    "rejected_attempt": {
+      "run_id": 29525959905,
+      "status": "rejected_pre_deploy",
+      "failure_classification": "lease API HTTP 400 during acquire/read-after-write against an expired predecessor owner",
+      "deploy_ran": false,
+      "bff_changed": false,
+      "write_proof_window_opened": false
+    },
+    "run_id": 29526445708,
+    "run_attempt": 1,
+    "job_id": 87715949316,
+    "payload_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "auth_profile": "permissive-stub",
+    "auth_stub": true,
+    "auth_mode": "permissive",
+    "version_read_count": 3,
+    "version_reads_exact_and_known": true,
+    "healthz_read_count": 3,
+    "healthz_live": true,
+    "healthz_ready": true,
+    "dependencies_all_ok": true
+  },
+  "bounded_write_proof": {
+    "status": "success",
+    "candidate_frontend_commit": "b13635514618ad46e3855772e9ed1a0fa1fce3d4",
+    "candidate_bff_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "candidate_pair_id": "433a21fe127a3bde0020b9444869f565e99ed4b36b7ade2c3ea89aa5185a8d36",
+    "read_only_artifact_digest_sha256": "61dfc0986f57cb696b0a6aa7b21af6d3eb8aa25fe8b5b63f7f3ad556afd47360",
+    "write_proof_artifact_digest_sha256": "db21014d4c69404aeb23987012cff1d54dd1eaa5f33d10700a9a2cae6d53e660",
+    "parent_run_id": 29526662869,
+    "parent_run_attempt": 1,
+    "correlation_id": "5baa7d49-394a-43a5-8ea4-ade765313277",
+    "parent_jobs": {
+      "deploy_exact_candidate": 87716670643,
+      "coordinate_bounded_proof": 87718210667,
+      "confirm_read_only_restore": 87720081823
+    },
+    "parent_artifacts": {
+      "deploy_evidence": {
+        "id": 8387096770,
+        "name": "pantheon-dev-fe-deploy-evidence-attempt-1",
+        "digest": "sha256:7d6e3fbc78d3e902b9fb6d38e2c23b6aa16b697ef9702c5fe7d9e4965db655b5"
+      },
+      "proof_binding": {
+        "id": 8387165728,
+        "name": "pantheon-proof-binding-attempt-1",
+        "digest": "sha256:0536a99c7c1f171cb82f6914d052fc6ec0dc59208ab1766a5de50af30b8da962"
+      },
+      "child_claim": {
+        "id": 8387231666,
+        "name": "pantheon-proof-child-claim-attempt-1",
+        "digest": "sha256:a1373dc2c64d2ed93be463ad39b0080a43ad2714aa586d94ece49ba6981c0ba9"
+      }
+    },
+    "watchdog_run_id": 29527293543,
+    "watchdog_run_attempt": 1,
+    "watchdog_conclusion": "success",
+    "watchdog_jobs": {
+      "authenticate_parent": 87718776813,
+      "watch_bounded_proof": 87718876632,
+      "restore_read_only": 87720078613
+    },
+    "child_run_id": 29527452120,
+    "child_run_attempt": 1,
+    "child_conclusion": "success",
+    "child_jobs": {
+      "authorize": 87719310624,
+      "proof": 87719347860
+    },
+    "artifact": {
+      "id": 8387313123,
+      "name": "pantheon-authorized-write-proof-attempt-1",
+      "digest": "sha256:3999572b0c5ff0d4e9682427320ce0bb61ce12256fb383a007bdb59c17489fad"
+    },
+    "expected_playwright": 6,
+    "observed_playwright": 6,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0,
+    "retries": 0,
+    "duration_ms": 71935.323,
+    "desktop_expected": 3,
+    "mobile_expected": 3,
+    "servant_ensure": {
+      "status": "success",
+      "persona_id": "agora-servant-b996f46bc40c4764690a",
+      "persona_class": "agora_servant",
+      "owner_scope": "user_private",
+      "memory_scope": "private_user",
+      "execution_authority": "none",
+      "registry_backed": true
+    },
+    "governed_proposal": {
+      "status": "success",
+      "unauthenticated_create_status": 401,
+      "unauthenticated_create_code": "AUTH_REQUIRED",
+      "viewer_create_status": 403,
+      "viewer_modify_status": 403,
+      "operator_create_status": 201,
+      "operator_modify_status": 200,
+      "operator_validate_status": 200,
+      "final_revision": 3,
+      "revisions": [1, 2, 3],
+      "audit_actions": ["create", "modify", "validate"],
+      "replay_revision": 3,
+      "execution_authority": "none",
+      "downstream_execution_attempted": false,
+      "tokens_recorded": false
+    },
+    "same_pair_before_after": true,
+    "before_after_write_digest_sha256": "db21014d4c69404aeb23987012cff1d54dd1eaa5f33d10700a9a2cae6d53e660",
+    "accepted_at": "2026-07-16T19:18:01Z"
+  },
+  "bundle_scan": {
+    "status": "success",
+    "evidence_run_id": 29523324214,
+    "captured_at_utc": "2026-07-16T18:31:20.105Z",
+    "completed_at_utc": "2026-07-16T18:31:23.272Z",
+    "frontend_commit": "b13635514618ad46e3855772e9ed1a0fa1fce3d4",
+    "manifest_bff_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "pair_id": "433a21fe127a3bde0020b9444869f565e99ed4b36b7ade2c3ea89aa5185a8d36",
+    "deployment_digest": "61dfc0986f57cb696b0a6aa7b21af6d3eb8aa25fe8b5b63f7f3ad556afd47360",
+    "deployment_profile": "read-only",
+    "method": "Fresh independent same-origin recursive scan with Content-Type classification; HTML SPA fallbacks were counted separately from verified JavaScript responses, and pre/post manifest identity was required to remain stable.",
+    "response_count": 811,
+    "html_response_count": 48,
+    "root_html_response_count": 1,
+    "html_fallback_response_count": 47,
+    "javascript_response_count": 763,
+    "javascript_bytes": 27433340,
+    "other_response_count": 0,
+    "http_failure_count": 0,
+    "literal_matches": {
+      "pantheon-dev-browser:viewer": 0,
+      "pantheon-dev-browser:operator": 0
+    },
+    "pre_post_manifest_stable": true
+  },
+  "read_only_restore": {
+    "status": "success",
+    "run_id": 29527293543,
+    "run_attempt": 1,
+    "restore_job_id": 87720078613,
+    "parent_run_id": 29526662869,
+    "frontend_commit": "b13635514618ad46e3855772e9ed1a0fa1fce3d4",
+    "bff_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "pair_id": "433a21fe127a3bde0020b9444869f565e99ed4b36b7ade2c3ea89aa5185a8d36",
+    "deployment_profile": "read-only",
+    "artifact_digest_sha256": "61dfc0986f57cb696b0a6aa7b21af6d3eb8aa25fe8b5b63f7f3ad556afd47360",
+    "manifest_read_count": 3,
+    "accepted_at": "2026-07-16T19:25:04.844Z",
+    "safe_restore_passed": true,
+    "rollback_required": false,
+    "same_pair_restored": true
+  },
+  "safety_strict_bff_restore": {
+    "status": "success_after_failed_proof",
+    "run_id": 29521081353,
+    "run_attempt": 1,
+    "job_id": 87698032121,
+    "payload_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "build_time": "2026-07-16T17:47:09Z",
+    "auth_stub": false,
+    "auth_mode": "strict",
+    "version_read_count": 3,
+    "version_reads_exact_and_known": true,
+    "healthz_read_count": 3,
+    "healthz_live": true,
+    "healthz_ready": true,
+    "dependencies_all_ok": true,
+    "note": "Historical safety restore after the superseded failed proof; final strict run 29527966606 supersedes it."
+  },
+  "final_strict_bff_restore": {
+    "status": "success",
+    "run_id": 29527966606,
+    "run_attempt": 1,
+    "job_id": 87721031182,
+    "payload_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "started_at": "2026-07-16T19:26:09Z",
+    "completed_at": "2026-07-16T19:28:45Z",
+    "build_time": "2026-07-16T19:27:37Z",
+    "version_read_count": 3,
+    "version_reads_exact_and_known": true,
+    "healthz_read_count": 3,
+    "healthz_live": true,
+    "healthz_ready": true,
+    "dependencies_all_ok": true,
+    "auth_stub": false,
+    "auth_mode": "strict"
+  },
+  "workflow_state": {
+    "pantheon_nonprod_deploy": {
+      "workflow_id": 269991390,
+      "state": "active"
+    },
+    "pantheon_dev_fe_deploy": {
+      "workflow_id": 292028803,
+      "state": "active"
+    },
+    "no_nonterminal_deploy": false,
+    "no_executing_lease_holding_or_conflicting_deploy": true,
+    "historical_nonexecuting_platform_ghost": {
+      "run_id": 29469158508,
+      "observed_status": "queued",
+      "head_branch": "task/EVOCHAIN-011",
+      "created_at": "2026-07-16T03:31:02Z",
+      "updated_at": "2026-07-16T03:31:02Z",
+      "job_count": 0,
+      "lease_held": false,
+      "conflicting": false,
+      "present_in_final_nonterminal_deploy_list": true,
+      "normal_cancel_result": "GitHub HTTP 500",
+      "force_cancel_result": "GitHub HTTP 500"
+    }
+  },
+  "pending_inputs": []
+}

@@ -7,12 +7,16 @@ payloads for BFF projection and command facades.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from typing import Any, Dict, Optional
+
+from services.persona.runtime_profile import build_persona_runtime_profile
 
 
 OPENCLAW_ADAPTER_BASE_URL_ENVS = (
@@ -25,6 +29,7 @@ OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED_ENV = (
     "PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED"
 )
 OPENCLAW_ADAPTER_ASSISTANT_PREFIX = "/api/openclaw-adapter/assistant"
+OPENCLAW_ADAPTER_AGENT_PREFIX = "/api/openclaw-adapter/agents"
 
 
 class OpenClawOpsClientError(RuntimeError):
@@ -111,6 +116,52 @@ def _safe_json(raw: str) -> Dict[str, Any]:
     return {"data": loaded}
 
 
+def _validated_servant_admission(persona: Dict[str, Any], persona_id: str) -> str:
+    """Verify the BFF-owned pre-sync admission claim against canonical IDs."""
+
+    metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+    tenant_id = str(metadata.get("tenant_id") or metadata.get("tenantId") or "").strip()
+    agora_user_id = str(
+        metadata.get("agora_user_id") or metadata.get("agoraUserId") or ""
+    ).strip()
+    persona_class = str(
+        metadata.get("persona_class") or persona.get("archetype") or ""
+    ).strip()
+    authority = str(metadata.get("execution_authority") or "").strip()
+    capabilities = metadata.get("interaction_capabilities")
+    snapshot_id = str(metadata.get("capability_snapshot_id") or "").strip()
+    source_idempotency_key = str(
+        persona.get("_agent_sync_idempotency_key") or ""
+    ).strip()
+
+    expected_persona_digest = hashlib.sha256(
+        f"{tenant_id}\0{agora_user_id}\0agora_servant".encode("utf-8")
+    ).hexdigest()[:20]
+    expected_persona_id = f"agora-servant-{expected_persona_digest}"
+    expected_snapshot_digest = hashlib.sha256(
+        f"{persona_id}\0persona_opinion".encode("utf-8")
+    ).hexdigest()[:20]
+    expected_snapshot_id = f"cap-servant-{expected_snapshot_digest}"
+
+    valid = (
+        bool(tenant_id)
+        and bool(agora_user_id)
+        and persona_id == expected_persona_id
+        and persona_class == "agora_servant"
+        and authority == "none"
+        and capabilities == ["persona_opinion"]
+        and snapshot_id == expected_snapshot_id
+        and bool(source_idempotency_key)
+    )
+    if not valid:
+        raise OpenClawOpsClientError(
+            "Persona does not carry an exact canonical Agora servant admission claim.",
+            status_code=503,
+            error_code="OPENCLAW_AGENT_ADMISSION_INVALID",
+        )
+    return source_idempotency_key
+
+
 class OpenClawOpsClient:
     def __init__(
         self,
@@ -149,6 +200,45 @@ class OpenClawOpsClient:
 
     def get_upstream_status(self) -> Dict[str, Any]:
         return self._request("GET", "/api/openclaw-adapter/upstream/status")
+
+    def ensure_agora_servant_agent(self, persona: Dict[str, Any]) -> Dict[str, Any]:
+        """Reconcile one governed, no-authority servant through the adapter."""
+        profile = build_persona_runtime_profile(persona)
+        persona_id = profile.persona_id
+        source_idempotency_key = _validated_servant_admission(persona, persona_id)
+        idempotency_key = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"pantheon:agora-servant-agent:{persona_id}:{source_idempotency_key}",
+            )
+        )
+        payload = self._request(
+            "POST",
+            f"{OPENCLAW_ADAPTER_AGENT_PREFIX}/ensure",
+            body={
+                "persona_registry_ref": f"persona:{persona_id}",
+                "workspace_ref": profile.workspace_ref,
+                "capability_snapshot": {
+                    "allowed_capabilities": ["persona_opinion"],
+                    "persona_class": "agora_servant",
+                },
+            },
+            headers={
+                "Idempotency-Key": idempotency_key,
+                "X-Request-Id": str(uuid.uuid4()),
+            },
+            expected_status={200, 201},
+            timeout_seconds=max(self._timeout, 135.0),
+        )
+        agent = payload.get("agent")
+        if not isinstance(agent, dict):
+            raise OpenClawOpsClientError(
+                "OpenClaw adapter agent ensure returned no agent projection.",
+                status_code=503,
+                error_code="OPENCLAW_AGENT_SYNC_INVALID_RESPONSE",
+                payload=payload,
+            )
+        return agent
 
     def list_lifecycle_sessions(
         self,
@@ -716,7 +806,11 @@ class OpenClawOpsClient:
             normalized_path == OPENCLAW_ADAPTER_ASSISTANT_PREFIX
             or normalized_path.startswith(f"{OPENCLAW_ADAPTER_ASSISTANT_PREFIX}/")
         )
-        if not is_assistant_path:
+        is_agent_path = (
+            normalized_path == OPENCLAW_ADAPTER_AGENT_PREFIX
+            or normalized_path.startswith(f"{OPENCLAW_ADAPTER_AGENT_PREFIX}/")
+        )
+        if not is_assistant_path and not is_agent_path:
             return {}
         if self._service_token:
             return {"X-Pantheon-Service-Token": self._service_token}

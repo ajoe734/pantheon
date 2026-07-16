@@ -732,13 +732,14 @@ class TestArchiveReplayAudit(unittest.TestCase):
         root: Path,
         file_id: str,
         *,
+        snapshot_task_id: str | None = None,
         task_id: str | None = None,
         review_file: str = "",
     ) -> Path:
         path = root / f"{file_id}.json"
         data = {
             "version": 1,
-            "task_id": file_id,
+            "task_id": snapshot_task_id if snapshot_task_id is not None else file_id,
             "terminal_status": "done",
             "terminal_outcome": "completed",
             "task": {
@@ -775,6 +776,15 @@ class TestArchiveReplayAudit(unittest.TestCase):
             "LOOP-PROD-TEL-001",
         ]
         self.assertEqual(list(guardrail.FROZEN_ARCHIVE_REPLAY_TASK_IDS), expected)
+        self.assertEqual(
+            guardrail.DEFAULT_ARCHIVE_EXCLUDED_TASK_IDS,
+            {
+                "LOOP-PROD-000",
+                "LOOP-PROD-001",
+                "LOOP-PROD-002",
+                "LOOP-PROD-PLANNING-BRIEFS-001",
+            },
+        )
 
     def test_archive_replay_rejects_missing_and_extra_sources(self):
         with tempfile.TemporaryDirectory() as td:
@@ -789,6 +799,19 @@ class TestArchiveReplayAudit(unittest.TestCase):
         errors = audit["selection"]["source_set_errors"]
         self.assertTrue(any("missing frozen archive snapshot: LOOP-PROD-B.json" in e for e in errors), errors)
         self.assertTrue(any("unexpected LOOP-PROD archive snapshot: LOOP-PROD-C.json" in e for e in errors), errors)
+        self.assertEqual(audit["selection"]["included_task_ids"], ["LOOP-PROD-A"])
+
+    def test_archive_replay_rejects_duplicate_frozen_task_ids(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_snapshot(root, "LOOP-PROD-A")
+            audit = guardrail.audit_archive_root(
+                root,
+                excluded_task_ids=set(),
+                frozen_task_ids=("LOOP-PROD-A", "LOOP-PROD-A"),
+            )
+        errors = audit["selection"]["source_set_errors"]
+        self.assertTrue(any("duplicate frozen archive replay task id: LOOP-PROD-A" in e for e in errors), errors)
 
     def test_archive_replay_rejects_malformed_snapshot(self):
         with tempfile.TemporaryDirectory() as td:
@@ -813,6 +836,22 @@ class TestArchiveReplayAudit(unittest.TestCase):
             )
         gaps = audit["results"][0]["gaps"]
         self.assertTrue(any("archive filename/task ID mismatch" in g for g in gaps), gaps)
+
+    def test_archive_replay_rejects_top_level_task_id_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_snapshot(
+                root,
+                "LOOP-PROD-A",
+                snapshot_task_id="LOOP-PROD-B",
+            )
+            audit = guardrail.audit_archive_root(
+                root,
+                excluded_task_ids=set(),
+                frozen_task_ids=("LOOP-PROD-A",),
+            )
+        gaps = audit["results"][0]["gaps"]
+        self.assertTrue(any("archive filename/task_id mismatch" in g for g in gaps), gaps)
 
     def test_archive_replay_rejects_duplicate_task_ids(self):
         with tempfile.TemporaryDirectory() as td:
