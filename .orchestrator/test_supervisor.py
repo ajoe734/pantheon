@@ -1497,6 +1497,17 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_worktree_allocated")
 
+    def test_generated_worker_task_brief_mentions_inherited_status_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            brief = supervisor._generated_worker_task_brief(
+                {"paths": {"status_file": str(root / "ai-status.json")}},
+                "OPS-WORKTREE-001",
+            )
+
+        self.assertIn("PANTHEON_STATUS_ROOT", brief)
+        self.assertIn("./scripts/ai-status.sh", brief)
+
     def test_prepare_worker_workspace_allocates_chair_review_worktree_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
