@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import json
 import os
 import tempfile
@@ -8,6 +9,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+
+
+class ReconciliationStoreError(RuntimeError):
+    """Raised when a JSON map file cannot be safely read or written.
+
+    Reads and writes fail closed on this error instead of silently
+    treating malformed, truncated, or otherwise unrecoverable source
+    bytes as an empty or partial map.
+    """
 
 
 class ReconciliationDriftStore:
@@ -19,43 +29,114 @@ class ReconciliationDriftStore:
         self.reconciliation_records_path = self.data_dir / "reconciliation_records.json"
         self.drift_reports_path = self.data_dir / "drift_reports.json"
 
-    def _coerce_map(self, payload: Any) -> Dict[str, Dict[str, Any]]:
-        if not isinstance(payload, dict):
-            return {}
-        return {str(key): value for key, value in payload.items() if isinstance(value, dict)}
+    @contextlib.contextmanager
+    def _locked(self, path: Path):
+        """Hold a cross-process exclusive lock for the full transaction on `path`.
 
-    def _read_concatenated_maps(self, text: str) -> Dict[str, Dict[str, Any]]:
-        decoder = json.JSONDecoder()
+        A fresh file descriptor is opened per call so the lock is scoped to
+        this transaction only (flock is per open-file-description), and it
+        serializes readers and writers across every process attached to the
+        same lock file, not just threads inside one process.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = path.parent / f".{path.name}.lock"
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+    def _validate_map(self, path: Path, payload: Any) -> Dict[str, Dict[str, Any]]:
+        if not isinstance(payload, dict):
+            raise ReconciliationStoreError(
+                f"{path}: expected a JSON object at the top level, got {type(payload).__name__}"
+            )
         records: Dict[str, Dict[str, Any]] = {}
+        for key, value in payload.items():
+            if not isinstance(value, dict):
+                raise ReconciliationStoreError(
+                    f"{path}: record {key!r} must be a JSON object, got {type(value).__name__}"
+                )
+            records[str(key)] = value
+        return records
+
+    def _read_concatenated_maps(self, path: Path, text: str) -> Dict[str, Dict[str, Any]]:
+        """Recover a historical concatenated-map source file.
+
+        Only succeeds when the entire non-whitespace input parses as one or
+        more consecutive JSON documents whose values all satisfy the store
+        map contract. Any malformed suffix, truncation, or invalid value
+        fails closed instead of returning whatever was parsed so far. When
+        the same id appears in more than one document, the later document
+        wins.
+        """
+        decoder = json.JSONDecoder()
+        documents: List[Any] = []
         offset = 0
-        while offset < len(text):
-            while offset < len(text) and text[offset].isspace():
+        length = len(text)
+        while offset < length:
+            while offset < length and text[offset].isspace():
                 offset += 1
-            if offset >= len(text):
+            if offset >= length:
                 break
             try:
                 payload, offset = decoder.raw_decode(text, offset)
-            except json.JSONDecodeError:
-                return records
-            records.update(self._coerce_map(payload))
+            except json.JSONDecodeError as exc:
+                raise ReconciliationStoreError(
+                    f"{path}: malformed JSON at offset {offset}: {exc}"
+                ) from exc
+            documents.append(payload)
+        if not documents:
+            raise ReconciliationStoreError(f"{path}: no JSON documents found")
+        records: Dict[str, Dict[str, Any]] = {}
+        for document in documents:
+            records.update(self._validate_map(path, document))
         return records
 
-    def _read_map(self, path: Path) -> Dict[str, Dict[str, Any]]:
+    def _read_map_locked(self, path: Path) -> Dict[str, Dict[str, Any]]:
         if not path.exists():
             return {}
         try:
-            text = path.read_text(encoding="utf-8").strip()
-        except UnicodeDecodeError:
+            raw = path.read_bytes()
+        except OSError as exc:
+            raise ReconciliationStoreError(f"{path}: failed to read: {exc}") from exc
+        if not raw.strip():
             return {}
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ReconciliationStoreError(f"{path}: not valid UTF-8: {exc}") from exc
+        text = text.strip()
         if not text:
             return {}
         try:
             payload = json.loads(text)
         except json.JSONDecodeError:
-            return self._read_concatenated_maps(text)
-        return self._coerce_map(payload)
+            return self._read_concatenated_maps(path, text)
+        return self._validate_map(path, payload)
 
-    def _write_map(self, path: Path, payload: Dict[str, Dict[str, Any]]) -> None:
+    def _read_map(self, path: Path) -> Dict[str, Dict[str, Any]]:
+        with self._locked(path):
+            return self._read_map_locked(path)
+
+    @staticmethod
+    def _fsync_dir(dir_path: Path) -> None:
+        try:
+            fd = os.open(str(dir_path), os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(fd)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+
+    def _write_map_locked(self, path: Path, payload: Dict[str, Dict[str, Any]]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_name = ""
         try:
@@ -70,7 +151,11 @@ class ReconciliationDriftStore:
                 tmp_name = handle.name
                 json.dump(payload, handle, indent=2, ensure_ascii=True)
                 handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(tmp_name, path)
+            tmp_name = ""
+            self._fsync_dir(path.parent)
         finally:
             if tmp_name:
                 with contextlib.suppress(FileNotFoundError):
@@ -79,9 +164,11 @@ class ReconciliationDriftStore:
     def _put_record(self, path: Path, record_id: str, record: Dict[str, Any]) -> Dict[str, Any]:
         if not record_id:
             raise ValueError("record_id is required")
-        records = self._read_map(path)
-        records[record_id] = json.loads(json.dumps(record))
-        self._write_map(path, records)
+        serializable = json.loads(json.dumps(record))
+        with self._locked(path):
+            records = self._read_map_locked(path)
+            records[record_id] = serializable
+            self._write_map_locked(path, records)
         return records[record_id]
 
     def _list_records(self, path: Path) -> List[Dict[str, Any]]:
