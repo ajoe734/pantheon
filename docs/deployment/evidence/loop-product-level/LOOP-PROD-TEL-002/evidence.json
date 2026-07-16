@@ -2,16 +2,16 @@
   "schema_version": "loop_product_evidence.v1",
   "task_id": "LOOP-PROD-TEL-002",
   "title": "Canonical loop-run and Trade Journey lifecycle projector",
-  "captured_at": "2026-07-15T14:17:19Z",
+  "captured_at": "2026-07-16T01:31:06Z",
   "outcome": "blocked",
   "terminal_success": false,
   "environment": "dev",
-  "owner": "Codex",
+  "owner": "Codex2",
   "reviewer": "Claude",
   "review": {
     "status": "not_requested_while_blocked",
     "review_file": null,
-    "reason": "Independent approval is intentionally deferred because authoritative target deployment and hosted correlation evidence are absent."
+    "reason": "Independent approval is intentionally deferred because the strict dev/root deployment now passes credential admission but root stack health fails before hosted correlation evidence, and the deploy workflow is currently disabled."
   },
   "delivery": {
     "merge_target": "dev",
@@ -42,6 +42,9 @@
       }
     ],
     "runtime_delivery_sha": "d9c4b46d2d28cbb3ba343639fe69f3ab439ee283",
+    "latest_completed_strict_root_candidate_sha": "6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3",
+    "latest_attempted_strict_root_candidate_sha": "55b2202bbf02f1ff58245728447b03320d9705a5",
+    "current_hosted_bff_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
     "code_delivery_complete": true,
     "target_deployment_complete": false
   },
@@ -92,20 +95,32 @@
   ],
   "deployment_attempt": {
     "workflow": "Pantheon Nonprod Deploy",
-    "run_id": 29422676364,
-    "url": "https://github.com/ajoe734/pantheon/actions/runs/29422676364",
-    "requested_sha": "d9c4b46d2d28cbb3ba343639fe69f3ab439ee283",
-    "workflow_head_sha": "d9c4b46d2d28cbb3ba343639fe69f3ab439ee283",
+    "run_id": 29462890670,
+    "url": "https://github.com/ajoe734/pantheon/actions/runs/29462890670",
+    "requested_sha": "6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3",
+    "workflow_head_sha": "6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3",
     "profile": "dev/root/strict",
     "conclusion": "failure",
-    "failed_step": "Enforce dev auth deployment floor",
-    "vm_mutation_started": false,
-    "rollback_required": false,
+    "failed_step": "Deploy requested VM stack",
+    "strict_auth_floor": "passed",
+    "workload_identity_federation": "passed",
+    "allow_dirty": true,
+    "managed_worktree_stash": "deploy-dirty-dev-root-6915f1fe7a2c-20260716T005922Z",
+    "prepared_worktree_sha": "6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3",
+    "vm_mutation_started": true,
+    "root_stack_health": "failed",
+    "blocking_services": [
+      "policy-learning-svc",
+      "reconciliation-drift-svc"
+    ],
+    "rollback_required": "not_claimed; public BFF availability was restored by separate BFF-only permissive-stub run 29463957129",
     "hosted_probe_executed": false,
-    "public_bff_readback_executed": false
+    "public_bff_readback_executed": false,
+    "workflow_state_at_capture": "disabled_manually"
   },
   "authoritative_readback": {
-    "expected_source_sha": "d9c4b46d2d28cbb3ba343639fe69f3ab439ee283",
+    "expected_source_sha": "6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3",
+    "latest_attempted_dev_head_sha": "55b2202bbf02f1ff58245728447b03320d9705a5",
     "observed_source_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
     "source_sha_matches": false,
     "health_status": "ok",
@@ -117,12 +132,18 @@
     },
     "security_negative": {
       "unauthenticated_loop_runs_http_status": 401,
-      "unauthenticated_trade_journey_write_http_status": 401,
-      "fixed_bearer_me_http_status": 200,
-      "fixed_bearer_expected_status": 401,
-      "strict_auth_conclusion": "fail"
+      "unauthenticated_trade_journey_write_http_status": "not_rechecked_after_restore",
+      "fixed_bearer_me_http_status": "not_rechecked_after_restore",
+      "fixed_bearer_expected_status_for_strict": 401,
+      "strict_auth_conclusion": "fail_from_hosted_config_posture"
     },
     "canonical_lifecycle_correlation": "not_observed",
+    "restoration_run": {
+      "run_id": 29463957129,
+      "profile": "dev/bff/permissive-stub",
+      "requested_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "conclusion": "success_for_availability_only"
+    },
     "conclusion": "blocked"
   },
   "acceptance": [
@@ -130,13 +151,13 @@
       "id": "AC-01",
       "requirement": "One real paper lifecycle produces one identity-consistent loop-run and multi-stage journey",
       "status": "blocked",
-      "evidence": "Local integration and provenance tests pass; natural hosted proof did not execute because deployment admission failed."
+      "evidence": "Local integration and provenance tests pass; strict dev/root deployment reached VM compose but root stack health failed before the natural hosted proof could execute."
     },
     {
       "id": "AC-02",
       "requirement": "Projection consumes append-only canonical events rather than incidents or manufactured fixtures",
       "status": "blocked",
-      "evidence": "Committed-source and real-producer negative tests pass locally; no target readback exists."
+      "evidence": "Committed-source and real-producer negative tests pass locally; no strict target readback exists because the hosted lifecycle probe never ran."
     },
     {
       "id": "AC-03",
@@ -154,31 +175,31 @@
       "id": "AC-05",
       "requirement": "Branch, PR, checks, merge SHA, independent review, and residual risk owner/expiry",
       "status": "blocked",
-      "evidence": "Three code PRs merged with checks; independent review is deferred until hosted evidence exists."
+      "evidence": "Code PRs merged with checks and blocker evidence is updated; independent review remains deferred until strict hosted evidence exists."
     },
     {
       "id": "AC-06",
       "requirement": "Authoritative pre/post readback, not seed, stub, fixture, snapshot, or synthetic receipt",
       "status": "fail_closed",
-      "evidence": "Observed hosted SHA is stale and posture is permissive/stub; no post-deploy proof was manufactured."
+      "evidence": "Observed hosted SHA is stale a10f752b3 and posture is permissive/stub after a BFF-only restore; no post-deploy proof was manufactured."
     },
     {
       "id": "AC-07",
       "requirement": "Duplicate safety, degraded/recovery behavior, rollback or compensation, and admitted-command RPO=0",
       "status": "blocked",
-      "evidence": "Local durability/failure tests pass and deployment required no rollback because mutation never began; hosted recovery proof is absent."
+      "evidence": "Local durability/failure tests pass; strict root deploy mutated dev VM state and then failed compose health, after which public BFF availability was restored by a separate permissive-stub BFF-only run. Hosted recovery proof is absent."
     },
     {
       "id": "AC-08",
       "requirement": "Exact deployment identity and controller truth",
       "status": "fail_closed",
-      "evidence": "Expected d9c4b46d2 differs from hosted a10f752b3; natural hosted controller proof did not execute."
+      "evidence": "Latest completed strict root candidate 6915f1fe differs from hosted a10f752b3, and latest dev-head strict attempts were cancelled. Natural hosted controller proof did not execute."
     },
     {
       "id": "AC-09",
       "requirement": "Preserve RBAC, MFA, environment, and no-live-capital boundaries",
       "status": "fail_closed",
-      "evidence": "No live broker/capital action occurred, but the current hosted BFF accepted the fixed test bearer with HTTP 200 and is not strict."
+      "evidence": "No live broker/capital action occurred, but the current hosted BFF advertises auth_stub=true and auth_mode=permissive, so strict auth is not proven."
     },
     {
       "id": "AC-10",
@@ -190,13 +211,34 @@
   "blockers": [
     {
       "id": "BLOCKER-LOOP-PROD-TEL-002-DEV-AUTH-SECRETS",
-      "status": "open",
-      "severity": "blocking",
+      "status": "resolved",
+      "resolved_at": "2026-07-16T00:56:44Z",
+      "severity": "previously_blocking",
       "owner": "Pantheon dev environment credential owner",
-      "description": "The GitHub dev environment contains none of DEV_BFF_JWT_SECRET, DEV_BFF_OIDC_CLIENT_ID, or DEV_BFF_OIDC_CLIENT_SECRET. The strict floor correctly refuses deployment before any target mutation.",
-      "required_action": "A human must provision all three governed GitHub dev environment secrets, then rerun workflow 269991390 for dev/root/strict at the exact runtime delivery SHA with run_loop_prod_tel_002_probe=true.",
+      "description": "The GitHub dev environment now exposes the required strict secret names and the 2026-07-16 strict runs passed the Enforce dev auth deployment floor step.",
+      "required_action": "Keep DEV_BFF_JWT_SECRET, DEV_BFF_OIDC_CLIENT_ID, DEV_BFF_OIDC_CLIENT_SECRET, and DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN provisioned for the next strict rerun.",
       "prohibited_workaround": "Do not fabricate repository credentials, weaken the strict floor, or use permissive-stub as product-level evidence.",
       "recheck_by": "2026-07-22T14:15:02Z"
+    },
+    {
+      "id": "BLOCKER-LOOP-PROD-TEL-002-DEV-ROOT-HEALTH",
+      "status": "open",
+      "severity": "blocking",
+      "owner": "Pantheon dev root stack owners for policy-learning-svc and reconciliation-drift-svc",
+      "description": "Strict dev/root deployment run 29462890670 reached VM compose at 6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3, but root stack health failed before the LOOP-PROD-TEL-002 hosted lifecycle probe. The terminal failure cited pantheon-policy-learning-svc-1 unhealthy, while pantheon-reconciliation-drift-svc-1 was also unhealthy.",
+      "required_action": "Repair or verify the dev root stack health dependencies, then rerun Pantheon Nonprod Deploy for dev/root/strict at the intended current dev SHA with run_loop_prod_tel_002_probe=true.",
+      "prohibited_workaround": "Do not accept a local test run, a BFF-only deploy, a permissive-stub deploy, or a cancelled run as hosted product-level proof.",
+      "recheck_by": "2026-07-23T01:31:06Z"
+    },
+    {
+      "id": "BLOCKER-LOOP-PROD-TEL-002-NONPROD-WORKFLOW-DISABLED",
+      "status": "open",
+      "severity": "blocking",
+      "owner": "Pantheon workflow operator",
+      "description": "After two strict dev/root attempts at newer dev head 55b2202bbf02f1ff58245728447b03320d9705a5 were cancelled, workflow 269991390 was observed in disabled_manually state, preventing this worker from dispatching another strict hosted proof run.",
+      "required_action": "Re-enable Pantheon Nonprod Deploy and permit a single dev/root/strict rerun with the LOOP-PROD-TEL-002 probe enabled once root stack health is acceptable.",
+      "prohibited_workaround": "Do not mark the task done from the current stale hosted BFF or from cancelled workflow attempts.",
+      "recheck_by": "2026-07-23T01:31:06Z"
     }
   ],
   "residual_risks": [
@@ -223,6 +265,14 @@
     {
       "path": "raw/20260715T141719Z-hosted-precheck.json",
       "sha256": "d430faf6389b4bbeabb2b12dd92f22bcaa11e3428d0f62eab6b085a398261e75"
+    },
+    {
+      "path": "raw/20260716T013106Z-strict-root-health-blocker.json",
+      "sha256": "02444b1871151199502706098eead6c34917bceeec5a0e81054f55050f720d68"
+    },
+    {
+      "path": "raw/20260716T013106Z-hosted-readback-after-permissive-restore.json",
+      "sha256": "790ddccf8db87a699707692783065ab49a73b267616d366e36f57c5a2fe7287f"
     }
   ],
   "record_log": [
@@ -231,6 +281,30 @@
       "actor": "Codex",
       "event": "strict_deployment_blocked",
       "message": "Merged runtime delivery SHA d9c4b46d2 was submitted to dev/root/strict. Human-managed dev-login/JWT secrets were absent, so the fail-closed floor stopped before target mutation; stale hosted posture was recorded without claiming success."
+    },
+    {
+      "recorded_at": "2026-07-16T00:56:44Z",
+      "actor": "Codex2",
+      "event": "strict_deployment_floor_rechecked",
+      "message": "Human/Ops-provisioned dev secrets were visible by name and strict dev/root run 29462829652 passed the auth floor and WIF before failing on a dirty managed deploy worktree."
+    },
+    {
+      "recorded_at": "2026-07-16T00:58:07Z",
+      "actor": "Codex2",
+      "event": "strict_deployment_blocked_by_root_health",
+      "message": "Official allow-dirty rerun 29462890670 stashed the managed deploy worktree and prepared 6915f1fe, but root compose failed on policy-learning-svc and reconciliation-drift-svc health before hosted lifecycle proof."
+    },
+    {
+      "recorded_at": "2026-07-16T01:24:51Z",
+      "actor": "Codex2",
+      "event": "bff_availability_restored_without_product_proof",
+      "message": "Separate BFF-only run 29463957129 restored public dev BFF availability at stale SHA a10f752b3 with permissive-stub profile; this is explicitly not LOOP-PROD-TEL-002 product-level proof."
+    },
+    {
+      "recorded_at": "2026-07-16T01:31:06Z",
+      "actor": "Codex2",
+      "event": "rerun_blocked_by_workflow_state",
+      "message": "Two newer dev-head strict runs at 55b2202b were cancelled and Pantheon Nonprod Deploy was observed disabled_manually, so no further hosted proof rerun could be dispatched in this worker turn."
     }
   ],
   "redaction": {
