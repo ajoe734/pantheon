@@ -33,11 +33,22 @@ Canonical JSON schemas live at:
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+import threading
+from copy import deepcopy
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from functools import wraps
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Mapping, Optional
+
+try:  # pragma: no cover - Linux production and CI provide fcntl.
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 
 def _utc_now() -> str:
@@ -75,6 +86,47 @@ class PostmortemStatus(str, Enum):
 
 class IncidentError(ValueError):
     """Raised when IncidentCase or Postmortem validation fails."""
+
+
+class IncidentConcurrencyError(IncidentError):
+    """Raised when a guarded mutation loses a durable compare-and-set race."""
+
+
+def _serialized_store_read(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        # Postgres refreshes replace both in-memory caches.  Reads must share
+        # the write lock so they cannot clear a mutation between its domain
+        # update and durable compare-and-set.
+        with self._thread_lock:
+            return method(self, *args, **kwargs)
+
+    return wrapped
+
+
+def _serialized_store_write(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._write_guard():
+            # JSON guards refresh before yielding; Postgres-backed subclasses
+            # refresh here because their guard has no filesystem path. Preserve
+            # that durable state so a failed _save (or any other exception after
+            # mutation) cannot leak an uncommitted transition through reads.
+            self._refresh_from_disk()
+            incidents_before = deepcopy(self._incidents)
+            postmortems_before = deepcopy(self._postmortems)
+            loaded_mtime_before = self._loaded_mtime_ns
+            try:
+                return method(self, *args, **kwargs)
+            except BaseException:
+                self._incidents.clear()
+                self._incidents.update(incidents_before)
+                self._postmortems.clear()
+                self._postmortems.update(postmortems_before)
+                self._loaded_mtime_ns = loaded_mtime_before
+                raise
+
+    return wrapped
 
 
 @dataclass(frozen=True)
@@ -135,6 +187,13 @@ class IncidentCase:
     incident_cluster_id: Optional[str] = None
     evidence_summary: Optional[str] = None
     lineage_ref: Optional[str] = None          # composite ref, e.g. "{artifact_id}@{artifact_version}"
+    # Canonical breach identity (e.g. metric_name/window/policy_source) for
+    # producers that need to distinguish two breaches sharing an explicit
+    # caller-supplied incident_id. None for incidents created by paths that
+    # don't set it (e.g. drift reports); a collision guard must treat that as
+    # "identity unknown", not "identity matches" (see services/incidents/
+    # consumer.py `_require_same_incident_identity`).
+    threshold_identity: Optional[str] = None
 
     def __post_init__(self) -> None:
         try:
@@ -292,6 +351,7 @@ class Postmortem:
 
     # Optional
     published_at: Optional[str] = None
+    published_event_id: Optional[str] = None
     linked_evolution_decision_id: Optional[str] = None  # set after EVO-003
 
     def __post_init__(self) -> None:
@@ -429,9 +489,35 @@ class IncidentStore:
         self._postmortems: Dict[str, Postmortem] = {}
         self._path = path
         self._loaded_mtime_ns: Optional[int] = None
+        self._thread_lock = threading.RLock()
         if path and path.exists():
             self._load(path)
             self._loaded_mtime_ns = path.stat().st_mtime_ns
+
+    @contextmanager
+    def _write_guard(self) -> Iterator[None]:
+        """Serialize JSON read-modify-write cycles across threads/processes."""
+
+        with self._thread_lock:
+            if self._path is None:
+                yield
+                return
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            lock_path = self._path.with_name(f".{self._path.name}.lock")
+            descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                if fcntl is not None:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX)
+                if self._path.exists():
+                    self._incidents.clear()
+                    self._postmortems.clear()
+                    self._load(self._path)
+                    self._loaded_mtime_ns = self._path.stat().st_mtime_ns
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
 
     def _refresh_from_disk(self) -> None:
         if not self._path or not self._path.exists():
@@ -444,6 +530,7 @@ class IncidentStore:
 
     # ---- IncidentCase reads ----
 
+    @_serialized_store_read
     def get_incident(self, incident_id: str) -> Optional[IncidentCase]:
         self._refresh_from_disk()
         return self._incidents.get(incident_id)
@@ -454,65 +541,91 @@ class IncidentStore:
             raise IncidentError(f"IncidentCase not found: {incident_id}")
         return inc
 
+    @_serialized_store_read
     def list_incidents(self) -> List[IncidentCase]:
         self._refresh_from_disk()
         return list(self._incidents.values())
 
+    @_serialized_store_read
     def find_incidents_by_binding(self, binding_id: str) -> List[IncidentCase]:
         self._refresh_from_disk()
         return [i for i in self._incidents.values() if i.binding_id == binding_id]
 
+    @_serialized_store_read
     def find_incidents_by_pool(self, capital_pool_id: str) -> List[IncidentCase]:
         self._refresh_from_disk()
         return [i for i in self._incidents.values() if i.capital_pool_id == capital_pool_id]
 
+    @_serialized_store_read
     def find_open_incidents(self) -> List[IncidentCase]:
         self._refresh_from_disk()
         return [i for i in self._incidents.values() if i.is_open()]
 
     # ---- IncidentCase writes ----
 
+    @_serialized_store_write
     def create_incident(self, inc: IncidentCase) -> IncidentCase:
-        self._refresh_from_disk()
         errors = validate_incident_case(inc)
         if errors:
             raise IncidentError(f"Invalid IncidentCase: {errors}")
         if inc.incident_id in self._incidents:
             raise IncidentError(f"IncidentCase already exists: {inc.incident_id}")
         self._incidents[inc.incident_id] = inc
-        self._save()
+        self._save(
+            aggregate_type="incident",
+            record_id=inc.incident_id,
+            expected_snapshot=None,
+        )
         return inc
 
+    @_serialized_store_write
     def update_incident_status(
         self,
         incident_id: str,
         new_status: str,
         *,
         resolved_at: Optional[str] = None,
+        expected_snapshot: Optional[Mapping[str, Any]] = None,
     ) -> IncidentCase:
         """Transition an incident to a new status."""
-        self._refresh_from_disk()
         inc = self.require_incident(incident_id)
+        if expected_snapshot is not None and inc.to_dict() != dict(expected_snapshot):
+            raise IncidentConcurrencyError(
+                f"IncidentCase changed concurrently before status transition: {incident_id}"
+            )
         try:
             IncidentStatus(new_status)
         except ValueError:
             raise IncidentError(f"Invalid status: {new_status!r}")
 
+        # Enforce no regression from terminal statuses
+        if inc.status == IncidentStatus.CLOSED.value and new_status != IncidentStatus.CLOSED.value:
+            raise IncidentError(f"Incident is closed and cannot transition to {new_status}")
+        if inc.status == IncidentStatus.RESOLVED.value and new_status not in {
+            IncidentStatus.RESOLVED.value,
+            IncidentStatus.CLOSED.value,
+        }:
+            raise IncidentError(f"Incident is resolved and cannot regress to {new_status}")
+
         updates: Dict[str, Any] = {"status": new_status}
         if new_status in {IncidentStatus.RESOLVED.value, IncidentStatus.CLOSED.value}:
-            updates["resolved_at"] = resolved_at or _utc_now()
+            updates["resolved_at"] = inc.resolved_at or resolved_at or _utc_now()
 
         updated = IncidentCase(**{**inc.to_dict(), **updates})
         errors = validate_incident_case(updated)
         if errors:
             raise IncidentError(f"Status update produces invalid IncidentCase: {errors}")
         self._incidents[incident_id] = updated
-        self._save()
+        self._save(
+            aggregate_type="incident",
+            record_id=incident_id,
+            expected_snapshot=inc.to_dict(),
+        )
         return updated
 
+    @_serialized_store_write
     def merge_incident_evidence(self, incident_id: str, incoming: IncidentCase) -> IncidentCase:
         """Merge additional evidence into an existing open IncidentCase."""
-        self._refresh_from_disk()
         existing = self.require_incident(incident_id)
         updates: Dict[str, Any] = {
             "telemetry_event_ids": _merge_unique(
@@ -538,11 +651,16 @@ class IncidentStore:
         if errors:
             raise IncidentError(f"Evidence merge produces invalid IncidentCase: {errors}")
         self._incidents[incident_id] = updated
-        self._save()
+        self._save(
+            aggregate_type="incident",
+            record_id=incident_id,
+            expected_snapshot=existing.to_dict(),
+        )
         return updated
 
     # ---- Postmortem reads ----
 
+    @_serialized_store_read
     def get_postmortem(self, postmortem_id: str) -> Optional[Postmortem]:
         self._refresh_from_disk()
         return self._postmortems.get(postmortem_id)
@@ -553,10 +671,12 @@ class IncidentStore:
             raise IncidentError(f"Postmortem not found: {postmortem_id}")
         return pm
 
+    @_serialized_store_read
     def list_postmortems(self) -> List[Postmortem]:
         self._refresh_from_disk()
         return list(self._postmortems.values())
 
+    @_serialized_store_read
     def find_postmortem_for_incident(self, incident_id: str) -> Optional[Postmortem]:
         self._refresh_from_disk()
         matches = [p for p in self._postmortems.values() if p.incident_id == incident_id]
@@ -564,6 +684,7 @@ class IncidentStore:
 
     # ---- Postmortem writes ----
 
+    @_serialized_store_write
     def create_postmortem(self, pm: Postmortem) -> Postmortem:
         """
         Create a Postmortem.
@@ -571,26 +692,56 @@ class IncidentStore:
         The referenced IncidentCase must exist in this store before a
         Postmortem can be created.
         """
-        self._refresh_from_disk()
         errors = validate_postmortem(pm)
         if errors:
             raise IncidentError(f"Invalid Postmortem: {errors}")
         if pm.postmortem_id in self._postmortems:
-            raise IncidentError(f"Postmortem already exists: {pm.postmortem_id}")
+            raise IncidentConcurrencyError(
+                f"Postmortem already exists: {pm.postmortem_id}"
+            )
         if pm.incident_id not in self._incidents:
             raise IncidentError(
                 f"Postmortem references unknown IncidentCase: {pm.incident_id}. "
                 "Create the IncidentCase first."
             )
-        self._validate_postmortem_against_incident(pm, self._incidents[pm.incident_id])
+        parent = self._incidents[pm.incident_id]
+        existing_for_incident = next(
+            (
+                candidate
+                for candidate in self._postmortems.values()
+                if candidate.incident_id == pm.incident_id
+            ),
+            None,
+        )
+        if existing_for_incident is not None:
+            raise IncidentConcurrencyError(
+                "Postmortem already exists for IncidentCase "
+                f"{pm.incident_id}: {existing_for_incident.postmortem_id}"
+            )
+        self._validate_postmortem_against_incident(pm, parent)
         self._postmortems[pm.postmortem_id] = pm
-        self._save()
+        self._save(
+            aggregate_type="postmortem",
+            record_id=pm.postmortem_id,
+            expected_snapshot=None,
+            consistency_checks=(("incident", pm.incident_id, parent.to_dict()),),
+        )
         return pm
 
-    def update_postmortem_draft(self, pm: Postmortem) -> Postmortem:
+    @_serialized_store_write
+    def update_postmortem_draft(
+        self,
+        pm: Postmortem,
+        *,
+        expected_snapshot: Optional[Mapping[str, Any]] = None,
+    ) -> Postmortem:
         """Replace an existing draft Postmortem with an updated draft."""
-        self._refresh_from_disk()
         existing = self.require_postmortem(pm.postmortem_id)
+        if expected_snapshot is not None and existing.to_dict() != dict(expected_snapshot):
+            raise IncidentConcurrencyError(
+                "Postmortem changed concurrently before draft update: "
+                f"{pm.postmortem_id}"
+            )
         if existing.status != PostmortemStatus.DRAFT.value or pm.status != PostmortemStatus.DRAFT.value:
             raise IncidentError("Only draft Postmortems can be updated by the draft worker")
         if existing.incident_id != pm.incident_id:
@@ -606,37 +757,83 @@ class IncidentStore:
                 f"Postmortem references unknown IncidentCase: {pm.incident_id}. "
                 "Create the IncidentCase first."
             )
-        self._validate_postmortem_against_incident(pm, self._incidents[pm.incident_id])
+        parent = self._incidents[pm.incident_id]
+        self._validate_postmortem_against_incident(pm, parent)
         self._postmortems[pm.postmortem_id] = pm
-        self._save()
+        self._save(
+            aggregate_type="postmortem",
+            record_id=pm.postmortem_id,
+            expected_snapshot=existing.to_dict(),
+            consistency_checks=(("incident", pm.incident_id, parent.to_dict()),),
+        )
         return pm
 
+    @_serialized_store_write
     def update_postmortem_status(
         self,
         postmortem_id: str,
         new_status: str,
         *,
         published_at: Optional[str] = None,
+        published_event_id: Optional[str] = None,
+        expected_snapshot: Optional[Mapping[str, Any]] = None,
+        expected_incident_snapshot: Optional[Mapping[str, Any]] = None,
     ) -> Postmortem:
-        self._refresh_from_disk()
         pm = self.require_postmortem(postmortem_id)
+        if expected_snapshot is not None and pm.to_dict() != dict(expected_snapshot):
+            raise IncidentConcurrencyError(
+                "Postmortem changed concurrently before status transition: "
+                f"{postmortem_id}"
+            )
+        incident = self.require_incident(pm.incident_id)
+        if (
+            expected_incident_snapshot is not None
+            and incident.to_dict() != dict(expected_incident_snapshot)
+        ):
+            raise IncidentConcurrencyError(
+                "Parent IncidentCase changed concurrently before postmortem status transition: "
+                f"{pm.incident_id}"
+            )
         try:
             PostmortemStatus(new_status)
         except ValueError:
             raise IncidentError(f"Invalid postmortem status: {new_status!r}")
 
+        if pm.status == PostmortemStatus.PUBLISHED.value:
+            if new_status != PostmortemStatus.PUBLISHED.value:
+                raise IncidentError(
+                    f"Postmortem is published and cannot transition to {new_status}"
+                )
+            if published_event_id and published_event_id != pm.published_event_id:
+                raise IncidentError(
+                    "Published Postmortem cannot be republished with a different event identity"
+                )
+            if published_at and published_at != pm.published_at:
+                raise IncidentError(
+                    "Published Postmortem cannot replace its original published_at"
+                )
+            return pm
+
         updates: Dict[str, Any] = {"status": new_status}
         if new_status == PostmortemStatus.PUBLISHED.value:
             updates["published_at"] = published_at or _utc_now()
+            if published_event_id:
+                updates["published_event_id"] = published_event_id
 
         updated = Postmortem(**{**pm.to_dict(), **updates})
         errors = validate_postmortem(updated)
         if errors:
             raise IncidentError(f"Status update produces invalid Postmortem: {errors}")
         self._postmortems[postmortem_id] = updated
-        self._save()
+        self._save(
+            aggregate_type="postmortem",
+            record_id=postmortem_id,
+            expected_snapshot=pm.to_dict(),
+            consistency_checks=(("incident", pm.incident_id, incident.to_dict()),),
+        )
         return updated
 
+    @_serialized_store_write
     def link_evolution_decision(
         self,
         postmortem_id: str,
@@ -648,23 +845,55 @@ class IncidentStore:
         Called by EVO-003 when an EvolutionDecision is created referencing
         this postmortem (evolution_decision.postmortem lineage edge).
         """
-        self._refresh_from_disk()
         pm = self.require_postmortem(postmortem_id)
         updated = Postmortem(**{**pm.to_dict(), "linked_evolution_decision_id": evolution_decision_id})
         self._postmortems[postmortem_id] = updated
-        self._save()
+        self._save(
+            aggregate_type="postmortem",
+            record_id=postmortem_id,
+            expected_snapshot=pm.to_dict(),
+        )
         return updated
 
     # ---- Persistence ----
 
-    def _save(self) -> None:
+    def _save(
+        self,
+        *,
+        aggregate_type: str,
+        record_id: str,
+        expected_snapshot: Optional[Mapping[str, Any]],
+        consistency_checks: tuple[tuple[str, str, Mapping[str, Any]], ...] = (),
+    ) -> None:
         if self._path:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             data = {
                 "incidents": [i.to_dict() for i in self._incidents.values()],
                 "postmortems": [p.to_dict() for p in self._postmortems.values()],
             }
-            self._path.write_text(json.dumps(data, indent=2))
+            handle = tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self._path.parent,
+                prefix=f".{self._path.name}.",
+                suffix=".tmp",
+                delete=False,
+            )
+            temporary_path = Path(handle.name)
+            try:
+                with handle:
+                    json.dump(data, handle, indent=2)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary_path, self._path)
+                directory_fd = os.open(self._path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            finally:
+                if temporary_path.exists():
+                    temporary_path.unlink()
             self._loaded_mtime_ns = self._path.stat().st_mtime_ns
 
     def _load(self, path: Path) -> None:

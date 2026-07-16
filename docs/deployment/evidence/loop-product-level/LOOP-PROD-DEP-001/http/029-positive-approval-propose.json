@@ -1,0 +1,51 @@
+{
+  "captured_at": "2026-07-15T00:10:26Z",
+  "duration_ms": 5.406,
+  "label": "positive-approval-propose",
+  "request": {
+    "body": {
+      "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+      "decision_id": "approval-loop-prod-dep-20260715001015",
+      "persona_id": "persona-20260531-6f175c5c",
+      "risk_level": "medium",
+      "target_id": "artifact-loop-prod-dep-20260715001015",
+      "target_type": "registry_entry",
+      "target_version": "1.14.1015"
+    },
+    "headers": {},
+    "method": "POST",
+    "started_at": "2026-07-15T00:10:26Z",
+    "url": "http://127.0.0.1:18082/api/governance/approvals"
+  },
+  "response": {
+    "payload": {
+      "actor_id": null,
+      "actor_role": null,
+      "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+      "conditions": [],
+      "created_at": "2026-07-15T00:10:26Z",
+      "decided_at": null,
+      "decision": null,
+      "decision_id": "approval-loop-prod-dep-20260715001015",
+      "decision_state": "proposed",
+      "evidence_refs": [],
+      "expires_at": null,
+      "metadata": null,
+      "owner_user_id": "pantheon-system",
+      "persona_id": "persona-20260531-6f175c5c",
+      "proposal_content_digest": null,
+      "proposal_id": null,
+      "proposal_revision": null,
+      "rationale": null,
+      "revoked_at": null,
+      "risk_level": "medium",
+      "superseded_by": null,
+      "target_id": "artifact-loop-prod-dep-20260715001015",
+      "target_type": "registry_entry",
+      "target_version": "1.14.1015",
+      "tenant_id": "pantheon-system",
+      "validation_result_digest": null
+    },
+    "status": 201
+  }
+}

@@ -1,10 +1,11 @@
 """Async preview/eval worker for trainer teaching sessions.
 
 The training-session API owns the durable preview job queue.  This worker is a
-small supervised poller that claims queued jobs by invoking the service's
-``/api/training/preview-jobs/{job_id}/run`` endpoint.  Duplicate ticks are
-idempotent because completed jobs are replayed by the API without creating a
-second preview result event.
+small supervised poller that asks for claimable jobs and invokes the service's
+``/api/training/preview-jobs/{job_id}/run`` endpoint.  The API owns leases,
+reclaim, retry eligibility, and the trusted evaluation clock.  Duplicate ticks
+are idempotent because completed jobs are replayed without creating a second
+preview result event.
 """
 
 from __future__ import annotations
@@ -17,7 +18,10 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+
+DEFAULT_ALIVE_PATH = "/data/training-session/preview-worker-alive"
 
 
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
@@ -37,13 +41,13 @@ def _read_json_response(request: urllib.request.Request, timeout_seconds: float)
     return json.loads(body) if body else {}
 
 
-def fetch_queued_jobs(
+def fetch_claimable_jobs(
     *,
     api_url: str,
     limit: int,
     timeout_seconds: float = 30.0,
 ) -> list[dict[str, Any]]:
-    query = urllib.parse.urlencode({"status": "queued", "limit": limit})
+    query = urllib.parse.urlencode({"status": "claimable", "limit": limit})
     request = urllib.request.Request(
         api_url.rstrip("/") + f"/api/training/preview-jobs?{query}",
         headers={"Accept": "application/json"},
@@ -59,7 +63,9 @@ def run_job(
     job_id: str,
     timeout_seconds: float = 30.0,
 ) -> dict[str, Any]:
-    payload = json.dumps({"run_at": _utc_now()}).encode("utf-8")
+    # The service owns the trusted evaluation clock.  Sending a worker clock
+    # here would let client-controlled time influence dataset freshness.
+    payload = b"{}"
     request = urllib.request.Request(
         api_url.rstrip("/") + f"/api/training/preview-jobs/{job_id}/run",
         data=payload,
@@ -75,10 +81,15 @@ def run_tick(
     api_url: str,
     limit: int,
     timeout_seconds: float = 30.0,
+    heartbeat: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
-    jobs = fetch_queued_jobs(api_url=api_url, limit=limit, timeout_seconds=timeout_seconds)
+    if heartbeat:
+        heartbeat()
+    jobs = fetch_claimable_jobs(api_url=api_url, limit=limit, timeout_seconds=timeout_seconds)
     completed = 0
     replayed = 0
+    reclaimed = 0
+    retryable = 0
     failed = 0
     errors: list[str] = []
     job_ids: list[str] = []
@@ -87,7 +98,9 @@ def run_tick(
         job_id = str(job.get("job_id") or "").strip()
         if not job_id:
             failed += 1
-            errors.append("queued preview job missing job_id")
+            errors.append("claimable preview job missing job_id")
+            if heartbeat:
+                heartbeat()
             continue
         job_ids.append(job_id)
         try:
@@ -96,14 +109,25 @@ def run_tick(
             failed += 1
             detail = exc.read().decode("utf-8", errors="replace")
             errors.append(f"job_id={job_id} http_error={exc.code} {detail}")
+            if heartbeat:
+                heartbeat()
             continue
         except urllib.error.URLError as exc:
             failed += 1
             errors.append(f"job_id={job_id} url_error={exc.reason}")
+            if heartbeat:
+                heartbeat()
             continue
+
+        if heartbeat:
+            heartbeat()
 
         if result.get("replayed"):
             replayed += 1
+        if result.get("reclaimed"):
+            reclaimed += 1
+        if result.get("retryable"):
+            retryable += 1
         if result.get("status") == "completed":
             completed += 1
         else:
@@ -115,6 +139,8 @@ def run_tick(
         "job_ids": job_ids,
         "completed": completed,
         "replayed": replayed,
+        "reclaimed": reclaimed,
+        "retryable": retryable,
         "failed": failed,
         "errors": errors,
     }
@@ -137,13 +163,18 @@ def main() -> int:
     max_ticks = _env_int("TRAINING_SESSION_PREVIEW_WORKER_MAX_TICKS", 0, minimum=0)
     batch_limit = _env_int("TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT", 10, minimum=1)
     timeout_seconds = float(os.getenv("TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS", "30"))
-    alive_path = os.getenv("TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH", "")
+    alive_path = os.getenv("TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH", DEFAULT_ALIVE_PATH)
 
     tick = 0
     while True:
         tick += 1
         try:
-            result = run_tick(api_url=api_url, limit=batch_limit, timeout_seconds=timeout_seconds)
+            result = run_tick(
+                api_url=api_url,
+                limit=batch_limit,
+                timeout_seconds=timeout_seconds,
+                heartbeat=lambda: _write_alive(alive_path),
+            )
             print(json.dumps({"tick": tick, "result": result}, sort_keys=True), flush=True)
         except Exception as exc:  # noqa: BLE001
             print(

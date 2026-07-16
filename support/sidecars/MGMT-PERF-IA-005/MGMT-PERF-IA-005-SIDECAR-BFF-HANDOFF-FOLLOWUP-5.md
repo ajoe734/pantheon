@@ -114,4 +114,3 @@ formula, rebalance list/detail, and rebalance apply routes remain registered in
 `services/control-plane/bff/main.py`. No canonical truth, runtime, registry,
 governance implementation, BFF route, schema, or frontend file was changed.
 `current-work.md` and the complete `ai-activity-log.jsonl` were not scanned.
-

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
 import sys
@@ -11,6 +12,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import planning_state
+import task_archive
 
 
 class PlanningStateTests(unittest.TestCase):
@@ -35,20 +37,37 @@ class PlanningStateTests(unittest.TestCase):
         )
 
     def patch_ai_status_paths(self, root: Path):
-        return mock.patch.multiple(
-            planning_state.ai_status,
-            ROOT=root,
-            STATUS_FILE=root / "ai-status.json",
-            LOG_FILE=root / "ai-activity-log.jsonl",
-            CURRENT_WORK_FILE=root / "current-work.md",
-            DOCS_SITE_DIR=root / "docs-site",
-            CONFIG_FILE=root / ".orchestrator" / "config.json",
-            PLANNING_STATE_FILE=root / ".orchestrator" / "planning-state.json",
-            ORCHESTRATOR_STATE_FILE=root / ".orchestrator" / "state.json",
-            APPROVAL_QUEUE_FILE=root / ".orchestrator" / "approval-queue.json",
-            DASHBOARD_BUNDLE_FILE=root / "dashboard-bundle.json",
-            archived_task_snapshot=lambda _task_id: None,
+        archive_dir = root / "ai-task-archive"
+        stack = ExitStack()
+        stack.enter_context(
+            mock.patch.multiple(
+                planning_state.ai_status,
+                ROOT=root,
+                STATUS_ROOT=root,
+                STATUS_FILE=root / "ai-status.json",
+                LOG_FILE=root / "ai-activity-log.jsonl",
+                CURRENT_WORK_FILE=root / "current-work.md",
+                DOCS_SITE_DIR=root / "docs-site",
+                CONFIG_FILE=root / ".orchestrator" / "config.json",
+                PLANNING_STATE_FILE=root / ".orchestrator" / "planning-state.json",
+                ORCHESTRATOR_STATE_FILE=root / ".orchestrator" / "state.json",
+                APPROVAL_QUEUE_FILE=root / ".orchestrator" / "approval-queue.json",
+                DASHBOARD_BUNDLE_FILE=root / "dashboard-bundle.json",
+                ARCHIVE_TASKS_DIR=archive_dir / "tasks",
+                archived_task_snapshot=lambda _task_id: None,
+            )
         )
+        stack.enter_context(
+            mock.patch.multiple(
+                task_archive,
+                STATUS_ROOT=root,
+                STATUS_FILE=root / "ai-status.json",
+                ARCHIVE_DIR=archive_dir,
+                ARCHIVE_TASKS_DIR=archive_dir / "tasks",
+                ARCHIVE_INDEX_FILE=archive_dir / "index.json",
+            )
+        )
+        return stack
 
     def test_sync_creates_templates_and_derived_state(self) -> None:
         with tempfile.TemporaryDirectory(prefix="planning-state-sync-") as temp_dir:
@@ -376,6 +395,37 @@ class PlanningStateTests(unittest.TestCase):
         )
         self.assertEqual(task_map["PLAN-002"]["materialization_ref"]["human_gate_status"], "approved")
 
+    def test_materialize_holds_canonical_task_lock_around_complete_body(self) -> None:
+        events: list[str] = []
+        lock = mock.MagicMock()
+        lock.__enter__.side_effect = lambda: events.append("lock-enter")
+        lock.__exit__.side_effect = lambda *_args: events.append("lock-exit")
+
+        session = {"session_id": "phase-test"}
+        args = ["ignored"]
+        with (
+            mock.patch.object(
+                planning_state.ai_status,
+                "canonical_task_state_lock",
+                return_value=lock,
+            ) as acquire_lock,
+            mock.patch.object(
+                planning_state,
+                "_command_materialize_locked",
+                side_effect=lambda actual_session, actual_args: events.append(
+                    f"body:{actual_session['session_id']}:{actual_args[0]}"
+                ),
+            ) as materialize_locked,
+        ):
+            planning_state.command_materialize(session, args)
+
+        acquire_lock.assert_called_once_with(shared=False, nonblocking=False)
+        materialize_locked.assert_called_once_with(session, args)
+        self.assertEqual(
+            events,
+            ["lock-enter", "body:phase-test:ignored", "lock-exit"],
+        )
+
     def test_materialize_preserves_existing_execution_truth_and_only_backfills_source_refs(self) -> None:
         with tempfile.TemporaryDirectory(prefix="planning-state-backfill-") as temp_dir:
             root = Path(temp_dir)
@@ -498,7 +548,15 @@ class PlanningStateTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-                with mock.patch.object(planning_state.ai_status, "archived_task_snapshot", return_value={"task_id": "PLAN-ARCH"}):
+                with mock.patch.object(
+                    planning_state.ai_status,
+                    "archived_task_snapshot",
+                    side_effect=lambda task_id: (
+                        {"task_id": "PLAN-ARCH"}
+                        if task_id == "PLAN-ARCH"
+                        else None
+                    ),
+                ):
                     planning_state.command_materialize(session, [])
 
                 status = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))

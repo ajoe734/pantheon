@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -360,6 +361,30 @@ class TestWorkshopStoreFactory:
         )
         assert DEFAULT_SCHEMA == "agora"
         assert BACKEND_ENV == "AGORA_WORKSHOP_STORE_BACKEND"
+
+    def test_postgres_create_event_replays_equivalent_and_rejects_collision(self):
+        dsn = os.getenv("TEST_DATABASE_URL")
+        if not dsn:
+            pytest.skip("TEST_DATABASE_URL is not set")
+        from agora.strategy_workshop import PostgresWorkshopStore
+
+        store = PostgresWorkshopStore(dsn=dsn, schema=f"agora_ws_{uuid.uuid4().hex[:12]}")
+        workshop_id = f"ws-{uuid.uuid4().hex}"
+        store.create_session({
+            "workshop_id": workshop_id, "tenant_id": "tenant-a", "user_id": "user-a",
+        })
+        event = {
+            "event_id": f"evt-{uuid.uuid4().hex}", "workshop_id": workshop_id,
+            "actor_type": "operator", "event_type": "opinion_requested",
+            "private_content_ref": "private://one", "redacted_summary": "safe",
+            "payload_refs_json": {"interaction_id": "int-1"}, "trace_id": "trace-1",
+        }
+        first = store.create_event(event)
+        replay = store.create_event(event)
+        assert replay["sequence_no"] == first["sequence_no"]
+        assert len(store.list_events(workshop_id)) == 1
+        with pytest.raises(ValueError, match="different payload"):
+            store.create_event({**event, "redacted_summary": "different"})
 
 
 # --------------------------------------------------------------------------- #
@@ -896,7 +921,7 @@ class TestWorkshopRouterEndpoints:
         assert resp.status_code == 403, resp.text
         assert resp.json()["error"]["code"] == "FORBIDDEN"
 
-    def test_deferred_versions_returns_501(self, monkeypatch):
+    def test_versions_route_is_live_and_returns_authoritative_empty_list(self, monkeypatch):
         client = _workshop_client(monkeypatch)
         create_resp = client.post(
             "/bff/agora/workshops",
@@ -913,7 +938,9 @@ class TestWorkshopRouterEndpoints:
             f"/bff/agora/workshops/{workshop_id}/versions",
             headers={"Authorization": _OPERATOR_AUTH},
         )
-        assert resp.status_code == 501
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["versions"] == []
+        assert resp.headers["etag"].startswith('W/"workshop:')
 
     def test_workshop_router_importable(self):
         from agora.strategy_workshop.router import create_strategy_workshop_router
@@ -929,6 +956,7 @@ class TestWorkshopRouterEndpoints:
         router = create_strategy_workshop_router(
             extract_identity=lambda auth: {"sub": "test"},
             require_read_role=lambda identity: None,
+            require_write_role=lambda identity: None,
             bff_error=lambda *a, **kw: HTTPException(status_code=a[0]),
             utc_now=lambda: "2026-06-21T00:00:00Z",
             workshop_store=store,
@@ -982,6 +1010,7 @@ class TestWorkshopRouterEndpoints:
         app.include_router(create_strategy_workshop_router(
             extract_identity=lambda auth: identity,
             require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
             bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
             utc_now=lambda: "2026-07-05T00:00:00Z",
             workshop_store=store,
@@ -1028,6 +1057,7 @@ class TestWorkshopRouterEndpoints:
         app.include_router(create_strategy_workshop_router(
             extract_identity=lambda auth: identity,
             require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
             bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
             utc_now=lambda: "2026-07-05T00:00:00Z",
             workshop_store=store,
@@ -1166,6 +1196,7 @@ class TestWorkshopConcurrencyContract:
         app.include_router(create_strategy_workshop_router(
             extract_identity=lambda auth: identity,
             require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
             bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
             utc_now=lambda: "2026-07-12T00:00:00Z",
             workshop_store=workshop_store,
@@ -1322,6 +1353,7 @@ class TestWorkshopPrivacyContract:
         app.include_router(create_strategy_workshop_router(
             extract_identity=lambda auth: identity,
             require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
             bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
             utc_now=lambda: "2026-07-12T00:00:00Z",
             workshop_store=workshop_store,
@@ -1366,6 +1398,7 @@ class TestWorkshopPrivacyContract:
         app.include_router(create_strategy_workshop_router(
             extract_identity=lambda auth: identity,
             require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
             bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
             utc_now=lambda: "2026-07-12T00:00:00Z",
             workshop_store=workshop_store,

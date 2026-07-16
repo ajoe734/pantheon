@@ -2,17 +2,51 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_SCRIPT = ROOT / "scripts" / "orchestrator_bundle.py"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import orchestrator_bundle
+
+
+def isolated_bundle_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("PANTHEON_STATUS_ROOT", None)
+    return env
 
 
 class OrchestratorBundleTests(unittest.TestCase):
+    def test_rejects_active_repository_and_configured_status_roots(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "active Pantheon repository/status root"):
+            orchestrator_bundle.assert_noncanonical_bundle_target(ROOT)
+
+        with tempfile.TemporaryDirectory(prefix="bundle-status-root-") as temp_dir:
+            status_root = Path(temp_dir) / "canonical-status"
+            sibling = Path(temp_dir) / "isolated-target"
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_ROOT": str(status_root)},
+                clear=False,
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit,
+                    "active Pantheon repository/status root",
+                ):
+                    orchestrator_bundle.assert_noncanonical_bundle_target(status_root)
+                self.assertEqual(
+                    orchestrator_bundle.assert_noncanonical_bundle_target(sibling),
+                    sibling.resolve(),
+                )
+
     def test_bootstrap_creates_portable_repo_scaffold(self) -> None:
         with tempfile.TemporaryDirectory(prefix="bundle-bootstrap-") as temp_dir:
             target = Path(temp_dir) / "demo-repo"
@@ -32,6 +66,7 @@ class OrchestratorBundleTests(unittest.TestCase):
                 check=True,
                 capture_output=True,
                 text=True,
+                env=isolated_bundle_env(),
             )
 
             self.assertTrue((target / ".orchestrator" / "config.json").exists())
@@ -72,6 +107,7 @@ class OrchestratorBundleTests(unittest.TestCase):
                 check=True,
                 capture_output=True,
                 text=True,
+                env=isolated_bundle_env(),
             )
             self.assertIn("Read AI_COLLABORATION_GUIDE.md and ai-status.json first.", prompt_result.stdout)
             self.assertIn("Use current-work.md as a human summary only", prompt_result.stdout)
@@ -104,6 +140,7 @@ class OrchestratorBundleTests(unittest.TestCase):
                 check=True,
                 capture_output=True,
                 text=True,
+                env=isolated_bundle_env(),
             )
             self.assertTrue(archive_path.exists())
             self.assertGreater(archive_path.stat().st_size, 0)

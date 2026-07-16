@@ -6,6 +6,7 @@ writes through the IncidentStore owned by the incident service.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -18,7 +19,12 @@ from services.incident.evidence_collector import (
     RuntimeBindingEvidence,
     TelemetryEvidence,
 )
-from services.incident.incident import IncidentCase, IncidentError, IncidentStore
+from services.incident.incident import (
+    IncidentCase,
+    IncidentConcurrencyError,
+    IncidentError,
+    IncidentStore,
+)
 
 
 def _utc_now() -> str:
@@ -27,6 +33,26 @@ def _utc_now() -> str:
 
 class IncidentConsumerError(ValueError):
     """Raised when a telemetry payload cannot be consumed into an IncidentCase."""
+
+
+# Mirrors the `threshold_snapshots[].signal_type`/`.comparator` enums in
+# services/control-plane/governance/evolution_decision.schema.json (the
+# canonical ThresholdSnapshot shape). A payload whose snapshot uses a value
+# outside these enums is not canonical and must be rejected at this boundary,
+# the same as a missing required field.
+_CANONICAL_SIGNAL_TYPES = {
+    "performance_degradation",
+    "execution_drift",
+    "feature_drift",
+    "human_correction",
+    "governance_incident",
+    "manual_review",
+}
+_CANONICAL_COMPARATORS = {"gt", "gte", "lt", "lte", "eq", "neq"}
+
+
+class IncidentConsumerRetryableError(IncidentConsumerError):
+    """Raised when repeated owner-store CAS contention requires upstream retry."""
 
 
 @dataclass(frozen=True)
@@ -70,6 +96,7 @@ class ThresholdTelemetryIncidentConsumer:
 
         existing = self._store.get_incident(incident.incident_id)
         if existing is not None:
+            _require_same_incident_identity(existing, incident)
             return ThresholdIncidentResult(incident=existing, created=False)
 
         try:
@@ -77,6 +104,7 @@ class ThresholdTelemetryIncidentConsumer:
         except IncidentError as exc:
             existing = self._store.get_incident(incident.incident_id)
             if existing is not None:
+                _require_same_incident_identity(existing, incident)
                 return ThresholdIncidentResult(incident=existing, created=False)
             raise IncidentConsumerError(str(exc)) from exc
 
@@ -107,7 +135,7 @@ class DriftReportIncidentConsumer:
 
         existing = self._find_existing_incident(incident)
         if existing is not None:
-            updated = self._store.merge_incident_evidence(existing.incident_id, incident)
+            updated = self._merge_incident_evidence(existing.incident_id, incident)
             return DriftReportIncidentResult(
                 incident=updated,
                 created=False,
@@ -119,7 +147,7 @@ class DriftReportIncidentConsumer:
         except IncidentError as exc:
             existing = self._store.get_incident(incident.incident_id)
             if existing is not None:
-                updated = self._store.merge_incident_evidence(existing.incident_id, incident)
+                updated = self._merge_incident_evidence(existing.incident_id, incident)
                 return DriftReportIncidentResult(
                     incident=updated,
                     created=False,
@@ -132,6 +160,28 @@ class DriftReportIncidentConsumer:
             created=True,
             incident_cluster_id=incident.incident_cluster_id or "",
         )
+
+    def _merge_incident_evidence(
+        self,
+        incident_id: str,
+        incoming: IncidentCase,
+        *,
+        max_attempts: int = 3,
+    ) -> IncidentCase:
+        last_conflict: IncidentConcurrencyError | None = None
+        for _ in range(max(1, int(max_attempts))):
+            try:
+                # The store refreshes durable state inside every guarded write,
+                # so a retry merges incoming evidence onto the CAS winner.
+                return self._store.merge_incident_evidence(incident_id, incoming)
+            except IncidentConcurrencyError as exc:
+                last_conflict = exc
+            except IncidentError as exc:
+                raise IncidentConsumerError(str(exc)) from exc
+        raise IncidentConsumerRetryableError(
+            "Incident evidence changed concurrently after retry budget: "
+            f"{incident_id}: {last_conflict}"
+        ) from last_conflict
 
     def _find_existing_incident(self, incident: IncidentCase) -> IncidentCase | None:
         direct = self._store.get_incident(incident.incident_id)
@@ -163,6 +213,48 @@ def build_incident_from_threshold_payload(
     threshold = _threshold_snapshot(payload)
     if not _is_breached(threshold):
         raise IncidentConsumerError("threshold snapshot is not breached")
+
+    # Validate the full canonical ThresholdSnapshot required-field boundary
+    # (evolution_decision.schema.json `threshold_snapshots[]`: policy_source,
+    # signal_type, metric_name, comparator, observed_value, threshold_value),
+    # not just metric_name/policy_source. This is the authoritative consumer
+    # boundary every producer's payload passes through, so a payload that
+    # dropped a required field (e.g. signal_type/comparator/observed_value/
+    # threshold_value) must never reach IncidentCase creation.
+    metric_name_val = threshold.get("metric_name")
+    if not isinstance(metric_name_val, str) or not metric_name_val.strip():
+        raise IncidentConsumerError("metric_name is required and cannot be empty")
+
+    policy_source_val = threshold.get("policy_source")
+    if not isinstance(policy_source_val, str) or not policy_source_val.strip():
+        raise IncidentConsumerError("policy_source is required and cannot be empty")
+
+    signal_type_val = threshold.get("signal_type")
+    if not isinstance(signal_type_val, str) or signal_type_val not in _CANONICAL_SIGNAL_TYPES:
+        raise IncidentConsumerError("signal_type is required and must be a canonical ThresholdSignalType")
+
+    comparator_val = threshold.get("comparator")
+    if not isinstance(comparator_val, str) or comparator_val not in _CANONICAL_COMPARATORS:
+        raise IncidentConsumerError("comparator is required and must be a canonical ThresholdComparator")
+
+    if threshold.get("observed_value") is None:
+        raise IncidentConsumerError("observed_value is required")
+
+    if threshold.get("threshold_value") is None:
+        raise IncidentConsumerError("threshold_value is required")
+
+    # evolution_decision.schema.json declares optional `window`/`note` as
+    # `type: string`. Without this check a list/object value passes through
+    # `_threshold_notes()`'s `if value not in (None, "")` guard unchanged and
+    # gets silently stringified into the incident's evidence (round-9 review
+    # point 5); reject anything but a string when the field is present.
+    window_val = threshold.get("window")
+    if window_val is not None and not isinstance(window_val, str):
+        raise IncidentConsumerError("threshold_snapshot.window must be a string when present")
+
+    note_val = threshold.get("note")
+    if note_val is not None and not isinstance(note_val, str):
+        raise IncidentConsumerError("threshold_snapshot.note must be a string when present")
 
     event = _telemetry_event(payload)
     runtime_summary = _mapping(payload.get("runtime_summary_projection")) or _mapping(
@@ -249,6 +341,7 @@ def build_incident_from_threshold_payload(
         severity=_severity(payload, event, threshold),
         incident_id=_incident_id(payload, event_id, metric_name),
         created_at=_created_at(payload, event),
+        threshold_identity=_threshold_identity(threshold),
     )
 
 
@@ -556,6 +649,55 @@ def _incident_id(payload: Mapping[str, Any], event_id: str, metric_name: str) ->
     return f"inc-threshold-{uuid.uuid5(uuid.NAMESPACE_URL, seed).hex[:12]}"
 
 
+def _threshold_identity(threshold: Mapping[str, Any]) -> str:
+    """Canonical (metric_name, window, policy_source) identity for a breach.
+
+    A JSON array of a fixed arity is an unambiguous encoding (unlike a
+    delimiter-joined string, where distinct tuples can collide across the
+    delimiter). Used to tell two breaches under the same explicit
+    caller-supplied ``incident_id`` apart (round-9 review point 4).
+    """
+    return json.dumps(
+        [threshold.get("metric_name"), threshold.get("window"), threshold.get("policy_source")],
+        separators=(",", ":"),
+    )
+
+
+def _require_same_incident_identity(existing: IncidentCase, incident: IncidentCase) -> None:
+    """Reject a caller-supplied ``incident_id`` that collides across identities.
+
+    A producer may pass an explicit ``incident_id`` (``_incident_id`` above
+    trusts it verbatim), so two payloads for entirely different events/
+    bindings/metrics can hash to the same id. Looking that id up and treating
+    whatever is stored under it as "the" duplicate — without checking it is
+    actually the same breach — silently discards the new breach and reports
+    a fabricated dedupe (round-8 review point 4). Same breach means: same
+    binding, same runtime, the same *canonical primary* telemetry event id
+    (``telemetry_event_ids[0]``, not an arbitrary intersection — a caller can
+    inject an old id as a supplemental ``telemetry_event_ids`` entry while
+    changing the real primary event, round-9 review point 4), and the same
+    threshold identity (metric_name/window/policy_source). An incident with
+    no recorded ``threshold_identity`` (e.g. created via a non-threshold
+    path) can never be proven to be the same breach, so it fails closed as a
+    conflict rather than matching by default.
+    """
+    same_binding = existing.binding_id == incident.binding_id
+    same_runtime = existing.runtime_id == incident.runtime_id
+    existing_primary = existing.telemetry_event_ids[0] if existing.telemetry_event_ids else None
+    incident_primary = incident.telemetry_event_ids[0] if incident.telemetry_event_ids else None
+    same_primary_event = existing_primary is not None and existing_primary == incident_primary
+    same_threshold_identity = (
+        existing.threshold_identity is not None
+        and existing.threshold_identity == incident.threshold_identity
+    )
+    if not (same_binding and same_runtime and same_primary_event and same_threshold_identity):
+        raise IncidentConsumerError(
+            f"incident_id {incident.incident_id!r} conflicts with an existing incident "
+            "for a different binding_id/runtime_id/primary telemetry_event_id/threshold "
+            "identity; refusing to treat this as a duplicate of an unrelated incident"
+        )
+
+
 def _title(payload: Mapping[str, Any], event: Mapping[str, Any], metric_name: str) -> str:
     explicit = _first_value(payload, event, keys=("title", "headline"))
     if explicit:
@@ -631,14 +773,29 @@ def _threshold_notes(threshold: Mapping[str, Any]) -> str:
         value = threshold.get(key)
         if value not in (None, ""):
             parts.append(f"{label}={value}")
+    # Preserve the producer's own note verbatim (carries dedupe_key=... and
+    # any baseline used) instead of dropping it: it is the audit trail that
+    # proves why a rerun deduped instead of opening a second incident.
+    note = threshold.get("note")
+    if note not in (None, ""):
+        parts.append(str(note))
     return "; ".join(parts)
 
 
 def _is_breached(threshold: Mapping[str, Any]) -> bool:
-    value = threshold.get("breached", True)
-    if isinstance(value, str):
-        return value.strip().lower() not in {"0", "false", "no"}
-    return bool(value)
+    if "breached" not in threshold:
+        return True
+    value = threshold["breached"]
+    # The governance schema (evolution_decision.schema.json threshold_snapshots[].
+    # breached) declares this field `type: boolean`. Coercing arbitrary truthy
+    # values (e.g. the string "yes") let a malformed producer payload open an
+    # IncidentCase from a snapshot that was never actually validated as
+    # breached (round-8 review point 3); reject anything but an actual bool.
+    if not isinstance(value, bool):
+        raise IncidentConsumerError(
+            f"threshold_snapshot.breached must be a boolean per the governance schema, got {value!r}"
+        )
+    return value
 
 
 def _looks_like_threshold(value: Mapping[str, Any]) -> bool:

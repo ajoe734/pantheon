@@ -35,9 +35,10 @@ class _Response:
         return self._body
 
 
-def test_preview_eval_worker_tick_runs_queued_jobs(monkeypatch) -> None:
+def test_preview_eval_worker_tick_runs_claimable_jobs(monkeypatch) -> None:
     module = _load_worker_module()
     requests = []
+    heartbeats = []
 
     def fake_urlopen(request, timeout):  # noqa: ANN001
         del timeout
@@ -50,7 +51,44 @@ def test_preview_eval_worker_tick_runs_queued_jobs(monkeypatch) -> None:
             {
                 "job_id": "pvjob-001",
                 "status": "completed",
+                "reclaimed": True,
+                "retryable": False,
                 "evaluation_proof_ref": "trainer-eval-proof:trn-1:teval-1",
+            }
+        )
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+
+    result = module.run_tick(
+        api_url="http://training-session-svc:8099",
+        limit=5,
+        heartbeat=lambda: heartbeats.append("alive"),
+    )
+
+    assert result["jobs_found"] == 1
+    assert result["job_ids"] == ["pvjob-001"]
+    assert result["completed"] == 1
+    assert result["reclaimed"] == 1
+    assert result["retryable"] == 0
+    assert result["failed"] == 0
+    assert requests[0].full_url.endswith("/api/training/preview-jobs?status=claimable&limit=5")
+    assert json.loads(requests[1].data) == {}
+    assert heartbeats == ["alive", "alive"]
+
+
+def test_preview_eval_worker_reports_retryable_failures(monkeypatch) -> None:
+    module = _load_worker_module()
+
+    def fake_urlopen(request, timeout):  # noqa: ANN001
+        del timeout
+        if request.get_method() == "GET":
+            return _Response([{"job_id": "pvjob-retry", "status": "failed"}])
+        return _Response(
+            {
+                "job_id": "pvjob-retry",
+                "status": "failed",
+                "reclaimed": False,
+                "retryable": True,
             }
         )
 
@@ -59,8 +97,18 @@ def test_preview_eval_worker_tick_runs_queued_jobs(monkeypatch) -> None:
     result = module.run_tick(api_url="http://training-session-svc:8099", limit=5)
 
     assert result["jobs_found"] == 1
-    assert result["job_ids"] == ["pvjob-001"]
-    assert result["completed"] == 1
-    assert result["failed"] == 0
-    assert requests[0].full_url.endswith("/api/training/preview-jobs?status=queued&limit=5")
-    assert requests[1].data is not None
+    assert result["completed"] == 0
+    assert result["reclaimed"] == 0
+    assert result["retryable"] == 1
+    assert result["failed"] == 1
+    assert result["errors"] == ["job_id=pvjob-retry unexpected_status='failed'"]
+
+
+def test_preview_eval_worker_alive_marker_is_written(tmp_path) -> None:
+    module = _load_worker_module()
+    alive_path = tmp_path / "preview-worker-alive"
+
+    module._write_alive(str(alive_path))
+
+    assert alive_path.read_text(encoding="utf-8").endswith("Z")
+    assert module.DEFAULT_ALIVE_PATH == "/data/training-session/preview-worker-alive"

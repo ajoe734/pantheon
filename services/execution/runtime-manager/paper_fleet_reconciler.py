@@ -26,15 +26,21 @@ Environment variables consumed by the reconciler:
   RECONCILER_RESTART_BACKOFF_SECONDS base backoff per restart (default 5)
   RECONCILER_DRAIN_TIMEOUT_SECONDS  SIGTERM→SIGKILL timeout (default 10)
   PANTHEON_TELEMETRY_URL            forwarded to each worker
+  PANTHEON_SOURCE_INGEST_URL        market-mark source forwarded to each worker
+  PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS
+                                     maximum accepted market-mark age (default 172800)
+  PANTHEON_PERFORMANCE_STATE_ROOT   persistent per-binding ledger directory
   SIGNAL_STORE_URL                  forwarded to each worker
   WORKER_SCRIPT_PATH                override path to paper_runtime.py
   HOST / PORT                       reconciler HTTP interface (default 0.0.0.0/8011)
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -86,6 +92,14 @@ def _as_int(value: str | None, default: int) -> int:
         return default
 
 
+def _binding_state_filename(binding_id: str) -> str:
+    """Return a stable filename without allowing binding IDs to shape paths."""
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", binding_id).strip("._-")
+    slug = (normalized or "binding")[:48]
+    digest = hashlib.sha256(binding_id.encode("utf-8")).hexdigest()[:12]
+    return f"{slug}-{digest}.json"
+
+
 # ---------------------------------------------------------------------------
 # Worker entry
 # ---------------------------------------------------------------------------
@@ -127,6 +141,9 @@ class PaperFleetReconciler:
         drain_timeout_seconds: Optional[float] = None,
         worker_script_path: Optional[str] = None,
         telemetry_api_url: Optional[str] = None,
+        source_ingest_url: Optional[str] = None,
+        performance_mark_max_age_seconds: Optional[int] = None,
+        performance_state_root: Optional[str] = None,
         monitoring_session_store_path: Optional[str] = None,
         monitoring_heartbeat_stale_after_seconds: Optional[int] = None,
         extra_env: Optional[Dict[str, str]] = None,
@@ -161,6 +178,25 @@ class PaperFleetReconciler:
             or os.getenv("PANTHEON_TELEMETRY_API_URL", "")
             or os.getenv("PANTHEON_TELEMETRY_URL", "")
         ).rstrip("/")
+        self._source_ingest_url = (
+            source_ingest_url
+            or os.getenv("PANTHEON_SOURCE_INGEST_URL", "")
+            or os.getenv("PANTHEON_SOURCE_INGEST_API_URL", "")
+        ).rstrip("/")
+        mark_max_age = (
+            performance_mark_max_age_seconds
+            if performance_mark_max_age_seconds is not None
+            else _as_int(
+                os.getenv("PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS"),
+                172800,
+            )
+        )
+        self._performance_mark_max_age_seconds = max(int(mark_max_age), 1)
+        self._performance_state_root = Path(
+            performance_state_root
+            or os.getenv("PANTHEON_PERFORMANCE_STATE_ROOT", "")
+            or "/data/runtime/paper-performance"
+        )
         store_path = (
             monitoring_session_store_path
             or os.getenv("PANTHEON_PAPER_RUNTIME_MONITORING_SESSION_STORE", "")
@@ -359,6 +395,11 @@ class PaperFleetReconciler:
             env["PANTHEON_RUNTIME_MANAGER_URL"] = self._url
         if self._token:
             env["PANTHEON_RUNTIME_MANAGER_TOKEN"] = self._token
+        if self._source_ingest_url:
+            env["PANTHEON_SOURCE_INGEST_URL"] = self._source_ingest_url
+        env["PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS"] = str(
+            self._performance_mark_max_age_seconds
+        )
         telemetry_url = os.getenv("PANTHEON_TELEMETRY_URL", "")
         if telemetry_url:
             env["PANTHEON_TELEMETRY_URL"] = telemetry_url
@@ -369,6 +410,9 @@ class PaperFleetReconciler:
         binding_id = str(binding.get("binding_id") or "")
         if binding_id:
             env["PANTHEON_SIGNAL_QUEUE_KEY"] = f"pantheon:signals:pending:{binding_id}"
+            env["PANTHEON_PERFORMANCE_STATE_PATH"] = str(
+                self._performance_state_root / _binding_state_filename(binding_id)
+            )
         return env
 
     def _start_worker(

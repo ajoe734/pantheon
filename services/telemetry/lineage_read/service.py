@@ -23,7 +23,9 @@ contract to produce derived-only lineage projections within the L1 SLA budgets:
 from __future__ import annotations
 
 import logging
+import threading
 from collections import defaultdict, deque
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -3109,12 +3111,97 @@ class LineageReadService:
         self.graph = LineageGraph()
         self.traverser = LineageTraverser(self.graph)
         self.projection = ProjectionBuilder()
+        # LIN-003: guards graph mutation (live event/binding admission) against
+        # concurrent reads from the HTTP query surface — both run on separate
+        # threads (ingest's asyncio loop thread vs. Flask request threads)
+        # against the same in-memory graph instance.
+        self._lock = threading.RLock()
 
     def load_corpus(self, corpus: dict[str, Any]) -> None:
         """Load a LIN-001A benchmark corpus into the service."""
-        self.graph = CorpusLoader.load(corpus)
-        self.traverser = LineageTraverser(self.graph)
-        self.projection = ProjectionBuilder()
+        with self._lock:
+            self.graph = CorpusLoader.load(corpus)
+            self.traverser = LineageTraverser(self.graph)
+            self.projection = ProjectionBuilder()
+
+    def admit_telemetry_event(
+        self,
+        event: dict[str, Any],
+        binding: Optional[Any] = None,
+    ) -> None:
+        """
+        LIN-003 live lineage write path.
+
+        Incrementally admit one accepted telemetry event — and the
+        RuntimeBinding it references, if that binding is not yet a graph
+        node — into the running lineage graph, so the deployed lineage read
+        surface (and callers such as
+        ``services.incident.reference_validation.CanonicalReferenceValidator``)
+        can resolve it immediately, without waiting for a corpus reload.
+
+        Idempotent: replaying the same event_id is a no-op past the first
+        admission (``LineageGraph.add_node`` already de-dupes by key).
+
+        This only writes the telemetry_event node and, when missing, a thin
+        runtime_binding node built from the already-resolved binding record.
+        It intentionally does not fabricate deployment_plan / capital_pool /
+        persona_capital_binding nodes: those are governance/control-plane
+        owned and out of LIN-003 scope (see
+        docs/decisions/LIN-003-live-lineage-write-path.md).
+        """
+        event_id = event.get("event_id")
+        if not event_id:
+            return
+
+        binding_id = event.get("binding_id") or event.get("runtime_binding_id")
+
+        with self._lock:
+            if (
+                binding_id
+                and binding is not None
+                and self.graph.get_node(NODE_RUNTIME_BINDING, binding_id) is None
+            ):
+                _admit_runtime_binding_node(self.graph, binding_id, binding)
+
+            if self.graph.get_node(NODE_TELEMETRY_EVENT, event_id) is not None:
+                return
+
+            self.graph.add_node(NODE_TELEMETRY_EVENT, event_id, event)
+            if binding_id:
+                self.graph.add_edge(GraphEdge(
+                    edge_type=EDGE_TELEMETRY_BINDING,
+                    from_type=NODE_TELEMETRY_EVENT,
+                    from_id=event_id,
+                    to_type=NODE_RUNTIME_BINDING,
+                    to_id=binding_id,
+                ))
+            plan_id = event.get("plan_id") or event.get("deployment_plan_id")
+            if plan_id:
+                self.graph.add_edge(GraphEdge(
+                    edge_type=EDGE_TELEMETRY_PLAN,
+                    from_type=NODE_TELEMETRY_EVENT,
+                    from_id=event_id,
+                    to_type=NODE_DEPLOYMENT_PLAN,
+                    to_id=plan_id,
+                ))
+            capital_pool_id = event.get("capital_pool_id")
+            if capital_pool_id:
+                self.graph.add_edge(GraphEdge(
+                    edge_type=EDGE_TELEMETRY_POOL,
+                    from_type=NODE_TELEMETRY_EVENT,
+                    from_id=event_id,
+                    to_type=NODE_CAPITAL_POOL,
+                    to_id=capital_pool_id,
+                ))
+            persona_capital_binding_id = event.get("persona_capital_binding_id")
+            if persona_capital_binding_id:
+                self.graph.add_edge(GraphEdge(
+                    edge_type=EDGE_TELEMETRY_PERSONA,
+                    from_type=NODE_TELEMETRY_EVENT,
+                    from_id=event_id,
+                    to_type=NODE_PERSONA_BINDING,
+                    to_id=persona_capital_binding_id,
+                ))
 
     def query(
         self,
@@ -3151,25 +3238,86 @@ class LineageReadService:
         dict
             Projection payload matching the LIN-001A corpus shape.
         """
-        if query_family == "runtime_binding_projection":
-            if not binding_id:
-                raise ValueError("binding_id required for runtime_binding_projection")
-            return self.projection.runtime_binding_projection(self.traverser, binding_id)
-        if query_family == "capital_pool_projection":
-            if not pool_id:
-                raise ValueError("pool_id required for capital_pool_projection")
-            return self.projection.capital_pool_projection(self.traverser, pool_id)
-        if query_family == "telemetry_event_trace":
-            if not event_id:
-                raise ValueError("event_id required for telemetry_event_trace")
-            return self.projection.telemetry_event_trace(self.traverser, event_id)
-        if query_family == "forensic_plan_trace":
-            if not plan_id:
-                raise ValueError("plan_id required for forensic_plan_trace")
-            return self.projection.forensic_plan_trace(self.traverser, plan_id)
-        if query_family == "source_runtime_telemetry_trace":
-            if not trace_id:
-                raise ValueError("trace_id required for source_runtime_telemetry_trace")
-            return self.projection.source_runtime_telemetry_trace(self.traverser, trace_id)
+        with self._lock:
+            if query_family == "runtime_binding_projection":
+                if not binding_id:
+                    raise ValueError("binding_id required for runtime_binding_projection")
+                return self.projection.runtime_binding_projection(self.traverser, binding_id)
+            if query_family == "capital_pool_projection":
+                if not pool_id:
+                    raise ValueError("pool_id required for capital_pool_projection")
+                return self.projection.capital_pool_projection(self.traverser, pool_id)
+            if query_family == "telemetry_event_trace":
+                if not event_id:
+                    raise ValueError("event_id required for telemetry_event_trace")
+                return self.projection.telemetry_event_trace(self.traverser, event_id)
+            if query_family == "forensic_plan_trace":
+                if not plan_id:
+                    raise ValueError("plan_id required for forensic_plan_trace")
+                return self.projection.forensic_plan_trace(self.traverser, plan_id)
+            if query_family == "source_runtime_telemetry_trace":
+                if not trace_id:
+                    raise ValueError("trace_id required for source_runtime_telemetry_trace")
+                return self.projection.source_runtime_telemetry_trace(self.traverser, trace_id)
 
-        raise ValueError(f"Unknown query family: {query_family}")
+            raise ValueError(f"Unknown query family: {query_family}")
+
+
+def _admit_runtime_binding_node(graph: LineageGraph, binding_id: str, binding: Any) -> None:
+    """Admit a thin runtime_binding node from an already-resolved binding record.
+
+    Accepts a dict, a dataclass/namespace with attribute access (e.g. the
+    RuntimeBinding objects returned by RuntimeManagerClient / the telemetry
+    ingest _RuntimeBindingAdapter), or anything exposing the same field names.
+    """
+    def _field(name: str) -> Any:
+        if isinstance(binding, Mapping):
+            return binding.get(name)
+        return getattr(binding, name, None)
+
+    data = {
+        "binding_id": binding_id,
+        "runtime_id": _field("runtime_id"),
+        "capital_pool_id": _field("capital_pool_id"),
+        "artifact_id": _field("artifact_id"),
+        "artifact_version": _field("artifact_version"),
+        "deployment_mode": _field("deployment_mode"),
+        "effective_at": _field("effective_at"),
+        "retired_at": _field("retired_at"),
+        "plan_id": _field("plan_id"),
+        "persona_capital_binding_id": _field("persona_capital_binding_id"),
+        "status": _field("status"),
+    }
+    graph.add_node(NODE_RUNTIME_BINDING, binding_id, data)
+    if data.get("artifact_id"):
+        graph.add_edge(GraphEdge(
+            edge_type=EDGE_RUNTIME_ARTIFACT,
+            from_type=NODE_RUNTIME_BINDING,
+            from_id=binding_id,
+            to_type=NODE_CANDIDATE_ARTIFACT,
+            to_id=data["artifact_id"],
+        ))
+    if data.get("capital_pool_id"):
+        graph.add_edge(GraphEdge(
+            edge_type=EDGE_RUNTIME_POOL,
+            from_type=NODE_RUNTIME_BINDING,
+            from_id=binding_id,
+            to_type=NODE_CAPITAL_POOL,
+            to_id=data["capital_pool_id"],
+        ))
+    if data.get("plan_id"):
+        graph.add_edge(GraphEdge(
+            edge_type=EDGE_RUNTIME_PLAN,
+            from_type=NODE_RUNTIME_BINDING,
+            from_id=binding_id,
+            to_type=NODE_DEPLOYMENT_PLAN,
+            to_id=data["plan_id"],
+        ))
+    if data.get("persona_capital_binding_id"):
+        graph.add_edge(GraphEdge(
+            edge_type=EDGE_RUNTIME_PERSONA,
+            from_type=NODE_RUNTIME_BINDING,
+            from_id=binding_id,
+            to_type=NODE_PERSONA_BINDING,
+            to_id=data["persona_capital_binding_id"],
+        ))

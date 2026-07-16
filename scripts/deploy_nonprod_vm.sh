@@ -17,7 +17,27 @@ DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/lupin/code/pantheon}"
 DEV_BFF_CANONICAL_CORS_ORIGIN="${DEV_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io}"
 DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-${DEV_BFF_CANONICAL_CORS_ORIGIN},https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
 DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}"
-DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-true}"
+# Strict by default: the dev deploy must not silently re-force stub/permissive
+# auth on every run. docker-compose.yml's own PANTHEON_BFF_AUTH_STUB/MODE
+# defaults are strict/false, but this script always passes an explicit value
+# into the compose environment (see PANTHEON_BFF_AUTH_STUB= below), which
+# overrides the compose file default regardless of what it says. Operators who
+# need a permissive dev session must opt in explicitly via
+# DEV_BFF_AUTH_STUB=true DEV_BFF_AUTH_MODE=permissive.
+DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"
+DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"
+# Governed verifier/dev-login credentials for the strict auth cutover. These
+# must come from a secret source (GitHub Actions secrets in CI), never from
+# compose file defaults. When strict mode is requested without them, the
+# preflight gate below refuses to deploy rather than shipping a strict-looking
+# BFF where every protected route is actually unusable.
+DEV_BFF_JWT_SECRET="${DEV_BFF_JWT_SECRET:-}"
+DEV_BFF_OIDC_CLIENT_ID="${DEV_BFF_OIDC_CLIENT_ID:-}"
+DEV_BFF_OIDC_CLIENT_SECRET="${DEV_BFF_OIDC_CLIENT_SECRET:-}"
+# Human-provisioned service credential shared only by operator-bff and the
+# OpenClaw adapter. There is intentionally no generated/local fallback.
+DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN="${DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"
+DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}"
 DEV_BFF_TENANT_ID="${DEV_BFF_TENANT_ID:-tenant-dev}"
 DEV_BFF_ALLOWED_TENANTS="${DEV_BFF_ALLOWED_TENANTS:-${DEV_BFF_TENANT_ID},pantheon-dev}"
 DEV_ASSISTANT_KERNEL_ENABLED="${DEV_ASSISTANT_KERNEL_ENABLED:-true}"
@@ -132,7 +152,9 @@ Environment overrides:
   GITHUB_TOKEN
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
   DEV_BFF_CANONICAL_CORS_ORIGIN DEV_BFF_CORS_ORIGINS
-  DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB
+  DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB DEV_BFF_AUTH_MODE
+  DEV_BFF_JWT_SECRET DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET
+  DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED
   DEV_BFF_TENANT_ID DEV_BFF_ALLOWED_TENANTS
   DEV_ASSISTANT_KERNEL_ENABLED DEV_ASSISTANT_CONTROL_MODE_STORE_PATH
   DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS
@@ -163,6 +185,18 @@ error() {
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || error "$1 is required"
+}
+
+is_placeholder_credential() {
+  local normalized="${1,,}"
+  case "$normalized" in
+    replace-me*|changeme*|change-me*|example*|dummy*|placeholder*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 shell_quote() {
@@ -219,6 +253,8 @@ configure_management_ai_dev_kernel_env() {
   PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-$DEV_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}"
   PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-$DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS}"
   PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES:-$DEV_BFF_STUB_CAPABILITIES}"
+  PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-$DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN}"
+  PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-$DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}"
   PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER:-$DEV_STATUS_ROOT_CONTAINER}"
   PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST:-${DEV_STATUS_ROOT_HOST:-$DEV_REMOTE_DIR}}"
 }
@@ -304,6 +340,11 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "allow_example_env=${ALLOW_EXAMPLE_ENV}"
   info "dev_bff_cors_origins=${DEV_BFF_CORS_ORIGINS}"
   info "dev_bff_auth_stub=${DEV_BFF_AUTH_STUB}"
+  info "dev_bff_auth_mode=${DEV_BFF_AUTH_MODE}"
+  info "dev_bff_jwt_secret_configured=$([[ -n "$DEV_BFF_JWT_SECRET" ]] && echo true || echo false)"
+  info "dev_bff_oidc_client_configured=$([[ -n "$DEV_BFF_OIDC_CLIENT_ID" && -n "$DEV_BFF_OIDC_CLIENT_SECRET" ]] && echo true || echo false)"
+  info "dev_openclaw_adapter_service_auth_required=${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}"
+  info "dev_openclaw_adapter_service_token_configured=$([[ -n "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}" ]] && echo true || echo false)"
   info "dev_assistant_kernel_enabled=${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}"
   info "dev_assistant_control_mode_store_path=${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}"
   info "dev_assistant_control_idle_ttl_seconds=${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-}"
@@ -326,10 +367,33 @@ if [[ "$DRY_RUN" == "true" ]]; then
   exit 0
 fi
 
-# This is the final local gate before any dev bucket, SSH, checkout, compose,
-# or smoke mutation.  Staging-live is an independent environment and must not
+# The shared dev lease is verified before any other dev gate so a stale or
+# mismatched lease is rejected first, before any dev bucket, SSH, checkout,
+# compose, or smoke mutation.  Staging-live is an independent environment and must not
 # depend on the shared dev lease.
 verify_dev_environment_lease_contract
+
+if [[ "$DEPLOY_ENV" == "dev" && "$DEV_BFF_AUTH_MODE" == "strict" && "$DEV_BFF_AUTH_STUB" != "true" ]]; then
+  if [[ -z "$DEV_BFF_JWT_SECRET" || -z "$DEV_BFF_OIDC_CLIENT_ID" || -z "$DEV_BFF_OIDC_CLIENT_SECRET" ]]; then
+    error "strict auth cutover requested (DEV_BFF_AUTH_MODE=strict, DEV_BFF_AUTH_STUB=${DEV_BFF_AUTH_STUB}) but no governed verifier/dev-login credentials are configured (DEV_BFF_JWT_SECRET, DEV_BFF_OIDC_CLIENT_ID, DEV_BFF_OIDC_CLIENT_SECRET); refusing to deploy a BFF where every protected route would be unusable"
+  fi
+fi
+
+if [[ "$DEPLOY_ENV" == "dev" ]]; then
+  case "${DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED,,}" in
+    1|true|yes|on)
+      if [[ -z "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}" ]] \
+        || is_placeholder_credential "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"; then
+        error "strict OpenClaw adapter service auth requires a human-provisioned DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN; refusing to deploy with an empty or fabricated service credential"
+      fi
+      ;;
+    0|false|no|off)
+      ;;
+    *)
+      error "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED must be true or false"
+      ;;
+  esac
+fi
 
 require_cmd gcloud
 
@@ -372,6 +436,10 @@ ssh_bash() {
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
   command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "$DEV_BFF_CORS_ORIGINS")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
+  command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
+  command_prefix+=" PANTHEON_DEV_BFF_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_ID=$(shell_quote "$DEV_BFF_OIDC_CLIENT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET=$(shell_quote "$DEV_BFF_OIDC_CLIENT_SECRET")"
   command_prefix+=" PANTHEON_DEV_BFF_TENANT_ID=$(shell_quote "$DEV_BFF_TENANT_ID")"
   command_prefix+=" PANTHEON_DEV_BFF_ALLOWED_TENANTS=$(shell_quote "$DEV_BFF_ALLOWED_TENANTS")"
   command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=$(shell_quote "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}")"
@@ -382,6 +450,8 @@ ssh_bash() {
   command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS=$(shell_quote "${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS=$(shell_quote "${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-}")"
   command_prefix+=" PANTHEON_BFF_STUB_CAPABILITIES=$(shell_quote "${PANTHEON_BFF_STUB_CAPABILITIES:-}")"
+  command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=$(shell_quote "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}")"
+  command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED=$(shell_quote "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}")"
   command_prefix+=" PANTHEON_STATUS_ROOT_HOST=$(shell_quote "${PANTHEON_STATUS_ROOT_HOST:-}")"
   command_prefix+=" PANTHEON_STATUS_ROOT_CONTAINER=$(shell_quote "${PANTHEON_STATUS_ROOT_CONTAINER:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-true}")"
@@ -446,6 +516,58 @@ assert_bff_source_sha() {
   info "BFF source SHA verified: ${actual}"
 }
 
+assert_bff_auth_gate() {
+  local base_url="$1"
+
+  if [[ "${PANTHEON_DEV_BFF_AUTH_MODE}" != "strict" || "${PANTHEON_DEV_BFF_AUTH_STUB}" == "true" ]]; then
+    info "strict auth gate skipped (auth_mode=${PANTHEON_DEV_BFF_AUTH_MODE}, auth_stub=${PANTHEON_DEV_BFF_AUTH_STUB})"
+    return 0
+  fi
+
+  info "asserting hosted BFF auth posture is strict (auth_stub=false, auth_mode=strict)"
+  local version_payload
+  version_payload="$(curl -fsS "${base_url}/bff/version")"
+  python3 -c '
+import json, sys
+
+payload = json.loads(sys.argv[1])
+posture = payload.get("config_posture")
+if not isinstance(posture, dict):
+    # Compatibility with deployment targets that predate the canonical
+    # config_posture envelope. New BFF versions publish posture only there.
+    posture = payload
+assert posture.get("auth_stub") is False, f"auth_stub={posture.get(\"auth_stub\")!r}, expected False"
+assert posture.get("auth_mode") == "strict", f"auth_mode={posture.get(\"auth_mode\")!r}, expected strict"
+' "$version_payload" || error "hosted BFF auth posture is not strict: ${version_payload}"
+
+  if [[ -z "${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" || -z "${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" ]]; then
+    error "strict auth cutover requires dev-login verifier credentials on the deploy runner; none were provided"
+  fi
+
+  info "asserting authenticated dev-login round trip succeeds"
+  local login_payload
+  local login_body
+  login_body="$(python3 -c 'import json,sys; print(json.dumps({"grant_type":"client_credentials","client_id":sys.argv[1],"client_secret":sys.argv[2]}))' \
+    "${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" "${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}")"
+  login_payload="$(curl -fsS -X POST "${base_url}/bff/auth/dev-login" \
+    -H 'Content-Type: application/json' \
+    -d "${login_body}")" \
+    || error "authenticated dev-login round trip failed against ${base_url}/bff/auth/dev-login"
+  local access_token
+  access_token="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])' <<<"$login_payload")"
+  curl -fsS "${base_url}/bff/me" -H "Authorization: Bearer ${access_token}" >/dev/null \
+    || error "authenticated /bff/me check failed with a freshly issued dev-login token"
+  info "authenticated dev-login round trip succeeded"
+
+  info "asserting a fixed/arbitrary bearer is rejected (fail-closed negative gate)"
+  local fixed_bearer_status
+  fixed_bearer_status="$(curl -s -o /dev/null -w '%{http_code}' "${base_url}/bff/me" -H 'Authorization: Bearer op-fixed:operator:mfa')"
+  if [[ "$fixed_bearer_status" == "200" ]]; then
+    error "hosted BFF accepted a fixed/arbitrary bearer token at ${base_url}/bff/me (strict auth cutover is not effective)"
+  fi
+  info "fixed bearer correctly rejected with HTTP ${fixed_bearer_status}"
+}
+
 snapshot_remote_state() {
   local project="$1"
   local compose_file="$2"
@@ -466,14 +588,30 @@ preserve_known_deploy_runtime_state() {
     ".orchestrator/metrics"
     ".orchestrator/task-briefs"
     ".orchestrator/watchdog-state.json"
+    "trade_journey_events.json"
   )
   local present_paths=()
   local path
   local runtime_status
   local stash_label
+  local exclude_file
 
   for path in "${known_paths[@]}"; do
     if [[ ! -e "$path" ]]; then
+      continue
+    fi
+    # Runtime-owned untracked files may not be readable by the deploy user.
+    # Register them in this checkout's private exclude file before asking git
+    # for worktree status; otherwise `git stash --include-untracked` attempts
+    # to open the file and aborts the deployment with EACCES. The file remains
+    # in place across the detached checkout and the repository-level ignore in
+    # the target commit makes this local exclusion unnecessary thereafter.
+    if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+      exclude_file="$(git rev-parse --git-path info/exclude)"
+      mkdir -p "$(dirname "$exclude_file")"
+      if ! grep -Fqx "/${path}" "$exclude_file" 2>/dev/null; then
+        printf '/%s\n' "$path" >>"$exclude_file"
+      fi
       continue
     fi
     # Skip gitignored runtime paths (e.g. .orchestrator/metrics,
@@ -1025,12 +1163,16 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
+    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     PANTHEON_ENV=dev \
     PANTHEON_LIVE_BROKER_ENABLED=false \
     BROKER_PAPER_ENABLED=true \
     AGORA_WORKSHOP_STORE_BACKEND=postgres \
     AGORA_WORKSHOP_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
     AGORA_WORKSHOP_STORE_SCHEMA=agora \
+    AGORA_GOVERNANCE_STORE_BACKEND=postgres \
+    AGORA_GOVERNANCE_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_GOVERNANCE_STORE_SCHEMA=agora \
     AGORA_RESEARCH_STORE_BACKEND=postgres \
     AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
     AGORA_RESEARCH_STORE_SCHEMA=agora_research \
@@ -1039,6 +1181,10 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
+    PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+    PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
+    PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
     PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
     PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
     PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
@@ -1049,6 +1195,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}" \
     PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS}" \
     PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
+    PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
+    PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
     PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST}" \
     PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER}" \
       docker compose -p pantheon -f docker-compose.yml up -d --build \
@@ -1058,6 +1206,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     curl_with_retry http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    assert_bff_auth_gate http://127.0.0.1:18001 \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     verify_dev_evolution_daily_sweep \
       || { dump_dev_root_failure_diagnostics; exit 1; }
@@ -1079,12 +1229,16 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="" \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
+    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     PANTHEON_ENV=dev \
     PANTHEON_LIVE_BROKER_ENABLED=false \
     BROKER_PAPER_ENABLED=true \
     AGORA_WORKSHOP_STORE_BACKEND=postgres \
     AGORA_WORKSHOP_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
     AGORA_WORKSHOP_STORE_SCHEMA=agora \
+    AGORA_GOVERNANCE_STORE_BACKEND=postgres \
+    AGORA_GOVERNANCE_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_GOVERNANCE_STORE_SCHEMA=agora \
     AGORA_RESEARCH_STORE_BACKEND=postgres \
     AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
     AGORA_RESEARCH_STORE_SCHEMA=agora_research \
@@ -1093,6 +1247,10 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
+    PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+    PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
+    PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
     PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
     PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
     PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
@@ -1103,6 +1261,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}" \
     PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS}" \
     PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
+    PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
+    PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
     PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST}" \
     PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER}" \
     MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND}" \
@@ -1117,6 +1277,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     curl_with_retry http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    assert_bff_auth_gate http://127.0.0.1:18001 \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     ;;
 

@@ -196,3 +196,51 @@ class TestAlphaReplicationQueuePersistence:
         entry = q2.list_all()[0]
         assert entry["last_revalidation_status"] == "dispatched"
         assert entry["revalidation_count"] == 1
+
+
+class TestAlphaReplicationQueueDLQAndTenantIdempotency:
+    def test_tenant_scoped_idempotency(self, tmp_path):
+        q = AlphaReplicationQueue(tmp_path)
+        spec1 = _approved_spec(strategy_id="strat-idemp", spec_version="1.0")
+        spec1["tenant_id"] = "tenant-a"
+        spec2 = _approved_spec(strategy_id="strat-idemp", spec_version="1.0")
+        spec2["tenant_id"] = "tenant-b"
+        
+        assert q.enqueue(spec1) is not None
+        assert q.enqueue(spec2) is not None
+        assert len(q.list_all()) == 2
+        
+        # Duplicate for same tenant is ignored
+        assert q.enqueue(spec1) is None
+
+    def test_mark_failed_retries_and_dlq(self, tmp_path):
+        q = AlphaReplicationQueue(tmp_path)
+        q.enqueue(_approved_spec("s1"))
+        
+        # 1st failure: remains pending
+        q.mark_failed("s1", "1.0", error="err 1", max_retries=3)
+        assert len(q.list_pending()) == 1
+        entry = q.list_all()[0]
+        assert entry["status"] == "pending"
+        assert entry["revalidation_count"] == 1
+        
+        # 2nd failure: remains pending
+        q.mark_failed("s1", "1.0", error="err 2", max_retries=3)
+        assert len(q.list_pending()) == 1
+        
+        # 3rd failure: transitions to dlq
+        q.mark_failed("s1", "1.0", error="err 3", max_retries=3)
+        assert len(q.list_pending()) == 0
+        entry = q.list_all()[0]
+        assert entry["status"] == "dlq"
+        assert entry["last_revalidation_status"] == "failed"
+        assert entry["revalidation_count"] == 3
+        
+        # replay resets back to pending
+        q.replay_dlq("s1", "1.0")
+        assert len(q.list_pending()) == 1
+        entry = q.list_all()[0]
+        assert entry["status"] == "pending"
+        assert entry["revalidation_count"] == 0
+        assert entry["last_revalidation_status"] is None
+

@@ -1,11 +1,11 @@
 # MGMT-PERF-IA-003 BFF and Frontend Handoff Packet
 
-**Sidecar task:** `MGMT-PERF-IA-003-SIDECAR-BFF-HANDOFF`  
-**Parent task:** `MGMT-PERF-IA-003`  
-**Parent owner / reviewer:** Claude / Antigravity  
-**Sidecar owner / reviewer:** Codex / Claude  
-**Helper kind:** `bff_handoff_packet`  
-**Prepared:** 2026-07-11  
+**Sidecar task:** `MGMT-PERF-IA-003-SIDECAR-BFF-HANDOFF`
+**Parent task:** `MGMT-PERF-IA-003`
+**Parent owner / reviewer:** Claude / Antigravity
+**Sidecar owner / reviewer:** Codex / Claude
+**Helper kind:** `bff_handoff_packet`
+**Prepared:** 2026-07-11
 **Mutates canonical truth:** no
 
 This is a support artifact only. It inventories the current BFF behavior and

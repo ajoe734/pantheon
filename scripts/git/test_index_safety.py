@@ -21,6 +21,7 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+REPO_ROOT = HERE.parents[1]
 
 
 def _load(modname: str, path: Path):
@@ -208,6 +209,11 @@ class WorkerCommitWrapperTests(unittest.TestCase):
         scripts_dir.mkdir(parents=True)
         (scripts_dir / "worker_commit.py").write_text(
             (HERE / "worker_commit.py").read_text()
+        )
+        orchestrator_dir = root / ".orchestrator"
+        orchestrator_dir.mkdir(parents=True)
+        (orchestrator_dir / "common.py").write_text(
+            (REPO_ROOT / ".orchestrator" / "common.py").read_text()
         )
         return root
 
@@ -448,10 +454,13 @@ class WorkerCommitWrapperTests(unittest.TestCase):
             status_log = status_root / "ai-activity-log.jsonl"
             self.assertFalse(local_log.exists())
             audit = json.loads(status_log.read_text(encoding="utf-8").splitlines()[-1])
+            head_sha = _git(root, "rev-parse", "HEAD").stdout.strip()
             self.assertEqual(audit["agent"], "Codex2")
             self.assertEqual(audit["type"], "worker_commit")
             self.assertEqual(audit["task_id"], "BAR-003")
+            self.assertEqual(audit["event_id"], f"worker-commit-{head_sha}")
             self.assertIn("Worker commit", audit["message"])
+            self.assertTrue((status_root / ".orchestrator" / "activity-audit.lock").is_file())
         finally:
             import shutil; shutil.rmtree(root); shutil.rmtree(status_root)
 

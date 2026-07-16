@@ -122,6 +122,7 @@ transitioning to `resolved` or `closed`.
 | Field | Type | Description |
 |---|---|---|
 | `published_at` | ISO-8601 UTC | Required when status is `published` |
+| `published_event_id` | string | Durable `postmortem.published` event committed with publication |
 | `contributing_factors` | `string[]` | Contributing factors |
 | `timeline` | `object[]` | Ordered event timeline (`ts`, `description`, `actor`) |
 | `action_items` | `string[]` | Follow-up action items |
@@ -141,6 +142,11 @@ draft → review → approved → published
 
 `published_at` is auto-set by `IncidentStore.update_postmortem_status()` when
 transitioning to `published`.
+
+When publication is coupled to durable delivery, `published_event_id` records
+the exact prepared event selected by the successful status transition. Crash
+reconciliation uses this immutable commit marker rather than mutable parent
+incident state.
 
 ---
 

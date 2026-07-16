@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -13,12 +14,13 @@ import threading
 import time
 import uuid
 from collections import deque
+from copy import deepcopy
 from concurrent.futures import Executor, ThreadPoolExecutor
 from contextvars import ContextVar, copy_context
 from datetime import datetime, timedelta, timezone
-from functools import partial
+from functools import partial, wraps
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 from urllib.parse import quote, urlencode
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -147,11 +149,27 @@ from command_executor import (
     create_capital_pool,
     create_capital_rebalance_proposal,
     execute_command_with_status,
+    _runtime_manager_client,
+    _post_json,
+    _get_json,
 )
-from persona_allocation_policy import calculate_target_allocations, validate_emergency_lines
+from persona_allocation_policy import (
+    build_pm12_allocation_policy_input,
+    calculate_target_allocations,
+    validate_emergency_lines,
+)
 from emergency_containment_policy import validate_emergency_containment
 from session_lifecycle_store import SessionLifecycleStore
 from management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
+from management_nl_command_idempotency import (
+    DEFAULT_STORAGE_PATH as DEFAULT_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_PATH,
+    ManagementNlCommandIdempotencyStore,
+    ManagementNlCommandPayloadConflict,
+    ManagementNlCommandRecoveryRequired,
+    ManagementNlCommandReservation,
+    ManagementNlCommandScope,
+    ManagementNlCommandStorageError,
+)
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from source_search_ops_client import (
     SearchIndexCommandClient,
@@ -188,6 +206,16 @@ from operations_read_model import (
 from read_store import ReadSurfaceStore, redact_evidence_refs
 from services.persona.runtime_profile import build_persona_runtime_profile
 from settings_store import SettingsStore
+from persona_provisioning import (
+    ProvisioningConflict,
+    ProvisioningRecord,
+    make_persona_provisioning_store,
+)
+from persona_provisioning_coordinator import (
+    PersonaProvisioningCoordinationError,
+    PersonaProvisioningCoordinator,
+    deterministic_provisioning_ids,
+)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -202,6 +230,7 @@ def _bool_from_env(name: str, *, default: bool = False) -> bool:
 
 _BFF_AUTH_STUB_ENV = "PANTHEON_BFF_AUTH_STUB"
 _BFF_STUB_LEGACY_BARE_TOKENS_ENV = "PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS"
+_BFF_STUB_CAPABILITY_ROLES = frozenset({"admin", "operator"})
 _PRODUCTION_STRICT_ENVIRONMENTS = {
     "canary",
     "live",
@@ -307,8 +336,14 @@ def _dedupe_origins(origins: List[str]) -> List[str]:
     return deduped
 
 
+_BFF_VALID_AUTH_MODES = frozenset({"strict", "permissive"})
+
+
 def _bff_auth_mode() -> str:
-    return os.getenv("PANTHEON_BFF_AUTH_MODE", "strict").strip().lower() or "strict"
+    raw = os.getenv("PANTHEON_BFF_AUTH_MODE", "strict").strip().lower() or "strict"
+    if raw not in _BFF_VALID_AUTH_MODES:
+        return "strict"
+    return raw
 
 
 def _is_production_strict_mode() -> bool:
@@ -1002,6 +1037,7 @@ def _recoverable_capital_command(record: Dict[str, Any]) -> bool:
 
 @app.on_event("startup")
 async def _start_downstream_health_monitor() -> None:
+    global _PERSONA_PROVISIONING_RECONCILER_TASK
     await downstream_health_monitor.start()
     # A crash can leave a durable owner command submitted/processing.  Replay
     # only the idempotent Capital authority commands; generic adapter commands
@@ -1013,10 +1049,22 @@ async def _start_downstream_health_monitor() -> None:
                 CommandStatus.SUBMITTED,
             )
             asyncio.create_task(_process_command_stub(str(record.get("command_id"))))
+    if _bool_from_env("PANTHEON_PERSONA_PROVISIONING_RECONCILER_ENABLED", default=True):
+        _PERSONA_PROVISIONING_RECONCILER_TASK = asyncio.create_task(
+            _persona_provisioning_reconciler_loop()
+        )
 
 
 @app.on_event("shutdown")
 async def _stop_downstream_health_monitor() -> None:
+    global _PERSONA_PROVISIONING_RECONCILER_TASK
+    if _PERSONA_PROVISIONING_RECONCILER_TASK is not None:
+        _PERSONA_PROVISIONING_RECONCILER_TASK.cancel()
+        try:
+            await _PERSONA_PROVISIONING_RECONCILER_TASK
+        except asyncio.CancelledError:
+            pass
+        _PERSONA_PROVISIONING_RECONCILER_TASK = None
     await downstream_health_monitor.stop()
 
 
@@ -1057,30 +1105,26 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 #   Strict default still applies: stub tokens are not accepted in strict mode.
 
 
-def _dev_login_client_id() -> str:
-    return _first_nonblank(
-        os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_ID"),
-        os.getenv("PANTHEON_BFF_OIDC_CLIENT_ID"),
-    )
-
-
-def _dev_login_client_secret() -> str:
-    return _first_nonblank(
-        os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_SECRET"),
-        os.getenv("PANTHEON_BFF_OIDC_CLIENT_SECRET"),
-    )
+# Server-bound dev-login identities. Each identity issues tokens for exactly
+# one fixed role set, subject, and tenant scope; the caller cannot request
+# roles or tenants beyond what the identity is bound to. This closes the
+# self-elevation gap where a single shared credential could mint a token for
+# any role (including admin) or any tenant simply by asking for it in the
+# request body.
+_DEV_LOGIN_IDENTITY_DEFS: Dict[str, Dict[str, Any]] = {
+    "viewer": {"roles": ("viewer",), "subject_suffix": "viewer"},
+    "operator": {"roles": ("operator",), "subject_suffix": "operator"},
+    "approver": {"roles": ("approver",), "subject_suffix": "approver"},
+    "risk_owner": {"roles": ("risk_owner",), "subject_suffix": "risk-owner"},
+    "operator_a": {"roles": ("operator",), "subject_suffix": "operator-a"},
+    "operator_b": {"roles": ("operator",), "subject_suffix": "operator-b"},
+}
 
 
 def _dev_login_forbidden_environment() -> bool:
     env_name = os.getenv("PANTHEON_ENV", "").strip().lower()
     deployment_stage = os.getenv("PANTHEON_DEPLOYMENT_STAGE", "").strip().lower()
     return env_name in _PRODUCTION_STRICT_ENVIRONMENTS or deployment_stage in _PRODUCTION_STRICT_ENVIRONMENTS
-
-
-def _dev_login_enabled() -> bool:
-    if _dev_login_forbidden_environment():
-        return False
-    return bool(_dev_login_client_id() and _dev_login_client_secret())
 
 
 def _dev_login_ttl_seconds() -> int:
@@ -1092,16 +1136,81 @@ def _dev_login_ttl_seconds() -> int:
     return max(300, min(ttl, 3600))
 
 
-def _dev_login_roles() -> List[str]:
-    roles = _env_csv("PANTHEON_BFF_DEV_LOGIN_ROLES") or ["operator", "reviewer", "approver"]
-    return sorted(set(role for role in roles if role in _READ_ROLES or role in _WRITE_ROLES))
-
-
 def _dev_login_bool_env(name: str, *, default: bool) -> bool:
     return _bool_from_env(name, default=default)
 
 
-def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
+def _dev_login_identity_registry() -> Dict[str, Dict[str, Any]]:
+    """Build the configured dev-login identity profiles from environment.
+
+    Each identity requires its own dedicated ``PANTHEON_BFF_DEV_LOGIN_<NAME>_
+    CLIENT_ID``/``_CLIENT_SECRET`` pair so distinct actors (e.g. operator A
+    vs. operator B) never share a credential or a subject. Only the
+    ``operator`` identity falls back to the legacy shared
+    ``PANTHEON_BFF_DEV_LOGIN_CLIENT_ID``/``PANTHEON_BFF_OIDC_CLIENT_ID``
+    credential for backward compatibility; unconfigured identities are simply
+    absent from the registry (dev-login as that identity is unavailable, it
+    does not fall back to a shared credential).
+    """
+    registry: Dict[str, Dict[str, Any]] = {}
+    for name, base in _DEV_LOGIN_IDENTITY_DEFS.items():
+        env_prefix = f"PANTHEON_BFF_DEV_LOGIN_{name.upper()}"
+        client_id = os.getenv(f"{env_prefix}_CLIENT_ID", "").strip()
+        client_secret = os.getenv(f"{env_prefix}_CLIENT_SECRET", "").strip()
+        if not (client_id and client_secret) and name == "operator":
+            client_id = _first_nonblank(
+                os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_ID"),
+                os.getenv("PANTHEON_BFF_OIDC_CLIENT_ID"),
+            )
+            client_secret = _first_nonblank(
+                os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_SECRET"),
+                os.getenv("PANTHEON_BFF_OIDC_CLIENT_SECRET"),
+            )
+        if not (client_id and client_secret):
+            continue
+
+        tenant_id = _first_nonblank(
+            os.getenv(f"{env_prefix}_TENANT_ID"),
+            os.getenv("PANTHEON_BFF_TENANT_ID"),
+            os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
+            os.getenv("PANTHEON_TENANT_ID"),
+            "tenant-dev",
+        )
+        allowed_tenants = _env_csv(f"{env_prefix}_ALLOWED_TENANTS") or [tenant_id]
+        if tenant_id not in allowed_tenants:
+            allowed_tenants = [tenant_id] + list(allowed_tenants)
+
+        mfa_verified = _dev_login_bool_env(f"{env_prefix}_MFA_VERIFIED", default=False)
+
+        registry[name] = {
+            "identity": name,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "roles": sorted(base["roles"]),
+            "subject": f"pantheon-dev-{base['subject_suffix']}",
+            "tenant_id": tenant_id,
+            "allowed_tenants": allowed_tenants,
+            "mfa_verified": mfa_verified,
+        }
+    return registry
+
+
+def _dev_login_enabled() -> bool:
+    if _dev_login_forbidden_environment():
+        return False
+    return bool(_dev_login_identity_registry())
+
+
+def _dev_login_match_identity(client_id: str, client_secret: str) -> Optional[Dict[str, Any]]:
+    for profile in _dev_login_identity_registry().values():
+        if hmac.compare_digest(client_id, profile["client_id"]) and hmac.compare_digest(
+            client_secret, profile["client_secret"]
+        ):
+            return profile
+    return None
+
+
+def _issue_dev_login_jwt(profile: Dict[str, Any]) -> Dict[str, Any]:
     try:
         from services.runtime_auth_inbound import encode_jwt_hs256
     except ImportError:
@@ -1121,11 +1230,8 @@ def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
     now = int(time.time())
     ttl = _dev_login_ttl_seconds()
     expires_at = now + ttl
-    roles = _dev_login_roles() or ["operator", "reviewer"]
-    subject = _first_nonblank(
-        os.getenv("PANTHEON_BFF_DEV_LOGIN_SUBJECT"),
-        f"pantheon-dev-{client_id}",
-    )
+    roles = list(profile["roles"])
+
     issuer = _first_nonblank(
         os.getenv("PANTHEON_BFF_JWT_ISSUER"),
         "pantheon-dev",
@@ -1134,16 +1240,9 @@ def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
         os.getenv("PANTHEON_BFF_JWT_AUDIENCE"),
         "bff-operators",
     )
-    tenant_id = _first_nonblank(
-        os.getenv("PANTHEON_BFF_TENANT_ID"),
-        os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
-        os.getenv("PANTHEON_TENANT_ID"),
-        "tenant-dev",
-    )
-    allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [tenant_id]
-    mfa_verified = _dev_login_bool_env("PANTHEON_BFF_DEV_LOGIN_MFA_VERIFIED", default=False)
+
     claims: Dict[str, Any] = {
-        "sub": subject,
+        "sub": profile["subject"],
         "roles": roles,
         "iss": issuer,
         "aud": audience,
@@ -1151,12 +1250,13 @@ def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
         "nbf": now,
         "exp": expires_at,
         "jti": f"dev-login-{uuid.uuid4().hex}",
-        "client_id": client_id,
+        "client_id": profile["client_id"],
+        "identity": profile["identity"],
         "token_use": "pantheon-bff-dev-login",
-        "tenant_id": tenant_id,
-        "allowed_tenants": allowed_tenants,
+        "tenant_id": profile["tenant_id"],
+        "allowed_tenants": profile["allowed_tenants"],
     }
-    if mfa_verified:
+    if profile["mfa_verified"]:
         claims["mfa_verified"] = True
 
     token = encode_jwt_hs256(claims, secret=secret)
@@ -1172,7 +1272,15 @@ def _issue_dev_login_jwt(client_id: str) -> Dict[str, Any]:
 
 @app.post("/bff/auth/dev-login")
 async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict)):
-    """Dev-only client-credentials exchange for short-lived BFF JWTs."""
+    """Dev-only client-credentials exchange for short-lived BFF JWTs.
+
+    Each client_id/client_secret pair is bound server-side to exactly one
+    named identity (viewer/operator/approver/risk_owner/operator_a/
+    operator_b) with a fixed subject, role set, and tenant scope. Callers may
+    optionally echo ``roles``/``tenant_id``/``allowed_tenants`` in the
+    request, but any value outside what the matched identity is bound to is
+    rejected as an escalation attempt rather than silently honored.
+    """
     if not _dev_login_enabled():
         raise _bff_error(
             403,
@@ -1193,27 +1301,62 @@ async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict
 
     client_id = str(payload.get("client_id") or payload.get("clientId") or "").strip()
     client_secret = str(payload.get("client_secret") or payload.get("clientSecret") or "").strip()
-    expected_id = _dev_login_client_id()
-    expected_secret = _dev_login_client_secret()
-    if not (
-        hmac.compare_digest(client_id, expected_id)
-        and hmac.compare_digest(client_secret, expected_secret)
-    ):
+    profile = _dev_login_match_identity(client_id, client_secret)
+    if profile is None:
         raise _bff_error(
             401,
             ErrorCode.AUTH_REQUIRED,
             "Invalid dev login client credentials",
             "AUTH_DEV_LOGIN_CLIENT_CREDENTIALS",
-            suggestion="Use the configured PANTHEON_BFF_OIDC_CLIENT_ID and CLIENT_SECRET",
+            suggestion="Use the configured per-identity PANTHEON_BFF_DEV_LOGIN_<IDENTITY>_CLIENT_ID/SECRET",
         )
 
-    token_payload = _issue_dev_login_jwt(client_id)
+    requested_roles = payload.get("roles")
+    if requested_roles is not None:
+        bound_roles = set(profile["roles"])
+        requested = set(requested_roles)
+        if not requested or not requested.issubset(bound_roles):
+            raise _bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Requested roles exceed the dev-login identity's bound roles",
+                "AUTH_DEV_LOGIN_ESCALATION_DENIED",
+                precondition_failed="roles",
+                suggestion=f"Identity '{profile['identity']}' is bound to roles {sorted(bound_roles)}",
+            )
+
+    requested_tenant = str(payload.get("tenant_id") or payload.get("tenantId") or "").strip()
+    if requested_tenant and requested_tenant != profile["tenant_id"]:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Requested tenant is outside the dev-login identity's bound tenant",
+            "AUTH_DEV_LOGIN_ESCALATION_DENIED",
+            precondition_failed="tenant_id",
+            suggestion=f"Identity '{profile['identity']}' is bound to tenant '{profile['tenant_id']}'",
+        )
+
+    requested_allowed_tenants = payload.get("allowed_tenants") or payload.get("allowedTenants")
+    if requested_allowed_tenants is not None and set(requested_allowed_tenants) - set(
+        profile["allowed_tenants"]
+    ):
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Requested allowed_tenants exceed the dev-login identity's bound tenants",
+            "AUTH_DEV_LOGIN_ESCALATION_DENIED",
+            precondition_failed="allowed_tenants",
+            suggestion=f"Identity '{profile['identity']}' is bound to tenants {profile['allowed_tenants']}",
+        )
+
+    token_payload = _issue_dev_login_jwt(profile)
     return {
         **token_payload,
         "meta": {
             "route": "POST /bff/auth/dev-login",
             "contract": "FE-INT-GATE-OIDC-DEV-LOGIN",
             "ttl_seconds": token_payload["expires_in"],
+            "identity": profile["identity"],
         },
     }
 
@@ -1279,7 +1422,7 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
             inferred_roles = ["analyst"]
         elif lowered.startswith("viewer_"):
             inferred_roles = ["viewer"]
-        capabilities = _stub_identity_capabilities([])
+        capabilities = _stub_identity_capabilities([], inferred_roles)
         return OperatorIdentity(
             operator_id=token,
             roles=inferred_roles,
@@ -1290,11 +1433,11 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
     parts = token.split(":")
     operator_id = parts[0] if parts else "unknown"
     roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
-    
+
     mfa_verified = False
     tenant_ids = None
     token_capabilities = []
-    
+
     if len(parts) > 2:
         if parts[2] == "mfa":
             mfa_verified = True
@@ -1306,13 +1449,13 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
             tenant_ids = parts[2].split(",")
             if len(parts) > 3 and parts[3]:
                 token_capabilities = parts[3].split(",")
-                
-    capabilities = _stub_identity_capabilities(token_capabilities)
+
+    capabilities = _stub_identity_capabilities(token_capabilities, roles)
     claims = {"sub": operator_id, "roles": roles, "capabilities": capabilities}
     if tenant_ids:
         claims["tenant_ids"] = tenant_ids
         claims["tenantIds"] = tenant_ids
-        
+
     return OperatorIdentity(
         operator_id=operator_id,
         roles=roles,
@@ -1322,7 +1465,13 @@ def _extract_identity_stub(authorization: Optional[str]) -> OperatorIdentity:
     )
 
 
-def _stub_identity_capabilities(token_capabilities: List[str]) -> List[str]:
+def _stub_identity_capabilities(
+    token_capabilities: List[str],
+    roles: List[str],
+) -> List[str]:
+    normalized_roles = {str(role or "").strip().lower() for role in roles}
+    if not normalized_roles.intersection(_BFF_STUB_CAPABILITY_ROLES):
+        return []
     return _dedupe_nonblank_strings(
         [
             *token_capabilities,
@@ -1342,10 +1491,12 @@ def _with_structured_identity_capabilities(identity: OperatorIdentity) -> Operat
         token_capabilities = [str(cap) for cap in raw_capabilities]
     else:
         token_capabilities = []
-    capabilities = _stub_identity_capabilities(token_capabilities)
-    if not capabilities:
-        return identity
-    claims["capabilities"] = capabilities
+    capabilities = _stub_identity_capabilities(token_capabilities, identity.roles)
+    if capabilities:
+        claims["capabilities"] = capabilities
+    else:
+        claims.pop("capabilities", None)
+        claims.pop("capability", None)
     try:
         return identity.model_copy(update={"claims": claims})
     except AttributeError:
@@ -3871,6 +4022,19 @@ def _normalize_quarterly_recommendation_command(cmd: OperatorCommand) -> Operato
         or cmd.target.id
         or ""
     ).strip()
+    target_recommendation_id = str(cmd.target.id or "").strip()
+    if (
+        recommendation_id
+        and target_recommendation_id
+        and recommendation_id != target_recommendation_id
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "recommendation_id does not match the command target",
+            "Use target.id as the authoritative quarterly recommendation id.",
+            precondition_failed="recommendation_id",
+        )
     if recommendation_id:
         params["recommendation_id"] = recommendation_id
         params["recommendationId"] = recommendation_id
@@ -5574,6 +5738,219 @@ def _validate_human_gate_decision(params: Dict[str, Any], identity: OperatorIden
         params["ttlSeconds"] = ttl_seconds
 
 
+def _pm12_resolve_quarterly_recommendation_submit_params(
+    params: Dict[str, Any],
+) -> Dict[str, Any]:
+    recommendation_id = str(
+        params.get("recommendation_id") or params.get("recommendationId") or ""
+    ).strip()
+    snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
+    quarter = str(params.get("quarter") or "").strip().upper()
+    if not recommendation_id or not snapshot_id or not quarter:
+        return dict(params)
+    snapshot = _pm12_allocation_snapshot_record(snapshot_id)
+    snapshot_quarter = str(snapshot.get("period") or "").strip().upper()
+    if snapshot_quarter != quarter:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "quarter does not match the admitted ranking snapshot",
+            "The submitted quarter must be the immutable snapshot period.",
+            precondition_failed="quarter",
+        )
+
+    matched_item: Optional[Dict[str, Any]] = None
+    matched_action_id = ""
+    for item in snapshot.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        persona_id = str(item.get("persona_id") or "").strip()
+        for action_id in _pm12_recommendation_action_ids(item):
+            expected_id = f"pm12-{quarter.lower()}-{persona_id}-{action_id}"
+            if expected_id == recommendation_id:
+                matched_item = item
+                matched_action_id = action_id
+                break
+        if matched_item is not None:
+            break
+    if matched_item is None:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "recommendation is not in the admitted ranking snapshot",
+            "The recommendation id/action/persona tuple was not materialized by the snapshot.",
+            precondition_failed="recommendation_id",
+        )
+
+    asserted_action_id = str(
+        params.get("recommendation_action_id")
+        or params.get("recommendationActionId")
+        or ""
+    ).strip()
+    if asserted_action_id and asserted_action_id != matched_action_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "recommendation action does not match the admitted snapshot",
+            "The caller-supplied recommendation action is not authoritative.",
+            precondition_failed="recommendation_action_id",
+        )
+
+    item = {
+        **json.loads(json.dumps(matched_item)),
+        "ranking_snapshot_id": snapshot_id,
+        "evidence_refs": [],
+    }
+    quarter_window = _pm12_quarter_window(quarter, utc_now())
+    source_recommendation = _pm12_quarterly_recommendation_item(
+        item,
+        action_id=matched_action_id,
+        quarter_window=quarter_window,
+        evidence_refs=[],
+    )
+    source_recommendation["human_review_state"] = {
+        "status": "recommended_not_submitted",
+        "decision_status": "pending",
+        "submitted": False,
+        "submit_status": "not_submitted",
+        "decision": None,
+        "decided_at": None,
+        "decided_by": None,
+    }
+    stored_source = _promotion_review_stored_source(source_recommendation)
+    stage_path = _promotion_review_stage_path(source_recommendation)
+    canonical_assertions = {
+        "persona_id": item.get("persona_id"),
+        "stage": item.get("stage"),
+        "deployment_stage": item.get("deployment_stage"),
+        "stage_from": stage_path.get("from_stage"),
+        "stage_to": stage_path.get("target_stage"),
+        "review_kind": stage_path.get("review_kind"),
+        "current_weight": item.get("current_weight"),
+        "target_weight": item.get("target_weight"),
+        "delta": item.get("delta"),
+        "capital_scope": item.get("capital_scope"),
+        "capital_pool_id": item.get("capital_pool_id"),
+        "capital_sleeve_id": item.get("capital_sleeve_id"),
+        "evidence_ref_ids": sorted(item.get("evidence_ref_ids") or []),
+    }
+    for field, authoritative_value in canonical_assertions.items():
+        if field not in params:
+            continue
+        asserted_value = params.get(field)
+        if field == "evidence_ref_ids":
+            asserted_value = sorted(asserted_value or [])
+        if _stable_json_hash(asserted_value) != _stable_json_hash(authoritative_value):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "quarterly recommendation assertion mismatch",
+                f"{field} does not match the admitted ranking snapshot.",
+                precondition_failed=field,
+            )
+    if params.get("evidence_refs") not in (None, []):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "caller evidence is not admissible",
+            "Quarterly recommendation evidence is materialized server-side.",
+            precondition_failed="evidence_refs",
+        )
+    asserted_source = params.get("source_recommendation")
+    if asserted_source is not None:
+        if not isinstance(asserted_source, dict):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "source recommendation assertion mismatch",
+                "source_recommendation must be an object when supplied.",
+                precondition_failed="source_recommendation",
+            )
+        nested_assertions = {
+            "id": recommendation_id,
+            "recommendation_id": recommendation_id,
+            "ranking_snapshot_id": snapshot_id,
+            "quarter": quarter,
+            "persona_id": item.get("persona_id"),
+            "action_id": matched_action_id,
+            "recommendation_action_id": matched_action_id,
+            "stage": item.get("stage"),
+            "deployment_stage": item.get("deployment_stage"),
+            "stage_from": stage_path.get("from_stage"),
+            "stage_to": stage_path.get("target_stage"),
+            "review_kind": stage_path.get("review_kind"),
+            "current_weight": item.get("current_weight"),
+            "target_weight": item.get("target_weight"),
+            "delta": item.get("delta"),
+            "capital_scope": item.get("capital_scope"),
+            "capital_pool_id": item.get("capital_pool_id"),
+            "capital_sleeve_id": item.get("capital_sleeve_id"),
+            "evidence_ref_ids": sorted(item.get("evidence_ref_ids") or []),
+        }
+        for field, authoritative_value in nested_assertions.items():
+            if field not in asserted_source:
+                continue
+            asserted_value = asserted_source.get(field)
+            if field == "evidence_ref_ids":
+                asserted_value = sorted(asserted_value or [])
+            if _stable_json_hash(asserted_value) != _stable_json_hash(
+                authoritative_value
+            ):
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "source recommendation assertion mismatch",
+                    f"source_recommendation.{field} does not match the admitted ranking snapshot.",
+                    precondition_failed=field,
+                )
+        if asserted_source.get("evidence_refs") not in (None, []):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "caller evidence is not admissible",
+                "source_recommendation evidence is materialized server-side.",
+                precondition_failed="evidence_refs",
+            )
+
+    canonical: Dict[str, Any] = {
+        "quarter": quarter,
+        "recommendation_id": recommendation_id,
+        "recommendationId": recommendation_id,
+        "recommendation_action_id": matched_action_id,
+        "recommendationActionId": matched_action_id,
+        "ranking_snapshot_id": snapshot_id,
+        "ranking_snapshot_content_digest": snapshot.get("content_digest"),
+        "ranking_item_digest": _stable_json_hash(matched_item),
+        "ranking_evidence_ref_ids": sorted(item.get("evidence_ref_ids") or []),
+        "persona_id": item.get("persona_id"),
+        "stage": item.get("stage"),
+        "deployment_stage": item.get("deployment_stage"),
+        "current_weight": item.get("current_weight"),
+        "target_weight": item.get("target_weight"),
+        "capital_scope": item.get("capital_scope"),
+        "capital_pool_id": item.get("capital_pool_id"),
+        "capital_sleeve_id": item.get("capital_sleeve_id"),
+        "stage_from": stage_path.get("from_stage"),
+        "stage_to": stage_path.get("target_stage"),
+        "review_kind": stage_path.get("review_kind"),
+        "requires_human_gate_decision": True,
+        "live_capital_mutation": False,
+        "liveCapitalMutation": False,
+        "direct_live_capital_mutation": False,
+        "runtime_mutation": False,
+        "source_type": "quarterly_ranking_recommendation",
+        "source_record_id": recommendation_id,
+        "source_recommendation": stored_source,
+        "audit_event": "quarterly_ranking.recommendation_submitted",
+        "policy": "promotion_governance_human_gate_no_direct_live_capital",
+    }
+    for field in ("reason", "note", "memo", "rationale"):
+        value = str(params.get(field) or "").strip()
+        if value:
+            canonical[field] = value
+    return canonical
+
+
 def _validate_quarterly_ranking_recommendation_submit(
     params: Dict[str, Any],
     identity: OperatorIdentity,
@@ -5588,7 +5965,12 @@ def _validate_quarterly_ranking_recommendation_submit(
             suggestion="Escalate to a user with operator, approver, or admin role",
         )
 
-    required = {"quarter", "recommendation_id"}
+    _raise_if_promotion_review_direct_mutation_requested(params)
+    resolved = _pm12_resolve_quarterly_recommendation_submit_params(params)
+    params.clear()
+    params.update(resolved)
+
+    required = {"quarter", "recommendation_id", "ranking_snapshot_id"}
     missing = required - {key for key, value in params.items() if value not in (None, "")}
     if missing:
         raise _bff_error(
@@ -5653,7 +6035,7 @@ def _enforce_ops_console_preconditions(
                 "Persona not found",
                 f"Persona {persona_id} does not exist",
             )
-        
+
         read_model = _ops_read_model_entry_for_persona(persona_id)
         if read_model:
             confidence = read_model.data_confidence
@@ -5663,7 +6045,7 @@ def _enforce_ops_console_preconditions(
                 confidence_str = confidence.value
             else:
                 confidence_str = str(confidence)
-            
+
             if confidence_str.lower() in ("unavailable", "unverifiable"):
                 raise _bff_error(
                     422,
@@ -5672,7 +6054,7 @@ def _enforce_ops_console_preconditions(
                     "Source confidence must be formal, partial, fallback, or degraded",
                     precondition_failed="source_confidence",
                 )
-            
+
             if required_bindings:
                 if "runtime" in required_bindings:
                     if not read_model.identity.runtime_ids:
@@ -5845,7 +6227,14 @@ def _validate_rebalance_proposal(params: Dict[str, Any], identity: OperatorIdent
             "Operator does not hold the required role",
             precondition_failed="role_check",
         )
-    _enforce_ops_console_preconditions(params, identity)
+    raise _bff_error(
+        422,
+        ErrorCode.VALIDATION_FAILED,
+        "RebalanceProposal requires server-side allocation admission",
+        "Submit the exact allocation evaluation through POST /bff/rebalances.",
+        precondition_failed="allocation_evaluation_id",
+        suggestion="Use POST /bff/management/allocation-policy/evaluate, then POST /bff/rebalances.",
+    )
 
 
 def _validate_approved_apply(params: Dict[str, Any], identity: OperatorIdentity) -> None:
@@ -6846,6 +7235,46 @@ def _surface_status() -> Dict[str, Any]:
     return {"status": "ok"}
 
 
+_LEGACY_LOOP_RUN_SOURCE = "legacy_incident_backfill"
+_LOOP_RUN_PROJECTION_SCHEMA = "pantheon.loop-run-projection.v1"
+
+
+def _loop_run_truth_source(available: bool) -> tuple[str, str]:
+    """Resolve loop-run provenance without letting incidents shadow truth."""
+    canonical_source = read_store.dataset_source("loop_runs")
+    if canonical_source != "missing":
+        return "loop_runs", canonical_source
+    incident_source = read_store.dataset_source("incidents")
+    if available and incident_source != "missing":
+        return "incidents", _LEGACY_LOOP_RUN_SOURCE
+    return "loop_runs", "missing"
+
+
+def _loop_run_projection_metadata() -> Dict[str, Any]:
+    getter = getattr(read_store, "loop_run_projection_metadata", None)
+    if not callable(getter):
+        return {}
+    try:
+        metadata = getter()
+    except (OSError, TypeError, ValueError):
+        return {}
+    return dict(metadata) if isinstance(metadata, Mapping) else {}
+
+
+def _loop_run_controller_is_formal(metadata: Mapping[str, Any]) -> bool:
+    if str(metadata.get("schema_version") or "") != _LOOP_RUN_PROJECTION_SCHEMA:
+        return False
+    controller = metadata.get("controller")
+    if not isinstance(controller, Mapping):
+        return False
+    return (
+        controller.get("accepted_live") is True
+        and str(controller.get("status") or "").strip().lower() == "ready"
+        and str(controller.get("mode") or "").strip().lower() == "live"
+        and str(controller.get("truth_level") or "").strip().lower() == "canonical_live"
+    )
+
+
 def _dataset_surface_status(
     dataset: str,
     *,
@@ -6866,6 +7295,18 @@ def _dataset_surface_status(
             "served_from": "local_snapshot",
             "last_known_at": snapshot_at or utc_now(),
         }
+    elif source == _LEGACY_LOOP_RUN_SOURCE:
+        surface["status"] = "degraded"
+        surface["note"] = (
+            "Incident-derived loop reconstruction is a legacy backfill view; "
+            "it is not canonical lifecycle-projector or live controller truth."
+        )
+        surface["projection_mode"] = "backfill"
+        surface["accepted_live"] = False
+        surface["staleness"] = {
+            "served_from": _LEGACY_LOOP_RUN_SOURCE,
+            "last_known_at": snapshot_at or utc_now(),
+        }
     elif source == "missing":
         surface["status"] = "unavailable"
         surface.setdefault(
@@ -6884,6 +7325,51 @@ def _dataset_surface_status(
         )
 
     return surface
+
+
+def _loop_run_surface_status(
+    available: bool,
+    *,
+    snapshot_at: Optional[str] = None,
+) -> tuple[str, str, Dict[str, Any]]:
+    dataset, source = _loop_run_truth_source(available)
+    surface = _dataset_surface_status(
+        dataset,
+        snapshot_at=snapshot_at,
+        source=source,
+    )
+    if dataset != "loop_runs" or source == "missing":
+        return dataset, source, surface
+
+    metadata = _loop_run_projection_metadata()
+    controller = metadata.get("controller")
+    controller = dict(controller) if isinstance(controller, Mapping) else {}
+    controller_formal = _loop_run_controller_is_formal(metadata)
+    surface.update(
+        {
+            "projection_schema_version": metadata.get("schema_version"),
+            "projection_generation": metadata.get("generation"),
+            "controller": controller,
+            "accepted_live": controller.get("accepted_live"),
+            "projection_mode": controller.get("mode"),
+            "truth_level": controller.get("truth_level"),
+            "truth_status": "formal" if controller_formal and surface.get("status") == "ok" else "degraded",
+        }
+    )
+    if not controller_formal or surface.get("status") != "ok":
+        surface["status"] = "degraded"
+        surface["controller_note"] = (
+            "Canonical loop-run records remain conclusive, but formal truth requires "
+            "accepted_live=true, status=ready, mode=live, and truth_level=canonical_live."
+        )
+        surface.setdefault(
+            "staleness",
+            {
+                "served_from": source,
+                "last_known_at": snapshot_at or utc_now(),
+            },
+        )
+    return dataset, source, surface
 
 
 def _dataset_source_after_read(dataset: str) -> str:
@@ -7094,7 +7580,7 @@ def _filter_by_common_identifiers(
         item_sleeve_ids = _extract_ids_from_item(item, ["sleeve_id", "sleeveId", "sleeve_ids", "sleeve"])
         item_artifact_ids = _extract_ids_from_item(item, ["artifact_id", "artifactId", "artifact_ids", "artifact"])
         item_broker_ids = _extract_ids_from_item(item, ["broker_id", "brokerId", "broker_ids", "broker"])
-        
+
         # 額外支援在 source_refs, target 或 links 中查找
         source_refs = item.get("source_refs") or {}
         if isinstance(source_refs, dict):
@@ -7106,7 +7592,7 @@ def _filter_by_common_identifiers(
                 item_strategy_ids.extend(source_refs["strategy_ids"])
             if "capital_pool_ids" in source_refs:
                 item_pool_ids.extend(source_refs["capital_pool_ids"])
-        
+
         target = item.get("target") or {}
         if isinstance(target, dict):
             t_type = target.get("type")
@@ -7129,16 +7615,16 @@ def _filter_by_common_identifiers(
             continue
         if bk_id and not any(str(bk_id).strip() == str(val).strip() for val in item_broker_ids):
             continue
-        
+
         # stage, period, as_of 匹配
         item_stage = item.get("stage") or item.get("lifecycle_state") or item.get("status")
         if stage and str(item_stage).strip().lower() != str(stage).strip().lower():
             continue
-            
+
         item_period = item.get("period")
         if period and str(item_period).strip().lower() != str(period).strip().lower():
             continue
-            
+
         # as_of 可以檢查 meta 或是 item_as_of
         item_as_of = item.get("as_of") or item.get("observed_at") or item.get("collected_at")
         if as_of and str(item_as_of).strip() != str(as_of).strip():
@@ -25103,6 +25589,308 @@ async def bff_ranking_formula_action(
 
 # -- Rebalances BFF ----------------------------------------------------------
 
+_PM12_ALLOCATION_POLICY_VERSION = "persona-real-allocation-v1"
+_PM12_ALLOCATION_LINE_DIGEST_FIELDS = (
+    "ranking_snapshot_id",
+    "allocation_evaluation_id",
+    "allocation_policy_version",
+    "persona_id",
+    "stage",
+    "capital_scope",
+    "capital_pool_id",
+    "capital_sleeve_id",
+    "current_weight",
+    "target_weight",
+    "delta",
+    "cap_reasons",
+    "evidence_refs",
+)
+_PM12_ALLOCATION_ASSERTION_FIELDS = (
+    "stage",
+    "deployment_stage",
+    "capital_scope",
+    "capital_scope_id",
+    "capital_pool_id",
+    "capital_sleeve_id",
+    "current_weight",
+    "target_weight",
+    "delta",
+    "overall_score",
+    "score",
+    "tier",
+    "tier_id",
+    "formula_version",
+    "allocation_policy_input",
+    "eligible",
+    "exclusion_codes",
+    "exclusion_reasons",
+    "evidence_ref_ids",
+)
+
+
+def _pm12_allocation_line_digest(line: Dict[str, Any]) -> str:
+    basis = {
+        field: line.get(field)
+        for field in _PM12_ALLOCATION_LINE_DIGEST_FIELDS
+    }
+    basis["capital_scope"] = line.get("capital_scope") or "pool"
+    basis["cap_reasons"] = list(line.get("cap_reasons") or [])
+    basis["evidence_refs"] = list(line.get("evidence_refs") or [])
+    return _stable_json_hash(basis)
+
+
+def _pm12_allocation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
+    snapshot = read_store.get_ranking_snapshot(snapshot_id)
+    if not isinstance(snapshot, dict):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "unknown ranking snapshot",
+            "Allocation evaluation requires a BFF-admitted quarterly ranking snapshot.",
+            precondition_failed="ranking_snapshot_id",
+        )
+    expected_content_digest = _stable_json_hash({
+        "surface": snapshot.get("surface"),
+        "period": snapshot.get("period"),
+        "formula_version": snapshot.get("formula_version"),
+        "items": snapshot.get("items") or [],
+    })
+    if str(snapshot.get("content_digest") or "") != expected_content_digest:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "ranking snapshot integrity check failed",
+            "The durable snapshot content no longer matches its admitted digest.",
+            precondition_failed="ranking_snapshot_id",
+        )
+    if (
+        str(snapshot.get("surface") or "") != "quarterly"
+        or str(snapshot.get("formula_version") or "")
+        != _PM12_LEAGUE_FORMULA_VERSION
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "ranking snapshot is not allocation eligible",
+            "Only admitted PM-12 quarterly snapshots can feed allocation evaluation.",
+            precondition_failed="ranking_snapshot_id",
+        )
+    return snapshot
+
+
+def _pm12_allocation_evaluation_record(evaluation_id: str) -> Dict[str, Any]:
+    evaluation = read_store.get_allocation_evaluation(evaluation_id)
+    if not isinstance(evaluation, dict):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "unknown allocation evaluation",
+            "The proposal must join to a durable server-side allocation evaluation.",
+            precondition_failed="allocation_evaluation_id",
+        )
+    lines = evaluation.get("lines")
+    if not isinstance(lines, list) or not lines:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "allocation evaluation integrity check failed",
+            "The durable allocation evaluation has no admitted lines.",
+            precondition_failed="allocation_evaluation_id",
+        )
+    for index, line in enumerate(lines):
+        if not isinstance(line, dict):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "allocation evaluation integrity check failed",
+                f"The durable allocation line at index {index} is invalid.",
+                precondition_failed="allocation_line_digest",
+            )
+        supplied_digest = str(line.get("allocation_line_digest") or "").strip()
+        if not supplied_digest or _pm12_allocation_line_digest(line) != supplied_digest:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "allocation evaluation integrity check failed",
+                f"The durable allocation line at index {index} no longer matches its digest.",
+                precondition_failed="allocation_line_digest",
+            )
+    expected_content_digest = _stable_json_hash({
+        "ranking_snapshot_id": evaluation.get("ranking_snapshot_id"),
+        "allocation_evaluation_id": evaluation.get("allocation_evaluation_id"),
+        "allocation_policy_version": evaluation.get("allocation_policy_version"),
+        "lines": lines,
+    })
+    if str(evaluation.get("content_digest") or "") != expected_content_digest:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "allocation evaluation integrity check failed",
+            "The durable allocation evaluation no longer matches its admitted digest.",
+            precondition_failed="allocation_evaluation_id",
+        )
+    return evaluation
+
+
+def _pm12_assert_allocation_row(
+    *,
+    asserted: Dict[str, Any],
+    authoritative: Dict[str, Any],
+    snapshot: Dict[str, Any],
+    index: int,
+) -> None:
+    for field in _PM12_ALLOCATION_ASSERTION_FIELDS:
+        if field not in asserted:
+            continue
+        asserted_value = asserted.get(field)
+        authoritative_value = authoritative.get(field)
+        if field in {"exclusion_codes", "exclusion_reasons", "evidence_ref_ids"}:
+            asserted_value = sorted(asserted_value or [])
+            authoritative_value = sorted(authoritative_value or [])
+        if _stable_json_hash(asserted_value) != _stable_json_hash(authoritative_value):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "ranking row assertion mismatch",
+                f"rows[{index}].{field} does not match the admitted ranking snapshot.",
+                precondition_failed=field,
+            )
+
+    if "evidence_refs" in asserted:
+        persona_id = str(authoritative.get("persona_id") or "")
+        supplied_digest = _stable_json_hash(asserted.get("evidence_refs") or [])
+        allowed = (
+            snapshot.get("evidence_assertion_digests", {}).get(persona_id, [])
+            if isinstance(snapshot.get("evidence_assertion_digests"), dict)
+            else []
+        )
+        if supplied_digest not in allowed:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "ranking evidence assertion mismatch",
+                f"rows[{index}].evidence_refs was not emitted for this admitted snapshot.",
+                precondition_failed="evidence_refs",
+            )
+
+
+def _pm12_materialize_allocation_evaluation(
+    snapshot: Dict[str, Any],
+    asserted_rows: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    snapshot_id = str(snapshot.get("ranking_snapshot_id") or "")
+    snapshot_items = [
+        item
+        for item in snapshot.get("items") or []
+        if isinstance(item, dict)
+    ]
+    items_by_persona = {
+        str(item.get("persona_id") or ""): item
+        for item in snapshot_items
+        if str(item.get("persona_id") or "").strip()
+    }
+    requested: Dict[str, Dict[str, Any]] = {}
+    for index, row in enumerate(asserted_rows):
+        if not isinstance(row, dict):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "invalid allocation row",
+                f"rows[{index}] must be an object.",
+                precondition_failed="rows",
+            )
+        row_snapshot_id = str(row.get("ranking_snapshot_id") or "").strip()
+        if row_snapshot_id != snapshot_id:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "ranking snapshot mismatch",
+                f"rows[{index}].ranking_snapshot_id must match the admitted snapshot.",
+                precondition_failed="ranking_snapshot_id",
+            )
+        persona_id = str(row.get("persona_id") or "").strip()
+        authoritative = items_by_persona.get(persona_id)
+        if authoritative is None:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "ranking row is not in the admitted snapshot",
+                f"rows[{index}].persona_id is not part of {snapshot_id}.",
+                precondition_failed="persona_id",
+            )
+        if persona_id in requested:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "duplicate ranking row",
+                f"rows[{index}].persona_id appears more than once.",
+                precondition_failed="persona_id",
+            )
+        _pm12_assert_allocation_row(
+            asserted=row,
+            authoritative=authoritative,
+            snapshot=snapshot,
+            index=index,
+        )
+        requested[persona_id] = authoritative
+
+    canonical_rows: List[Dict[str, Any]] = []
+    for item in snapshot_items:
+        persona_id = str(item.get("persona_id") or "")
+        if persona_id not in requested:
+            continue
+        canonical_rows.append({
+            **json.loads(json.dumps(item)),
+            "ranking_snapshot_id": snapshot_id,
+            "evidence_refs": list(item.get("evidence_ref_ids") or []),
+        })
+    try:
+        raw_lines = calculate_target_allocations(canonical_rows)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "ranking snapshot cannot be evaluated",
+            str(exc),
+            precondition_failed="allocation_policy_input",
+        ) from exc
+
+    basis = {
+        "ranking_snapshot_id": snapshot_id,
+        "allocation_policy_version": _PM12_ALLOCATION_POLICY_VERSION,
+        "persona_ids": [line.get("persona_id") for line in raw_lines],
+        "lines": raw_lines,
+    }
+    basis_digest = _stable_json_hash(basis)
+    evaluation_id = f"allocation-evaluation-{basis_digest[:24]}"
+    lines: List[Dict[str, Any]] = []
+    for line in raw_lines:
+        normalized = {
+            **line,
+            "ranking_snapshot_id": snapshot_id,
+            "allocation_evaluation_id": evaluation_id,
+            "allocation_policy_version": _PM12_ALLOCATION_POLICY_VERSION,
+        }
+        normalized["allocation_line_digest"] = _pm12_allocation_line_digest(
+            normalized
+        )
+        lines.append(normalized)
+    content_digest = _stable_json_hash({
+        "ranking_snapshot_id": snapshot_id,
+        "allocation_evaluation_id": evaluation_id,
+        "allocation_policy_version": _PM12_ALLOCATION_POLICY_VERSION,
+        "lines": lines,
+    })
+    return read_store.put_allocation_evaluation({
+        "allocation_evaluation_id": evaluation_id,
+        "ranking_snapshot_id": snapshot_id,
+        "allocation_policy_version": _PM12_ALLOCATION_POLICY_VERSION,
+        "content_digest": content_digest,
+        "lines": lines,
+        "created_at": utc_now(),
+        "applied": False,
+    })
+
 @app.post("/bff/management/allocation-policy/evaluate")
 async def bff_evaluate_persona_allocation_policy(
     payload: Dict[str, Any] = Body(...),
@@ -25114,29 +25902,182 @@ async def bff_evaluate_persona_allocation_policy(
     rows = payload.get("rows")
     if not isinstance(rows, list):
         raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "rows is required", "Allocation evaluation requires a rows array")
-    lines = calculate_target_allocations(rows)
+    ranking_snapshot_id = str(payload.get("ranking_snapshot_id") or "").strip()
+    if not ranking_snapshot_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "ranking_snapshot_id is required",
+            "Allocation evaluation must join to one immutable ranking snapshot.",
+            precondition_failed="ranking_snapshot_id",
+        )
+    if not rows:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "rows is required",
+            "Allocation evaluation requires at least one admitted ranking row.",
+            precondition_failed="rows",
+        )
+    snapshot = _pm12_allocation_snapshot_record(ranking_snapshot_id)
+    evaluation = _pm12_materialize_allocation_evaluation(snapshot, rows)
     return {
         "data": {
-            "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
-            "lines": lines,
+            "ranking_snapshot_id": ranking_snapshot_id,
+            "allocation_evaluation_id": evaluation["allocation_evaluation_id"],
+            "allocation_policy_version": evaluation["allocation_policy_version"],
+            "lines": evaluation["lines"],
             "applied": False,
         },
-        "meta": {"snapshot_at": utc_now(), "policy": "persona-real-allocation-v1"},
+        "meta": {
+            "snapshot_at": utc_now(),
+            "ranking_snapshot_id": ranking_snapshot_id,
+            "allocation_evaluation_id": evaluation["allocation_evaluation_id"],
+            "policy": evaluation["allocation_policy_version"],
+        },
     }
 
 
 def _validate_rebalance_proposal_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    required = ("ranking_snapshot_id", "simulation", "constraints", "rollback_target")
-    missing = [field for field in required if not payload.get(field)]
+    required = (
+        "ranking_snapshot_id",
+        "allocation_evaluation_id",
+        "allocation_policy_version",
+        "simulation",
+        "constraints",
+        "rollback_target",
+    )
+    missing = [
+        field
+        for field in required
+        if (
+            not str(payload.get(field) or "").strip()
+            if field in {
+                "ranking_snapshot_id",
+                "allocation_evaluation_id",
+                "allocation_policy_version",
+            }
+            else not payload.get(field)
+        )
+    ]
     lines = payload.get("lines")
     if not isinstance(lines, list) or not lines:
         missing.append("lines")
-    line_fields = ("persona_id", "stage", "capital_scope", "current_weight", "target_weight", "delta", "cap_reasons", "evidence_refs")
+    line_fields = (
+        "ranking_snapshot_id",
+        "allocation_evaluation_id",
+        "allocation_line_digest",
+        "allocation_policy_version",
+        "persona_id",
+        "stage",
+        "capital_scope",
+        "current_weight",
+        "target_weight",
+        "delta",
+        "cap_reasons",
+        "evidence_refs",
+    )
+    normalized_lines: List[Dict[str, Any]] = []
     if not missing:
+        ranking_snapshot_id = str(payload.get("ranking_snapshot_id") or "").strip()
+        allocation_evaluation_id = str(
+            payload.get("allocation_evaluation_id") or ""
+        ).strip()
+        allocation_policy_version = str(
+            payload.get("allocation_policy_version") or ""
+        ).strip()
+        snapshot = _pm12_allocation_snapshot_record(ranking_snapshot_id)
+        evaluation = _pm12_allocation_evaluation_record(
+            allocation_evaluation_id
+        )
+        if (
+            str(evaluation.get("ranking_snapshot_id") or "")
+            != ranking_snapshot_id
+            or str(evaluation.get("allocation_policy_version") or "")
+            != allocation_policy_version
+        ):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "rebalance lineage mismatch",
+                "The allocation evaluation does not belong to the supplied snapshot and policy.",
+                precondition_failed="allocation_evaluation_id",
+            )
+        expected_lines = {
+            str(line.get("allocation_line_digest") or ""): line
+            for line in evaluation.get("lines") or []
+            if isinstance(line, dict)
+            and str(line.get("allocation_line_digest") or "").strip()
+        }
+        seen_line_digests: Set[str] = set()
         for index, line in enumerate(lines):
+            if not isinstance(line, dict):
+                raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "invalid proposal line", f"lines[{index}] must be an object")
             absent = [field for field in line_fields if field not in line]
             if absent:
                 raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "invalid proposal line", f"lines[{index}] missing: {', '.join(absent)}")
+            line_snapshot_id = str(line.get("ranking_snapshot_id") or "").strip()
+            if not line_snapshot_id:
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "ranking_snapshot_id is required on every proposal line",
+                    f"lines[{index}].ranking_snapshot_id must identify the source allocation line.",
+                    precondition_failed="ranking_snapshot_id",
+                )
+            if line_snapshot_id != ranking_snapshot_id:
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "ranking snapshot mismatch",
+                    f"lines[{index}].ranking_snapshot_id does not match the proposal snapshot.",
+                    precondition_failed="ranking_snapshot_id",
+                )
+            line_evaluation_id = str(
+                line.get("allocation_evaluation_id") or ""
+            ).strip()
+            line_policy_version = str(
+                line.get("allocation_policy_version") or ""
+            ).strip()
+            line_digest = str(line.get("allocation_line_digest") or "").strip()
+            if (
+                line_evaluation_id != allocation_evaluation_id
+                or line_policy_version != allocation_policy_version
+            ):
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "allocation lineage mismatch",
+                    f"lines[{index}] does not match the proposal evaluation and policy.",
+                    precondition_failed="allocation_evaluation_id",
+                )
+            expected = expected_lines.get(line_digest)
+            if expected is None or line_digest in seen_line_digests:
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "unadmitted allocation line",
+                    f"lines[{index}] is not a unique line from the admitted evaluation.",
+                    precondition_failed="allocation_line_digest",
+                )
+            if _stable_json_hash(line) != _stable_json_hash(expected):
+                raise _bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "allocation line assertion mismatch",
+                    f"lines[{index}] was changed after server-side allocation evaluation.",
+                    precondition_failed="allocation_line_digest",
+                )
+            seen_line_digests.add(line_digest)
+            normalized_lines.append(json.loads(json.dumps(expected)))
+        if seen_line_digests != set(expected_lines):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "incomplete allocation evaluation",
+                "Proposal lines must exactly match the admitted allocation evaluation.",
+                precondition_failed="allocation_line_digest",
+            )
     if missing:
         raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "incomplete rebalance proposal", f"Missing proposal fields: {', '.join(missing)}")
     if payload.get("emergency"):
@@ -25144,14 +26085,14 @@ def _validate_rebalance_proposal_payload(payload: Dict[str, Any]) -> List[Dict[s
             validate_emergency_lines(lines)
         except ValueError as exc:
             raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "invalid emergency proposal", str(exc)) from exc
-    return lines
+    return normalized_lines
 
 
 def _capital_owner_role(identity: OperatorIdentity) -> str:
     return next(
         (
             role
-            for role in ("admin", "approver", "reviewer", "operator")
+            for role in ("admin", "approver", "operator", "reviewer")
             if role in identity.roles
         ),
         "operator",
@@ -25503,6 +26444,9 @@ async def bff_create_rebalance(
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
     request_hash = sha256_checksum({"route": "POST /bff/rebalances", "payload": payload})
     dry_run = _request_dry_run_requested()
+    proposal_lines = payload.get("lines")
+    if proposal_lines is not None or not dry_run:
+        proposal_lines = _validate_rebalance_proposal_payload(payload)
     if not dry_run:
         durable = command_store.get_command_by_idempotency_key(
             resolved_key,
@@ -25532,6 +26476,13 @@ async def bff_create_rebalance(
                 durable_result.get("rebalance_id")
                 or (durable.get("target") or {}).get("id")
             )
+            for lineage_field in (
+                "ranking_snapshot_id",
+                "allocation_evaluation_id",
+                "allocation_policy_version",
+            ):
+                if durable_result.get(lineage_field):
+                    replay[lineage_field] = durable_result[lineage_field]
             return replay
         cached = _capital_bff_idempotency_check(
             identity.operator_id, resolved_key, request_hash
@@ -25545,9 +26496,6 @@ async def bff_create_rebalance(
             "Rebalance must specify a capital_pool_id",
             precondition_failed="capital_pool_id",
         )
-    proposal_lines = payload.get("lines")
-    if proposal_lines is not None:
-        proposal_lines = _validate_rebalance_proposal_payload(payload)
     staleness_warning = _check_read_surface_state()
     command_id = str(uuid.uuid4())
     submitted_at = utc_now()
@@ -25562,50 +26510,51 @@ async def bff_create_rebalance(
         )
         combined = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result)
         combined["rebalance_id"] = f"dryrun-rb-{uuid.uuid4().hex[:8]}"
-        return JSONResponse(status_code=200, content=jsonable_encoder(combined))
-    # Full auditable proposals are owned by the Capital service.  The legacy
-    # minimal command shape (no proposal lines) remains a compatibility record,
-    # but it is terminal and never claims authoritative capital mutation.
-    if proposal_lines is not None:
-        try:
-            rebalance = create_capital_rebalance_proposal(
-                {
-                    "capital_pool_id": capital_pool_id,
-                    "proposal_type": (
-                        "emergency_containment"
-                        if payload.get("emergency")
-                        else "quarterly_rebalance"
-                    ),
-                    "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
-                    "reason": payload.get("reason") or "",
-                    "params": payload.get("params") or {},
-                    "lines": proposal_lines,
-                    "simulation": payload.get("simulation"),
-                    "constraints": payload.get("constraints"),
-                    "rollback_target": payload.get("rollback_target"),
-                    "audit_refs": list(payload.get("audit_refs") or []),
-                    "emergency": bool(payload.get("emergency")),
-                    "actor_id": identity.operator_id,
-                    "actor_role": _capital_owner_role(identity),
-                    "idempotency_key": resolved_key,
-                    "request_hash": request_hash,
-                }
-            )
-        except Exception as exc:
-            _raise_capital_owner_error(exc, operation="persist rebalance proposal")
-            raise
-        command_type = CommandType.REBALANCE_PROPOSAL
-        authoritative = True
-    else:
-        rebalance = read_store.create_rebalance(
-            capital_pool_id=capital_pool_id,
-            actor_id=identity.operator_id,
-            created_at=submitted_at,
-            params=payload.get("params"),
-            reason=payload.get("reason"),
+        combined["ranking_snapshot_id"] = payload.get("ranking_snapshot_id")
+        combined["allocation_evaluation_id"] = payload.get(
+            "allocation_evaluation_id"
         )
-        command_type = CommandType.REBALANCE_ACTION
-        authoritative = False
+        combined["allocation_policy_version"] = payload.get(
+            "allocation_policy_version"
+        )
+        return JSONResponse(status_code=200, content=jsonable_encoder(combined))
+    # Every persisted proposal is joined to a durable ranking snapshot and
+    # server-materialized allocation evaluation before Capital owns the write.
+    try:
+        rebalance = create_capital_rebalance_proposal(
+            {
+                "capital_pool_id": capital_pool_id,
+                "proposal_type": (
+                    "emergency_containment"
+                    if payload.get("emergency")
+                    else "quarterly_rebalance"
+                ),
+                "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
+                "allocation_evaluation_id": payload.get(
+                    "allocation_evaluation_id"
+                ),
+                "allocation_policy_version": payload.get(
+                    "allocation_policy_version"
+                ),
+                "reason": payload.get("reason") or "",
+                "params": payload.get("params") or {},
+                "lines": proposal_lines,
+                "simulation": payload.get("simulation"),
+                "constraints": payload.get("constraints"),
+                "rollback_target": payload.get("rollback_target"),
+                "audit_refs": list(payload.get("audit_refs") or []),
+                "emergency": bool(payload.get("emergency")),
+                "actor_id": identity.operator_id,
+                "actor_role": _capital_owner_role(identity),
+                "idempotency_key": resolved_key,
+                "request_hash": request_hash,
+            }
+        )
+    except Exception as exc:
+        _raise_capital_owner_error(exc, operation="persist rebalance proposal")
+        raise
+    command_type = CommandType.REBALANCE_PROPOSAL
+    authoritative = True
 
     rebalance_id = str(rebalance.get("rebalance_id") or rebalance.get("id") or "").strip()
     if not rebalance_id:
@@ -25647,6 +26596,9 @@ async def bff_create_rebalance(
             "actor_role": _capital_owner_role(identity),
             "idempotency_key": resolved_key,
             "request_hash": request_hash,
+            "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
+            "allocation_evaluation_id": payload.get("allocation_evaluation_id"),
+            "allocation_policy_version": payload.get("allocation_policy_version"),
         },
         audit_context=audit_record,
         foundation_context={"idempotency_record": idempotency_record.to_dict()},
@@ -25655,6 +26607,9 @@ async def bff_create_rebalance(
         "command_id": command_id,
         "rebalance_id": rebalance_id,
         "capital_pool_id": capital_pool_id,
+        "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
+        "allocation_evaluation_id": payload.get("allocation_evaluation_id"),
+        "allocation_policy_version": payload.get("allocation_policy_version"),
         "status": "proposal_persisted",
         "proposal_persisted": True,
         "authoritative_capital_readback": authoritative,
@@ -25678,6 +26633,15 @@ async def bff_create_rebalance(
     )
     combined = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result)
     combined["rebalance_id"] = rebalance_id
+    if proposal_lines is not None:
+        combined["ranking_snapshot_id"] = payload.get("ranking_snapshot_id")
+        combined["allocation_evaluation_id"] = payload.get(
+            "allocation_evaluation_id"
+        )
+        combined["allocation_policy_version"] = payload.get(
+            "allocation_policy_version"
+        )
+        combined["lines"] = proposal_lines
     _capital_bff_idempotency_store(
         identity.operator_id, resolved_key, request_hash, combined
     )
@@ -25943,6 +26907,8 @@ _STRATEGY_BFF_LIFECYCLE_MAP = {
     "rollback_required": "rollback_required",
     "stopped": "stopped",
     "failed": "failed",
+    "provisioning": "provisioning",
+    "provisioning_failed": "failed",
 }
 
 _PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({
@@ -25977,6 +26943,79 @@ _STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _PERSONA_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
+_PERSONA_PROVISIONING_STORE = None
+_PERSONA_PROVISIONING_STORE_LOCK = threading.Lock()
+_PERSONA_PROVISIONING_RECONCILER_TASK: Optional[asyncio.Task[Any]] = None
+_PERSONA_FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
+
+
+def _persona_provisioning_store():
+    """Lazily bootstrap the durable cross-replica coordination ledger."""
+    global _PERSONA_PROVISIONING_STORE
+    if _PERSONA_PROVISIONING_STORE is not None:
+        return _PERSONA_PROVISIONING_STORE
+    with _PERSONA_PROVISIONING_STORE_LOCK:
+        if _PERSONA_PROVISIONING_STORE is None:
+            _PERSONA_PROVISIONING_STORE = make_persona_provisioning_store()
+    return _PERSONA_PROVISIONING_STORE
+
+
+class _PersonaOwnerHttpTransport:
+    """Strict synchronous transport to canonical provisioning owner APIs."""
+
+    _OWNER_ENVIRONMENTS = {
+        "capital": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
+        "registry": ("PANTHEON_REGISTRY_API_URL", "PANTHEON_REGISTRY_URL"),
+        "governance": (
+            "PANTHEON_GOVERNANCE_APPROVAL_API_URL",
+            "PANTHEON_GOVERNANCE_SERVICE_URL",
+        ),
+        "deployment": ("PANTHEON_DEPLOYMENT_API_URL", "PANTHEON_DEPLOYMENT_SERVICE_URL"),
+    }
+
+    @classmethod
+    def _url(cls, owner: str, path: str) -> str:
+        env_names = cls._OWNER_ENVIRONMENTS.get(owner)
+        if env_names is None:
+            raise RuntimeError(f"Unknown Persona provisioning owner: {owner}")
+        for env_name in env_names:
+            base = os.getenv(env_name, "").strip().rstrip("/")
+            if base:
+                return f"{base}{path}"
+        raise RuntimeError(
+            f"Persona provisioning owner {owner} is unconfigured; set {env_names[0]}"
+        )
+
+    def get(self, owner: str, path: str) -> Optional[Dict[str, Any]]:
+        try:
+            value = _get_json(self._url(owner, path))
+        except urllib_error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            raise
+        if not isinstance(value, dict):
+            raise RuntimeError(f"{owner} GET {path} returned a non-object receipt")
+        return value
+
+    def post(self, owner: str, path: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        value = _post_json(self._url(owner, path), dict(payload))
+        if not isinstance(value, dict):
+            raise RuntimeError(f"{owner} POST {path} returned a non-object receipt")
+        return value
+
+    def patch(self, owner: str, path: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        request = urllib_request.Request(
+            self._url(owner, path),
+            data=json.dumps(dict(payload)).encode("utf-8"),
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            method="PATCH",
+        )
+        timeout = max(1, int(os.getenv("PANTHEON_COMMAND_TIMEOUT_SECONDS", "30")))
+        with urllib_request.urlopen(request, timeout=timeout) as response:
+            value = json.loads(response.read().decode("utf-8"))
+        if not isinstance(value, dict):
+            raise RuntimeError(f"{owner} PATCH {path} returned a non-object receipt")
+        return value
 
 
 def _strategy_persona_idempotency_check(
@@ -25995,7 +27034,7 @@ def _strategy_persona_idempotency_check(
             precondition_failed="idempotency_conflict",
             suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
         )
-    return existing.get("result")
+    return deepcopy(existing.get("result"))
 
 
 def _strategy_seed_replication_idempotency_check(
@@ -26979,14 +28018,962 @@ def _project_strategy_dto(
     return dto
 
 
+def _deployment_url(path: str) -> str:
+    base = os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip().rstrip("/")
+    if not base:
+        base = "http://deployment:8095"
+    return f"{base}{path}"
+
+
+def _checkpoint_persona_provisioning_readback(
+    *,
+    persona_id: str,
+    metadata: Dict[str, Any],
+    state: str,
+    runtime_binding_id: str,
+    runtime_id: str,
+    authoritative_readback: Optional[Mapping[str, Any]] = None,
+    failure_reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Persist one terminal decision and return its durable replay outcome."""
+    tenant_id = str(metadata.get("tenant_id") or "").strip()
+    idempotency_key = str(metadata.get("provisioning_idempotency_key") or "").strip()
+    if not tenant_id or not idempotency_key:
+        return {"committed": False, "ledger_state": None}
+    lease_owner = f"persona-readback:{uuid.uuid4().hex}"
+    store = None
+    record = None
+    try:
+        store = _persona_provisioning_store()
+        record = store.acquire(
+            tenant_id,
+            idempotency_key,
+            lease_owner=lease_owner,
+            lease_seconds=max(
+                60,
+                int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+            ),
+        )
+        if record is None:
+            return {"committed": False, "ledger_state": None}
+        desired_terminal_state = {
+            "paper_running": "succeeded",
+            "provisioning_failed": "failed",
+        }.get(state)
+        if desired_terminal_state is None:
+            store.release(record, lease_owner=lease_owner)
+            return {"committed": False, "ledger_state": None}
+        if record.state in {"succeeded", "failed", "compensated"}:
+            compatible = record.state == desired_terminal_state or (
+                desired_terminal_state == "failed" and record.state == "compensated"
+            )
+            schedule_cleanup = None
+            cleanup_error = None
+            if record.state in {"failed", "compensated"}:
+                try:
+                    schedule_cleanup = _remove_persona_cron_required(persona_id)
+                    record.references["first_evaluation_schedule_cleanup"] = deepcopy(
+                        schedule_cleanup
+                    )
+                except Exception as exc:
+                    cleanup_error = str(exc) or exc.__class__.__name__
+                    record.references["first_evaluation_schedule_cleanup"] = {
+                        "status": "pending",
+                        "registered": None,
+                        "terminal_reason": cleanup_error,
+                    }
+            # A terminal ledger release is atomic, so its references and
+            # compensation already belong to that decision.  Preserve them
+            # verbatim on replay; in particular, never turn a compensated
+            # record back into failed or reverse an earlier outcome.
+            store.release(record, lease_owner=lease_owner)
+            return {
+                "committed": compatible,
+                "ledger_state": record.state,
+                "terminal_replay": True,
+                "failure_reason": str(
+                    (record.error or {}).get("terminal_reason")
+                    or (record.error or {}).get("reason")
+                    or ""
+                ),
+                "schedule_cleanup": deepcopy(schedule_cleanup),
+                "schedule_cleanup_error": cleanup_error,
+                "references": deepcopy(record.references),
+                "result": deepcopy(record.result),
+            }
+        if runtime_binding_id:
+            record.references["runtime_binding_id"] = runtime_binding_id
+        if runtime_id:
+            record.references["runtime_id"] = runtime_id
+        if state == "paper_running":
+            if not isinstance(authoritative_readback, Mapping):
+                store.release(record, lease_owner=lease_owner)
+                return {"committed": False, "ledger_state": record.state}
+            record.references["authoritative_readback"] = deepcopy(
+                dict(authoritative_readback)
+            )
+        schedule_cleanup = None
+        cleanup_error = None
+        if state == "provisioning_failed":
+            # Destructive cleanup happens while the terminal ledger lease is
+            # held.  A concurrent success decision therefore cannot race with
+            # removal of the schedule it just proved authoritative.  Cleanup
+            # unavailability must not erase the durable terminal decision:
+            # persist a retryable cleanup receipt and let later controller
+            # passes finish the fail-closed removal.
+            try:
+                schedule_cleanup = _remove_persona_cron_required(persona_id)
+                record.references["first_evaluation_schedule_cleanup"] = deepcopy(
+                    schedule_cleanup
+                )
+            except Exception as exc:
+                cleanup_error = str(exc) or exc.__class__.__name__
+                record.references["first_evaluation_schedule_cleanup"] = {
+                    "status": "pending",
+                    "registered": None,
+                    "terminal_reason": cleanup_error,
+                }
+        if state == "paper_running":
+            record.state = "succeeded"
+            record.current_step = "authoritative_readback_complete"
+            record.error = None
+            record.result = {
+                "status": "paper_running",
+                "paper_running": True,
+                "authoritative_readback": deepcopy(dict(authoritative_readback or {})),
+                "recorded_at": utc_now(),
+            }
+        elif state == "provisioning_failed":
+            record.state = "failed"
+            record.current_step = "authoritative_readback_failed"
+            record.error = {
+                "code": "PERSONA_PROVISIONING_READBACK_FAILED",
+                "reason": failure_reason or "authoritative_readback_failed",
+                "failed_step": "authoritative_readback",
+                "terminal_reason": failure_reason or "authoritative_readback_failed",
+                "terminal": True,
+                "failed_at": utc_now(),
+                "recorded_at": utc_now(),
+            }
+            record.result = {
+                "status": "provisioning_failed",
+                "paper_running": False,
+                "failure_reason": failure_reason or "authoritative_readback_failed",
+                "recorded_at": utc_now(),
+            }
+        released = store.release(record, lease_owner=lease_owner)
+        committed = bool(
+            released.state == record.state and released.current_step == record.current_step
+        )
+        return {
+            "committed": committed,
+            "ledger_state": released.state,
+            "terminal_replay": False,
+            "schedule_cleanup": deepcopy(schedule_cleanup),
+            "schedule_cleanup_error": cleanup_error,
+            "references": deepcopy(released.references),
+            "result": deepcopy(released.result),
+        }
+    except Exception as exc:
+        # Owner lifecycle remains fail-closed; inability to persist the mirror
+        # is logged and never turns missing readback into success.
+        log.warning("Failed to checkpoint Persona provisioning readback: %s", exc)
+        if store is not None and record is not None:
+            try:
+                store.release(record, lease_owner=lease_owner)
+            except Exception:
+                pass
+        return {
+            "committed": False,
+            "ledger_state": None,
+            "terminal_replay": False,
+            "error": str(exc) or exc.__class__.__name__,
+        }
+
+
+def _append_persona_reconcile_diagnostic(
+    diagnostics: Optional[List[str]],
+    dependency: str,
+) -> None:
+    if diagnostics is not None and dependency not in diagnostics:
+        diagnostics.append(dependency)
+
+
+def _materialize_terminal_persona_provisioning_ledger(
+    persona_id: str,
+    raw: Dict[str, Any],
+    *,
+    diagnostics: Optional[List[str]] = None,
+) -> Optional[str]:
+    """Replay a durable terminal decision before consulting mutable owners.
+
+    The ledger release and Persona projection are separate durable writes.  A
+    process crash between them must not leave the Persona in ``provisioning``
+    or allow newer owner observations to reverse the released decision.
+    ``None`` means the ledger is not terminal; a returned lifecycle is final
+    for this controller pass.
+    """
+
+    metadata = raw.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    tenant_id = str(metadata.get("tenant_id") or "").strip()
+    idempotency_key = str(metadata.get("provisioning_idempotency_key") or "").strip()
+    if not tenant_id or not idempotency_key:
+        return None
+    try:
+        record = _persona_provisioning_store().get(tenant_id, idempotency_key)
+    except Exception as exc:
+        log.warning("Failed to read Persona provisioning ledger for %s: %s", persona_id, exc)
+        _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
+        return None
+    if record is None or record.state not in {"succeeded", "failed", "compensated"}:
+        return None
+
+    references = record.references if isinstance(record.references, dict) else {}
+    desired_state = (
+        "paper_running" if record.state == "succeeded" else "provisioning_failed"
+    )
+    checkpoint = _checkpoint_persona_provisioning_readback(
+        persona_id=persona_id,
+        metadata=metadata,
+        state=desired_state,
+        runtime_binding_id=str(references.get("runtime_binding_id") or "").strip(),
+        runtime_id=str(references.get("runtime_id") or "").strip(),
+        authoritative_readback=(
+            references.get("authoritative_readback")
+            if isinstance(references.get("authoritative_readback"), Mapping)
+            else None
+        ),
+        failure_reason=str(
+            (record.error or {}).get("terminal_reason")
+            or (record.error or {}).get("reason")
+            or "durable_ledger_terminal_failure"
+        ),
+    )
+    if not checkpoint.get("committed"):
+        _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
+        return "provisioning"
+
+    ledger_state = str(checkpoint.get("ledger_state") or "")
+    durable_references = checkpoint.get("references")
+    durable_references = (
+        durable_references if isinstance(durable_references, Mapping) else {}
+    )
+    metadata_updates: Dict[str, Any] = {}
+    runtime_binding_id = str(
+        durable_references.get("runtime_binding_id") or ""
+    ).strip()
+    runtime_id = str(durable_references.get("runtime_id") or "").strip()
+
+    if ledger_state == "succeeded":
+        durable_readback = durable_references.get("authoritative_readback")
+        durable_result = checkpoint.get("result")
+        if (
+            not runtime_binding_id
+            or not runtime_id
+            or not isinstance(durable_readback, Mapping)
+            or not isinstance(durable_result, Mapping)
+            or durable_result.get("paper_running") is not True
+            or durable_result.get("status") != "paper_running"
+        ):
+            _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
+            return "provisioning"
+        new_state = "paper_running"
+        metadata_updates.update(
+            {
+                "paper_runtime_state": "running",
+                "runtime_binding_id": runtime_binding_id,
+                "runtime_id": runtime_id,
+                "provisioning_authoritative_readback": deepcopy(
+                    dict(durable_readback)
+                ),
+            }
+        )
+    elif ledger_state in {"failed", "compensated"}:
+        new_state = "provisioning_failed"
+        metadata_updates["provisioning_failure_reason"] = (
+            checkpoint.get("failure_reason") or "durable_ledger_terminal_failure"
+        )
+        schedule_cleanup = checkpoint.get("schedule_cleanup")
+        if isinstance(schedule_cleanup, Mapping):
+            metadata_updates["first_evaluation_schedule_cleanup"] = deepcopy(
+                dict(schedule_cleanup)
+            )
+        elif checkpoint.get("schedule_cleanup_error"):
+            _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
+            metadata_updates["first_evaluation_schedule_cleanup"] = {
+                "status": "pending",
+                "registered": None,
+                "terminal_reason": checkpoint["schedule_cleanup_error"],
+            }
+        compensation = _reconcile_persona_provisioning_compensation(
+            {**metadata, **metadata_updates}
+        )
+        if compensation is not None:
+            metadata_updates["provisioning_compensation"] = compensation
+            if compensation.get("status") in {"failed", "pending"}:
+                _append_persona_reconcile_diagnostic(
+                    diagnostics, "provisioning_compensation"
+                )
+    else:
+        _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
+        return "provisioning"
+
+    read_store.update_persona(
+        persona_id,
+        lifecycle_state=new_state,
+        metadata=metadata_updates,
+    )
+    if persona_id in _PERSONA_BFF_OVERLAY:
+        _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
+        _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
+        if runtime_binding_id:
+            _PERSONA_BFF_OVERLAY[persona_id]["runtimeBindingId"] = runtime_binding_id
+        if runtime_id:
+            _PERSONA_BFF_OVERLAY[persona_id]["runtimeId"] = runtime_id
+    raw["lifecycle_state"] = new_state
+    raw["status"] = new_state
+    raw.setdefault("metadata", {}).update(metadata_updates)
+    raw["metadata"]["lifecycle_state"] = new_state
+    return new_state
+
+
+def _reconcile_persona_provisioning_compensation(
+    metadata: Mapping[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Resume fail-closed Deployment/Capital compensation from durable state."""
+
+    tenant_id = str(metadata.get("tenant_id") or "").strip()
+    idempotency_key = str(metadata.get("provisioning_idempotency_key") or "").strip()
+    if not tenant_id or not idempotency_key:
+        return None
+    store = _persona_provisioning_store()
+    record = store.get(tenant_id, idempotency_key)
+    if record is None:
+        return None
+    coordinator = PersonaProvisioningCoordinator(
+        store=store,
+        transport=_PersonaOwnerHttpTransport(),
+        schedule_registrar=_register_persona_cron_required,
+        lease_owner=f"persona-compensation:{uuid.uuid4().hex}",
+        lease_seconds=max(
+            30,
+            int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+        ),
+    )
+    try:
+        reconciled = coordinator.reconcile_failure_compensation(record)
+    except Exception as exc:
+        log.warning("Failed to reconcile Persona provisioning compensation: %s", exc)
+        return {
+            "status": "pending",
+            "terminal_reason": str(exc) or exc.__class__.__name__,
+        }
+    return {
+        "ledger_state": reconciled.state,
+        "current_step": reconciled.current_step,
+        **deepcopy(reconciled.compensation or {"status": "not_required"}),
+    }
+
+
+def _evaluate_persona_provisioning_status(
+    persona_id: str,
+    raw: Dict[str, Any],
+    *,
+    all_bindings: Optional[Dict[str, Dict[str, Any]]] = None,
+    all_cron_registrations: Optional[Set[Tuple[str, str]]] = None,
+    all_monitoring_sessions: Optional[List[Dict[str, Any]]] = None,
+    diagnostics: Optional[List[str]] = None,
+) -> str:
+    metadata = raw.get("metadata") or {}
+    current_state = raw.get("lifecycle_state") or raw.get("state")
+    if current_state == "provisioning_failed":
+        terminal_updates: Dict[str, Any] = {}
+        try:
+            schedule_cleanup = _remove_persona_cron_required(persona_id)
+            terminal_updates["first_evaluation_schedule_cleanup"] = schedule_cleanup
+        except Exception as exc:
+            log.warning(
+                "Failed to reconcile terminal first-evaluation cleanup for %s: %s",
+                persona_id,
+                exc,
+            )
+            terminal_updates["first_evaluation_schedule_cleanup"] = {
+                "status": "pending",
+                "registered": None,
+                "terminal_reason": str(exc) or exc.__class__.__name__,
+            }
+            _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
+        compensation = _reconcile_persona_provisioning_compensation(metadata)
+        if compensation is not None:
+            terminal_updates["provisioning_compensation"] = compensation
+        changed_updates = {
+            key: value
+            for key, value in terminal_updates.items()
+            if metadata.get(key) != value
+        }
+        if changed_updates:
+            read_store.update_persona(
+                persona_id,
+                lifecycle_state="provisioning_failed",
+                metadata=changed_updates,
+            )
+            raw.setdefault("metadata", {}).update(changed_updates)
+        return "provisioning_failed"
+    if current_state not in ("provisioning", "draft", "paper_running"):
+        return str(current_state or "")
+    if current_state == "paper_running":
+        return "paper_running"
+    if current_state != "provisioning":
+        return str(current_state or "")
+
+    terminal_replay = _materialize_terminal_persona_provisioning_ledger(
+        persona_id,
+        raw,
+        diagnostics=diagnostics,
+    )
+    if terminal_replay is not None:
+        return terminal_replay
+
+    # Deployment owns admission and the runtime identity.  Never infer a
+    # RuntimeBinding id from the distinct PersonaCapitalBinding id.
+    persona_capital_binding_id = str(
+        metadata.get("persona_capital_binding_id") or metadata.get("binding_id") or ""
+    ).strip()
+    tenant_id = str(metadata.get("tenant_id") or "").strip()
+    capital_pool_id = str(
+        metadata.get("internal_paper_capital_pool_id")
+        or metadata.get("legacy_paper_capital_pool_id")
+        or ""
+    ).strip()
+    plan_id = str(metadata.get("deployment_plan_id") or "").strip()
+    expected_saga_id = str(metadata.get("deployment_saga_id") or "").strip()
+    binding_id = str(metadata.get("runtime_binding_id") or "").strip()
+    runtime_id = str(metadata.get("runtime_id") or "").strip()
+    projection: Dict[str, Any] = {}
+    projection_failed = False
+    if plan_id:
+        try:
+            candidate = _get_json(
+                _deployment_url(f"/api/deployment/plans/{quote(plan_id, safe='')}/projection")
+            )
+            projection = candidate if isinstance(candidate, dict) else {}
+        except Exception as exc:
+            log.warning("Failed to query Deployment projection %s for %s: %s", plan_id, persona_id, exc)
+            _append_persona_reconcile_diagnostic(diagnostics, "deployment")
+
+    projection_saga = projection.get("deployment_saga")
+    projection_saga = projection_saga if isinstance(projection_saga, dict) else {}
+    projected_saga_id = str(
+        projection.get("deployment_saga_id") or projection_saga.get("saga_id") or ""
+    ).strip()
+    projected_plan_id = str(projection.get("plan_id") or "").strip()
+    projection_observed = bool(
+        projection
+        and projected_plan_id == plan_id
+        and projected_saga_id
+        and (not expected_saga_id or projected_saga_id == expected_saga_id)
+    )
+    projection_identity_failed = bool(projection) and bool(
+        (projected_plan_id and projected_plan_id != plan_id)
+        or (
+            projected_saga_id
+            and expected_saga_id
+            and projected_saga_id != expected_saga_id
+        )
+    )
+
+    saga_status = str(
+        projection.get("deployment_saga_status")
+        or projection_saga.get("status")
+        or ""
+    ).strip().lower()
+    saga_progress = projection.get("deployment_saga_progress")
+    saga_progress = saga_progress if isinstance(saga_progress, dict) else {}
+    progress_status = str(saga_progress.get("progress_status") or "").strip().lower()
+    projection_complete = (
+        saga_status == "completed" and progress_status == "completed"
+    )
+    projection_failed = saga_status in {
+        "failed",
+        "aborted",
+        "compensating",
+        "compensated",
+    } or progress_status in {
+        "failed",
+        "blocked",
+        "compensating",
+    }
+
+    # Deployment projection proves saga admission, but Runtime Manager is the
+    # sole RuntimeBinding authority. Embedded projection/file snapshots never
+    # satisfy lifecycle readback.
+    projected_binding = projection.get("runtime_binding")
+    projected_binding = projected_binding if isinstance(projected_binding, dict) else {}
+    projected_binding_id = str(
+        projection.get("runtime_binding_id")
+        or projected_binding.get("binding_id")
+        or ""
+    ).strip()
+    projected_runtime_id = str(
+        projection.get("runtime_id") or projected_binding.get("runtime_id") or ""
+    ).strip()
+
+    binding: Optional[Dict[str, Any]] = None
+    binding_ok = False
+    binding_failed = False
+    authoritative_bindings: List[Dict[str, Any]] = []
+    if plan_id:
+        try:
+            if all_bindings is not None:
+                authoritative_bindings = [
+                    value
+                    for value in all_bindings.values()
+                    if isinstance(value, dict)
+                    and str(value.get("plan_id") or "") == plan_id
+                ]
+            else:
+                client = _runtime_manager_client()
+                authoritative_bindings = [
+                    value
+                    for value in client.list_by_plan(plan_id)
+                    if isinstance(value, dict)
+                ]
+            active_bindings = [
+                value
+                for value in authoritative_bindings
+                if str(value.get("state") or value.get("status") or "").lower()
+                in {"active", "running", "ok"}
+            ]
+            if len(active_bindings) == 1:
+                binding = active_bindings[0]
+                authoritative_binding_id = str(
+                    binding.get("binding_id") or binding.get("id") or ""
+                ).strip()
+                authoritative_runtime_id = str(binding.get("runtime_id") or "").strip()
+                binding_metadata = binding.get("metadata")
+                binding_metadata = binding_metadata if isinstance(binding_metadata, dict) else {}
+                identity_matches = all((
+                    bool(authoritative_binding_id),
+                    authoritative_binding_id.startswith("rb-"),
+                    bool(authoritative_runtime_id),
+                    str(binding.get("plan_id") or "") == plan_id,
+                    str(binding.get("persona_capital_binding_id") or "")
+                    == persona_capital_binding_id,
+                    str(binding.get("capital_pool_id") or "") == capital_pool_id,
+                    str(
+                        binding.get("deployment_mode")
+                        or binding.get("deployment_stage")
+                        or ""
+                    ) == "paper",
+                    str(binding_metadata.get("persona_id") or "") == persona_id,
+                    str(binding_metadata.get("tenant_id") or "") == tenant_id,
+                    not binding_id or binding_id == authoritative_binding_id,
+                    not runtime_id or runtime_id == authoritative_runtime_id,
+                    not projected_binding_id
+                    or projected_binding_id == authoritative_binding_id,
+                    not projected_runtime_id
+                    or projected_runtime_id == authoritative_runtime_id,
+                ))
+                if identity_matches:
+                    binding_id = authoritative_binding_id
+                    runtime_id = authoritative_runtime_id
+                    binding_ok = True
+                else:
+                    binding_failed = True
+            elif len(active_bindings) > 1:
+                binding_failed = True
+            elif binding_id and any(
+                str(value.get("binding_id") or value.get("id") or "") == binding_id
+                for value in (all_bindings or {}).values()
+                if isinstance(value, dict)
+            ):
+                # The expected binding identity exists under another plan.
+                binding_failed = True
+            elif any(
+                str(value.get("state") or value.get("status") or "").lower()
+                in {"failed", "stopped", "error"}
+                for value in authoritative_bindings
+            ):
+                binding_failed = True
+        except Exception as exc:
+            log.warning(
+                "Failed to query RuntimeBindings for plan %s / %s: %s",
+                plan_id,
+                persona_id,
+                exc,
+            )
+            _append_persona_reconcile_diagnostic(diagnostics, "runtime_manager")
+
+    # Require exactly one fresh, active worker joined on the complete identity.
+    monitoring_sessions: List[Dict[str, Any]] = []
+    worker_identity_conflict = False
+    if binding_ok and runtime_id and binding_id:
+        try:
+            owner_sessions = (
+                all_monitoring_sessions
+                if all_monitoring_sessions is not None
+                else read_store.list_authoritative_paper_runtime_monitoring_sessions()
+            )
+        except Exception as exc:
+            log.warning(
+                "Failed to query paper worker sessions for %s: %s",
+                persona_id,
+                exc,
+            )
+            _append_persona_reconcile_diagnostic(diagnostics, "paper_runtime_manager")
+            owner_sessions = []
+        for s in owner_sessions:
+            # The paper-fleet reconciler owns worker sessions and joins them to
+            # RuntimeBinding by runtime_id + binding_id.  It does not duplicate
+            # Persona identity into the session.  Persona identity is instead
+            # proven above from the authoritative RuntimeBinding metadata.  If
+            # a future session does carry persona_id, treat a conflicting value
+            # as fail-closed rather than ignoring it.
+            s_pid = str(s.get("persona_id") or "").strip()
+            s_rtid = str(s.get("runtime_id") or "").strip()
+            s_bid = str(s.get("binding_id") or s.get("runtime_binding_id") or "").strip()
+            s_pool_id = str(s.get("capital_pool_id") or "").strip()
+            if s_rtid == runtime_id and s_bid == binding_id:
+                if (s_pid and s_pid != persona_id) or s_pool_id != capital_pool_id:
+                    worker_identity_conflict = True
+                else:
+                    monitoring_sessions.append(s)
+
+    max_heartbeat_age = max(
+        1,
+        int(os.getenv("PANTHEON_PERSONA_HEARTBEAT_MAX_AGE_SECONDS", "90")),
+    )
+    now_dt = datetime.now(timezone.utc)
+    live_sessions: List[Dict[str, Any]] = []
+    startup_sessions: List[Dict[str, Any]] = []
+    current_owner_sessions: List[Dict[str, Any]] = []
+    for session in monitoring_sessions:
+        status = str(session.get("status") or "").strip().lower()
+        staleness = session.get("staleness")
+        stale_marker = bool(
+            isinstance(staleness, Mapping)
+            and (
+                str(staleness.get("status") or "").strip().lower() == "stale"
+                or staleness.get("reason")
+            )
+        )
+        heartbeat_at = _parse_rfc3339(session.get("last_heartbeat_at"))
+        fresh = bool(
+            heartbeat_at is not None
+            and 0 <= (now_dt - heartbeat_at).total_seconds() <= max_heartbeat_age
+        )
+        session_id = str(session.get("session_id") or session.get("id") or "").strip()
+        current_owner = (
+            session_id
+            and session.get("active") is not False
+            and session.get("ended_at") in (None, "")
+            and status not in {"failed", "ended", "error", "stale"}
+            and not stale_marker
+        )
+        if current_owner:
+            current_owner_sessions.append(session)
+        startup_status = status in {
+            "accepted",
+            "initializing",
+            "pending",
+            "queued",
+            "starting",
+        }
+        if (
+            current_owner
+            and (status == "running" or startup_status)
+            and session.get("last_heartbeat_at") in (None, "")
+        ):
+            startup_sessions.append(session)
+        if (
+            session_id
+            and status == "running"
+            and session.get("active") is not False
+            and session.get("ended_at") in (None, "")
+            and fresh
+            and not stale_marker
+        ):
+            live_sessions.append(session)
+    heartbeat_ok = len(live_sessions) == 1
+    # Historical ended/stale sessions are expected after worker replacement.
+    # They cannot poison one unique fresh owner session.  No fresh successor
+    # or multiple current workers is fail-closed once an owner record exists.
+    # One exact running owner may briefly precede its first heartbeat; keep
+    # that startup race pending and let the provisioning timeout decide if the
+    # worker never becomes authoritative.
+    startup_pending = (
+        len(startup_sessions) == 1 and len(current_owner_sessions) == 1
+    )
+    heartbeat_failed = worker_identity_conflict or (
+        bool(monitoring_sessions) and not heartbeat_ok and not startup_pending
+    )
+
+    # The schedule authority must contain the exact first-evaluation workflow.
+    cron_ok = False
+    authoritative_schedule_readback: Optional[Dict[str, Any]] = None
+    try:
+        schedule_discovered = all_cron_registrations is None or (
+                persona_id,
+                _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+            ) in all_cron_registrations
+        if schedule_discovered:
+            if (
+                projection_observed
+                and projection_complete
+                and binding_ok
+                and runtime_id
+                and binding_id
+                and capital_pool_id
+                and persona_capital_binding_id
+            ):
+                schedule_receipt = _register_persona_cron_required(
+                    persona_id,
+                    capital_pool_id,
+                    persona_capital_binding_id,
+                    runtime_id=runtime_id,
+                    runtime_binding_id=binding_id,
+                )
+                authoritative = schedule_receipt.get("authoritative_readback")
+                cron_ok = bool(
+                    isinstance(authoritative, dict)
+                    and authoritative.get("registered") is True
+                    and authoritative.get("persona_id") == persona_id
+                    and authoritative.get("workflow_id")
+                    == _PERSONA_FIRST_EVALUATION_WORKFLOW_ID
+                    and authoritative.get("runtime_id") == runtime_id
+                    and authoritative.get("runtime_binding_id") == binding_id
+                    and authoritative.get("capital_pool_id") == capital_pool_id
+                    and authoritative.get("persona_capital_binding_id")
+                    == persona_capital_binding_id
+                    and isinstance(authoritative.get("job_id"), str)
+                    and bool(authoritative["job_id"].strip())
+                    and authoritative.get("request_id")
+                    == (
+                        f"persona-provisioning:{persona_id}:"
+                        f"{_PERSONA_FIRST_EVALUATION_WORKFLOW_ID}"
+                    )
+                )
+                if cron_ok:
+                    authoritative_schedule_readback = deepcopy(authoritative)
+    except Exception as exc:
+        log.warning("Failed to query first-evaluation schedule for %s: %s", persona_id, exc)
+        _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
+
+    # A timed-out attempt is terminal even if stale evidence happens to appear
+    # later; recovery must be an explicit retry that acquires the durable lease.
+    is_timeout = False
+    readback_started_at = metadata.get("provisioning_readback_started_at")
+    if readback_started_at:
+        try:
+            started_at_dt = _parse_rfc3339(readback_started_at)
+            timeout_seconds = max(
+                1,
+                int(os.getenv("PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS", "600")),
+            )
+            is_timeout = bool(
+                started_at_dt is not None
+                and (now_dt - started_at_dt).total_seconds() > timeout_seconds
+            )
+        except (TypeError, ValueError):
+            is_timeout = False
+
+    if (
+        projection_failed
+        or projection_identity_failed
+        or binding_failed
+        or heartbeat_failed
+        or is_timeout
+    ):
+        new_state = "provisioning_failed"
+    elif (
+        projection_observed
+        and projection_complete
+        and binding_ok
+        and heartbeat_ok
+        and cron_ok
+    ):
+        new_state = "paper_running"
+    else:
+        new_state = "provisioning"
+
+    metadata_updates: Dict[str, Any] = {}
+    if binding_ok and binding_id:
+        metadata_updates["runtime_binding_id"] = binding_id
+    if binding_ok and runtime_id:
+        metadata_updates["runtime_id"] = runtime_id
+    if new_state == "provisioning_failed":
+        failure_reasons = []
+        if projection_failed:
+            failure_reasons.append("deployment_saga_failed")
+        if projection_identity_failed:
+            failure_reasons.append("deployment_projection_identity_mismatched")
+        if binding_failed:
+            failure_reasons.append("runtime_binding_failed_or_mismatched")
+        if heartbeat_failed:
+            failure_reasons.append("paper_worker_failed_stale_or_duplicated")
+        if is_timeout:
+            failure_reasons.append("provisioning_timeout")
+        metadata_updates["provisioning_failure_reason"] = ",".join(failure_reasons)
+    elif new_state == "paper_running":
+        metadata_updates["paper_runtime_state"] = "running"
+        metadata_updates.pop("provisioning_failure_reason", None)
+
+    # The durable ledger is the release barrier for terminal Persona state.
+    # If its lease is busy or storage is unavailable, leave the Persona in
+    # provisioning so a later controller pass can recover with RPO=0.
+    if new_state in {"paper_running", "provisioning_failed"}:
+        authoritative_readback: Optional[Dict[str, Any]] = None
+        if new_state == "paper_running":
+            if (
+                not isinstance(binding, Mapping)
+                or len(live_sessions) != 1
+                or authoritative_schedule_readback is None
+            ):
+                return "provisioning"
+            authoritative_readback = {
+                "observed_at": utc_now(),
+                "deployment": {
+                    "plan_id": plan_id,
+                    "saga_id": projected_saga_id,
+                    "saga_status": saga_status,
+                    "progress_status": progress_status,
+                },
+                "runtime_binding": deepcopy(dict(binding)),
+                "paper_worker": deepcopy(live_sessions[0]),
+                "first_evaluation_schedule": deepcopy(
+                    authoritative_schedule_readback
+                ),
+            }
+        terminal_checkpoint = _checkpoint_persona_provisioning_readback(
+            persona_id=persona_id,
+            metadata={**metadata, **metadata_updates},
+            state=new_state,
+            runtime_binding_id=binding_id,
+            runtime_id=runtime_id,
+            authoritative_readback=authoritative_readback,
+            failure_reason=metadata_updates.get("provisioning_failure_reason"),
+        )
+        ledger_state = terminal_checkpoint.get("ledger_state")
+        if terminal_checkpoint.get("terminal_replay"):
+            # The ledger release is the durable lifecycle decision.  A crash
+            # between that release and Persona projection must recover the
+            # earlier terminal state, never remain stuck in provisioning or
+            # reverse the decision from newer observations.
+            if ledger_state == "succeeded":
+                durable_references = terminal_checkpoint.get("references")
+                durable_references = (
+                    durable_references
+                    if isinstance(durable_references, Mapping)
+                    else {}
+                )
+                durable_readback = durable_references.get("authoritative_readback")
+                durable_result = terminal_checkpoint.get("result")
+                if (
+                    not isinstance(durable_readback, Mapping)
+                    or not isinstance(durable_result, Mapping)
+                    or durable_result.get("paper_running") is not True
+                    or durable_result.get("status") != "paper_running"
+                ):
+                    return "provisioning"
+                binding_id = str(
+                    durable_references.get("runtime_binding_id") or ""
+                ).strip()
+                runtime_id = str(
+                    durable_references.get("runtime_id") or ""
+                ).strip()
+                if not binding_id or not runtime_id:
+                    return "provisioning"
+                new_state = "paper_running"
+                metadata_updates["paper_runtime_state"] = "running"
+                metadata_updates["runtime_binding_id"] = binding_id
+                metadata_updates["runtime_id"] = runtime_id
+                metadata_updates["provisioning_authoritative_readback"] = deepcopy(
+                    dict(durable_readback)
+                )
+                metadata_updates.pop("provisioning_failure_reason", None)
+            elif ledger_state in {"failed", "compensated"}:
+                new_state = "provisioning_failed"
+                metadata_updates["provisioning_failure_reason"] = (
+                    terminal_checkpoint.get("failure_reason")
+                    or "durable_ledger_terminal_failure"
+                )
+        elif not terminal_checkpoint.get("committed"):
+            return "provisioning"
+        if new_state == "paper_running":
+            durable_references = terminal_checkpoint.get("references")
+            durable_readback = (
+                durable_references.get("authoritative_readback")
+                if isinstance(durable_references, Mapping)
+                else None
+            )
+            if not isinstance(durable_readback, Mapping):
+                return "provisioning"
+            metadata_updates["provisioning_authoritative_readback"] = deepcopy(
+                dict(durable_readback)
+            )
+        schedule_cleanup = terminal_checkpoint.get("schedule_cleanup")
+        if isinstance(schedule_cleanup, Mapping):
+            metadata_updates["first_evaluation_schedule_cleanup"] = deepcopy(
+                dict(schedule_cleanup)
+            )
+        elif terminal_checkpoint.get("schedule_cleanup_error"):
+            _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
+            metadata_updates["first_evaluation_schedule_cleanup"] = {
+                "status": "pending",
+                "registered": None,
+                "terminal_reason": terminal_checkpoint["schedule_cleanup_error"],
+            }
+        if new_state == "provisioning_failed":
+            compensation = _reconcile_persona_provisioning_compensation(
+                {**metadata, **metadata_updates}
+            )
+            if compensation is not None:
+                metadata_updates["provisioning_compensation"] = compensation
+                if compensation.get("status") in {"failed", "pending"}:
+                    _append_persona_reconcile_diagnostic(
+                        diagnostics, "provisioning_compensation"
+                    )
+
+    if new_state != current_state or metadata_updates:
+        read_store.update_persona(
+            persona_id,
+            lifecycle_state=new_state,
+            metadata=metadata_updates,
+        )
+        if persona_id in _PERSONA_BFF_OVERLAY:
+            _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
+            _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
+            if binding_id:
+                _PERSONA_BFF_OVERLAY[persona_id]["runtimeBindingId"] = binding_id
+            if runtime_id:
+                _PERSONA_BFF_OVERLAY[persona_id]["runtimeId"] = runtime_id
+        raw["lifecycle_state"] = new_state
+        raw["status"] = new_state
+        raw.setdefault("metadata", {}).update(metadata_updates)
+        raw["metadata"]["lifecycle_state"] = new_state
+
+    return new_state
+
+
 def _project_persona_dto(
     raw: Dict[str, Any],
     *,
     overlay: Optional[Dict[str, Any]] = None,
     routed_strategies: Optional[int] = None,
+    all_bindings: Optional[Dict[str, Dict[str, Any]]] = None,
+    all_cron_registrations: Optional[Set[Tuple[str, str]]] = None,
+    evaluate_provisioning: bool = False,
 ) -> Dict[str, Any]:
     """Project canonical persona data into execute-plans Persona DTO."""
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
+    if persona_id and evaluate_provisioning:
+        _evaluate_persona_provisioning_status(
+            persona_id,
+            raw,
+            all_bindings=all_bindings,
+            all_cron_registrations=all_cron_registrations,
+        )
     metadata = dict(raw.get("metadata") or {}) if isinstance(raw.get("metadata"), dict) else {}
     archetype = str(
         metadata.get("archetype")
@@ -27038,6 +29025,7 @@ def _project_persona_dto(
         "id": persona_id,
         "name": raw.get("name") or persona_id,
         "owner": metadata.get("owner") or raw.get("owner") or "pantheon-bff",
+        "tenantId": metadata.get("tenant_id"),
         "updatedAt": raw.get("updated_at") or raw.get("created_at") or utc_now(),
         "state": _normalize_lifecycle_state(raw.get("lifecycle_state")),
         "risk": _normalize_risk_level(metadata.get("risk_level")),
@@ -27075,6 +29063,9 @@ def _project_persona_dto(
         dto.pop("paperLedger", None)
     if not dto.get("legacyPaperCapitalPoolId"):
         dto.pop("legacyPaperCapitalPoolId", None)
+    for optional_runtime_field in ("runtimeId", "runtimeBindingId"):
+        if not dto.get(optional_runtime_field):
+            dto.pop(optional_runtime_field, None)
     required_data_sources = (
         raw.get("required_data_sources")
         if isinstance(raw.get("required_data_sources"), list)
@@ -27163,6 +29154,7 @@ def _list_persona_records() -> List[Dict[str, Any]]:
                 "archetype": overlay.get("archetype"),
                 "owner": overlay.get("owner"),
                 "risk_level": overlay.get("risk"),
+                "tenant_id": overlay.get("tenantId"),
             },
         })
     return items
@@ -31143,15 +33135,9 @@ def _management_loop_throughput_response(
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
     available, raw_records = read_store.list_loop_runs()
-    source_dataset = (
-        "loop_runs"
-        if available and read_store.dataset_source("incidents") == "missing"
-        else "incidents"
-    )
-    loop_surface = _dataset_surface_status(
-        source_dataset,
+    source_dataset, source, loop_surface = _loop_run_surface_status(
+        available,
         snapshot_at=snapshot_at,
-        source=None if available else "missing",
     )
 
     status_filter = {item.lower() for item in (_split_csv_query(status) or [])}
@@ -31799,7 +33785,7 @@ async def bff_management_portfolio_book_exposure(
         risk_policy_ref=risk_policy_ref,
     )
     entries = sources["entries"]
-    
+
     # Resolve capital pool filter
     resolved_pool_id = capital_pool_id or pool
     if resolved_pool_id:
@@ -35337,6 +37323,29 @@ def _management_intervention_stream_response(
     }
 
 
+_EVOLUTION_JOURNAL_REGISTERED_SEED_EXACT_IDS = {
+    "87c655c3e3c9", "inc-87c655c3e3c9", "rb-001", "fo-001", "btc-drift",
+    "inc-20260410-001", "inc-20260409-002", "pm-20260409-002",
+    "plan-f-042", "artifact-042", "runtime-042", "binding-042",
+}
+# "evo-vslice-" and "ev-seed-" are registered seed *families* (see
+# services/evolution/seed_data.py ev-seed-001..005) — any id in a family is
+# seed-derived, unlike the one-off exact ids above.
+_EVOLUTION_JOURNAL_REGISTERED_SEED_PREFIXES = ("evo-vslice-", "ev-seed-")
+
+
+def _evolution_journal_is_registered_seed_id(value: Any) -> bool:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return False
+    if normalized in _EVOLUTION_JOURNAL_REGISTERED_SEED_EXACT_IDS:
+        return True
+    return any(
+        normalized.startswith(prefix)
+        for prefix in _EVOLUTION_JOURNAL_REGISTERED_SEED_PREFIXES
+    )
+
+
 _EVOLUTION_JOURNAL_TYPE_ALIASES = {
     "decision": "evolution_decision",
     "evolution": "evolution_decision",
@@ -35352,6 +37361,41 @@ _EVOLUTION_JOURNAL_TYPE_ALIASES = {
     "freeze": "freeze_order",
     "freeze_order": "freeze_order",
     "freeze_orders": "freeze_order",
+}
+
+
+# Typed lineage namespaces for the ?persona= filter. Two entities can share
+# the same raw string id in different namespaces (e.g. a runtime_id and an
+# unrelated artifact target_id both equal to "same-token") — matching must
+# stay scoped to the field/target-type that produced the id, never a single
+# flattened id blob.
+_EVOLUTION_JOURNAL_REFERENCE_FIELD_CATEGORY = {
+    "artifact_id": "artifact",
+    "persona_id": "persona",
+    "runtime_id": "runtime",
+    "runtime_binding_id": "binding",
+    "persona_capital_binding_id": "binding",
+    "incident_id": "incident",
+    "incident_ref": "incident",
+    "linked_incident_id": "incident",
+    "capital_pool_id": "pool",
+    "pool_id": "pool",
+    "plan_id": "plan",
+    "deployment_plan_id": "plan",
+}
+_EVOLUTION_JOURNAL_TARGET_TYPE_CATEGORY = {
+    "persona": "persona",
+    "runtime": "runtime",
+    "binding": "binding",
+    "runtime_binding": "binding",
+    "persona_capital_binding": "binding",
+    "plan": "plan",
+    "deployment_plan": "plan",
+    "pool": "pool",
+    "capital_pool": "pool",
+    "candidate_artifact": "artifact",
+    "artifact": "artifact",
+    "incident": "incident",
 }
 
 
@@ -35543,6 +37587,11 @@ def _evolution_journal_mutation_review_item(
         identity=identity,
         snapshot_at=snapshot_at,
     )
+    # Preserve metadata/provenance/origin from the source decision
+    for field in ("metadata", "provenance", "origin"):
+        if field in decision and field not in projection:
+            projection[field] = decision[field]
+
     item = _evolution_journal_base_item(
         entry_type="mutation_review",
         source_id=decision_id,
@@ -35743,13 +37792,23 @@ def _evolution_entry_text(item: Dict[str, Any]) -> str:
     target = item.get("target") or {}
     target_parts = [target.get("type"), target.get("id"), target.get("version")]
     target_str = " ".join([str(p) for p in target_parts if p])
-    
+
     record = item.get("record") or {}
     evidence_refs = record.get("evidence_refs") or []
     evidence_str = ""
     if isinstance(evidence_refs, list):
         evidence_str = " ".join([json.dumps(ref) for ref in evidence_refs])
-        
+    record_parts = []
+    if isinstance(record, dict):
+        for field in (
+            "artifact_id", "persona_id", "target_id", "runtime_id",
+            "runtime_binding_id", "persona_capital_binding_id", "incident_id", "incident_ref"
+        ):
+            val = record.get(field)
+            if val:
+                record_parts.append(str(val))
+    record_str = " ".join(record_parts)
+
     parts = [
         item.get("id"),
         item.get("title"),
@@ -35760,6 +37819,7 @@ def _evolution_entry_text(item: Dict[str, Any]) -> str:
         item.get("action_type"),
         target_str,
         evidence_str,
+        record_str,
     ]
     return " ".join([str(p) for p in parts if p]).lower()
 
@@ -35806,28 +37866,55 @@ def _evolution_journal_items(
             items.append(item)
 
     for item in items:
-        is_seed = False
-        source_id = str(item.get("source_id") or "").lower()
-        journal_id = str(item.get("id") or "").lower()
-        for marker in ("seed", "vslice", "87c655c3e3c9", "rb-001", "fo-001", "btc-drift"):
-            if marker in source_id or marker in journal_id:
-                is_seed = True
+        origin_val = None
+        for d in (
+            item,
+            item.get("record"),
+            (item.get("record") or {}).get("metadata"),
+            (item.get("record") or {}).get("provenance"),
+            item.get("decision"),
+            (item.get("decision") or {}).get("metadata"),
+            item.get("mutation_review"),
+            (item.get("mutation_review") or {}).get("metadata"),
+            item.get("postmortem"),
+            (item.get("postmortem") or {}).get("metadata"),
+            item.get("freeze_order"),
+            (item.get("freeze_order") or {}).get("metadata"),
+            item.get("rollback"),
+            (item.get("rollback") or {}).get("metadata"),
+        ):
+            if isinstance(d, dict) and d.get("origin"):
+                origin_val = str(d.get("origin")).strip().lower()
                 break
-        if not is_seed:
-            for key in ("decision", "mutation_review", "mutationReview", "postmortem", "freeze_order", "freezeOrder", "rollback"):
-                inner = item.get(key)
-                if isinstance(inner, dict):
-                    for field in ("id", "decision_id", "source_id", "incident_id", "incident_ref", "linked_incident_id", "report_id"):
-                        val = str(inner.get(field) or "").lower()
-                        for marker in ("seed", "vslice", "87c655c3e3c9", "rb-001", "fo-001", "btc-drift"):
-                            if marker in val:
+
+        if origin_val in ("seed", "live", "unknown"):
+            item["origin"] = origin_val
+        else:
+            is_seed = (
+                _evolution_journal_is_registered_seed_id(item.get("source_id"))
+                or _evolution_journal_is_registered_seed_id(item.get("id"))
+            )
+            target_obj = item.get("target") if isinstance(item.get("target"), dict) else {}
+            if not is_seed and _evolution_journal_is_registered_seed_id(target_obj.get("id")):
+                is_seed = True
+            if not is_seed:
+                for key in ("decision", "mutation_review", "mutationReview", "postmortem", "freeze_order", "freezeOrder", "rollback"):
+                    inner = item.get(key)
+                    if isinstance(inner, dict):
+                        for field in (
+                            "id", "decision_id", "source_id", "report_id",
+                            "incident_id", "incident_ref", "linked_incident_id",
+                            "target_id", "artifact_id", "runtime_id",
+                            "runtime_binding_id", "persona_capital_binding_id",
+                            "plan_id", "deployment_plan_id",
+                        ):
+                            if _evolution_journal_is_registered_seed_id(inner.get(field)):
                                 is_seed = True
                                 break
-                        if is_seed:
-                            break
-                if is_seed:
-                    break
-        item["origin"] = "seed" if is_seed else "live"
+                    if is_seed:
+                        break
+
+            item["origin"] = "seed" if is_seed else "unknown"
 
     items.sort(
         key=lambda item: (
@@ -35849,6 +37936,14 @@ def _evolution_journal_surfaces(
         "freeze_orders": _dataset_surface_status("freeze_orders", snapshot_at=snapshot_at),
         "rollbacks": _dataset_surface_status("all_rollbacks", snapshot_at=snapshot_at),
         "approval_decisions": _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at),
+        # Not part of the base journal aggregate below — these back the
+        # ?persona= lineage filter and must stay visible on their own so a
+        # degraded/unavailable dependency there isn't reported as an
+        # authoritative empty result.
+        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
+        "incidents": _dataset_surface_status("incidents", snapshot_at=snapshot_at),
     }
     mutation_surface = _aggregate_group_surface(
         "mutation_review",
@@ -36485,6 +38580,7 @@ async def bff_management_evolution_journal(
     _require_read_role(identity)
 
     snapshot_at = utc_now()
+    surfaces = _evolution_journal_surfaces(snapshot_at=snapshot_at)
     items, _decisions, _postmortems, _freeze_orders, _rollbacks = _evolution_journal_items(
         identity=identity,
         snapshot_at=snapshot_at,
@@ -36497,22 +38593,185 @@ async def bff_management_evolution_journal(
         risk_level=risk_level,
     )
     if persona:
-        p_clean = persona.strip()
+        p_clean = persona.strip().lower()
         if p_clean:
-            filtered = [item for item in filtered if p_clean.lower() in _evolution_entry_text(item)]
+            for dep_key, label in (
+                ("personas", "Persona"),
+                ("persona_bindings", "Persona-capital binding"),
+                ("runtime_bindings", "Runtime binding"),
+                ("incidents", "Incident"),
+            ):
+                _raise_if_read_surface_unavailable(surfaces[dep_key], label=label)
+
+            persona_ids = {p_clean}
+            runtime_ids = set()
+            binding_ids = set()
+            plan_ids = set()
+            pool_ids = set()
+            artifact_ids = set()
+            incident_ids = set()
+
+            personas = read_store.list_personas(include_market_persona_defaults=True) or []
+            for p in personas:
+                pid = str(p.get("persona_id") or p.get("id") or "").strip().lower()
+                if pid == p_clean:
+                    # Only the persona's own directly declared artifact_id is a
+                    # matchable "owned artifact" — artifact_id discovered later
+                    # via binding/incident traversal is intentionally excluded
+                    # (see below) so a shared artifact can't pull in another
+                    # persona's unrelated rows.
+                    for field, target_set in [
+                        ("runtime_id", runtime_ids),
+                        ("binding_id", binding_ids),
+                        ("persona_capital_binding_id", binding_ids),
+                        ("pool_id", pool_ids),
+                        ("capital_pool_id", pool_ids),
+                        ("plan_id", plan_ids),
+                        ("artifact_id", artifact_ids),
+                    ]:
+                        val = str(p.get(field) or "").strip().lower()
+                        if val:
+                            target_set.add(val)
+
+            # Read canonical persona-capital bindings (read_store.list_bindings)
+            # *and* runtime bindings once each and expand runtime/binding/plan/
+            # pool ids to a fixed point. Both binding sources are traversed
+            # because a canonical persona-capital binding can exist with no
+            # matching runtime row at all; list_runtime_bindings only uses
+            # list_bindings to enrich runtime rows that already exist, so a
+            # runtime-less persona -> binding -> pool -> incident chain would
+            # otherwise be invisible. A fixed-point loop (rather than a
+            # hardcoded pass count) is required because a chain can be
+            # arbitrarily deep.
+            #
+            # persona_ids is intentionally never grown past the requested
+            # root persona. A binding reached only via a shared capital pool
+            # AND declaring a *different* persona's ownership is a neighbor
+            # belonging to that other persona, not part of the root's own
+            # chain — adopting its identity would leak that other persona's
+            # private rows into this closure (two personas can independently
+            # reference the same shared pool). A pool-only match with no
+            # foreign persona attached (e.g. an intermediate system binding
+            # that declares no persona_id at all) is still a genuine hop on
+            # the root's own resource graph and its runtime/binding/plan ids
+            # are adopted normally.
+            bindings = list(read_store.list_runtime_bindings(include_market_persona_defaults=True) or [])
+            bindings += list(read_store.list_bindings(include_market_persona_defaults=True) or [])
+            incidents = read_store.list_incidents() or []
+            changed = True
+            while changed:
+                changed = False
+                for b in bindings:
+                    b_pid = str(b.get("persona_id") or b.get("personaId") or "").strip().lower()
+                    b_rid = str(b.get("runtime_id") or "").strip().lower()
+                    b_bid = str(b.get("binding_id") or b.get("runtime_binding_id") or "").strip().lower()
+                    b_pcbid = str(b.get("persona_capital_binding_id") or "").strip().lower()
+                    b_plid = str(b.get("plan_id") or b.get("deployment_plan_id") or "").strip().lower()
+                    b_pool = str(b.get("pool_id") or b.get("capital_pool_id") or "").strip().lower()
+
+                    owned_match = (
+                        (b_pid and b_pid == p_clean) or
+                        (b_rid and b_rid in runtime_ids) or
+                        (b_bid and b_bid in binding_ids) or
+                        (b_pcbid and b_pcbid in binding_ids) or
+                        (b_plid and b_plid in plan_ids)
+                    )
+                    pool_only_match = (not owned_match) and (b_pool and b_pool in pool_ids)
+                    if not (owned_match or pool_only_match):
+                        continue
+                    if pool_only_match and b_pid and b_pid != p_clean:
+                        continue
+                    for val, target_set in (
+                        (b_rid, runtime_ids),
+                        (b_bid, binding_ids), (b_pcbid, binding_ids),
+                        (b_plid, plan_ids), (b_pool, pool_ids),
+                    ):
+                        if val and val not in target_set:
+                            target_set.add(val)
+                            changed = True
+
+                for i in incidents:
+                    i_id = str(i.get("incident_id") or i.get("id") or "").strip().lower()
+                    i_rid = str(i.get("runtime_id") or "").strip().lower()
+                    i_bid = str(i.get("binding_id") or i.get("persona_capital_binding_id") or "").strip().lower()
+                    i_plid = str(i.get("deployment_plan_id") or "").strip().lower()
+                    i_pool = str(i.get("capital_pool_id") or i.get("pool_id") or "").strip().lower()
+
+                    is_match = (
+                        (i_id and i_id in incident_ids) or
+                        (i_rid and i_rid in runtime_ids) or
+                        (i_bid and i_bid in binding_ids) or
+                        (i_plid and i_plid in plan_ids) or
+                        (i_pool and i_pool in pool_ids)
+                    )
+                    if not is_match:
+                        continue
+                    for val, target_set in (
+                        (i_id, incident_ids), (i_rid, runtime_ids),
+                        (i_bid, binding_ids), (i_plid, plan_ids),
+                        (i_pool, pool_ids),
+                    ):
+                        if val and val not in target_set:
+                            target_set.add(val)
+                            changed = True
+
+            category_sets = {
+                "persona": persona_ids,
+                "runtime": runtime_ids,
+                "binding": binding_ids,
+                "plan": plan_ids,
+                "pool": pool_ids,
+                "artifact": artifact_ids,
+                "incident": incident_ids,
+            }
+
+            def _journal_item_matches_persona_lineage(item: Dict[str, Any]) -> bool:
+                # Match only through typed reference fields/target-type
+                # namespaces — never a flattened id blob — so a shared raw
+                # string value in two different namespaces (e.g. a
+                # runtime_id equal to an unrelated artifact target_id) cannot
+                # cross-match. The entry's own identity (source_id/id/
+                # decision_id/report_id/...) is intentionally excluded:
+                # matching those against an arbitrary "persona" query string
+                # is a false collision, not a lineage relationship.
+                target_obj = item.get("target") or {}
+                if isinstance(target_obj, dict):
+                    category = _EVOLUTION_JOURNAL_TARGET_TYPE_CATEGORY.get(
+                        str(target_obj.get("type") or "").strip().lower()
+                    )
+                    target_val = str(target_obj.get("id") or "").strip().lower()
+                    if category and target_val and target_val in category_sets[category]:
+                        return True
+                record_obj = item.get("record") or {}
+                if isinstance(record_obj, dict):
+                    for field, category in _EVOLUTION_JOURNAL_REFERENCE_FIELD_CATEGORY.items():
+                        val = str(record_obj.get(field) or "").strip().lower()
+                        if val and val in category_sets[category]:
+                            return True
+                return False
+
+            filtered = [item for item in filtered if _journal_item_matches_persona_lineage(item)]
     if mutation_review:
-        mr_clean = mutation_review.strip()
+        mr_clean = mutation_review.strip().lower()
         if mr_clean:
-            filtered = [item for item in filtered if mr_clean.lower() in _evolution_entry_text(item)]
+            filtered = [
+                item for item in filtered
+                if str(item.get("source_id") or "").lower() == mr_clean
+                and item.get("entry_type") == "mutation_review"
+            ]
     if decision:
-        dec_clean = decision.strip()
+        dec_clean = decision.strip().lower()
         if dec_clean:
-            filtered = [item for item in filtered if dec_clean.lower() in _evolution_entry_text(item)]
+            filtered = [
+                item for item in filtered
+                if str(item.get("source_id") or "").lower() == dec_clean
+                and item.get("entry_type") == "evolution_decision"
+            ]
 
     total = len(filtered)
     page_items, next_page_token = _page_slice(filtered, page_token, page_size)
     meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = _evolution_journal_surfaces(snapshot_at=snapshot_at)
+    meta["surfaces"] = surfaces
     meta["composition_sources"] = [
         "evolution_decisions",
         "postmortems",
@@ -36540,6 +38799,11 @@ async def bff_management_evolution_journal(
 # ---------------- /bff/management/nl (BFF-B6-001) ----------------
 
 _MGMT_NL_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_MGMT_NL_COMMAND_IDEMPOTENCY_STORE: Optional[ManagementNlCommandIdempotencyStore] = None
+_MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG: Optional[Tuple[str, float]] = None
+_MGMT_NL_COMMAND_RESERVATION_CONTEXT: ContextVar[
+    Optional[ManagementNlCommandReservation]
+] = ContextVar("management_nl_command_reservation", default=None)
 
 _MGMT_NL_VALID_FOCUS = {"cockpit", "trading_pulse", "portfolio", "persona_fleet", "all"}
 _MGMT_NL_FOCUS_ALIASES = {
@@ -38155,6 +40419,27 @@ def _mgmt_nl_raise_control_mode_actor_error(identity: OperatorIdentity) -> None:
         )
 
 
+def _mgmt_nl_require_mode_capability(identity: OperatorIdentity, mode: Any) -> None:
+    from assistant.control_mode import actor_capabilities
+
+    mode_value = str(getattr(mode, "value", mode) or "").strip()
+    required = f"assistant.{mode_value.replace('_', '.')}"
+    if required in set(actor_capabilities(identity)):
+        return
+    raise _bff_error(
+        403,
+        ErrorCode.FORBIDDEN,
+        f"Control mode {mode_value} requires {required} capability",
+        "The authenticated actor does not hold the exact capability required for the requested mode.",
+        precondition_failed="control_mode_capability",
+        details_extra={
+            "field": "capabilities",
+            "reason": "mode_capability_missing",
+            "required_capability": required,
+        },
+    )
+
+
 def _mgmt_nl_raise_control_mode_error(exc: Exception) -> None:
     status_code = int(getattr(exc, "status_code", 422) or 422)
     if status_code == 403:
@@ -38306,6 +40591,7 @@ def _mgmt_nl_handle_control_command(
     focus: str,
     ui_snapshot: Dict[str, Any],
     resolved_key: str,
+    idempotency_storage_key: str,
     request_hash: str,
     session_id: str,
     message_id: str,
@@ -38353,6 +40639,7 @@ def _mgmt_nl_handle_control_command(
                 precondition_failed="control_mode_kernel_policy",
                 details_extra={"field": exc.field},
             )
+        _mgmt_nl_require_mode_capability(identity, mode)
         ttl_seconds = _mgmt_nl_positive_int(
             options.get("ttlSeconds", options.get("ttl_seconds")),
             DEFAULT_KERNEL_TTL_SECONDS,
@@ -38375,6 +40662,7 @@ def _mgmt_nl_handle_control_command(
         except ControlModeError as exc:
             _mgmt_nl_raise_control_mode_error(exc)
     elif command_kind == "deactivate":
+        _mgmt_nl_raise_control_mode_actor_error(identity)
         control_mode = store.deactivate(identity.operator_id, reason="management_nl_chat_control_command")
     elif command_kind == "status":
         control_mode = _assistant_control_mode_for_identity(
@@ -38570,7 +40858,7 @@ def _mgmt_nl_handle_control_command(
         conversation_href=conversation_href,
         control_command=command_kind,
     )
-    _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
+    _mgmt_nl_idempotency_put(idempotency_storage_key, request_hash=request_hash, result=result)
     return JSONResponse(status_code=202, content=result)
 
 
@@ -38649,10 +40937,32 @@ def _mgmt_nl_record_high_risk_refusal(
         return None
 
 
-def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional[Dict[str, Any]]:
-    existing = _management_ai_conversation_store().get_idempotency(resolved_key)
+def _mgmt_nl_idempotency_storage_key(
+    resolved_key: str,
+    *,
+    actor_id: str,
+    tenant_id: str,
+) -> str:
+    material = "\x00".join(
+        [
+            "management-nl-v2",
+            str(actor_id or "").strip(),
+            str(tenant_id or "").strip(),
+            str(resolved_key or "").strip(),
+        ]
+    )
+    return f"management-nl-v2:{hashlib.sha256(material.encode('utf-8')).hexdigest()}"
+
+
+def _mgmt_nl_idempotency_check(
+    storage_key: str,
+    request_hash: str,
+    *,
+    display_key: str,
+) -> Optional[Dict[str, Any]]:
+    existing = _management_ai_conversation_store().get_idempotency(storage_key)
     if existing is None:
-        existing = _MGMT_NL_IDEMPOTENCY.get(resolved_key)
+        existing = _MGMT_NL_IDEMPOTENCY.get(storage_key)
     if existing is None:
         return None
     if existing.get("request_hash") != request_hash:
@@ -38660,7 +40970,7 @@ def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional
             409,
             ErrorCode.IDEMPOTENCY_CONFLICT,
             "Idempotency key was already used with a different payload",
-            f"Key {resolved_key!r} is bound to a different management NL request hash",
+            f"Key {display_key!r} is bound to a different management NL request hash",
             precondition_failed="idempotency_conflict",
             suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
         )
@@ -38668,17 +40978,280 @@ def _mgmt_nl_idempotency_check(resolved_key: str, request_hash: str) -> Optional
 
 
 def _mgmt_nl_idempotency_put(
-    resolved_key: str,
+    storage_key: str,
     *,
     request_hash: str,
     result: Dict[str, Any],
 ) -> None:
     _management_ai_conversation_store().put_idempotency(
-        resolved_key,
+        storage_key,
         request_hash=request_hash,
         result=result,
     )
-    _MGMT_NL_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    _MGMT_NL_IDEMPOTENCY[storage_key] = {"request_hash": request_hash, "result": result}
+
+
+def _mgmt_nl_command_idempotency_required() -> bool:
+    return _bool_from_env("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED")
+
+
+def _mgmt_nl_command_recovery_seconds() -> float:
+    raw = os.getenv(
+        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS",
+        "300",
+    ).strip()
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 300.0
+    return max(value, 0.001)
+
+
+def _mgmt_nl_command_idempotency_store() -> ManagementNlCommandIdempotencyStore:
+    global _MGMT_NL_COMMAND_IDEMPOTENCY_STORE, _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG
+    storage_path = os.getenv(
+        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
+        DEFAULT_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_PATH,
+    ).strip()
+    config = (storage_path, _mgmt_nl_command_recovery_seconds())
+    if _MGMT_NL_COMMAND_IDEMPOTENCY_STORE is None or _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG != config:
+        _MGMT_NL_COMMAND_IDEMPOTENCY_STORE = ManagementNlCommandIdempotencyStore(
+            storage_path,
+            recovery_seconds=config[1],
+        )
+        _MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = config
+    return _MGMT_NL_COMMAND_IDEMPOTENCY_STORE
+
+
+def _mgmt_nl_command_scope(
+    *,
+    actor_id: str,
+    tenant_id: str,
+    resolved_key: str,
+) -> ManagementNlCommandScope:
+    return ManagementNlCommandScope(
+        actor_id=actor_id,
+        tenant_id=tenant_id,
+        route="POST /bff/management/nl/ask",
+        idempotency_key=resolved_key,
+    )
+
+
+def _mgmt_nl_result_is_terminal(result: Optional[Mapping[str, Any]]) -> bool:
+    if not isinstance(result, Mapping):
+        return False
+    data = result.get("data") if isinstance(result.get("data"), Mapping) else {}
+    meta = result.get("meta") if isinstance(result.get("meta"), Mapping) else {}
+    states = {
+        str(value or "").strip().lower()
+        for value in (
+            data.get("lifecycle_status"),
+            data.get("lifecycleStatus"),
+            data.get("status"),
+            meta.get("lifecycle_status"),
+            meta.get("lifecycleStatus"),
+            meta.get("status"),
+        )
+        if str(value or "").strip()
+    }
+    return not states.intersection({"accepted", "processing", "pending", "queued", "in_progress"})
+
+
+def _mgmt_nl_raise_command_idempotency_error(exc: Exception, *, display_key: str) -> None:
+    if isinstance(exc, ManagementNlCommandPayloadConflict):
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Idempotency key was already used with a different payload",
+            f"Key {display_key!r} is bound to a different Management NL command",
+            precondition_failed="idempotency_conflict",
+            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+        ) from exc
+    if isinstance(exc, ManagementNlCommandRecoveryRequired):
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Management NL command outcome is uncertain",
+            "The command will not be executed again until its prior outcome is reconciled.",
+            precondition_failed="idempotency_recovery_required",
+            suggestion="Inspect the durable conversation/provider audit and reconcile this key explicitly",
+        ) from exc
+    raise _bff_error(
+        503,
+        ErrorCode.DEPENDENCY_UNAVAILABLE,
+        "Management NL command admission store is unavailable",
+        str(exc),
+        precondition_failed="management_nl_command_idempotency_store",
+        suggestion="Restore the durable command idempotency volume before retrying",
+    ) from exc
+
+
+def _mgmt_nl_command_wait_seconds() -> float:
+    raw = os.getenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_WAIT_SECONDS", "").strip()
+    if raw:
+        try:
+            return max(float(raw), 0.01)
+        except (TypeError, ValueError):
+            pass
+    provider_raw = os.getenv("PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS", "180").strip()
+    try:
+        provider_seconds = max(float(provider_raw), 0.1)
+    except (TypeError, ValueError):
+        provider_seconds = 180.0
+    return provider_seconds + 10.0
+
+
+def _mgmt_nl_command_poll_seconds() -> float:
+    raw = os.getenv(
+        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_POLL_SECONDS",
+        "0.05",
+    ).strip()
+    try:
+        return min(max(float(raw), 0.005), 1.0)
+    except (TypeError, ValueError):
+        return 0.05
+
+
+async def _mgmt_nl_command_admit(
+    *,
+    scope: ManagementNlCommandScope,
+    request_hash: str,
+    legacy_result: Optional[Dict[str, Any]],
+    display_key: str,
+) -> tuple[Optional[ManagementNlCommandReservation], Optional[Dict[str, Any]]]:
+    if not _mgmt_nl_command_idempotency_required():
+        return None, legacy_result
+
+    store = _mgmt_nl_command_idempotency_store()
+    try:
+        admission = await asyncio.to_thread(
+            store.admit,
+            scope,
+            request_hash=request_hash,
+            legacy_result=legacy_result,
+            legacy_terminal=_mgmt_nl_result_is_terminal(legacy_result),
+        )
+    except (
+        ManagementNlCommandPayloadConflict,
+        ManagementNlCommandRecoveryRequired,
+        ManagementNlCommandStorageError,
+    ) as exc:
+        _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
+
+    if admission.state == "owner":
+        return admission.reservation, None
+    if admission.state == "complete":
+        return None, admission.result
+    if admission.state != "wait":
+        _mgmt_nl_raise_command_idempotency_error(
+            ManagementNlCommandStorageError(
+                f"Unsupported Management NL command admission state: {admission.state}"
+            ),
+            display_key=display_key,
+        )
+
+    deadline = asyncio.get_running_loop().time() + _mgmt_nl_command_wait_seconds()
+    while True:
+        if asyncio.get_running_loop().time() >= deadline:
+            raise _bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Management NL command is still in progress",
+                "An exact concurrent request owns this idempotency key and has not reached a terminal result.",
+                precondition_failed="idempotency_in_progress",
+                suggestion="Retry the same payload and key after the current provider turn completes",
+            )
+        await asyncio.sleep(_mgmt_nl_command_poll_seconds())
+        try:
+            admission = await asyncio.to_thread(
+                store.observe,
+                scope,
+                request_hash=request_hash,
+            )
+        except (
+            ManagementNlCommandPayloadConflict,
+            ManagementNlCommandRecoveryRequired,
+            ManagementNlCommandStorageError,
+        ) as exc:
+            _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
+        if admission.state == "complete":
+            return None, admission.result
+        if admission.state != "wait":
+            _mgmt_nl_raise_command_idempotency_error(
+                ManagementNlCommandStorageError(
+                    f"Unsupported Management NL command observation state: {admission.state}"
+                ),
+                display_key=display_key,
+            )
+
+
+async def _mgmt_nl_command_complete(
+    reservation: Optional[ManagementNlCommandReservation],
+    result: Dict[str, Any],
+    *,
+    display_key: str,
+) -> None:
+    if reservation is None:
+        return
+    try:
+        await asyncio.to_thread(
+            _mgmt_nl_command_idempotency_store().complete,
+            reservation,
+            result,
+        )
+    except (
+        ManagementNlCommandPayloadConflict,
+        ManagementNlCommandRecoveryRequired,
+        ManagementNlCommandStorageError,
+    ) as exc:
+        _mgmt_nl_raise_command_idempotency_error(exc, display_key=display_key)
+
+
+async def _mgmt_nl_command_mark_uncertain(
+    reservation: Optional[ManagementNlCommandReservation],
+    *,
+    reason: str,
+) -> None:
+    if reservation is None:
+        return
+    try:
+        await asyncio.to_thread(
+            _mgmt_nl_command_idempotency_store().mark_uncertain,
+            reservation,
+            reason=reason,
+        )
+    except Exception:
+        log.exception("Failed to mark Management NL command reservation uncertain")
+
+
+def _mgmt_nl_command_reservation_guard(handler: Callable[..., Any]) -> Callable[..., Any]:
+    """Mark any owned reservation uncertain before an exceptional response exits."""
+
+    @wraps(handler)
+    async def guarded(*args: Any, **kwargs: Any) -> Any:
+        token = _MGMT_NL_COMMAND_RESERVATION_CONTEXT.set(None)
+        try:
+            return await handler(*args, **kwargs)
+        except BaseException:
+            reservation = _MGMT_NL_COMMAND_RESERVATION_CONTEXT.get()
+            if reservation is not None:
+                try:
+                    await asyncio.shield(
+                        _mgmt_nl_command_mark_uncertain(
+                            reservation,
+                            reason="request_failed_before_terminal_commit",
+                        )
+                    )
+                except BaseException:
+                    # The durable recovery deadline still turns an abandoned
+                    # in-progress record uncertain if cancellation interrupts
+                    # this best-effort immediate transition.
+                    log.exception("Management NL reservation uncertainty guard failed")
+            raise
+        finally:
+            _MGMT_NL_COMMAND_RESERVATION_CONTEXT.reset(token)
+
+    return guarded
 
 
 def _mgmt_nl_surface_confidence(surfaces: Dict[str, Any]) -> str:
@@ -39636,7 +42209,85 @@ def _mgmt_nl_openclaw_repair_metadata(payload: Dict[str, Any]) -> Dict[str, Any]
     )
     if isinstance(pull_request, dict):
         metadata["pull_request"] = pull_request
+    receipt = repair.get("receipt")
+    if isinstance(receipt, str) and receipt.strip():
+        metadata["receipt"] = receipt.strip()
     return metadata
+
+
+def _mgmt_nl_authorize_openclaw_repair_metadata(
+    payload: Dict[str, Any],
+    *,
+    identity: OperatorIdentity,
+    caller_tenant_id: str,
+    control_mode: Dict[str, Any],
+) -> Dict[str, Any]:
+    from assistant.repair_receipts import RepairReceiptError, verify_repair_receipt
+
+    supplied = _mgmt_nl_openclaw_repair_metadata(payload)
+    mode = str(control_mode.get("mode") or "") if control_mode.get("active") else "user"
+    if mode != "kernel_repair":
+        if supplied:
+            raise _bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "Prepared repair metadata requires active kernel_repair control mode",
+                "Activate kernel_repair with the same authenticated operator before forwarding a prepare receipt.",
+                precondition_failed="control_mode",
+                details_extra={"reason": "kernel_repair_required", "mode": mode},
+            )
+        return {}
+
+    _mgmt_nl_raise_control_mode_actor_error(identity)
+    _mgmt_nl_require_mode_capability(identity, "kernel_repair")
+    activation_capabilities = {
+        str(value or "").strip() for value in (control_mode.get("capabilities") or [])
+    }
+    if "assistant.kernel.repair" not in activation_capabilities:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Active control mode is not authorized for repair writes",
+            "The active control-mode activation does not include assistant.kernel.repair.",
+            precondition_failed="control_mode_capability",
+            details_extra={
+                "reason": "activation_capability_missing",
+                "required_capability": "assistant.kernel.repair",
+            },
+        )
+
+    receipt = str(supplied.pop("receipt", "") or "").strip()
+    if not receipt:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Kernel repair requires a BFF-issued prepare receipt",
+            "Call /bff/assistant/repair-worktrees/prepare and forward its exact repair object.",
+            precondition_failed="repair_receipt",
+            details_extra={"reason": "repair_receipt_missing"},
+        )
+    try:
+        signed_repair = verify_repair_receipt(
+            receipt,
+            actor_id=identity.operator_id,
+            tenant_id=caller_tenant_id,
+            control_status=control_mode,
+            supplied_repair=supplied,
+        )
+    except RepairReceiptError as exc:
+        status_code = 503 if exc.reason == "receipt_key_unconfigured" else 403
+        code = ErrorCode.PRECONDITION_FAILED if status_code == 503 else ErrorCode.FORBIDDEN
+        raise _bff_error(
+            status_code,
+            code,
+            "Assistant repair prepare receipt is invalid",
+            str(exc),
+            precondition_failed="repair_receipt",
+            details_extra={"reason": exc.reason},
+        ) from exc
+    # The signed canonical object, not browser-supplied fields, crosses the BFF
+    # provider boundary. The receipt itself stays inside the BFF.
+    return signed_repair
 
 
 def _mgmt_nl_provider_mode_prompt_lines(provider_mode: str) -> List[str]:
@@ -39895,7 +42546,7 @@ def _mgmt_nl_maybe_provider_answer(
     }
     if provider_mode == "kernel_repair" and openclaw_repair_metadata:
         metadata.update(openclaw_repair_metadata)
-        metadata["repair_metadata_source"] = "management_nl_openclaw_payload"
+        metadata["repair_metadata_source"] = "bff_prepared_repair_receipt"
 
     def _provider_failure(error: OpenClawOpsClientError) -> Tuple[None, Dict[str, Any], List[Dict[str, Any]]]:
         duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
@@ -40067,6 +42718,34 @@ def _mgmt_nl_provider_inline_grace_seconds() -> float:
     return value if value > 0 else _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS
 
 
+def _mgmt_nl_provider_inline_wait_seconds(control_mode: Dict[str, Any]) -> float:
+    """Keep admitted repair writes synchronous through durable result storage.
+
+    User/debug turns may finish asynchronously for UI responsiveness. A repair
+    turn can mutate its prepared worktree, so returning while only an in-memory
+    finalizer owns the terminal response would lose bounded recovery on BFF
+    restart. Wait through the adapter's provider timeout, then persist the
+    terminal result before returning the 202 response.
+    """
+
+    if not control_mode.get("active") or str(control_mode.get("mode") or "") != "kernel_repair":
+        return _mgmt_nl_provider_inline_grace_seconds()
+    raw = os.getenv("PANTHEON_MANAGEMENT_NL_REPAIR_INLINE_TIMEOUT_SECONDS", "").strip()
+    if raw:
+        try:
+            configured = float(raw)
+        except (TypeError, ValueError):
+            configured = 0.0
+        if configured > 0:
+            return configured
+    provider_raw = os.getenv("PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS", "180.0").strip()
+    try:
+        provider_timeout = max(float(provider_raw), 0.1)
+    except (TypeError, ValueError):
+        provider_timeout = 180.0
+    return provider_timeout + 5.0
+
+
 def _mgmt_nl_stream_read_timeout_seconds() -> float:
     raw = os.getenv("PANTHEON_MANAGEMENT_NL_STREAM_READ_TIMEOUT_SECONDS")
     if raw is None or not str(raw).strip():
@@ -40134,10 +42813,12 @@ async def _mgmt_nl_finalize_provider_turn(
     trace_id: str,
     focus: str,
     resolved_key: str,
+    idempotency_storage_key: Optional[str] = None,
     request_hash: str,
     audit_log_href: str,
     conversation_href: str,
     base_result: Dict[str, Any],
+    command_reservation: Optional[ManagementNlCommandReservation] = None,
 ) -> None:
     """Finish a nl/ask exchange whose provider call exceeded the inline grace
     window: await the in-flight agent run, then append the assistant turn exactly
@@ -40194,18 +42875,28 @@ async def _mgmt_nl_finalize_provider_turn(
             audit_log_href=audit_log_href,
             conversation_href=conversation_href,
         )
+        final_result = _mgmt_nl_finalize_result(
+            base_result,
+            answer=answer,
+            provider_status=provider_status,
+            actions=actions,
+        )
         _mgmt_nl_idempotency_put(
-            resolved_key,
+            idempotency_storage_key or resolved_key,
             request_hash=request_hash,
-            result=_mgmt_nl_finalize_result(
-                base_result,
-                answer=answer,
-                provider_status=provider_status,
-                actions=actions,
-            ),
+            result=final_result,
+        )
+        await _mgmt_nl_command_complete(
+            command_reservation,
+            final_result,
+            display_key=resolved_key,
         )
     except Exception:
         log.warning("Failed to persist async-finalised Management NL turn", exc_info=True)
+        await _mgmt_nl_command_mark_uncertain(
+            command_reservation,
+            reason="async_provider_finalization_failed",
+        )
 
 
 def _mgmt_nl_schedule_provider_finalize(**kwargs: Any) -> None:
@@ -40215,6 +42906,7 @@ def _mgmt_nl_schedule_provider_finalize(**kwargs: Any) -> None:
 
 
 @app.post("/bff/management/nl/ask", status_code=202)
+@_mgmt_nl_command_reservation_guard
 async def bff_management_nl_ask(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -40276,25 +42968,18 @@ async def bff_management_nl_ask(
     allowed_action_kinds = _mgmt_nl_allowed_action_kinds(ui_snapshot)
 
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    idempotency_storage_key = _mgmt_nl_idempotency_storage_key(
+        resolved_key,
+        actor_id=identity.operator_id,
+        tenant_id=caller_tenant_id,
+    )
     request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask", "payload": payload})
-    cached = _mgmt_nl_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        cached_data = cached.get("data") if isinstance(cached, dict) else {}
-        _management_ai_record_event(
-            {
-                "event_type": "management_ai.exchange.replayed",
-                "session_id": str((cached_data or {}).get("session_id") or payload.get("session_id") or payload.get("sessionId") or ""),
-                "message_id": str((cached_data or {}).get("message_id") or ""),
-                "trace_id": str((cached_data or {}).get("trace_id") or (cached_data or {}).get("traceId") or ""),
-                "actor_id": identity.operator_id,
-                "focus": focus,
-                "route": "POST /bff/management/nl/ask",
-                "idempotency_key": resolved_key,
-            }
-        )
-        return JSONResponse(status_code=202, content=_management_json_clone(cached))
-
-    if _request_dry_run_requested():
+    legacy_cached = _mgmt_nl_idempotency_check(
+        idempotency_storage_key,
+        request_hash,
+        display_key=resolved_key,
+    )
+    if legacy_cached is None and _request_dry_run_requested():
         return _dry_run_success_response(
             {
                 "status": "accepted",
@@ -40317,12 +43002,40 @@ async def bff_management_nl_ask(
             },
         )
 
+    command_scope = _mgmt_nl_command_scope(
+        actor_id=identity.operator_id,
+        tenant_id=caller_tenant_id,
+        resolved_key=resolved_key,
+    )
+    command_reservation, cached = await _mgmt_nl_command_admit(
+        scope=command_scope,
+        request_hash=request_hash,
+        legacy_result=legacy_cached,
+        display_key=resolved_key,
+    )
+    _MGMT_NL_COMMAND_RESERVATION_CONTEXT.set(command_reservation)
+    if cached is not None:
+        cached_data = cached.get("data") if isinstance(cached, dict) else {}
+        _management_ai_record_event(
+            {
+                "event_type": "management_ai.exchange.replayed",
+                "session_id": str((cached_data or {}).get("session_id") or payload.get("session_id") or payload.get("sessionId") or ""),
+                "message_id": str((cached_data or {}).get("message_id") or ""),
+                "trace_id": str((cached_data or {}).get("trace_id") or (cached_data or {}).get("traceId") or ""),
+                "actor_id": identity.operator_id,
+                "focus": focus,
+                "route": "POST /bff/management/nl/ask",
+                "idempotency_key": resolved_key,
+            }
+        )
+        return JSONResponse(status_code=202, content=_management_json_clone(cached))
+
     now = utc_now()
     session_id = str(payload.get("sessionId") or payload.get("session_id") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
     message_id = f"mnl-{uuid.uuid4().hex[:16]}"
     trace_id = str(payload.get("traceId") or payload.get("trace_id") or f"mnl-trace-{uuid.uuid4().hex[:12]}")
     if control_command is not None:
-        return _mgmt_nl_handle_control_command(
+        control_response = _mgmt_nl_handle_control_command(
             control_command=control_command,
             payload=payload,
             identity=identity,
@@ -40330,17 +43043,31 @@ async def bff_management_nl_ask(
             focus=focus,
             ui_snapshot=ui_snapshot,
             resolved_key=resolved_key,
+            idempotency_storage_key=idempotency_storage_key,
             request_hash=request_hash,
             session_id=session_id,
             message_id=message_id,
             trace_id=trace_id,
             now=now,
         )
+        control_result = json.loads(control_response.body)
+        await _mgmt_nl_command_complete(
+            command_reservation,
+            control_result,
+            display_key=resolved_key,
+        )
+        return control_response
 
     control_mode = _assistant_control_mode_for_identity(
         identity,
         management_session_id=session_id,
         touch=True,
+    )
+    openclaw_repair_metadata = _mgmt_nl_authorize_openclaw_repair_metadata(
+        payload,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        control_mode=control_mode,
     )
     _management_ai_ensure_session(
         session_id=session_id,
@@ -40496,8 +43223,6 @@ async def bff_management_nl_ask(
             "audit_ref": audit_ref,
         }
     )
-    openclaw_repair_metadata = _mgmt_nl_openclaw_repair_metadata(payload)
-
     # _mgmt_nl_maybe_provider_answer issues a synchronous, blocking HTTP call to
     # the OpenClaw adapter (OpenClawOpsClient.invoke_assistant_provider), which
     # drives the Claude/Codex CLI agent and can take 30s+. The BFF runs a single
@@ -40536,7 +43261,7 @@ async def bff_management_nl_ask(
         )
     )
     done, _ = await asyncio.wait(
-        {provider_task}, timeout=_mgmt_nl_provider_inline_grace_seconds()
+        {provider_task}, timeout=_mgmt_nl_provider_inline_wait_seconds(control_mode)
     )
     provider_pending = provider_task not in done
     if provider_pending:
@@ -40655,7 +43380,13 @@ async def bff_management_nl_ask(
         audit_log_href=audit_log_href,
         conversation_href=conversation_href,
     )
-    _mgmt_nl_idempotency_put(resolved_key, request_hash=request_hash, result=result)
+    _mgmt_nl_idempotency_put(idempotency_storage_key, request_hash=request_hash, result=result)
+    if not provider_pending:
+        await _mgmt_nl_command_complete(
+            command_reservation,
+            result,
+            display_key=resolved_key,
+        )
     if provider_pending:
         # The assistant turn was intentionally NOT persisted above: the store's
         # append_turn is not an upsert, so writing a placeholder here would leave
@@ -40671,10 +43402,12 @@ async def bff_management_nl_ask(
             trace_id=trace_id,
             focus=focus,
             resolved_key=resolved_key,
+            idempotency_storage_key=idempotency_storage_key,
             request_hash=request_hash,
             audit_log_href=audit_log_href,
             conversation_href=conversation_href,
             base_result=result,
+            command_reservation=command_reservation,
         )
     return JSONResponse(status_code=202, content=result)
 
@@ -40722,6 +43455,11 @@ def bff_management_nl_ask_stream(
 
     if control_command is not None:
         resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        idempotency_storage_key = _mgmt_nl_idempotency_storage_key(
+            resolved_key,
+            actor_id=identity.operator_id,
+            tenant_id=caller_tenant_id,
+        )
         request_hash = _stable_json_hash({"route": "POST /bff/management/nl/ask/stream", "payload": payload})
         control_response = _mgmt_nl_handle_control_command(
             control_command=control_command,
@@ -40731,6 +43469,7 @@ def bff_management_nl_ask_stream(
             focus=focus,
             ui_snapshot=ui_snapshot,
             resolved_key=resolved_key,
+            idempotency_storage_key=idempotency_storage_key,
             request_hash=request_hash,
             session_id=session_id,
             message_id=message_id,
@@ -42233,6 +44972,103 @@ def _try_register_persona_cron(persona_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _register_persona_cron_required(
+    persona_id: str,
+    capital_pool_id: str,
+    binding_id: str,
+    *,
+    runtime_id: Optional[str] = None,
+    runtime_binding_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Register and authoritatively read back the required evaluation schedule."""
+    if "persona_cron_registrar" not in sys.modules:
+        saved_modules = {
+            name: sys.modules.pop(name)
+            for name in ("models", "workflows")
+            if name in sys.modules
+        }
+        sys.path.insert(0, _CRON_SERVICE_DIR)
+        try:
+            import persona_cron_registrar  # noqa: F401
+        finally:
+            sys.path.remove(_CRON_SERVICE_DIR)
+            for name in ("models", "workflows"):
+                sys.modules.pop(name, None)
+            sys.modules.update(saved_modules)
+    from persona_cron_registrar import PersonaCronRegistrar  # type: ignore[import]
+
+    registrar = PersonaCronRegistrar()
+    result = registrar.register_for_persona(
+        persona_id,
+        capital_pool_id=capital_pool_id,
+        workflow_ids=[_PERSONA_FIRST_EVALUATION_WORKFLOW_ID],
+        runtime_id=runtime_id,
+        runtime_binding_id=runtime_binding_id,
+        persona_capital_binding_id=binding_id,
+    )
+    body = result.to_dict()
+    if body.get("mode") != "gateway_rpc":
+        raise RuntimeError("first-evaluation schedule authority is unavailable (dry-run refused)")
+    if body.get("failed"):
+        raise RuntimeError(f"cron registration failed: {body['failed']}")
+    runtime = registrar._get_runtime()
+    authoritative_job = (
+        registrar.get_first_evaluation_registration(
+            persona_id,
+            runtime=runtime,
+            runtime_id=runtime_id,
+            runtime_binding_id=runtime_binding_id,
+            capital_pool_id=capital_pool_id,
+            persona_capital_binding_id=binding_id,
+        )
+        if runtime is not None
+        else None
+    )
+    if authoritative_job is None:
+        raise RuntimeError("first-evaluation schedule failed authoritative readback")
+    authoritative_event = registrar._decode_job_event(authoritative_job) or {}
+    body["authoritative_readback"] = {
+        "persona_id": persona_id,
+        "workflow_id": _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+        "runtime_id": runtime_id,
+        "runtime_binding_id": runtime_binding_id,
+        "capital_pool_id": capital_pool_id,
+        "persona_capital_binding_id": binding_id,
+        "registered": True,
+        "job_id": authoritative_job.get("id"),
+        "job_name": authoritative_job.get("name"),
+        "request_id": authoritative_event.get("request_id"),
+        "schedule": deepcopy(authoritative_job.get("schedule")),
+        "session_target": authoritative_job.get("sessionTarget"),
+        "observed_at": utc_now(),
+    }
+    return body
+
+
+def _remove_persona_cron_required(persona_id: str) -> Dict[str, Any]:
+    """Remove first-evaluation owner rows and require authoritative absence."""
+    if "persona_cron_registrar" not in sys.modules:
+        saved_modules = {
+            name: sys.modules.pop(name)
+            for name in ("models", "workflows")
+            if name in sys.modules
+        }
+        sys.path.insert(0, _CRON_SERVICE_DIR)
+        try:
+            import persona_cron_registrar  # noqa: F401
+        finally:
+            sys.path.remove(_CRON_SERVICE_DIR)
+            for name in ("models", "workflows"):
+                sys.modules.pop(name, None)
+            sys.modules.update(saved_modules)
+    from persona_cron_registrar import PersonaCronRegistrar  # type: ignore[import]
+
+    result = PersonaCronRegistrar().remove_first_evaluation_registration(persona_id)
+    if result.get("registered") is not False:
+        raise RuntimeError("first-evaluation schedule removal lacks zero-owner readback")
+    return result
+
+
 def _try_bootstrap_persona_ooda_packet(persona_id: str) -> Optional[Dict[str, Any]]:
     """Create and persist the initial open OODA loop packet for *persona_id*.
 
@@ -42247,6 +45083,118 @@ def _try_bootstrap_persona_ooda_packet(persona_id: str) -> Optional[Dict[str, An
 
 # ---------------- /bff/personas routes ----------------
 
+def _persona_readback_snapshot() -> Tuple[
+    Dict[str, Dict[str, Any]],
+    Optional[Set[Tuple[str, str]]],
+    List[Dict[str, Any]],
+]:
+    """Fetch owner readbacks off the async event loop for Persona projections."""
+    all_bindings: Dict[str, Dict[str, Any]] = {}
+    try:
+        client = _runtime_manager_client()
+        for binding in client.list_all():
+            binding_id = binding.get("binding_id") or binding.get("id")
+            if binding_id:
+                all_bindings[str(binding_id)] = binding
+    except Exception as exc:
+        all_bindings = {}
+        log.warning("Failed to batch list runtime bindings: %s", exc)
+
+    # A (persona_id, workflow_id) set discards duplicates and every schedule,
+    # payload, target, and authority identity field.  It is therefore never a
+    # lifecycle proof.  Each provisioning projection performs the registrar's
+    # strict owner readback instead.
+    monitoring_sessions: List[Dict[str, Any]] = []
+    try:
+        monitoring_sessions = (
+            read_store.list_authoritative_paper_runtime_monitoring_sessions()
+        )
+    except Exception as exc:
+        log.warning("Failed to batch list paper worker sessions: %s", exc)
+    return all_bindings, None, monitoring_sessions
+
+
+def _reconcile_persona_provisioning_once() -> int:
+    """Materialize provisioning lifecycle from owner readbacks off read paths."""
+
+    all_bindings, _, monitoring_sessions = _persona_readback_snapshot()
+    reconciled = 0
+    for raw in _list_persona_records():
+        state = str(raw.get("lifecycle_state") or raw.get("state") or "").strip()
+        if state not in {"provisioning", "provisioning_failed"}:
+            continue
+        persona_id = str(raw.get("persona_id") or raw.get("id") or "").strip()
+        if not persona_id:
+            continue
+        try:
+            _evaluate_persona_provisioning_status(
+                persona_id,
+                raw,
+                all_bindings=all_bindings,
+                all_cron_registrations=None,
+                all_monitoring_sessions=monitoring_sessions,
+            )
+            reconciled += 1
+        except Exception as exc:
+            log.warning(
+                "Persona provisioning reconciliation failed for %s: %s",
+                persona_id,
+                exc,
+            )
+    return reconciled
+
+
+async def _persona_provisioning_reconciler_loop() -> None:
+    interval = max(
+        1,
+        int(os.getenv("PANTHEON_PERSONA_PROVISIONING_RECONCILE_SECONDS", "5")),
+    )
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await asyncio.to_thread(_reconcile_persona_provisioning_once)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("Persona provisioning reconciliation pass failed: %s", exc)
+
+
+def _project_persona_list_records(raw_personas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    items = []
+    for raw in raw_personas:
+        persona_id = str(raw.get("persona_id") or raw.get("id") or "")
+        items.append(
+            _project_persona_dto(
+                raw,
+                overlay=_PERSONA_BFF_OVERLAY.get(persona_id),
+                routed_strategies=_routed_strategies_for_persona(persona_id),
+                evaluate_provisioning=False,
+            )
+        )
+    return items
+
+
+def _persona_record_tenant_id(raw: Mapping[str, Any]) -> str:
+    metadata = raw.get("metadata")
+    return str(metadata.get("tenant_id") or "").strip() if isinstance(metadata, dict) else ""
+
+
+def _persona_record_projected_state(raw: Mapping[str, Any]) -> str:
+    return _normalize_lifecycle_state(
+        raw.get("lifecycle_state") or raw.get("state") or raw.get("status")
+    )
+
+
+def _persona_record_archetype(raw: Mapping[str, Any]) -> str:
+    metadata = raw.get("metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    return str(
+        metadata.get("archetype")
+        or raw.get("strategy_family")
+        or raw.get("mandate")
+        or "generalist"
+    )
+
 @app.get("/bff/personas")
 async def bff_list_personas(
     state: Optional[str] = None,
@@ -42259,20 +45207,23 @@ async def bff_list_personas(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
-    raw_personas = _list_persona_records()
-    items = []
-    for raw in raw_personas:
-        persona_id = str(raw.get("persona_id") or raw.get("id") or "")
-        overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
-        routed = _routed_strategies_for_persona(persona_id)
-        dto = _project_persona_dto(raw, overlay=overlay, routed_strategies=routed)
-        items.append(dto)
+    tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+    raw_personas = [
+        raw
+        for raw in _list_persona_records()
+        if _persona_record_tenant_id(raw) in {"", tenant_id}
+    ]
     if state:
-        items = [p for p in items if p.get("state") == state]
+        raw_personas = [
+            raw for raw in raw_personas if _persona_record_projected_state(raw) == state
+        ]
     if archetype:
-        items = [p for p in items if p.get("archetype") == archetype]
-    total = len(items)
-    page_items, next_page_token = _page_slice(items, page_token, page_size)
+        raw_personas = [
+            raw for raw in raw_personas if _persona_record_archetype(raw) == archetype
+        ]
+    total = len(raw_personas)
+    page_raw, next_page_token = _page_slice(raw_personas, page_token, page_size)
+    page_items = await asyncio.to_thread(_project_persona_list_records, page_raw)
     return {
         "data": page_items,
         "items": page_items,
@@ -42281,6 +45232,52 @@ async def bff_list_personas(
             "personas", "persona_list",
             snapshot_at=snapshot_at, total=total,
         ),
+    }
+
+
+@app.post("/bff/personas/{persona_id}/provisioning/reconcile")
+async def bff_reconcile_persona_provisioning(
+    persona_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Operator-triggered controller pass; Persona GET/list remain pure reads."""
+
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+    raw = read_store.get_persona(persona_id)
+    if (
+        raw is None
+        or _persona_record_tenant_id(raw) != caller_tenant
+    ):
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Persona not found",
+            f"Persona {persona_id} does not exist",
+        )
+    diagnostics: List[str] = []
+    state = await asyncio.to_thread(
+        _evaluate_persona_provisioning_status,
+        persona_id,
+        raw,
+        diagnostics=diagnostics,
+    )
+    dto = _project_persona_dto(
+        raw,
+        overlay=_PERSONA_BFF_OVERLAY.get(persona_id),
+        routed_strategies=_routed_strategies_for_persona(persona_id),
+        evaluate_provisioning=False,
+    )
+    return {
+        "data": dto,
+        "meta": {
+            "snapshot_at": utc_now(),
+            "reconciled_by": "persona_provisioning_controller",
+            "lifecycle_state": state,
+            "status": "degraded" if diagnostics else "ok",
+            "degraded_dependencies": sorted(set(diagnostics)),
+        },
     }
 
 
@@ -42325,60 +45322,70 @@ def _persona_create_validate_paper_only(payload: Dict[str, Any]) -> str:
             precondition_failed="capital_mode",
             suggestion="Create the Persona in paper mode, then request promotion review after evidence is ready.",
         )
+    risk_profile = payload.get("riskProfile") or payload.get("risk_profile")
+    risk_profile = risk_profile if isinstance(risk_profile, Mapping) else {}
+    requested_risk = _normalize_risk_level(
+        payload.get("risk")
+        or payload.get("risk_level")
+        or risk_profile.get("risk_level")
+        or "low"
+    )
+    if requested_risk != "low":
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Automatic Persona provisioning requires low risk",
+            (
+                "Medium/high/critical Persona admission requires a governed "
+                "Human Inbox review and cannot use the automatic paper-create path."
+            ),
+            precondition_failed="risk_level",
+            suggestion="Create a low-risk paper Persona or use the governed review workflow.",
+        )
     return "paper"
 
 
-def _persona_create_paper_refs(persona_id: str, payload: Dict[str, Any]) -> Dict[str, str]:
-    paper_ledger_id = str(
-        payload.get("paperLedgerId")
-        or payload.get("paper_ledger_id")
-        or payload.get("paperAccountId")
-        or payload.get("paper_account_id")
-        or f"paper-ledger-{persona_id}"
-    ).strip()
-    legacy_capital_ref_id = str(
-        payload.get("legacyPaperCapitalPoolId")
-        or payload.get("legacy_paper_capital_pool_id")
-        or payload.get("paperCapitalPoolId")
-        or payload.get("paper_capital_pool_id")
-        or payload.get("capitalPoolId")
-        or payload.get("capital_pool_id")
-        or paper_ledger_id
-    ).strip()
-    binding_id = str(
-        payload.get("paperBindingId")
-        or payload.get("paper_binding_id")
-        or payload.get("bindingId")
-        or payload.get("binding_id")
-        or f"binding-{persona_id}-paper"
-    ).strip()
-    plan_id = str(
-        payload.get("paperDeploymentPlanId")
-        or payload.get("paper_deployment_plan_id")
-        or payload.get("deploymentPlanId")
-        or payload.get("deployment_plan_id")
-        or f"paper-plan-{persona_id}"
-    ).strip()
-    runtime_id = str(
-        payload.get("paperRuntimeId")
-        or payload.get("paper_runtime_id")
-        or payload.get("runtimeId")
-        or payload.get("runtime_id")
-        or f"runtime-{persona_id}-paper"
-    ).strip()
-    artifact_id = str(
-        payload.get("artifactId")
-        or payload.get("artifact_id")
-        or f"paper-artifact-{persona_id}"
-    ).strip()
-    return {
-        "paper_ledger_id": paper_ledger_id,
-        "capital_pool_id": legacy_capital_ref_id,
-        "binding_id": binding_id,
-        "deployment_plan_id": plan_id,
-        "runtime_id": runtime_id,
-        "artifact_id": artifact_id,
-    }
+def _normalize_persona_create_name(name: str) -> str:
+    return " ".join(str(name or "").casefold().split())
+
+
+def _persona_create_identity(tenant_id: str, normalized_name: str) -> str:
+    digest = hashlib.sha256(
+        f"{tenant_id}\x00{normalized_name}".encode("utf-8")
+    ).hexdigest()[:20]
+    return f"persona-{digest}"
+
+
+def _persona_create_canonical_payload(
+    payload: Mapping[str, Any],
+    *,
+    name: str,
+    tenant_id: str,
+    requested_by: str,
+) -> Dict[str, Any]:
+    canonical = json.loads(json.dumps(dict(payload)))
+    canonical["name"] = name
+    canonical["tenant_id"] = tenant_id
+    canonical.pop("tenantId", None)
+    # Caller attribution is derived only from the authenticated identity.  It
+    # participates in the durable request hash, so another operator cannot
+    # replay the key and silently take ownership of an in-flight Persona.
+    for field in (
+        "owner",
+        "actor_id",
+        "actorId",
+        "created_by",
+        "createdBy",
+        "requested_by",
+        "requestedBy",
+    ):
+        canonical.pop(field, None)
+    canonical["requested_by"] = requested_by
+    if "budget" not in canonical:
+        canonical["budget"] = canonical.get("paperBudget") or canonical.get("paper_budget")
+    if "risk_policy_ref" not in canonical:
+        canonical["risk_policy_ref"] = canonical.get("riskPolicyRef")
+    return canonical
 
 
 def _openclaw_agent_reconcile_request(
@@ -42419,84 +45426,66 @@ def _openclaw_agent_reconcile_request(
     return request
 
 
-@app.post("/bff/personas", status_code=201)
-async def bff_create_persona(
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: create persona stub (execute-plans compatibility)."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash({"route": "POST /bff/personas", "payload": payload})
-    dry_run = _request_dry_run_requested()
-    if not dry_run:
-        cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
-        if cached is not None:
-            return cached
-    name = str(payload.get("name") or "").strip()
-    if not name:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED, "name is required",
-            "Persona name must be a non-empty string",
-            precondition_failed="name",
-        )
-    snapshot_at = utc_now()
-    persona_id = f"persona-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
-    owner = str(payload.get("owner") or identity.operator_id)
-    archetype = str(payload.get("archetype") or "generalist")
-    risk = _normalize_risk_level(payload.get("risk") or "low")
-    capital_mode = _persona_create_validate_paper_only(payload)
-    refs = _persona_create_paper_refs(persona_id, payload)
-    lifecycle_state = "paper_running"
-    market = str(payload.get("market") or "").strip().upper()
-    required_data_sources = payload.get("required_data_sources") or payload.get("requiredDataSources")
-    if not required_data_sources and market:
-        from read_store import _market_persona_required_data_sources
-        required_data_sources = _market_persona_required_data_sources({"market": market})
-    # Real persona identity + trading-character traits — these flow to the
-    # persona's OpenClaw agent SOUL (integrations/openclaw/persona_agent_sync).
-    mandate = str(payload.get("mandate") or "").strip() or None
-    strategy_family = str(payload.get("strategy_family") or payload.get("strategyFamily") or "").strip() or None
-    raw_traits = payload.get("traits")
-    traits = {
-        k: raw_traits[k]
-        for k in ("instruments", "risk_appetite", "decision_style", "time_horizon", "hard_rules", "persona_voice")
-        if isinstance(raw_traits, dict) and raw_traits.get(k) not in (None, "")
-    } or None
-    persona_metadata = {
+def _persona_provisioning_metadata(
+    record: ProvisioningRecord,
+    *,
+    ids: Any,
+    payload: Mapping[str, Any],
+    owner: str,
+    archetype: str,
+    risk: str,
+    mandate: Optional[str],
+    strategy_family: Optional[str],
+    traits: Optional[Dict[str, Any]],
+    lifecycle_state: str,
+) -> Dict[str, Any]:
+    paper_ledger_id = f"paper-ledger-{ids.token}"
+    runtime_binding_id = str(record.references.get("runtime_binding_id") or "").strip()
+    runtime_id = str(record.references.get("runtime_id") or "").strip()
+    metadata: Dict[str, Any] = {
         "description": payload.get("description"),
         "memo": payload.get("memo"),
-        "initial_mode": payload.get("initialMode"),
-        "execution_mode": payload.get("executionMode") or payload.get("initialMode"),
+        "tenant_id": record.tenant_id,
+        "provisioning_idempotency_key": record.idempotency_key,
+        "provisioning_request_hash": record.request_hash,
+        "provisioning_state": record.state,
+        "provisioning_step": record.current_step,
+        "initial_mode": "paper",
+        "execution_mode": "paper",
         "success_rate": float(payload.get("successRate") or 0.0),
-        "capital_mode": capital_mode,
-        "paper_ledger_id": refs["paper_ledger_id"],
+        "capital_mode": "paper",
+        "paper_ledger_id": paper_ledger_id,
         "paper_ledger": {
-            "id": refs["paper_ledger_id"],
+            "id": paper_ledger_id,
             "mode": "paper",
-            "persona_id": persona_id,
+            "persona_id": record.persona_id,
             "is_isolated": True,
-            "benchmark_budget": payload.get("paperBudget") or payload.get("paper_budget"),
+            "benchmark_budget": payload.get("budget"),
         },
-        "legacy_paper_capital_pool_id": refs["capital_pool_id"],
-        "persona_capital_binding_id": refs["binding_id"],
-        "binding_id": refs["binding_id"],
-        "runtime_id": refs["runtime_id"],
-        "runtime_binding_id": refs["binding_id"],
-        "deployment_plan_id": refs["deployment_plan_id"],
+        # Internal canonical paper pool.  Public DTO projection intentionally
+        # keeps capitalPoolId empty in paper mode.
+        "legacy_paper_capital_pool_id": ids.capital_pool_id,
+        "internal_paper_capital_pool_id": ids.capital_pool_id,
+        "persona_capital_binding_id": ids.persona_capital_binding_id,
+        "registry_id": ids.registry_id,
+        "approval_decision_id": ids.approval_decision_id,
+        "deployment_plan_id": ids.deployment_plan_id,
+        "deployment_saga_id": ids.deployment_saga_id,
         "deployment_stage": "paper",
-        "paper_runtime_state": "running",
+        "paper_runtime_state": (
+            "running"
+            if lifecycle_state == "paper_running"
+            else "failed" if lifecycle_state == "provisioning_failed" else "provisioning"
+        ),
         "live_capital_enabled": False,
         "live_write_enabled": False,
         "order_side_effects_allowed": False,
         "capital_side_effects_allowed": False,
         "governance_required": True,
         "recommended_governance_action": "none",
-        "data_source_status": payload.get("dataSourceStatus") or payload.get("data_source_status") or {
+        "data_source_status": payload.get("dataSourceStatus")
+        or payload.get("data_source_status")
+        or {
             "state": "paper_readback_pending",
             "provider_count": len(payload.get("dataSources") or payload.get("data_sources") or []),
             "provider_status_counts": {},
@@ -42504,177 +45493,456 @@ async def bff_create_persona(
             "order_side_effects_allowed": False,
         },
         "data_sources": payload.get("dataSources") or payload.get("data_sources") or [],
-        "risk_profile": payload.get("riskProfile") or payload.get("risk_profile") or {
+        "risk_profile": payload.get("riskProfile")
+        or payload.get("risk_profile")
+        or {
             "risk_level": risk,
             "max_drawdown": payload.get("maxDrawdown") or payload.get("max_drawdown"),
             "daily_loss_limit": payload.get("dailyLossLimit") or payload.get("daily_loss_limit"),
         },
         "evidence_refs": [
-            f"evidence://persona-create/{persona_id}/request",
-            f"evidence://persona-create/{persona_id}/paper-ledger-binding",
-            f"evidence://persona-create/{persona_id}/paper-runtime-binding",
+            f"evidence://persona-create/{record.persona_id}/request",
+            f"evidence://persona-create/{record.persona_id}/capital-binding",
+            f"evidence://persona-create/{record.persona_id}/deployment-saga",
         ],
     }
-    persona_metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
+    readback_started_at = record.references.get("provisioning_readback_started_at")
+    if isinstance(readback_started_at, str) and readback_started_at.strip():
+        metadata["provisioning_readback_started_at"] = readback_started_at.strip()
+    if runtime_binding_id:
+        metadata["runtime_binding_id"] = runtime_binding_id
+    if runtime_id:
+        metadata["runtime_id"] = runtime_id
+    if record.error:
+        metadata["provisioning_error"] = deepcopy(record.error)
+    if record.compensation:
+        metadata["provisioning_compensation"] = deepcopy(record.compensation)
+    if traits:
+        metadata["traits"] = deepcopy(traits)
+    metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
         {
-            "id": persona_id,
-            "persona_id": persona_id,
-            "name": name,
+            "id": record.persona_id,
+            "persona_id": record.persona_id,
+            "name": str(payload.get("name") or record.normalized_name),
             "mandate": mandate or archetype,
             "strategy_family": strategy_family or archetype,
             "lifecycle_state": lifecycle_state,
             "metadata": {
-                **persona_metadata,
+                **metadata,
                 "owner": owner,
                 "archetype": archetype,
                 "risk_level": risk,
-                **({"traits": traits} if traits else {}),
             },
         },
         reason="persona_created",
     )
-    if dry_run:
-        persona_record = {
-            "id": persona_id,
-            "persona_id": persona_id,
-            "name": name,
-            "mandate": mandate or archetype,
-            "strategy_family": strategy_family or archetype,
-            "lifecycle_state": lifecycle_state,
-            "created_at": snapshot_at,
-            "updated_at": snapshot_at,
-            "created_by": owner,
-            "required_data_sources": json.loads(json.dumps(required_data_sources or [])),
-            "metadata": {
-                **persona_metadata,
-                "owner": owner,
-                "archetype": archetype,
-                "risk_level": risk,
-                **({"traits": traits} if traits else {}),
-            },
-        }
+    return metadata
+
+
+def _persona_create_required_data_sources(payload: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    required = payload.get("required_data_sources") or payload.get("requiredDataSources")
+    market = str(payload.get("market") or "").strip().upper()
+    if not required and market:
+        from read_store import _market_persona_required_data_sources
+
+        required = _market_persona_required_data_sources({"market": market})
+    return json.loads(json.dumps(required or []))
+
+
+def _persona_record_for_provisioning(
+    record: ProvisioningRecord,
+    *,
+    payload: Mapping[str, Any],
+    owner: str,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    canonical_owner = str(record.request_payload.get("requested_by") or owner).strip()
+    ids = deterministic_provisioning_ids(record)
+    archetype = str(payload.get("archetype") or "generalist")
+    risk = _normalize_risk_level(payload.get("risk") or "low")
+    mandate = str(payload.get("mandate") or "").strip() or None
+    strategy_family = str(
+        payload.get("strategy_family") or payload.get("strategyFamily") or ""
+    ).strip() or None
+    raw_traits = payload.get("traits")
+    traits = {
+        key: raw_traits[key]
+        for key in (
+            "instruments",
+            "risk_appetite",
+            "decision_style",
+            "time_horizon",
+            "hard_rules",
+            "persona_voice",
+        )
+        if isinstance(raw_traits, dict) and raw_traits.get(key) not in (None, "")
+    } or None
+    if record.state == "succeeded":
+        lifecycle_state = "paper_running"
+    elif record.state in {"failed", "compensated"}:
+        lifecycle_state = "provisioning_failed"
     else:
-        persona_record = read_store.create_persona(
-            persona_id=persona_id,
-            name=name,
-            actor_id=owner,
-            created_at=snapshot_at,
+        lifecycle_state = "provisioning"
+    metadata = _persona_provisioning_metadata(
+        record,
+        ids=ids,
+        payload=payload,
+        owner=canonical_owner,
+        archetype=archetype,
+        risk=risk,
+        mandate=mandate,
+        strategy_family=strategy_family,
+        traits=traits,
+        lifecycle_state=lifecycle_state,
+    )
+    existing = read_store.get_persona(record.persona_id)
+    if existing is None:
+        persona = read_store.create_persona(
+            persona_id=record.persona_id,
+            name=str(payload.get("name") or record.normalized_name),
+            actor_id=canonical_owner,
+            created_at=record.created_at,
             archetype=archetype,
             lifecycle_state=lifecycle_state,
             risk_level=risk,
             mandate=mandate,
             strategy_family=strategy_family,
             traits=traits,
-            metadata=persona_metadata,
-            required_data_sources=required_data_sources,
+            metadata=metadata,
+            required_data_sources=_persona_create_required_data_sources(payload),
         )
-        read_store.create_persona_binding(
-            binding_id=refs["binding_id"],
-            persona_id=persona_id,
-            capital_pool_id=refs["capital_pool_id"],
-            actor_id=owner,
-            created_at=snapshot_at,
-            role="paper_owner",
-            validity="active",
-            metadata={
-                "capital_mode": "paper",
-                "paper_ledger_id": refs["paper_ledger_id"],
-                "legacy_paper_capital_pool_id": refs["capital_pool_id"],
-                "live_capital_enabled": False,
-                "created_via": "POST /bff/personas",
-            },
-        )
-        read_store.create_deployment_plan(
-            plan_id=refs["deployment_plan_id"],
-            binding_id=refs["binding_id"],
-            artifact_id=refs["artifact_id"],
-            deployment_mode="paper",
-            capital_pool_id=refs["capital_pool_id"],
-            actor_id=owner,
-            created_at=snapshot_at,
-            params={
-                "persona_id": persona_id,
-                "capital_mode": "paper",
-                "paper_ledger_id": refs["paper_ledger_id"],
-                "human_review_required_for_live": True,
-            },
-            locked=True,
-            status="approved",
-        )
-        read_store.create_runtime_binding(
-            runtime_id=refs["runtime_id"],
-            name=f"{name} paper runtime",
-            persona_id=persona_id,
-            binding_id=refs["binding_id"],
-            deployment_plan_id=refs["deployment_plan_id"],
-            runtime_kind="paper",
-            actor_id=owner,
-            created_at=snapshot_at,
-            params={
-                "capital_pool_id": refs["capital_pool_id"],
-                "capital_mode": "paper",
-                "paper_ledger_id": refs["paper_ledger_id"],
-                "live_write_enabled": False,
-                "order_side_effects_allowed": False,
-            },
-            state="running",
-        )
+    else:
+        existing_metadata = existing.get("metadata")
+        existing_metadata = existing_metadata if isinstance(existing_metadata, dict) else {}
+        if (
+            str(existing.get("name") or "").strip()
+            != str(payload.get("name") or record.normalized_name).strip()
+            or str(existing_metadata.get("tenant_id") or record.tenant_id) != record.tenant_id
+        ):
+            raise ProvisioningConflict(
+                "stable Persona identity is already occupied by different tenant/name semantics"
+            )
+        if (
+            record.state == "succeeded"
+            and str(existing.get("lifecycle_state") or "") == "paper_running"
+        ):
+            lifecycle_state = "paper_running"
+        persona = read_store.update_persona(
+            record.persona_id,
+            lifecycle_state=lifecycle_state,
+            metadata=metadata,
+        ) or existing
+    return persona, metadata
+
+
+def _persona_create_response(
+    record: ProvisioningRecord,
+    *,
+    persona: Dict[str, Any],
+    metadata: Dict[str, Any],
+    payload: Mapping[str, Any],
+    snapshot_at: str,
+    ooda_packet: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    ids = deterministic_provisioning_ids(record)
     overlay = _project_persona_dto(
-        persona_record,
+        persona,
         overlay={
             "routedStrategies": int(payload.get("routedStrategies") or 0),
             "successRate": float(payload.get("successRate") or 0.0),
             "capitalMode": "paper",
-            "paperLedgerId": refs["paper_ledger_id"],
-            "paperLedger": persona_metadata["paper_ledger"],
-            "legacyPaperCapitalPoolId": refs["capital_pool_id"],
-            "runtimeId": refs["runtime_id"],
-            "runtimeBindingId": refs["binding_id"],
-            "deploymentPlanId": refs["deployment_plan_id"],
+            "paperLedgerId": metadata["paper_ledger_id"],
+            "paperLedger": metadata["paper_ledger"],
+            "legacyPaperCapitalPoolId": ids.capital_pool_id,
+            "deploymentPlanId": ids.deployment_plan_id,
             "deploymentStage": "paper",
-            "evidenceRefs": list(persona_metadata["evidence_refs"]),
+            "evidenceRefs": list(metadata["evidence_refs"]),
+            "runtimeId": metadata.get("runtime_id"),
+            "runtimeBindingId": metadata.get("runtime_binding_id"),
+            "tenantId": record.tenant_id,
         },
         routed_strategies=0,
+        evaluate_provisioning=False,
     )
-    if dry_run:
+    _PERSONA_BFF_OVERLAY[record.persona_id] = overlay
+    meta: Dict[str, Any] = {
+        "snapshot_at": snapshot_at,
+        "create_flow": "durable_owner_coordinated_provisioning",
+        "provisioning_state": record.state,
+        "provisioning_step": record.current_step,
+        "authoritative_receipt_steps": sorted(record.references),
+        "capital_mode": "paper",
+        "paper_ledger_id": metadata["paper_ledger_id"],
+        "legacy_paper_capital_pool_id": ids.capital_pool_id,
+        "persona_capital_binding_id": ids.persona_capital_binding_id,
+        "runtime_binding_id": metadata.get("runtime_binding_id"),
+        "runtime_id": metadata.get("runtime_id"),
+        "registry_id": ids.registry_id,
+        "approval_decision_id": ids.approval_decision_id,
+        "deployment_plan_id": ids.deployment_plan_id,
+        "deployment_saga_id": ids.deployment_saga_id,
+        "first_evaluation_workflow_id": _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+        "dispatch_admitted": "deployment_dispatch" in record.references,
+        "live_capital_side_effects": False,
+        "human_review_required_for_live": True,
+    }
+    if ooda_packet:
+        meta["ooda_packet_id"] = ooda_packet.get("packet_id")
+        meta["ooda_loop_status"] = ooda_packet.get("status")
+    if record.error:
+        meta["terminal_error"] = deepcopy(record.error)
+    if record.compensation:
+        meta["compensation"] = deepcopy(record.compensation)
+    return {"data": overlay, "meta": meta}
+
+
+def _ensure_persona_ooda_packet(persona_id: str, capital_pool_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        for packet in read_store.list_ooda_packets():
+            if persona_id in [str(value) for value in (packet.get("persona_ids") or [])]:
+                return packet
+        from persona_ooda_bootstrap import bootstrap_persona_ooda_packet  # type: ignore[import]
+
+        return bootstrap_persona_ooda_packet(
+            persona_id,
+            capital_pool_id=capital_pool_id,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _coordinate_persona_create(
+    record: ProvisioningRecord,
+    *,
+    payload: Mapping[str, Any],
+    owner: str,
+) -> Tuple[ProvisioningRecord, Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
+    store = _persona_provisioning_store()
+    active, _ = store.reserve(
+        tenant_id=record.tenant_id,
+        idempotency_key=record.idempotency_key,
+        request_hash=record.request_hash,
+        normalized_name=record.normalized_name,
+        persona_id=record.persona_id,
+        request_payload=record.request_payload,
+    )
+    coordinator = PersonaProvisioningCoordinator(
+        store=store,
+        transport=_PersonaOwnerHttpTransport(),
+        schedule_registrar=_register_persona_cron_required,
+        lease_owner=f"operator-bff:{os.getenv('HOSTNAME', 'local')}:{uuid.uuid4().hex}",
+        lease_seconds=max(
+            30,
+            int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+        ),
+    )
+    try:
+        active = coordinator.coordinate(active)
+    except PersonaProvisioningCoordinationError:
+        # A concurrent replica may hold the lease.  Return only the durable
+        # progress already visible; never manufacture downstream success.
+        latest = store.get(active.tenant_id, active.idempotency_key)
+        if latest is None or latest.state not in {"reserved", "provisioning"}:
+            raise
+        active = latest
+    persona, metadata = _persona_record_for_provisioning(
+        active,
+        payload=payload,
+        owner=owner,
+    )
+    ooda_packet = None
+    if active.state not in {"failed", "compensated"}:
+        ooda_packet = _ensure_persona_ooda_packet(
+            active.persona_id,
+            deterministic_provisioning_ids(active).capital_pool_id,
+        )
+    return active, persona, metadata, ooda_packet
+
+
+@app.post("/bff/personas", status_code=201)
+async def bff_create_persona(
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """Create a real dynamic paper Persona through canonical owner services."""
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "name is required",
+            "Persona name must be a non-empty string",
+            precondition_failed="name",
+        )
+    _persona_create_validate_paper_only(payload)
+
+    requested_owner = str(payload.get("owner") or "").strip()
+    if requested_owner and requested_owner != identity.operator_id:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Persona owner must match the authenticated operator",
+            "Client-supplied owner assertions cannot impersonate another operator",
+            precondition_failed="owner",
+        )
+    tenant = _bff_me_tenant_payload(
+        identity,
+        requested_tenant=str(payload.get("tenantId") or payload.get("tenant_id") or "").strip()
+        or None,
+    )
+    tenant_id = str(tenant["id"])
+    normalized_name = _normalize_persona_create_name(name)
+    canonical_payload = _persona_create_canonical_payload(
+        payload,
+        name=name,
+        tenant_id=tenant_id,
+        requested_by=identity.operator_id,
+    )
+    request_hash = _stable_json_hash(
+        {
+            "route": "POST /bff/personas",
+            "tenant_id": tenant_id,
+            "payload": canonical_payload,
+        }
+    )
+    snapshot_at = utc_now()
+    record = ProvisioningRecord(
+        tenant_id=tenant_id,
+        idempotency_key=resolved_key,
+        request_hash=request_hash,
+        normalized_name=normalized_name,
+        persona_id=_persona_create_identity(tenant_id, normalized_name),
+        request_payload=canonical_payload,
+        created_at=snapshot_at,
+        updated_at=snapshot_at,
+    )
+
+    if _request_dry_run_requested():
+        ids = deterministic_provisioning_ids(record)
+        archetype = str(canonical_payload.get("archetype") or "generalist")
+        risk = _normalize_risk_level(canonical_payload.get("risk") or "low")
+        mandate = str(canonical_payload.get("mandate") or "").strip() or None
+        strategy_family = str(
+            canonical_payload.get("strategy_family")
+            or canonical_payload.get("strategyFamily")
+            or ""
+        ).strip() or None
+        raw_traits = canonical_payload.get("traits")
+        traits = dict(raw_traits) if isinstance(raw_traits, dict) else None
+        metadata = _persona_provisioning_metadata(
+            record,
+            ids=ids,
+            payload=canonical_payload,
+            owner=identity.operator_id,
+            archetype=archetype,
+            risk=risk,
+            mandate=mandate,
+            strategy_family=strategy_family,
+            traits=traits,
+            lifecycle_state="provisioning",
+        )
+        preview_persona = {
+            "id": record.persona_id,
+            "persona_id": record.persona_id,
+            "name": name,
+            "mandate": mandate or archetype,
+            "strategy_family": strategy_family or archetype,
+            "lifecycle_state": "provisioning",
+            "created_at": snapshot_at,
+            "updated_at": snapshot_at,
+            "created_by": identity.operator_id,
+            "required_data_sources": _persona_create_required_data_sources(canonical_payload),
+            "metadata": {
+                **metadata,
+                "owner": identity.operator_id,
+                "archetype": archetype,
+                "risk_level": risk,
+            },
+        }
+        preview = _project_persona_dto(
+            preview_persona,
+            overlay={
+                "capitalMode": "paper",
+                "paperLedgerId": metadata["paper_ledger_id"],
+                "paperLedger": metadata["paper_ledger"],
+                "legacyPaperCapitalPoolId": ids.capital_pool_id,
+                "deploymentPlanId": ids.deployment_plan_id,
+                "deploymentStage": "paper",
+            },
+            routed_strategies=0,
+            evaluate_provisioning=False,
+        )
         return _dry_run_success_response(
-            overlay,
+            preview,
+            status_code=201,
             snapshot_at=snapshot_at,
             idempotency_key=resolved_key,
             evidence_kind="persona.create",
+            extra_meta={
+                "create_flow": "durable_owner_coordinated_provisioning_preview",
+                "mutations_performed": False,
+                "preview_ids": ids.to_dict(),
+                "first_evaluation_workflow_id": _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+            },
         )
-    _PERSONA_BFF_OVERLAY[persona_id] = overlay
 
-    # Wire persona OODA loop: register recurring cron jobs + open OODA packet.
-    cron_registration = _try_register_persona_cron(persona_id)
-    ooda_packet = _try_bootstrap_persona_ooda_packet(persona_id)
+    try:
+        active, persona, metadata, ooda_packet = await asyncio.to_thread(
+            _coordinate_persona_create,
+            record,
+            payload=canonical_payload,
+            owner=identity.operator_id,
+        )
+    except ProvisioningConflict as exc:
+        raise _bff_error(
+            409,
+            ErrorCode.IDEMPOTENCY_CONFLICT,
+            "Persona create conflicts with an existing durable reservation",
+            str(exc),
+            precondition_failed="idempotency_or_tenant_name",
+            suggestion="Replay the original request unchanged or choose a different Persona name",
+        ) from exc
+    except PersonaProvisioningCoordinationError as exc:
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Persona provisioning coordinator is unavailable",
+            str(exc),
+            precondition_failed="provisioning_coordinator",
+            suggestion="Retry the same Idempotency-Key after the active coordinator lease expires",
+        ) from exc
 
-    ooda_meta: Dict[str, Any] = {}
-    if ooda_packet:
-        ooda_meta["ooda_packet_id"] = ooda_packet.get("packet_id")
-        ooda_meta["ooda_loop_status"] = ooda_packet.get("status")
-    if cron_registration:
-        ooda_meta["cron_registration_mode"] = cron_registration.get("mode")
-        ooda_meta["cron_registered_count"] = len(cron_registration.get("registered") or [])
-
-    result = {
-        "data": overlay,
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "create_flow": "one_shot_paper_running",
-            "capital_mode": "paper",
-            "paper_ledger_id": refs["paper_ledger_id"],
-            "legacy_paper_capital_pool_id": refs["capital_pool_id"],
-            "runtime_binding_id": refs["binding_id"],
-            "runtime_id": refs["runtime_id"],
-            "deployment_plan_id": refs["deployment_plan_id"],
-            "live_capital_side_effects": False,
-            "human_review_required_for_live": True,
-            **ooda_meta,
-        },
-    }
-    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
+    response = _persona_create_response(
+        active,
+        persona=persona,
+        metadata=metadata,
+        payload=canonical_payload,
+        snapshot_at=snapshot_at,
+        ooda_packet=ooda_packet,
+    )
+    if active.state in {"failed", "compensated"}:
+        reason = str((active.error or {}).get("terminal_reason") or "downstream provisioning failed")
+        raise _bff_error(
+            502,
+            ErrorCode.UPSTREAM_ERROR,
+            "Persona provisioning failed",
+            reason,
+            precondition_failed=str((active.error or {}).get("failed_step") or "provisioning"),
+            suggestion="Inspect the persisted Persona provisioning receipt before a governed retry",
+            details_extra={
+                "personaId": active.persona_id,
+                "provisioningState": active.state,
+                "provisioningStep": active.current_step,
+                "compensation": active.compensation,
+            },
+        )
+    return response
 
 
 @app.post("/bff/management/personas/create-paper-bundle", status_code=201)
@@ -42684,7 +45952,7 @@ async def bff_create_paper_persona_bundle(
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    """BFF: Create paper persona bundle (atomically creates persona + paper ledger + paper runtime binding + deployment plan)."""
+    """Create a restart-safe paper Persona bundle through the shared coordinator."""
     return await bff_create_persona(
         payload=payload,
         authorization=authorization,
@@ -42733,11 +46001,21 @@ async def bff_get_persona(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
+    caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
+    if overlay and str(overlay.get("tenantId") or "") != caller_tenant:
+        overlay = None
     raw = read_store.get_persona(persona_id)
+    if raw:
+        record_tenant = _persona_record_tenant_id(raw)
+        if record_tenant and record_tenant != caller_tenant:
+            raw = None
+            overlay = None
     detail_surface = None
     if not raw and not overlay:
         raw = _persona_catalog_fallback_record(persona_id)
+        if raw and _persona_record_tenant_id(raw) not in {"", caller_tenant}:
+            raw = None
         if raw:
             detail_surface = _persona_catalog_fallback_surface(snapshot_at)
     if not raw and not overlay:
@@ -42747,8 +46025,13 @@ async def bff_get_persona(
             f"Persona {persona_id} does not exist",
         )
     base = raw or {"persona_id": persona_id, "name": (overlay or {}).get("name")}
-    routed = _routed_strategies_for_persona(persona_id)
-    dto = _project_persona_dto(base, overlay=overlay, routed_strategies=routed)
+    dto = await asyncio.to_thread(
+        lambda: _project_persona_dto(
+            base,
+            overlay=overlay,
+            routed_strategies=_routed_strategies_for_persona(persona_id),
+        )
+    )
     containment = read_store.get_persona_containment(persona_id)
     if containment:
         containment_state = str(containment.get("containment_state") or "frozen")
@@ -42773,6 +46056,31 @@ async def bff_get_persona(
     }
 
 
+_PERSONA_PATCH_SERVER_MANAGED_FIELDS = frozenset({
+    "owner",
+    "state",
+    "status",
+    "lifecycle_state",
+    "lifecycleState",
+    "lifecycleStatus",
+    "paper_runtime_state",
+    "paperRuntimeState",
+    "runtime_id",
+    "runtimeId",
+    "runtime_binding_id",
+    "runtimeBindingId",
+    "capital_mode",
+    "capitalMode",
+    "deployment_stage",
+    "deploymentStage",
+    "created_by",
+    "createdBy",
+    "actor_id",
+    "actorId",
+    "availableActions",
+})
+
+
 @app.patch("/bff/personas/{persona_id}")
 async def bff_patch_persona(
     persona_id: str,
@@ -42785,40 +46093,74 @@ async def bff_patch_persona(
     identity = _extract_identity(authorization)
     _require_operator_role(identity)
     _reject_body_idempotency_key(payload)
+    managed_fields = sorted(_PERSONA_PATCH_SERVER_MANAGED_FIELDS.intersection(payload))
+    if managed_fields:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Persona lifecycle and ownership fields are server-managed",
+            f"Client PATCH cannot mutate: {', '.join(managed_fields)}",
+            precondition_failed=managed_fields[0],
+            suggestion="Use the governed Persona action or promotion workflow.",
+        )
     resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash(
-        {"route": "PATCH /bff/personas/{persona_id}", "id": persona_id, "payload": payload}
-    )
-    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
     raw = read_store.get_persona(persona_id)
     overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
+    caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+    raw_tenant = _persona_record_tenant_id(raw) if raw else ""
+    overlay_tenant = str((overlay or {}).get("tenantId") or "")
+    if raw and raw_tenant not in {"", caller_tenant}:
+        raw = None
+        overlay = None
+    if overlay and overlay_tenant != caller_tenant:
+        overlay = None
+    if raw and not raw_tenant and overlay is None:
+        # Tenantless legacy catalog rows may remain readable, but mutation is
+        # fail-closed until an authoritative tenant owner exists.
+        raw = None
     if not raw and not overlay:
         raise _bff_error(
             404, ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"Persona {persona_id} does not exist",
         )
+    cache_key = ":".join(
+        ("persona-patch", caller_tenant, identity.operator_id, resolved_key)
+    )
+    request_hash = _stable_json_hash(
+        {
+            "route": "PATCH /bff/personas/{persona_id}",
+            "tenant_id": caller_tenant,
+            "operator_id": identity.operator_id,
+            "id": persona_id,
+            "payload": payload,
+        }
+    )
+    cached = _strategy_persona_idempotency_check(cache_key, request_hash)
+    if cached is not None:
+        return cached
     snapshot_at = utc_now()
     base = dict(overlay) if overlay else {}
     if not base:
         routed = _routed_strategies_for_persona(persona_id)
         base = _project_persona_dto(raw or {"persona_id": persona_id}, routed_strategies=routed)
     for field in (
-        "name", "owner", "state", "risk",
+        "name", "risk",
         "archetype", "routedStrategies", "successRate",
-        "availableActions",
     ):
         if field in payload:
             base[field] = payload[field]
-    if "state" in payload:
-        base["state"] = _normalize_lifecycle_state(payload["state"])
     if "risk" in payload:
         base["risk"] = _normalize_risk_level(payload["risk"])
     base["updatedAt"] = snapshot_at
     base["id"] = persona_id
+    base["tenantId"] = caller_tenant
     existing_metadata = dict(raw.get("metadata") if isinstance(raw, dict) and isinstance(raw.get("metadata"), dict) else {})
+    canonical_lifecycle = str(
+        (raw or {}).get("lifecycle_state")
+        or (raw or {}).get("state")
+        or "draft"
+    )
     update_metadata: Dict[str, Any] = {
         "success_rate": float(base.get("successRate") or 0.0),
     }
@@ -42829,11 +46171,11 @@ async def bff_patch_persona(
             "name": str(base.get("name") or persona_id),
             "mandate": str(base.get("archetype") or existing_metadata.get("archetype") or "generalist"),
             "strategy_family": str(base.get("archetype") or existing_metadata.get("archetype") or "generalist"),
-            "lifecycle_state": str(base.get("state") or "draft"),
+            "lifecycle_state": canonical_lifecycle,
             "metadata": {
                 **existing_metadata,
                 **update_metadata,
-                "owner": str(base.get("owner") or identity.operator_id),
+                "owner": str(existing_metadata.get("owner") or identity.operator_id),
                 "archetype": str(base.get("archetype") or "generalist"),
                 "risk_level": str(base.get("risk") or "low"),
             },
@@ -42843,10 +46185,13 @@ async def bff_patch_persona(
     persona_record = read_store.update_persona(
         persona_id,
         name=str(base.get("name") or persona_id),
-        actor_id=str(base.get("owner") or identity.operator_id),
+        actor_id=str(existing_metadata.get("owner") or identity.operator_id),
         updated_at=snapshot_at,
         archetype=str(base.get("archetype") or "generalist"),
-        lifecycle_state=str(base.get("state") or "draft"),
+        # Lifecycle is controller-owned.  Omitting it makes update_persona
+        # re-read and preserve the latest canonical value, avoiding a stale
+        # overlay racing paper_running/provisioning_failed reconciliation.
+        lifecycle_state=None,
         risk_level=str(base.get("risk") or "low"),
         metadata=update_metadata,
     )
@@ -42857,12 +46202,16 @@ async def bff_patch_persona(
             overlay={
                 "routedStrategies": int(base.get("routedStrategies") or routed),
                 "successRate": float(base.get("successRate") or 0.0),
+                "tenantId": caller_tenant,
             },
             routed_strategies=routed,
         )
-    _PERSONA_BFF_OVERLAY[persona_id] = base
-    result = {"data": base, "meta": {"snapshot_at": snapshot_at}}
-    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+    _PERSONA_BFF_OVERLAY[persona_id] = deepcopy(base)
+    result = {"data": deepcopy(base), "meta": {"snapshot_at": snapshot_at}}
+    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[cache_key] = {
+        "request_hash": request_hash,
+        "result": deepcopy(result),
+    }
     return result
 
 
@@ -43563,9 +46912,150 @@ def _pm12_persona_binding_summary(
     }
 
 
+def _pm12_record_freshness_issue(record: Dict[str, Any]) -> Optional[str]:
+    sources = [record]
+    metadata = record.get("metadata")
+    if isinstance(metadata, dict):
+        sources.append(metadata)
+    for source in sources:
+        if source.get("stale") is True or source.get("is_stale") is True:
+            return "stale"
+        if source.get("degraded") is True:
+            return "degraded"
+        for key in (
+            "freshness_status",
+            "heartbeat_status",
+            "data_status",
+            "source_status",
+            "state",
+            "status",
+            "connectivity_status",
+        ):
+            status = str(source.get(key) or "").strip().lower()
+            if status in {"stale", "expired", "lagging", "unavailable"}:
+                return "stale"
+            if status in {
+                "degraded",
+                "partial",
+                "invalid",
+                "disconnected",
+                "offline",
+                "failed",
+                "error",
+            }:
+                return "degraded"
+        for key in ("staleness", "freshness"):
+            marker = source.get(key)
+            if isinstance(marker, str):
+                marker_text = marker.strip().lower()
+                if marker_text in {"stale", "expired", "lagging"}:
+                    return "stale"
+                if marker_text in {"degraded", "partial", "invalid"}:
+                    return "degraded"
+            if not isinstance(marker, dict):
+                continue
+            marker_status = str(
+                marker.get("status")
+                or marker.get("state")
+                or marker.get("freshness_status")
+                or ""
+            ).strip().lower()
+            marker_reason = str(marker.get("reason") or "").strip().lower()
+            if marker_status in {"stale", "expired", "lagging"} or "stale" in marker_reason:
+                return "stale"
+            if marker_status in {"degraded", "partial", "invalid"}:
+                return "degraded"
+            age = _management_number(marker.get("age_seconds"))
+            threshold = _management_number(marker.get("threshold_seconds"))
+            if age is not None and threshold is not None and age > threshold:
+                return "stale"
+    return None
+
+
+def _pm12_runtime_identity_aliases(runtime: Dict[str, Any]) -> Set[str]:
+    return {
+        str(value or "").strip()
+        for value in (
+            runtime.get("id"),
+            runtime.get("runtime_id"),
+            runtime.get("runtime_binding_id"),
+            runtime.get("binding_id"),
+        )
+        if str(value or "").strip()
+    }
+
+
+def _pm12_session_runtime_aliases(session: Dict[str, Any]) -> Set[str]:
+    return {
+        str(value or "").strip()
+        for value in (
+            session.get("runtime_id"),
+            session.get("runtime_binding_id"),
+            session.get("execution_runtime_id"),
+        )
+        if str(value or "").strip()
+    }
+
+
+def _pm12_runtime_session_resolution(
+    persona_id: str,
+    runtime: Dict[str, Any],
+) -> tuple[Optional[Dict[str, Any]], str]:
+    if not runtime:
+        return None, "missing_runtime"
+    sessions = [
+        session
+        for session in (read_store.get_sessions_for_persona(persona_id) or [])
+        if isinstance(session, dict)
+    ]
+    runtime_aliases = _pm12_runtime_identity_aliases(runtime)
+    matching = [
+        session
+        for session in sessions
+        if _pm12_session_runtime_aliases(session).intersection(runtime_aliases)
+    ]
+    if not matching:
+        if any(_pm12_session_runtime_aliases(session) for session in sessions):
+            return None, "identity_mismatch"
+        return None, "missing"
+
+    ended = [
+        session
+        for session in matching
+        if session.get("ended_at") not in (None, "")
+        or str(session.get("status") or session.get("state") or "").strip().lower()
+        in {"ended", "closed", "completed", "stopped", "terminated", "expired"}
+    ]
+    candidates = [session for session in matching if session not in ended]
+    stale = [session for session in candidates if _pm12_record_freshness_issue(session)]
+    candidates = [session for session in candidates if session not in stale]
+    active = [
+        session
+        for session in candidates
+        if str(session.get("status") or session.get("state") or "").strip().lower()
+        in {"active", "running"}
+        and session.get("active") is not False
+    ]
+    if len(active) == 1:
+        return active[0], "active"
+    if len(active) > 1:
+        return None, "identity_mismatch"
+    if stale:
+        return None, "stale"
+    if ended:
+        return None, "ended"
+    return None, "inactive"
+
+
 def _pm12_persona_session_summary(persona_id: str) -> Dict[str, Any]:
     sessions = read_store.get_sessions_for_persona(persona_id) or []
-    active = [s for s in sessions if str(s.get("status") or "").lower() == "active"]
+    active = [
+        session
+        for session in sessions
+        if str(session.get("status") or "").lower() == "active"
+        and session.get("ended_at") in (None, "")
+        and _pm12_record_freshness_issue(session) is None
+    ]
     return {
         "total": len(sessions),
         "active": len(active),
@@ -43778,6 +47268,18 @@ def _pm12_persona_runtime_ids(
     *,
     telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
 ) -> List[str]:
+    if "runtime_resolution" in row:
+        if str(row.get("runtime_resolution") or "") != "active":
+            return []
+        authoritative_ids = [
+            *(row.get("runtime_ids") if isinstance(row.get("runtime_ids"), list) else []),
+            row.get("runtime_id"),
+        ]
+        return list(dict.fromkeys(
+            str(value or "").strip()
+            for value in authoritative_ids
+            if str(value or "").strip()
+        ))
     bindings = row.get("binding_summary") if isinstance(row.get("binding_summary"), dict) else {}
     sessions = row.get("session_summary") if isinstance(row.get("session_summary"), dict) else {}
     if not sessions:
@@ -43838,6 +47340,31 @@ def _pm12_telemetry_record_timestamp(record: Dict[str, Any]) -> Optional[datetim
     return None
 
 
+def _pm12_finite_number(value: Any) -> Optional[float]:
+    parsed = _management_number(value)
+    if parsed is None or not math.isfinite(parsed):
+        return None
+    return parsed
+
+
+def _pm12_telemetry_record_resolution(
+    record: Dict[str, Any],
+    expected_runtime_id: str,
+) -> str:
+    declared_runtime_id = str(
+        record.get("runtime_id")
+        or record.get("runtimeId")
+        or record.get("execution_runtime_id")
+        or ""
+    ).strip()
+    if declared_runtime_id and declared_runtime_id != expected_runtime_id:
+        return "identity_mismatch"
+    freshness_issue = _pm12_record_freshness_issue(record)
+    if freshness_issue is not None:
+        return freshness_issue
+    return "fresh"
+
+
 def _pm12_telemetry_metrics_from_records(
     runtime_ids: List[str],
     telemetry: List[Dict[str, Any]],
@@ -43850,7 +47377,9 @@ def _pm12_telemetry_metrics_from_records(
     pnl_values = [
         value
         for value in (
-            _management_first_float(item, "pnl", "summary.total_pnl", "summary.pnl")
+            _pm12_finite_number(
+                _management_first_float(item, "pnl", "summary.total_pnl", "summary.pnl")
+            )
             for item in telemetry
         )
         if value is not None
@@ -43858,7 +47387,14 @@ def _pm12_telemetry_metrics_from_records(
     drawdown_values = [
         value
         for value in (
-            _management_first_float(item, "drawdown", "max_drawdown", "summary.max_drawdown")
+            _pm12_finite_number(
+                _management_first_float(
+                    item,
+                    "drawdown",
+                    "max_drawdown",
+                    "summary.max_drawdown",
+                )
+            )
             for item in telemetry
         )
         if value is not None
@@ -43866,7 +47402,9 @@ def _pm12_telemetry_metrics_from_records(
     fill_rate_values = [
         value
         for value in (
-            _management_first_float(item, "fill_rate", "summary.fill_rate")
+            _pm12_finite_number(
+                _management_first_float(item, "fill_rate", "summary.fill_rate")
+            )
             for item in telemetry
         )
         if value is not None
@@ -43874,11 +47412,13 @@ def _pm12_telemetry_metrics_from_records(
     slippage_values = [
         value
         for value in (
-            _management_first_float(
-                item,
-                "avg_slippage_bps",
-                "summary.avg_slippage_bps",
-                "summary.slippage_bps",
+            _pm12_finite_number(
+                _management_first_float(
+                    item,
+                    "avg_slippage_bps",
+                    "summary.avg_slippage_bps",
+                    "summary.slippage_bps",
+                )
             )
             for item in telemetry
         )
@@ -43887,13 +47427,44 @@ def _pm12_telemetry_metrics_from_records(
     trade_values = [
         value
         for value in (
-            _management_first_float(item, "total_trades", "summary.total_trades")
+            _pm12_finite_number(
+                _management_first_float(item, "total_trades", "summary.total_trades")
+            )
             for item in telemetry
         )
         if value is not None
     ]
     latest_timestamp = _pm12_telemetry_record_timestamp(telemetry[0]) if telemetry else None
     latest_timestamp_iso = _pm12_iso_z(latest_timestamp) if latest_timestamp else None
+    telemetry_evidence_refs: List[Dict[str, Any]] = []
+    for runtime_id in runtime_ids:
+        runtime_records = [
+            record
+            for record in telemetry
+            if str(record.get("runtime_id") or "").strip() == runtime_id
+        ]
+        if not runtime_records:
+            continue
+        observed_at = _pm12_latest_timestamp(
+            runtime_records,
+            (
+                "collected_at",
+                "collectedAt",
+                "bucket_start",
+                "bucketStart",
+                "timestamp",
+                "updated_at",
+                "updatedAt",
+                "created_at",
+                "createdAt",
+            ),
+        )
+        telemetry_evidence_refs.append({
+            "ref_id": f"telemetry-summary:{runtime_id}",
+            "source_type": "telemetry_summary",
+            "runtime_id": runtime_id,
+            "observed_at": observed_at,
+        })
     return {
         "runtime_ids": runtime_ids,
         "runtime_count": len(runtime_ids),
@@ -43904,6 +47475,7 @@ def _pm12_telemetry_metrics_from_records(
         "avg_slippage_bps": _management_avg(slippage_values),
         "total_trades": int(sum(trade_values)) if trade_values else 0,
         "latest_telemetry_at": latest_timestamp_iso,
+        "telemetry_evidence_refs": telemetry_evidence_refs,
     }
 
 
@@ -43929,12 +47501,16 @@ def _pm12_persona_telemetry_records(
                 telemetry_cache[runtime_id] = summary
         if not isinstance(summary, dict):
             continue
+        if _pm12_telemetry_record_resolution(summary, runtime_id) != "fresh":
+            continue
         candidates: List[Dict[str, Any]] = [dict(summary)]
         for key in _PM12_TELEMETRY_HISTORY_KEYS:
             raw_history = summary.get(key)
             if isinstance(raw_history, list):
                 candidates.extend(dict(item) for item in raw_history if isinstance(item, dict))
         for candidate in candidates:
+            if _pm12_telemetry_record_resolution(candidate, runtime_id) != "fresh":
+                continue
             candidate.setdefault("runtime_id", runtime_id)
             dedupe_key = (
                 str(candidate.get("runtime_id") or ""),
@@ -43961,18 +47537,37 @@ def _pm12_persona_telemetry_records(
 def _pm12_persona_telemetry_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
     telemetry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
     runtime_ids = _pm12_persona_runtime_ids(row, telemetry_cache=telemetry_cache)
-    return _pm12_telemetry_metrics_from_records(
+    records = [
+        record
+        for record in _pm12_persona_telemetry_records(
+            row,
+            runtime_ids=runtime_ids,
+            telemetry_cache=telemetry_cache,
+        )
+        if isinstance(record, dict)
+    ]
+    metrics = _pm12_telemetry_metrics_from_records(
         runtime_ids,
-        [
-            record
-            for record in _pm12_persona_telemetry_records(
-                row,
-                runtime_ids=runtime_ids,
-                telemetry_cache=telemetry_cache,
-            )
-            if isinstance(record, dict)
-        ],
+        records,
     )
+    resolutions = [
+        _pm12_telemetry_record_resolution(summary, runtime_id)
+        for runtime_id in runtime_ids
+        for summary in [telemetry_cache.get(runtime_id)]
+        if isinstance(summary, dict)
+    ]
+    if records:
+        telemetry_resolution = "fresh"
+    elif "identity_mismatch" in resolutions:
+        telemetry_resolution = "identity_mismatch"
+    elif "stale" in resolutions:
+        telemetry_resolution = "stale"
+    elif "degraded" in resolutions:
+        telemetry_resolution = "degraded"
+    else:
+        telemetry_resolution = "missing"
+    metrics["telemetry_resolution"] = telemetry_resolution
+    return metrics
 
 
 def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) -> Dict[str, float]:
@@ -44178,7 +47773,7 @@ def _pm12_quarter_evidence_refs(
 def _pm12_public_quarter_evidence_refs(
     identity: OperatorIdentity,
     quarter_window: Dict[str, Any],
-) -> tuple[List[Dict[str, Any]], int, bool]:
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, bool]:
     raw_evidence_refs = read_store.list_evidence_refs()
     evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
     quarter_evidence_refs = (
@@ -44201,6 +47796,7 @@ def _pm12_public_quarter_evidence_refs(
             for item in processed_evidence_refs
             if isinstance(item, dict)
         ],
+        quarter_evidence_refs,
         redacted_count,
         evidence_dataset_available,
     )
@@ -44282,7 +47878,7 @@ def _pm12_quarterly_ranking_items(
         persona_id = str(item.get("persona_id") or "")
         quarter = quarter_window["quarter"]
         gov_state = _pm12_quarterly_ranking_governance_state(persona_id, quarter)
-        items.append({
+        ranking_item = {
             **item,
             "rank": rank,
             "score": score,
@@ -44294,7 +47890,11 @@ def _pm12_quarterly_ranking_items(
             "period": "quarter",
             "criteria": "overall",
             "governance_state": gov_state,
-        })
+        }
+        ranking_item["allocation_policy_input"] = build_pm12_allocation_policy_input(
+            ranking_item
+        )
+        items.append(ranking_item)
     return items
 
 
@@ -44426,9 +48026,11 @@ def _pm12_quarterly_drilldown_payload(
         "total_weighted_contribution": total_weighted,
         "evidence_ref_count": len(evidence_refs),
         "basis": item.get("basis") or formula["basis"],
+        "ranking_snapshot_id": item.get("ranking_snapshot_id"),
     }
     return {
         "id": f"pm12-quarterly-ranking-drilldown-{quarter_window['quarter'].lower()}-{persona_id}",
+        "ranking_snapshot_id": item.get("ranking_snapshot_id"),
         "quarter": quarter_window["quarter"],
         "quarter_window": quarter_window,
         "persona_id": persona_id,
@@ -44496,74 +48098,995 @@ def _pm12_recommendation_action_ids(item: Dict[str, Any]) -> List[str]:
     ]
 
 
-def _enrich_persona_item_with_bindings(item: Dict[str, Any]) -> Dict[str, Any]:
+def _pm12_record_lifecycle_is_active(
+    record: Dict[str, Any],
+    *,
+    fields: tuple[str, ...],
+    active_values: Set[str],
+) -> bool:
+    if _pm12_record_freshness_issue(record) is not None:
+        return False
+    if any(
+        record.get(field) not in (None, "")
+        for field in ("retired_at", "ended_at", "terminated_at", "deleted_at")
+    ):
+        return False
+    now = datetime.now(timezone.utc)
+    effective_from = _audit_datetime(record.get("effective_from"))
+    effective_to = _audit_datetime(record.get("effective_to"))
+    if effective_from is not None and effective_from > now:
+        return False
+    if effective_to is not None and effective_to <= now:
+        return False
+    declared = [
+        str(record.get(field) or "").strip().lower()
+        for field in fields
+        if record.get(field) not in (None, "")
+    ]
+    return bool(declared) and all(value in active_values for value in declared)
+
+
+def _pm12_binding_runtime_context(
+    *,
+    persona_id: str,
+    item: Dict[str, Any],
+    bindings: List[Dict[str, Any]],
+    runtimes: List[Dict[str, Any]],
+) -> tuple[Dict[str, Any], Dict[str, Any], str]:
+    metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
+    declared_binding_ids = {
+        str(value or "").strip()
+        for value in (
+            item.get("binding_id"),
+            item.get("persona_capital_binding_id"),
+            (item.get("capital_binding") or {}).get("id")
+            if isinstance(item.get("capital_binding"), dict)
+            else None,
+        )
+        if str(value or "").strip()
+    }
+    declared_sleeve_id = str(
+        item.get("capital_sleeve_id") or item.get("sleeve_id") or ""
+    ).strip()
+    declared_runtime_ids = {
+        str(value or "").strip()
+        for value in [
+            *(item.get("runtime_ids") if isinstance(item.get("runtime_ids"), list) else []),
+            *(metrics.get("runtime_ids") if isinstance(metrics.get("runtime_ids"), list) else []),
+            item.get("runtime_id"),
+            item.get("runtime_binding_id"),
+        ]
+        if str(value or "").strip()
+    }
+    active_bindings = [
+        record
+        for record in bindings
+        if _pm12_record_lifecycle_is_active(
+            record,
+            fields=("status", "validity"),
+            active_values={"active", "ready", "bound"},
+        )
+    ]
+    active_runtimes = [
+        record
+        for record in runtimes
+        if _pm12_record_lifecycle_is_active(
+            record,
+            fields=("status", "state"),
+            active_values={"active", "running", "idle"},
+        )
+    ]
+    declared_runtime_records = [
+        record
+        for record in runtimes
+        if str(record.get("runtime_id") or record.get("runtime_binding_id") or record.get("id") or "").strip()
+        in declared_runtime_ids
+    ]
+    declared_runtime_matches = [
+        record
+        for record in declared_runtime_records
+        if _pm12_record_lifecycle_is_active(
+            record,
+            fields=("status", "state"),
+            active_values={"active", "running", "idle"},
+        )
+    ]
+    declared_runtime = declared_runtime_matches[0] if len(declared_runtime_matches) == 1 else {}
+    declared_runtime_identity_record = (
+        declared_runtime
+        or (declared_runtime_records[0] if len(declared_runtime_records) == 1 else {})
+    )
+    declared_runtime_binding_id = str(
+        _persona_fleet_record_value(
+            declared_runtime_identity_record,
+            "persona_capital_binding_id",
+            "binding_id",
+        )
+        or ""
+    ).strip()
+
+    all_explicit_matches = [
+        record
+        for record in bindings
+        if {
+            str(record.get("id") or "").strip(),
+            str(record.get("binding_id") or "").strip(),
+            str(record.get("persona_capital_binding_id") or "").strip(),
+        }.intersection(declared_binding_ids)
+    ]
+    if not all_explicit_matches and declared_sleeve_id:
+        all_explicit_matches = [
+            record
+            for record in bindings
+            if str(
+                _persona_fleet_record_value(
+                    record,
+                    "capital_sleeve_id",
+                    "capitalSleeveId",
+                    "sleeve_id",
+                    "sleeveId",
+                )
+                or ""
+            ).strip()
+            == declared_sleeve_id
+        ]
+    if not all_explicit_matches and declared_runtime_binding_id:
+        all_explicit_matches = [
+            record
+            for record in bindings
+            if declared_runtime_binding_id
+            in {
+                str(record.get("id") or "").strip(),
+                str(record.get("binding_id") or "").strip(),
+                str(record.get("persona_capital_binding_id") or "").strip(),
+            }
+        ]
+    explicit_matches = [
+        record
+        for record in all_explicit_matches
+        if _pm12_record_lifecycle_is_active(
+            record,
+            fields=("status", "validity"),
+            active_values={"active", "ready", "bound"},
+        )
+    ]
+    binding_identity_declared = bool(
+        declared_binding_ids or declared_sleeve_id or declared_runtime_binding_id
+    )
+    if len(all_explicit_matches) > 1:
+        binding = {}
+        binding_resolution = "ambiguous"
+    elif len(all_explicit_matches) == 1 and len(explicit_matches) == 1:
+        binding = explicit_matches[0]
+        binding_resolution = "explicit"
+    elif all_explicit_matches:
+        binding = {}
+        binding_resolution = "inactive"
+    elif binding_identity_declared:
+        binding = {}
+        binding_resolution = "binding_mismatch"
+    elif len(active_bindings) == 1:
+        binding = active_bindings[0]
+        binding_resolution = "single"
+    elif active_bindings:
+        binding = {}
+        binding_resolution = "ambiguous"
+    elif bindings:
+        binding = {}
+        binding_resolution = "inactive"
+    else:
+        binding = {}
+        binding_resolution = "missing"
+
+    selected_binding_ids = {
+        str(value or "").strip()
+        for record in ([binding] if binding else [])
+        for value in (
+            record.get("id"),
+            record.get("binding_id"),
+            record.get("persona_capital_binding_id"),
+        )
+        if str(value or "").strip()
+    }
+
+    if len(declared_runtime_matches) > 1:
+        runtime_candidates: List[Dict[str, Any]] = []
+        binding_resolution = f"{binding_resolution}_runtime_ambiguous"
+    elif declared_runtime:
+        runtime_candidates = [declared_runtime]
+    elif binding:
+        runtime_candidates = [
+            record
+            for record in active_runtimes
+            if str(
+                _persona_fleet_record_value(
+                    record,
+                    "persona_capital_binding_id",
+                    "binding_id",
+                )
+                or ""
+            ).strip()
+            in selected_binding_ids
+        ]
+    else:
+        runtime_candidates = [
+            record
+            for record in active_runtimes
+            if str(record.get("persona_id") or "").strip() == persona_id
+        ]
+
+    if (
+        len(declared_runtime_records) > len(declared_runtime_matches)
+        and "inactive" not in binding_resolution
+    ):
+        binding_resolution = f"{binding_resolution}_runtime_inactive"
+
+    persona_runtime_candidates = [
+        record
+        for record in runtime_candidates
+        if not str(record.get("persona_id") or "").strip()
+        or str(record.get("persona_id") or "").strip() == persona_id
+    ]
+    if len(persona_runtime_candidates) == 1:
+        runtime = persona_runtime_candidates[0]
+    elif persona_runtime_candidates:
+        runtime = {}
+        if "runtime_ambiguous" not in binding_resolution:
+            binding_resolution = f"{binding_resolution}_runtime_ambiguous"
+    else:
+        runtime = {}
+
+    runtime_binding_id = str(
+        _persona_fleet_record_value(
+            runtime,
+            "persona_capital_binding_id",
+            "binding_id",
+        )
+        or ""
+    ).strip()
+    if binding and runtime_binding_id and runtime_binding_id not in selected_binding_ids:
+        runtime = {}
+        binding_resolution = "binding_mismatch"
+    elif not binding and runtime_binding_id:
+        active_binding_ids = {
+            str(value or "").strip()
+            for record in active_bindings
+            for value in (
+                record.get("id"),
+                record.get("binding_id"),
+                record.get("persona_capital_binding_id"),
+            )
+            if str(value or "").strip()
+        }
+        if runtime_binding_id not in active_binding_ids:
+            runtime = {}
+            binding_resolution = "binding_mismatch"
+    if binding and runtime:
+        binding_metadata = (
+            binding.get("metadata")
+            if isinstance(binding.get("metadata"), dict)
+            else {}
+        )
+        allowed_scope = str(
+            binding.get("allowed_deployment_scope")
+            or binding_metadata.get("allowed_deployment_scope")
+            or ""
+        ).strip().lower()
+        runtime_mode = str(
+            runtime.get("deployment_mode") or ""
+        ).strip().lower()
+        scope_rank = {"paper": 1, "canary": 2, "live": 3}
+        if runtime_mode in {"canary", "live"} and allowed_scope not in scope_rank:
+            binding_resolution = "binding_mismatch"
+        elif (
+            allowed_scope in scope_rank
+            and runtime_mode in scope_rank
+            and scope_rank[runtime_mode] > scope_rank[allowed_scope]
+        ):
+            binding_resolution = "binding_mismatch"
+    return binding, runtime, binding_resolution
+
+
+def _pm12_evidence_ref_key(ref: Any) -> str:
+    if isinstance(ref, dict):
+        for key in ("ref_id", "refId", "id", "source_ref", "route_href"):
+            value = str(ref.get(key) or "").strip()
+            if value:
+                return value
+        return json.dumps(ref, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return str(ref or "").strip()
+
+
+def _pm12_merge_evidence_refs(*groups: Any) -> List[Any]:
+    merged: List[Any] = []
+    seen: Set[str] = set()
+    for group in groups:
+        if not isinstance(group, list):
+            continue
+        for ref in group:
+            key = _pm12_evidence_ref_key(ref)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(json.loads(json.dumps(ref)))
+    return merged
+
+
+_PM12_RANKING_SNAPSHOT_ITEM_FIELDS = (
+    "persona_id",
+    "rank",
+    "score",
+    "overall_score",
+    "tier",
+    "tier_id",
+    "formula_version",
+    "allocation_policy_input",
+    "components",
+    "metrics",
+    "stage",
+    "deployment_stage",
+    "capital_mode",
+    "capital_scope",
+    "capital_scope_id",
+    "capital_pool_id",
+    "capital_sleeve_id",
+    "paper_ledger_id",
+    "current_weight",
+    "target_weight",
+    "delta",
+    "current_weight_source",
+    "binding_state",
+    "binding_resolution",
+    "runtime_resolution",
+    "session_resolution",
+    "telemetry_resolution",
+    "binding_ids",
+    "runtime_ids",
+    "strategy_ids",
+    "capital_pool_ids",
+    "sleeve_ids",
+    "artifact_ids",
+    "broker_ids",
+    "eligible",
+    "exclusion_codes",
+    "exclusion_reasons",
+    "evidence_coverage",
+    "evidence_ref_ids",
+    "source_confidence",
+)
+
+
+def _pm12_ranking_snapshot_payload_items(
+    items: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    set_like_fields = {
+        "binding_ids",
+        "runtime_ids",
+        "strategy_ids",
+        "capital_pool_ids",
+        "sleeve_ids",
+        "artifact_ids",
+        "broker_ids",
+        "exclusion_codes",
+        "exclusion_reasons",
+    }
+    payload_items: List[Dict[str, Any]] = []
+    for item in items:
+        payload_item: Dict[str, Any] = {}
+        for field in _PM12_RANKING_SNAPSHOT_ITEM_FIELDS:
+            if field not in item:
+                continue
+            if field == "evidence_ref_ids":
+                payload_item[field] = sorted(
+                    str(value).strip()
+                    for value in (
+                        item.get("_snapshot_evidence_ref_ids")
+                        or item.get(field)
+                        or []
+                    )
+                    if str(value).strip()
+                )
+            elif field in set_like_fields and isinstance(item.get(field), list):
+                payload_item[field] = sorted(
+                    item.get(field) or [],
+                    key=lambda value: json.dumps(
+                        value,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=True,
+                    ),
+                )
+            elif field == "metrics" and isinstance(item.get(field), dict):
+                metrics = json.loads(json.dumps(item.get(field)))
+                for nested_field in ("runtime_ids", "telemetry_evidence_refs"):
+                    if isinstance(metrics.get(nested_field), list):
+                        metrics[nested_field] = sorted(
+                            metrics[nested_field],
+                            key=lambda value: json.dumps(
+                                value,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                                ensure_ascii=True,
+                            ),
+                        )
+                payload_item[field] = metrics
+            else:
+                payload_item[field] = item.get(field)
+        payload_items.append(payload_item)
+    payload_items.sort(
+        key=lambda item: (
+            (
+                int(item.get("rank"))
+                if isinstance(item.get("rank"), int)
+                or str(item.get("rank") or "").isdigit()
+                else 10**9
+            ),
+            str(item.get("persona_id") or ""),
+        )
+    )
+    return payload_items
+
+
+def _pm12_ranking_snapshot_content(
+    items: List[Dict[str, Any]],
+    *,
+    surface: str,
+    period: str,
+) -> Dict[str, Any]:
+    return {
+        "surface": surface,
+        "period": period,
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+        "items": _pm12_ranking_snapshot_payload_items(items),
+    }
+
+
+def _pm12_ranking_snapshot_id(
+    items: List[Dict[str, Any]],
+    *,
+    surface: str,
+    period: str,
+) -> str:
+    digest = _stable_json_hash(
+        _pm12_ranking_snapshot_content(items, surface=surface, period=period)
+    )
+    clean_period = re.sub(r"[^a-z0-9]+", "-", str(period or "current").strip().lower()).strip("-")
+    return f"ranking-{surface}-{clean_period or 'current'}-{digest[:24]}"
+
+
+def _pm12_attach_ranking_snapshot(
+    items: List[Dict[str, Any]],
+    *,
+    surface: str,
+    period: str,
+) -> tuple[List[Dict[str, Any]], str]:
+    content = _pm12_ranking_snapshot_content(items, surface=surface, period=period)
+    content_digest = _stable_json_hash(content)
+    clean_period = re.sub(
+        r"[^a-z0-9]+",
+        "-",
+        str(period or "current").strip().lower(),
+    ).strip("-")
+    snapshot_id = (
+        f"ranking-{surface}-{clean_period or 'current'}-{content_digest[:24]}"
+    )
+    evidence_assertion_digests: Dict[str, List[str]] = {}
+    for item in items:
+        persona_id = str(item.get("persona_id") or "").strip()
+        if not persona_id:
+            continue
+        evidence_assertion_digests.setdefault(persona_id, []).append(
+            _stable_json_hash(item.get("evidence_refs") or [])
+        )
+    read_store.put_ranking_snapshot({
+        "ranking_snapshot_id": snapshot_id,
+        "surface": surface,
+        "period": period,
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
+        "content_digest": content_digest,
+        "items": content["items"],
+        "evidence_assertion_digests": evidence_assertion_digests,
+        "created_at": utc_now(),
+    })
+    return (
+        [
+            {
+                **{
+                    key: value
+                    for key, value in item.items()
+                    if key != "_snapshot_evidence_ref_ids"
+                },
+                "ranking_snapshot_id": snapshot_id,
+            }
+            for item in items
+        ],
+        snapshot_id,
+    )
+
+
+def _pm12_attach_ranking_evidence(
+    items: List[Dict[str, Any]],
+    public_evidence_refs: List[Dict[str, Any]],
+    *,
+    canonical_evidence_refs: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    canonical_refs = canonical_evidence_refs if canonical_evidence_refs is not None else public_evidence_refs
+    public_by_id = {
+        _pm12_evidence_ref_key(ref): ref
+        for ref in public_evidence_refs
+        if _pm12_evidence_ref_key(ref)
+    }
+    canonical_ids_by_entity: Dict[tuple[str, str], List[str]] = {}
+    for ref in canonical_refs:
+        linked = (
+            ref.get("linked_object_summary")
+            if isinstance(ref.get("linked_object_summary"), dict)
+            else {}
+        )
+        entity_key = (
+            str(linked.get("entity_type") or "").strip().lower(),
+            str(linked.get("entity_ref") or "").strip(),
+        )
+        ref_id = _pm12_evidence_ref_key(ref)
+        if all(entity_key) and ref_id:
+            canonical_ids_by_entity.setdefault(entity_key, []).append(ref_id)
+    enriched: List[Dict[str, Any]] = []
+    for item in items:
+        linked_entities = {
+            ("persona", str(item.get("persona_id") or "").strip()),
+            *(('runtime', str(value).strip()) for value in item.get("runtime_ids") or []),
+            *(('runtime_binding', str(value).strip()) for value in item.get("runtime_ids") or []),
+            *(('persona_binding', str(value).strip()) for value in item.get("binding_ids") or []),
+            *(('persona_capital_binding', str(value).strip()) for value in item.get("binding_ids") or []),
+            *(('strategy', str(value).strip()) for value in item.get("strategy_ids") or []),
+            *(('strategy_spec', str(value).strip()) for value in item.get("strategy_ids") or []),
+            *(('artifact', str(value).strip()) for value in item.get("artifact_ids") or []),
+            *(('capital_pool', str(value).strip()) for value in item.get("capital_pool_ids") or []),
+            *(('capital_sleeve', str(value).strip()) for value in item.get("sleeve_ids") or []),
+            ("paper_ledger", str(item.get("paper_ledger_id") or "").strip()),
+        }
+        linked_entities = {
+            (entity_type, entity_ref)
+            for entity_type, entity_ref in linked_entities
+            if entity_ref
+        }
+        canonical_ref_ids = sorted({
+            ref_id
+            for entity_key in linked_entities
+            for ref_id in canonical_ids_by_entity.get(entity_key, [])
+        })
+        telemetry_refs = list(item.get("evidence_refs") or [])
+        snapshot_evidence_ref_ids = sorted({
+            *(_pm12_evidence_ref_key(ref) for ref in telemetry_refs),
+            *canonical_ref_ids,
+        } - {""})
+        visible_scoped_refs = [
+            public_by_id[ref_id]
+            for ref_id in canonical_ref_ids
+            if ref_id in public_by_id
+        ]
+        visible_refs = _pm12_merge_evidence_refs(
+            telemetry_refs,
+            visible_scoped_refs,
+        )
+        enriched.append({
+            **item,
+            "evidence_refs": visible_refs,
+            "evidence_ref_ids": sorted({
+                _pm12_evidence_ref_key(ref)
+                for ref in visible_refs
+                if _pm12_evidence_ref_key(ref)
+            }),
+            "_snapshot_evidence_ref_ids": snapshot_evidence_ref_ids,
+        })
+    return enriched
+
+
+def _enrich_persona_item_with_bindings(
+    item: Dict[str, Any],
+    *,
+    bindings: Optional[List[Dict[str, Any]]] = None,
+    runtimes: Optional[List[Dict[str, Any]]] = None,
+    persona: Optional[Dict[str, Any]] = None,
+    league_entry: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
     if not persona_id:
         return item
 
     enriched = dict(item)
-    try:
-        bindings = read_store.list_bindings(persona_id=persona_id) or []
-    except Exception:
-        bindings = []
+    if bindings is None:
+        try:
+            bindings = read_store.list_bindings(persona_id=persona_id) or []
+        except Exception:
+            bindings = []
+    if runtimes is None:
+        try:
+            runtimes = read_store.list_runtime_bindings() or []
+        except Exception:
+            runtimes = []
+    if persona is None:
+        try:
+            persona = read_store.get_persona(persona_id) or {}
+        except Exception:
+            persona = {}
+    if league_entry is None:
+        try:
+            league_entry = read_store.get_persona_league_entry(persona_id) or {}
+        except Exception:
+            league_entry = {}
 
-    try:
-        runtimes = read_store.list_runtime_bindings() or []
-        runtimes = [r for r in runtimes if str(r.get("persona_id")) == persona_id]
-    except Exception:
-        runtimes = []
+    raw_metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+    binding_context_item = {
+        **item,
+        # Session observations may locate candidate records, but they cannot
+        # choose an authoritative RuntimeBinding.
+        "runtime_ids": [],
+        "binding_id": (
+            league_entry.get("binding_id")
+            or league_entry.get("persona_capital_binding_id")
+            or raw_metadata.get("binding_id")
+            or raw_metadata.get("persona_capital_binding_id")
+            or item.get("binding_id")
+        ),
+        "runtime_binding_id": (
+            league_entry.get("runtime_binding_id")
+            or raw_metadata.get("runtime_binding_id")
+            or item.get("runtime_binding_id")
+        ),
+        "capital_sleeve_id": (
+            league_entry.get("capital_sleeve_id")
+            or raw_metadata.get("capital_sleeve_id")
+            or item.get("capital_sleeve_id")
+        ),
+        "deployment_stage": (
+            league_entry.get("deployment_stage")
+            or raw_metadata.get("deployment_stage")
+            or raw_metadata.get("capital_mode")
+            or item.get("deployment_stage")
+        ),
+    }
+    binding, runtime, binding_resolution = _pm12_binding_runtime_context(
+        persona_id=persona_id,
+        item=binding_context_item,
+        bindings=bindings,
+        runtimes=runtimes,
+    )
+    runtime_mode = str(runtime.get("deployment_mode") or "").strip().lower()
+    runtime_mode = {
+        "paper_running": "paper",
+        "canary_running": "canary",
+        "live_running": "live",
+    }.get(runtime_mode, runtime_mode)
+    if runtime and runtime_mode in _PERSONA_FLEET_RUNNING_STAGE_STATES:
+        runtime_resolution = "active"
+    elif runtime:
+        runtime_resolution = "invalid_deployment_mode"
+    elif "runtime_ambiguous" in binding_resolution:
+        runtime_resolution = "ambiguous"
+    elif any(_pm12_record_freshness_issue(record) for record in runtimes):
+        runtime_resolution = "stale"
+    elif any(record.get("retired_at") not in (None, "") for record in runtimes):
+        runtime_resolution = "retired"
+    elif "runtime_inactive" in binding_resolution or (
+        runtimes
+        and not any(
+            _pm12_record_lifecycle_is_active(
+                record,
+                fields=("status", "state"),
+                active_values={"active", "running", "idle"},
+            )
+            for record in runtimes
+        )
+    ):
+        runtime_resolution = "inactive"
+    elif "mismatch" in binding_resolution:
+        runtime_resolution = "identity_mismatch"
+    else:
+        runtime_resolution = "missing"
+    _, session_resolution = _pm12_runtime_session_resolution(persona_id, runtime)
+    matching_runtimes = [runtime] if runtime else []
 
     strategy_ids = []
+    binding_ids = []
     pool_ids = []
-    runtime_ids = []
+    runtime_ids: List[str] = []
     sleeve_ids = []
     artifact_ids = []
     broker_ids = []
 
-    for b in bindings:
-        if b.get("strategy_id"):
-            strategy_ids.append(str(b["strategy_id"]))
-        if b.get("capital_pool_id"):
-            pool_ids.append(str(b["capital_pool_id"]))
-        if b.get("sleeve_id"):
-            sleeve_ids.append(str(b["sleeve_id"]))
-        if b.get("broker_id"):
-            broker_ids.append(str(b["broker_id"]))
+    for b in ([binding] if binding else []):
+        binding_id = str(
+            b.get("binding_id")
+            or b.get("persona_capital_binding_id")
+            or b.get("id")
+            or ""
+        ).strip()
+        if binding_id:
+            binding_ids.append(binding_id)
+        binding_strategy_id = _persona_fleet_record_value(b, "strategy_id")
+        if binding_strategy_id:
+            strategy_ids.append(str(binding_strategy_id))
+        binding_pool_id = _persona_fleet_record_value(b, "capital_pool_id", "pool_id")
+        if binding_pool_id:
+            pool_ids.append(str(binding_pool_id))
+        binding_sleeve_id = _persona_fleet_record_value(
+            b,
+            "capital_sleeve_id",
+            "sleeve_id",
+        )
+        if binding_sleeve_id:
+            sleeve_ids.append(str(binding_sleeve_id))
+        binding_broker_id = _persona_fleet_record_value(b, "broker_id")
+        if binding_broker_id:
+            broker_ids.append(str(binding_broker_id))
 
-    for r in runtimes:
+    for r in matching_runtimes:
         if r.get("runtime_id"):
             runtime_ids.append(str(r["runtime_id"]))
         if r.get("strategy_id"):
             strategy_ids.append(str(r["strategy_id"]))
         elif r.get("params", {}).get("strategy_id"):
             strategy_ids.append(str(r["params"]["strategy_id"]))
-        if r.get("capital_pool_id"):
-            pool_ids.append(str(r["capital_pool_id"]))
-        if r.get("artifact_id"):
-            artifact_ids.append(str(r["artifact_id"]))
-        if r.get("broker_id"):
-            broker_ids.append(str(r["broker_id"]))
+        runtime_pool_id = _persona_fleet_record_value(r, "capital_pool_id", "pool_id")
+        if runtime_pool_id:
+            pool_ids.append(str(runtime_pool_id))
+        runtime_sleeve_id = _persona_fleet_record_value(r, "capital_sleeve_id", "sleeve_id")
+        if runtime_sleeve_id:
+            sleeve_ids.append(str(runtime_sleeve_id))
+        runtime_artifact_id = _persona_fleet_record_value(r, "artifact_id")
+        if runtime_artifact_id:
+            artifact_ids.append(str(runtime_artifact_id))
+        runtime_broker_id = _persona_fleet_record_value(r, "broker_id")
+        if runtime_broker_id:
+            broker_ids.append(str(runtime_broker_id))
 
-    enriched["strategy_ids"] = list(set(strategy_ids))
-    enriched["capital_pool_ids"] = list(set(pool_ids))
-    enriched["runtime_ids"] = list(set(runtime_ids))
-    enriched["sleeve_ids"] = list(set(sleeve_ids))
-    enriched["artifact_ids"] = list(set(artifact_ids))
-    enriched["broker_ids"] = list(set(broker_ids))
+    deployment_stage = runtime.get("deployment_mode") or "none"
+    capital_mode = {
+        "paper_running": "paper",
+        "canary_running": "canary",
+        "live_running": "live",
+    }.get(str(deployment_stage or "").strip().lower(), str(deployment_stage or "").strip().lower())
+    if capital_mode not in _PERSONA_FLEET_RUNNING_STAGE_STATES:
+        capital_mode = "none"
+        deployment_stage = "none"
+    else:
+        deployment_stage = capital_mode
+    source_pool_id = (
+        _persona_fleet_record_value(binding, "capital_pool_id", "pool_id")
+        or _persona_fleet_record_value(runtime, "capital_pool_id", "pool_id")
+    )
+    if capital_mode == "paper" and not source_pool_id:
+        source_pool_id = raw_metadata.get("legacy_paper_capital_pool_id")
+    live_pool_id = _persona_fleet_live_capital_pool_id(
+        capital_mode=capital_mode,
+        pool_id=source_pool_id,
+        league_entry={},
+        raw_metadata={},
+        context_metadata={},
+        binding=binding,
+    )
+    paper_ledger_id = _persona_fleet_paper_ledger_id(
+        persona_id=persona_id,
+        capital_mode=capital_mode,
+        league_entry=league_entry,
+        raw_metadata=raw_metadata,
+        context_metadata={},
+        binding=binding,
+        runtime=runtime,
+    )
+    capital_projection = _persona_fleet_capital_binding_projection(
+        persona_id=persona_id,
+        capital_mode=capital_mode,
+        deployment_stage=deployment_stage,
+        paper_ledger_id=paper_ledger_id,
+        live_pool_id=live_pool_id,
+        binding=binding,
+        runtime=runtime,
+        league_entry={},
+        raw_metadata={},
+        context_metadata={},
+    )
+    lifecycle_state = (
+        persona.get("lifecycle_state")
+        or persona.get("status")
+        or item.get("state")
+        or item.get("stage")
+        or "unknown"
+    )
+    normalized_lifecycle = _normalize_lifecycle_state(lifecycle_state)
+    if (
+        runtime
+        and capital_mode in _PERSONA_FLEET_RUNNING_STAGE_STATES
+        and _is_persona_lifecycle_operational(lifecycle_state)
+    ):
+        stage = f"{capital_mode}_running"
+    elif normalized_lifecycle in {"frozen", "suspended", "retired"}:
+        stage = normalized_lifecycle
+    else:
+        stage = "not_running"
+    stage_capital_mode = {
+        "paper_running": "paper",
+        "canary_running": "canary",
+        "live_running": "live",
+    }.get(stage)
+    stage_binding_mismatch = False
+    binding_for_weight = binding
+    runtime_for_weight = runtime
+    if stage_binding_mismatch:
+        binding_resolution = f"{binding_resolution}_stage_mismatch"
+    binding_identity_failed = any(
+        token in binding_resolution
+        for token in ("ambiguous", "mismatch", "inactive")
+    )
+    identity_resolution_failed = (
+        not runtime
+        or runtime_resolution != "active"
+        or binding_identity_failed
+        or (capital_mode in {"canary", "live"} and not binding)
+    )
+    if identity_resolution_failed:
+        binding_for_weight = {}
+        runtime_for_weight = {}
+        binding_ids = []
+        pool_ids = []
+        sleeve_ids = []
+    if stage_capital_mode == "paper":
+        capital_mode = "paper"
+        live_pool_id = None
+        paper_ledger_id = _persona_fleet_paper_ledger_id(
+            persona_id=persona_id,
+            capital_mode="paper",
+            league_entry=league_entry,
+            raw_metadata=raw_metadata,
+            context_metadata={},
+            binding=binding if not stage_binding_mismatch else {},
+            runtime=runtime if not stage_binding_mismatch else {},
+        )
+        capital_projection = _persona_fleet_capital_binding_projection(
+            persona_id=persona_id,
+            capital_mode="paper",
+            deployment_stage="paper",
+            paper_ledger_id=paper_ledger_id,
+            live_pool_id=None,
+            binding={},
+            runtime={},
+            league_entry={},
+            raw_metadata={},
+            context_metadata={},
+        )
+        pool_ids = []
+        sleeve_ids = []
+    elif identity_resolution_failed and stage_capital_mode:
+        capital_mode = stage_capital_mode
+        live_pool_id = None
+        capital_projection = _persona_fleet_capital_binding_projection(
+            persona_id=persona_id,
+            capital_mode=stage_capital_mode,
+            deployment_stage=stage_capital_mode,
+            paper_ledger_id=None,
+            live_pool_id=None,
+            binding={},
+            runtime={},
+            league_entry={},
+            raw_metadata={},
+            context_metadata={},
+        )
+    elif identity_resolution_failed:
+        capital_mode = "none"
+        live_pool_id = None
+        paper_ledger_id = None
+        capital_projection = _persona_fleet_capital_binding_projection(
+            persona_id=persona_id,
+            capital_mode="none",
+            deployment_stage="none",
+            paper_ledger_id=None,
+            live_pool_id=None,
+            binding={},
+            runtime={},
+            league_entry={},
+            raw_metadata={},
+            context_metadata={},
+        )
+    capital_projection["stage"] = stage
+    capital_projection["capital_binding"]["stage"] = stage
+    authoritative_current_weight = None
+    authoritative_target_weight = None
+    current_weight_source = "unavailable"
+    for source_name, record in (
+        ("persona_binding", binding_for_weight),
+        ("runtime_binding", runtime_for_weight),
+    ):
+        value = _persona_fleet_record_value(
+            record,
+            "current_weight",
+            "currentWeight",
+            "allocation_weight",
+            "weight",
+        )
+        if value not in (None, "") and not isinstance(value, bool):
+            try:
+                parsed_weight = float(value)
+                if math.isfinite(parsed_weight) and 0.0 <= parsed_weight <= 1.0:
+                    authoritative_current_weight = parsed_weight
+                    current_weight_source = source_name
+                else:
+                    current_weight_source = f"{source_name}_invalid"
+                break
+            except (TypeError, ValueError):
+                current_weight_source = f"{source_name}_invalid"
+                break
+    for record in (binding_for_weight, runtime_for_weight):
+        value = _persona_fleet_record_value(
+            record,
+            "target_weight",
+            "targetWeight",
+            "proposed_weight",
+        )
+        if value not in (None, "") and not isinstance(value, bool):
+            try:
+                parsed_weight = float(value)
+                if math.isfinite(parsed_weight) and 0.0 <= parsed_weight <= 1.0:
+                    authoritative_target_weight = parsed_weight
+                break
+            except (TypeError, ValueError):
+                break
+    capital_projection["current_weight"] = authoritative_current_weight
+    capital_projection["target_weight"] = authoritative_target_weight
+    capital_projection["capital_binding"]["current_weight"] = authoritative_current_weight
+    capital_projection["capital_binding"]["target_weight"] = authoritative_target_weight
+    if stage == "paper_running":
+        capital_projection["current_weight"] = None
+        capital_projection["target_weight"] = None
+        capital_projection["capital_binding"]["current_weight"] = None
+        capital_projection["capital_binding"]["target_weight"] = None
+        current_weight_source = "not_applicable_paper_ledger"
+
+    projected_sleeve_id = capital_projection.get("capital_sleeve_id")
+    if projected_sleeve_id:
+        sleeve_ids.append(str(projected_sleeve_id))
+    if live_pool_id:
+        pool_ids.append(str(live_pool_id))
+    elif capital_mode == "paper":
+        pool_ids = []
+
+    enriched["strategy_ids"] = sorted(set(strategy_ids))
+    enriched["binding_ids"] = sorted(set(binding_ids))
+    enriched["capital_pool_ids"] = sorted(set(pool_ids))
+    enriched["runtime_ids"] = sorted(set(runtime_ids))
+    enriched["sleeve_ids"] = sorted(set(sleeve_ids))
+    enriched["artifact_ids"] = sorted(set(artifact_ids))
+    enriched["broker_ids"] = sorted(set(broker_ids))
 
     if strategy_ids:
         enriched["strategy_id"] = strategy_ids[0]
-    if pool_ids:
-        enriched["capital_pool_id"] = pool_ids[0]
-        enriched["pool_id"] = pool_ids[0]
+    enriched["capital_pool_id"] = live_pool_id
+    enriched["pool_id"] = live_pool_id
     if runtime_ids:
         enriched["runtime_id"] = runtime_ids[0]
-    if sleeve_ids:
-        enriched["sleeve_id"] = sleeve_ids[0]
+    enriched["sleeve_id"] = projected_sleeve_id
     if artifact_ids:
         enriched["artifact_id"] = artifact_ids[0]
     if broker_ids:
         enriched["broker_id"] = broker_ids[0]
+
+    enriched.update({
+        "stage": stage,
+        "deployment_stage": str(deployment_stage or "none").strip().lower() or "none",
+        "capital_mode": capital_mode,
+        "capital_scope": capital_projection.get("capital_scope"),
+        "capital_scope_id": capital_projection.get("capital_scope_id"),
+        "capital_sleeve_id": projected_sleeve_id,
+        "paper_ledger_id": paper_ledger_id,
+        "current_weight": capital_projection.get("current_weight"),
+        "target_weight": capital_projection.get("target_weight"),
+        "binding_state": capital_projection.get("binding_state"),
+        "binding_resolution": binding_resolution,
+        "runtime_resolution": runtime_resolution,
+        "session_resolution": session_resolution,
+        "capital_binding": capital_projection.get("capital_binding"),
+        "current_weight_source": current_weight_source,
+    })
 
     return enriched
 
@@ -44578,7 +49101,7 @@ def _pm12_quarterly_recommendation_item(
     action = _PM12_QUARTERLY_RECOMMENDATION_ACTIONS[action_id]
     persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
     score = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or 0.0
-    evidence_sample = evidence_refs[:5]
+    evidence_sample = list(item.get("evidence_refs") or [])[:5]
     evidence_ref_ids = [
         str(ref.get("refId") or ref.get("ref_id") or ref.get("id"))
         for ref in evidence_sample
@@ -44622,17 +49145,56 @@ def _pm12_quarterly_recommendation_item(
         "quarter": quarter_window["quarter"],
         "quarter_window": quarter_window,
         "persona_id": persona_id,
-        "ranking_evidence_ref": f"ranking-evidence:{quarter_window['quarter'].lower()}-{persona_id}",
+        "ranking_snapshot_id": item.get("ranking_snapshot_id"),
+        "ranking_evidence_ref": (
+            f"ranking-snapshot:{item.get('ranking_snapshot_id')}"
+            if item.get("ranking_snapshot_id")
+            else f"ranking-evidence:{quarter_window['quarter'].lower()}-{persona_id}"
+        ),
         "human_review_state": human_review_state,
         "name": item.get("name"),
         "owner": item.get("owner"),
+        "archetype": item.get("archetype"),
         "state": item.get("state"),
+        "stage": item.get("stage"),
+        "deployment_stage": item.get("deployment_stage"),
+        "capital_mode": item.get("capital_mode"),
+        "capital_scope": item.get("capital_scope"),
+        "capital_scope_id": item.get("capital_scope_id"),
+        "capital_pool_id": item.get("capital_pool_id"),
+        "capital_sleeve_id": item.get("capital_sleeve_id"),
+        "paper_ledger_id": item.get("paper_ledger_id"),
+        "current_weight": item.get("current_weight"),
+        "target_weight": item.get("target_weight"),
+        "delta": item.get("delta"),
+        "current_weight_source": item.get("current_weight_source"),
+        "binding_state": item.get("binding_state"),
+        "binding_resolution": item.get("binding_resolution"),
+        "runtime_resolution": item.get("runtime_resolution"),
+        "session_resolution": item.get("session_resolution"),
+        "telemetry_resolution": item.get("telemetry_resolution"),
+        "binding_ids": list(item.get("binding_ids") or []),
+        "strategy_ids": list(item.get("strategy_ids") or []),
+        "runtime_ids": list(item.get("runtime_ids") or []),
+        "capital_pool_ids": list(item.get("capital_pool_ids") or []),
+        "sleeve_ids": list(item.get("sleeve_ids") or []),
+        "artifact_ids": list(item.get("artifact_ids") or []),
+        "broker_ids": list(item.get("broker_ids") or []),
+        "eligible": item.get("eligible"),
+        "exclusion_reason": item.get("exclusion_reason"),
+        "exclusion_reasons": list(item.get("exclusion_reasons") or []),
+        "exclusion_codes": list(item.get("exclusion_codes") or []),
+        "evidence_coverage": item.get("evidence_coverage"),
+        "source_confidence": item.get("source_confidence"),
         "risk": item.get("risk"),
         "rank": item.get("rank"),
         "score": score,
         "tier": item.get("tier"),
         "tier_id": item.get("tier_id"),
         "tier_label": item.get("tier_label"),
+        "allocation_policy_input": json.loads(
+            json.dumps(item.get("allocation_policy_input") or {})
+        ),
         "formula_version": item.get("formula_version") or _PM12_LEAGUE_FORMULA_VERSION,
         "action_id": action_id,
         "action_label": action["label"],
@@ -44722,10 +49284,12 @@ def _promotion_review_quarter_from_id(review_id: Any) -> Optional[str]:
 
 def _promotion_review_stage_path(recommendation: Dict[str, Any]) -> Dict[str, Any]:
     action_id = str(recommendation.get("action_id") or "").strip()
-    state = str(recommendation.get("state") or "").strip().lower()
-    if "canary" in state:
+    stage = str(
+        recommendation.get("stage") or recommendation.get("state") or ""
+    ).strip().lower()
+    if "canary" in stage:
         from_stage = "canary"
-    elif "live" in state:
+    elif "live" in stage:
         from_stage = "live"
     else:
         from_stage = "paper"
@@ -44775,13 +49339,17 @@ def _latest_promotion_review_submission(review_id: Any) -> Optional[Dict[str, An
     return None
 
 
-def _promotion_review_submission_projection(review_id: Any) -> Optional[Dict[str, Any]]:
+def _promotion_review_submission_projection(
+    review_id: Any,
+    *,
+    include_source_recommendation: bool = False,
+) -> Optional[Dict[str, Any]]:
     record = _latest_promotion_review_submission(review_id)
     if record is None:
         return None
     params = record.get("params") if isinstance(record.get("params"), dict) else {}
     audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
-    return {
+    projection = {
         "submitted": True,
         "submit_status": record.get("status"),
         "command_id": record.get("command_id"),
@@ -44791,10 +49359,21 @@ def _promotion_review_submission_projection(review_id: Any) -> Optional[Dict[str
         "submitted_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
         "recommendation_id": params.get("recommendation_id") or params.get("recommendationId"),
         "recommendation_action_id": params.get("recommendation_action_id") or params.get("recommendationActionId"),
+        "ranking_snapshot_id": params.get("ranking_snapshot_id"),
+        "quarter": params.get("quarter"),
+        "persona_id": params.get("persona_id"),
+        "stage_from": params.get("stage_from"),
+        "stage_to": params.get("stage_to"),
+        "review_kind": params.get("review_kind"),
         "human_inbox_id": f"{_PROMOTION_REVIEW_TARGET_PREFIX}{_promotion_review_clean_id(review_id)}",
         "live_capital_mutation": False,
         "requires_human_gate_decision": True,
     }
+    if include_source_recommendation and isinstance(params.get("source_recommendation"), dict):
+        projection["source_recommendation"] = json.loads(
+            json.dumps(params.get("source_recommendation"))
+        )
+    return projection
 
 
 def _latest_promotion_review_command(review_id: Any) -> Optional[Dict[str, Any]]:
@@ -44819,8 +49398,29 @@ def _promotion_review_item_from_recommendation(
     recommendation: Dict[str, Any],
 ) -> Dict[str, Any]:
     review_id = str(recommendation.get("recommendation_id") or recommendation.get("id") or "")
+    private_submission = _promotion_review_submission_projection(
+        review_id,
+        include_source_recommendation=True,
+    )
+    stored_source = (
+        private_submission.get("source_recommendation")
+        if isinstance(private_submission, dict)
+        else None
+    )
+    if isinstance(stored_source, dict):
+        recommendation = json.loads(json.dumps(stored_source))
+        recommendation["evidence_refs"] = []
+        recommendation["evidence_ref_ids"] = []
+    submission = (
+        {
+            key: value
+            for key, value in private_submission.items()
+            if key != "source_recommendation"
+        }
+        if isinstance(private_submission, dict)
+        else None
+    )
     action_id = str(recommendation.get("action_id") or "")
-    submission = _promotion_review_submission_projection(review_id)
     decision = _promotion_review_decision_projection(review_id)
     stage_path = _promotion_review_stage_path(recommendation)
     target_stage = str(stage_path.get("target_stage") or "governance_review")
@@ -44842,6 +49442,7 @@ def _promotion_review_item_from_recommendation(
         "review_id": review_id,
         "promotion_review_id": review_id,
         "recommendation_id": recommendation.get("recommendation_id") or recommendation.get("id"),
+        "ranking_snapshot_id": recommendation.get("ranking_snapshot_id"),
         "quarter": recommendation.get("quarter"),
         "quarter_window": recommendation.get("quarter_window"),
         "persona_id": recommendation.get("persona_id"),
@@ -44850,6 +49451,18 @@ def _promotion_review_item_from_recommendation(
         "rank": recommendation.get("rank"),
         "score": recommendation.get("score"),
         "tier": recommendation.get("tier"),
+        "stage": recommendation.get("stage"),
+        "capital_scope": recommendation.get("capital_scope"),
+        "capital_scope_id": recommendation.get("capital_scope_id"),
+        "capital_pool_id": recommendation.get("capital_pool_id"),
+        "capital_sleeve_id": recommendation.get("capital_sleeve_id"),
+        "paper_ledger_id": recommendation.get("paper_ledger_id"),
+        "current_weight": recommendation.get("current_weight"),
+        "current_weight_source": recommendation.get("current_weight_source"),
+        "eligible": recommendation.get("eligible"),
+        "exclusion_reason": recommendation.get("exclusion_reason"),
+        "exclusion_reasons": list(recommendation.get("exclusion_reasons") or []),
+        "exclusion_codes": list(recommendation.get("exclusion_codes") or []),
         "action_id": action_id,
         "action_label": recommendation.get("action_label"),
         "priority": recommendation.get("priority"),
@@ -44906,11 +49519,32 @@ def _promotion_review_items(
     q: str = "",
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any], int, bool]:
     quarter_window = _pm12_quarter_window(quarter, snapshot_at)
-    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    rows = _pm12_persona_league_rows()
     ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
-    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
+    (
+        public_evidence_refs,
+        canonical_evidence_refs,
+        redacted_count,
+        evidence_dataset_available,
+    ) = _pm12_public_quarter_evidence_refs(
         identity,
         quarter_window,
+    )
+    ranked_items = _pm12_attach_ranking_evidence(
+        ranked_items,
+        public_evidence_refs,
+        canonical_evidence_refs=canonical_evidence_refs,
+    )
+    ranked_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
+        ranked_items,
+        surface="quarterly",
+        period=quarter_window["quarter"],
+    )
+    ranked_items = _pm12_filter_persona_items(
+        ranked_items,
+        state=state,
+        archetype=archetype,
+        q=q,
     )
     recommendations = _pm12_quarterly_recommendations(
         ranked_items,
@@ -45127,6 +49761,7 @@ def _promotion_review_submit_response(
             "recommendation_id": refreshed["recommendation_id"],
             "persona_id": refreshed.get("persona_id"),
             "action_id": refreshed.get("action_id"),
+            "ranking_snapshot_id": refreshed.get("ranking_snapshot_id"),
             "status": refreshed.get("status"),
             "submitted": True,
             "human_inbox_id": refreshed.get("human_inbox_id"),
@@ -45142,6 +49777,7 @@ def _promotion_review_submit_response(
     meta = content.setdefault("meta", {})
     meta.update(
         {
+            "ranking_snapshot_id": refreshed.get("ranking_snapshot_id"),
             "live_capital_mutation": False,
             "liveCapitalMutation": False,
             "direct_live_capital_mutation": False,
@@ -45158,7 +49794,7 @@ def _promotion_review_stored_source(
 ) -> Dict[str, Any]:
     stored = json.loads(json.dumps(recommendation))
     # Command params are visible on governance read surfaces. Persist the
-    # authoritative recommendation tuple, never submitter-supplied evidence.
+    # Authoritative immutable ranking tuple, never submitter-supplied evidence.
     stored["evidence_refs"] = []
     stored["evidence_ref_ids"] = []
     return stored
@@ -45185,8 +49821,127 @@ async def bff_management_quarterly_ranking_recommendation_submit(
         )
     _reject_body_idempotency_key(payload)
     _raise_if_promotion_review_direct_mutation_requested(payload)
+    for key in ("recommendation_id", "recommendationId"):
+        asserted_id = str(payload.get(key) or "").strip()
+        if asserted_id and asserted_id != recommendation_id:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "recommendation id assertion mismatch",
+                f"{key} must match the recommendation id in the route.",
+                precondition_failed="recommendation_id",
+            )
 
     snapshot_at = utc_now()
+    requested_ranking_snapshot_id = str(
+        payload.get("ranking_snapshot_id") or ""
+    ).strip()
+    existing_submission = _promotion_review_submission_projection(
+        recommendation_id,
+        include_source_recommendation=True,
+    )
+    if existing_submission:
+        stored_ranking_snapshot_id = str(
+            existing_submission.get("ranking_snapshot_id") or ""
+        ).strip()
+        if not stored_ranking_snapshot_id:
+            raise _bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "submitted recommendation has no immutable ranking snapshot",
+                "A legacy submission cannot adopt a caller-provided snapshot during replay.",
+                precondition_failed="ranking_snapshot_id",
+                suggestion="Create a new governed recommendation submission from a current ranking snapshot.",
+            )
+        if (
+            requested_ranking_snapshot_id
+            and requested_ranking_snapshot_id != stored_ranking_snapshot_id
+        ):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "ranking_snapshot_id does not match the submitted recommendation",
+                "Replay the immutable ranking snapshot stored with the original submission.",
+                precondition_failed="ranking_snapshot_id",
+            )
+        replay_assertions = {
+            **payload,
+            "quarter": (
+                payload.get("quarter")
+                or existing_submission.get("quarter")
+                or _promotion_review_quarter_from_id(recommendation_id)
+            ),
+            "recommendation_id": recommendation_id,
+            "ranking_snapshot_id": stored_ranking_snapshot_id,
+        }
+        _validate_quarterly_ranking_recommendation_submit(
+            replay_assertions,
+            identity,
+        )
+        stored_source = existing_submission.get("source_recommendation")
+        if not isinstance(stored_source, dict):
+            stored_source = {
+                "id": existing_submission.get("recommendation_id") or recommendation_id,
+                "recommendation_id": existing_submission.get("recommendation_id") or recommendation_id,
+                "ranking_snapshot_id": stored_ranking_snapshot_id,
+                "quarter": existing_submission.get("quarter"),
+                "persona_id": existing_submission.get("persona_id"),
+                "action_id": existing_submission.get("recommendation_action_id"),
+                "stage": existing_submission.get("stage_from"),
+                "evidence_refs": [],
+                "evidence_ref_ids": [],
+            }
+        else:
+            stored_source = json.loads(json.dumps(stored_source))
+            stored_source["ranking_snapshot_id"] = (
+                stored_ranking_snapshot_id
+                or str(stored_source.get("ranking_snapshot_id") or "").strip()
+            )
+        # The stored recommendation may have been submitted by a more privileged
+        # actor. Snapshot replay is identity-stable, but evidence visibility is
+        # request-scoped, so never replay stored evidence bodies across roles.
+        stored_source["evidence_refs"] = []
+        stored_source["evidence_ref_ids"] = []
+        already = _promotion_review_item_from_recommendation(stored_source)
+        replay_snapshot_id = str(
+            stored_ranking_snapshot_id
+            or already.get("ranking_snapshot_id")
+            or ""
+        ).strip()
+        already["ranking_snapshot_id"] = replay_snapshot_id
+        return JSONResponse(
+            status_code=200,
+            content=jsonable_encoder(
+                {
+                    "data": {
+                        "command_id": existing_submission.get("command_id"),
+                        "review_id": already["review_id"],
+                        "promotion_review_id": already["promotion_review_id"],
+                        "recommendation_id": already["recommendation_id"],
+                        "persona_id": already.get("persona_id"),
+                        "action_id": already.get("action_id"),
+                        "ranking_snapshot_id": replay_snapshot_id,
+                        "status": already.get("status"),
+                        "submitted": True,
+                        "human_inbox_id": already.get("human_inbox_id"),
+                        "requires_human_gate_decision": True,
+                        "live_capital_mutation": False,
+                        "review": already,
+                        "links": already.get("links") or {},
+                    },
+                    "meta": {
+                        **_snapshot_meta(snapshot_at),
+                        "ranking_snapshot_id": replay_snapshot_id,
+                        "idempotency": {"replayed": True, "source": "existing_submission"},
+                        "live_capital_mutation": False,
+                        "direct_live_capital_mutation": False,
+                        "requires_human_gate_decision": True,
+                        "governance_policy": "promotion_governance_human_gate_no_direct_live_capital",
+                    },
+                }
+            ),
+        )
+
     review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
         identity,
         recommendation_id,
@@ -45202,65 +49957,26 @@ async def bff_management_quarterly_ranking_recommendation_submit(
             precondition_failed="recommendation_id",
         )
 
-    existing_submission = _promotion_review_submission_projection(review["review_id"])
-    if existing_submission:
-        already = _promotion_review_item_from_recommendation(review["source_recommendation"])
-        return JSONResponse(
-            status_code=200,
-            content=jsonable_encoder(
-                {
-                    "data": {
-                        "command_id": existing_submission.get("command_id"),
-                        "review_id": already["review_id"],
-                        "promotion_review_id": already["promotion_review_id"],
-                        "recommendation_id": already["recommendation_id"],
-                        "persona_id": already.get("persona_id"),
-                        "action_id": already.get("action_id"),
-                        "status": already.get("status"),
-                        "submitted": True,
-                        "human_inbox_id": already.get("human_inbox_id"),
-                        "requires_human_gate_decision": True,
-                        "live_capital_mutation": False,
-                        "review": already,
-                        "links": already.get("links") or {},
-                    },
-                    "meta": {
-                        **_snapshot_meta(snapshot_at),
-                        "idempotency": {"replayed": True, "source": "existing_submission"},
-                        "live_capital_mutation": False,
-                        "direct_live_capital_mutation": False,
-                        "requires_human_gate_decision": True,
-                        "governance_policy": "promotion_governance_human_gate_no_direct_live_capital",
-                    },
-                }
-            ),
+    authoritative_ranking_snapshot_id = str(
+        review.get("ranking_snapshot_id") or ""
+    ).strip()
+    if (
+        requested_ranking_snapshot_id
+        and requested_ranking_snapshot_id != authoritative_ranking_snapshot_id
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "ranking_snapshot_id does not match the recommendation",
+            "Submit the immutable ranking snapshot attached to the recommendation.",
+            precondition_failed="ranking_snapshot_id",
         )
 
     command_payload = {
         **payload,
-        "quarter": review.get("quarter"),
-        "review_id": review["review_id"],
-        "promotion_review_id": review["promotion_review_id"],
+        "quarter": payload.get("quarter") or review.get("quarter"),
         "recommendation_id": review["recommendation_id"],
-        "recommendationId": review["recommendation_id"],
-        "recommendation_action_id": review.get("action_id"),
-        "recommendationActionId": review.get("action_id"),
-        "persona_id": review.get("persona_id"),
-        "stage_from": (review.get("promotion_path") or {}).get("from_stage"),
-        "stage_to": (review.get("promotion_path") or {}).get("target_stage"),
-        "review_kind": review.get("review_kind"),
-        "requires_human_gate_decision": True,
-        "live_capital_mutation": False,
-        "liveCapitalMutation": False,
-        "direct_live_capital_mutation": False,
-        "runtime_mutation": False,
-        "source_type": "quarterly_ranking_recommendation",
-        "source_record_id": review["recommendation_id"],
-        "source_recommendation": _promotion_review_stored_source(
-            review["source_recommendation"]
-        ),
-        "audit_event": "quarterly_ranking.recommendation_submitted",
-        "policy": "promotion_governance_human_gate_no_direct_live_capital",
+        "ranking_snapshot_id": authoritative_ranking_snapshot_id,
     }
     _validate_quarterly_ranking_recommendation_submit(command_payload, identity)
     command_response = _sem_command_response(
@@ -45572,32 +50288,156 @@ def _project_persona_league_row(
     }
 
 
-def _pm12_persona_league_rows(
+def _pm12_filter_persona_items(
+    items: List[Dict[str, Any]],
     *,
-    state: Optional[str],
-    archetype: Optional[str],
-    q: str,
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = "",
 ) -> List[Dict[str, Any]]:
-    runtime_bindings = read_store.list_runtime_bindings() or []
-    rows = [
-        _project_persona_league_row(raw, runtime_bindings=runtime_bindings)
-        for raw in _list_persona_records()
-    ]
+    filtered = items
     if state:
         normalized_state = _normalize_lifecycle_state(state)
-        rows = [row for row in rows if row.get("state") == normalized_state]
+        filtered = [item for item in filtered if item.get("state") == normalized_state]
     if archetype:
-        rows = [row for row in rows if str(row.get("archetype") or "") == archetype]
+        filtered = [
+            item
+            for item in filtered
+            if str(item.get("archetype") or "") == archetype
+        ]
     needle = q.strip().lower()
     if needle:
-        rows = [
-            row for row in rows
-            if needle in str(row.get("id") or "").lower()
-            or needle in str(row.get("name") or "").lower()
-            or needle in str(row.get("owner") or "").lower()
-            or needle in str(row.get("archetype") or "").lower()
+        filtered = [
+            item for item in filtered
+            if needle in str(item.get("id") or "").lower()
+            or needle in str(item.get("name") or "").lower()
+            or needle in str(item.get("owner") or "").lower()
+            or needle in str(item.get("archetype") or "").lower()
         ]
-    return sorted(rows, key=lambda row: str(row.get("name") or row.get("id") or ""))
+    return list(filtered)
+
+
+def _pm12_persona_league_rows(
+    *,
+    state: Optional[str] = None,
+    archetype: Optional[str] = None,
+    q: str = "",
+) -> List[Dict[str, Any]]:
+    raw_records = _list_persona_records()
+    try:
+        all_bindings = [
+            record
+            for record in (read_store.list_bindings() or [])
+            if isinstance(record, dict)
+        ]
+    except Exception:
+        all_bindings = []
+    try:
+        all_runtimes = [
+            record
+            for record in (read_store.list_runtime_bindings() or [])
+            if isinstance(record, dict)
+        ]
+    except Exception:
+        all_runtimes = []
+    try:
+        all_league_entries = [
+            record
+            for record in (read_store.list_persona_league() or [])
+            if isinstance(record, dict)
+        ]
+    except Exception:
+        all_league_entries = []
+
+    bindings_by_persona: Dict[str, List[Dict[str, Any]]] = {}
+    for binding in all_bindings:
+        binding_persona_id = str(binding.get("persona_id") or "").strip()
+        if binding_persona_id:
+            bindings_by_persona.setdefault(binding_persona_id, []).append(binding)
+    league_by_persona = {
+        str(record.get("persona_id") or record.get("id") or "").strip(): record
+        for record in all_league_entries
+        if str(record.get("persona_id") or record.get("id") or "").strip()
+    }
+    runtimes_by_persona: Dict[str, List[Dict[str, Any]]] = {}
+    runtimes_by_binding: Dict[str, List[Dict[str, Any]]] = {}
+    runtimes_by_identity: Dict[str, List[Dict[str, Any]]] = {}
+    for runtime in all_runtimes:
+        runtime_persona_id = str(runtime.get("persona_id") or "").strip()
+        if runtime_persona_id:
+            runtimes_by_persona.setdefault(runtime_persona_id, []).append(runtime)
+        runtime_binding_id = str(
+            _persona_fleet_record_value(
+                runtime,
+                "persona_capital_binding_id",
+                "binding_id",
+            )
+            or ""
+        ).strip()
+        if runtime_binding_id:
+            runtimes_by_binding.setdefault(runtime_binding_id, []).append(runtime)
+        for value in (
+            runtime.get("runtime_id"),
+            runtime.get("runtime_binding_id"),
+            runtime.get("id"),
+        ):
+            runtime_identity = str(value or "").strip()
+            if runtime_identity:
+                runtimes_by_identity.setdefault(runtime_identity, []).append(runtime)
+
+    enriched_rows: List[Dict[str, Any]] = []
+    for raw in raw_records:
+        projected = _project_persona_league_row(raw)
+        persona_id = str(projected.get("persona_id") or projected.get("id") or "").strip()
+        persona_bindings = bindings_by_persona.get(persona_id, [])
+        runtime_candidates: Dict[str, Dict[str, Any]] = {}
+
+        def include_runtime(runtime: Dict[str, Any]) -> None:
+            identity = str(
+                runtime.get("runtime_id")
+                or runtime.get("runtime_binding_id")
+                or runtime.get("id")
+                or ""
+            ).strip()
+            if identity:
+                runtime_candidates[identity] = runtime
+
+        for runtime in runtimes_by_persona.get(persona_id, []):
+            include_runtime(runtime)
+        for runtime_id in _pm12_persona_runtime_ids(projected):
+            for runtime in runtimes_by_identity.get(runtime_id, []):
+                include_runtime(runtime)
+        for binding in persona_bindings:
+            for value in (
+                binding.get("id"),
+                binding.get("binding_id"),
+                binding.get("persona_capital_binding_id"),
+            ):
+                binding_id = str(value or "").strip()
+                if not binding_id:
+                    continue
+                for runtime in runtimes_by_binding.get(binding_id, []):
+                    include_runtime(runtime)
+
+        enriched_rows.append(
+            _enrich_persona_item_with_bindings(
+                projected,
+                bindings=persona_bindings,
+                runtimes=list(runtime_candidates.values()),
+                persona=raw,
+                league_entry=league_by_persona.get(persona_id, {}),
+            )
+        )
+    rows = sorted(
+        enriched_rows,
+        key=lambda row: str(row.get("name") or row.get("id") or ""),
+    )
+    return _pm12_filter_persona_items(
+        rows,
+        state=state,
+        archetype=archetype,
+        q=q,
+    )
 
 
 def _pm12_persona_league_source_surfaces(snapshot_at: str) -> Dict[str, Dict[str, Any]]:
@@ -45625,15 +50465,84 @@ def _pm12_persona_league_ranking_item(
     components = dict(scores)
 
     state = row.get("state")
+    stage = str(row.get("stage") or state or "unknown").strip().lower() or "unknown"
     telemetry_count = metrics.get("telemetry_coverage_count", 0)
+    active_stages = {"paper_running", "canary_running", "live_running"}
     lifecycle_operational = _is_persona_lifecycle_operational(state)
-    eligible = lifecycle_operational and telemetry_count > 0
+    runtime_resolution = str(row.get("runtime_resolution") or "missing")
+    session_resolution = str(row.get("session_resolution") or "missing")
+    telemetry_resolution = str(
+        metrics.get("telemetry_resolution") or (
+            "fresh" if telemetry_count else "missing"
+        )
+    )
 
-    exclusion_reasons = []
+    exclusion_codes: List[str] = []
+    exclusion_reasons: List[str] = []
     if not lifecycle_operational:
+        exclusion_codes.append("inactive_lifecycle")
         exclusion_reasons.append(f"Inactive lifecycle state: {state}")
-    if telemetry_count == 0:
+    if stage not in active_stages:
+        exclusion_codes.append("stage_not_running")
+        exclusion_reasons.append(f"Inactive governed stage: {stage}")
+    if runtime_resolution == "missing":
+        exclusion_codes.append("missing_runtime")
+        exclusion_reasons.append("No authoritative active RuntimeBinding")
+    elif runtime_resolution in {"inactive", "retired"}:
+        exclusion_codes.append("inactive_runtime")
+        exclusion_reasons.append(f"RuntimeBinding is {runtime_resolution}")
+    elif runtime_resolution == "stale":
+        exclusion_codes.append("stale_runtime")
+        exclusion_reasons.append("RuntimeBinding freshness is stale or degraded")
+    elif runtime_resolution == "invalid_deployment_mode":
+        exclusion_codes.append("inactive_runtime")
+        exclusion_reasons.append("RuntimeBinding has no authoritative deployment_mode")
+    elif runtime_resolution in {"ambiguous", "identity_mismatch"}:
+        exclusion_codes.append("runtime_identity_mismatch")
+        exclusion_reasons.append("RuntimeBinding identity is not authoritative")
+    if session_resolution in {"missing", "missing_runtime", "inactive"}:
+        exclusion_codes.append("missing_active_session")
+        exclusion_reasons.append("No active session is joined to the RuntimeBinding")
+    elif session_resolution == "ended":
+        exclusion_codes.append("ended_session")
+        exclusion_reasons.append("The RuntimeBinding session has ended")
+    elif session_resolution == "stale":
+        exclusion_codes.append("stale_session")
+        exclusion_reasons.append("The RuntimeBinding session heartbeat is stale")
+    elif session_resolution == "identity_mismatch":
+        exclusion_codes.append("runtime_identity_mismatch")
+        exclusion_reasons.append("Session identity does not join to the RuntimeBinding")
+    if telemetry_resolution == "missing":
+        exclusion_codes.append("missing_telemetry")
         exclusion_reasons.append("No telemetry coverage")
+    elif telemetry_resolution == "stale":
+        exclusion_codes.append("stale_telemetry")
+        exclusion_reasons.append("Runtime telemetry is stale")
+    elif telemetry_resolution == "degraded":
+        exclusion_codes.append("degraded_telemetry")
+        exclusion_reasons.append("Runtime telemetry is degraded")
+    elif telemetry_resolution == "identity_mismatch":
+        exclusion_codes.append("runtime_identity_mismatch")
+        exclusion_reasons.append("Telemetry identity does not join to the RuntimeBinding")
+    if stage in {"canary_running", "live_running"} and row.get("current_weight") is None:
+        exclusion_codes.append("missing_current_weight")
+        exclusion_reasons.append("Missing authoritative current weight")
+    if stage in {"canary_running", "live_running"} and row.get("capital_scope") == "unbound":
+        exclusion_codes.append("missing_capital_binding")
+        exclusion_reasons.append("Missing authoritative real-capital binding")
+    binding_resolution = str(row.get("binding_resolution") or "")
+    if (
+        any(token in binding_resolution for token in ("ambiguous", "mismatch"))
+        or (
+            stage in {"canary_running", "live_running"}
+            and any(token in binding_resolution for token in ("missing", "inactive"))
+        )
+    ):
+        exclusion_codes.append("binding_mismatch")
+        exclusion_reasons.append("Binding/runtime identity prevents an authoritative allocation join")
+    exclusion_codes = list(dict.fromkeys(exclusion_codes))
+    exclusion_reasons = list(dict.fromkeys(exclusion_reasons))
+    eligible = not exclusion_reasons
     exclusion_reason = "; ".join(exclusion_reasons) if exclusion_reasons else None
 
     evidence_coverage = min(1.0, telemetry_count / 10.0) if telemetry_count > 0 else 0.0
@@ -45645,12 +50554,36 @@ def _pm12_persona_league_ranking_item(
     else:
         source_confidence = "formal"
 
+    telemetry_evidence_refs = list(metrics.get("telemetry_evidence_refs") or [])
     return {
         "id": row.get("id"),
         "persona_id": row.get("persona_id") or row.get("id"),
         "name": row.get("name"),
         "owner": row.get("owner"),
         "state": state,
+        "stage": stage,
+        "deployment_stage": row.get("deployment_stage"),
+        "capital_mode": row.get("capital_mode"),
+        "capital_scope": row.get("capital_scope"),
+        "capital_scope_id": row.get("capital_scope_id"),
+        "capital_pool_id": row.get("capital_pool_id"),
+        "capital_sleeve_id": row.get("capital_sleeve_id"),
+        "paper_ledger_id": row.get("paper_ledger_id"),
+        "current_weight": row.get("current_weight"),
+        "target_weight": row.get("target_weight"),
+        "binding_state": row.get("binding_state"),
+        "binding_resolution": row.get("binding_resolution"),
+        "runtime_resolution": runtime_resolution,
+        "session_resolution": session_resolution,
+        "telemetry_resolution": telemetry_resolution,
+        "current_weight_source": row.get("current_weight_source"),
+        "binding_ids": list(row.get("binding_ids") or []),
+        "strategy_ids": list(row.get("strategy_ids") or []),
+        "runtime_ids": list(row.get("runtime_ids") or metrics.get("runtime_ids") or []),
+        "capital_pool_ids": list(row.get("capital_pool_ids") or []),
+        "sleeve_ids": list(row.get("sleeve_ids") or []),
+        "artifact_ids": list(row.get("artifact_ids") or []),
+        "broker_ids": list(row.get("broker_ids") or []),
         "risk": row.get("risk"),
         "archetype": row.get("archetype"),
         "tier": tier["id"],
@@ -45662,7 +50595,15 @@ def _pm12_persona_league_ranking_item(
         "links": row.get("links") or {},
         "eligible": eligible,
         "exclusion_reason": exclusion_reason,
+        "exclusion_reasons": exclusion_reasons,
+        "exclusion_codes": exclusion_codes,
         "evidence_coverage": evidence_coverage,
+        "evidence_refs": telemetry_evidence_refs,
+        "evidence_ref_ids": sorted({
+            _pm12_evidence_ref_key(ref)
+            for ref in telemetry_evidence_refs
+            if _pm12_evidence_ref_key(ref)
+        }),
         "source_confidence": source_confidence,
     }
 def _pm12_persona_league_rankings(
@@ -46075,12 +51016,47 @@ async def bff_management_persona_league(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
-    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    all_rows = _pm12_persona_league_rows()
+    ranking_basis, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
+        [_pm12_persona_league_ranking_item(row) for row in all_rows],
+        surface="rolling",
+        period="short_cycle",
+    )
+    ranking_by_persona = {
+        str(item.get("persona_id") or ""): item
+        for item in ranking_basis
+        if str(item.get("persona_id") or "")
+    }
+    rows = _pm12_filter_persona_items(
+        [
+        {
+            **row,
+            **{
+                field: ranking_by_persona.get(str(row.get("persona_id") or ""), {}).get(field)
+                for field in (
+                    "eligible",
+                    "exclusion_reason",
+                    "exclusion_reasons",
+                    "exclusion_codes",
+                    "evidence_coverage",
+                    "evidence_refs",
+                    "source_confidence",
+                    "ranking_snapshot_id",
+                )
+            },
+        }
+        for row in all_rows
+        ],
+        state=state,
+        archetype=archetype,
+        q=q,
+    )
     total = len(rows)
     page_items, next_page_token = _page_slice(rows, page_token, page_size)
     summary = {
         "persona_count": total,
         "returned_count": len(page_items),
+        "ranking_snapshot_id": ranking_snapshot_id,
     }
     persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
     surfaces = {
@@ -46097,12 +51073,14 @@ async def bff_management_persona_league(
     return {
         "data": {
             "id": "management-persona-league",
+            "ranking_snapshot_id": ranking_snapshot_id,
             "items": page_items,
             "summary": summary,
         },
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": {
             "snapshot_at": snapshot_at,
+            "ranking_snapshot_id": ranking_snapshot_id,
             "total": total,
             "surfaces": surfaces,
             "composition_sources": [
@@ -46149,11 +51127,20 @@ async def bff_management_persona_league_rankings(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
-    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    rows = _pm12_persona_league_rows()
 
     # Pre-enrich and filter the base league rows represented as ranking items
-    base_items = [_pm12_persona_league_ranking_item(row) for row in rows]
-    enriched_items = [_enrich_persona_item_with_bindings(item) for item in base_items]
+    base_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
+        [_pm12_persona_league_ranking_item(row) for row in rows],
+        surface="rolling",
+        period="short_cycle",
+    )
+    enriched_items = _pm12_filter_persona_items(
+        base_items,
+        state=state,
+        archetype=archetype,
+        q=q,
+    )
     filtered_items = _filter_by_common_identifiers(
         enriched_items,
         persona_id=persona_id, persona=persona,
@@ -46163,7 +51150,7 @@ async def bff_management_persona_league_rankings(
         sleeve_id=sleeve_id, sleeve=sleeve,
         artifact_id=artifact_id, artifact=artifact,
         broker_id=broker_id, broker=broker,
-        stage=stage or state, period=period, as_of=as_of
+        stage=stage, period=period, as_of=as_of
     )
 
     blocks = _pm12_persona_league_rankings(
@@ -46172,6 +51159,8 @@ async def bff_management_persona_league_rankings(
         limit=limit,
         base_items=filtered_items,
     )
+    for block in blocks:
+        block["ranking_snapshot_id"] = ranking_snapshot_id
     source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
     rankings_surface = _aggregate_group_surface(
         "persona_league_rankings",
@@ -46182,19 +51171,22 @@ async def bff_management_persona_league_rankings(
     )
     top_item = (blocks[0].get("items") or [None])[0] if blocks else None
     summary = {
-        "persona_count": len(rows),
+        "persona_count": len(filtered_items),
         "criteria": [block["criteria"] for block in blocks],
         "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
+        "ranking_snapshot_id": ranking_snapshot_id,
     }
     return {
         "data": {
             "id": "management-persona-league-rankings",
+            "ranking_snapshot_id": ranking_snapshot_id,
             "items": blocks,
             "summary": summary,
         },
         "page_info": {"next_page_token": None, "total": len(blocks), "page_size": len(blocks)},
         "meta": {
             "snapshot_at": snapshot_at,
+            "ranking_snapshot_id": ranking_snapshot_id,
             "surfaces": {
                 name: _performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
                 for name, surface in {
@@ -46316,11 +51308,9 @@ async def bff_management_persona_league_tiers(
     snapshot_at = utc_now()
     rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
 
-    # Pre-enrich and filter the base league rows represented as ranking items
     base_items = [_pm12_persona_league_ranking_item(row) for row in rows]
-    enriched_items = [_enrich_persona_item_with_bindings(item) for item in base_items]
     filtered_items = _filter_by_common_identifiers(
-        enriched_items,
+        base_items,
         persona_id=persona_id, persona=persona,
         runtime_id=runtime_id, runtime=runtime,
         strategy_id=strategy_id, strategy=strategy,
@@ -46328,7 +51318,7 @@ async def bff_management_persona_league_tiers(
         sleeve_id=sleeve_id, sleeve=sleeve,
         artifact_id=artifact_id, artifact=artifact,
         broker_id=broker_id, broker=broker,
-        stage=stage or state, period=period, as_of=as_of
+        stage=stage, period=period, as_of=as_of
     )
 
     tiers, assignments, summary = _pm12_persona_league_tier_payload(
@@ -46523,11 +51513,35 @@ async def bff_management_quarterly_ranking(
     _require_read_role(identity)
     snapshot_at = utc_now()
     quarter_window = _pm12_quarter_window(quarter, snapshot_at)
-    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    rows = _pm12_persona_league_rows()
     ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+    (
+        public_evidence_refs,
+        canonical_evidence_refs,
+        redacted_count,
+        evidence_dataset_available,
+    ) = _pm12_public_quarter_evidence_refs(
+        identity,
+        quarter_window,
+    )
+    ranked_items = _pm12_attach_ranking_evidence(
+        ranked_items,
+        public_evidence_refs,
+        canonical_evidence_refs=canonical_evidence_refs,
+    )
+    ranked_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
+        ranked_items,
+        surface="quarterly",
+        period=quarter_window["quarter"],
+    )
 
-    # Enrich and apply common filters
-    enriched_items = [_enrich_persona_item_with_bindings(item) for item in ranked_items]
+    # Apply common filters after the immutable full-universe snapshot is built.
+    enriched_items = _pm12_filter_persona_items(
+        ranked_items,
+        state=state,
+        archetype=archetype,
+        q=q,
+    )
     filtered_items = _filter_by_common_identifiers(
         enriched_items,
         persona_id=persona_id, persona=persona,
@@ -46537,15 +51551,10 @@ async def bff_management_quarterly_ranking(
         sleeve_id=sleeve_id, sleeve=sleeve,
         artifact_id=artifact_id, artifact=artifact,
         broker_id=broker_id, broker=broker,
-        stage=stage or state, period=period, as_of=as_of
+        stage=stage, period=period, as_of=as_of
     )
     total = len(filtered_items)
     page_items, next_page_token = _page_slice(filtered_items, page_token, page_size)
-
-    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
-        identity,
-        quarter_window,
-    )
 
     formula = _pm12_quarter_formula_payload()
     source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
@@ -46573,20 +51582,23 @@ async def bff_management_quarterly_ranking(
             **source_surfaces,
         }.items()
     }
-    top_item = ranked_items[0] if ranked_items else None
+    top_item = filtered_items[0] if filtered_items else None
     summary = {
         "quarter": quarter_window["quarter"],
         "formula_version": formula["formula_version"],
-        "persona_count": len(rows),
+        "persona_count": total,
+        "ranking_universe_count": len(rows),
         "ranked_count": total,
         "returned_count": len(page_items),
         "top_persona_id": (top_item or {}).get("persona_id") if isinstance(top_item, dict) else None,
         "evidence_ref_count": len(public_evidence_refs),
         "redacted_evidence_count": redacted_count,
         "basis": formula["basis"],
+        "ranking_snapshot_id": ranking_snapshot_id,
     }
     data = {
         "id": f"pm12-quarterly-ranking-{quarter_window['quarter'].lower()}",
+        "ranking_snapshot_id": ranking_snapshot_id,
         "quarter": quarter_window["quarter"],
         "quarter_window": quarter_window,
         "formula": formula,
@@ -46603,6 +51615,7 @@ async def bff_management_quarterly_ranking(
         },
         "meta": {
             **_snapshot_meta(snapshot_at),
+            "ranking_snapshot_id": ranking_snapshot_id,
             "surfaces": quarterly_surfaces,
             "composition_sources": [
                 "GET /bff/management/persona-league",
@@ -46664,8 +51677,27 @@ async def bff_management_quarterly_ranking_drilldown(
 
     snapshot_at = utc_now()
     quarter_window = _pm12_quarter_window(quarter, snapshot_at)
-    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    rows = _pm12_persona_league_rows()
     ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
+    (
+        public_evidence_refs,
+        canonical_evidence_refs,
+        redacted_count,
+        evidence_dataset_available,
+    ) = _pm12_public_quarter_evidence_refs(
+        identity,
+        quarter_window,
+    )
+    ranked_items = _pm12_attach_ranking_evidence(
+        ranked_items,
+        public_evidence_refs,
+        canonical_evidence_refs=canonical_evidence_refs,
+    )
+    ranked_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
+        ranked_items,
+        surface="quarterly",
+        period=quarter_window["quarter"],
+    )
     ranking_item = _pm12_quarterly_find_persona_item(ranked_items, resolved_persona_id)
     if ranking_item is None:
         raise _bff_error(
@@ -46677,10 +51709,14 @@ async def bff_management_quarterly_ranking_drilldown(
             correlation_id=correlation_id,
         )
 
-    # Enrich and apply common filters
-    enriched_item = _enrich_persona_item_with_bindings(ranking_item)
+    legacy_filtered_results = _pm12_filter_persona_items(
+        [ranking_item],
+        state=state,
+        archetype=archetype,
+        q=q,
+    )
     filtered_results = _filter_by_common_identifiers(
-        [enriched_item],
+        legacy_filtered_results,
         persona_id=resolved_persona_id, persona=persona,
         runtime_id=runtime_id, runtime=runtime,
         strategy_id=strategy_id, strategy=strategy,
@@ -46688,7 +51724,7 @@ async def bff_management_quarterly_ranking_drilldown(
         sleeve_id=sleeve_id, sleeve=sleeve,
         artifact_id=artifact_id, artifact=artifact,
         broker_id=broker_id, broker=broker,
-        stage=stage or state, period=period, as_of=as_of
+        stage=stage, period=period, as_of=as_of
     )
     if not filtered_results:
         raise _bff_error(
@@ -46702,17 +51738,14 @@ async def bff_management_quarterly_ranking_drilldown(
 
     ranking_item = filtered_results[0]
 
-    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
-        identity,
-        quarter_window,
-    )
     row = _pm12_quarterly_find_persona_row(rows, resolved_persona_id)
+    item_evidence_refs = list(ranking_item.get("evidence_refs") or [])
     drilldown = _pm12_quarterly_drilldown_payload(
         item=ranking_item,
         row=row,
         quarter_window=quarter_window,
         ranked_count=len(ranked_items),
-        evidence_refs=public_evidence_refs,
+        evidence_refs=item_evidence_refs,
     )
 
     source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
@@ -46749,10 +51782,11 @@ async def bff_management_quarterly_ranking_drilldown(
         "source_breakdown": drilldown["source_breakdown"],
         "formula": drilldown["formula"],
         "quarter_window": quarter_window,
-        "evidence_refs": public_evidence_refs,
+        "evidence_refs": item_evidence_refs,
         "summary": summary,
         "meta": {
             **_snapshot_meta(snapshot_at),
+            "ranking_snapshot_id": ranking_snapshot_id,
             "correlation_id": correlation_id,
             "surfaces": {
                 "quarterly_ranking_drilldown": drilldown_surface,
@@ -46808,11 +51842,26 @@ async def bff_management_quarterly_ranking_recommendations(
     _require_read_role(identity)
     snapshot_at = utc_now()
     quarter_window = _pm12_quarter_window(quarter, snapshot_at)
-    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    rows = _pm12_persona_league_rows()
     ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
-    public_evidence_refs, redacted_count, evidence_dataset_available = _pm12_public_quarter_evidence_refs(
+    (
+        public_evidence_refs,
+        canonical_evidence_refs,
+        redacted_count,
+        evidence_dataset_available,
+    ) = _pm12_public_quarter_evidence_refs(
         identity,
         quarter_window,
+    )
+    ranked_items = _pm12_attach_ranking_evidence(
+        ranked_items,
+        public_evidence_refs,
+        canonical_evidence_refs=canonical_evidence_refs,
+    )
+    ranked_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
+        ranked_items,
+        surface="quarterly",
+        period=quarter_window["quarter"],
     )
     recommendations = _pm12_quarterly_recommendations(
         ranked_items,
@@ -46820,8 +51869,12 @@ async def bff_management_quarterly_ranking_recommendations(
         evidence_refs=public_evidence_refs,
     )
 
-    # Enrich and apply common filters
-    enriched_recs = [_enrich_persona_item_with_bindings(rec) for rec in recommendations]
+    enriched_recs = _pm12_filter_persona_items(
+        recommendations,
+        state=state,
+        archetype=archetype,
+        q=q,
+    )
     filtered_recs = _filter_by_common_identifiers(
         enriched_recs,
         persona_id=persona_id, persona=persona,
@@ -46831,17 +51884,29 @@ async def bff_management_quarterly_ranking_recommendations(
         sleeve_id=sleeve_id, sleeve=sleeve,
         artifact_id=artifact_id, artifact=artifact,
         broker_id=broker_id, broker=broker,
-        stage=stage or state, period=period, as_of=as_of
+        stage=stage, period=period, as_of=as_of
     )
     total = len(filtered_recs)
     page_items, next_page_token = _page_slice(filtered_recs, page_token, page_size)
 
     formula = _pm12_quarter_formula_payload()
     action_counts = {
-        action_id: len([item for item in recommendations if item.get("action_id") == action_id])
+        action_id: len([item for item in filtered_recs if item.get("action_id") == action_id])
         for action_id in _PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER
     }
-    top_item = ranked_items[0] if ranked_items else None
+    filtered_persona_ids = {
+        str(item.get("persona_id") or "")
+        for item in filtered_recs
+        if str(item.get("persona_id") or "")
+    }
+    top_item = next(
+        (
+            item
+            for item in ranked_items
+            if str(item.get("persona_id") or "") in filtered_persona_ids
+        ),
+        None,
+    )
     summary = {
         "quarter": quarter_window["quarter"],
         "formula_version": formula["formula_version"],
@@ -46858,6 +51923,7 @@ async def bff_management_quarterly_ranking_recommendations(
         "allowed_actions": list(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER),
         "basis": formula["basis"],
         "policy": "read_only_governance_advisory",
+        "ranking_snapshot_id": ranking_snapshot_id,
     }
 
     source_surfaces = _pm12_persona_league_source_surfaces(snapshot_at)
@@ -46902,6 +51968,7 @@ async def bff_management_quarterly_ranking_recommendations(
     governance_destinations = ["human_inbox", "governance_queue", "human_gate_decision"]
     data = {
         "id": f"pm12-quarterly-ranking-recommendations-{quarter_window['quarter'].lower()}",
+        "ranking_snapshot_id": ranking_snapshot_id,
         "quarter": quarter_window["quarter"],
         "quarter_window": quarter_window,
         "formula": formula,
@@ -46921,6 +51988,7 @@ async def bff_management_quarterly_ranking_recommendations(
         },
         "meta": {
             **_snapshot_meta(snapshot_at),
+            "ranking_snapshot_id": ranking_snapshot_id,
             "surfaces": {
                 "quarterly_ranking_recommendations": recommendations_surface,
                 "quarterly_ranking": quarterly_surface,
@@ -54522,10 +59590,26 @@ def _action_adapter_command_payload(
         "audit_event": audit_event,
         "adapter_source_route": _ACTIONS_TO_COMMANDS_SOURCE_ROUTE,
     }
+    command_type = spec["command_type"].value
+    target_type = spec["target_type"].value
+
+    if normalized_entity_type == "rebalance" and clean_action_id.lower() == "apply":
+        command_type = CommandType.APPROVED_APPLY.value
+        target_type = ObjectType.REBALANCE.value
+        params["entity_type"] = "Rebalance"
+        if "rebalance_id" not in params:
+            params["rebalance_id"] = clean_entity_id
+    elif normalized_entity_type == "persona" and clean_action_id.lower() == "emergencycontainment":
+        command_type = CommandType.EMERGENCY_CONTAINMENT.value
+        target_type = ObjectType.PERSONA.value
+        params["entity_type"] = "Persona"
+        if "persona_id" not in params:
+            params["persona_id"] = clean_entity_id
+
     return {
-        "command": spec["command_type"].value,
+        "command": command_type,
         "target": {
-            "type": spec["target_type"].value,
+            "type": target_type,
             "id": clean_entity_id,
         },
         "action": clean_action_id,
@@ -54845,7 +59929,7 @@ def _submit_canonical_action_command(
             "adapter_source_route": _ACTIONS_TO_COMMANDS_SOURCE_ROUTE,
         },
         extra_precondition=lambda identity, _cmd: _require_operator_role(identity),
-        enqueue=False,
+        enqueue=True,
         include_durable_meta=True,
         response_deprecation=deprecation,
     )
@@ -55881,6 +60965,55 @@ async def bff_v5_loop_inventory(
     return _loop_inventory_response_meta(payload)
 
 
+async def _async_loop_health_records() -> Tuple[bool, List[Dict[str, Any]], str]:
+    fs_available, fs_records, fs_source = _loop_health_store_records()
+    for r in fs_records:
+        if isinstance(r, dict):
+            r["_health_source"] = fs_source
+
+    dsn = os.environ.get("DATABASE_URL")
+    db_records = []
+    db_available = False
+    if dsn:
+        try:
+            import importlib
+            loop_control = importlib.import_module("services.loop-control")
+            LoopControllerStore = loop_control.LoopControllerStore
+            project_controller_record_to_bff = loop_control.project_controller_record_to_bff
+            store = LoopControllerStore(dsn)
+            tenant_id = os.environ.get("PANTHEON_TENANT_ID", "default")
+            environment = os.environ.get("PANTHEON_ENV", "dev")
+            records = await store.list_records(tenant_id, environment)
+            if records:
+                db_records = [project_controller_record_to_bff(r) for r in records]
+                for r in db_records:
+                    r["_health_source"] = "controller_store"
+                db_available = True
+        except Exception as e:
+            log.warning(f"Failed to load loop health from database: {e}. Falling back to file store.")
+
+    merged_records = []
+    seen_loops = set()
+
+    for r in db_records:
+        loop_id = r.get("loop_id") or r.get("id")
+        if loop_id:
+            merged_records.append(r)
+            seen_loops.add(str(loop_id).strip())
+
+    for r in fs_records:
+        loop_id = r.get("loop_id") or r.get("id")
+        if loop_id:
+            clean_id = str(loop_id).strip()
+            if clean_id not in seen_loops:
+                merged_records.append(r)
+
+    health_available = db_available or fs_available
+    health_source = "controller_store" if db_available else fs_source
+    return health_available, merged_records, health_source
+
+
+
 @app.get("/bff/v5/loop-health", response_model=LoopHealthListEnvelope)
 async def bff_v5_loop_health(
     authorization: Optional[str] = Header(default=None),
@@ -55888,7 +61021,7 @@ async def bff_v5_loop_health(
     """List operator loop health truth without promoting registry metadata to liveness."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    health_available, health_records, health_source = _loop_health_store_records()
+    health_available, health_records, health_source = await _async_loop_health_records()
     records = list_loop_health_entries(
         health_records,
         health_source=health_source,
@@ -55920,7 +61053,7 @@ async def bff_v5_loop_health_detail(
     """Get one operator loop health truth record."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    health_available, health_records, health_source = _loop_health_store_records()
+    health_available, health_records, health_source = await _async_loop_health_records()
     payload = _sem_final_registry_detail(
         get_loop_health_entry(
             loop_id,
@@ -56005,9 +61138,14 @@ async def bff_list_loop_runs(
     if status:
         requested = {s.strip().lower() for s in status.split(",") if s.strip()}
         records = [r for r in records if str(r.get("status") or "").lower() in requested]
-    src_dataset = "loop_runs" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
-    source = None if available else "missing"
-    return _sem_final_list_response(records, dataset=src_dataset, surface_key="loop_runs", source=source)
+    src_dataset, source, surface = _loop_run_surface_status(available)
+    return _sem_final_list_response(
+        records,
+        dataset=src_dataset,
+        surface_key="loop_runs",
+        source=source,
+        surface=surface,
+    )
 
 
 @app.get("/bff/v5/loop-runs/{loop_run_id}")
@@ -56020,15 +61158,16 @@ async def bff_get_loop_run(
     _require_read_role(identity)
     clean_id = loop_run_id.strip()
     available, record = read_store.get_loop_run(clean_id)
-    lr_src_dataset = "loop_runs" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
+    lr_src_dataset, source, surface = _loop_run_surface_status(available)
     return _sem_final_read_model_detail(
         record,
         entity_id=clean_id,
         label="Loop run",
         dataset=lr_src_dataset,
         surface_key="loop_run_detail",
-        source=None if available else "missing",
+        source=source,
         source_available=None if available else False,
+        surface=surface,
     )
 
 
@@ -56675,12 +61814,28 @@ def _bff_source_commit() -> str:
 @app.get("/bff/version")
 async def sem_bff_version():
     commit = _bff_source_commit()
+    image_digest = os.getenv("BFF_IMAGE_DIGEST") or os.getenv("IMAGE_DIGEST") or "unknown"
+    build_time = os.getenv("BFF_BUILD_TIME") or os.getenv("BUILD_TIME") or "unknown"
+    environment = os.getenv("PANTHEON_ENV") or os.getenv("ENVIRONMENT") or "unknown"
+
+    config_posture = {
+        "auth_stub": _bff_auth_stub_enabled(),
+        "auth_mode": _bff_auth_mode(),
+        "dev_login_enabled": _dev_login_enabled(),
+        "mfa_required": _bool_from_env("PANTHEON_BFF_MFA_REQUIRED", default=False),
+        "assistant_kernel_enabled": _bool_from_env("PANTHEON_ASSISTANT_KERNEL_ENABLED", default=False),
+    }
+
     return {
         "service": "operator-bff",
         "version": "0.2.0",
         "source_commit_sha": commit,
         "commit": commit,
         "source_commit_known": bool(re.fullmatch(r"[0-9a-fA-F]{40}", commit)),
+        "image_digest": image_digest,
+        "build_time": build_time,
+        "environment": environment,
+        "config_posture": config_posture,
     }
 
 
@@ -56739,12 +61894,13 @@ def _sem_final_list_response(
     dataset: str,
     surface_key: str,
     source: Optional[str] = None,
+    surface: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
     if source == "bff_local_registry":
         meta = _sem_final_registry_meta(surface_key, snapshot_at=snapshot_at, total=len(items))
     else:
-        surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at, source=source)
+        surface = surface or _dataset_surface_status(dataset, snapshot_at=snapshot_at, source=source)
         meta = {
             "snapshot_at": snapshot_at,
             "surfaces": {surface_key: surface},
@@ -56808,9 +61964,10 @@ def _sem_final_read_model_detail(
     surface_key: str,
     source: Optional[str] = None,
     source_available: Optional[bool] = None,
+    surface: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
-    surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at, source=source)
+    surface = surface or _dataset_surface_status(dataset, snapshot_at=snapshot_at, source=source)
     if record:
         return {
             "data": record,
@@ -59628,9 +64785,14 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
         )
     if path == "/bff/v5/loop-runs":
         available, records = read_store.list_loop_runs()
-        src_dataset = "loop_runs" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
-        source = None if available else "missing"
-        return _sem_final_list_response(records, dataset=src_dataset, surface_key="loop_runs", source=source)
+        src_dataset, source, surface = _loop_run_surface_status(available)
+        return _sem_final_list_response(
+            records,
+            dataset=src_dataset,
+            surface_key="loop_runs",
+            source=source,
+            surface=surface,
+        )
     if path == "/bff/v5/sentinel/findings":
         available, records = read_store.list_sentinel_findings()
         src_dataset = "sentinel_findings" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
@@ -59643,6 +64805,8 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
         incidents_source = read_store.dataset_source("incidents")
 
         def _control_room_child_surface(dataset: str, available: bool) -> Dict[str, Any]:
+            if dataset == "loop_runs":
+                return _loop_run_surface_status(available, snapshot_at=snapshot_at)[2]
             if incidents_source != "missing":
                 return _dataset_surface_status("incidents", snapshot_at=snapshot_at)
             return _dataset_surface_status(
@@ -59811,15 +64975,16 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
         )
     if path.startswith("/bff/v5/loop-runs/"):
         available, record = read_store.get_loop_run(entity_id)
-        lr_src_dataset = "loop_runs" if available and read_store.dataset_source("incidents") == "missing" else "incidents"
+        lr_src_dataset, source, surface = _loop_run_surface_status(available)
         return _sem_final_read_model_detail(
             record,
             entity_id=entity_id,
             label="Loop run",
             dataset=lr_src_dataset,
             surface_key="loop_run_detail",
-            source=None if available else "missing",
+            source=source,
             source_available=None if available else False,
+            surface=surface,
         )
     if path.startswith("/bff/v5/sentinel/findings/"):
         available, record = read_store.get_sentinel_finding(entity_id)
@@ -60055,6 +65220,8 @@ async def bff_v5_control_room(
     incidents_source = read_store.dataset_source("incidents")
 
     def _cr_child_surface(dataset: str, available: bool) -> Dict[str, Any]:
+        if dataset == "loop_runs":
+            return _loop_run_surface_status(available, snapshot_at=snapshot_at)[2]
         if incidents_source != "missing":
             return _dataset_surface_status("incidents", snapshot_at=snapshot_at)
         return _dataset_surface_status(
@@ -61526,6 +66693,7 @@ app.include_router(
     _create_agora_router(
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
+        require_write_role=_require_operator_role,
         bff_error=_bff_error,
         utc_now=utc_now,
         get_read_store=lambda: read_store,

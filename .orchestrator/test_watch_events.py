@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import fcntl
+import json
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import watch_events
@@ -64,6 +69,83 @@ class WatcherBookkeepingTests(unittest.TestCase):
         self.assertEqual(state["recent_terminal_tasks"], [{"task_id": "OPS-001"}])
         self.assertEqual(state["pending_handoff_keys"], [])
         self.assertIsNotNone(state["last_scan_at"])
+
+
+class WatcherQueueTransactionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        self.queue_path = self.root / "event-queue.jsonl"
+        self.config = {
+            "paths": {
+                "state_file": str(self.root / "state.json"),
+                "event_queue": str(self.queue_path),
+                "status_file": str(self.root / "ai-status.json"),
+                "activity_log": str(self.root / "ai-activity-log.jsonl"),
+            },
+            "agents": {
+                "codex": {
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "adapter": "file_inbox",
+                }
+            },
+            "providers": {"codex": {"delivery_mode": "file_inbox"}},
+        }
+        self.event = {
+            "key": "TASK-001:status:in_progress:codex",
+            "task_id": "TASK-001",
+            "target_agent": "Codex",
+            "reason": "status:in_progress",
+            "context_files": ["AI_COLLABORATION_GUIDE.md"],
+            "task": {"id": "TASK-001", "artifacts": []},
+        }
+
+    def test_public_queue_append_holds_runtime_sidecar_and_reads_back_exact_event(self) -> None:
+        real_append = watch_events._append_runtime_event_locked
+        lock_path = self.root / ".orchestrator" / "runtime-admission.lock"
+
+        def assert_locked_append(config: dict, payload: dict) -> None:
+            probe = os.open(lock_path, os.O_RDWR)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(probe)
+            real_append(config, payload)
+
+        with (
+            mock.patch.object(watch_events, "render_wakeup_message", return_value="wake\n"),
+            mock.patch.object(watch_events, "write_activity_log"),
+            mock.patch.object(watch_events, "_append_runtime_event_locked", side_effect=assert_locked_append),
+        ):
+            self.assertTrue(watch_events.queue_delivery_event(self.config, self.event))
+
+        rows = [json.loads(line) for line in self.queue_path.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["task_id"], "TASK-001")
+        self.assertEqual(rows[0]["message"], "wake\n")
+
+    def test_queue_append_rejects_symlink_leaf_without_touching_target(self) -> None:
+        target = self.root / "outside.jsonl"
+        target.write_text('{"operator": true}\n', encoding="utf-8")
+        self.queue_path.symlink_to(target)
+
+        with (
+            mock.patch.object(watch_events, "render_wakeup_message", return_value="wake\n"),
+            mock.patch.object(watch_events, "write_activity_log"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "data leaf cannot be a symlink"):
+                watch_events.queue_delivery_event(self.config, self.event)
+
+        self.assertTrue(self.queue_path.is_symlink())
+        self.assertEqual(target.read_text(encoding="utf-8"), '{"operator": true}\n')
+
+    def test_queue_append_fails_closed_on_readback_mismatch(self) -> None:
+        with mock.patch.object(watch_events.os, "pread", return_value=b"corrupt"):
+            with self.assertRaisesRegex(RuntimeError, "readback mismatch"):
+                watch_events._append_runtime_event_locked(self.config, {"event_id": "evt-1"})
 
 
 if __name__ == "__main__":

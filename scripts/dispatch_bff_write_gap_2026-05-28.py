@@ -28,8 +28,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from canonical_writer_guard import assert_isolated_legacy_write_target
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 STATE_PATH = REPO_ROOT / "ai-status.json"
+AUTO_BY = "dispatch_bff_write_gap_2026-05-28"
 
 SPEC = "docs/04/pantheon_bff_write_gap_2026-05-28/BFF_WRITE_GAP_SPEC.md"
 FE_SPEC = "execute-plans/.lovable/specs/be-requirements/BE_WRITE_GAP_SPEC_2026-05-28.md"
@@ -370,6 +373,7 @@ def update_sprint_metadata() -> None:
     state["sprint"] = SPRINT_ID
     state["sprint_started_at"] = "2026-05-28T00:00:00Z"
     state["objective"] = SPRINT_OBJECTIVE
+    assert_isolated_legacy_write_target(STATE_PATH, tool=AUTO_BY)
     STATE_PATH.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n")
     print(f"Sprint metadata updated: {SPRINT_ID}")
 

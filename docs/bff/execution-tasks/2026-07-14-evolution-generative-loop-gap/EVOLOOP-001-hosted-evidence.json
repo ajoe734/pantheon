@@ -1,0 +1,660 @@
+{
+  "assertion_failures": [],
+  "bff_after": {
+    "observed_at": "2026-07-14T09:23:55Z",
+    "source_commit_sha": "26ed8b7d4a5f7ac9aec848213dfc2752c39a3a1f",
+    "url": "http://127.0.0.1:18001/bff/version"
+  },
+  "bff_before": {
+    "observed_at": "2026-07-14T09:22:20Z",
+    "source_commit_sha": "26ed8b7d4a5f7ac9aec848213dfc2752c39a3a1f",
+    "url": "http://127.0.0.1:18001/bff/version"
+  },
+  "completed_at": "2026-07-14T09:23:55Z",
+  "deployment": {
+    "requested_ref": "26ed8b7d4a5f7ac9aec848213dfc2752c39a3a1f",
+    "resolved_sha": "26ed8b7d4a5f7ac9aec848213dfc2752c39a3a1f",
+    "run_attempt": "1",
+    "run_id": "29319983880",
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/29319983880"
+  },
+  "expected_sha": "26ed8b7d4a5f7ac9aec848213dfc2752c39a3a1f",
+  "initial_probe": {
+    "completed_at": "2026-07-14T09:23:30Z",
+    "direct_execute_calls_by_probe": 0,
+    "freeze": {
+      "action_type": "freeze",
+      "approved_at": "2026-07-14T09:22:21Z",
+      "cooldown_ends_at": null,
+      "decision_id": "evoloop-001-29319983880-1-freeze-live",
+      "decision_state": "approved",
+      "executed_step_actor": null,
+      "executed_step_count": 0,
+      "execution_result": null,
+      "metadata_has_active_runtime": false,
+      "observation_window_ends_at": null,
+      "observed_at": "2026-07-14T09:23:30Z",
+      "risk_level": "high",
+      "runtime_binding_id": "rb-evoloop-001-29319983880-1-freeze-live",
+      "target_id": "artifact-evoloop-001-29319983880-1-freeze-live",
+      "target_stage": "live",
+      "target_type": "candidate_artifact",
+      "target_version": "v1.0"
+    },
+    "mutating_request_count": 6,
+    "mutating_requests": [
+      {
+        "completed_at": "2026-07-14T09:22:21Z",
+        "method": "POST",
+        "path": "/api/evolution/proposals",
+        "requested_at": "2026-07-14T09:22:21Z",
+        "status": 201
+      },
+      {
+        "completed_at": "2026-07-14T09:22:21Z",
+        "method": "POST",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-research/review",
+        "requested_at": "2026-07-14T09:22:21Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:21Z",
+        "method": "POST",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-research/approve",
+        "requested_at": "2026-07-14T09:22:21Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:21Z",
+        "method": "POST",
+        "path": "/api/evolution/proposals",
+        "requested_at": "2026-07-14T09:22:21Z",
+        "status": 201
+      },
+      {
+        "completed_at": "2026-07-14T09:22:21Z",
+        "method": "POST",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live/review",
+        "requested_at": "2026-07-14T09:22:21Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:21Z",
+        "method": "POST",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live/approve",
+        "requested_at": "2026-07-14T09:22:21Z",
+        "status": 200
+      }
+    ],
+    "mutation_whitelist_passed": true,
+    "phase": "initial",
+    "request_ledger": [
+      {
+        "completed_at": "2026-07-14T09:22:21Z",
+        "method": "POST",
+        "path": "/api/evolution/proposals",
+        "requested_at": "2026-07-14T09:22:21Z",
+        "status": 201
+      },
+      {
+        "completed_at": "2026-07-14T09:22:21Z",
+        "method": "POST",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-research/review",
+        "requested_at": "2026-07-14T09:22:21Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:21Z",
+        "method": "POST",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-research/approve",
+        "requested_at": "2026-07-14T09:22:21Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:21Z",
+        "method": "POST",
+        "path": "/api/evolution/proposals",
+        "requested_at": "2026-07-14T09:22:21Z",
+        "status": 201
+      },
+      {
+        "completed_at": "2026-07-14T09:22:21Z",
+        "method": "POST",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live/review",
+        "requested_at": "2026-07-14T09:22:21Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:21Z",
+        "method": "POST",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live/approve",
+        "requested_at": "2026-07-14T09:22:21Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:21Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-research",
+        "requested_at": "2026-07-14T09:22:21Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:21Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:21Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:23Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-research",
+        "requested_at": "2026-07-14T09:22:23Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:23Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:23Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:25Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-research",
+        "requested_at": "2026-07-14T09:22:25Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:25Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:25Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:27Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:27Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:29Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:29Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:31Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:31Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:33Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:33Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:35Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:35Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:37Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:37Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:39Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:39Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:41Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:41Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:43Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:43Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:45Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:45Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:47Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:47Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:49Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:49Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:51Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:51Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:53Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:53Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:55Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:55Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:57Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:57Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:22:59Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:22:59Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:01Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:01Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:03Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:03Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:05Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:05Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:07Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:07Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:09Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:09Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:11Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:11Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:13Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:13Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:15Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:15Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:17Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:17Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:19Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:19Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:21Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:21Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:23Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:23Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:25Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:25Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:27Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:27Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:29Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:29Z",
+        "status": 200
+      },
+      {
+        "completed_at": "2026-07-14T09:23:30Z",
+        "method": "GET",
+        "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+        "requested_at": "2026-07-14T09:23:30Z",
+        "status": 200
+      }
+    ],
+    "research": {
+      "action_type": "retrain",
+      "approved_at": "2026-07-14T09:22:21Z",
+      "cooldown_ends_at": "2026-07-17T09:22:24Z",
+      "decision_id": "evoloop-001-29319983880-1-research",
+      "decision_state": "executed",
+      "executed_step_actor": "evolution-dispatch-worker",
+      "executed_step_count": 1,
+      "execution_result": {
+        "executed_at": "2026-07-14T09:22:24Z",
+        "execution_ref_id": "dispatch-evoloop-001-29319983880-1-research",
+        "outcome_summary": "research_retrain submitted to research.",
+        "plane": "research",
+        "status": "submitted"
+      },
+      "metadata_has_active_runtime": false,
+      "observation_window_ends_at": "2026-07-21T09:22:24Z",
+      "observed_at": "2026-07-14T09:23:30Z",
+      "risk_level": "low",
+      "runtime_binding_id": null,
+      "target_id": "artifact-evoloop-001-29319983880-1-research",
+      "target_stage": "paper",
+      "target_type": "candidate_artifact",
+      "target_version": "v1.0"
+    },
+    "schema_version": "evoloop-001-hosted-probe.v1",
+    "started_at": "2026-07-14T09:22:21Z",
+    "unexpected_mutating_requests": []
+  },
+  "initial_worker_log_evidence": {
+    "freeze_skip_count": 3,
+    "research_dispatch_count": 1,
+    "tick_values": [
+      4,
+      5,
+      6
+    ]
+  },
+  "ownership_after": {
+    "checkout_sha": "26ed8b7d4a5f7ac9aec848213dfc2752c39a3a1f",
+    "compose_config_file": "/home/lupin/pantheon-ci-deploy/dev-root/docker-compose.yml",
+    "container_command": [
+      "python",
+      "-m",
+      "services.evolution.dispatch_worker"
+    ],
+    "container_id": "3d6da08bbc1fb384b43a61bfbfcfe66baa55917ba055d259919056256309d741",
+    "container_name": "pantheon-evolution-dispatch-worker-1",
+    "container_source_sha256": "8f504cef8ad760c59e0e80bca420c2a471575c4ea7a48b54a634af8539166b0f",
+    "container_started_at": "2026-07-14T09:23:41.614455771Z",
+    "health": "healthy",
+    "host_source_sha256": "8f504cef8ad760c59e0e80bca420c2a471575c4ea7a48b54a634af8539166b0f",
+    "image_id": "sha256:725162fcb1fa9f3dcde6baf7106aa8d91d679ba7bf7c34b987547e1c025308d6",
+    "labels": {
+      "com.docker.compose.config-hash": "026fad83f75dd0571c73c1d037b2aab766d87c373cd106350aba67333957c461",
+      "com.docker.compose.project": "pantheon",
+      "com.docker.compose.project.config_files": "/home/lupin/pantheon-ci-deploy/dev-root/docker-compose.yml",
+      "com.docker.compose.project.working_dir": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "com.docker.compose.service": "evolution-dispatch-worker"
+    },
+    "observed_at": "2026-07-14T09:23:51Z",
+    "rendered_service_config_hash": "026fad83f75dd0571c73c1d037b2aab766d87c373cd106350aba67333957c461",
+    "running": true,
+    "working_dir": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "worktree": {
+      "allowed_runtime_dirty_paths": [
+        ".orchestrator/task-briefs/ag_uipol_011.md",
+        ".orchestrator/task-briefs/evoloop_006.md",
+        ".orchestrator/task-briefs/pint_010_r2.md",
+        ".orchestrator/task-briefs/evoloop_005.md",
+        ".orchestrator/task-briefs/fe_secret_boundary_002.md"
+      ],
+      "full_worktree_clean": false,
+      "task_runtime_scope": [
+        "docker-compose.yml",
+        "services/evolution/Dockerfile",
+        "services/evolution/requirements.txt",
+        "services/evolution/dispatch_worker.py",
+        "services/evolution/hosted_compose_probe.py",
+        "services/evolution/hosted_dispatch_probe.py"
+      ],
+      "task_scope_clean": true,
+      "unexpected_dirty_paths": []
+    }
+  },
+  "ownership_before": {
+    "checkout_sha": "26ed8b7d4a5f7ac9aec848213dfc2752c39a3a1f",
+    "compose_config_file": "/home/lupin/pantheon-ci-deploy/dev-root/docker-compose.yml",
+    "container_command": [
+      "python",
+      "-m",
+      "services.evolution.dispatch_worker"
+    ],
+    "container_id": "3d6da08bbc1fb384b43a61bfbfcfe66baa55917ba055d259919056256309d741",
+    "container_name": "pantheon-evolution-dispatch-worker-1",
+    "container_source_sha256": "8f504cef8ad760c59e0e80bca420c2a471575c4ea7a48b54a634af8539166b0f",
+    "container_started_at": "2026-07-14T09:20:53.543645301Z",
+    "health": "healthy",
+    "host_source_sha256": "8f504cef8ad760c59e0e80bca420c2a471575c4ea7a48b54a634af8539166b0f",
+    "image_id": "sha256:725162fcb1fa9f3dcde6baf7106aa8d91d679ba7bf7c34b987547e1c025308d6",
+    "labels": {
+      "com.docker.compose.config-hash": "026fad83f75dd0571c73c1d037b2aab766d87c373cd106350aba67333957c461",
+      "com.docker.compose.project": "pantheon",
+      "com.docker.compose.project.config_files": "/home/lupin/pantheon-ci-deploy/dev-root/docker-compose.yml",
+      "com.docker.compose.project.working_dir": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "com.docker.compose.service": "evolution-dispatch-worker"
+    },
+    "observed_at": "2026-07-14T09:22:21Z",
+    "rendered_service_config_hash": "026fad83f75dd0571c73c1d037b2aab766d87c373cd106350aba67333957c461",
+    "running": true,
+    "working_dir": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "worktree": {
+      "allowed_runtime_dirty_paths": [
+        ".orchestrator/task-briefs/ag_uipol_011.md",
+        ".orchestrator/task-briefs/evoloop_006.md",
+        ".orchestrator/task-briefs/pint_010_r2.md",
+        ".orchestrator/task-briefs/evoloop_005.md",
+        ".orchestrator/task-briefs/fe_secret_boundary_002.md"
+      ],
+      "full_worktree_clean": false,
+      "task_runtime_scope": [
+        "docker-compose.yml",
+        "services/evolution/Dockerfile",
+        "services/evolution/requirements.txt",
+        "services/evolution/dispatch_worker.py",
+        "services/evolution/hosted_compose_probe.py",
+        "services/evolution/hosted_dispatch_probe.py"
+      ],
+      "task_scope_clean": true,
+      "unexpected_dirty_paths": []
+    }
+  },
+  "probe": {
+    "exit_code": 0,
+    "invocation": [
+      "python3",
+      "-m",
+      "services.evolution.hosted_compose_probe",
+      "--expected-sha",
+      "26ed8b7d4a5f7ac9aec848213dfc2752c39a3a1f",
+      "--requested-ref",
+      "26ed8b7d4a5f7ac9aec848213dfc2752c39a3a1f",
+      "--deploy-run-id",
+      "29319983880",
+      "--deploy-run-attempt",
+      "1",
+      "--deploy-run-url",
+      "https://github.com/ajoe734/pantheon/actions/runs/29319983880",
+      "--prefix",
+      "evoloop-001-29319983880-1",
+      "--output",
+      "/tmp/evoloop-001-hosted-29319983880-1.json"
+    ],
+    "source_provenance": [
+      {
+        "git_blob_sha": "f90c7c1acc6534bc3e889afe3da5f27a8655f821",
+        "git_commit_sha": "26ed8b7d4a5f7ac9aec848213dfc2752c39a3a1f",
+        "path": "services/evolution/hosted_compose_probe.py",
+        "sha256": "55d80eb7bc22a2a4fa02d481685f9744974ee490b04fd7443d1d7eee400814fc"
+      },
+      {
+        "git_blob_sha": "4d419c8a3c4914b6584f9c09d755e42b2ece1da1",
+        "git_commit_sha": "26ed8b7d4a5f7ac9aec848213dfc2752c39a3a1f",
+        "path": "services/evolution/hosted_dispatch_probe.py",
+        "sha256": "98f5fc4ae06428d4f02a3f44a5af369baaf0417e93ce3db96a316b43a215bc67"
+      }
+    ]
+  },
+  "restart": {
+    "container_started_at": "2026-07-14T09:23:41.614455771Z",
+    "freeze_skip_count": 1,
+    "fresh_tick_count": 1,
+    "health_after_wait": "healthy",
+    "research_redispatch_count": 0,
+    "running_after_wait": true,
+    "started_at": "2026-07-14T09:23:30Z",
+    "tick_values": [
+      1
+    ],
+    "verify_probe": {
+      "completed_at": "2026-07-14T09:23:49Z",
+      "direct_execute_calls_by_probe": 0,
+      "freeze": {
+        "action_type": "freeze",
+        "approved_at": "2026-07-14T09:22:21Z",
+        "cooldown_ends_at": null,
+        "decision_id": "evoloop-001-29319983880-1-freeze-live",
+        "decision_state": "approved",
+        "executed_step_actor": null,
+        "executed_step_count": 0,
+        "execution_result": null,
+        "metadata_has_active_runtime": false,
+        "observation_window_ends_at": null,
+        "observed_at": "2026-07-14T09:23:49Z",
+        "risk_level": "high",
+        "runtime_binding_id": "rb-evoloop-001-29319983880-1-freeze-live",
+        "target_id": "artifact-evoloop-001-29319983880-1-freeze-live",
+        "target_stage": "live",
+        "target_type": "candidate_artifact",
+        "target_version": "v1.0"
+      },
+      "mutating_request_count": 0,
+      "mutating_requests": [],
+      "mutation_whitelist_passed": true,
+      "phase": "verify",
+      "request_ledger": [
+        {
+          "completed_at": "2026-07-14T09:23:49Z",
+          "method": "GET",
+          "path": "/api/evolution/proposals/evoloop-001-29319983880-1-research",
+          "requested_at": "2026-07-14T09:23:49Z",
+          "status": 200
+        },
+        {
+          "completed_at": "2026-07-14T09:23:49Z",
+          "method": "GET",
+          "path": "/api/evolution/proposals/evoloop-001-29319983880-1-freeze-live",
+          "requested_at": "2026-07-14T09:23:49Z",
+          "status": 200
+        }
+      ],
+      "research": {
+        "action_type": "retrain",
+        "approved_at": "2026-07-14T09:22:21Z",
+        "cooldown_ends_at": "2026-07-17T09:22:24Z",
+        "decision_id": "evoloop-001-29319983880-1-research",
+        "decision_state": "executed",
+        "executed_step_actor": "evolution-dispatch-worker",
+        "executed_step_count": 1,
+        "execution_result": {
+          "executed_at": "2026-07-14T09:22:24Z",
+          "execution_ref_id": "dispatch-evoloop-001-29319983880-1-research",
+          "outcome_summary": "research_retrain submitted to research.",
+          "plane": "research",
+          "status": "submitted"
+        },
+        "metadata_has_active_runtime": false,
+        "observation_window_ends_at": "2026-07-21T09:22:24Z",
+        "observed_at": "2026-07-14T09:23:49Z",
+        "risk_level": "low",
+        "runtime_binding_id": null,
+        "target_id": "artifact-evoloop-001-29319983880-1-research",
+        "target_stage": "paper",
+        "target_type": "candidate_artifact",
+        "target_version": "v1.0"
+      },
+      "schema_version": "evoloop-001-hosted-probe.v1",
+      "unexpected_mutating_requests": []
+    }
+  },
+  "schema_version": "evoloop-001-hosted-compose-probe.v1",
+  "started_at": "2026-07-14T09:22:19Z"
+}

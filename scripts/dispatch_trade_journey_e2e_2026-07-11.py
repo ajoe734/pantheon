@@ -8,6 +8,8 @@ import json
 import os
 from pathlib import Path
 
+from canonical_writer_guard import assert_isolated_legacy_write_target
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 STATUS_ROOT = Path(os.path.expanduser(os.environ.get("PANTHEON_STATUS_ROOT", str(REPO_ROOT)))).resolve()
 STATUS_PATH = STATUS_ROOT / "ai-status.json"
@@ -98,7 +100,9 @@ def main() -> int:
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     if args.dry_run:
         return 0
+    assert_isolated_legacy_write_target(STATUS_PATH, tool=Path(__file__).name)
     STATUS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    assert_isolated_legacy_write_target(LOG_PATH, tool=Path(__file__).name)
     with LOG_PATH.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps({"ts": now, "event": "fleet_dispatch", "auto_by": AUTO_BY, **summary}, ensure_ascii=False) + "\n")
     return 0

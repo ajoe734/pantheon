@@ -20,6 +20,11 @@ OPENCLAW_ADAPTER_BASE_URL_ENVS = (
     "PANTHEON_OPENCLAW_ADAPTER_URL",
     "OPENCLAW_GATEWAY_ADAPTER_URL",
 )
+OPENCLAW_ADAPTER_SERVICE_TOKEN_ENV = "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"
+OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED_ENV = (
+    "PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED"
+)
+OPENCLAW_ADAPTER_ASSISTANT_PREFIX = "/api/openclaw-adapter/assistant"
 
 
 class OpenClawOpsClientError(RuntimeError):
@@ -87,6 +92,13 @@ def _assistant_reauth_timeout_seconds() -> float:
         return 30.0
 
 
+def _truthy_env(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _safe_json(raw: str) -> Dict[str, Any]:
     if not raw:
         return {}
@@ -105,11 +117,24 @@ class OpenClawOpsClient:
         *,
         base_url: Optional[str] = None,
         timeout_seconds: Optional[float] = None,
+        service_token: Optional[str] = None,
+        service_auth_required: Optional[bool] = None,
     ) -> None:
         raw = base_url if base_url is not None else _base_url_from_env()
         self._base_url = raw.rstrip("/") if raw else ""
         self._timeout = timeout_seconds if timeout_seconds is not None else _timeout_seconds()
         self._timeout_explicit = timeout_seconds is not None
+        token = (
+            os.getenv(OPENCLAW_ADAPTER_SERVICE_TOKEN_ENV, "")
+            if service_token is None
+            else service_token
+        )
+        self._service_token = str(token or "").strip()
+        self._service_auth_required = (
+            _truthy_env(OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED_ENV)
+            if service_auth_required is None
+            else bool(service_auth_required)
+        )
 
     @property
     def configured(self) -> bool:
@@ -336,6 +361,7 @@ class OpenClawOpsClient:
         if session_user:
             md.setdefault("session_user", session_user)
         body = {"mode": mode, "prompt": prompt, "context_pack": context_pack, "metadata": md}
+        path = "/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream"
         headers = {
             "X-Operator-Id": operator_id,
             "Content-Type": "application/json",
@@ -343,8 +369,9 @@ class OpenClawOpsClient:
         }
         if trace_id:
             headers["X-Trace-Id"] = trace_id
+        headers.update(self._assistant_service_headers(path))
         request = urllib.request.Request(
-            f"{self._base_url}/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream",
+            f"{self._base_url}{path}",
             data=json.dumps(body).encode("utf-8"),
             headers=headers,
             method="POST",
@@ -675,6 +702,32 @@ class OpenClawOpsClient:
             return self._timeout
         return _assistant_provider_timeout_seconds()
 
+    def _assistant_service_headers(self, path: str) -> Dict[str, str]:
+        """Return BFF-to-adapter auth headers for assistant-only routes.
+
+        The service token is never sent to unrelated adapter surfaces.  A
+        strict deployment with a missing token is a local configuration error,
+        so fail before opening a socket instead of relying on an adapter-side
+        denial after potentially expensive request preparation.
+        """
+
+        normalized_path = str(path or "").rstrip("/")
+        is_assistant_path = (
+            normalized_path == OPENCLAW_ADAPTER_ASSISTANT_PREFIX
+            or normalized_path.startswith(f"{OPENCLAW_ADAPTER_ASSISTANT_PREFIX}/")
+        )
+        if not is_assistant_path:
+            return {}
+        if self._service_token:
+            return {"X-Pantheon-Service-Token": self._service_token}
+        if self._service_auth_required:
+            raise OpenClawOpsClientError(
+                "OpenClaw adapter assistant service authentication is required, but the BFF service token is not configured.",
+                status_code=503,
+                error_code="OPENCLAW_ADAPTER_SERVICE_AUTH_MISCONFIGURED",
+            )
+        return {}
+
     def _request(
         self,
         method: str,
@@ -709,6 +762,9 @@ class OpenClawOpsClient:
             request_headers["Content-Type"] = "application/json"
         if headers:
             request_headers.update(headers)
+        # Apply the trusted service credential last so a caller-provided header
+        # cannot replace the BFF-owned token.
+        request_headers.update(self._assistant_service_headers(path))
 
         data = json.dumps(body).encode("utf-8") if body is not None else None
         request = urllib.request.Request(

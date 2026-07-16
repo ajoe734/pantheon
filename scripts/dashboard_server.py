@@ -6,9 +6,18 @@ import functools
 import json
 import subprocess
 import shutil
+import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+
+
+ROOT = Path(__file__).resolve().parents[1]
+ORCHESTRATOR_DIR = ROOT / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+
+from common import read_activity_log_tail_bytes
 
 
 class NoCacheRequestHandler(SimpleHTTPRequestHandler):
@@ -29,20 +38,25 @@ class NoCacheRequestHandler(SimpleHTTPRequestHandler):
             return
         live_path = self.live_file_map.get(parsed.path)
         if live_path is not None:
-            if not live_path.exists():
-                self.send_error(404, f"Live file not found: {parsed.path}")
-                return
             tail_lines = self.tail_line_map.get(parsed.path)
             if tail_lines is not None:
-                # Serve only the last N lines to keep payload small
-                with live_path.open("rb") as f:
-                    all_lines = f.readlines()
-                body = b"".join(all_lines[-tail_lines:])
+                # Recovery runs under audit EX; the returned snapshot is read
+                # under audit SH and remains immutable while sent to clients.
+                body = read_activity_log_tail_bytes(
+                    live_path,
+                    max_lines=tail_lines,
+                )
+                if body is None:
+                    self.send_error(404, f"Live file not found: {parsed.path}")
+                    return
                 self.send_response(200)
                 self.send_header("Content-type", self.guess_type(str(live_path)))
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+                return
+            if not live_path.exists():
+                self.send_error(404, f"Live file not found: {parsed.path}")
                 return
             self.send_response(200)
             self.send_header("Content-type", self.guess_type(str(live_path)))

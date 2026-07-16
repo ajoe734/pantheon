@@ -4,15 +4,49 @@ import json
 import os
 import sys
 import tempfile
+
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
+from persona_provisioning import MemoryPersonaProvisioningStore
 from read_store import ReadSurfaceStore
+from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
+
+
+@pytest.fixture(autouse=True)
+def _isolate_persona_create_service_clients(monkeypatch):
+    """Keep this BFF contract test local after persona creation moved its
+    subresource writes to the canonical Capital, Deployment, and Runtime
+    services."""
+
+    transport = FakeOwnerTransport()
+    monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())
+    monkeypatch.setattr(bff_main, "_PersonaOwnerHttpTransport", lambda: transport)
+    monkeypatch.setattr(bff_main, "_register_persona_cron_required", _schedule_receipt)
+
+    def _missing_deployment_plan(*_args, **_kwargs):
+        raise RuntimeError("deployment plan not found")
+
+    monkeypatch.setattr(bff_main, "_get_json", _missing_deployment_plan)
+    monkeypatch.setattr(bff_main, "_post_json", lambda *_args, **_kwargs: {"status": "created"})
+
+    class _RuntimeManagerClient:
+        def get(self, _binding_id):
+            return None
+
+        def deploy(self, request):
+            return {"runtime_id": request["runtime_id"], "status": "accepted"}
+
+        def list_all(self):
+            return []
+
+    monkeypatch.setattr(bff_main, "_runtime_manager_client", _RuntimeManagerClient)
 
 
 def _fresh_client(td: str) -> TestClient:
@@ -58,43 +92,45 @@ def test_bff_management_create_paper_bundle_success() -> None:
         original = bff_main.read_store
         try:
             client = _fresh_client(td)
-            
+
             payload = {
                 "name": "Alpha Trader",
                 "archetype": "mean_reversion",
-                "risk": "medium",
+                "risk": "low",
                 "mandate": "Trade TW equities using daily pricing",
                 "market": "TW",
             }
-            
+
             resp = client.post(
                 "/bff/management/personas/create-paper-bundle",
                 json=payload,
                 headers={**HEADERS, "Idempotency-Key": "bundle-create-123"},
             )
-            
+
             assert resp.status_code == 201, resp.text
             body = resp.json()
             assert "data" in body
             assert "meta" in body
-            
+
             data = body["data"]
             meta = body["meta"]
             persona_id = data["id"]
-            
+
             # Acceptance verification
-            assert data["state"] == "paper_running"
+            assert data["state"] == "provisioning"
             assert data["capitalMode"] == "paper"
             assert data["deploymentStage"] == "paper"
             assert data["paperLedgerId"].startswith("paper-ledger-")
-            assert data["runtimeId"].startswith("runtime-")
-            assert data["runtimeBindingId"].endswith("-paper")
+            assert "runtimeId" not in data
+            assert "runtimeBindingId" not in data
             assert "capitalPoolId" not in data
-            
-            assert meta["create_flow"] == "one_shot_paper_running"
+
+            assert meta["create_flow"] == "durable_owner_coordinated_provisioning"
+            assert meta["runtime_id"] is None
+            assert meta["runtime_binding_id"] is None
             assert meta["live_capital_side_effects"] is False
             assert meta["human_review_required_for_live"] is True
-            
+
             # Idempotency check with the same key
             dup_resp = client.post(
                 "/bff/management/personas/create-paper-bundle",
@@ -103,33 +139,33 @@ def test_bff_management_create_paper_bundle_success() -> None:
             )
             assert dup_resp.status_code == 201
             assert dup_resp.json()["data"]["id"] == persona_id
-            
+
             # Query the created persona detail to verify data sources and bindings
             bff_main._PERSONA_BFF_OVERLAY.clear()
             bff_main.read_store = ReadSurfaceStore(
                 os.path.join(td, "read_surfaces.json"),
                 allow_local_snapshot_fallback=False,
             )
-            
+
             detail_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
             assert detail_resp.status_code == 200, detail_resp.text
             detail = detail_resp.json()["data"]
-            
-            assert detail["state"] == "paper_running"
+
+            assert detail["state"] == "provisioning"
             assert detail["mandate"] == "Trade TW equities using daily pricing"
             assert detail["archetype"] == "mean_reversion"
-            
+
             # Check TW required data sources are set correctly
             assert "sourceHealthBindings" in detail or "required_data_sources" in bff_main.read_store.get_persona(persona_id)
             persona_raw = bff_main.read_store.get_persona(persona_id)
             assert persona_raw is not None
             assert len(persona_raw.get("required_data_sources", [])) > 0
-            
+
             # Ensure paper ledger is isolated
             ledger = persona_raw["metadata"].get("paper_ledger")
             assert ledger is not None
             assert ledger["persona_id"] == persona_id
             assert ledger["is_isolated"] is True
-            
+
         finally:
             bff_main.read_store = original

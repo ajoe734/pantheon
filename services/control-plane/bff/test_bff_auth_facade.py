@@ -248,6 +248,19 @@ class TestExtractIdentityJwt:
             "assistant.kernel.repair",
         ]
 
+    def test_permissive_viewer_does_not_inherit_or_assert_stub_capabilities(self):
+        identity = self._call(
+            "Bearer pantheon-dev-browser:viewer:mfa:assistant.kernel.debug",
+            env_overrides={
+                "PANTHEON_BFF_AUTH_MODE": "permissive",
+                "PANTHEON_BFF_JWT_SECRET": "",
+                "PANTHEON_BFF_STUB_CAPABILITIES": "assistant.kernel.repair",
+            },
+        )
+
+        assert identity.roles == ["viewer"]
+        assert identity.claims.get("capabilities") in (None, [])
+
 
 # ---------------------------------------------------------------------------
 # Unit tests: _extract_identity_stub (legacy dev mode)
@@ -287,6 +300,19 @@ class TestExtractIdentityStub:
             "assistant.kernel.debug",
             "assistant.kernel.repair",
         ]
+
+    def test_viewer_stub_does_not_inherit_or_assert_capabilities(self):
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_BFF_STUB_CAPABILITIES": "assistant.kernel.repair"},
+            clear=False,
+        ):
+            identity = self._call(
+                "Bearer pantheon-dev-browser:viewer:mfa:assistant.kernel.debug"
+            )
+
+        assert identity.roles == ["viewer"]
+        assert identity.claims["capabilities"] == []
 
     def test_colon_format_multiple_roles(self):
         identity = self._call("Bearer op-multi:operator,reviewer")
@@ -331,6 +357,23 @@ class TestExtractIdentityDispatch:
             {"PANTHEON_BFF_AUTH_STUB": "", "PANTHEON_BFF_AUTH_MODE": "strict"},
             clear=False,
         ):
+            with pytest.raises(HTTPException) as exc_info:
+                _extract_identity("Bearer op-admin:admin:mfa")
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.parametrize("bad_mode", ["strcit", "", "disabled", "strict-ish", "PERMISIVE"])
+    def test_malformed_auth_mode_with_stub_true_still_routes_to_jwt(self, bad_mode):
+        # A typo'd/unrecognized PANTHEON_BFF_AUTH_MODE combined with
+        # PANTHEON_BFF_AUTH_STUB=true must not silently enable the dev stub —
+        # unrecognized modes fail closed to strict.
+        from fastapi import HTTPException
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_BFF_AUTH_STUB": "true", "PANTHEON_BFF_AUTH_MODE": bad_mode},
+            clear=False,
+        ):
+            assert bff_main._bff_auth_mode() == "strict"
+            assert bff_main._bff_auth_stub_enabled() is False
             with pytest.raises(HTTPException) as exc_info:
                 _extract_identity("Bearer op-admin:admin:mfa")
         assert exc_info.value.status_code == 401

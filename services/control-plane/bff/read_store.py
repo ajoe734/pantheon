@@ -30,6 +30,8 @@ from services.consultation.client import ConsultationClientError, ConsultationSe
 from services.consultation.store import ConsultationStore
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
+_NOT_SUPPLIED = object()
+
 
 def _first_existing(paths: List[Path]) -> Optional[Path]:
     for path in paths:
@@ -3053,6 +3055,8 @@ class ServiceBackedReadAdapter:
             "filenames": (),
             "keys": ["id"],
             "snapshot_key": "loop_runs",
+            "nested_key": "records",
+            "snapshot_requires_key": True,
         },
         "loop_health": {
             "env": "PANTHEON_BFF_LOOP_HEALTH_STORE",
@@ -3230,6 +3234,7 @@ class ServiceBackedReadAdapter:
         self._cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._cache_meta: Dict[str, tuple[str, int]] = {}
         self._cache_source: Dict[str, str] = {}
+        self._cache_envelope_metadata: Dict[str, Dict[str, Any]] = {}
         self._snapshot_path = snapshot_path or _default_bff_snapshot_path()
         self._allow_snapshot_fallback = allow_snapshot_fallback
 
@@ -3302,6 +3307,15 @@ class ServiceBackedReadAdapter:
                 return True, self._cache.get(dataset, {})
 
             payload = _load_record_store_payload(path)
+            if dataset == "loop_runs" and isinstance(payload, dict):
+                controller = payload.get("controller")
+                self._cache_envelope_metadata[dataset] = {
+                    "schema_version": payload.get("schema_version"),
+                    "generation": payload.get("generation"),
+                    "controller": dict(controller) if isinstance(controller, dict) else {},
+                }
+            else:
+                self._cache_envelope_metadata.pop(dataset, None)
             if dataset == "ooda_packets":
                 payload = _project_ooda_packet_store_payload(payload)
             if dataset == "synthesis_conflict_logs":
@@ -3317,6 +3331,14 @@ class ServiceBackedReadAdapter:
 
         snapshot_key = self._DATASETS[dataset].get("snapshot_key")
         if include_snapshot_fallback and self._allow_snapshot_fallback and snapshot_key:
+            if self._DATASETS[dataset].get("snapshot_requires_key") and self._snapshot_path.exists():
+                try:
+                    snapshot_payload = _load_record_store_payload(self._snapshot_path)
+                except (OSError, ValueError):
+                    snapshot_payload = None
+                if not isinstance(snapshot_payload, dict) or snapshot_key not in snapshot_payload:
+                    self._cache_envelope_metadata.pop(dataset, None)
+                    return False, {}
             available, normalized, cache_meta = _load_snapshot_dataset(
                 self._snapshot_path,
                 str(snapshot_key),
@@ -3327,8 +3349,10 @@ class ServiceBackedReadAdapter:
                     self._cache[dataset] = normalized
                     self._cache_meta[dataset] = cache_meta
                     self._cache_source[dataset] = "local_snapshot"
+                    self._cache_envelope_metadata.pop(dataset, None)
                 return True, self._cache.get(dataset, normalized)
 
+        self._cache_envelope_metadata.pop(dataset, None)
         return False, {}
 
     def source(self, dataset: str) -> str:
@@ -3337,6 +3361,10 @@ class ServiceBackedReadAdapter:
     def cached_source(self, dataset: str) -> Optional[str]:
         """Return provenance from an earlier read without touching the backend."""
         return self._cache_source.get(dataset)
+
+    def envelope_metadata(self, dataset: str) -> Dict[str, Any]:
+        """Return wrapper metadata retained during the most recent dataset read."""
+        return json.loads(json.dumps(self._cache_envelope_metadata.get(dataset, {})))
 
     def list_records(
         self,
@@ -3382,6 +3410,14 @@ class ServiceBackedReadAdapter:
             "derived_from_incident_id": inc_id,
             "runtime_id": inc.get("runtime_id"),
             "binding_id": inc.get("binding_id"),
+            # Incident reconstruction is retained only as an explicitly
+            # degraded compatibility view.  It is neither the canonical loop
+            # ledger nor evidence that the lifecycle projector is live.
+            "source": "legacy_incident_backfill",
+            "projection_mode": "backfill",
+            "truth_level": "legacy_backfill",
+            "accepted_live": False,
+            "read_state": "degraded",
         }
 
     _SENTINEL_KIND_KEYWORDS: Dict[str, List[str]] = {
@@ -3418,32 +3454,30 @@ class ServiceBackedReadAdapter:
         }
 
     def list_loop_runs(self) -> tuple[bool, List[Dict[str, Any]]]:
-        # Merge the dedicated v5 loop-run ledger (paper-binding execution loops,
-        # populated by the loop-run projector) with incident-derived recovery
-        # loops. Previously incidents short-circuited this method, so the
-        # projector's PANTHEON_BFF_LOOP_RUN_STORE records never surfaced whenever
-        # any incident existed — leaving the ledger blank despite active runtimes.
-        runs: List[Dict[str, Any]] = []
-        seen: set = set()
+        # A configured projector ledger is authoritative, including when it is
+        # valid but empty.  Incident reconstruction is an incident-only legacy
+        # fallback and must never be merged into canonical lifecycle truth.
         avail_lr, lr_data = self._load_dataset("loop_runs")
         if avail_lr:
-            for run in lr_data.values():
-                if isinstance(run, dict):
-                    runs.append(run)
-                    seen.add(str(run.get("id") or ""))
+            return True, [run for run in lr_data.values() if isinstance(run, dict)]
+
         avail_inc, incidents = self._load_dataset("incidents")
-        if avail_inc:
-            for inc in incidents.values():
-                if not isinstance(inc, dict):
-                    continue
-                if "sentinel" in str(inc.get("title") or "").lower():
-                    continue
-                derived = self._derive_loop_run(inc)
-                if str(derived.get("id") or "") not in seen:
-                    runs.append(derived)
-        return (avail_lr or avail_inc), runs
+        if not avail_inc:
+            return False, []
+        return True, [
+            self._derive_loop_run(inc)
+            for inc in incidents.values()
+            if isinstance(inc, dict)
+            and "sentinel" not in str(inc.get("title") or "").lower()
+        ]
 
     def get_loop_run(self, loop_run_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
+        # Canonical lookup is first and conclusive.  A missing ID in an
+        # available canonical ledger must not resolve to an unrelated incident.
+        avail_lr, lr_data = self._load_dataset("loop_runs")
+        if avail_lr:
+            return True, lr_data.get(loop_run_id)
+
         avail_inc, incidents = self._load_dataset("incidents")
         if avail_inc:
             inc = incidents.get(loop_run_id)
@@ -3458,14 +3492,7 @@ class ServiceBackedReadAdapter:
                 ]
                 if 1 <= n <= len(non_sentinel):
                     return True, self._derive_loop_run(non_sentinel[n - 1], override_id=loop_run_id)
-        # Fall through to the dedicated loop-run ledger for projector-written
-        # records (e.g. lr-rb-*) that are not incident-derived.
-        avail_lr, lr_data = self._load_dataset("loop_runs")
-        if avail_lr and loop_run_id in lr_data:
-            return True, lr_data.get(loop_run_id)
         if avail_inc:
-            return True, None
-        if avail_lr:
             return True, None
         return False, None
 
@@ -4076,6 +4103,10 @@ def _default_read_data() -> Dict[str, Any]:
             "runtime-042": {
                 "id": "runtime-042",
                 "runtime_id": "runtime-042",
+                "persona_id": "persona-alpha",
+                "binding_id": "binding-042",
+                "runtime_binding_id": "binding-042",
+                "persona_capital_binding_id": "binding-042",
                 "deployment_mode": "paper",
                 "deployment_stage": "none",
                 "status": "idle",
@@ -7348,6 +7379,8 @@ class ReadSurfaceStore:
         "containments": "containments",
         "rankings": "rankings",
         "persona_league": "persona_league",
+        "ranking_snapshots": "ranking_snapshots",
+        "allocation_evaluations": "allocation_evaluations",
     }
     _MARKET_PERSONA_RECORD_KEYS = {
         "personas": ["persona_id", "id"],
@@ -7372,7 +7405,13 @@ class ReadSurfaceStore:
     ) -> None:
         self._path = Path(storage_path)
         self._data: Dict[str, Any] = {}
-        self._local_overlay_write_datasets: set[str] = set()
+        # These admission records are owned and persisted by the BFF.  They
+        # remain authoritative after restart even when read-model fallback is
+        # disabled.
+        self._local_overlay_write_datasets: set[str] = {
+            "ranking_snapshots",
+            "allocation_evaluations",
+        }
         if allow_local_snapshot_fallback is None:
             allow_local_snapshot_fallback = False
         self._allow_local_snapshot_fallback = allow_local_snapshot_fallback
@@ -8827,6 +8866,9 @@ class ReadSurfaceStore:
             raw = self._path.read_text().strip()
             if raw:
                 self._data = json.loads(raw)
+                for dataset, key in self._LOCAL_DATA_KEYS.items():
+                    if key in self._data:
+                        self._local_overlay_write_datasets.add(dataset)
                 if self._allow_local_snapshot_fallback and self._backfill_local_contract_defaults():
                     self._save()
                 return
@@ -10497,6 +10539,21 @@ class ReadSurfaceStore:
         decision_id = raw.get("decision_id") or raw.get("id")
         target_type = raw.get("target_type") or raw.get("decision_type")
         target_id = raw.get("target_id")
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        tenant_id = (
+            raw.get("tenant_id")
+            or raw.get("tenantId")
+            or metadata.get("tenant_id")
+            or metadata.get("tenantId")
+        )
+        owner_user_id = (
+            raw.get("owner_user_id")
+            or raw.get("user_id")
+            or raw.get("userId")
+            or metadata.get("owner_user_id")
+            or metadata.get("user_id")
+            or metadata.get("userId")
+        )
         deployment_ref = {}
         if str(target_type or "") == "DeploymentPlan" and target_id:
             deployment_ref = {
@@ -10510,6 +10567,8 @@ class ReadSurfaceStore:
             "target_type": target_type,
             "target_id": target_id,
             "target_version": raw.get("target_version"),
+            "tenant_id": tenant_id,
+            "owner_user_id": owner_user_id,
             "deployment_ref": deployment_ref,
             "outcome": raw.get("decision") or raw.get("outcome"),
             "reviewer": raw.get("actor_id") or raw.get("reviewer"),
@@ -10518,6 +10577,12 @@ class ReadSurfaceStore:
             "created_at": raw.get("created_at") or raw.get("submitted_at"),
             "submitted_at": raw.get("submitted_at") or raw.get("created_at"),
             "decided_at": raw.get("decided_at"),
+            "expires_at": raw.get("expires_at"),
+            "revoked_at": raw.get("revoked_at"),
+            "proposal_id": raw.get("proposal_id"),
+            "proposal_revision": raw.get("proposal_revision"),
+            "proposal_content_digest": raw.get("proposal_content_digest"),
+            "validation_result_digest": raw.get("validation_result_digest"),
             "risk_level": raw.get("risk_level"),
             "state": raw.get("decision_state") or raw.get("state"),
             "rationale": raw.get("rationale"),
@@ -10569,8 +10634,8 @@ class ReadSurfaceStore:
     @staticmethod
     def _project_canonical_runtime_binding(raw: Dict[str, Any]) -> Dict[str, Any]:
         binding_id = raw.get("binding_id") or raw.get("id")
-        deployment_stage = raw.get("deployment_stage") or raw.get("deployment_mode")
-        deployment_mode = raw.get("deployment_mode") or deployment_stage
+        deployment_stage = raw.get("deployment_stage")
+        deployment_mode = raw.get("deployment_mode")
         metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
         tenant_id = raw.get("tenant_id") or raw.get("tenantId") or metadata.get("tenant_id") or metadata.get("tenantId")
         projected = json.loads(json.dumps(raw))
@@ -10582,7 +10647,7 @@ class ReadSurfaceStore:
         projected.setdefault("state", raw.get("state") or raw.get("status"))
         projected.setdefault("persona_id", raw.get("persona_id"))
         projected.setdefault("deployment_plan_id", raw.get("deployment_plan_id") or raw.get("plan_id"))
-        projected.setdefault("runtime_kind", raw.get("runtime_kind") or deployment_mode)
+        projected.setdefault("runtime_kind", raw.get("runtime_kind"))
         projected["deployment_stage"] = deployment_stage
         projected["deployment_mode"] = deployment_mode
         projected.setdefault("status", raw.get("status"))
@@ -10627,7 +10692,7 @@ class ReadSurfaceStore:
     @staticmethod
     def _project_service_session(raw: Dict[str, Any]) -> Dict[str, Any]:
         session_id = raw.get("session_id") or raw.get("id")
-        return {
+        projected = {
             "id": session_id,
             "session_id": session_id,
             "persona_id": raw.get("persona_id"),
@@ -10644,8 +10709,37 @@ class ReadSurfaceStore:
             "deployment_stage": raw.get("deployment_stage"),
             "capital_pool_id": raw.get("capital_pool_id"),
             "context_bundle_ref": raw.get("context_bundle_ref"),
-            "metadata": raw.get("metadata", {}),
+            "metadata": json.loads(json.dumps(raw.get("metadata", {}))),
         }
+        authoritative_session_fields = (
+            "binding_id",
+            "runtime_identity",
+            "runtime_kind",
+            "deployment_mode",
+            "state",
+            "lifecycle_state",
+            "active",
+            "created_at",
+            "updated_at",
+            "last_heartbeat_at",
+            "last_seen_at",
+            "heartbeat_status",
+            "freshness",
+            "staleness",
+            "stale",
+            "stale_at",
+            "stale_after_seconds",
+            "degraded",
+            "degraded_at",
+            "last_error",
+        )
+        for field in authoritative_session_fields:
+            if field in raw:
+                projected[field] = json.loads(json.dumps(raw[field]))
+        for field, value in raw.items():
+            if field == "reason" or field.endswith("_reason") or field.endswith("_reasons"):
+                projected[field] = json.loads(json.dumps(value))
+        return projected
 
     @staticmethod
     def _project_service_evolution_decision(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -10657,6 +10751,8 @@ class ReadSurfaceStore:
             "id": decision_id,
             "decision_id": decision_id,
             "program_id": raw.get("program_id"),
+            "persona_id": raw.get("persona_id"),
+            "capital_pool_id": raw.get("capital_pool_id"),
             "action_type": raw.get("action_type"),
             "risk_level": raw.get("risk_level"),
             "status": decision_state,
@@ -10686,6 +10782,8 @@ class ReadSurfaceStore:
             "required_approvals": raw.get("required_approvals"),
             "rollback_followthrough": raw.get("rollback_followthrough"),
             "metadata": raw.get("metadata"),
+            "origin": raw.get("origin"),
+            "provenance": raw.get("provenance"),
             "execution_result": raw.get("execution_result"),
         }
 
@@ -11333,6 +11431,12 @@ class ReadSurfaceStore:
 
             capital_binding = capital_binding_by_id.get(persona_binding_id, {})
             canonical_persona_id = str(capital_binding.get("persona_id") or "").strip()
+            if (
+                not canonical_persona_id
+                and str(projected.get("canonicalWriteAuthority") or "").strip()
+                == "runtime_manager_service"
+            ):
+                canonical_persona_id = str(projected.get("persona_id") or "").strip()
             if canonical_persona_id:
                 projected["persona_id"] = canonical_persona_id
                 if not str(projected.get("capital_pool_id") or "").strip():
@@ -11451,6 +11555,32 @@ class ReadSurfaceStore:
             )
         return sorted(
             [json.loads(json.dumps(session)) for session in sessions],
+            key=self._paper_runtime_monitoring_sort_key,
+            reverse=True,
+        )
+
+    def list_authoritative_paper_runtime_monitoring_sessions(self) -> List[Dict[str, Any]]:
+        """Return only paper-fleet owner records, never local/snapshot substitutes.
+
+        Persona provisioning is a safety-relevant lifecycle gate.  Local BFF
+        overlays and bundled snapshots remain useful for operator read views,
+        but they cannot prove that the canonical paper worker has joined its
+        RuntimeBinding.  An unavailable owner therefore reads back as no
+        authoritative evidence and leaves provisioning pending.
+        """
+
+        available, raw_sessions = self._canonical.list_records(
+            "paper_runtime_monitoring_sessions",
+            include_snapshot_fallback=False,
+        )
+        if not available:
+            return []
+        return sorted(
+            [
+                json.loads(json.dumps(session))
+                for session in raw_sessions
+                if isinstance(session, dict)
+            ],
             key=self._paper_runtime_monitoring_sort_key,
             reverse=True,
         )
@@ -11952,6 +12082,90 @@ class ReadSurfaceStore:
         rebalances[rebalance_id] = record
         self._save()
         return record
+
+    # ------------------------------------------------------------------ #
+    # Ranking snapshot / allocation-evaluation admission records
+    # ------------------------------------------------------------------ #
+
+    def put_ranking_snapshot(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """Persist an immutable BFF-owned ranking snapshot admission record."""
+        snapshot_id = str(
+            record.get("ranking_snapshot_id") or record.get("snapshot_id") or ""
+        ).strip()
+        content_digest = str(record.get("content_digest") or "").strip()
+        if not snapshot_id or not content_digest:
+            raise ValueError("ranking snapshot id and content_digest are required")
+        snapshots = self._ensure_local_overlay_records("ranking_snapshots")
+        existing = snapshots.get(snapshot_id)
+        if isinstance(existing, dict):
+            if str(existing.get("content_digest") or "") != content_digest:
+                raise ValueError("ranking snapshot id already has different content")
+            changed = False
+            incoming_variants = record.get("evidence_assertion_digests")
+            if isinstance(incoming_variants, dict):
+                existing_variants = existing.setdefault(
+                    "evidence_assertion_digests", {}
+                )
+                if not isinstance(existing_variants, dict):
+                    existing_variants = {}
+                    existing["evidence_assertion_digests"] = existing_variants
+                for persona_id, raw_digests in incoming_variants.items():
+                    if not isinstance(raw_digests, list):
+                        continue
+                    merged = sorted({
+                        str(value).strip()
+                        for value in (
+                            list(existing_variants.get(str(persona_id)) or [])
+                            + raw_digests
+                        )
+                        if str(value).strip()
+                    })
+                    if merged != existing_variants.get(str(persona_id)):
+                        existing_variants[str(persona_id)] = merged
+                        changed = True
+            if changed:
+                self._save()
+            return json.loads(json.dumps(existing))
+        stored = json.loads(json.dumps({**record, "ranking_snapshot_id": snapshot_id}))
+        snapshots[snapshot_id] = stored
+        self._save()
+        return json.loads(json.dumps(stored))
+
+    def get_ranking_snapshot(self, snapshot_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        clean_id = str(snapshot_id or "").strip()
+        if not clean_id:
+            return None
+        record = self._local_overlay_records("ranking_snapshots").get(clean_id)
+        return json.loads(json.dumps(record)) if isinstance(record, dict) else None
+
+    def put_allocation_evaluation(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """Persist one immutable server-materialized allocation evaluation."""
+        evaluation_id = str(record.get("allocation_evaluation_id") or "").strip()
+        content_digest = str(record.get("content_digest") or "").strip()
+        if not evaluation_id or not content_digest:
+            raise ValueError("allocation evaluation id and content_digest are required")
+        evaluations = self._ensure_local_overlay_records("allocation_evaluations")
+        existing = evaluations.get(evaluation_id)
+        if isinstance(existing, dict):
+            if str(existing.get("content_digest") or "") != content_digest:
+                raise ValueError("allocation evaluation id already has different content")
+            return json.loads(json.dumps(existing))
+        stored = json.loads(
+            json.dumps({**record, "allocation_evaluation_id": evaluation_id})
+        )
+        evaluations[evaluation_id] = stored
+        self._save()
+        return json.loads(json.dumps(stored))
+
+    def get_allocation_evaluation(
+        self,
+        evaluation_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        clean_id = str(evaluation_id or "").strip()
+        if not clean_id:
+            return None
+        record = self._local_overlay_records("allocation_evaluations").get(clean_id)
+        return json.loads(json.dumps(record)) if isinstance(record, dict) else None
 
     # ------------------------------------------------------------------ #
     # Rankings (full-spec long tail)
@@ -12685,12 +12899,15 @@ class ReadSurfaceStore:
         plan_id: str,
         *,
         plan: Optional[Dict[str, Any]] = None,
-        decision: Optional[Dict[str, Any]] = None,
+        decision: Any = _NOT_SUPPLIED,
     ) -> Dict[str, Any]:
         if plan is None:
             plan = self.get_deployment_plan(plan_id)
-        if decision is None and plan:
-            decision = self.get_approval_decision(plan.get("approval_decision_id"))
+        if decision is _NOT_SUPPLIED:
+            if plan:
+                decision = self.get_approval_decision(plan.get("approval_decision_id"))
+            else:
+                decision = None
         fallback_actions = dict((self._local_fallback("allowed_actions") or {}).get(plan_id, {}))
         if plan and (plan.get("status") is not None or plan.get("target_stage") is not None):
             can_review = self._derive_can_review_deployment_plan(plan, decision)
@@ -12726,13 +12943,16 @@ class ReadSurfaceStore:
         plan_id: str,
         *,
         plan: Optional[Dict[str, Any]] = None,
-        decision: Optional[Dict[str, Any]] = None,
+        decision: Any = _NOT_SUPPLIED,
     ) -> Dict[str, Any]:
         summary = dict((self._local_fallback("review_summaries") or {}).get(plan_id, {}))
         if plan is None:
             plan = self.get_deployment_plan(plan_id)
-        if decision is None and plan:
-            decision = self.get_approval_decision(plan.get("approval_decision_id"))
+        if decision is _NOT_SUPPLIED:
+            if plan:
+                decision = self.get_approval_decision(plan.get("approval_decision_id"))
+            else:
+                decision = None
         if decision:
             summary.setdefault("governanceOutcome", decision.get("outcome"))
             summary.setdefault("decisionState", decision.get("state"))
@@ -16140,6 +16360,9 @@ class ReadSurfaceStore:
 
     def list_loop_runs(self) -> tuple[bool, List[Dict[str, Any]]]:
         return self._service.list_loop_runs()
+
+    def loop_run_projection_metadata(self) -> Dict[str, Any]:
+        return self._service.envelope_metadata("loop_runs")
 
     def get_loop_run(self, loop_run_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
         return self._service.get_loop_run(loop_run_id)

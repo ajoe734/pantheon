@@ -11,6 +11,7 @@ materializer via `trade_journeys.EVENT_STORE` replacement, restore after.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -180,6 +181,16 @@ def test_tj_e2e_005_meta_schema_requires_read_state_enum() -> None:
     schema = bff_main.app.openapi()
     meta_schema = schema["components"]["schemas"]["TradeJourneyMeta"]
     assert set(meta_schema["properties"]["read_state"]["enum"]) == {"formal", "partial", "degraded", "unavailable"}
+    freshness_schema = schema["components"]["schemas"]["TradeJourneyFreshness"]
+    assert {
+        "projection_schema_version",
+        "generation",
+        "projector_owned",
+        "projection_mode",
+        "truth_level",
+        "accepted_live",
+        "controller",
+    } <= set(freshness_schema["properties"])
 
 
 # --------------------------------------------------------------------------- #
@@ -584,6 +595,142 @@ def test_tj_e2e_005_unavailable_store_returns_200_with_explicit_unavailable_stat
     _run(scenario)
 
 
+def test_tj_e2e_005_backfill_only_projector_store_exposes_controller_and_downgrades_formal(
+    tmp_path, monkeypatch
+) -> None:
+    store_file = tmp_path / "trade_journey_events.json"
+    controller = {
+        "controller_id": "canonical-lifecycle-projector",
+        "controller_name": "canonical-lifecycle-projector",
+        "deployment_sha": "abc123",
+        "status": "repair_only",
+        "mode": "backfill",
+        "truth_level": "backfill_only",
+        "accepted_live": False,
+        "checkpoint": 0,
+        "source_high_watermark": 8,
+        "backlog": 8,
+        "generation": 4,
+    }
+    store_file.write_text(
+        json.dumps(
+            {
+                "schema_version": "pantheon.trade-journey-projection.v1",
+                "generation": 4,
+                "controller": controller,
+                "events": _BASE_EVENTS,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE", str(store_file))
+
+    def scenario():
+        store = tj.TradeJourneyEventStore()
+        tj.EVENT_STORE = store
+        client = TestClient(bff_main.app)
+        response = client.get(
+            "/bff/management/trade-journeys?tenant_id=tenant-a&environment=paper",
+            headers=OPERATOR_HEADERS,
+        )
+        assert response.status_code == 200, response.text
+        meta = response.json()["meta"]
+        assert meta["read_state"] == "degraded"
+        freshness = meta["freshness"]
+        assert freshness["projector_owned"] is True
+        assert freshness["projection_schema_version"] == "pantheon.trade-journey-projection.v1"
+        assert freshness["generation"] == 4
+        assert freshness["projection_mode"] == "backfill"
+        assert freshness["truth_level"] == "backfill_only"
+        assert freshness["accepted_live"] is False
+        assert freshness["controller"] == controller
+        assert store.projector_owned() is True
+
+    _run(scenario)
+
+
+def test_tj_e2e_005_live_projector_store_can_report_formal(tmp_path, monkeypatch) -> None:
+    store_file = tmp_path / "trade_journey_events.json"
+    store_file.write_text(
+        json.dumps(
+            {
+                "schema_version": "pantheon.trade-journey-projection.v1",
+                "generation": 5,
+                "controller": {
+                    "controller_id": "canonical-lifecycle-projector",
+                    "status": "ready",
+                    "mode": "live",
+                    "truth_level": "canonical_live",
+                    "accepted_live": True,
+                    "checkpoint": 8,
+                    "source_high_watermark": 8,
+                    "backlog": 0,
+                },
+                "events": _BASE_EVENTS,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE", str(store_file))
+
+    def scenario():
+        tj.EVENT_STORE = tj.TradeJourneyEventStore()
+        response = TestClient(bff_main.app).get(
+            "/bff/management/trade-journeys?tenant_id=tenant-a&environment=paper",
+            headers=OPERATOR_HEADERS,
+        )
+        assert response.status_code == 200, response.text
+        meta = response.json()["meta"]
+        assert meta["read_state"] == "formal"
+        assert meta["freshness"]["accepted_live"] is True
+        assert meta["freshness"]["projection_mode"] == "live"
+
+    _run(scenario)
+
+
+def test_tj_e2e_005_degraded_projector_cannot_reuse_historic_live_acceptance(
+    tmp_path, monkeypatch
+) -> None:
+    store_file = tmp_path / "trade_journey_events.json"
+    store_file.write_text(
+        json.dumps(
+            {
+                "schema_version": "pantheon.trade-journey-projection.v1",
+                "generation": 6,
+                "controller": {
+                    "controller_id": "canonical-lifecycle-projector",
+                    "status": "degraded",
+                    "mode": "live",
+                    "truth_level": "canonical_live",
+                    # A previous accepted live checkpoint is diagnostic history,
+                    # not proof that this degraded generation is formally live.
+                    "accepted_live": True,
+                    "checkpoint": 8,
+                    "source_high_watermark": 8,
+                    "backlog": 0,
+                },
+                "events": _BASE_EVENTS,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE", str(store_file))
+
+    def scenario():
+        tj.EVENT_STORE = tj.TradeJourneyEventStore()
+        response = TestClient(bff_main.app).get(
+            "/bff/management/trade-journeys?tenant_id=tenant-a&environment=paper",
+            headers=OPERATOR_HEADERS,
+        )
+        assert response.status_code == 200, response.text
+        meta = response.json()["meta"]
+        assert meta["read_state"] == "degraded"
+        assert meta["freshness"]["accepted_live"] is True
+        assert meta["freshness"]["controller"]["status"] == "degraded"
+
+    _run(scenario)
+
+
 def test_tj_e2e_005_conflicting_diagnostics_report_degraded_read_state() -> None:
     def scenario():
         events = [
@@ -711,7 +858,6 @@ def test_tj_e2e_005_list_pagination_handles_many_journeys_within_budget() -> Non
 
 
 def test_tj_e2e_005_publish_events_appends_and_saves_to_store_file(tmp_path) -> None:
-    import json
     store_file = tmp_path / "trade_journey_events.json"
     # Seed empty list
     store_file.write_text("[]", encoding="utf-8")
@@ -796,3 +942,43 @@ def test_tj_e2e_005_publish_events_appends_and_saves_to_store_file(tmp_path) -> 
         else:
             os.environ.pop("PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE", None)
 
+
+def test_tj_e2e_005_publish_rejects_projector_owned_store_without_mutation(
+    tmp_path, monkeypatch
+) -> None:
+    store_file = tmp_path / "trade_journey_events.json"
+    payload = {
+        "schema_version": "pantheon.trade-journey-projection.v1",
+        "generation": 2,
+        "controller": {
+            "controller_id": "canonical-lifecycle-projector",
+            "status": "ready",
+            "mode": "live",
+            "truth_level": "canonical_live",
+            "accepted_live": True,
+        },
+        "events": _BASE_EVENTS,
+    }
+    original = json.dumps(payload, sort_keys=True)
+    store_file.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE", str(store_file))
+
+    response = TestClient(bff_main.app).post(
+        "/bff/management/trade-journeys/events",
+        headers=OPERATOR_HEADERS,
+        json=[
+            {
+                "event_id": "must-not-write",
+                "journey_id": "tj_1",
+                "tenant_id": "tenant-a",
+                "environment": "paper",
+                "occurred_at": "2026-07-12T00:09:00Z",
+                "stage": "reconciliation",
+                "stage_status": "succeeded",
+            }
+        ],
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "PROJECTOR_OWNED_STORE"
+    assert store_file.read_text(encoding="utf-8") == original

@@ -1,0 +1,462 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Persona provisioning through binding and first-evaluation authoritative readback",
+    "note": "Fail-closed task evidence. Local implementation delivery is merged; hosted product admission remains blocked.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Raw artifacts under raw/ are immutable. This manifest may append observations or correct legacy claims only by recording the invalidation in record_log.",
+    "recording_mode": "logical_append_only_with_recorded_legacy_correction",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-15T13:49:51Z",
+    "evidence_cut_semantics": "Merged implementation and current pre-deploy admission audit. No hosted terminal-success claim.",
+    "id": "LOOP-PROD-PER-001",
+    "overall_admission": "blocked",
+    "owner": "Codex2",
+    "phase": "Loop Product-Level Remediation / Wave 2",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
+    "reviewer": "Antigravity",
+    "target_environment": "dev",
+    "target_maturity": "product-level",
+    "task_branch": "task/LOOP-PROD-PER-001",
+    "title": "Persona provisioning through binding and first-evaluation readback"
+  },
+  "authorities": {
+    "actual_state": [
+      "durable Persona provisioning ledger",
+      "canonical Persona lifecycle state",
+      "Deployment plan and saga projection",
+      "Runtime Manager RuntimeBinding",
+      "paper worker session and heartbeat",
+      "OpenClaw first-evaluation schedule"
+    ],
+    "desired_state": [
+      "create-paper Persona specification",
+      "deployment policy",
+      "canonical first-evaluation workflow catalog"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-PER-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex2 for the task implementation and evidence; owner services remain authoritative for their records",
+    "composes_with": [
+      "LOOP-PROD-DEP-001",
+      "LOOP-PROD-CAP-001",
+      "LOOP-PROD-OODA-001",
+      "PPL-ALLOC-010",
+      "PPL-ALLOC-011",
+      "OPS-DEV-ENV-LEASE-001"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.sha256",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134000Z-local-validation.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134700Z-github-delivery.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134900Z-admission-blockers.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134921Z-hosted-precheck.json"
+    ],
+    "implementation_changed_files": [
+      ".env.example",
+      "docker-compose.control.yml",
+      "docker-compose.staging-full.yml",
+      "docker-compose.yml",
+      "env/prod-control.env.example",
+      "scripts/deploy_nonprod_vm.sh",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/persona_provisioning.py",
+      "services/control-plane/bff/persona_provisioning_coordinator.py",
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/cron/persona_cron_registrar.py",
+      "services/control-plane/cron/service.py",
+      "services/control-plane/cron/workflows.py",
+      "services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
+      "services/openclaw-gateway-adapter/main.py"
+    ],
+    "not_changing": "Secret values, another task's environment-lease PR, live broker/capital activation, frontend code, or Human/Ops final authority",
+    "owned_layer": "Durable Persona create-paper coordination, explicit authoritative lifecycle reconciliation, exact first-evaluation ownership, and fail-closed deployment/adapter configuration"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "708ee6f41",
+        "subject": "LOOP-PROD-PER-001: anchor durable provisioning"
+      },
+      {
+        "sha": "18f2b119a",
+        "subject": "LOOP-PROD-PER-001: anchor worker readback"
+      },
+      {
+        "sha": "7117ae028",
+        "subject": "LOOP-PROD-PER-001: anchor canonical convergence"
+      },
+      {
+        "sha": "e9dd98dba",
+        "subject": "LOOP-PROD-PER-001: anchor real PostgreSQL proof"
+      },
+      {
+        "sha": "cbe8796db",
+        "subject": "LOOP-PROD-PER-001: anchor strict deploy readback"
+      },
+      {
+        "sha": "ddbdec9a2e785e389f88bdb266624f2e6d487443",
+        "subject": "LOOP-PROD-PER-001: anchor authoritative provisioning controller"
+      },
+      {
+        "sha": "63c9e2bb9",
+        "subject": "LOOP-PROD-PER-001: anchor terminal readback fencing"
+      },
+      {
+        "sha": "fd829751a",
+        "subject": "LOOP-PROD-PER-001: anchor composed BFF contract"
+      }
+    ],
+    "pull_request": {
+      "number": 3713,
+      "url": "https://github.com/ajoe734/pantheon/pull/3713",
+      "head_sha": "34a37f514219a4739153faff6b7c185e2e243bb2",
+      "base": "dev",
+      "merged_at": "2026-07-15T13:47:00Z",
+      "merge_sha": "e7a6dfa5cc6bab0fe6a6cf28b0c51ac590dbf8bf"
+    },
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "name": "Commit trailers",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "name": "Runtime mirror guard",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "name": "Smoke acceptance",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Orchestrator Sync",
+        "name": "Forward to orchestrator",
+        "conclusion": "success"
+      }
+    ],
+    "raw_evidence_ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134700Z-github-delivery.json"
+  },
+  "validation": {
+    "conclusion": "local_pass_hosted_pending",
+    "validated_at": "2026-07-15T13:46:00Z",
+    "validated_head_sha": "34a37f514219a4739153faff6b7c185e2e243bb2",
+    "raw_evidence_ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134000Z-local-validation.json",
+    "coverage_summary": [
+      "exact Deployment completion and identity",
+      "one canonical RuntimeBinding",
+      "one fresh paper worker and transient startup states",
+      "exact first-evaluation schedule and deterministic request identity",
+      "durable terminal replay and crash window",
+      "duplicate and response-loss convergence",
+      "cleanup/compensation degraded behavior",
+      "RBAC and tenant route negatives",
+      "real PostgreSQL lease/checkpoint fencing",
+      "split dev/staging topology"
+    ]
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "dev",
+    "public_bff_base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "expected_merge_sha": "e7a6dfa5cc6bab0fe6a6cf28b0c51ac590dbf8bf",
+    "environment_lease": {
+      "status": "blocked",
+      "reason": "PR #3558 is still draft/open and is not merged into dev"
+    },
+    "strict_auth_credentials": {
+      "status": "blocked",
+      "reason": "dev environment has none of the required JWT/OIDC/adapter service-token secret names"
+    },
+    "canonical_root_deploy": {
+      "status": "not_attempted",
+      "reason": "gate-before-switch preconditions are absent; an unleased permissive deployment would not be admissible"
+    },
+    "identity_admission": {
+      "status": "blocked",
+      "authoritative_chain": [],
+      "reason": "hosted source SHA differs, image digest/build time are unknown, and strict-auth negative gate fails"
+    },
+    "raw_blocker_ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134900Z-admission-blockers.json"
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "observed_at": "2026-07-15T13:49:21Z",
+      "status": "blocked",
+      "hosted_source_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "expected_source_sha": "e7a6dfa5cc6bab0fe6a6cf28b0c51ac590dbf8bf",
+      "auth_stub": true,
+      "auth_mode": "permissive",
+      "mfa_required": false,
+      "fixed_bearer_http_status": 200,
+      "image_digest": "unknown",
+      "raw_evidence_ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134921Z-hosted-precheck.json"
+    },
+    "post_deploy": {
+      "status": "missing",
+      "reason": "No admissible deployment has occurred"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "partial",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "missing",
+      "proof": [
+        "Deterministic reservation and owner GET-first coordination",
+        "duplicate RuntimeBinding/worker fail-closed behavior",
+        "cron response-loss, duplicate cleanup, and ambiguous-name collision tests"
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "partial",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "missing",
+      "proof": [
+        "Deployment compensating/failed, binding mismatch, worker stale/duplicate, cron outage, timeout, and operator degraded-dependency tests"
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "partial",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "missing",
+      "proof": [
+        "Durable success stores exact Deployment, RuntimeBinding, paper worker, and first-evaluation schedule proof"
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "partial",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "missing",
+      "proof": [
+        "Terminal ledger replay precedes mutable owner reads and restores durable runtime identities after the ledger/Persona crash window",
+        "Real PostgreSQL lease and checkpoint integration passed"
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "partial",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "missing",
+      "proof": [
+        "Failure holds the ledger lease, persists terminal truth even when cron cleanup is degraded, and resumes Deployment/Capital compensation"
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "blocked",
+      "reason": "shared environment lease integration is not merged"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "reason": "This task changes backend/control-plane provisioning only"
+    },
+    "mfa": {
+      "status": "blocked",
+      "reason": "hosted /bff/version reports mfa_required=false"
+    },
+    "no_live_capital": {
+      "status": "partial",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "not_deployed",
+      "proof": [
+        "Create flow is low-risk paper-only and rejects live/prod/canary initial modes"
+      ]
+    },
+    "rbac": {
+      "status": "blocked",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "fail",
+      "reason": "hosted fixed arbitrary bearer is accepted and cross-owner HTTP transport service identity remains unresolved"
+    },
+    "tenant_isolation": {
+      "status": "partial",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "missing"
+    },
+    "two_person_approval": {
+      "status": "not_applicable",
+      "reason": "Low-risk paper Persona creation does not activate live capital; Human/Ops production sign-off remains a separate program gate"
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "create remains provisioning until canonical binding, worker, and first evaluation schedule read back",
+      "status": "partial",
+      "local": "pass",
+      "hosted": "missing"
+    },
+    {
+      "id": "AC2",
+      "statement": "dynamic identity propagates without seed name, pool, binding, or metric substitution",
+      "status": "partial",
+      "local": "pass",
+      "hosted": "missing"
+    },
+    {
+      "id": "AC3",
+      "statement": "downstream failure is terminal and restart-safe",
+      "status": "partial",
+      "local": "pass",
+      "hosted": "missing"
+    },
+    {
+      "id": "AC4",
+      "statement": "duplicate create/retry converges to one Persona, binding, worker, and evaluation schedule",
+      "status": "partial",
+      "local": "pass_by_composed_contracts",
+      "hosted": "missing"
+    },
+    {
+      "id": "AC5",
+      "statement": "archive branch, PR, checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+      "status": "partial",
+      "delivery": "pass",
+      "independent_review": "pending"
+    },
+    {
+      "id": "AC6",
+      "statement": "authoritative pre/post readback; no synthetic receipt is terminal success",
+      "status": "partial",
+      "local": "pass",
+      "hosted_pre": "blocked",
+      "hosted_post": "missing"
+    },
+    {
+      "id": "AC7",
+      "statement": "duplicate, degraded, restart, rollback, compensation, and admitted-command RPO=0 proof",
+      "status": "partial",
+      "local": "pass",
+      "hosted": "missing"
+    },
+    {
+      "id": "AC8",
+      "statement": "exact deployment identity and controller truth when deployed",
+      "status": "blocked",
+      "reason": "No admissible exact-SHA strict-auth deployment"
+    },
+    {
+      "id": "AC9",
+      "statement": "RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries",
+      "status": "blocked",
+      "reason": "hosted auth is permissive, fixed bearer is accepted, MFA is false, lease is absent, and owner transport service identity remains open"
+    },
+    {
+      "id": "AC10",
+      "statement": "redacted append-only checksummed evidence; missing or contradicted proof fails closed",
+      "status": "partial",
+      "manifest": "checksummed_blocked_cut",
+      "independent_review": "pending"
+    }
+  ],
+  "residual_risks": {
+    "RISK-001": {
+      "blocking_for_this_task": true,
+      "containment": "Do not claim strict product admission; keep owner writes limited to the governed dev workflow and fail closed on readback mismatch.",
+      "description": "_PersonaOwnerHttpTransport does not yet carry a verifiable service identity/token across every owner boundary.",
+      "expiry": "2026-07-18T23:59:59Z",
+      "owner": "Control Plane/BFF security lane",
+      "recheck_trigger": "before strict dev deployment or any production admission",
+      "severity": "high"
+    },
+    "RISK-002": {
+      "blocking_for_this_task": true,
+      "containment": "No shared-dev deployment is attempted until gate-before-switch lease integration is merged.",
+      "description": "OPS-DEV-ENV-LEASE-001 PR #3558 is draft/open and current nonprod deploy lacks the shared lease gate.",
+      "expiry": "2026-07-16T23:59:59Z",
+      "owner": "OPS-DEV-ENV-LEASE-001 owner",
+      "recheck_trigger": "PR #3558 merge",
+      "severity": "high"
+    },
+    "RISK-003": {
+      "blocking_for_this_task": true,
+      "containment": "Never fabricate, default, log, or commit credential values; deploy script rejects empty/placeholder adapter tokens.",
+      "description": "Required dev JWT/OIDC and adapter service-token secrets are absent.",
+      "expiry": "2026-07-16T23:59:59Z",
+      "owner": "Human/Ops dev environment owner",
+      "recheck_trigger": "required secret names provisioned in the dev environment",
+      "severity": "critical"
+    },
+    "RISK-004": {
+      "blocking_for_this_task": true,
+      "containment": "Treat hosted readiness as infrastructure health only; do not promote Persona maturity or accept the deployment.",
+      "description": "Hosted BFF serves an older SHA with unknown image/build identity and permissive stub auth; a fixed bearer returns HTTP 200.",
+      "expiry": "2026-07-16T23:59:59Z",
+      "owner": "Pantheon dev deployment owner",
+      "recheck_trigger": "exact merge-SHA strict-auth deployment and negative auth probe",
+      "severity": "critical"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134000Z-local-validation.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134700Z-github-delivery.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134900Z-admission-blockers.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134921Z-hosted-precheck.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
+    "normalized_hosted_readback": {
+      "source_commit_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "auth_stub": true,
+      "auth_mode": "permissive",
+      "fixed_bearer_http_status": 200
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "Checksums are stored in the companion file to avoid a recursive self-hash.",
+    "source_artifact_sha256_by_epoch": {}
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-15T04:40:00Z",
+      "kind": "legacy_manifest_claim",
+      "status": "invalidated",
+      "actor": "unknown_legacy_writer",
+      "reason": "The prior pass claim used wrong owner/reviewer, stale PR/head identity, no hosted authority chain, and no raw artifacts. It is superseded by this fail-closed cut."
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-07-15T13:47:18Z",
+      "kind": "implementation_delivery",
+      "status": "pass",
+      "actor": "Codex2",
+      "ref": "raw/20260715T134700Z-github-delivery.json"
+    },
+    {
+      "sequence": 3,
+      "recorded_at": "2026-07-15T13:49:00Z",
+      "kind": "deployment_admission_preflight",
+      "status": "blocked",
+      "actor": "Codex2",
+      "ref": "raw/20260715T134900Z-admission-blockers.json"
+    },
+    {
+      "sequence": 4,
+      "recorded_at": "2026-07-15T13:49:21Z",
+      "kind": "hosted_pre_deploy_readback",
+      "status": "blocked",
+      "actor": "Codex2",
+      "ref": "raw/20260715T134921Z-hosted-precheck.json"
+    }
+  ]
+}

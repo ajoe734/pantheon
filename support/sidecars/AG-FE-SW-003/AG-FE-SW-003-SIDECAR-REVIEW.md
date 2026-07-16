@@ -15,8 +15,8 @@ AG-FE-SW-003 implements:
 2. **`ReadinessGateCard` enhancement** — per-gate missing requirements with hard/soft hardness indicator inside `WorkshopCardRenderer`.
 3. **`StrategyWorkshopPage` CTA gate** — "Add to Trading Room" button disabled until `readiness.highest_ready_gate === "trading_room"`.
 
-Owner: Claude2  
-Reviewer: Codex  
+Owner: Claude2
+Reviewer: Codex
 PR: #2257 (branch `task/AG-FE-SW-003` → `dev`)
 
 ---

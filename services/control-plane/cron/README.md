@@ -20,6 +20,7 @@ OpenClaw rewrite.
 | `pantheon.review` | Package candidate review into an approval request instead of auto-approving | `paper` | `approval_request` handoff |
 | `pantheon.retrain` | Trigger batch retraining from governed feedback / datasets | `research` | `registry_submission` handoff |
 | `pantheon.deploy` | Create a governed `DeploymentPlan` for `paper`, `canary`, `live`, or `frozen` | `paper`, `live`, or `status` | deployment-plan-backed deployment request |
+| `pantheon.persona.first-evaluation` | Schedule the first governed observation of a persona's current canonical paper runtime | `paper` | persona evaluation dispatch |
 
 ## Governance Guarantees
 

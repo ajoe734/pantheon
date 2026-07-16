@@ -1,18 +1,46 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from fastapi import FastAPI, Header, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from evaluation_authority import (
+    AuthorityValidationError,
+    EvaluationAuthoritySnapshot,
+    load_evaluation_authority,
+    stable_json_sha256,
+)
+from services.knowledge.evidence.runtime_log import RuntimeEvidenceLog
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
+from services.research.vectorbt.adapter.vectorbt_adapter import (
+    BacktestConfig,
+    PRIMARY_BACKEND,
+    VECTORBT_VERSION_PIN,
+    VectorbtBackend,
+    VectorbtWorkflowError,
+    run_vectorbt_workflow,
+)
 from models import TeachingEvent, TeachingSession
+from persona_target import (
+    PersonaTargetError,
+    commit_persona_target,
+    read_persona_target_precondition,
+)
+from source_dataset_authority import (
+    SourceDatasetAuthorityError,
+    materialize_source_dataset_version,
+    urllib_json_get,
+)
 from policy_lineage import (
     PolicyLineageError,
     build_lineage_read_store,
@@ -21,8 +49,18 @@ from policy_lineage import (
 from store import TrainingSessionStore, build_training_session_store
 
 
+def _trusted_now() -> datetime:
+    """Return the service-owned evaluation clock (never a request timestamp)."""
+
+    return datetime.now(timezone.utc)
+
+
+def _utc_iso(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return _utc_iso(_trusted_now())
 
 
 def _data_dir() -> str:
@@ -39,14 +77,15 @@ def _session_id(timestamp: str, existing: set[str]) -> str:
     return candidate
 
 
-def _next_event_id(timestamp: str, events: List[Dict[str, Any]]) -> str:
+def _next_event_id(timestamp: str, events: List[Dict[str, Any]], session_id: str) -> str:
     prefix = timestamp[:10].replace("-", "")
+    session_token = sha256(str(session_id or "").encode("utf-8")).hexdigest()[:10]
     existing_ids = {str(event.get("event_id") or "") for event in events if isinstance(event, dict)}
     next_sequence = max((int(event.get("sequence_number") or 0) for event in events), default=0) + 1
-    event_id = f"tevt-{prefix}-{next_sequence:03d}"
+    event_id = f"tevt-{prefix}-{session_token}-{next_sequence:03d}"
     while event_id in existing_ids:
         next_sequence += 1
-        event_id = f"tevt-{prefix}-{next_sequence:03d}"
+        event_id = f"tevt-{prefix}-{session_token}-{next_sequence:03d}"
     return event_id
 
 
@@ -91,31 +130,6 @@ def _replay_decision_hash(session_id: str, body: "ReplayDecisionBody", state: st
             "note": body.note,
         }
     )
-
-
-def _decision_lineage_refs(
-    *,
-    session_id: str,
-    replay: Dict[str, Any],
-    state: str,
-    timestamp: str,
-) -> Dict[str, Any]:
-    persona_id = str(replay.get("persona_id") or "").strip()
-    suffix = "commit" if state == "committed" else "discard"
-    refs = {
-        "decision_record_ref": f"trainer-replay-decision:{session_id}:{state}",
-        "lineage_ref": f"trainer-replay-lineage:{session_id}:{state}",
-        "lineage_edge_id": f"lin-{session_id}-{suffix}",
-        "lineage_recorded_at": timestamp,
-    }
-    if state == "committed" and persona_id:
-        refs.update(
-            {
-                "persona_policy_ref": f"persona:{persona_id}:policy:{session_id}",
-                "route_policy_ref": f"persona:{persona_id}:route-policy:{session_id}",
-            }
-        )
-    return refs
 
 
 def _teaching_event_ids(replay: Dict[str, Any]) -> List[str]:
@@ -331,7 +345,9 @@ class QueuePreviewJobBody(BaseModel):
 
 
 class RunPreviewJobBody(BaseModel):
-    run_at: Optional[str] = None
+    """Worker trigger body; the service clock is the only evaluation clock."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ReplayDecisionBody(BaseModel):
@@ -345,6 +361,8 @@ app = FastAPI(title="Pantheon Training Session Service", version="0.1.0")
 STORE_BACKEND = os.getenv("TRAINING_SESSION_EVENT_STORE_BACKEND", "jsonl").strip().lower() or "jsonl"
 PERSISTENCE_POSTURE = require_persistence_posture("training-session")
 store = build_training_session_store(_data_dir())
+def get_store():
+    return store
 register_fastapi_health_routes(
     app,
     "training-session",
@@ -444,7 +462,7 @@ def append_event(session_id: str, body: AppendEventBody) -> Dict[str, Any]:
         raise HTTPException(status_code=409, detail="training session is not active")
     timestamp = body.emitted_at or utc_now()
     events = session.setdefault("events", [])
-    event_id = _next_event_id(timestamp, events)
+    event_id = _next_event_id(timestamp, events, session_id)
     sequence_number = max((int(event.get("sequence_number") or 0) for event in events), default=0) + 1
     event = _build_teaching_event(
         session_id=session_id,
@@ -567,24 +585,214 @@ def get_preview(session_id: str) -> Dict[str, Any]:
     return record
 
 
-from services.research.vectorbt.adapter.vectorbt_adapter import run_vectorbt_workflow, BacktestConfig
+def _runtime_evidence_log() -> RuntimeEvidenceLog:
+    path = str(
+        os.getenv("TRAINING_SESSION_RUNTIME_EVIDENCE_PATH")
+        or Path(_data_dir()) / "runtime-evidence.jsonl"
+    ).strip()
+    if not path:
+        raise RuntimeError("TRAINING_SESSION_RUNTIME_EVIDENCE_PATH is required")
+    return RuntimeEvidenceLog(path, owner_service="training-session")
 
-def _get_ohlcv_data(session_id: str) -> List[Dict[str, Any]]:
-    data = []
-    start_date = datetime(2026, 1, 1)
-    for instrument in ["STUB1", "STUB2"]:
-        for i in range(35):
-            date = (start_date + timedelta(days=i)).strftime("%Y-%m-%d")
-            data.append({
-                "instrument": instrument,
-                "date": date,
-                "open": 100.0 + i,
-                "high": 105.0 + i,
-                "low": 95.0 + i,
-                "close": 100.0 + i,
-                "volume": 1000.0 + i
-            })
-    return data
+
+def _required_authority_path(name: str) -> str:
+    value = str(os.getenv(name) or "").strip()
+    if not value:
+        raise AuthorityValidationError(f"{name} is required")
+    return value
+
+
+def _load_authority_snapshot(*, trusted_now: datetime, strategy_id: str) -> EvaluationAuthoritySnapshot:
+    dataset_path = str(os.getenv("TRAINING_SESSION_CANONICAL_DATASET_PATH") or "").strip()
+    authority_root: Optional[str] = None
+    if not dataset_path:
+        source_api_url = str(os.getenv("SOURCE_INGEST_API_URL") or "").strip()
+        connector_id = str(os.getenv("TRAINING_SESSION_SOURCE_CONNECTOR_ID") or "").strip()
+        dataset_id = str(os.getenv("TRAINING_SESSION_SOURCE_DATASET_ID") or "").strip()
+        source_root = str(os.getenv("TRAINING_SESSION_SOURCE_VOLUME_ROOT") or "").strip()
+        output_root = str(
+            os.getenv("TRAINING_SESSION_DATASET_AUTHORITY_OUTPUT_ROOT")
+            or Path(_data_dir()) / "dataset-authority"
+        ).strip()
+        if not all((source_api_url, connector_id, dataset_id, source_root, output_root)):
+            raise AuthorityValidationError(
+                "source DatasetVersion authority configuration is incomplete"
+            )
+        try:
+            timeout = float(os.getenv("TRAINING_SESSION_SOURCE_AUTHORITY_TIMEOUT_SECONDS", "5"))
+            materialized = materialize_source_dataset_version(
+                http_get=lambda url: urllib_json_get(url, timeout_seconds=timeout),
+                source_api_url=source_api_url,
+                connector_id=connector_id,
+                dataset_id=dataset_id,
+                source_volume_root=source_root,
+                output_root=output_root,
+                trusted_now=trusted_now,
+            )
+        except (SourceDatasetAuthorityError, ValueError) as exc:
+            raise AuthorityValidationError(f"source DatasetVersion authority rejected: {exc}") from exc
+        dataset_path = str(materialized.path)
+        authority_root = str(materialized.path.parent)
+    return load_evaluation_authority(
+        dataset_path,
+        _required_authority_path("TRAINING_SESSION_THRESHOLD_POLICY_PATH"),
+        trusted_now=trusted_now,
+        strategy_id=strategy_id,
+        authority_root=authority_root,
+    )
+
+
+def _persona_authority_token() -> str:
+    token = str(os.getenv("TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN") or "").strip()
+    if not token:
+        raise PersonaTargetError("TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN is required")
+    return token
+
+
+def _persona_target_url(
+    env_name: str,
+    *,
+    persona_id: str,
+    session_id: str,
+    approval_decision_ref: str = "",
+    generation: Optional[int] = None,
+) -> str:
+    template = str(os.getenv(env_name) or "").strip()
+    if not template:
+        raise PersonaTargetError(f"{env_name} is required")
+    try:
+        return template.format(
+            persona_id=quote(persona_id, safe=""),
+            session_id=quote(session_id, safe=""),
+            approval_decision_ref=quote(approval_decision_ref, safe=""),
+            generation="" if generation is None else generation,
+        )
+    except (KeyError, ValueError) as exc:
+        raise PersonaTargetError(f"{env_name} contains an invalid URL template") from exc
+
+
+def _persona_target_timeout_seconds() -> float:
+    try:
+        value = float(os.getenv("TRAINING_SESSION_PERSONA_AUTHORITY_TIMEOUT_SECONDS", "5"))
+    except ValueError as exc:
+        raise PersonaTargetError("TRAINING_SESSION_PERSONA_AUTHORITY_TIMEOUT_SECONDS is invalid") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise PersonaTargetError("TRAINING_SESSION_PERSONA_AUTHORITY_TIMEOUT_SECONDS must be positive")
+    return value
+
+
+def _candidate_approval_decision_ref(session_id: str, eval_id: str) -> str:
+    return f"persona-teaching-approval:{session_id}:{eval_id}"
+
+
+def _read_target_precondition(
+    *,
+    session: Dict[str, Any],
+    session_id: str,
+    trusted_now: datetime,
+) -> Dict[str, Any]:
+    persona_id = str(session.get("persona_id") or "").strip()
+    if not persona_id:
+        raise PersonaTargetError("training session persona_id is required")
+    return read_persona_target_precondition(
+        persona_id=persona_id,
+        persona_readback_url=_persona_target_url(
+            "TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE",
+            persona_id=persona_id,
+            session_id=session_id,
+        ),
+        authorization_token=_persona_authority_token(),
+        trusted_now=trusted_now,
+        timeout_seconds=_persona_target_timeout_seconds(),
+    )
+
+
+def _parse_utc_timestamp(value: Any, label: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} must be a timezone-aware ISO 8601 timestamp")
+    text = value.strip()
+    try:
+        parsed = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be a timezone-aware ISO 8601 timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{label} must be a timezone-aware ISO 8601 timestamp")
+    return parsed.astimezone(timezone.utc)
+
+
+def _canonical_controls(session_id: str) -> List[Dict[str, Any]]:
+    raw_controls = (store.get_controls(session_id) or {}).get("controls") or []
+    if not isinstance(raw_controls, list) or not raw_controls:
+        raise AuthorityValidationError("candidate has no governed controls to evaluate")
+    controls: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    changed = False
+    for index, raw in enumerate(raw_controls):
+        if not isinstance(raw, dict):
+            raise AuthorityValidationError(f"candidate control at index {index} must be an object")
+        key = str(raw.get("parameter_key") or "").strip()
+        if not key or key in seen:
+            raise AuthorityValidationError("candidate controls require unique non-empty parameter_key values")
+        seen.add(key)
+        current = raw.get("current_value")
+        baseline = raw.get("baseline_value", current)
+        try:
+            stable_json_sha256({"current": current, "baseline": baseline})
+        except AuthorityValidationError as exc:
+            raise AuthorityValidationError(f"candidate control {key!r} is not finite canonical JSON") from exc
+        changed = changed or current != baseline
+        controls.append(
+            {
+                "parameter_key": key,
+                "baseline_value": baseline,
+                "current_value": current,
+            }
+        )
+    if not changed:
+        raise AuthorityValidationError("candidate controls do not contain an effective change")
+    return sorted(controls, key=lambda control: control["parameter_key"])
+
+
+def _backtest_config(controls: List[Dict[str, Any]], requested_by: str) -> BacktestConfig:
+    supported = {"short_window", "long_window", "strategy.short_window", "strategy.long_window"}
+    unsupported = sorted(
+        control["parameter_key"] for control in controls if control["parameter_key"] not in supported
+    )
+    if unsupported:
+        raise AuthorityValidationError(
+            "candidate controls are not bound to the vectorbt strategy: " + ", ".join(unsupported)
+        )
+    params: Dict[str, Any] = {}
+    for control in controls:
+        key = str(control["parameter_key"]).removeprefix("strategy.")
+        value = control["current_value"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise AuthorityValidationError(f"candidate control {control['parameter_key']!r} must be a positive integer")
+        params[key] = value
+    short_window = int(params.get("short_window", 5))
+    long_window = int(params.get("long_window", 20))
+    if short_window >= long_window:
+        raise AuthorityValidationError("candidate short_window must be less than long_window")
+    return BacktestConfig(requested_by=requested_by, strategy_params=params)
+
+
+def _finite_metric(metrics: Dict[str, Any], key: str) -> float:
+    value = metrics.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise AuthorityValidationError(f"vectorbt metric {key} is missing or non-numeric")
+    normalized = float(value)
+    if not math.isfinite(normalized):
+        raise AuthorityValidationError(f"vectorbt metric {key} is non-finite")
+    return normalized
+
+
+def _proof_digest(proof: Dict[str, Any]) -> str:
+    unsigned = dict(proof)
+    unsigned.pop("proof_digest", None)
+    # The durable evidence record contains the proof digest, so its checksum is
+    # intentionally an external binding rather than part of the digest itself.
+    unsigned.pop("runtime_evidence", None)
+    return stable_json_sha256(unsigned)
 
 
 def _append_training_event(
@@ -607,7 +815,7 @@ def _append_training_event(
     events = session.setdefault("events", [])
     event = _build_teaching_event(
         session_id=session_id,
-        event_id=_next_event_id(timestamp, events),
+        event_id=_next_event_id(timestamp, events, session_id),
         event_type=event_type,
         actor=actor,
         actor_type=actor_type,
@@ -638,32 +846,97 @@ def _build_preview_evaluation_proof(
     eval_id: str,
     timestamp: str,
     preview: Dict[str, Any],
-    job_id: Optional[str] = None,
+    authority: EvaluationAuthoritySnapshot,
+    backend: Dict[str, Any],
+    controls: List[Dict[str, Any]],
+    metrics: Dict[str, float],
+    target_precondition: Dict[str, Any],
+    approval_decision_ref: str,
+    job_id: Optional[str],
+    worker_run_id: Optional[str],
+    attempt_count: Optional[int],
+    validation_status: str,
+    validation_errors: List[str],
 ) -> Dict[str, Any]:
-    metric_delta = preview.get("metric_delta") if isinstance(preview.get("metric_delta"), list) else []
-    metric_keys = [
-        str(metric.get("metric_key"))
-        for metric in metric_delta
-        if isinstance(metric, dict) and metric.get("metric_key")
-    ]
+    authority_payload = authority.to_dict()
+    authority_payload.pop("vectorbt_dataset", None)
+    authority_payload["policy"]["approval_decision_ref"] = approval_decision_ref
+    controls_digest = stable_json_sha256(controls)
+    metrics_digest = stable_json_sha256(metrics)
+    candidate_binding = {
+        "session_id": session_id,
+        "persona_id": preview.get("persona_id"),
+        "candidate_snapshot_at": preview.get("candidate_snapshot_at"),
+        "controls_digest": controls_digest,
+        "metrics_digest": metrics_digest,
+        "dataset_digest": authority.dataset_digest,
+        "policy_digest": authority.policy_digest,
+        "backend_run_id": backend["run_id"],
+        "job_id": job_id,
+        "worker_run_id": worker_run_id,
+        "target_generation": target_precondition["target_generation"],
+        "precondition_digest": target_precondition["precondition_digest"],
+    }
     proof = {
+        "schema_version": "persona_teaching_evaluation_proof.v2",
         "proof_id": f"teval-proof-{eval_id}",
         "proof_ref": f"trainer-eval-proof:{session_id}:{eval_id}",
         "session_id": session_id,
+        "persona_id": preview.get("persona_id"),
         "eval_id": eval_id,
         "job_id": job_id,
-        "status": "passed",
-        "generated_at": timestamp,
+        "worker_run_id": worker_run_id,
+        "attempt_count": attempt_count,
+        "status": validation_status,
+        "evaluated_at": timestamp,
+        "expires_at": authority.expires_at,
         "baseline_snapshot_at": preview.get("baseline_snapshot_at"),
         "candidate_snapshot_at": preview.get("candidate_snapshot_at"),
-        "metric_keys": metric_keys,
-        "preview_quality": preview.get("preview_quality"),
+        "controls": controls,
+        "controls_digest": controls_digest,
+        "metrics": metrics,
+        "metrics_digest": metrics_digest,
+        "authority": authority_payload,
+        "target_precondition": target_precondition,
+        "backend": backend,
+        "candidate_binding": candidate_binding,
+        "candidate_digest": stable_json_sha256(candidate_binding),
+        "validation_errors": list(validation_errors),
         "governance_gate_id": "persona_teaching_eval_proof",
-        "governance_gate_state": "passed",
+        "governance_gate_state": validation_status,
+        "gates": [
+            *authority_payload["gates"],
+            {
+                "gate_id": "persona_target_precondition",
+                "state": "passed",
+                "controller_record_ref": target_precondition["controller_record_ref"],
+                "target_generation": target_precondition["target_generation"],
+            },
+            {
+                "gate_id": "real_vectorbt_backend",
+                "state": "passed" if backend.get("name") == authority.required_backend else "failed",
+                "backend": backend.get("name"),
+                "run_id": backend.get("run_id"),
+            },
+            {
+                "gate_id": "candidate_metric_thresholds",
+                "state": "passed" if not validation_errors else "failed",
+                "thresholds": authority_payload["thresholds"],
+            },
+            {
+                "gate_id": "default_worker_provenance",
+                "state": "passed" if job_id and worker_run_id and attempt_count else "failed",
+                "job_id": job_id,
+                "worker_run_id": worker_run_id,
+                "attempt_count": attempt_count,
+            },
+        ],
         "required_for_commit": True,
+        "commit_eligible": validation_status == "passed",
         "direct_live_influence": False,
     }
-    return {key: value for key, value in proof.items() if value is not None}
+    proof["proof_digest"] = _proof_digest(proof)
+    return proof
 
 
 def _run_preview_evaluation(
@@ -674,94 +947,170 @@ def _run_preview_evaluation(
     timestamp: str,
     eval_id: Optional[str] = None,
     job_id: Optional[str] = None,
+    worker_run_id: Optional[str] = None,
+    attempt_count: Optional[int] = None,
     requested_by: str = "operator",
 ) -> Dict[str, Any]:
-    controls = (store.get_controls(session_id) or {}).get("controls") or []
-    strategy_params = {
-        control.get("parameter_key"): control.get("current_value")
-        for control in controls
-        if isinstance(control, dict) and control.get("parameter_key")
-    }
-
-    ohlcv_records = _get_ohlcv_data(session_id)
-    dataset = {
-        "dataset_id": f"preview-{session_id}",
-        "strategy_id": f"preview-{session_id}",
-        "source_dataset_ref": "stub-ref",
-        "records": ohlcv_records,
-    }
-
-    config = BacktestConfig(strategy_params=strategy_params)
+    trusted_now = _parse_utc_timestamp(timestamp, "evaluation timestamp")
+    eval_id = eval_id or f"teval-{uuid.uuid4().hex[:12]}"
+    controls = _canonical_controls(session_id)
+    config = _backtest_config(controls, requested_by)
+    authority = _load_authority_snapshot(
+        trusted_now=trusted_now,
+        strategy_id=f"preview-{session_id}",
+    )
     try:
-        backtest_result = run_vectorbt_workflow(dataset, config=config)
-        metrics = backtest_result.backtest_result.aggregate_metrics
-        metric_delta = [
-            {
-                "metric_key": "total_return",
-                "display_label": "Total Return",
-                "baseline_value": 0.0,
-                "candidate_value": metrics.get("mean_total_return", 0.0),
-                "delta": metrics.get("mean_total_return", 0.0),
-                "delta_pct": metrics.get("mean_total_return", 0.0) * 100,
-                "unit": "pct",
-                "direction": "up" if metrics.get("mean_total_return", 0.0) >= 0 else "down"
-            },
-            {
-                "metric_key": "sharpe_ratio",
-                "display_label": "Sharpe Ratio",
-                "baseline_value": 0.0,
-                "candidate_value": metrics.get("mean_sharpe_ratio", 0.0),
-                "delta": metrics.get("mean_sharpe_ratio", 0.0),
-                "delta_pct": 0.0,
-                "unit": "ratio",
-                "direction": "up"
-            },
-            {
-                "metric_key": "max_drawdown",
-                "display_label": "Max Drawdown",
-                "baseline_value": 0.0,
-                "candidate_value": metrics.get("mean_max_drawdown", 0.0),
-                "delta": metrics.get("mean_max_drawdown", 0.0),
-                "delta_pct": 0.0,
-                "unit": "pct",
-                "direction": "down"
-            }
-        ]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Backtest failed: {str(e)}")
+        target_precondition = _read_target_precondition(
+            session=session,
+            session_id=session_id,
+            trusted_now=trusted_now,
+        )
+    except PersonaTargetError as exc:
+        raise AuthorityValidationError(f"persona target authority unavailable: {exc}") from exc
+    approval_decision_ref = _candidate_approval_decision_ref(session_id, eval_id)
+    try:
+        result = run_vectorbt_workflow(
+            authority.vectorbt_dataset,
+            backend=VectorbtBackend(),
+            config=config,
+        )
+    except (VectorbtWorkflowError, ImportError, RuntimeError, ValueError) as exc:
+        raise AuthorityValidationError(f"real vectorbt evaluation failed: {exc}") from exc
+    backend_result = result.backtest_result
+    if backend_result.backend != authority.required_backend or backend_result.backend != PRIMARY_BACKEND:
+        raise AuthorityValidationError("evaluation backend does not match the authoritative required backend")
+    if not str(backend_result.run_id or "").startswith("vbt-real-"):
+        raise AuthorityValidationError("evaluation backend did not return real vectorbt run provenance")
+    aggregate = dict(backend_result.aggregate_metrics)
+    metrics = {
+        "total_return": _finite_metric(aggregate, "mean_total_return"),
+        "sharpe_ratio": _finite_metric(aggregate, "mean_sharpe_ratio"),
+        "max_drawdown": _finite_metric(aggregate, "mean_max_drawdown"),
+    }
+    validation_errors: List[str] = []
+    thresholds = dict(authority.thresholds)
+    if metrics["sharpe_ratio"] < float(thresholds["min_sharpe_ratio"]):
+        validation_errors.append("sharpe_ratio_below_threshold")
+    if metrics["total_return"] < float(thresholds["min_total_return"]):
+        validation_errors.append("total_return_below_threshold")
+    if metrics["max_drawdown"] > float(thresholds["max_drawdown"]):
+        validation_errors.append("max_drawdown_above_threshold")
+    if not job_id or not worker_run_id or not attempt_count:
+        validation_errors.append("default_worker_provenance_required")
+    validation_status = "passed" if not validation_errors else "failed"
+    metric_delta = [
+        {
+            "metric_key": key,
+            "display_label": label,
+            "baseline_value": 0.0,
+            "candidate_value": metrics[key],
+            "delta": metrics[key],
+            "delta_pct": metrics[key] * 100 if key == "total_return" else None,
+            "unit": unit,
+            "direction": "down" if key == "max_drawdown" else ("up" if metrics[key] >= 0 else "down"),
+        }
+        for key, label, unit in (
+            ("total_return", "Total Return", "pct"),
+            ("sharpe_ratio", "Sharpe Ratio", "ratio"),
+            ("max_drawdown", "Max Drawdown", "pct"),
+        )
+    ]
 
     bundle = store.get_preview_bundle(session_id) or {"session_id": session_id, "evaluations": {}}
     evaluations = bundle.setdefault("evaluations", {})
-    eval_id = eval_id or f"teval-{uuid.uuid4().hex[:12]}"
     control_diff = [
         {
-            "field": control.get("parameter_key"),
-            "before": control.get("baseline_value", control.get("current_value")),
-            "after": control.get("current_value"),
+            "field": control["parameter_key"],
+            "before": control["baseline_value"],
+            "after": control["current_value"],
             "validation_status": "accepted",
         }
         for control in controls
-        if isinstance(control, dict) and control.get("parameter_key")
     ]
     preview = {
         "eval_id": eval_id,
         "job_id": job_id,
         "session_id": session_id,
+        "persona_id": session.get("persona_id"),
         "status": "completed",
         "mode": mode,
         "baseline_snapshot_at": session.get("started_at"),
         "candidate_snapshot_at": timestamp,
         "metric_delta": metric_delta,
         "control_diff": control_diff,
-        "preview_quality": "vectorbt_real",
+        "preview_quality": PRIMARY_BACKEND,
+        "validation_status": validation_status,
+        "validation_errors": validation_errors,
     }
     proof = _build_preview_evaluation_proof(
         session_id=session_id,
         eval_id=eval_id,
         timestamp=timestamp,
         preview=preview,
+        authority=authority,
+        backend={
+            "name": backend_result.backend,
+            "run_id": backend_result.run_id,
+            "framework": "vectorbt",
+            "framework_version": VECTORBT_VERSION_PIN,
+            "artifact_checksum": result.registry_entry.get("checksum"),
+        },
+        controls=controls,
+        metrics=metrics,
+        target_precondition=target_precondition,
+        approval_decision_ref=approval_decision_ref,
         job_id=job_id,
+        worker_run_id=worker_run_id,
+        attempt_count=attempt_count,
+        validation_status=validation_status,
+        validation_errors=validation_errors,
     )
+    if job_id:
+        active_job = store.get_preview_job(job_id)
+        try:
+            lease_expires_at = _parse_utc_timestamp(
+                (active_job or {}).get("lease_expires_at"),
+                "preview job lease_expires_at",
+            )
+        except ValueError as exc:
+            raise AuthorityValidationError("preview job lease is missing or invalid") from exc
+        if (
+            not active_job
+            or active_job.get("status") != "running"
+            or active_job.get("worker_run_id") != worker_run_id
+            or trusted_now >= lease_expires_at
+        ):
+            raise AuthorityValidationError("preview job lease fencing rejected this worker attempt")
+    evidence = _runtime_evidence_log().append(
+        "preview_evaluation_terminal",
+        {
+            "session_id": session_id,
+            "persona_id": session.get("persona_id"),
+            "eval_id": eval_id,
+            "job_id": job_id,
+            "worker_run_id": worker_run_id,
+            "proof_id": proof["proof_id"],
+            "proof_digest": proof["proof_digest"],
+            "dataset_version_id": authority.dataset_version_id,
+            "dataset_digest": authority.dataset_digest,
+            "policy_id": authority.policy_id,
+            "policy_version": authority.policy_version,
+            "policy_digest": authority.policy_digest,
+            "approval_decision_ref": approval_decision_ref,
+            "target_precondition": target_precondition,
+            "backend": proof["backend"],
+            "thresholds": thresholds,
+            "metrics": metrics,
+            "validation_status": validation_status,
+            "validation_errors": validation_errors,
+        },
+        recorded_at=timestamp,
+    )
+    proof["runtime_evidence"] = {
+        "schema_version": evidence["schema_version"],
+        "sequence": evidence["sequence"],
+        "checksum": evidence["checksum"],
+    }
     preview["evaluation_proof"] = proof
     preview["governance_gate"] = {
         "gate_id": proof["governance_gate_id"],
@@ -794,6 +1143,7 @@ def _run_preview_evaluation(
         },
         payload={"mode": mode, "requested_by": requested_by, "job_id": job_id},
     )
+
     return preview
 
 
@@ -824,9 +1174,189 @@ def _require_commit_eval_proof(session_id: str, replay: Dict[str, Any]) -> Dict[
     proof = preview.get("evaluation_proof")
     if not isinstance(proof, dict) or not proof.get("proof_ref"):
         raise HTTPException(status_code=409, detail="evaluation proof required before commit")
-    if proof.get("status") != "passed" or proof.get("governance_gate_state") != "passed":
+    if (
+        proof.get("schema_version") != "persona_teaching_evaluation_proof.v2"
+        or proof.get("status") != "passed"
+        or proof.get("governance_gate_state") != "passed"
+        or proof.get("commit_eligible") is not True
+        or proof.get("validation_errors") != []
+    ):
         raise HTTPException(status_code=409, detail="evaluation governance gate is not passed")
+    if proof.get("session_id") != session_id or proof.get("persona_id") != replay.get("persona_id"):
+        raise HTTPException(status_code=409, detail="evaluation proof target binding mismatch")
+    if proof.get("proof_digest") != _proof_digest(proof):
+        raise HTTPException(status_code=409, detail="evaluation proof digest mismatch")
+    candidate_binding = proof.get("candidate_binding")
+    if not isinstance(candidate_binding, dict) or proof.get("candidate_digest") != stable_json_sha256(
+        candidate_binding
+    ):
+        raise HTTPException(status_code=409, detail="evaluation candidate digest mismatch")
+    if candidate_binding.get("candidate_snapshot_at") != preview.get("candidate_snapshot_at"):
+        raise HTTPException(status_code=409, detail="evaluation candidate snapshot binding mismatch")
+
+    now = _trusted_now().astimezone(timezone.utc)
+    try:
+        evaluated_at = _parse_utc_timestamp(proof.get("evaluated_at"), "proof.evaluated_at")
+        expires_at = _parse_utc_timestamp(proof.get("expires_at"), "proof.expires_at")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if evaluated_at > now or now >= expires_at:
+        raise HTTPException(status_code=409, detail="evaluation proof is future-dated or expired")
+
+    try:
+        authority = _load_authority_snapshot(
+            trusted_now=now,
+            strategy_id=f"preview-{session_id}",
+        )
+        controls = _canonical_controls(session_id)
+    except AuthorityValidationError as exc:
+        raise HTTPException(status_code=409, detail=f"evaluation authority is no longer admissible: {exc}") from exc
+    proof_authority = proof.get("authority")
+    if not isinstance(proof_authority, dict):
+        raise HTTPException(status_code=409, detail="evaluation authority binding is missing")
+    dataset_binding = proof_authority.get("dataset")
+    policy_binding = proof_authority.get("policy")
+    if (
+        not isinstance(dataset_binding, dict)
+        or dataset_binding.get("dataset_version_id") != authority.dataset_version_id
+        or dataset_binding.get("digest") != authority.dataset_digest
+        or not isinstance(policy_binding, dict)
+        or policy_binding.get("policy_id") != authority.policy_id
+        or policy_binding.get("policy_version") != authority.policy_version
+        or policy_binding.get("digest") != authority.policy_digest
+    ):
+        raise HTTPException(status_code=409, detail="evaluation dataset or policy authority changed")
+    if proof.get("controls_digest") != stable_json_sha256(controls):
+        raise HTTPException(status_code=409, detail="evaluation proof controls changed after evaluation")
+
+    gates = proof.get("gates")
+    if not isinstance(gates, list) or not gates or any(
+        not isinstance(gate, dict) or gate.get("state") != "passed" for gate in gates
+    ):
+        raise HTTPException(status_code=409, detail="evaluation proof contains a failed or invalid gate")
+    backend = proof.get("backend")
+    if (
+        not isinstance(backend, dict)
+        or backend.get("name") != PRIMARY_BACKEND
+        or not str(backend.get("run_id") or "").startswith("vbt-real-")
+    ):
+        raise HTTPException(status_code=409, detail="evaluation proof is not backed by real vectorbt")
+    metrics = proof.get("metrics")
+    if not isinstance(metrics, dict) or proof.get("metrics_digest") != stable_json_sha256(metrics):
+        raise HTTPException(status_code=409, detail="evaluation metric digest mismatch")
+    try:
+        for key in ("total_return", "sharpe_ratio", "max_drawdown"):
+            _finite_metric(metrics, key)
+    except AuthorityValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    job_id = str(proof.get("job_id") or "").strip()
+    worker_run_id = str(proof.get("worker_run_id") or "").strip()
+    job = store.get_preview_job(job_id) if job_id else None
+    if (
+        not job
+        or job.get("status") != "completed"
+        or job.get("evaluation_proof_ref") != proof.get("proof_ref")
+        or job.get("proof_digest") != proof.get("proof_digest")
+        or job.get("worker_run_id") != worker_run_id
+    ):
+        raise HTTPException(status_code=409, detail="evaluation worker provenance is missing or mismatched")
+
+    evidence_ref = proof.get("runtime_evidence")
+    if not isinstance(evidence_ref, dict):
+        raise HTTPException(status_code=409, detail="evaluation runtime evidence binding is missing")
+    try:
+        records = _runtime_evidence_log().read_verified()
+        sequence = int(evidence_ref.get("sequence") or 0)
+        evidence = records[sequence - 1] if sequence > 0 else None
+    except (OSError, ValueError, IndexError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=f"evaluation runtime evidence is unavailable: {exc}") from exc
+    if (
+        not evidence
+        or evidence.get("event_type") != "preview_evaluation_terminal"
+        or evidence.get("checksum") != evidence_ref.get("checksum")
+        or (evidence.get("payload") or {}).get("proof_digest") != proof.get("proof_digest")
+    ):
+        raise HTTPException(status_code=409, detail="evaluation runtime evidence binding mismatch")
     return dict(proof)
+
+
+def _commit_authoritative_persona_target(
+    *,
+    session_id: str,
+    replay: Dict[str, Any],
+    proof: Dict[str, Any],
+    idempotency_key: str,
+    trusted_now: datetime,
+) -> Dict[str, Any]:
+    persona_id = str(replay.get("persona_id") or "").strip()
+    authority = proof.get("authority") if isinstance(proof.get("authority"), dict) else {}
+    policy = authority.get("policy") if isinstance(authority.get("policy"), dict) else {}
+    approval_decision_ref = str(policy.get("approval_decision_ref") or "").strip()
+    precondition = proof.get("target_precondition")
+    if not approval_decision_ref or not isinstance(precondition, dict):
+        raise PersonaTargetError("evaluation proof target or approval binding is missing")
+    generation = precondition.get("target_generation")
+    if isinstance(generation, bool) or not isinstance(generation, int):
+        raise PersonaTargetError("evaluation proof target_generation is invalid")
+    return commit_persona_target(
+        persona_id=persona_id,
+        session_id=session_id,
+        candidate=proof.get("candidate_binding"),
+        control_state=proof.get("controls"),
+        evaluation_proof=proof,
+        generation=generation,
+        idempotency_key=idempotency_key,
+        expected_precondition_digest=str(precondition.get("precondition_digest") or ""),
+        approval_decision_ref=approval_decision_ref,
+        persona_readback_url=_persona_target_url(
+            "TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE",
+            persona_id=persona_id,
+            session_id=session_id,
+            generation=generation,
+            approval_decision_ref=approval_decision_ref,
+        ),
+        approval_readback_url=_persona_target_url(
+            "TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE",
+            persona_id=persona_id,
+            session_id=session_id,
+            generation=generation,
+            approval_decision_ref=approval_decision_ref,
+        ),
+        target_write_url=_persona_target_url(
+            "TRAINING_SESSION_PERSONA_TARGET_WRITE_URL_TEMPLATE",
+            persona_id=persona_id,
+            session_id=session_id,
+            generation=generation,
+            approval_decision_ref=approval_decision_ref,
+        ),
+        target_readback_url=_persona_target_url(
+            "TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE",
+            persona_id=persona_id,
+            session_id=session_id,
+            generation=generation,
+            approval_decision_ref=approval_decision_ref,
+        ),
+        authorization_token=_persona_authority_token(),
+        trusted_now=trusted_now,
+        timeout_seconds=_persona_target_timeout_seconds(),
+    )
+
+
+def _append_or_get_runtime_decision_evidence(
+    event_type: str,
+    payload: Dict[str, Any],
+    *,
+    request_hash: str,
+    recorded_at: str,
+) -> Dict[str, Any]:
+    log = _runtime_evidence_log()
+    return log.append_or_get(
+        event_type,
+        {**payload, "request_hash": request_hash},
+        match_payload={"request_hash": request_hash},
+        recorded_at=recorded_at,
+    )
 
 
 @app.post("/api/training/sessions/{session_id}/preview", status_code=201)
@@ -834,14 +1364,57 @@ def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]
     session = store.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="training session not found")
-    timestamp = body.refreshed_at or utc_now()
-    return _run_preview_evaluation(
-        session_id,
-        session,
-        mode=body.mode,
-        timestamp=timestamp,
-        requested_by="operator",
-    )
+    timestamp = utc_now()
+    try:
+        return _run_preview_evaluation(
+            session_id,
+            session,
+            mode=body.mode,
+            timestamp=timestamp,
+            requested_by="operator",
+        )
+    except AuthorityValidationError as exc:
+        raise HTTPException(status_code=409, detail=f"preview evaluation rejected: {exc}") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail=f"preview evidence unavailable: {exc}") from exc
+
+
+def _preview_job_max_attempts() -> int:
+    try:
+        value = int(os.getenv("TRAINING_SESSION_PREVIEW_JOB_MAX_ATTEMPTS", "3"))
+    except ValueError as exc:
+        raise RuntimeError("TRAINING_SESSION_PREVIEW_JOB_MAX_ATTEMPTS must be an integer") from exc
+    if value < 1:
+        raise RuntimeError("TRAINING_SESSION_PREVIEW_JOB_MAX_ATTEMPTS must be positive")
+    return value
+
+
+def _preview_job_lease_seconds() -> int:
+    try:
+        value = int(os.getenv("TRAINING_SESSION_PREVIEW_JOB_LEASE_SECONDS", "120"))
+    except ValueError as exc:
+        raise RuntimeError("TRAINING_SESSION_PREVIEW_JOB_LEASE_SECONDS must be an integer") from exc
+    if value < 30:
+        raise RuntimeError("TRAINING_SESSION_PREVIEW_JOB_LEASE_SECONDS must be at least 30")
+    return value
+
+
+def _job_is_claimable(job: Dict[str, Any], now: datetime) -> bool:
+    status = str(job.get("status") or "").lower()
+    attempts = int(job.get("attempt_count") or 0)
+    max_attempts = int(job.get("max_attempts") or _preview_job_max_attempts())
+    if attempts >= max_attempts:
+        return False
+    if status == "queued":
+        return True
+    if status == "failed":
+        return job.get("retryable") is True
+    if status != "running":
+        return False
+    try:
+        return _parse_utc_timestamp(job.get("lease_expires_at"), "job.lease_expires_at") <= now
+    except ValueError:
+        return True
 
 
 @app.get("/api/training/preview-jobs")
@@ -853,7 +1426,10 @@ def list_preview_jobs(
     jobs = store.list_preview_jobs()
     if session_id:
         jobs = [job for job in jobs if job.get("session_id") == session_id]
-    if status:
+    if status and status.lower() == "claimable":
+        now = _trusted_now().astimezone(timezone.utc)
+        jobs = [job for job in jobs if _job_is_claimable(job, now)]
+    elif status:
         jobs = [job for job in jobs if str(job.get("status") or "").lower() == status.lower()]
     jobs.sort(key=lambda job: str(job.get("requested_at") or ""))
     return jobs[:limit]
@@ -880,15 +1456,37 @@ def queue_preview_job(
     if str(session.get("status") or "").lower() != "active":
         raise HTTPException(status_code=409, detail="training session is not active")
 
-    timestamp = body.requested_at or utc_now()
+    timestamp = utc_now()
     key = _idempotency_key(idempotency_key, x_idempotency_key)
     job_id = _preview_job_id(session_id, key)
+    request_hash = _stable_hash(
+        {
+            "session_id": session_id,
+            "mode": body.mode,
+            "requested_by": body.requested_by,
+        }
+    )
     existing = store.get_preview_job(job_id)
     if existing is not None:
+        if existing.get("request_hash") != request_hash:
+            raise HTTPException(status_code=409, detail="idempotency key conflict")
         existing["replayed"] = True
         return existing
 
     eval_id = f"teval-{uuid.uuid4().hex[:12]}"
+    evidence = _runtime_evidence_log().append(
+        "preview_job_admission_intent",
+        {
+            "job_id": job_id,
+            "session_id": session_id,
+            "persona_id": session.get("persona_id"),
+            "eval_id": eval_id,
+            "mode": body.mode,
+            "requested_by": body.requested_by,
+            "request_hash": request_hash,
+        },
+        recorded_at=timestamp,
+    )
     job = {
         "job_id": job_id,
         "session_id": session_id,
@@ -897,8 +1495,16 @@ def queue_preview_job(
         "mode": body.mode,
         "requested_by": body.requested_by,
         "requested_at": timestamp,
+        "client_requested_at": body.requested_at,
         "attempt_count": 0,
+        "max_attempts": _preview_job_max_attempts(),
+        "retryable": True,
         "idempotency_key": key,
+        "request_hash": request_hash,
+        "admission_evidence": {
+            "sequence": evidence["sequence"],
+            "checksum": evidence["checksum"],
+        },
     }
     stored = store.put_preview_job(job_id, job)
     _append_training_event(
@@ -916,63 +1522,143 @@ def queue_preview_job(
 
 @app.post("/api/training/preview-jobs/{job_id}/run")
 def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Dict[str, Any]:
-    job = store.get_preview_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="preview job not found")
-    if job.get("status") == "completed":
-        job["replayed"] = True
-        return job
-    if job.get("status") == "running":
-        return job
-    if job.get("status") not in {"queued", "failed"}:
-        raise HTTPException(status_code=409, detail="preview job is not runnable")
+    del body
+    now = _trusted_now().astimezone(timezone.utc)
+    timestamp = _utc_iso(now)
+    lease_expires_at = _utc_iso(now + timedelta(seconds=_preview_job_lease_seconds()))
+    worker_run_id = f"preview-worker-{uuid.uuid4().hex[:16]}"
 
-    timestamp = (body.run_at if body else None) or utc_now()
-    job["status"] = "running"
-    job["last_attempt_at"] = timestamp
-    job["attempt_count"] = int(job.get("attempt_count") or 0) + 1
-    store.put_preview_job(job_id, job)
+    def claim(existing: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if existing is None:
+            raise HTTPException(status_code=404, detail="preview job not found")
+        if existing.get("status") == "completed":
+            replayed = dict(existing)
+            replayed["replayed"] = True
+            return replayed
+        if not _job_is_claimable(existing, now):
+            raise HTTPException(status_code=409, detail="preview job is not claimable")
+        reclaimed = existing.get("status") == "running"
+        existing.update(
+            {
+                "status": "running",
+                "last_attempt_at": timestamp,
+                "lease_started_at": timestamp,
+                "lease_expires_at": lease_expires_at,
+                "worker_run_id": worker_run_id,
+                "attempt_count": int(existing.get("attempt_count") or 0) + 1,
+                "reclaimed": reclaimed,
+                "retryable": False,
+                "replayed": False,
+            }
+        )
+        existing.pop("failed_at", None)
+        existing.pop("error_code", None)
+        return existing
+
+    job = store.mutate_preview_job(job_id, claim)
+    if job.get("replayed") is True:
+        return job
 
     session_id = str(job.get("session_id") or "").strip()
     session = store.get_session(session_id)
     if not session:
-        job["status"] = "failed"
-        job["failed_at"] = timestamp
-        job["error"] = "training session not found"
-        store.put_preview_job(job_id, job)
-        raise HTTPException(status_code=404, detail="training session not found")
+        failure_code = "training_session_not_found"
+        retryable = False
+        preview = None
+    else:
+        failure_code = None
+        retryable = False
+        try:
+            preview = _run_preview_evaluation(
+                session_id,
+                session,
+                mode=str(job.get("mode") or "refresh"),
+                timestamp=timestamp,
+                eval_id=str(job.get("eval_id") or "") or None,
+                job_id=job_id,
+                worker_run_id=worker_run_id,
+                attempt_count=int(job.get("attempt_count") or 0),
+                requested_by=str(job.get("requested_by") or "operator"),
+            )
+        except AuthorityValidationError as exc:
+            preview = None
+            message = str(exc)
+            retryable = message.startswith(
+                ("real vectorbt evaluation failed", "persona target authority unavailable")
+            )
+            failure_code = (
+                "evaluation_dependency_unavailable" if retryable else "evaluation_admission_rejected"
+            )
+        except (OSError, RuntimeError):
+            preview = None
+            retryable = True
+            failure_code = "runtime_evidence_unavailable"
+        except Exception:  # noqa: BLE001 - every worker attempt must reach durable terminal state.
+            preview = None
+            retryable = True
+            failure_code = "evaluation_internal_error"
 
-    try:
-        preview = _run_preview_evaluation(
-            session_id,
-            session,
-            mode=str(job.get("mode") or "refresh"),
-            timestamp=timestamp,
-            eval_id=str(job.get("eval_id") or "") or None,
-            job_id=job_id,
-            requested_by=str(job.get("requested_by") or "operator"),
-        )
-    except HTTPException as exc:
-        job["status"] = "failed"
-        job["failed_at"] = timestamp
-        job["error"] = str(exc.detail)
-        store.put_preview_job(job_id, job)
-        raise
+    if preview is None:
+        retryable = retryable and int(job.get("attempt_count") or 0) < int(job.get("max_attempts") or 1)
+        try:
+            failure_evidence = _runtime_evidence_log().append(
+                "preview_job_failed",
+                {
+                    "job_id": job_id,
+                    "session_id": session_id,
+                    "worker_run_id": worker_run_id,
+                    "attempt_count": job.get("attempt_count"),
+                    "error_code": failure_code,
+                    "retryable": retryable,
+                },
+                recorded_at=timestamp,
+            )
+        except (OSError, RuntimeError):
+            failure_evidence = None
+
+        def fail(active: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+            if not active or active.get("worker_run_id") != worker_run_id:
+                raise HTTPException(status_code=409, detail="preview job lease was lost")
+            active.update(
+                {
+                    "status": "failed",
+                    "failed_at": timestamp,
+                    "error_code": failure_code,
+                    "retryable": retryable,
+                }
+            )
+            if failure_evidence:
+                active["failure_evidence"] = {
+                    "sequence": failure_evidence["sequence"],
+                    "checksum": failure_evidence["checksum"],
+                }
+            return active
+
+        return store.mutate_preview_job(job_id, fail)
 
     proof = preview.get("evaluation_proof") if isinstance(preview.get("evaluation_proof"), dict) else {}
-    job.update(
-        {
-            "status": "completed",
-            "completed_at": timestamp,
-            "candidate_snapshot_at": preview.get("candidate_snapshot_at"),
-            "preview_ref": f"trainer-preview:{session_id}:{preview.get('eval_id')}",
-            "evaluation_proof_ref": proof.get("proof_ref"),
-            "governance_gate_state": proof.get("governance_gate_state"),
-            "preview": preview,
-        }
-    )
-    job.pop("error", None)
-    return store.put_preview_job(job_id, job)
+
+    def complete(active: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not active or active.get("worker_run_id") != worker_run_id or active.get("status") != "running":
+            raise HTTPException(status_code=409, detail="preview job lease was lost")
+        active.update(
+            {
+                "status": "completed",
+                "completed_at": timestamp,
+                "candidate_snapshot_at": preview.get("candidate_snapshot_at"),
+                "preview_ref": f"trainer-preview:{session_id}:{preview.get('eval_id')}",
+                "evaluation_proof_ref": proof.get("proof_ref"),
+                "proof_digest": proof.get("proof_digest"),
+                "governance_gate_state": proof.get("governance_gate_state"),
+                "retryable": False,
+                "preview": preview,
+            }
+        )
+        active.pop("error_code", None)
+        active.pop("failed_at", None)
+        return active
+
+    return store.mutate_preview_job(job_id, complete)
 
 
 
@@ -1004,20 +1690,28 @@ def complete_session(session_id: str) -> Dict[str, Any]:
     session = store.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="training session not found")
+    existing_replay = store.get_replay(session_id)
+    if existing_replay and (existing_replay.get("replay_resolution") or {}).get("state") == "pending_decision":
+        if str(session.get("status") or "").lower() != "completed":
+            session["status"] = "completed"
+            session["ended_at"] = existing_replay.get("ended_at") or utc_now()
+            store.put_session(_teaching_session_contract(session))
+        return existing_replay
     if str(session.get("status") or "").lower() not in {"active", "paused"}:
         raise HTTPException(status_code=409, detail="training session cannot be completed")
     timestamp = utc_now()
-    session["status"] = "completed"
-    session["ended_at"] = timestamp
-    session = _teaching_session_contract(session)
-    store.put_session(session)
     preview = (store.get_preview_bundle(session_id) or {}).get("preview") or {}
-    candidate_snapshot_at = preview.get("candidate_snapshot_at") or timestamp
+    proof = preview.get("evaluation_proof") if isinstance(preview.get("evaluation_proof"), dict) else {}
+    candidate_snapshot_at = preview.get("candidate_snapshot_at")
+    if not proof or not candidate_snapshot_at:
+        raise HTTPException(status_code=409, detail="passing worker evaluation proof required before completion")
     replay = dict(session)
+    replay["status"] = "completed"
+    replay["ended_at"] = timestamp
     replay["replay_resolution"] = {"state": "pending_decision", "decision_at": None, "decision_by": None, "note": None}
     replay["artifacts"] = {
-        "before_artifact_ref": f"{session_id}-before-artifact",
-        "candidate_artifact_ref": f"{session_id}-candidate-artifact",
+        "before_artifact_ref": (proof.get("target_precondition") or {}).get("controller_record_ref"),
+        "candidate_artifact_ref": f"sha256:{proof.get('candidate_digest')}",
         "after_artifact_ref": None,
     }
     replay_eval_ref = {
@@ -1026,22 +1720,20 @@ def complete_session(session_id: str) -> Dict[str, Any]:
         "baseline_snapshot_at": preview.get("baseline_snapshot_at"),
         "candidate_snapshot_at": candidate_snapshot_at,
     }
-    proof = preview.get("evaluation_proof") if isinstance(preview.get("evaluation_proof"), dict) else {}
-    if proof:
-        replay_eval_ref.update(
-            {
-                "evaluation_proof_ref": proof.get("proof_ref"),
-                "governance_gate_state": proof.get("governance_gate_state"),
-            }
-        )
+    replay_eval_ref.update(
+        {
+            "evaluation_proof_ref": proof.get("proof_ref"),
+            "governance_gate_state": proof.get("governance_gate_state"),
+        }
+    )
     replay_event = _build_teaching_event(
         session_id=session_id,
-        event_id=_next_event_id(timestamp, replay.get("events") or []),
+        event_id=f"tevt-complete-{str(proof.get('proof_digest') or '')[:20]}",
         actor="system",
         actor_label="Training Session Service",
         event_type="preview_trigger",
         summary="Replay candidate materialized from preview.",
-        timestamp=timestamp,
+        timestamp=str(proof.get("evaluated_at") or timestamp),
         sequence_number=max(
             (int(event.get("sequence_number") or 0) for event in replay.get("events", [])),
             default=0,
@@ -1051,8 +1743,34 @@ def complete_session(session_id: str) -> Dict[str, Any]:
         eval_ref=replay_eval_ref,
     )
     replay.setdefault("events", []).append(replay_event)
-    store.append_event(replay_event)
+    # Validate the exact event-bound candidate before changing either session
+    # or replay state.  This re-reads current data/policy/controls and evidence.
+    _require_commit_eval_proof(session_id, replay)
+    try:
+        materialized_evidence = _append_or_get_runtime_decision_evidence(
+            "replay_candidate_materialized",
+            {
+                "session_id": session_id,
+                "persona_id": session.get("persona_id"),
+                "proof_digest": proof.get("proof_digest"),
+                "candidate_digest": proof.get("candidate_digest"),
+                "candidate_snapshot_at": candidate_snapshot_at,
+            },
+            request_hash=str(proof.get("proof_digest") or ""),
+            recorded_at=timestamp,
+        )
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail=f"candidate evidence unavailable: {exc}") from exc
+    replay["artifacts"]["materialization_evidence_ref"] = (
+        f"runtime-evidence:{materialized_evidence['checksum']}"
+    )
+    stored_event = store.append_event(replay_event)
+    replay["events"][-1] = stored_event
     store.put_replay(session_id, replay)
+    session["status"] = "completed"
+    session["ended_at"] = timestamp
+    session = _teaching_session_contract(session)
+    store.put_session(session)
     return replay
 
 
@@ -1063,120 +1781,231 @@ def _decide_replay(
     *,
     idempotency_key: Optional[str] = None,
 ) -> Dict[str, Any]:
-    replay = get_replay(session_id)
-    timestamp = body.decided_at or utc_now()
-    resolution = replay.setdefault("replay_resolution", {})
-    request_hash = _replay_decision_hash(session_id, body, state) if idempotency_key else None
-    existing_idempotency = resolution.get("idempotency")
-    if idempotency_key and isinstance(existing_idempotency, dict):
-        if existing_idempotency.get("key") == idempotency_key:
-            if existing_idempotency.get("request_hash") != request_hash:
-                raise HTTPException(status_code=409, detail="idempotency key conflict")
-            return _mark_replay_idempotency(
-                replay,
-                idempotency_key=idempotency_key,
-                request_hash=request_hash,
-                replayed=True,
+    if not idempotency_key:
+        raise HTTPException(status_code=400, detail="Idempotency-Key is required for replay decisions")
+    timestamp = utc_now()
+    request_hash = _replay_decision_hash(session_id, body, state)
+
+    def decide_locked(existing_replay: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if existing_replay is None:
+            session = store.get_session(session_id)
+            if not session:
+                raise HTTPException(status_code=404, detail="training replay not found")
+            replay = dict(session)
+            replay.setdefault("replay_resolution", {"state": "not_applicable"})
+            replay.setdefault("artifacts", {})
+        else:
+            replay = existing_replay
+
+        resolution = replay.setdefault("replay_resolution", {})
+        existing_idempotency = resolution.get("idempotency")
+        if isinstance(existing_idempotency, dict):
+            if existing_idempotency.get("key") == idempotency_key:
+                if existing_idempotency.get("request_hash") != request_hash:
+                    raise HTTPException(status_code=409, detail="idempotency key conflict")
+                return _mark_replay_idempotency(
+                    replay,
+                    idempotency_key=idempotency_key,
+                    request_hash=request_hash,
+                    replayed=True,
+                )
+        if resolution.get("state") not in {"pending_decision", None}:
+            raise HTTPException(status_code=409, detail="replay already decided")
+        candidate_snapshot_at = _replay_candidate_snapshot_at(replay)
+        if not body.expected_candidate_snapshot_at:
+            raise HTTPException(status_code=409, detail="expected_candidate_snapshot_at is required")
+        if body.expected_candidate_snapshot_at != candidate_snapshot_at:
+            raise HTTPException(status_code=409, detail="candidate snapshot mismatch")
+
+        artifacts = replay.setdefault("artifacts", {})
+        proof: Dict[str, Any] = {}
+        target_receipt: Dict[str, Any] = {}
+        if state == "committed":
+            proof = _require_commit_eval_proof(session_id, replay)
+            try:
+                _append_or_get_runtime_decision_evidence(
+                    "persona_commit_admission_intent",
+                    {
+                        "session_id": session_id,
+                        "persona_id": replay.get("persona_id"),
+                        "candidate_snapshot_at": candidate_snapshot_at,
+                        "proof_digest": proof.get("proof_digest"),
+                        "candidate_digest": proof.get("candidate_digest"),
+                        "controls_digest": proof.get("controls_digest"),
+                        "target_precondition": proof.get("target_precondition"),
+                    },
+                    request_hash=request_hash,
+                    recorded_at=timestamp,
+                )
+                target_receipt = _commit_authoritative_persona_target(
+                    session_id=session_id,
+                    replay=replay,
+                    proof=proof,
+                    idempotency_key=idempotency_key,
+                    trusted_now=_trusted_now().astimezone(timezone.utc),
+                )
+            except PersonaTargetError as exc:
+                try:
+                    _append_or_get_runtime_decision_evidence(
+                        "persona_commit_rejected",
+                        {
+                            "session_id": session_id,
+                            "persona_id": replay.get("persona_id"),
+                            "proof_digest": proof.get("proof_digest"),
+                            "error_code": "persona_target_authority_rejected",
+                        },
+                        request_hash=request_hash,
+                        recorded_at=timestamp,
+                    )
+                except (OSError, RuntimeError):
+                    pass
+                raise HTTPException(status_code=409, detail=f"persona target commit rejected: {exc}") from exc
+            except (OSError, RuntimeError) as exc:
+                raise HTTPException(status_code=503, detail=f"persona commit evidence unavailable: {exc}") from exc
+
+            try:
+                terminal_evidence = _append_or_get_runtime_decision_evidence(
+                    "persona_commit_terminal_readback",
+                    {
+                        "session_id": session_id,
+                        "persona_id": replay.get("persona_id"),
+                        "proof_digest": proof.get("proof_digest"),
+                        "candidate_digest": proof.get("candidate_digest"),
+                        "controls_digest": proof.get("controls_digest"),
+                        "target_receipt": target_receipt,
+                    },
+                    request_hash=request_hash,
+                    recorded_at=str(target_receipt.get("target_recorded_at") or timestamp),
+                )
+            except (OSError, RuntimeError) as exc:
+                # The target owner may already be committed.  Returning failure
+                # is intentional: a retry with the same key converges through
+                # exact terminal readback before local state advances.
+                raise HTTPException(status_code=503, detail=f"persona terminal evidence unavailable: {exc}") from exc
+
+            target_ref = str(target_receipt.get("target_controller_record_ref") or "").strip()
+            if not target_ref:
+                raise HTTPException(status_code=409, detail="persona terminal target record ref is missing")
+            artifacts.update(
+                {
+                    "after_artifact_ref": target_ref,
+                    "persona_policy_ref": target_ref,
+                    "persona_target_controller_record_ref": target_ref,
+                    "approval_controller_record_ref": target_receipt.get("approval_controller_record_ref"),
+                    "approval_decision_id": target_receipt.get("approval_decision_id"),
+                    "approval_decision_ref": target_receipt.get("approval_decision_ref"),
+                    "evaluation_proof_ref": proof.get("proof_ref"),
+                    "evaluation_proof_id": proof.get("proof_id"),
+                    "evaluation_job_id": proof.get("job_id"),
+                    "evaluation_governance_gate_id": proof.get("governance_gate_id"),
+                    "evaluation_governance_gate_state": proof.get("governance_gate_state"),
+                    "decision_record_ref": f"runtime-evidence:{terminal_evidence['checksum']}",
+                    "lineage_recorded_at": target_receipt.get("target_recorded_at") or terminal_evidence["recorded_at"],
+                }
             )
-    if resolution.get("state") not in {"pending_decision", None}:
-        raise HTTPException(status_code=409, detail="replay already decided")
-    candidate_snapshot_at = _replay_candidate_snapshot_at(replay)
-    if body.expected_candidate_snapshot_at and body.expected_candidate_snapshot_at != candidate_snapshot_at:
-        raise HTTPException(status_code=409, detail="candidate snapshot mismatch")
-    resolution["state"] = state
-    resolution["decision_at"] = timestamp
-    resolution["decision_by"] = body.actor_id
-    resolution["note"] = body.note
-    artifacts = replay.setdefault("artifacts", {})
-    if state == "committed":
-        artifacts["after_artifact_ref"] = f"{session_id}-committed-artifact"
-    artifacts.update(
-        _decision_lineage_refs(
-            session_id=session_id,
-            replay=replay,
-            state=state,
-            timestamp=timestamp,
-        )
-    )
-    if state == "committed":
-        proof = _require_commit_eval_proof(session_id, replay)
-        resolution["evaluation_proof"] = proof
-        artifacts.update(
-            {
+            try:
+                policy_edges = record_policy_lineage_commit(
+                    session_id,
+                    _teaching_event_ids(replay),
+                    str(replay.get("persona_id") or ""),
+                    store=build_lineage_read_store(store.data_dir),
+                    commit_at=str(artifacts["lineage_recorded_at"]),
+                    policy_artifact_id=target_ref,
+                )
+            except PolicyLineageError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            artifacts["policy_lineage_edge_ids"] = [edge["edge_id"] for edge in policy_edges]
+            artifacts["policy_lineage_store_ref"] = "lineage-read:training-session-policy-lineage"
+            artifacts["lineage_audit"] = {
+                "state": "recorded_from_terminal_target_readback",
+                "recorded_at": artifacts["lineage_recorded_at"],
+                "policy_lineage_edge_ids": artifacts["policy_lineage_edge_ids"],
                 "evaluation_proof_ref": proof.get("proof_ref"),
-                "evaluation_proof_id": proof.get("proof_id"),
-                "evaluation_job_id": proof.get("job_id"),
-                "evaluation_governance_gate_id": proof.get("governance_gate_id"),
-                "evaluation_governance_gate_state": proof.get("governance_gate_state"),
+                "governance_gate_state": proof.get("governance_gate_state"),
+                "persona_target_controller_record_ref": target_ref,
             }
-        )
-        try:
-            policy_edges = record_policy_lineage_commit(
-                session_id,
-                _teaching_event_ids(replay),
-                str(replay.get("persona_id") or ""),
-                store=build_lineage_read_store(store.data_dir),
-                commit_at=timestamp,
-                policy_artifact_id=artifacts.get("persona_policy_ref"),
+        else:
+            try:
+                terminal_evidence = _append_or_get_runtime_decision_evidence(
+                    "replay_discard_terminal",
+                    {
+                        "session_id": session_id,
+                        "persona_id": replay.get("persona_id"),
+                        "candidate_snapshot_at": candidate_snapshot_at,
+                        "decision_by": body.actor_id,
+                        "note": body.note,
+                    },
+                    request_hash=request_hash,
+                    recorded_at=timestamp,
+                )
+            except (OSError, RuntimeError) as exc:
+                raise HTTPException(status_code=503, detail=f"discard evidence unavailable: {exc}") from exc
+            artifacts.update(
+                {
+                    "after_artifact_ref": None,
+                    "decision_record_ref": f"runtime-evidence:{terminal_evidence['checksum']}",
+                    "lineage_recorded_at": terminal_evidence["recorded_at"],
+                }
             )
-        except PolicyLineageError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        artifacts["policy_lineage_edge_ids"] = [edge["edge_id"] for edge in policy_edges]
-        artifacts["policy_lineage_store_ref"] = "lineage-read:training-session-policy-lineage"
-        artifacts["lineage_audit"] = {
-            "state": "recorded",
-            "recorded_at": timestamp,
-            "policy_lineage_edge_ids": artifacts["policy_lineage_edge_ids"],
-            "evaluation_proof_ref": proof.get("proof_ref"),
-            "governance_gate_state": proof.get("governance_gate_state"),
-        }
-    decision_artifact_refs = {
-        "before_artifact_ref": artifacts.get("before_artifact_ref"),
-        "candidate_artifact_ref": artifacts.get("candidate_artifact_ref"),
-        "after_artifact_ref": artifacts.get("after_artifact_ref"),
-        "decision_record_ref": artifacts.get("decision_record_ref"),
-        "lineage_ref": artifacts.get("lineage_ref"),
-        "lineage_edge_id": artifacts.get("lineage_edge_id"),
-        "lineage_recorded_at": artifacts.get("lineage_recorded_at"),
-        "evaluation_proof_ref": artifacts.get("evaluation_proof_ref"),
-        "evaluation_governance_gate_id": artifacts.get("evaluation_governance_gate_id"),
-        "evaluation_governance_gate_state": artifacts.get("evaluation_governance_gate_state"),
-        "persona_policy_ref": artifacts.get("persona_policy_ref"),
-        "route_policy_ref": artifacts.get("route_policy_ref"),
-        "policy_lineage_edge_ids": artifacts.get("policy_lineage_edge_ids"),
-        "policy_lineage_store_ref": artifacts.get("policy_lineage_store_ref"),
-        "lineage_audit": artifacts.get("lineage_audit"),
-    }
-    decision_event = _build_teaching_event(
-        session_id=session_id,
-        event_id=_next_event_id(timestamp, replay.get("events") or []),
-        actor="system",
-        actor_label="Training Session Service",
-        event_type="commit" if state == "committed" else "discard",
-        summary=f"Replay candidate {state} by {body.actor_id}.",
-        timestamp=timestamp,
-        sequence_number=max(
-            (int(event.get("sequence_number") or 0) for event in replay.get("events", [])),
-            default=0,
-        )
-        + 1,
-        eval_ref={
-            "candidate_snapshot_at": candidate_snapshot_at,
+
+        resolution["state"] = state
+        resolution["decision_at"] = artifacts.get("lineage_recorded_at") or timestamp
+        resolution["decision_by"] = body.actor_id
+        resolution["note"] = body.note
+        resolution["client_decided_at"] = body.decided_at
+        if proof:
+            resolution["evaluation_proof"] = proof
+            resolution["persona_target_readback"] = target_receipt
+
+        decision_artifact_refs = {
+            "before_artifact_ref": artifacts.get("before_artifact_ref"),
+            "candidate_artifact_ref": artifacts.get("candidate_artifact_ref"),
+            "after_artifact_ref": artifacts.get("after_artifact_ref"),
+            "decision_record_ref": artifacts.get("decision_record_ref"),
+            "lineage_recorded_at": artifacts.get("lineage_recorded_at"),
             "evaluation_proof_ref": artifacts.get("evaluation_proof_ref"),
-            "governance_gate_state": artifacts.get("evaluation_governance_gate_state"),
-        },
-        artifact_refs=decision_artifact_refs,
-    )
-    replay.setdefault("events", []).append(decision_event)
-    _mark_replay_idempotency(
-        replay,
-        idempotency_key=idempotency_key,
-        request_hash=request_hash,
-        replayed=False,
-    )
-    store.append_event(decision_event)
-    store.put_replay(session_id, replay)
-    return replay
+            "evaluation_governance_gate_id": artifacts.get("evaluation_governance_gate_id"),
+            "evaluation_governance_gate_state": artifacts.get("evaluation_governance_gate_state"),
+            "persona_policy_ref": artifacts.get("persona_policy_ref"),
+            "persona_target_controller_record_ref": artifacts.get("persona_target_controller_record_ref"),
+            "approval_controller_record_ref": artifacts.get("approval_controller_record_ref"),
+            "approval_decision_id": artifacts.get("approval_decision_id"),
+            "approval_decision_ref": artifacts.get("approval_decision_ref"),
+            "policy_lineage_edge_ids": artifacts.get("policy_lineage_edge_ids"),
+            "policy_lineage_store_ref": artifacts.get("policy_lineage_store_ref"),
+            "lineage_audit": artifacts.get("lineage_audit"),
+        }
+        decision_event = _build_teaching_event(
+            session_id=session_id,
+            event_id=f"tevt-decision-{request_hash[:20]}",
+            actor="system",
+            actor_label="Training Session Service",
+            event_type="commit" if state == "committed" else "discard",
+            summary=f"Replay candidate {state} by {body.actor_id}.",
+            timestamp=str(artifacts.get("lineage_recorded_at") or timestamp),
+            sequence_number=max(
+                (int(event.get("sequence_number") or 0) for event in replay.get("events", [])),
+                default=0,
+            )
+            + 1,
+            eval_ref={
+                "candidate_snapshot_at": candidate_snapshot_at,
+                "evaluation_proof_ref": artifacts.get("evaluation_proof_ref"),
+                "governance_gate_state": artifacts.get("evaluation_governance_gate_state"),
+            },
+            artifact_refs=decision_artifact_refs,
+        )
+        _mark_replay_idempotency(
+            replay,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            replayed=False,
+        )
+        stored_decision_event = store.append_event(decision_event)
+        replay.setdefault("events", []).append(stored_decision_event)
+        return replay
+
+    return store.mutate_replay(session_id, decide_locked)
 
 
 @app.post("/api/training/replays/{session_id}/commit")

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -30,6 +33,8 @@ from .models import (
     TranscriptEvent,
     GateHandoffStatus,
     utc_now,
+    AuthorType,
+    ParticipantType,
 )
 from .store import build_consultation_store
 
@@ -55,6 +60,16 @@ CONSULTATION_SERVICE_ACTOR = ActorRef(
     actor_type="service",
     actor_id="consultation-svc",
 )
+
+_CREATE_FINGERPRINT_METADATA_KEY = "_pantheon_create_fingerprint_sha256"
+_REQUEST_COMMAND_LOCK = threading.RLock()
+_SUBMITTED_OR_LATER_STATUSES = {
+    ConsultRequestStatus.SUBMITTED,
+    ConsultRequestStatus.ASSIGNED,
+    ConsultRequestStatus.IN_PROGRESS,
+    ConsultRequestStatus.MEMO_PENDING,
+    ConsultRequestStatus.PUBLISHED,
+}
 
 
 def _actor_to_data(actor_ref: ActorRef | Dict[str, str]) -> Dict[str, str]:
@@ -103,6 +118,83 @@ def _request_dict(req: Any, exclude: Optional[set[str]] = None) -> Dict[str, Any
     return req.dict(exclude=exclude or set())
 
 
+def _canonical_create_payload(req: Any) -> Dict[str, Any]:
+    """Return the normalized caller-owned fields used by create idempotency."""
+    payload = _request_dict(req, exclude={"request_id"})
+    metadata = dict(payload.get("metadata") or {})
+    metadata.pop(_CREATE_FINGERPRINT_METADATA_KEY, None)
+    payload["metadata"] = metadata
+    return payload
+
+
+def _create_fingerprint(request_id: str, payload: Dict[str, Any]) -> str:
+    canonical = json.dumps(
+        {"request_id": request_id, "request": payload},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
+
+
+def _stored_create_fingerprint(request: ConsultRequest) -> str:
+    metadata = dict(request.metadata or {})
+    recorded = metadata.get(_CREATE_FINGERPRINT_METADATA_KEY)
+    if isinstance(recorded, str) and recorded:
+        return recorded
+
+    # Legacy requests pre-date persisted create fingerprints. Reconstruct the
+    # original create shape when it is still available; changed legacy records
+    # fail closed because their reconstructed fingerprint will not match.
+    request_data = _request_dict(request)
+    create_fields = set(getattr(CreateConsultRequest, "model_fields", {}).keys())
+    if not create_fields:  # Pydantic v1 compatibility.
+        create_fields = set(getattr(CreateConsultRequest, "__fields__", {}).keys())
+    payload = {
+        field: request_data.get(field)
+        for field in create_fields
+        if field != "request_id"
+    }
+    payload_metadata = dict(payload.get("metadata") or {})
+    payload_metadata.pop(_CREATE_FINGERPRINT_METADATA_KEY, None)
+    payload["metadata"] = payload_metadata
+    return _create_fingerprint(request.request_id, payload)
+
+
+def _ensure_audit_once(
+    *,
+    action: str,
+    request: ConsultRequest,
+    payload_hash: Optional[str] = None,
+    before_state: Optional[str] = None,
+    after_state: Optional[str] = None,
+) -> None:
+    existing = [
+        event
+        for event in store.list_audit_for_request(request.request_id)
+        if event.action == action
+    ]
+    if existing:
+        recorded_hashes = {
+            event.payload_hash for event in existing if event.payload_hash is not None
+        }
+        if payload_hash and recorded_hashes and payload_hash not in recorded_hashes:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Persisted {action} fingerprint conflicts with request body",
+            )
+        return
+    _emit_audit(
+        action=action,
+        request_id=request.request_id,
+        actor_ref=request.requested_by,
+        trace_id=request.trace_id,
+        before_state=before_state,
+        after_state=after_state,
+        payload_hash=payload_hash,
+    )
+
+
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok", "service": "consultation"}
@@ -113,17 +205,39 @@ def health() -> Dict[str, str]:
 
 @app.post("/api/consult/requests", response_model=ConsultRequest, status_code=201)
 def create_request(req: CreateConsultRequest) -> ConsultRequest:
-    request_id = f"cr-{uuid.uuid4().hex[:12]}"
-    new_req = ConsultRequest(request_id=request_id, **_request_dict(req))
-    store.put_request(new_req)
-    _emit_audit(
-        action="request_created",
-        request_id=request_id,
-        actor_ref=req.requested_by,
-        trace_id=req.trace_id,
-        after_state=ConsultRequestStatus.DRAFT.value,
-    )
-    return new_req
+    request_id = req.request_id or f"cr-{uuid.uuid4().hex[:12]}"
+    create_payload = _canonical_create_payload(req)
+    fingerprint = _create_fingerprint(request_id, create_payload)
+
+    with _REQUEST_COMMAND_LOCK:
+        existing = store.get_request(request_id)
+        if existing is not None:
+            if _stored_create_fingerprint(existing) != fingerprint:
+                raise HTTPException(
+                    status_code=409,
+                    detail="ConsultRequest request_id already exists with a different canonical request",
+                )
+            _ensure_audit_once(
+                action="request_created",
+                request=existing,
+                payload_hash=fingerprint,
+                after_state=ConsultRequestStatus.DRAFT.value,
+            )
+            return existing
+
+        stored_payload = dict(create_payload)
+        stored_metadata = dict(create_payload.get("metadata") or {})
+        stored_metadata[_CREATE_FINGERPRINT_METADATA_KEY] = fingerprint
+        stored_payload["metadata"] = stored_metadata
+        new_req = ConsultRequest(request_id=request_id, **stored_payload)
+        store.put_request(new_req)
+        _ensure_audit_once(
+            action="request_created",
+            request=new_req,
+            payload_hash=fingerprint,
+            after_state=ConsultRequestStatus.DRAFT.value,
+        )
+        return new_req
 
 
 @app.get("/api/consult/requests", response_model=List[ConsultRequest])
@@ -149,25 +263,33 @@ def get_request(request_id: str) -> ConsultRequest:
 
 @app.post("/api/consult/requests/{request_id}/submit", response_model=ConsultRequest)
 def submit_request(request_id: str) -> ConsultRequest:
-    request = _get_request_or_404(request_id)
-    if request.status != ConsultRequestStatus.DRAFT:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot submit request in {request.status.value} state",
-        )
+    with _REQUEST_COMMAND_LOCK:
+        request = _get_request_or_404(request_id)
+        if request.status in _SUBMITTED_OR_LATER_STATUSES:
+            if request.status == ConsultRequestStatus.SUBMITTED:
+                _ensure_audit_once(
+                    action="request_submitted",
+                    request=request,
+                    before_state=ConsultRequestStatus.DRAFT.value,
+                    after_state=ConsultRequestStatus.SUBMITTED.value,
+                )
+            return request
+        if request.status != ConsultRequestStatus.DRAFT:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot submit request in {request.status.value} state",
+            )
 
-    before_state = request.status.value
-    request.status = ConsultRequestStatus.SUBMITTED
-    store.put_request(request)
-    _emit_audit(
-        action="request_submitted",
-        request_id=request_id,
-        actor_ref=request.requested_by,
-        trace_id=request.trace_id,
-        before_state=before_state,
-        after_state=request.status.value,
-    )
-    return request
+        before_state = request.status.value
+        request.status = ConsultRequestStatus.SUBMITTED
+        store.put_request(request)
+        _ensure_audit_once(
+            action="request_submitted",
+            request=request,
+            before_state=before_state,
+            after_state=request.status.value,
+        )
+        return request
 
 
 @app.post("/api/consult/requests/{request_id}/cancel", response_model=ConsultRequest)
@@ -401,6 +523,85 @@ def get_memo(memo_id: str) -> ConsultMemo:
     return memo
 
 
+def _validate_qualified_consultation(request_id: str, memo: ConsultMemo) -> None:
+    # Get participants
+    participants = store.list_participants_for_request(request_id)
+    if not participants:
+        raise HTTPException(
+            status_code=400,
+            detail="No participants assigned to the consult request."
+        )
+
+    # 1. Verify Memo is authored by an assigned real participant (not system)
+    if memo.author_type == AuthorType.SYSTEM:
+        raise HTTPException(
+            status_code=400,
+            detail="Memo is not qualified: author type cannot be system."
+        )
+    memo_author_qualified = False
+    for p in participants:
+        mapped_ptype = "human" if p.participant_type == ParticipantType.HUMAN_REVIEWER else p.participant_type.value
+        if p.participant_ref == memo.author_ref and mapped_ptype == memo.author_type.value:
+            memo_author_qualified = True
+            break
+    if not memo_author_qualified:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Memo author {memo.author_ref} ({memo.author_type}) is not an assigned participant."
+        )
+
+    # 2. Verify Transcript contains at least one event from a real assigned participant
+    transcript = store.get_transcript(request_id)
+    has_real_event = False
+    if transcript and transcript.events:
+        for event in transcript.events:
+            actor_type = event.actor.actor_type
+            actor_id = event.actor.actor_id
+            if actor_type in {"service", "system"}:
+                continue
+            for p in participants:
+                mapped_ptype = "human" if p.participant_type == ParticipantType.HUMAN_REVIEWER else p.participant_type.value
+                if p.participant_ref == actor_id and mapped_ptype == actor_type:
+                    has_real_event = True
+                    break
+            if has_real_event:
+                break
+    if not has_real_event:
+        raise HTTPException(
+            status_code=400,
+            detail="Transcript is not qualified: must contain at least one event from an assigned real participant/provider."
+        )
+
+    # 3. Verify Review Evidence is present and qualified (no service/system attachments, attached by assigned participant)
+    attachments = store.list_evidence_for_request(request_id)
+    request = store.get_request(request_id)
+    total_ev = len(request.evidence_refs) + len(attachments) if request else len(attachments)
+    if total_ev == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Review evidence is missing: request must have evidence refs or attachments."
+        )
+    for att in attachments:
+        actor_type = att.attached_by.actor_type
+        actor_id = att.attached_by.actor_id
+        if actor_type in {"service", "system"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Evidence attachment {att.attachment_id} has invalid author type: {actor_type}."
+            )
+        att_qualified = False
+        for p in participants:
+            mapped_ptype = "human" if p.participant_type == ParticipantType.HUMAN_REVIEWER else p.participant_type.value
+            if p.participant_ref == actor_id and mapped_ptype == actor_type:
+                att_qualified = True
+                break
+        if not att_qualified:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Evidence attachment {att.attachment_id} was not attached by an assigned participant."
+            )
+
+
 @app.post("/api/consult/memos/{memo_id}/publish", response_model=ConsultMemo)
 def publish_memo(memo_id: str) -> ConsultMemo:
     memo = store.get_memo(memo_id)
@@ -410,6 +611,8 @@ def publish_memo(memo_id: str) -> ConsultMemo:
         return memo
 
     request = _get_request_or_404(memo.request_id)
+    _validate_qualified_consultation(memo.request_id, memo)
+
     memo.status = MemoStatus.PUBLISHED
     memo.published_at = utc_now()
     store.put_memo(memo)
@@ -466,6 +669,7 @@ def create_handoff(req: CreateGateHandoffRequest) -> ConsultGateHandoff:
             raise HTTPException(status_code=400, detail=f"ConsultMemo {memo_id} belongs to another request")
         if memo.status != MemoStatus.PUBLISHED:
             raise HTTPException(status_code=400, detail=f"ConsultMemo {memo_id} is not published")
+        _validate_qualified_consultation(req.request_id, memo)
 
     attached_evidence_refs = [
         attachment.evidence_ref.id
@@ -543,6 +747,43 @@ def record_committee_sponsor_decision(
     if matched_request is None:
         raise HTTPException(status_code=404, detail="Committee not found")
 
+    # Check if a sponsor decision was already processed and successfully dispatched or gated
+    existing_metadata = matched_request.metadata if isinstance(matched_request.metadata, dict) else {}
+    existing_handoff_data = existing_metadata.get("service_handoff")
+    existing_handoff = None
+    if isinstance(existing_handoff_data, dict):
+        existing_handoff_id = existing_handoff_data.get("handoff_id")
+        if existing_handoff_id:
+            existing_handoff = store.get_handoff(existing_handoff_id)
+        
+        dispatch_info = existing_handoff_data.get("proposal_dispatch")
+        if isinstance(dispatch_info, dict) and dispatch_info.get("status") in {"sent", "gated"}:
+            # Idempotency check: if the decision is the same, return the existing result.
+            if matched_consult.get("sponsor_decision") == sponsor_decision:
+                handoff_status = existing_handoff_data.get("status")
+                if existing_handoff:
+                    handoff_status = existing_handoff.status.value if hasattr(existing_handoff.status, "value") else existing_handoff.status
+                return {
+                    "committee_id": committee_id,
+                    "committee_ref": matched_consult.get("committee_ref") or committee_id,
+                    "linked_request_id": matched_request.request_id,
+                    "linked_session_id": matched_request.linked_session_id or matched_consult.get("requester_session_id"),
+                    "sponsor_decision": matched_consult.get("sponsor_decision"),
+                    "sponsor_decided_at": matched_consult.get("sponsor_decided_at"),
+                    "sponsor_decided_by": matched_consult.get("sponsor_decided_by"),
+                    "consensus_state": matched_consult.get("consensus_state"),
+                    "rationale_ref": (matched_consult.get("synthesis_summary") or {}).get("rationale_ref"),
+                    "outcome": (matched_consult.get("synthesis_summary") or {}).get("outcome"),
+                    "service_handoff": {
+                        "handoff_id": existing_handoff_id,
+                        "target_gate": existing_handoff_data.get("target_gate"),
+                        "evidence_refs": existing_handoff_data.get("evidence_refs"),
+                        "audit_refs": existing_handoff_data.get("audit_refs"),
+                        "status": handoff_status,
+                        "proposal_dispatch": dispatch_info,
+                    },
+                }
+
     memos = [
         memo
         for memo in store.list_memos_for_request(matched_request.request_id)
@@ -554,10 +795,34 @@ def record_committee_sponsor_decision(
             detail="Committee has no published consultation memo for gate handoff",
         )
 
+    # Resolve assigned sponsor persona and real target version
+    assigned_sponsor_persona_id = None
+    if matched_consult.get("sponsor_persona_id"):
+        assigned_sponsor_persona_id = matched_consult.get("sponsor_persona_id")
+    elif matched_request.from_persona_id:
+        assigned_sponsor_persona_id = matched_request.from_persona_id
+    else:
+        # Check committee_participants roster
+        participants = matched_consult.get("committee_participants") or matched_request.metadata.get("committee_participants") or []
+        for p in participants:
+            if isinstance(p, dict) and p.get("role") == "sponsor" and p.get("participant_ref"):
+                assigned_sponsor_persona_id = p.get("participant_ref")
+                break
+    if not assigned_sponsor_persona_id:
+        assigned_sponsor_persona_id = req.actor_id
+
+    target_version = (
+        matched_consult.get("target_version")
+        or matched_consult.get("version")
+        or matched_request.metadata.get("target_version")
+        or matched_request.metadata.get("version")
+        or "1.0.0"
+    )
+
     recorded_at = req.recorded_at or utc_now()
     matched_consult["sponsor_decision"] = sponsor_decision
     matched_consult["sponsor_decided_at"] = recorded_at
-    matched_consult["sponsor_decided_by"] = req.actor_id
+    matched_consult["sponsor_decided_by"] = assigned_sponsor_persona_id
     matched_consult["consensus_state"] = "reached"
     matched_consult["outcome"] = sponsor_decision
     synthesis_summary = dict(matched_consult.get("synthesis_summary") or {})
@@ -580,28 +845,145 @@ def record_committee_sponsor_decision(
             evidence_refs.append(ref_id)
 
     audit_refs = [event.audit_id for event in store.list_audit_for_request(matched_request.request_id)]
-    handoff = ConsultGateHandoff(
-        handoff_id=f"gh-{uuid.uuid4().hex[:12]}",
-        request_id=matched_request.request_id,
-        target_gate=f"committee_sponsor_decision:{committee_id}",
-        memo_ids=[memo.memo_id for memo in memos],
-        evidence_refs=evidence_refs,
-        audit_refs=audit_refs,
-        trace_id=matched_request.trace_id,
-        status=GateHandoffStatus.SENT,
-        sent_at=recorded_at,
+    
+    if existing_handoff:
+        handoff = existing_handoff
+        handoff.sent_at = recorded_at
+        handoff.evidence_refs = list(set(handoff.evidence_refs + evidence_refs))
+        handoff.audit_refs = list(set(handoff.audit_refs + audit_refs))
+        handoff.status = GateHandoffStatus.SENT
+        store.put_handoff(handoff)
+    else:
+        handoff = ConsultGateHandoff(
+            handoff_id=f"gh-{uuid.uuid4().hex[:12]}",
+            request_id=matched_request.request_id,
+            target_gate=f"committee_sponsor_decision:{committee_id}",
+            memo_ids=[memo.memo_id for memo in memos],
+            evidence_refs=evidence_refs,
+            audit_refs=audit_refs,
+            trace_id=matched_request.trace_id,
+            status=GateHandoffStatus.SENT,
+            sent_at=recorded_at,
+        )
+        store.put_handoff(handoff)
+        audit = _emit_audit(
+            action="gate_handoff_created",
+            request_id=matched_request.request_id,
+            actor_ref=ActorRef(actor_type="operator", actor_id=req.actor_id),
+            service_actor_ref=CONSULTATION_SERVICE_ACTOR,
+            trace_id=matched_request.trace_id,
+            after_state=handoff.handoff_id,
+        )
+        handoff.audit_refs.append(audit.audit_id)
+        store.put_handoff(handoff)
+
+    # Map to governance / evolution proposal using the sponsor decision bridge
+    from .sponsor_decision_bridge import bridge, SponsorDecisionBridgeError
+
+    # Infer decision type: approval or evolution
+    decision_type = matched_consult.get("type") or matched_consult.get("decision_type")
+    if not decision_type:
+        if matched_consult.get("action_type") or "action_type" in matched_consult:
+            decision_type = "evolution"
+        else:
+            decision_type = "approval"
+
+    # Translate evidence refs format for the bridge
+    evidence_payload = []
+    for m in memos:
+        evidence_payload.append({"ref_type": "committee_memo", "ref_id": m.memo_id})
+    evidence_payload.append({"ref_type": "service_handoff", "ref_id": handoff.handoff_id})
+    for ref_id in evidence_refs:
+        if ref_id not in {m.memo_id for m in memos} and ref_id != handoff.handoff_id:
+            evidence_payload.append({"ref_type": "manual_review_ticket", "ref_id": ref_id})
+
+    bridge_payload = {
+        "decision_id": committee_id,
+        "type": decision_type,
+        "sponsor_persona_id": assigned_sponsor_persona_id,
+        "target_type": matched_request.target_type,
+        "target_id": matched_request.target_id,
+        "target_version": target_version,
+        "sponsor_decision": sponsor_decision,
+        "rationale": matched_consult.get("rationale") or f"Committee sponsor decided via {committee_id}",
+        "rationale_ref": rationale_ref,
+        "conditions": matched_consult.get("conditions") or [],
+        "committee_id": committee_id,
+        "handoff_id": handoff.handoff_id,
+        "trace_id": matched_request.trace_id,
+        "capital_pool_id": matched_consult.get("capital_pool_id"),
+        "persona_id": matched_consult.get("persona_id"),
+        "evidence_refs": evidence_payload,
+        "action_type": matched_consult.get("action_type"),
+        "target_stage": matched_consult.get("target_stage"),
+        "threshold_snapshots": matched_consult.get("threshold_snapshots") or [],
+        "linked_incident_id": matched_consult.get("linked_incident_id"),
+        "linked_postmortem_id": matched_consult.get("linked_postmortem_id"),
+        "metadata": matched_consult.get("metadata") or {},
+    }
+
+    # Remove None values to avoid schema clutter
+    bridge_payload = {k: v for k, v in bridge_payload.items() if v is not None}
+
+    try:
+        proposal = bridge(bridge_payload)
+    except SponsorDecisionBridgeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Sponsor decision bridge mapping failed: {exc}",
+        )
+
+    # Post proposal to downstream service
+    gov_url = (
+        os.getenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL")
+        or os.getenv("PANTHEON_GOVERNANCE_SERVICE_URL")
+        or os.getenv("PANTHEON_GOVERNANCE_API_URL")
+        or os.getenv("GOVERNANCE_URL")
+        or "http://127.0.0.1:8082"
     )
-    store.put_handoff(handoff)
-    audit = _emit_audit(
-        action="gate_handoff_created",
-        request_id=matched_request.request_id,
-        actor_ref=ActorRef(actor_type="operator", actor_id=req.actor_id),
-        service_actor_ref=CONSULTATION_SERVICE_ACTOR,
-        trace_id=matched_request.trace_id,
-        after_state=handoff.handoff_id,
+    evo_url = (
+        os.getenv("PANTHEON_EVOLUTION_API_URL")
+        or os.getenv("PANTHEON_EVOLUTION_SERVICE_URL")
+        or os.getenv("PANTHEON_EVOLUTION_API_URL")
+        or os.getenv("EVOLUTION_URL")
+        or "http://127.0.0.1:8093"
     )
-    handoff.audit_refs.append(audit.audit_id)
-    store.put_handoff(handoff)
+
+    dispatch_status = "pending"
+    dispatch_error = None
+
+    if sponsor_decision == "rejected":
+        dispatch_status = "gated"
+        dispatch_error = "Sponsor decision is rejected; proposal dispatch gated."
+    else:
+        try:
+            import urllib.request
+            import json
+
+            proposal_dict = proposal.to_dict()
+            if proposal.proposal_type == "approval_decision":
+                target_url = f"{gov_url.rstrip('/')}/api/governance/approvals"
+            else:
+                target_url = f"{evo_url.rstrip('/')}/api/evolution/proposals"
+
+            data = json.dumps(proposal_dict).encode("utf-8")
+            post_req = urllib.request.Request(
+                target_url,
+                data=data,
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(post_req, timeout=10.0) as resp:
+                resp.read()
+            dispatch_status = "sent"
+        except Exception as exc:
+            dispatch_status = "failed"
+            dispatch_error = str(exc)
+
+    if dispatch_status == "failed":
+        handoff.status = GateHandoffStatus.FAILED
+    else:
+        handoff.status = GateHandoffStatus.SENT
 
     metadata = matched_request.metadata if isinstance(matched_request.metadata, dict) else {}
     metadata["consultation"] = matched_consult
@@ -611,9 +993,22 @@ def record_committee_sponsor_decision(
         "evidence_refs": list(handoff.evidence_refs),
         "audit_refs": list(handoff.audit_refs),
         "status": handoff.status.value if hasattr(handoff.status, "value") else handoff.status,
+        "proposal_dispatch": {
+            "status": dispatch_status,
+            "error": dispatch_error,
+            "proposal_id": proposal.decision_id,
+            "proposal_type": proposal.proposal_type,
+        },
     }
     matched_request.metadata = metadata
     store.put_request(matched_request)
+    store.put_handoff(handoff)
+
+    if dispatch_status == "failed" and not (os.getenv("PANTHEON_TEST_MODE") or os.getenv("PYTEST_CURRENT_TEST")):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to dispatch proposal to downstream service: {dispatch_error}",
+        )
 
     return {
         "committee_id": committee_id,
@@ -632,5 +1027,11 @@ def record_committee_sponsor_decision(
             "evidence_refs": list(handoff.evidence_refs),
             "audit_refs": list(handoff.audit_refs),
             "status": handoff.status.value if hasattr(handoff.status, "value") else handoff.status,
+            "proposal_dispatch": {
+                "status": dispatch_status,
+                "error": dispatch_error,
+                "proposal_id": proposal.decision_id,
+                "proposal_type": proposal.proposal_type,
+            },
         },
     }

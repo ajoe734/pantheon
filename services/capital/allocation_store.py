@@ -61,6 +61,34 @@ def stable_payload_hash(payload: Dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+ALLOCATION_LINE_DIGEST_FIELDS = (
+    "ranking_snapshot_id",
+    "allocation_evaluation_id",
+    "allocation_policy_version",
+    "persona_id",
+    "stage",
+    "capital_scope",
+    "capital_pool_id",
+    "capital_sleeve_id",
+    "current_weight",
+    "target_weight",
+    "delta",
+    "cap_reasons",
+    "evidence_refs",
+)
+
+
+def allocation_line_digest(line: Dict[str, Any]) -> str:
+    basis = {
+        field: line.get(field)
+        for field in ALLOCATION_LINE_DIGEST_FIELDS
+    }
+    basis["capital_scope"] = line.get("capital_scope") or "pool"
+    basis["cap_reasons"] = list(line.get("cap_reasons") or [])
+    basis["evidence_refs"] = list(line.get("evidence_refs") or [])
+    return stable_payload_hash(basis)
+
+
 def _server_payload_hash(payload: Dict[str, Any]) -> str:
     semantic = {
         key: value
@@ -78,7 +106,7 @@ class AllocationAuthorityStore:
     """Single-writer aggregate for rebalance and containment state."""
 
     _POSTGRES_RECORD_ID = "capital-allocation-authority"
-    _SCHEMA_VERSION = 2
+    _SCHEMA_VERSION = 3
     _WEIGHT_TOLERANCE = 1e-12
 
     def __init__(
@@ -200,6 +228,10 @@ class AllocationAuthorityStore:
         self,
         pool_id: str,
         raw_lines: Any,
+        *,
+        ranking_snapshot_id: str,
+        allocation_evaluation_id: str,
+        allocation_policy_version: str,
     ) -> list[Dict[str, Any]]:
         if not isinstance(raw_lines, list) or not raw_lines:
             raise AllocationAuthorityValidationError("lines must be a non-empty list")
@@ -209,6 +241,28 @@ class AllocationAuthorityStore:
             if not isinstance(raw_line, dict):
                 raise AllocationAuthorityValidationError(f"lines[{index}] must be an object")
             line = _deepcopy(raw_line)
+            line_snapshot_id = self._require_text(line, "ranking_snapshot_id")
+            if line_snapshot_id != ranking_snapshot_id:
+                raise AllocationAuthorityValidationError(
+                    f"lines[{index}].ranking_snapshot_id must equal the proposal ranking_snapshot_id"
+                )
+            line_evaluation_id = self._require_text(line, "allocation_evaluation_id")
+            if line_evaluation_id != allocation_evaluation_id:
+                raise AllocationAuthorityValidationError(
+                    f"lines[{index}].allocation_evaluation_id must equal the proposal "
+                    "allocation_evaluation_id"
+                )
+            line_policy_version = self._require_text(line, "allocation_policy_version")
+            if line_policy_version != allocation_policy_version:
+                raise AllocationAuthorityValidationError(
+                    f"lines[{index}].allocation_policy_version must equal the proposal "
+                    "allocation_policy_version"
+                )
+            line_digest = self._require_text(line, "allocation_line_digest")
+            if allocation_line_digest(line) != line_digest:
+                raise AllocationAuthorityValidationError(
+                    f"lines[{index}].allocation_line_digest does not match the admitted allocation tuple"
+                )
             persona_id = self._require_text(line, "persona_id")
             line_pool_id = str(line.get("capital_pool_id") or pool_id).strip()
             if line_pool_id != pool_id:
@@ -219,13 +273,30 @@ class AllocationAuthorityStore:
             target_weight = self._weight(line.get("target_weight"), f"lines[{index}].target_weight")
             delta = target_weight - current_weight
             if line.get("delta") is not None:
+                if isinstance(line.get("delta"), bool) or not isinstance(
+                    line.get("delta"), (int, float)
+                ):
+                    raise AllocationAuthorityValidationError(
+                        f"lines[{index}].delta must be a finite number"
+                    )
                 supplied_delta = float(line["delta"])
-                if not math.isclose(supplied_delta, delta, abs_tol=self._WEIGHT_TOLERANCE):
+                if not math.isfinite(supplied_delta) or not math.isclose(
+                    supplied_delta,
+                    delta,
+                    abs_tol=self._WEIGHT_TOLERANCE,
+                ):
                     raise AllocationAuthorityValidationError(
                         f"lines[{index}].delta does not match target_weight-current_weight"
                     )
+                # Preserve the exact evaluated tuple instead of replacing an
+                # admitted decimal with a binary subtraction artifact.
+                delta = supplied_delta
             line.update(
                 {
+                    "ranking_snapshot_id": ranking_snapshot_id,
+                    "allocation_evaluation_id": allocation_evaluation_id,
+                    "allocation_line_digest": line_digest,
+                    "allocation_policy_version": allocation_policy_version,
                     "persona_id": persona_id,
                     "capital_pool_id": pool_id,
                     "capital_scope": str(line.get("capital_scope") or "pool"),
@@ -356,7 +427,22 @@ class AllocationAuthorityStore:
                 return _deepcopy(record), True
 
             pool_id = self._require_text(payload, "capital_pool_id")
-            lines = self._normalize_lines(pool_id, payload.get("lines"))
+            ranking_snapshot_id = self._require_text(payload, "ranking_snapshot_id")
+            allocation_evaluation_id = self._require_text(
+                payload,
+                "allocation_evaluation_id",
+            )
+            allocation_policy_version = self._require_text(
+                payload,
+                "allocation_policy_version",
+            )
+            lines = self._normalize_lines(
+                pool_id,
+                payload.get("lines"),
+                ranking_snapshot_id=ranking_snapshot_id,
+                allocation_evaluation_id=allocation_evaluation_id,
+                allocation_policy_version=allocation_policy_version,
+            )
             now = utc_now()
             rebalance_id = str(payload.get("rebalance_id") or "").strip()
             if not rebalance_id:
@@ -368,7 +454,9 @@ class AllocationAuthorityStore:
                 "id": rebalance_id,
                 "rebalance_id": rebalance_id,
                 "capital_pool_id": pool_id,
-                "ranking_snapshot_id": payload.get("ranking_snapshot_id"),
+                "ranking_snapshot_id": ranking_snapshot_id,
+                "allocation_evaluation_id": allocation_evaluation_id,
+                "allocation_policy_version": allocation_policy_version,
                 "reason": str(payload.get("reason") or ""),
                 "lines": lines,
                 "simulation": _deepcopy(payload.get("simulation") or {}),

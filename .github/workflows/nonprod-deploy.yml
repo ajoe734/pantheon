@@ -37,6 +37,24 @@ on:
         required: false
         default: false
         type: boolean
+      dev_auth_profile:
+        description: "Dev only: strict by default; permissive-stub is for bounded governed proof runs"
+        required: false
+        default: strict
+        type: choice
+        options:
+          - strict
+          - permissive-stub
+      run_evolution_dispatch_probe:
+        description: "Dev root only: run and upload the EVOLOOP-001 hosted dispatch probe"
+        required: false
+        default: false
+        type: boolean
+      run_loop_prod_tel_002_probe:
+        description: "Dev root only: prove a natural canonical paper lifecycle against committed telemetry"
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - "publish/v*"
@@ -61,6 +79,7 @@ jobs:
       TARGET_COMPONENT: ${{ github.event_name == 'push' && 'auto' || inputs.component }}
       TARGET_REF: ${{ github.event_name == 'push' && github.sha || inputs.ref || github.sha }}
       ALLOW_DIRTY: ${{ github.event_name == 'push' && 'false' || inputs.allow_dirty }}
+      DEV_AUTH_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.dev_auth_profile || 'strict' }}
     steps:
       # This checkout is the immutable trust root for every lease operation.
       # It is intentionally separate from the requested deployment payload.
@@ -86,6 +105,8 @@ jobs:
         id: target
         working-directory: .target
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        env:
+          RUN_LOOP_PROD_TEL_002_PROBE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe || false }}
         run: |
           sha="$(git rev-parse HEAD)"
           [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]
@@ -100,7 +121,49 @@ jobs:
             *) echo "Invalid dev deployment component: ${TARGET_COMPONENT}" >&2; exit 1 ;;
           esac
           docker compose -f docker-compose.yml config --quiet
+          if [[ "${RUN_LOOP_PROD_TEL_002_PROBE}" == "true" && ( "${TARGET_COMPONENT}" != "root" || "${DEV_AUTH_PROFILE}" != "strict" ) ]]; then
+            echo "LOOP-PROD-TEL-002 hosted proof requires dev/root with strict auth." >&2
+            exit 1
+          fi
           echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+
+      - name: Enforce dev auth deployment floor
+        working-directory: .target
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        env:
+          DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+        run: |
+          case "${DEV_AUTH_PROFILE}" in
+            strict)
+              if [[ -z "${DEV_BFF_JWT_SECRET}" || -z "${DEV_BFF_OIDC_CLIENT_ID}" || -z "${DEV_BFF_OIDC_CLIENT_SECRET}" ]]; then
+                echo "::error::Dev BFF deploy credentials are not provisioned; refusing to run any target ref before strict auth can be verified."
+                exit 1
+              fi
+
+              deploy_script="scripts/deploy_nonprod_vm.sh"
+              required_markers=(
+                'DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"'
+                'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"'
+                'no governed verifier/dev-login credentials'
+                'assert_bff_auth_gate'
+              )
+              for marker in "${required_markers[@]}"; do
+                if ! grep -Fq -- "${marker}" "${deploy_script}"; then
+                  echo "::error::Requested ref lacks the dev strict-auth deployment contract: ${marker}"
+                  exit 1
+                fi
+              done
+              ;;
+            permissive-stub)
+              echo "::notice::Explicit bounded permissive-stub profile selected; strict credential/ref floor is not applied."
+              ;;
+            *)
+              echo "::error::Unknown dev auth profile: ${DEV_AUTH_PROFILE}"
+              exit 1
+              ;;
+          esac
 
       - name: Authenticate to Google Cloud via Workload Identity Federation
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
@@ -330,6 +393,16 @@ jobs:
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/code/pantheon' }}
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
+          # Governed verifier/dev-login credentials for the strict auth cutover.
+          # Must be provisioned as repo/environment secrets by a human; deploy_nonprod_vm.sh
+          # refuses to deploy dev with DEV_BFF_AUTH_MODE=strict if these are empty.
+          DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          # Human-provisioned BFF-to-adapter credential. The deploy preflight
+          # rejects an empty value while service auth is required.
+          DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
+          DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
           DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}
@@ -348,6 +421,21 @@ jobs:
             5e72d6a4d2c945d79a9a1fcc2e205584b9a1f06cc53c973c7ba3ae76205db102 "${controller}/scripts/dev_environment_lease.py" \
             f3995a2baedc2ff47178a0de8ad1952096df4de508d5a47c8e0042a151ab7ea8 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
+          case "${DEV_AUTH_PROFILE}" in
+            strict)
+              export DEV_BFF_AUTH_STUB=false
+              export DEV_BFF_AUTH_MODE=strict
+              ;;
+            permissive-stub)
+              export DEV_BFF_AUTH_STUB=true
+              export DEV_BFF_AUTH_MODE=permissive
+              ;;
+            *)
+              echo "Unknown dev auth profile: ${DEV_AUTH_PROFILE}" >&2
+              exit 1
+              ;;
+          esac
+          echo "Dev BFF auth profile: ${DEV_AUTH_PROFILE} (stub=${DEV_BFF_AUTH_STUB}, mode=${DEV_BFF_AUTH_MODE})"
           args=(
             bash "${GITHUB_WORKSPACE}/.target/scripts/deploy_nonprod_vm.sh"
             --environment dev
@@ -358,6 +446,125 @@ jobs:
           [[ "${ALLOW_DIRTY}" == "true" ]] && args+=(--allow-dirty)
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
             exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" "${args[@]}"
+
+      - name: Dev evolution dispatch hosted probe
+        id: evolution-dispatch-probe
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe && env.TARGET_COMPONENT == 'root' }}
+        env:
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || '/home/lupin/pantheon-ci-deploy/dev-root' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}
+          DEPLOY_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          set -euo pipefail
+          evidence_name="evoloop-001-hosted-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          remote_evidence="/tmp/${evidence_name}"
+          local_evidence="/tmp/${evidence_name}"
+          prefix="evoloop-001-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf -v worktree_q '%q' "${DEV_DEPLOY_WORKTREE}"
+          printf -v deploy_sha_q '%q' "${DEPLOY_SHA}"
+          printf -v remote_evidence_q '%q' "${remote_evidence}"
+          printf -v prefix_q '%q' "${prefix}"
+          printf -v requested_ref_q '%q' "${TARGET_REF}"
+          printf -v run_id_q '%q' "${GITHUB_RUN_ID}"
+          printf -v run_attempt_q '%q' "${GITHUB_RUN_ATTEMPT}"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          printf -v run_url_q '%q' "${run_url}"
+          gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
+            --zone "${DEV_ZONE}" \
+            --project "${GCP_DEPLOY_PROJECT_ID}" \
+            --ssh-flag=-T \
+            --command "set -euo pipefail; cd ${worktree_q}; python3 -m services.evolution.hosted_compose_probe --expected-sha ${deploy_sha_q} --requested-ref ${requested_ref_q} --deploy-run-id ${run_id_q} --deploy-run-attempt ${run_attempt_q} --deploy-run-url ${run_url_q} --prefix ${prefix_q} --output ${remote_evidence_q}"
+          gcloud compute scp \
+            --zone "${DEV_ZONE}" \
+            --project "${GCP_DEPLOY_PROJECT_ID}" \
+            "${REMOTE_USER}@${DEV_VM}:${remote_evidence}" \
+            "${local_evidence}"
+          echo "artifact_path=${local_evidence}" >> "$GITHUB_OUTPUT"
+          echo "Hosted evolution dispatch evidence: ${evidence_name}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload evolution dispatch hosted evidence
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe && env.TARGET_COMPONENT == 'root' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: evoloop-001-hosted-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.evolution-dispatch-probe.outputs.artifact_path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Dev canonical paper lifecycle hosted probe
+        id: loop-prod-tel-002-probe
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe && env.TARGET_COMPONENT == 'root' }}
+        working-directory: .target
+        env:
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || '/home/lupin/pantheon-ci-deploy/dev-root' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}
+          DEV_BFF_PUBLIC_URL: ${{ vars.DEV_BFF_PUBLIC_URL || 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io' }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          DEPLOY_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          set -euo pipefail
+          evidence_name="loop-prod-tel-002-hosted-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          readback_name="loop-prod-tel-002-bff-readback-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          remote_evidence="/tmp/${evidence_name}"
+          local_evidence="/tmp/${evidence_name}"
+          readback_evidence="/tmp/${readback_name}"
+          container_evidence="/tmp/${evidence_name}"
+          printf -v worktree_q '%q' "${DEV_DEPLOY_WORKTREE}"
+          printf -v deploy_sha_q '%q' "${DEPLOY_SHA}"
+          printf -v remote_evidence_q '%q' "${remote_evidence}"
+          printf -v container_evidence_q '%q' "${container_evidence}"
+          echo "artifact_path=${local_evidence}" >> "$GITHUB_OUTPUT"
+          echo "readback_artifact_path=${readback_evidence}" >> "$GITHUB_OUTPUT"
+          set +e
+          gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
+            --zone "${DEV_ZONE}" \
+            --project "${GCP_DEPLOY_PROJECT_ID}" \
+            --ssh-flag=-T \
+            --command "set -uo pipefail; cd ${worktree_q} || exit 1; container_evidence=${container_evidence_q}; remote_evidence=${remote_evidence_q}; probe_status=0; docker compose -p pantheon -f docker-compose.yml exec -T loop-run-projector-scheduler python -m services.trade_journey.hosted_lifecycle_probe --expected-sha ${deploy_sha_q} --output \"\${container_evidence}\" --timeout-seconds 420 --poll-seconds 5 || probe_status=\$?; container_id=\$(docker compose -p pantheon -f docker-compose.yml ps -q loop-run-projector-scheduler) || exit 1; if [[ -z \"\${container_id}\" ]]; then exit 1; fi; docker cp \"\${container_id}:\${container_evidence}\" \"\${remote_evidence}\" || exit 1; exit \${probe_status}"
+          probe_status=$?
+          scp_status=0
+          gcloud compute scp \
+            --zone "${DEV_ZONE}" \
+            --project "${GCP_DEPLOY_PROJECT_ID}" \
+            "${REMOTE_USER}@${DEV_VM}:${remote_evidence}" \
+            "${local_evidence}" || scp_status=$?
+          set -e
+          if [[ "${scp_status}" -ne 0 || ! -s "${local_evidence}" ]]; then
+            python3 -c 'import sys; from pathlib import Path; from services.trade_journey.hosted_lifecycle_probe import write_failure_artifact; write_failure_artifact(Path(sys.argv[1]), expected_sha=sys.argv[2], code="hosted_probe_transport_error", message="hosted lifecycle evidence transport failed")' "${local_evidence}" "${DEPLOY_SHA}"
+          fi
+          readback_status=0
+          python3 -m services.trade_journey.hosted_bff_readback \
+            --source "${local_evidence}" \
+            --output "${readback_evidence}" \
+            --expected-sha "${DEPLOY_SHA}" \
+            --base-url "${DEV_BFF_PUBLIC_URL}" || readback_status=$?
+          echo "Canonical lifecycle hosted evidence: ${evidence_name}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Authenticated public BFF readback evidence: ${readback_name}" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${probe_status}" -ne 0 ]]; then
+            exit "${probe_status}"
+          fi
+          if [[ "${scp_status}" -ne 0 ]]; then
+            exit "${scp_status}"
+          fi
+          exit "${readback_status}"
+
+      - name: Upload canonical paper lifecycle hosted evidence
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe && env.TARGET_COMPONENT == 'root' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: loop-prod-tel-002-hosted-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.loop-prod-tel-002-probe.outputs.artifact_path }}
+            ${{ steps.loop-prod-tel-002-probe.outputs.readback_artifact_path }}
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Dev OpenClaw assistant live smoke under lease
         id: openclaw
@@ -394,6 +601,7 @@ jobs:
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}
+          DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
@@ -404,9 +612,11 @@ jobs:
             5e72d6a4d2c945d79a9a1fcc2e205584b9a1f06cc53c973c7ba3ae76205db102 "${controller}/scripts/dev_environment_lease.py" \
             f3995a2baedc2ff47178a0de8ad1952096df4de508d5a47c8e0042a151ab7ea8 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
+          # The service token is streamed over stdin ahead of the smoke script so
+          # it never appears on the remote command line or in the deployed checkout.
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
             exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
-            bash -c 'gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T --command "OPENCLAW_GATEWAY_ADAPTER_URL=http://127.0.0.1:18104 bash -s" < "$1"' \
+            bash -c '{ printf "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=%q\n" "${DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN}"; printf "%s\n" "curl() {" "  command curl -H \"X-Pantheon-Service-Token: \${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}\" \"\$@\"" "}"; cat "$1"; } | gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T --command "OPENCLAW_GATEWAY_ADAPTER_URL=http://127.0.0.1:18104 bash -s"' \
             bash "${GITHUB_WORKSPACE}/.target/scripts/openclaw-assistant-openclaw-live-smoke.sh"
 
       - name: Public dev BFF smoke and exact version proof under lease
@@ -508,6 +718,7 @@ jobs:
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/code/pantheon' }}
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
@@ -524,20 +735,29 @@ jobs:
             exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
             bash -c '
               set -euo pipefail
-              idem="agora-restart-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-              workshop_id="$(curl -fsS -X POST "${DEV_BFF_URL}/bff/agora/workshops" \
-                -H "Authorization: Bearer agora-deploy-smoke:operator" \
-                -H "Idempotency-Key: ${idem}" -H "Content-Type: application/json" \
-                --data "{\"initial_message\":\"Versioned dev restart-persistence smoke\"}" \
-                | jq -er ".data.workshop_id")"
+              workshop_id="deploy-restart-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+              tenant_id="pantheon-dev"
+              user_id="pantheon-dev-browser"
+              printf -v remote_dir_q "%q" "${DEV_REMOTE_DIR}"
+              printf -v workshop_id_q "%q" "${workshop_id}"
+              printf -v tenant_id_q "%q" "${tenant_id}"
+              printf -v user_id_q "%q" "${user_id}"
               gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" \
                 --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T \
-                --command "docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -q '\''^AGORA_WORKSHOP_STORE_BACKEND=postgres$'\'' && docker logs pantheon-operator-bff-1 2>&1 | grep -q '\''Agora workshop store initialized backend=postgres'\'' && cd /home/lupin/code/pantheon && docker compose -p pantheon -f docker-compose.yml restart operator-bff"
+                --command "set -euo pipefail; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_WORKSHOP_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_GOVERNANCE_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_DATASET_STORE_BACKEND=postgres'\'' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F '\''Agora workshop store initialized backend=postgres'\'' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F '\''Agora governance store initialized backend=postgres'\'' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F '\''Agora dataset store initialized backend=postgres'\'' >/dev/null; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py seed --workshop-id ${workshop_id_q} --tenant-id ${tenant_id_q} --user-id ${user_id_q}; docker compose -p pantheon -f docker-compose.yml restart operator-bff"
+              ready=false
               for _ in $(seq 1 30); do
-                curl -fsS "${DEV_BFF_URL}/readyz" >/dev/null && break
+                if curl -fsS "${DEV_BFF_URL}/readyz" >/dev/null; then
+                  ready=true
+                  break
+                fi
                 sleep 2
               done
-              test "$(curl -fsS "${DEV_BFF_URL}/bff/agora/workshops/${workshop_id}" -H "Authorization: Bearer agora-deploy-smoke:operator" | jq -er ".data.workshop_id")" = "${workshop_id}"
+              test "${ready}" = true
+              gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" \
+                --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T \
+                --command "set -euo pipefail; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py verify --workshop-id ${workshop_id_q} --tenant-id ${tenant_id_q} --user-id ${user_id_q}"
+              echo "Workshop ${workshop_id} and proposal proposal-${workshop_id} survived operator-bff restart with exactly-once replay and pending outbox recovery." >> "$GITHUB_STEP_SUMMARY"
             '
 
       - name: Stop heartbeat and release only after complete success

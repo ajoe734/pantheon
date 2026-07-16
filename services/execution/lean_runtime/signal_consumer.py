@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import pathlib
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -175,7 +176,20 @@ class SignalConsumer:
     # ------------------------------------------------------------------
 
     def _validate(self, raw: dict) -> dict | None:
+        if not isinstance(raw, dict):
+            log.error("Signal payload must be an object — discarding")
+            return None
+
         signal_id = raw.get("signal_id", "<unknown>")
+
+        # Python accepts NaN/Infinity by default even though they are not JSON
+        # numbers. Reject them, including inside metadata, before any runtime
+        # recorder or journey event can observe this signal.
+        try:
+            json.dumps(raw, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            log.error("[%s] Signal is not strict JSON: %s — discarding", signal_id, exc)
+            return None
 
         # Schema version check (major version must match)
         version_str = str(raw.get("version", "0.0"))
@@ -210,6 +224,32 @@ class SignalConsumer:
                 log.error("[%s] Missing required field '%s' — discarding", signal_id, field)
                 return None
 
+        if not _is_finite_number(raw["quantity"], minimum=0.0):
+            log.error("[%s] quantity must be a finite non-negative number — discarding", signal_id)
+            return None
+
+        limit_price = raw.get("limit_price")
+        if limit_price is not None and not _is_finite_number(
+            limit_price,
+            minimum=0.0,
+            exclusive=True,
+        ):
+            log.error("[%s] limit_price must be a finite positive number — discarding", signal_id)
+            return None
+
+        metadata = raw.get("metadata")
+        if metadata is not None and not isinstance(metadata, dict):
+            log.error("[%s] metadata must be an object — discarding", signal_id)
+            return None
+        confidence_score = (metadata or {}).get("confidence_score")
+        if confidence_score is not None and not _is_finite_number(
+            confidence_score,
+            minimum=0.0,
+            maximum=1.0,
+        ):
+            log.error("[%s] confidence_score must be finite and within [0, 1] — discarding", signal_id)
+            return None
+
         return raw
 
     def _is_duplicate(self, signal: dict) -> bool:
@@ -240,7 +280,7 @@ class SignalConsumer:
         """
         Staleness check. Uses algo.Time if available (real-time or backtest time),
         falling back to current UTC time.
-        
+
         Note: algo.Time is naive and represents the exchange's local time.
         For accurate staleness checks, we compare against signal's timestamp
         which should also be in a consistent timezone (typically UTC per schema).
@@ -248,7 +288,7 @@ class SignalConsumer:
         datetimes for comparison.
         """
         sid = signal["signal_id"]
-        
+
         # Determine "now" based on algo context
         if algo and hasattr(algo, "Time"):
             now = algo.Time
@@ -258,7 +298,7 @@ class SignalConsumer:
         ts = _parse_dt(signal["timestamp"])
         if not ts:
             return None
-            
+
         # Normalize both to naive datetimes for comparison (strip timezone info)
         # This handles the case where algo.Time is naive but represents exchange time
         if ts.tzinfo is not None:
@@ -267,16 +307,16 @@ class SignalConsumer:
             now = now.replace(tzinfo=None)
 
         diff_seconds = (now - ts).total_seconds()
-        
+
         # Discard signals >24h old
         if diff_seconds > 86400:
-            log.warning("[%s] Signal timestamp >24h old (now=%s, ts=%s) — discarding as stale", 
+            log.warning("[%s] Signal timestamp >24h old (now=%s, ts=%s) — discarding as stale",
                         sid, now.isoformat(), ts.isoformat())
             return "stale_signal"
-            
+
         # Reject signals >1h in future (anomaly check for clock drift)
         if diff_seconds < -3600:
-             log.warning("[%s] Signal timestamp >1h in future (now=%s, ts=%s) — discarding as anomalous", 
+             log.warning("[%s] Signal timestamp >1h in future (now=%s, ts=%s) — discarding as anomalous",
                          sid, now.isoformat(), ts.isoformat())
              return "future_signal_anomaly"
 
@@ -544,6 +584,26 @@ def _parse_dt(ts_str: str) -> datetime | None:
         return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
     except Exception:
         return None
+
+
+def _is_finite_number(
+    value: Any,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+    exclusive: bool = False,
+) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    number = float(value)
+    if not math.isfinite(number):
+        return False
+    if minimum is not None:
+        if exclusive and number <= minimum:
+            return False
+        if not exclusive and number < minimum:
+            return False
+    return maximum is None or number <= maximum
 
 
 def _signal_wins(candidate: dict, incumbent: dict) -> bool:

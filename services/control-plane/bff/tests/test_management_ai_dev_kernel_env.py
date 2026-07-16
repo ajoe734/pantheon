@@ -91,6 +91,11 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
         'DEV_BFF_STUB_CAPABILITIES="${DEV_BFF_STUB_CAPABILITIES:-assistant.kernel.debug,assistant.kernel.repair}"'
         in script
     )
+    assert 'DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN="${DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"' in script
+    assert (
+        'DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}"'
+        in script
+    )
     assert 'DEV_STATUS_ROOT_CONTAINER="${DEV_STATUS_ROOT_CONTAINER:-/workspace/status-root}"' in script
     assert "configure_management_ai_dev_kernel_env" in script
     assert (
@@ -113,18 +118,30 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
         'PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-$DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS}"'
         in script
     )
+    assert (
+        'PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-$DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN}"'
+        in script
+    )
+    assert (
+        'PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-$DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}"'
+        in script
+    )
     assert 'PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST:-${DEV_STATUS_ROOT_HOST:-$DEV_REMOTE_DIR}}"' in script
     assert 'command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=' in script
     assert 'command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REPO_URL=' in script
     assert 'command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REMOTE_URL=' in script
     assert 'command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS=' in script
     assert 'command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS=' in script
+    assert 'command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=' in script
+    assert 'command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED=' in script
     assert 'command_prefix+=" PANTHEON_STATUS_ROOT_HOST=' in script
     assert 'PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \\' in script
     assert 'PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL}" \\' in script
     assert 'PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL}" \\' in script
     assert 'PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}" \\' in script
     assert 'PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS}" \\' in script
+    assert 'PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \\' in script
+    assert 'PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \\' in script
     assert 'PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST}" \\' in script
 
 
@@ -156,6 +173,8 @@ def test_nonprod_dev_deploy_runs_openclaw_assistant_sentinel_smoke() -> None:
     assert "env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root'" in workflow
     assert "gcloud compute ssh" in workflow
     assert "OPENCLAW_GATEWAY_ADAPTER_URL=http://127.0.0.1:18104 bash -s" in workflow
-    assert "< scripts/openclaw-assistant-openclaw-live-smoke.sh" in workflow
+    assert "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}" in workflow
+    assert "X-Pantheon-Service-Token: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" in workflow
+    assert "cat scripts/openclaw-assistant-openclaw-live-smoke.sh" in workflow
     assert "OPENCLAW_LIVE" in smoke
     assert "sentinel '${SENTINEL}' not found" in smoke

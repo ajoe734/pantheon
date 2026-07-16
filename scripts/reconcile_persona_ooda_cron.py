@@ -73,7 +73,7 @@ def main() -> int:
         return 2
 
     registrar = PersonaCronRegistrar()
-    results = registrar.reconcile_personas(persona_ids)
+    results, removed, remove_failed = registrar.reconcile_personas(persona_ids)
 
     dry_run = 0
     total_registered = total_skipped = total_failed = 0
@@ -89,8 +89,14 @@ def main() -> int:
         for f in d["failed"]:
             print(f"    FAIL {f.get('workflow_id')}: {f.get('error')}")
 
+    for rem in removed:
+        print(f"REMOVED ORPHAN: job_id={rem['job_id']} name={rem['job_name']} reason={rem['reason']}")
+    for fail in remove_failed:
+        print(f"REMOVE ORPHAN FAILED: job_id={fail['job_id']} name={fail['job_name']} error={fail['error']} reason={fail['reason']}")
+
     print(f"\nTotals: personas={len(results)} registered={total_registered} "
-          f"skipped={total_skipped} failed={total_failed} dry_run_personas={dry_run}")
+          f"skipped={total_skipped} failed={total_failed} dry_run_personas={dry_run} "
+          f"removed_orphans={len(removed)} remove_failed_orphans={len(remove_failed)}")
     if dry_run:
         print("WARNING: some personas registered in dry_run (no live gateway transport). "
               "Set PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL or OPENCLAW_PAPER_ADAPTER_ENABLED=true.",

@@ -1,8 +1,8 @@
 # Trade Journey Observability and State Contract
 
-**Task:** TJ-E2E-002  
-**Owner:** Antigravity  
-**Reviewer:** Claude  
+**Task:** TJ-E2E-002
+**Owner:** Antigravity
+**Reviewer:** Claude
 **Status:** DRAFT — ready for orchestration and governance review
 
 ---

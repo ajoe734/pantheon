@@ -1,0 +1,74 @@
+{
+  "budgets": {
+    "tradingRoom": {
+      "bodyHeight": 1440,
+      "bodyWidth": 2560,
+      "documentWidth": 2560,
+      "mainOverflowX": "hidden",
+      "mainOverflowY": "auto",
+      "shellBottom": 1440,
+      "shellHeight": 1440,
+      "shellOverflow": "hidden",
+      "shellTop": 0,
+      "viewportHeight": 1440,
+      "viewportWidth": 2560
+    },
+    "workshop": {
+      "bodyHeight": 1440,
+      "bodyWidth": 2560,
+      "documentWidth": 2560,
+      "mainOverflowX": "hidden",
+      "mainOverflowY": "auto",
+      "shellBottom": 1440,
+      "shellHeight": 1440,
+      "shellOverflow": "hidden",
+      "shellTop": 0,
+      "viewportHeight": 1440,
+      "viewportWidth": 2560
+    },
+    "performance": {
+      "bodyHeight": 1440,
+      "bodyWidth": 2560,
+      "documentWidth": 2560,
+      "mainOverflowX": "hidden",
+      "mainOverflowY": "auto",
+      "shellBottom": 1440,
+      "shellHeight": 1440,
+      "shellOverflow": "hidden",
+      "shellTop": 0,
+      "viewportHeight": 1440,
+      "viewportWidth": 2560
+    }
+  },
+  "captures": [
+    "/tmp/ag-uipol-011/ag-uipol-011-79e0f8f3083c-wide-2560-trading-room.png",
+    "/tmp/ag-uipol-011/ag-uipol-011-79e0f8f3083c-wide-2560-strategy-workshop.png",
+    "/tmp/ag-uipol-011/ag-uipol-011-79e0f8f3083c-wide-2560-strategy-performance.png"
+  ],
+  "deployment": {
+    "app": "execute-plans",
+    "environment": "pantheon-dev-fe",
+    "deployedAt": "20260715T054747Z",
+    "commit": "79e0f8f3083c8546ec2c139afbc339322dcbe755",
+    "sourceRef": "79e0f8f3083c8546ec2c139afbc339322dcbe755",
+    "sourceBranch": "dev",
+    "feHost": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+    "bffHost": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "bffCommit": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+    "bffCommitEvidence": true,
+    "bffCommitSource": "bff_version",
+    "buildMode": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_FALLBACK": "strict",
+      "VITE_BFF_REAL_WRITES": "false",
+      "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+      "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+    }
+  },
+  "expectedFeSha": "79e0f8f3083c8546ec2c139afbc339322dcbe755",
+  "viewport": {
+    "height": 1440,
+    "name": "wide-2560",
+    "width": 2560
+  }
+}

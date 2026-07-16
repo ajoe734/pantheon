@@ -19,7 +19,8 @@ The ingest service provides:
 5. Backpressure management (adaptive concurrency, delay non-critical events)
 6. Dead-letter handling (diagnostic tags, JSONL spill, startup loading,
    and replay support)
-7. Idempotent deduplication by event_id (service layer + ON CONFLICT at write layer)
+7. Idempotent deduplication by event_id (service layer + transactional conflict
+   detection at the canonical write layer)
 
 Replay policy
 -------------
@@ -38,13 +39,16 @@ Replace the default memory-only sink with build_postgres_write_fn():
     write_fn = build_postgres_write_fn(dsn=os.environ["TELEMETRY_DB_DSN"])
     svc = TelemetryIngestService(write_fn=write_fn, ...)
 
-The Postgres write function uses ON CONFLICT (event_id) DO NOTHING for
-idempotent inserts under retry/replay.
+The Postgres write function distinguishes an exact retry from a conflicting
+reuse of an event_id in the same transaction.  Newly committed rows emit one
+transaction-scoped pg_notify wake-up; PostgreSQL delivers that notification
+only after the rows are commit-visible.
 """
 
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import time
 from datetime import datetime, timezone
@@ -86,6 +90,12 @@ except ImportError:
     jsonschema = None
 
 log = logging.getLogger(__name__)
+
+TELEMETRY_COMMIT_NOTIFY_CHANNEL = "pantheon_lifecycle_events"
+
+
+class ConflictingTelemetryEventError(ValueError):
+    """An event_id was reused for content other than the immutable original."""
 
 
 # ---------------------------------------------------------------------------
@@ -159,12 +169,22 @@ class RuntimeBindingProtocol(Protocol):
 def build_postgres_write_fn(
     dsn: str,
     table: str = "telemetry_events",
+    notify_channel: str = TELEMETRY_COMMIT_NOTIFY_CHANNEL,
 ) -> Callable[[list[dict[str, Any]]], Coroutine[Any, Any, WriteResult]]:
     """
     Build the canonical Postgres batch-write function for production wiring.
 
-    Uses ON CONFLICT (event_id) DO NOTHING for idempotent inserts — a batch
-    that is retried or replayed will not create duplicate rows.
+    A batch is committed atomically.  ON CONFLICT (event_id) DO NOTHING is
+    followed by an equality check against the committed immutable row:
+
+    * exact duplicates are successful no-ops;
+    * conflicting duplicates fail the whole batch as non-retryable;
+    * new rows receive database-owned ingested_seq / ingested_at values.
+
+    When at least one new row is inserted, pg_notify is invoked inside the
+    write transaction.  PostgreSQL releases the notification only when that
+    same transaction commits, so consumers can immediately read every
+    advertised ingested_seq from the canonical table.
 
     Example
     -------
@@ -177,10 +197,37 @@ def build_postgres_write_fn(
             event_id        TEXT PRIMARY KEY,
             event_type      TEXT NOT NULL,
             created_at      TIMESTAMPTZ NOT NULL,
-            payload         JSONB NOT NULL
+            payload         JSONB NOT NULL,
+            ingested_seq    BIGINT NOT NULL DEFAULT nextval('telemetry_events_ingested_seq_seq'),
+            ingested_at     TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
         );
     """
     import json as _json
+
+    table_parts = table.split(".")
+    if not table_parts or any(
+        not part
+        or not (part[0].isalpha() or part[0] == "_")
+        or any(not (char.isalnum() or char == "_") for char in part)
+        for part in table_parts
+    ):
+        raise ValueError(f"invalid Postgres table identifier: {table!r}")
+    if not notify_channel or len(notify_channel.encode("utf-8")) > 63 or "\x00" in notify_channel:
+        raise ValueError("notify_channel must be a non-empty Postgres identifier of at most 63 bytes")
+
+    insert_sql = (
+        f"INSERT INTO {table} "
+        f"(event_id, event_type, created_at, payload) "
+        f"VALUES ($1, $2, $3::timestamptz, $4::jsonb) "
+        f"ON CONFLICT (event_id) DO NOTHING "
+        f"RETURNING ingested_seq"
+    )
+    exact_duplicate_sql = (
+        f"SELECT event_type = $2 "
+        f"AND created_at = $3::timestamptz "
+        f"AND payload = $4::jsonb "
+        f"FROM {table} WHERE event_id = $1"
+    )
 
     async def _postgres_write(batch: list[dict[str, Any]]) -> WriteResult:
         try:
@@ -195,20 +242,54 @@ def build_postgres_write_fn(
                         ev.get("event_id"),
                         ev.get("event_type"),
                         _coerce_postgres_created_at(ev.get("created_at")),
-                        _json.dumps(ev),
+                        _json.dumps(ev, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
                     )
                     for ev in batch
                 ]
-                await conn.executemany(
-                    f"INSERT INTO {table} "
-                    f"(event_id, event_type, created_at, payload) "
-                    f"VALUES ($1, $2, $3::timestamptz, $4::jsonb) "
-                    f"ON CONFLICT (event_id) DO NOTHING",
-                    rows,
-                )
+                inserted_sequences: list[int] = []
+                async with conn.transaction():
+                    # Sequence values are allocated before commit. Serializing
+                    # canonical writer transactions prevents a later sequence
+                    # from committing before an earlier one and being used to
+                    # advance a projector checkpoint past an invisible gap.
+                    await conn.execute(
+                        "SELECT pg_advisory_xact_lock(hashtext($1))",
+                        table,
+                    )
+                    for row in rows:
+                        inserted = await conn.fetchrow(insert_sql, *row)
+                        if inserted is not None:
+                            inserted_sequences.append(int(inserted["ingested_seq"]))
+                            continue
+
+                        exact_duplicate = await conn.fetchval(exact_duplicate_sql, *row)
+                        if exact_duplicate is not True:
+                            raise ConflictingTelemetryEventError(
+                                f"conflicting duplicate event_id={row[0]}"
+                            )
+
+                    if inserted_sequences:
+                        notification = _json.dumps(
+                            {
+                                "schema_version": "telemetry-commit-notification/1",
+                                "table": table,
+                                "inserted_count": len(inserted_sequences),
+                                "first_ingested_seq": min(inserted_sequences),
+                                "last_ingested_seq": max(inserted_sequences),
+                            },
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        )
+                        await conn.execute(
+                            "SELECT pg_notify($1, $2)",
+                            notify_channel,
+                            notification,
+                        )
             finally:
                 await conn.close()
-            return WriteResult.ok(len(batch))
+            return WriteResult.ok(len(inserted_sequences))
+        except ConflictingTelemetryEventError as exc:
+            return WriteResult.fail(str(exc), retryable=False)
         except Exception as exc:  # noqa: BLE001
             return WriteResult.fail(str(exc), retryable=True)
 
@@ -257,6 +338,7 @@ class TelemetryIngestService:
         binding_store: Optional[RuntimeBindingProtocol] = None,
         runtime_summary_store: Optional[RuntimeSummaryProjectionStore] = None,
         trade_episode_projection_store: Optional[TradeEpisodeProjectionStore] = None,
+        lineage_write_store: Optional[Any] = None,
         dedup_max_size: int = 500_000,
         replay_dlq_on_start: bool = False,
         dlq_replay_tag_filter: Optional[str] = None,
@@ -297,6 +379,13 @@ class TelemetryIngestService:
         runtime_summary_store : RuntimeSummaryProjectionStore, optional
             Telemetry-owned read model updated after validated paper telemetry
             is accepted, used by the BFF runtime-state surfaces.
+        lineage_write_store : LineageReadService, optional
+            LIN-003 live lineage write path. When provided, every accepted
+            event (and its resolved RuntimeBinding, if not already a graph
+            node) is admitted into this lineage graph immediately, so the
+            deployed lineage read surface resolves newly-ingested events
+            without waiting for a static corpus reload. Failures here are
+            logged and never fail the ingest call.
         dedup_max_size : int
             Maximum number of event_ids tracked for idempotent deduplication.
             When exceeded, the oldest half of tracked IDs are evicted.
@@ -345,6 +434,7 @@ class TelemetryIngestService:
         self._binding_store = binding_store
         self._runtime_summary_store = runtime_summary_store
         self._trade_episode_projection_store = trade_episode_projection_store
+        self._lineage_write_store = lineage_write_store
 
         # Write function
         self._write_fn = write_fn or self._default_write_fn
@@ -361,7 +451,7 @@ class TelemetryIngestService:
         )
 
         # Idempotent deduplication by event_id
-        self._seen_event_ids: set[str] = set()
+        self._seen_event_ids: dict[str, dict[str, Any]] = {}
         self._dedup_max_size = dedup_max_size
 
         # State
@@ -427,7 +517,9 @@ class TelemetryIngestService:
         except jsonschema.SchemaError as e:
             return False, f"Schema error: {e.message}"
 
-    def _validate_evidence_contract(self, event: dict[str, Any]) -> tuple[bool, Optional[str]]:
+    def _validate_evidence_contract(
+        self, event: dict[str, Any]
+    ) -> tuple[bool, Optional[str], Optional[Any]]:
         """
         Validate TEL-001A evidence contract (E-1 through E-6).
 
@@ -435,44 +527,46 @@ class TelemetryIngestService:
         authoritative RuntimeBinding record and all identity fields plus the
         temporal window are cross-checked.
 
-        Returns (valid, error_message).
+        Returns (valid, error_message, binding). ``binding`` is the resolved
+        RuntimeBinding record (or None) so callers with a lineage_write_store
+        (LIN-003) can admit it without a second authoritative lookup.
         """
         event_type = event.get("event_type")
         if event_type in TRADE_JOURNAL_EVENT_TYPES:
-            return True, None
+            return True, None, None
 
         # E-1: Minimal binding identity (field presence)
         binding_id = event.get("binding_id")
         if not binding_id:
-            return False, "Missing binding_id (Evidence E-1)"
+            return False, "Missing binding_id (Evidence E-1)", None
 
         required_identity = ["runtime_id", "capital_pool_id", "artifact_id", "artifact_version"]
         missing = [f for f in required_identity if not event.get(f)]
         if missing:
-            return False, f"Missing binding identity fields: {missing} (Evidence E-1)"
+            return False, f"Missing binding identity fields: {missing} (Evidence E-1)", None
 
         # E-2: Deployment stage and execution mode proof (field presence + enum)
         deployment_stage = event.get("deployment_stage")
         if not deployment_stage or deployment_stage not in ("paper", "canary", "live", "frozen"):
-            return False, f"Invalid deployment_stage: {deployment_stage} (Evidence E-2)"
+            return False, f"Invalid deployment_stage: {deployment_stage} (Evidence E-2)", None
         execution_mode = event.get("execution_mode")
         if not execution_mode or execution_mode not in ("paper", "canary", "live", "frozen"):
-            return False, f"Invalid execution_mode: {execution_mode} (Evidence E-2)"
+            return False, f"Invalid execution_mode: {execution_mode} (Evidence E-2)", None
         if execution_mode != deployment_stage:
             return False, (
                 f"execution_mode/deployment_stage mismatch: execution_mode {execution_mode!r} must match deployment_stage "
                 f"{deployment_stage!r} (Evidence E-2)"
-            )
+            ), None
 
         # E-3: Governance admissibility
         if not event.get("plan_id") or not event.get("persona_capital_binding_id"):
-            return False, "Missing governance admissibility fields (Evidence E-3)"
+            return False, "Missing governance admissibility fields (Evidence E-3)", None
 
         # E-5: Rollback lineage consistency
         rollback_parent = event.get("rollback_parent")
         rollback_action_type = event.get("rollback_action_type")
         if (rollback_parent is not None) != (rollback_action_type is not None):
-            return False, "rollback_parent and rollback_action_type must both be set or both absent (Evidence E-5)"
+            return False, "rollback_parent and rollback_action_type must both be set or both absent (Evidence E-5)", None
 
         # --- RuntimeBinding authoritative cross-validation (requires binding_store) ---
         if self._binding_store is not None:
@@ -481,7 +575,7 @@ class TelemetryIngestService:
                 return False, (
                     f"binding_id {binding_id!r} not found in RuntimeBinding store — "
                     f"event cannot be attributed to an authoritative binding (Evidence E-1)"
-                )
+                ), None
 
             # E-1 cross-check: all identity fields must match the canonical binding
             identity_fields = (
@@ -504,7 +598,7 @@ class TelemetryIngestService:
                 return False, (
                     f"RuntimeBinding identity mismatch for {binding_id!r}: "
                     f"{'; '.join(mismatches)} (Evidence E-1)"
-                )
+                ), None
 
             # E-2 cross-check: deployment_stage must equal binding.deployment_mode
             binding_mode = getattr(binding, "deployment_mode", None)
@@ -512,13 +606,13 @@ class TelemetryIngestService:
                 return False, (
                     f"deployment_stage {deployment_stage!r} does not match binding "
                     f"deployment_mode {binding_mode!r} (Evidence E-2)"
-                )
+                ), None
             binding_execution_mode = getattr(binding, "execution_mode", None) or binding_mode
             if execution_mode != binding_execution_mode:
                 return False, (
                     f"execution_mode {execution_mode!r} does not match binding "
                     f"execution_mode {binding_execution_mode!r} (Evidence E-2)"
-                )
+                ), None
 
             # E-4: Temporal window — event.created_at must fall within
             # [binding.effective_at, binding.retired_at]
@@ -530,14 +624,16 @@ class TelemetryIngestService:
                 return False, (
                     f"Event created_at {event_ts!r} precedes binding effective_at "
                     f"{effective_at!r} — temporal violation (Evidence E-4)"
-                )
+                ), None
             if event_ts and retired_at and event_ts > retired_at:
                 return False, (
                     f"Event created_at {event_ts!r} is after binding retired_at "
                     f"{retired_at!r} — temporal violation (Evidence E-4)"
-                )
+                ), None
 
-        return True, None
+            return True, None, binding
+
+        return True, None, None
 
     async def ingest(self, event: dict[str, Any], timeout: Optional[float] = None) -> bool:
         """
@@ -567,8 +663,63 @@ class TelemetryIngestService:
         #    counted or written more than once within this service instance.
         event_id = event.get("event_id")
         if event_id and event_id in self._seen_event_ids:
+            # 0.a. Validate schema on duplicate retry
+            valid_schema, schema_err = self._validate_event(event)
+            if not valid_schema:
+                self._total_rejected += 1
+                self._dlq.reject(
+                    event=event,
+                    tags=[TAG_SCHEMA_VIOLATION],
+                    reason=f"Schema validation failed on duplicate retry: {schema_err}",
+                )
+                log.warning(f"Ingest duplicate retry rejected (schema): {schema_err}")
+                return False
+
+            # 0.b. Validate evidence contract on duplicate retry
+            valid_ev, ev_err, resolved_binding = self._validate_evidence_contract(event)
+            if not valid_ev:
+                err_lower = ev_err.lower()
+                if "temporal" in err_lower or "effective_at" in err_lower or "retired_at" in err_lower:
+                    tag = TAG_TEMPORAL_VIOLATION
+                elif "binding" in err_lower or "mismatch" in err_lower or "not found" in err_lower:
+                    tag = TAG_BINDING_MISMATCH
+                else:
+                    tag = TAG_SCHEMA_VIOLATION
+
+                self._total_rejected += 1
+                self._dlq.reject(
+                    event=event,
+                    tags=[tag],
+                    reason=f"Evidence contract violation on duplicate retry: {ev_err}",
+                )
+                log.warning(f"Ingest duplicate retry rejected (evidence): {ev_err}")
+                return False
+
+            # 0.c. Reject same-ID content mismatch
+            original_event = self._seen_event_ids[event_id]
+            mismatch = False
+            for k in (set(event.keys()) | set(original_event.keys())):
+                if event.get(k) != original_event.get(k):
+                    mismatch = True
+                    break
+            if mismatch:
+                self._total_rejected += 1
+                self._dlq.reject(
+                    event=event,
+                    tags=[TAG_SCHEMA_VIOLATION],
+                    reason=f"Content mismatch for duplicate event_id={event_id}",
+                )
+                log.warning(f"Ingest duplicate retry rejected (content mismatch for event_id={event_id})")
+                return False
+
             self._total_duplicates += 1
             log.debug(f"Ingest skipped (duplicate event_id): {event_id}")
+            if self._lineage_write_store is not None:
+                try:
+                    # Lineage repair must use the immutable originally accepted payload
+                    self._lineage_write_store.admit_telemetry_event(original_event, resolved_binding)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Lineage live-write admission failed for duplicate event %s: %s", event_id, exc)
             return True  # idempotent: already delivered, treat as success
 
         # 1. Schema validation
@@ -584,7 +735,7 @@ class TelemetryIngestService:
             return False
 
         # 2. Evidence contract validation (field presence + RuntimeBinding cross-check)
-        valid, error_msg = self._validate_evidence_contract(event)
+        valid, error_msg, resolved_binding = self._validate_evidence_contract(event)
         if not valid:
             # Classify the tag based on the error type
             err_lower = error_msg.lower()
@@ -618,12 +769,14 @@ class TelemetryIngestService:
 
         # Track event_id for idempotent dedup after successful enqueue
         if event_id:
-            self._seen_event_ids.add(event_id)
+            # Keep an immutable snapshot so producer-side mutation cannot turn
+            # a conflicting retry into an apparent exact duplicate.
+            self._seen_event_ids[event_id] = copy.deepcopy(event)
             # Evict oldest half when the dedup set exceeds its size limit
             if len(self._seen_event_ids) > self._dedup_max_size:
-                evict = list(self._seen_event_ids)[: self._dedup_max_size // 2]
+                evict = list(self._seen_event_ids.keys())[: self._dedup_max_size // 2]
                 for eid in evict:
-                    self._seen_event_ids.discard(eid)
+                    self._seen_event_ids.pop(eid, None)
 
         self._total_ingested += 1
         if self._runtime_summary_store is not None:
@@ -631,6 +784,12 @@ class TelemetryIngestService:
                 self._runtime_summary_store.project_event(event)
             except Exception as exc:  # noqa: BLE001
                 log.warning("Runtime summary projection failed for event %s: %s", event_id, exc)
+
+        if self._lineage_write_store is not None:
+            try:
+                self._lineage_write_store.admit_telemetry_event(event, resolved_binding)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Lineage live-write admission failed for event %s: %s", event_id, exc)
 
         if self._trade_episode_projection_store is not None:
             has_episode = (
@@ -887,7 +1046,7 @@ class TelemetryIngestService:
             # Clear the event_id from the dedup set so replay can re-enqueue it.
             eid = event.get("event_id")
             if eid:
-                self._seen_event_ids.discard(eid)
+                self._seen_event_ids.pop(eid, None)
             ok = await self.ingest(event, timeout=5.0)
             if ok:
                 count += 1

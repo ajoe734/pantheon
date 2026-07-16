@@ -133,6 +133,7 @@ class DeadLetterReplayProcessor:
         apply_fn: Callable[[EventEnvelope], str | None],
         reason: str,
         queue: DeadLetterQueue | None = None,
+        before_replace_fn: Callable[[DeadLetterReplayResult], None] | None = None,
     ) -> DeadLetterReplayBatchResult:
         results: list[DeadLetterReplayResult] = []
         for entry in entries:
@@ -144,6 +145,8 @@ class DeadLetterReplayProcessor:
                 reason=reason,
             )
             results.append(result)
+            if before_replace_fn:
+                before_replace_fn(result)
             if queue:
                 queue.replace_entry(updated_entry)
         return DeadLetterReplayBatchResult(results=tuple(results))

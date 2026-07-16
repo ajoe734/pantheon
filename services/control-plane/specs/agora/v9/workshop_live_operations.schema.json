@@ -1,0 +1,152 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon.example/specs/agora/v9/workshop_live_operations.schema.json",
+  "title": "Agora Strategy Workshop live operation payloads",
+  "definitions": {
+    "JsonPatchOperation": {
+      "type": "object",
+      "required": ["op", "path"],
+      "properties": {
+        "op": {
+          "enum": ["add", "remove", "replace", "move", "copy", "test"]
+        },
+        "path": {"type": "string", "minLength": 1},
+        "from": {"type": "string", "minLength": 1},
+        "value": {}
+      },
+      "additionalProperties": false
+    },
+    "WorkshopVersionCreateRequest": {
+      "type": "object",
+      "required": ["patch"],
+      "properties": {
+        "expected_workshop_version": {"type": ["integer", "null"], "minimum": 1},
+        "patch": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/definitions/JsonPatchOperation"}
+        },
+        "base_document_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "reason": {"type": ["string", "null"], "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "WorkshopResearchRunRequest": {
+      "type": "object",
+      "required": ["research_context", "approval_decision_id"],
+      "properties": {
+        "research_context": {"type": "string", "minLength": 1},
+        "strategy_version_ref": {"type": ["string", "null"], "minLength": 1},
+        "parameters": {"type": "object"},
+        "approval_decision_id": {"type": "string", "minLength": 1},
+        "adapter": {"enum": ["stub", "handoff_only", "manual"]},
+        "requested_mode": {"enum": ["stub", "handoff_only", "manual"]},
+        "dispatch_mode": {"enum": ["stub", "handoff_only", "manual"]}
+      },
+      "additionalProperties": false
+    },
+    "WorkshopConsultationRequest": {
+      "type": "object",
+      "required": ["consultation_type", "subject"],
+      "properties": {
+        "consultation_type": {"enum": ["committee", "advisory"]},
+        "subject": {"type": "string", "minLength": 1},
+        "context_refs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    },
+    "WorkshopConcludeRequest": {
+      "type": "object",
+      "required": ["approval_decision_id"],
+      "properties": {
+        "final_version_id": {"type": ["string", "null"], "minLength": 1},
+        "conclusion_notes": {"type": ["string", "null"]},
+        "approval_decision_id": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "WorkshopCommandReceipt": {
+      "type": "object",
+      "required": [
+        "receipt_id",
+        "operation",
+        "status",
+        "command_terminal",
+        "idempotency_key",
+        "request_hash",
+        "expected_lock_version",
+        "resulting_lock_version",
+        "canonical_refs"
+      ],
+      "properties": {
+        "receipt_id": {"type": "string", "minLength": 1},
+        "operation": {
+          "enum": [
+            "create_version",
+            "select_version",
+            "dispatch_research",
+            "open_consultation",
+            "conclude"
+          ]
+        },
+        "status": {"enum": ["admitted", "completed", "failed"]},
+        "command_terminal": {"type": "boolean"},
+        "request_id": {"type": "string"},
+        "trace_id": {"type": "string"},
+        "idempotency_key": {"type": "string", "minLength": 1},
+        "request_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "expected_lock_version": {"type": "integer", "minimum": 1},
+        "resulting_lock_version": {"type": "integer", "minimum": 1},
+        "admitted_at": {"type": "string"},
+        "completed_at": {"type": "string"},
+        "canonical_refs": {"type": "object"}
+      },
+      "additionalProperties": true
+    },
+    "NoDirectActionProof": {
+      "type": "object",
+      "required": ["deployment_triggered", "order_submitted", "live_capital_changed"],
+      "properties": {
+        "deployment_triggered": {"const": false},
+        "order_submitted": {"const": false},
+        "live_capital_changed": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "WorkshopLiveOperationEnvelope": {
+      "type": "object",
+      "required": ["data", "meta"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "required": ["command_receipt", "resource"],
+          "properties": {
+            "command_receipt": {"$ref": "#/definitions/WorkshopCommandReceipt"},
+            "resource": {"type": "object"}
+          },
+          "additionalProperties": false
+        },
+        "meta": {
+          "type": "object",
+          "required": ["capability", "audience", "etag", "canonical_authority", "no_direct_action"],
+          "properties": {
+            "snapshot_at": {"type": "string"},
+            "capability": {"const": "agora.workshop.v1"},
+            "audience": {"type": "string", "pattern": "^tenant:.+:user:.+$"},
+            "etag": {"type": "string", "pattern": "^W/\\\"workshop:.+:v[0-9]+\\\"$"},
+            "canonical_authority": {"type": "string", "minLength": 1},
+            "no_direct_action": {"$ref": "#/definitions/NoDirectActionProof"}
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

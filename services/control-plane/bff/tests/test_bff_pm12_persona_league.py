@@ -4,15 +4,26 @@ import os
 import sys
 import tempfile
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
+from persona_provisioning import MemoryPersonaProvisioningStore
 from read_store import ReadSurfaceStore
+from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 
 HEADERS = {"Authorization": "Bearer op-pm12:operator,reviewer"}
+
+
+@pytest.fixture(autouse=True)
+def _canonical_persona_owner_fakes(monkeypatch: pytest.MonkeyPatch) -> None:
+    transport = FakeOwnerTransport()
+    monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())
+    monkeypatch.setattr(bff_main, "_PersonaOwnerHttpTransport", lambda: transport)
+    monkeypatch.setattr(bff_main, "_register_persona_cron_required", _schedule_receipt)
 
 
 def _fresh_client(td: str, *, fallback: bool = True) -> TestClient:
@@ -84,7 +95,7 @@ def test_pm12_persona_league_filters_searches_and_paginates() -> None:
             response = client.get(
                 "/bff/management/persona-league",
                 headers=HEADERS,
-                params={"state": "paper_running", "archetype": "macro", "q": "macro", "page_size": 1},
+                params={"state": "provisioning", "archetype": "macro", "q": "macro", "page_size": 1},
             )
 
             assert response.status_code == 200, response.text

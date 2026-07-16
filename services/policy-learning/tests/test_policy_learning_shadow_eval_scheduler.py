@@ -334,3 +334,249 @@ def test_list_candidates_filter_by_eval_type() -> None:
         )
         assert len(imitation_list.json()) == 1
         assert imitation_list.json()[0]["eval_type"] == "imitation"
+
+
+def test_worker_backlog_dlq_process_retry_replay_restart_endpoints() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+
+        # 1. Propose candidates
+        resp = client.post(
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-worker-test",
+                "eval_type": "shadow",
+                "dataset_refs": [{"id": "ds-limit-1", "type": "trace_dataset"}, {"id": "ds-limit-2", "type": "trace_dataset"}],
+            },
+        )
+        assert resp.status_code == 201
+        
+        # 2. Check backlog
+        backlog_resp = client.get("/api/policy-learning/worker/backlog")
+        assert backlog_resp.status_code == 200
+        backlog = backlog_resp.json()
+        assert len(backlog) == 2
+        for c in backlog:
+            assert c["status"] == "proposed"
+
+        # 3. Process backlog
+        process_resp = client.post("/api/policy-learning/worker/process")
+        assert process_resp.status_code == 200
+        assert process_resp.json()["processed_count"] == 2
+
+        # 4. Check backlog is now empty, and candidates are processed
+        backlog_resp = client.get("/api/policy-learning/worker/backlog")
+        assert len(backlog_resp.json()) == 0
+
+        # Check listed candidates
+        listed = client.get("/api/policy-learning/candidates")
+        candidates = listed.json()
+        assert len(candidates) == 2
+        for c in candidates:
+            assert c["status"] == "processed"
+            assert "metrics" in c
+            assert "evaluation_summary" in c
+            assert "policy_weights" in c
+            assert "lineage" in c
+
+        # 5. Test DLQ and Replay/Retry: manually put a failed candidate
+        c1 = candidates[0]
+        c1["status"] = "failed"
+        c1["error_message"] = "mock evaluation failure"
+        svc.store.put_candidate(c1)
+
+        # Check DLQ returns the failed candidate
+        dlq_resp = client.get("/api/policy-learning/worker/dlq")
+        assert dlq_resp.status_code == 200
+        dlq = dlq_resp.json()
+        assert len(dlq) == 1
+        assert dlq[0]["candidate_id"] == c1["candidate_id"]
+
+        # Replay DLQ item
+        replay_resp = client.post(f"/api/policy-learning/worker/dlq/{c1['candidate_id']}/replay")
+        assert replay_resp.status_code == 200
+        # Replay automatically runs _process_backlog, so it shifts back to processed!
+        assert replay_resp.json()["status"] == "processed"
+
+        # DLQ should be empty now
+        dlq_resp = client.get("/api/policy-learning/worker/dlq")
+        assert len(dlq_resp.json()) == 0
+
+        # Fail it again to test retry
+        c1 = listed.json()[0]
+        c1["status"] = "failed"
+        c1["error_message"] = "mock evaluation failure"
+        svc.store.put_candidate(c1)
+
+        retry_resp = client.post(f"/api/policy-learning/worker/retry/{c1['candidate_id']}")
+        assert retry_resp.status_code == 200
+        assert retry_resp.json()["status"] == "processed"
+
+        # Fail both to test restart
+        for c in listed.json():
+            c["status"] = "failed"
+            c["error_message"] = "mock evaluation failure"
+            svc.store.put_candidate(c)
+
+        restart_resp = client.post("/api/policy-learning/worker/restart")
+        assert restart_resp.status_code == 200
+        assert restart_resp.json()["reset_count"] == 2
+
+        # Check readback
+        readback_resp = client.get(f"/api/policy-learning/worker/readback/{c1['candidate_id']}")
+        assert readback_resp.status_code == 200
+        assert readback_resp.json()["status"] == "processed"
+
+
+def test_get_dataset_payload_postgres_loading() -> None:
+    import os
+    from unittest import mock
+    from types import SimpleNamespace
+    import json
+    import tempfile
+    
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        _get_dataset_payload = svc._get_dataset_payload
+        
+        # 1. Non-postgres backend fallback
+        with mock.patch.dict("os.environ", {"POLICY_LEARNING_STORE_BACKEND": "json"}):
+            res = _get_dataset_payload("ds-trace-persona1-session1")
+            assert res["dataset_id"] == "ds-trace-persona1-session1"
+            assert len(res["sessions"]) == 2  # default SEED_DATASET has 2 sessions
+        
+        # 2. Postgres backend with mocked psycopg returning matching records
+        class FakeCursor:
+            def __init__(self, rows):
+                self.rows = rows
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                pass
+            def execute(self, sql, params=None):
+                pass
+            def fetchall(self):
+                return self.rows
+                
+        class FakeConnection:
+            def __init__(self, rows):
+                self.rows = rows
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                pass
+            def cursor(self):
+                return FakeCursor(self.rows)
+
+        complete_dataset_content = {
+            "strategy_id": "test-strat",
+            "source_strategy_spec_id": "test-spec",
+            "sessions": [
+                {
+                    "trajectory_id": "t-100",
+                    "actor_id": "act-1",
+                    "actor_role": "operator",
+                    "decision": "approve",
+                    "target": {"registry_id": "reg-1"},
+                    "steps": [{"observation": [1.0, 2.0], "action": "buy"}]
+                }
+            ]
+        }
+        
+        single_session_content = {
+            "trajectory_id": "t-200",
+            "actor_id": "act-2",
+            "actor_role": "approver",
+            "decision": "edit",
+            "steps": [{"observation": [3.0, 4.0], "action": "sell"}]
+        }
+
+        single_transition_content = {
+            "actor_id": "act-3",
+            "actor_role": "operator",
+            "decision": "approve",
+            "observation": [5.0, 6.0],
+            "action": "hold"
+        }
+
+        db_rows = [
+            (
+                "persona1", "session1",
+                json.dumps(complete_dataset_content),
+                json.dumps(["ref-1"]),
+                "ev-1"
+            ),
+            (
+                "persona1", "session1",
+                json.dumps(single_session_content),
+                None,
+                "ev-2"
+            ),
+            (
+                "persona1", "session1",
+                json.dumps(single_transition_content),
+                json.dumps(["ref-2"]),
+                "ev-3"
+            ),
+            (
+                "persona2", "session2",
+                json.dumps(complete_dataset_content),
+                None,
+                "ev-4"
+            )
+        ]
+
+        fake_psycopg = SimpleNamespace(connect=lambda dsn: FakeConnection(db_rows))
+
+        with (
+            mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}),
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "POLICY_LEARNING_STORE_BACKEND": "postgres",
+                    "POLICY_LEARNING_STORE_DSN": "postgresql://test",
+                }
+            )
+        ):
+            res = _get_dataset_payload("ds-trace-persona1-session1")
+            assert res["dataset_id"] == "ds-trace-persona1-session1"
+            assert res["strategy_id"] == "test-strat"
+            assert res["source_strategy_spec_id"] == "test-spec"
+            assert len(res["sessions"]) == 3
+            
+            assert res["sessions"][0]["trajectory_id"] == "t-100"
+            assert res["sessions"][0]["steps"][0]["observation"] == [1.0, 2.0]
+            
+            assert res["sessions"][1]["trajectory_id"] == "t-200"
+            assert res["sessions"][1]["actor_role"] == "approver"
+            assert res["sessions"][1]["decision"] == "edit"
+            
+            assert res["sessions"][2]["trajectory_id"] == "traj-ev-3"
+            assert res["sessions"][2]["actor_role"] == "operator"
+            assert res["sessions"][2]["steps"][0]["observation"] == [5.0, 6.0]
+            assert res["sessions"][2]["steps"][0]["action"] == "hold"
+            assert res["sessions"][2]["steps"][0]["feedback_event_id"] == "ev-3"
+            
+            assert "evidence://ev-1" in res["source_dataset_refs"]
+            assert "evidence://ev-2" in res["source_dataset_refs"]
+            assert "evidence://ev-3" in res["source_dataset_refs"]
+            assert "ref-1" in res["source_dataset_refs"]
+            assert "ref-2" in res["source_dataset_refs"]
+            
+        fake_psycopg_empty = SimpleNamespace(connect=lambda dsn: FakeConnection([]))
+        with (
+            mock.patch.dict(sys.modules, {"psycopg": fake_psycopg_empty}),
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "POLICY_LEARNING_STORE_BACKEND": "postgres",
+                    "POLICY_LEARNING_STORE_DSN": "postgresql://test",
+                }
+            )
+        ):
+            res = _get_dataset_payload("ds-trace-persona1-session1")
+            assert res["dataset_id"] == "ds-trace-persona1-session1"
+            assert len(res["sessions"]) == 2

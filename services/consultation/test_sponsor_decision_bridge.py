@@ -138,3 +138,344 @@ def test_bridge_does_not_emit_decided_or_store_write_payload() -> None:
     assert "decision" not in proposal
     assert "decided_at" not in proposal
     assert "store_path" not in proposal
+
+
+def test_api_record_sponsor_decision_dispatches_proposal() -> None:
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch, MagicMock
+    import services.consultation.main as main_module
+    from services.consultation.main import app
+    from services.consultation.models import ConsultRequest, ConsultRequestType, ActorRef, ConsultRequestStatus
+    from services.consultation.store import build_consultation_store
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        old_store = main_module.store
+        main_module.store = build_consultation_store(td)
+
+        try:
+            req = ConsultRequest(
+                request_id="cr-test-001",
+                request_type=ConsultRequestType.STRATEGY_REVIEW,
+                requested_by=ActorRef(actor_type="persona", actor_id="persona-momentum"),
+                target_type="strategy_spec",
+                target_id="strat-test",
+                trace_id="trace-test-001",
+                metadata={
+                    "consultation": {
+                        "committee_ref": "comm-test-001",
+                        "type": "evolution",
+                        "action_type": "retrain",
+                    }
+                }
+            )
+            main_module.store.put_request(req)
+
+            from services.consultation.models import ConsultMemo, MemoStatus, MemoType, AuthorType, Recommendation
+            memo = ConsultMemo(
+                memo_id="mem-test-001",
+                request_id="cr-test-001",
+                memo_type=MemoType.COMMITTEE_SUMMARY,
+                author_type=AuthorType.SYSTEM,
+                author_ref="test-system",
+                target_type="strategy_spec",
+                target_id="strat-test",
+                summary="Test summary",
+                recommendation=Recommendation.APPROVE,
+                status=MemoStatus.PUBLISHED,
+                trace_id="trace-test-001"
+            )
+            main_module.store.put_memo(memo)
+
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                mock_resp = MagicMock()
+                mock_resp.read.return_value = b'{"status": "ok"}'
+                mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+                client = TestClient(app)
+                response = client.post(
+                    "/api/consult/committees/comm-test-001/sponsor-decision",
+                    json={
+                        "sponsor_decision": "approved",
+                        "rationale_ref": "workspace://ref",
+                        "actor_id": "operator-test",
+                    }
+                )
+
+                assert response.status_code == 200
+                data = response.json()
+                assert data["sponsor_decision"] == "approved"
+                assert "proposal_dispatch" in data["service_handoff"]
+                assert data["service_handoff"]["proposal_dispatch"]["status"] == "sent"
+                assert data["service_handoff"]["proposal_dispatch"]["proposal_type"] == "evolution_decision"
+
+                assert mock_urlopen.call_count == 1
+                call_args = mock_urlopen.call_args[0][0]
+                assert call_args.full_url.endswith("/api/evolution/proposals")
+
+        finally:
+            main_module.store = old_store
+
+
+def test_api_record_sponsor_decision_idempotent_no_duplicate_dispatches() -> None:
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch, MagicMock
+    import services.consultation.main as main_module
+    from services.consultation.main import app
+    from services.consultation.models import ConsultRequest, ConsultRequestType, ActorRef
+    from services.consultation.store import build_consultation_store
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        old_store = main_module.store
+        main_module.store = build_consultation_store(td)
+
+        try:
+            req = ConsultRequest(
+                request_id="cr-test-002",
+                request_type=ConsultRequestType.STRATEGY_REVIEW,
+                requested_by=ActorRef(actor_type="persona", actor_id="persona-momentum"),
+                target_type="strategy_spec",
+                target_id="strat-test",
+                trace_id="trace-test-002",
+                metadata={
+                    "consultation": {
+                        "committee_ref": "comm-test-002",
+                        "type": "evolution",
+                        "action_type": "retrain",
+                    }
+                }
+            )
+            main_module.store.put_request(req)
+
+            from services.consultation.models import ConsultMemo, MemoStatus, MemoType, AuthorType, Recommendation
+            memo = ConsultMemo(
+                memo_id="mem-test-002",
+                request_id="cr-test-002",
+                memo_type=MemoType.COMMITTEE_SUMMARY,
+                author_type=AuthorType.SYSTEM,
+                author_ref="test-system",
+                target_type="strategy_spec",
+                target_id="strat-test",
+                summary="Test summary",
+                recommendation=Recommendation.APPROVE,
+                status=MemoStatus.PUBLISHED,
+                trace_id="trace-test-002"
+            )
+            main_module.store.put_memo(memo)
+
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                mock_resp = MagicMock()
+                mock_resp.read.return_value = b'{"status": "ok"}'
+                mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+                client = TestClient(app)
+                
+                # First call
+                response1 = client.post(
+                    "/api/consult/committees/comm-test-002/sponsor-decision",
+                    json={
+                        "sponsor_decision": "approved",
+                        "rationale_ref": "workspace://ref",
+                        "actor_id": "operator-test",
+                    }
+                )
+                assert response1.status_code == 200
+                data1 = response1.json()
+                assert data1["sponsor_decision"] == "approved"
+                assert data1["service_handoff"]["proposal_dispatch"]["status"] == "sent"
+                assert mock_urlopen.call_count == 1
+
+                # Second call (duplicate)
+                response2 = client.post(
+                    "/api/consult/committees/comm-test-002/sponsor-decision",
+                    json={
+                        "sponsor_decision": "approved",
+                        "rationale_ref": "workspace://ref",
+                        "actor_id": "operator-test",
+                    }
+                )
+                assert response2.status_code == 200
+                data2 = response2.json()
+                assert data2["sponsor_decision"] == "approved"
+                assert data2["service_handoff"]["proposal_dispatch"]["status"] == "sent"
+                
+                # Verify mock_urlopen was still only called once!
+                assert mock_urlopen.call_count == 1
+
+        finally:
+            main_module.store = old_store
+
+
+def test_api_record_sponsor_decision_gated_when_rejected() -> None:
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch, MagicMock
+    import services.consultation.main as main_module
+    from services.consultation.main import app
+    from services.consultation.models import ConsultRequest, ConsultRequestType, ActorRef
+    from services.consultation.store import build_consultation_store
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        old_store = main_module.store
+        main_module.store = build_consultation_store(td)
+
+        try:
+            req = ConsultRequest(
+                request_id="cr-test-003",
+                request_type=ConsultRequestType.STRATEGY_REVIEW,
+                requested_by=ActorRef(actor_type="persona", actor_id="persona-momentum"),
+                target_type="strategy_spec",
+                target_id="strat-test",
+                trace_id="trace-test-003",
+                metadata={
+                    "consultation": {
+                        "committee_ref": "comm-test-003",
+                        "type": "evolution",
+                        "action_type": "retrain",
+                    }
+                }
+            )
+            main_module.store.put_request(req)
+
+            from services.consultation.models import ConsultMemo, MemoStatus, MemoType, AuthorType, Recommendation
+            memo = ConsultMemo(
+                memo_id="mem-test-003",
+                request_id="cr-test-003",
+                memo_type=MemoType.COMMITTEE_SUMMARY,
+                author_type=AuthorType.SYSTEM,
+                author_ref="test-system",
+                target_type="strategy_spec",
+                target_id="strat-test",
+                summary="Test summary",
+                recommendation=Recommendation.REJECT,
+                status=MemoStatus.PUBLISHED,
+                trace_id="trace-test-003"
+            )
+            main_module.store.put_memo(memo)
+
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                client = TestClient(app)
+                response = client.post(
+                    "/api/consult/committees/comm-test-003/sponsor-decision",
+                    json={
+                        "sponsor_decision": "rejected",
+                        "rationale_ref": "workspace://ref",
+                        "actor_id": "operator-test",
+                    }
+                )
+
+                assert response.status_code == 200
+                data = response.json()
+                assert data["sponsor_decision"] == "rejected"
+                assert data["service_handoff"]["proposal_dispatch"]["status"] == "gated"
+                assert data["service_handoff"]["proposal_dispatch"]["error"] == "Sponsor decision is rejected; proposal dispatch gated."
+                assert mock_urlopen.call_count == 0
+
+                # Verify state is saved durably as gated
+                saved_request = main_module.store.get_request("cr-test-003")
+                assert saved_request.metadata["service_handoff"]["proposal_dispatch"]["status"] == "gated"
+
+        finally:
+            main_module.store = old_store
+
+
+def test_api_record_sponsor_decision_failed_dispatch_is_durable_and_retryable() -> None:
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch, MagicMock
+    import services.consultation.main as main_module
+    from services.consultation.main import app
+    from services.consultation.models import ConsultRequest, ConsultRequestType, ActorRef
+    from services.consultation.store import build_consultation_store
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        old_store = main_module.store
+        main_module.store = build_consultation_store(td)
+
+        try:
+            req = ConsultRequest(
+                request_id="cr-test-004",
+                request_type=ConsultRequestType.STRATEGY_REVIEW,
+                requested_by=ActorRef(actor_type="persona", actor_id="persona-momentum"),
+                target_type="strategy_spec",
+                target_id="strat-test",
+                trace_id="trace-test-004",
+                metadata={
+                    "consultation": {
+                        "committee_ref": "comm-test-004",
+                        "type": "evolution",
+                        "action_type": "retrain",
+                    }
+                }
+            )
+            main_module.store.put_request(req)
+
+            from services.consultation.models import ConsultMemo, MemoStatus, MemoType, AuthorType, Recommendation
+            memo = ConsultMemo(
+                memo_id="mem-test-004",
+                request_id="cr-test-004",
+                memo_type=MemoType.COMMITTEE_SUMMARY,
+                author_type=AuthorType.SYSTEM,
+                author_ref="test-system",
+                target_type="strategy_spec",
+                target_id="strat-test",
+                summary="Test summary",
+                recommendation=Recommendation.APPROVE,
+                status=MemoStatus.PUBLISHED,
+                trace_id="trace-test-004"
+            )
+            main_module.store.put_memo(memo)
+
+            # 1. First call fails with Connection Error
+            with patch("urllib.request.urlopen", side_effect=Exception("Connection refused")) as mock_urlopen:
+                client = TestClient(app)
+                # In test mode it won't raise 502, but it will record the failed dispatch durably.
+                response1 = client.post(
+                    "/api/consult/committees/comm-test-004/sponsor-decision",
+                    json={
+                        "sponsor_decision": "approved",
+                        "rationale_ref": "workspace://ref",
+                        "actor_id": "operator-test",
+                    }
+                )
+
+                assert response1.status_code == 200
+                data1 = response1.json()
+                assert data1["service_handoff"]["proposal_dispatch"]["status"] == "failed"
+                assert data1["service_handoff"]["proposal_dispatch"]["error"] == "Connection refused"
+                assert mock_urlopen.call_count == 1
+
+                # Verify state is saved durably as failed in store
+                saved_request1 = main_module.store.get_request("cr-test-004")
+                assert saved_request1.metadata["service_handoff"]["proposal_dispatch"]["status"] == "failed"
+                assert saved_request1.metadata["service_handoff"]["status"] == "failed"
+
+            # 2. Second call retries and succeeds
+            with patch("urllib.request.urlopen") as mock_urlopen_success:
+                mock_resp = MagicMock()
+                mock_resp.read.return_value = b'{"status": "ok"}'
+                mock_urlopen_success.return_value.__enter__.return_value = mock_resp
+
+                response2 = client.post(
+                    "/api/consult/committees/comm-test-004/sponsor-decision",
+                    json={
+                        "sponsor_decision": "approved",
+                        "rationale_ref": "workspace://ref",
+                        "actor_id": "operator-test",
+                    }
+                )
+
+                assert response2.status_code == 200
+                data2 = response2.json()
+                assert data2["service_handoff"]["proposal_dispatch"]["status"] == "sent"
+                assert mock_urlopen_success.call_count == 1
+
+                # Verify state is updated durably as sent
+                saved_request2 = main_module.store.get_request("cr-test-004")
+                assert saved_request2.metadata["service_handoff"]["proposal_dispatch"]["status"] == "sent"
+                assert saved_request2.metadata["service_handoff"]["status"] == "sent"
+
+        finally:
+            main_module.store = old_store
+

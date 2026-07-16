@@ -1,7 +1,7 @@
 # PTJ-004 owner handoff
 
-Owner: Codex  
-Reviewer: Codex2  
+Owner: Codex
+Reviewer: Codex2
 Status: review approved; ready for owner finalization
 
 ## Delivered boundary

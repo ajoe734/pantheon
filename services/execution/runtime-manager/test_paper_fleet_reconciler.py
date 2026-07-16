@@ -246,6 +246,105 @@ class TestPaperFleetReconcilerEnvBuilder(unittest.TestCase):
         # verify other keys are present
         self.assertIn("PANTHEON_RUNTIME_BINDING_ID", env)
 
+    def test_worker_env_contains_performance_mark_contract(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        recon = PaperFleetReconciler(
+            source_ingest_url="http://source-ingest:8097/",
+            performance_mark_max_age_seconds=172800,
+            performance_state_root="/data/runtime/paper-performance",
+            poll_interval_seconds=999,
+        )
+        env = recon._build_worker_env(_make_binding("binding-safe-001"))
+
+        self.assertEqual(
+            env["PANTHEON_SOURCE_INGEST_URL"],
+            "http://source-ingest:8097",
+        )
+        self.assertEqual(
+            env["PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS"],
+            "172800",
+        )
+        state_path = Path(env["PANTHEON_PERFORMANCE_STATE_PATH"])
+        self.assertEqual(state_path.parent, Path("/data/runtime/paper-performance"))
+        self.assertTrue(state_path.name.startswith("binding-safe-001-"))
+        self.assertEqual(state_path.suffix, ".json")
+
+    def test_binding_id_cannot_escape_performance_state_root(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        state_root = Path("/data/runtime/paper-performance")
+        recon = PaperFleetReconciler(
+            performance_state_root=str(state_root),
+            poll_interval_seconds=999,
+        )
+        hostile_ids = ("../../shared/binding", "..\\..\\shared\\binding")
+        state_paths = {
+            Path(
+                recon._build_worker_env(_make_binding(binding_id))[
+                    "PANTHEON_PERFORMANCE_STATE_PATH"
+                ]
+            )
+            for binding_id in hostile_ids
+        }
+
+        self.assertEqual(len(state_paths), len(hostile_ids))
+        for state_path in state_paths:
+            self.assertEqual(state_path.parent, state_root)
+            self.assertNotIn("..", state_path.name)
+
+
+class TestPaperPerformanceComposeWiring(unittest.TestCase):
+    def test_fleet_and_static_runtimes_use_canonical_mark_source_and_state_volume(self) -> None:
+        import yaml
+
+        compose_path = Path(__file__).resolve().parents[3] / "docker-compose.yml"
+        services = yaml.safe_load(compose_path.read_text(encoding="utf-8"))["services"]
+
+        fleet = services["paper-fleet-reconciler"]
+        fleet_env = fleet["environment"]
+        self.assertEqual(
+            fleet_env["PANTHEON_SOURCE_INGEST_URL"],
+            "http://source-ingest:8097",
+        )
+        self.assertEqual(
+            fleet_env["PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS"],
+            "${PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS:-172800}",
+        )
+        self.assertEqual(
+            fleet_env["PANTHEON_PERFORMANCE_STATE_ROOT"],
+            "/data/runtime/paper-performance",
+        )
+        self.assertIn("runtime-data:/data/runtime", fleet["volumes"])
+        self.assertEqual(
+            fleet["depends_on"]["source-ingest"]["condition"],
+            "service_healthy",
+        )
+
+        static_runtime = services["pantheon-paper-runtime"]
+        static_env = static_runtime["environment"]
+        self.assertEqual(
+            static_env["PANTHEON_SOURCE_INGEST_URL"],
+            "http://source-ingest:8097",
+        )
+        self.assertEqual(
+            static_env["PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS"],
+            "${PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS:-172800}",
+        )
+        self.assertEqual(
+            static_env["PANTHEON_PERFORMANCE_STATE_PATH"],
+            "/data/runtime/paper-performance/static-paper-runtime.json",
+        )
+        self.assertEqual(
+            static_env["PANTHEON_PAPER_SYNTHETIC_MARKET_DATA"],
+            "${PANTHEON_PAPER_SYNTHETIC_MARKET_DATA:-false}",
+        )
+        self.assertIn("runtime-data:/data/runtime", static_runtime["volumes"])
+        self.assertEqual(
+            static_runtime["depends_on"]["source-ingest"]["condition"],
+            "service_healthy",
+        )
+
 
 class TestPaperFleetReconcilerPortAllocation(unittest.TestCase):
     def test_ports_are_sequential_and_non_overlapping(self) -> None:

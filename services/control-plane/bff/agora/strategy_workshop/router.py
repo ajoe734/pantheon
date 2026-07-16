@@ -22,7 +22,7 @@ Routes still in main.py (migration pending — see router stub comment):
   POST /bff/agora/training-examples
   ...  (all the old committee/evaluation/persona-lab routes)
 
-Routes deferred to later AG-BE-SW-* tasks (registered as 501 stubs):
+Canonical live operations:
   GET/POST /bff/agora/workshops/{id}/versions
   POST     /bff/agora/workshops/{id}/versions/{ver}/select
   POST     /bff/agora/workshops/{id}/research-runs
@@ -32,6 +32,7 @@ Routes deferred to later AG-BE-SW-* tasks (registered as 501 stubs):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import sys
@@ -40,17 +41,23 @@ from collections import deque
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Mapping, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from .operations import CanonicalOperationError, WorkshopCanonicalOperations
 from .store import make_workshop_store
 
 _CONTROL_PLANE_DIR = Path(__file__).resolve().parents[3]
 if str(_CONTROL_PLANE_DIR) not in sys.path:
     sys.path.insert(0, str(_CONTROL_PLANE_DIR))
+
+from privacy.private_content_store import (  # noqa: E402
+    EphemeralKeyProvider,
+    MemoryPrivateContentStore,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -267,6 +274,10 @@ def _identity_for_scope(identity: Any) -> Any:
         roles=list(roles or []),
         claims=claims,
         token_kind=identity.get("token_kind", identity.get("tokenKind", "test")),
+        mfa_verified=bool(
+            identity.get("mfa_verified", identity.get("mfaVerified", False))
+            or claims.get("mfa_verified", claims.get("mfaVerified", False))
+        ),
     )
 
 
@@ -898,6 +909,45 @@ class WorkshopCompletenessSnapshotRequest(BaseModel):
     persist_readiness: bool = True
 
 
+class WorkshopVersionCreateRequest(BaseModel):
+    """Create a Registry-owned immutable StrategySpec draft version."""
+
+    model_config = {"extra": "forbid"}
+
+    expected_workshop_version: Optional[int] = Field(default=None, ge=1)
+    patch: List[Dict[str, Any]] = Field(min_length=1)
+    base_document_sha256: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class WorkshopResearchRunRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    research_context: str = Field(min_length=1)
+    strategy_version_ref: Optional[str] = None
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    approval_decision_id: str = Field(min_length=1)
+    adapter: str = "handoff_only"
+    requested_mode: str = "handoff_only"
+    dispatch_mode: str = "handoff_only"
+
+
+class WorkshopConsultationRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    consultation_type: str
+    subject: str = Field(min_length=1)
+    context_refs: List[str] = Field(default_factory=list)
+
+
+class WorkshopConcludeRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    final_version_id: Optional[str] = None
+    conclusion_notes: Optional[str] = None
+    approval_decision_id: str = Field(min_length=1)
+
+
 # --------------------------------------------------------------------------- #
 # Router factory
 # --------------------------------------------------------------------------- #
@@ -906,10 +956,12 @@ def create_strategy_workshop_router(
     *,
     extract_identity: Callable[..., Any],
     require_read_role: Callable[..., None],
+    require_write_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
     workshop_store: Any = None,
     private_content_store: Any = None,
+    canonical_operations: Any = None,
 ) -> APIRouter:
     """Build and return the strategy-workshop APIRouter.
 
@@ -917,18 +969,56 @@ def create_strategy_workshop_router(
     When omitted the store is constructed from AGORA_WORKSHOP_STORE_BACKEND env.
     """
     store = workshop_store if workshop_store is not None else make_workshop_store()
+    canonical = (
+        canonical_operations
+        if canonical_operations is not None
+        else WorkshopCanonicalOperations()
+    )
     if private_content_store is None:
-        from privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
         private_content_store = MemoryPrivateContentStore(key_provider=EphemeralKeyProvider())
     router = APIRouter(tags=["agora-workshop"])
 
     # Lazy import to avoid circular import at module load time
-    def _scope(authorization: Optional[str], x_tenant_id: Optional[str] = None) -> Any:
+    def _scope(
+        authorization: Optional[str],
+        x_tenant_id: Optional[str] = None,
+        *,
+        write: bool = False,
+        x_mfa_token: Optional[str] = None,
+        mfa_required: bool = False,
+    ) -> Any:
         from ..identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
         from ..models import AgoraErrorCode
 
-        identity = _identity_for_scope(extract_identity(authorization))
+        try:
+            raw_identity = extract_identity(authorization, mfa_token=x_mfa_token)
+        except TypeError:
+            # Narrow test adapters written before the MFA-bearing factory
+            # signature remain supported.  Production assembly accepts the
+            # keyword and validates it in the shared auth facade.
+            raw_identity = extract_identity(authorization)
+        identity = _identity_for_scope(raw_identity)
         require_read_role(identity)
+        if write:
+            require_write_role(identity)
+            if mfa_required and not bool(getattr(identity, "mfa_verified", False)):
+                # The explicit header is accepted only for the dev auth stub.
+                # Strict JWT/OIDC paths must set mfa_verified in the shared
+                # inbound-auth facade after validating the token/claim.
+                stub_mfa = bool(
+                    str(x_mfa_token or "").strip()
+                    and getattr(identity, "token_kind", "") in {"stub", "test"}
+                )
+                if not stub_mfa:
+                    from models import ErrorCode
+                    raise bff_error(
+                        401,
+                        ErrorCode.AUTH_REQUIRED,
+                        "MFA verification is required for workshop commands",
+                        "MFA_REQUIRED",
+                        precondition_failed="mfa_verification",
+                        suggestion="Supply a valid X-MFA-Token or MFA-verified identity",
+                    )
         try:
             return resolve_agora_user_scope(
                 identity,
@@ -947,15 +1037,6 @@ def create_strategy_workshop_router(
                 details_extra=exc.details,
             )
 
-    def _not_implemented(route: str) -> None:
-        from models import ErrorCode
-        raise bff_error(
-            501,
-            ErrorCode.NOT_IMPLEMENTED,
-            f"{route} is not yet implemented",
-            "stub: see later AG-BE-SW-* tasks",
-        )
-
     def _scoped_session(workshop_id: str, scope: Any) -> Dict[str, Any]:
         session = store.get_session(workshop_id)
         if session is None:
@@ -968,6 +1049,520 @@ def create_strategy_workshop_router(
                 resource_id=workshop_id,
             )
         return session
+
+    def _etag(workshop_id: str, lock_version: int) -> str:
+        return f'W/"workshop:{workshop_id}:v{lock_version}"'
+
+    def _request_hash(payload: Mapping[str, Any]) -> str:
+        canonical_payload = json.dumps(
+            dict(payload),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+        return hashlib.sha256(canonical_payload).hexdigest()
+
+    def _require_command_headers(
+        *,
+        workshop_id: str,
+        if_match: Optional[str],
+        idempotency_key: Optional[str],
+        request_id: Optional[str],
+    ) -> tuple[int, str, str]:
+        from models import ErrorCode
+
+        if if_match is None:
+            raise bff_error(
+                428,
+                ErrorCode.PRECONDITION_FAILED,
+                "If-Match header is required for workshop mutations",
+                "missing_if_match",
+                precondition_failed="if_match",
+                suggestion="GET the workshop and retry with its current ETag",
+            )
+        if not str(idempotency_key or "").strip():
+            raise bff_error(
+                400,
+                ErrorCode.VALIDATION_FAILED,
+                "Idempotency-Key header is required",
+                "missing_idempotency_key",
+                precondition_failed="idempotency_key",
+            )
+        if not str(request_id or "").strip():
+            raise bff_error(
+                400,
+                ErrorCode.VALIDATION_FAILED,
+                "X-Request-Id header is required",
+                "missing_request_id",
+                precondition_failed="request_id",
+            )
+        return (
+            _parse_etag_lock_version(if_match, workshop_id),
+            str(idempotency_key).strip(),
+            str(request_id).strip(),
+        )
+
+    def _public_receipt(receipt: Mapping[str, Any]) -> Dict[str, Any]:
+        status = str(receipt.get("status") or "")
+        result: Dict[str, Any] = {
+            "receipt_id": receipt.get("receipt_id") or receipt.get("command_id"),
+            "operation": receipt.get("operation"),
+            "status": status,
+            "command_terminal": status in {"completed", "failed"},
+            "request_id": receipt.get("request_id"),
+            "trace_id": receipt.get("trace_id"),
+            "idempotency_key": receipt.get("idempotency_key"),
+            "request_hash": receipt.get("request_hash"),
+            "expected_lock_version": receipt.get("expected_lock_version"),
+            "resulting_lock_version": (
+                receipt.get("resulting_lock_version")
+                or receipt.get("admitted_lock_version")
+            ),
+            "admitted_at": receipt.get("admitted_at"),
+            "completed_at": receipt.get("completed_at"),
+            "canonical_refs": receipt.get("canonical_refs")
+            or receipt.get("canonical_refs_json")
+            or {},
+        }
+        return {key: value for key, value in result.items() if value is not None}
+
+    def _command_response(
+        *,
+        receipt: Mapping[str, Any],
+        resource: Mapping[str, Any],
+        session: Mapping[str, Any],
+        scope: Any,
+        canonical_authority: str,
+        response: Response,
+    ) -> Dict[str, Any]:
+        lock_version = int(
+            receipt.get("resulting_lock_version")
+            or receipt.get("admitted_lock_version")
+            or session.get("lock_version")
+            or 1
+        )
+        value = _etag(str(session["workshop_id"]), lock_version)
+        response.headers["ETag"] = value
+        no_direct_action = {
+            "deployment_triggered": False,
+            "order_submitted": False,
+            "live_capital_changed": False,
+        }
+        return {
+            "data": {
+                "command_receipt": _public_receipt(receipt),
+                "resource": dict(resource),
+            },
+            "meta": {
+                "snapshot_at": utc_now(),
+                "capability": "agora.workshop.v1",
+                "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+                "etag": value,
+                "canonical_authority": canonical_authority,
+                "no_direct_action": no_direct_action,
+            },
+        }
+
+    def _raise_admission_failure(
+        *,
+        workshop_id: str,
+        result: Mapping[str, Any],
+    ) -> None:
+        from models import ErrorCode
+
+        outcome = str(result.get("outcome") or "")
+        current_version = int(result.get("current_lock_version") or 1)
+        if outcome == "idempotency_conflict":
+            raise bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Idempotency-Key was already used with a different request",
+                "IDEMPOTENCY_REQUEST_HASH_MISMATCH",
+                precondition_failed="idempotency_key",
+            )
+        if outcome in {"scope_mismatch"}:
+            _raise_cross_user_forbidden(
+                bff_error=bff_error,
+                resource="strategy_workshop",
+                resource_id=workshop_id,
+            )
+        if outcome == "not_found":
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Workshop not found",
+                workshop_id,
+            )
+        if outcome == "terminal":
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Workshop is in a terminal state",
+                "WORKSHOP_TERMINAL_STATE",
+                precondition_failed="workshop_status",
+            )
+        if outcome == "stale":
+            current_etag = _etag(workshop_id, current_version)
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Concurrent modification: ETag mismatch",
+                "CONCURRENT_MODIFICATION",
+                precondition_failed="if_match",
+                details_extra={
+                    "current_etag": current_etag,
+                    "latest_href": f"/bff/agora/workshops/{workshop_id}",
+                },
+            )
+        raise bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "Workshop command could not be admitted",
+            outcome or "COMMAND_ADMISSION_FAILED",
+        )
+
+    def _admit_command(
+        *,
+        workshop_id: str,
+        scope: Any,
+        operation: str,
+        expected_lock_version: int,
+        idempotency_key: str,
+        request_id: str,
+        payload: Mapping[str, Any],
+    ) -> tuple[Dict[str, Any], str]:
+        payload_hash = _request_hash(payload)
+        admission = store.admit_command(
+            workshop_id=workshop_id,
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+            operation=operation,
+            idempotency_key=idempotency_key,
+            request_hash=payload_hash,
+            expected_lock_version=expected_lock_version,
+            request_payload=dict(payload),
+            request_id=request_id,
+            trace_id=request_id,
+        )
+        outcome = str(admission.get("outcome") or "")
+        if outcome not in {"admitted", "replay"}:
+            _raise_admission_failure(workshop_id=workshop_id, result=admission)
+        receipt = admission.get("receipt")
+        if not isinstance(receipt, dict):
+            from models import ErrorCode
+            raise bff_error(
+                500,
+                ErrorCode.UPSTREAM_ERROR,
+                "Workshop command admission did not return a receipt",
+                "COMMAND_RECEIPT_MISSING",
+            )
+        return receipt, payload_hash
+
+    def _canonical_error(
+        *,
+        workshop_id: str,
+        operation: str,
+        scope: Any,
+        idempotency_key: str,
+        request_hash: str,
+        error: CanonicalOperationError,
+        compensation: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        from models import ErrorCode
+
+        store.fail_command(
+            workshop_id=workshop_id,
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+            operation=operation,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            failure={
+                "authority": error.authority,
+                "reason": error.reason,
+                "status_code": error.status_code,
+                "retryable": error.retryable,
+            },
+            compensation=dict(compensation or {}),
+        )
+        status_code = 503 if error.retryable else 502
+        if error.status_code == 404:
+            status_code = 409
+        raise bff_error(
+            status_code,
+            ErrorCode.DEPENDENCY_UNAVAILABLE if error.retryable else ErrorCode.UPSTREAM_ERROR,
+            "Canonical downstream operation failed",
+            error.reason,
+            precondition_failed=error.authority,
+            suggestion="Refetch the workshop before retrying with a new command key",
+        )
+
+    def _fail_domain_command(
+        *,
+        workshop_id: str,
+        operation: str,
+        scope: Any,
+        idempotency_key: str,
+        request_hash: str,
+        status_code: int,
+        code: Any,
+        message: str,
+        reason: str,
+        precondition_failed: str,
+    ) -> None:
+        store.fail_command(
+            workshop_id=workshop_id,
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+            operation=operation,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            failure={
+                "reason": reason,
+                "status_code": status_code,
+                "precondition_failed": precondition_failed,
+            },
+            compensation={"workshop_effect": "none"},
+        )
+        raise bff_error(
+            status_code,
+            code,
+            message,
+            reason,
+            precondition_failed=precondition_failed,
+        )
+
+    @staticmethod
+    def _receipt_result(receipt: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+        value = receipt.get("result")
+        if value is None:
+            value = receipt.get("result_json")
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                return None
+        return dict(value) if isinstance(value, Mapping) else None
+
+    def _require_replayable_receipt(
+        *,
+        receipt: Mapping[str, Any],
+        workshop_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        from models import ErrorCode
+
+        status = str(receipt.get("status") or "")
+        if status == "completed":
+            result = _receipt_result(receipt)
+            if result is None:
+                raise bff_error(
+                    500,
+                    ErrorCode.UPSTREAM_ERROR,
+                    "Completed command receipt is missing its canonical result",
+                    "COMMAND_RESULT_MISSING",
+                )
+            return result
+        if status == "failed":
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "The prior command attempt failed and was compensated",
+                "COMMAND_PREVIOUSLY_FAILED",
+                precondition_failed="idempotency_key",
+                suggestion="GET the workshop and retry with its latest ETag and a new Idempotency-Key",
+                details_extra={"latest_href": f"/bff/agora/workshops/{workshop_id}"},
+            )
+        return None
+
+    def _complete_or_raise(
+        *,
+        workshop_id: str,
+        operation: str,
+        scope: Any,
+        idempotency_key: str,
+        request_hash: str,
+        result: Mapping[str, Any],
+        canonical_refs: Mapping[str, Any],
+        version_link: Optional[Mapping[str, Any]] = None,
+        session_updates: Optional[Mapping[str, Any]] = None,
+        event: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        from models import ErrorCode
+
+        try:
+            completed = store.complete_command(
+                workshop_id=workshop_id,
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                result=dict(result),
+                canonical_refs=dict(canonical_refs),
+                version_link=dict(version_link) if version_link else None,
+                session_updates=dict(session_updates or {}),
+                event=dict(event) if event else None,
+            )
+        except Exception as exc:
+            try:
+                store.fail_command(
+                    workshop_id=workshop_id,
+                    tenant_id=scope.tenant_id,
+                    user_id=scope.user_id,
+                    operation=operation,
+                    idempotency_key=idempotency_key,
+                    request_hash=request_hash,
+                    failure={"reason": "WORKSHOP_COMMIT_EXCEPTION"},
+                    compensation={
+                        "required": True,
+                        "canonical_refs": dict(canonical_refs),
+                    },
+                )
+            except Exception:
+                pass
+            raise bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Workshop command store could not commit canonical readback",
+                "WORKSHOP_COMMIT_EXCEPTION",
+                precondition_failed="workshop_command_store",
+            ) from exc
+        if str(completed.get("outcome") or "") not in {"completed", "replay"}:
+            store.fail_command(
+                workshop_id=workshop_id,
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                failure={"reason": "WORKSHOP_COMMIT_FAILED"},
+                compensation={"required": True, "canonical_refs": dict(canonical_refs)},
+            )
+            raise bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Canonical effect was recorded but workshop projection could not commit",
+                "WORKSHOP_COMMIT_FAILED",
+                precondition_failed="workshop_command_store",
+            )
+        receipt = completed.get("receipt")
+        if not isinstance(receipt, dict):
+            raise bff_error(
+                500,
+                ErrorCode.UPSTREAM_ERROR,
+                "Workshop command completion did not return a receipt",
+                "COMMAND_RECEIPT_MISSING",
+            )
+        return receipt
+
+    @staticmethod
+    def _approval_actor(record: Mapping[str, Any]) -> str:
+        value = (
+            record.get("reviewer")
+            or record.get("approver")
+            or record.get("decided_by")
+            or record.get("actor_id")
+        )
+        if isinstance(value, Mapping):
+            value = value.get("actor_id") or value.get("id")
+        return str(value or "").strip()
+
+    def _require_approval(
+        *,
+        approval_decision_id: str,
+        workshop_id: str,
+        version_id: str,
+        session: Mapping[str, Any],
+        scope: Any,
+    ) -> Dict[str, Any]:
+        from models import ErrorCode
+
+        try:
+            decision = canonical.get_approval_decision(approval_decision_id)
+        except CanonicalOperationError as exc:
+            status_code = 503 if exc.retryable else 409
+            code = ErrorCode.DEPENDENCY_UNAVAILABLE if exc.retryable else ErrorCode.HUMAN_GATE_PENDING
+            raise bff_error(
+                status_code,
+                code,
+                "Authoritative approval is required",
+                exc.reason,
+                precondition_failed="approval_decision_id",
+            ) from exc
+        outcome = str(decision.get("outcome") or decision.get("decision") or "").lower()
+        state = str(decision.get("state") or decision.get("decision_state") or "").lower()
+        if outcome not in {"approve", "approved", "accepted", "approved_with_conditions"}:
+            raise bff_error(
+                409,
+                ErrorCode.HUMAN_GATE_PENDING,
+                "Approval decision is not approved",
+                "APPROVAL_NOT_APPROVED",
+                precondition_failed="approval_decision_id",
+            )
+        if state and state not in {"decided", "approved", "completed"}:
+            raise bff_error(
+                409,
+                ErrorCode.HUMAN_GATE_PENDING,
+                "Approval decision is not terminal",
+                "APPROVAL_NOT_DECIDED",
+                precondition_failed="approval_decision_id",
+            )
+        tenant_id = str(decision.get("tenant_id") or "").strip()
+        owner_user_id = str(
+            decision.get("owner_user_id") or decision.get("user_id") or ""
+        ).strip()
+        if not tenant_id or tenant_id != scope.tenant_id:
+            raise bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Approval decision is outside the workshop tenant",
+                "APPROVAL_TENANT_MISMATCH",
+                precondition_failed="approval_scope",
+            )
+        if owner_user_id and owner_user_id != scope.user_id:
+            raise bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Approval decision is outside the workshop user scope",
+                "APPROVAL_USER_MISMATCH",
+                precondition_failed="approval_scope",
+            )
+        target_id = str(decision.get("target_id") or "").strip()
+        target_version = str(decision.get("target_version") or "").strip()
+        target_type = str(decision.get("target_type") or "").strip().lower()
+        if target_type not in {"strategy_workshop", "workshop"}:
+            raise bff_error(
+                409,
+                ErrorCode.HUMAN_GATE_PENDING,
+                "Approval decision target type is not a Strategy Workshop",
+                "APPROVAL_TARGET_TYPE_MISMATCH",
+                precondition_failed="approval_binding",
+            )
+        if target_id != workshop_id or (target_version and target_version != version_id):
+            raise bff_error(
+                409,
+                ErrorCode.HUMAN_GATE_PENDING,
+                "Approval decision is not bound to this workshop version",
+                "APPROVAL_TARGET_MISMATCH",
+                precondition_failed="approval_binding",
+            )
+        requester = str(session.get("user_id") or "").strip()
+        approver = _approval_actor(decision)
+        if not requester or not approver or requester == approver:
+            raise bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "A distinct approver is required",
+                "APPROVAL_DISTINCT_ACTOR_REQUIRED",
+                precondition_failed="distinct_approver",
+            )
+        return {
+            "approval_decision_id": approval_decision_id,
+            "requested_by": requester,
+            "approved_by": approver,
+            "distinct_actors": True,
+            "decision": "approved",
+        }
 
     def _readiness_from_store_or_state(session: Dict[str, Any]) -> Dict[str, Any]:
         latest = (
@@ -1026,7 +1621,7 @@ def create_strategy_workshop_router(
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _scope(authorization, x_tenant_id, write=True)
         # Idempotency-Key is mandatory for all write operations on this endpoint.
         if idempotency_key is None:
             from models import ErrorCode
@@ -1145,7 +1740,7 @@ def create_strategy_workshop_router(
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _scope(authorization, x_tenant_id, write=True)
         # If-Match is mandatory: mutations without a precondition are rejected (RFC 6585 §428).
         if if_match is None:
             from models import ErrorCode
@@ -1320,7 +1915,7 @@ def create_strategy_workshop_router(
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _scope(authorization, x_tenant_id, write=True)
         session = _scoped_session(workshop_id, scope)
         if if_match is None:
             from models import ErrorCode
@@ -1519,7 +2114,7 @@ def create_strategy_workshop_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
         del body
-        scope = _scope(authorization, x_tenant_id)
+        scope = _scope(authorization, x_tenant_id, write=True)
         session = _scoped_session(workshop_id, scope)
         if if_match is None:
             from models import ErrorCode
@@ -1611,64 +2206,964 @@ def create_strategy_workshop_router(
             },
         }
 
-    # ------------------------------------------------------------------ #
-    # Deferred stubs (later AG-BE-SW-* tasks)
-    # ------------------------------------------------------------------ #
-
     @router.get("/bff/agora/workshops/{workshop_id}/versions")
     def list_workshop_versions(
         workshop_id: str,
+        response: Response,
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        _scope(authorization)
-        _not_implemented("GET /bff/agora/workshops/{workshop_id}/versions")
-        return {}  # unreachable
+        scope = _scope(authorization, x_tenant_id)
+        session = _scoped_session(workshop_id, scope)
+        etag = _etag(workshop_id, int(session.get("lock_version") or 1))
+        response.headers["ETag"] = etag
+        versions: List[Dict[str, Any]] = []
+        for link in store.list_version_links(workshop_id):
+            registry_id = str(link.get("strategy_spec_registry_id") or "")
+            try:
+                readback = canonical.get_strategy_spec(registry_id)
+            except CanonicalOperationError as exc:
+                from models import ErrorCode
+                raise bff_error(
+                    503 if exc.retryable else 502,
+                    ErrorCode.DEPENDENCY_UNAVAILABLE if exc.retryable else ErrorCode.UPSTREAM_ERROR,
+                    "StrategySpec version readback is unavailable",
+                    exc.reason,
+                    precondition_failed="strategy_registry",
+                ) from exc
+            versions.append({"version": link, "strategy_spec": readback})
+        return {
+            "data": {
+                "versions": versions,
+                "selected_version_id": session.get("selected_version_id"),
+                "active_strategy_spec_registry_id": session.get(
+                    "active_strategy_spec_registry_id"
+                ),
+            },
+            "meta": {
+                "snapshot_at": utc_now(),
+                "capability": "agora.workshop.v1",
+                "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+                "request_id": x_request_id,
+                "canonical_authority": "strategy_registry",
+                "etag": etag,
+                "no_direct_action": {
+                    "deployment_triggered": False,
+                    "order_submitted": False,
+                    "live_capital_changed": False,
+                },
+            },
+        }
 
     @router.post("/bff/agora/workshops/{workshop_id}/versions", status_code=201)
     def create_workshop_version(
         workshop_id: str,
+        response: Response,
+        body: Optional[WorkshopVersionCreateRequest] = Body(default=None),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+        if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        _scope(authorization)
-        _not_implemented("POST /bff/agora/workshops/{workshop_id}/versions")
-        return {}
+        from models import ErrorCode
+        from services.research.strategy_spec.models import validate_strategy_spec_payload
+        from services.research.strategy_spec.patching import PatchError, apply_patch_validated
+
+        scope = _scope(
+            authorization,
+            x_tenant_id,
+            write=True,
+            x_mfa_token=x_mfa_token,
+            mfa_required=True,
+        )
+        if body is None:
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "VersionCreateRequest body is required",
+                "REQUEST_BODY_REQUIRED",
+                precondition_failed="request_body",
+            )
+        session = _scoped_session(workshop_id, scope)
+        expected_version, command_key, request_id = _require_command_headers(
+            workshop_id=workshop_id,
+            if_match=if_match,
+            idempotency_key=idempotency_key,
+            request_id=x_request_id,
+        )
+        if (
+            body.expected_workshop_version is not None
+            and body.expected_workshop_version != expected_version
+        ):
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Body and If-Match workshop versions disagree",
+                "EXPECTED_WORKSHOP_VERSION_MISMATCH",
+                precondition_failed="expected_workshop_version",
+            )
+        request_payload = body.model_dump(mode="json")
+        receipt, request_hash = _admit_command(
+            workshop_id=workshop_id,
+            scope=scope,
+            operation="create_version",
+            expected_lock_version=expected_version,
+            idempotency_key=command_key,
+            request_id=request_id,
+            payload=request_payload,
+        )
+        replay = _require_replayable_receipt(receipt=receipt, workshop_id=workshop_id)
+        if replay is not None:
+            return _command_response(
+                receipt=receipt,
+                resource=replay,
+                session=store.get_session(workshop_id) or session,
+                scope=scope,
+                canonical_authority="strategy_registry",
+                response=response,
+            )
+
+        base_registry_id = str(session.get("active_strategy_spec_registry_id") or "")
+        if not base_registry_id:
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="create_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=409,
+                code=ErrorCode.PRECONDITION_FAILED,
+                message="Workshop has no active StrategySpec",
+                reason="ACTIVE_STRATEGY_SPEC_REQUIRED",
+                precondition_failed="active_strategy_spec_registry_id",
+            )
+        try:
+            base_readback = canonical.get_strategy_spec(base_registry_id)
+        except CanonicalOperationError as exc:
+            _canonical_error(
+                workshop_id=workshop_id,
+                operation="create_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                error=exc,
+            )
+        base_entry = dict(base_readback["entry"])
+        base_doc = dict((base_entry.get("metadata") or {}).get("strategy_spec") or {})
+        if not base_doc:
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="create_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=409,
+                code=ErrorCode.PRECONDITION_FAILED,
+                message="Active Registry entry has no inline StrategySpec document",
+                reason="STRATEGY_SPEC_DOCUMENT_REQUIRED",
+                precondition_failed="strategy_spec",
+            )
+        try:
+            patched, _ = apply_patch_validated(
+                base_doc,
+                body.patch,
+                expected_base_sha256=body.base_document_sha256,
+            )
+            version_parts = [int(part) for part in str(base_entry.get("version") or "").split(".")]
+            if len(version_parts) != 3:
+                raise ValueError("Registry StrategySpec version must be semantic x.y.z")
+            version_parts[2] += 1
+            next_version = ".".join(str(part) for part in version_parts)
+            # StrategySpec.spec_version is the document-schema version (currently
+            # 1.0), not the Registry artifact semver.  The immutable Registry
+            # entry's ``version`` below advances while the document contract
+            # version remains unchanged.
+            validate_strategy_spec_payload(patched)
+        except (PatchError, ValueError) as exc:
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="create_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=422,
+                code=ErrorCode.VALIDATION_FAILED,
+                message="StrategySpec patch is invalid",
+                reason=getattr(exc, "error_code", "PATCH_VALIDATION_FAILED"),
+                precondition_failed="patch",
+            )
+        digest = hashlib.sha256(
+            f"{workshop_id}:{command_key}".encode("utf-8")
+        ).hexdigest()[:20]
+        registry_id = f"reg-ws-{digest}"
+        workshop_version_id = f"wsv-{digest}"
+        strategy_id = str(base_entry.get("strategy_id") or session.get("strategy_id") or "")
+        try:
+            registry_readback = canonical.create_strategy_spec(
+                {
+                    "registry_id": registry_id,
+                    "strategy_id": strategy_id,
+                    "version": next_version,
+                    "artifact_state": "draft",
+                    "lineage": {"parent_registry_ids": [base_registry_id]},
+                    "metadata": {
+                        "tenant_id": scope.tenant_id,
+                        "owner_user_id": scope.user_id,
+                        "workshop_id": workshop_id,
+                        "workshop_request_id": request_id,
+                        "reason": body.reason,
+                    },
+                    "strategy_spec": patched,
+                }
+            )
+        except CanonicalOperationError as exc:
+            _canonical_error(
+                workshop_id=workshop_id,
+                operation="create_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                error=exc,
+            )
+        existing_links = store.list_version_links(workshop_id)
+        link = {
+            "workshop_version_id": workshop_version_id,
+            "workshop_id": workshop_id,
+            "strategy_id": strategy_id,
+            "strategy_spec_registry_id": registry_id,
+            "parent_workshop_version_id": session.get("active_workshop_version_id")
+            or session.get("selected_version_id"),
+            "source_event_id": f"wsevt-version-{digest}",
+            "sequence_no": len(existing_links) + 1,
+            "created_by": scope.user_id,
+            "created_at": utc_now(),
+        }
+        resource = {"version": link, "strategy_spec": registry_readback}
+        receipt = _complete_or_raise(
+            workshop_id=workshop_id,
+            operation="create_version",
+            scope=scope,
+            idempotency_key=command_key,
+            request_hash=request_hash,
+            result=resource,
+            canonical_refs={
+                "strategy_spec_registry_id": registry_id,
+                "workshop_version_id": workshop_version_id,
+            },
+            version_link=link,
+            session_updates={"strategy_id": strategy_id, "status": "in_review"},
+            event={
+                "event_id": link["source_event_id"],
+                "actor_type": "operator",
+                "event_type": "version_created",
+                "redacted_summary": "StrategySpec draft version created",
+                "payload_refs_json": {
+                    "workshop_version_id": workshop_version_id,
+                    "strategy_spec_registry_id": registry_id,
+                },
+                "trace_id": request_id,
+            },
+        )
+        _ws_publish(
+            workshop_id,
+            "workshop.version.created",
+            {
+                "workshop_version_id": workshop_version_id,
+                "strategy_spec_registry_id": registry_id,
+            },
+            utc_now_fn=utc_now,
+        )
+        return _command_response(
+            receipt=receipt,
+            resource=resource,
+            session=store.get_session(workshop_id) or session,
+            scope=scope,
+            canonical_authority="strategy_registry",
+            response=response,
+        )
 
     @router.post("/bff/agora/workshops/{workshop_id}/versions/{version_id}/select")
     def select_workshop_version(
         workshop_id: str,
         version_id: str,
+        response: Response,
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+        if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        _scope(authorization)
-        _not_implemented("POST /bff/agora/workshops/{workshop_id}/versions/{version_id}/select")
-        return {}
+        from models import ErrorCode
+
+        scope = _scope(
+            authorization,
+            x_tenant_id,
+            write=True,
+            x_mfa_token=x_mfa_token,
+            mfa_required=True,
+        )
+        session = _scoped_session(workshop_id, scope)
+        link = store.get_version_link(workshop_id, version_id)
+        if link is None:
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Workshop version not found",
+                version_id,
+            )
+        expected_version, command_key, request_id = _require_command_headers(
+            workshop_id=workshop_id,
+            if_match=if_match,
+            idempotency_key=idempotency_key,
+            request_id=x_request_id,
+        )
+        request_payload = {"version_id": version_id}
+        receipt, request_hash = _admit_command(
+            workshop_id=workshop_id,
+            scope=scope,
+            operation="select_version",
+            expected_lock_version=expected_version,
+            idempotency_key=command_key,
+            request_id=request_id,
+            payload=request_payload,
+        )
+        replay = _require_replayable_receipt(receipt=receipt, workshop_id=workshop_id)
+        if replay is not None:
+            return _command_response(
+                receipt=receipt,
+                resource=replay,
+                session=store.get_session(workshop_id) or session,
+                scope=scope,
+                canonical_authority="strategy_registry",
+                response=response,
+            )
+        registry_id = str(link["strategy_spec_registry_id"])
+        try:
+            registry_readback = canonical.get_strategy_spec(registry_id)
+        except CanonicalOperationError as exc:
+            _canonical_error(
+                workshop_id=workshop_id,
+                operation="select_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                error=exc,
+            )
+        selected_session = {
+            **session,
+            "strategy_id": link["strategy_id"],
+            "selected_version_id": version_id,
+            "active_workshop_version_id": version_id,
+            "active_strategy_spec_registry_id": registry_id,
+            "status": "in_review",
+            "lock_version": receipt.get("admitted_lock_version"),
+        }
+        resource = {
+            "workshop": selected_session,
+            "version": link,
+            "strategy_spec": registry_readback,
+        }
+        receipt = _complete_or_raise(
+            workshop_id=workshop_id,
+            operation="select_version",
+            scope=scope,
+            idempotency_key=command_key,
+            request_hash=request_hash,
+            result=resource,
+            canonical_refs={
+                "strategy_spec_registry_id": registry_id,
+                "workshop_version_id": version_id,
+            },
+            session_updates={
+                "strategy_id": link["strategy_id"],
+                "selected_version_id": version_id,
+                "active_workshop_version_id": version_id,
+                "active_strategy_spec_registry_id": registry_id,
+                "status": "in_review",
+            },
+            event={
+                "event_id": f"wsevt-select-{hashlib.sha256(command_key.encode()).hexdigest()[:16]}",
+                "actor_type": "operator",
+                "event_type": "version_selected",
+                "redacted_summary": "Workshop version selected",
+                "payload_refs_json": {
+                    "workshop_version_id": version_id,
+                    "strategy_spec_registry_id": registry_id,
+                },
+                "trace_id": request_id,
+            },
+        )
+        return _command_response(
+            receipt=receipt,
+            resource=resource,
+            session=store.get_session(workshop_id) or selected_session,
+            scope=scope,
+            canonical_authority="strategy_registry",
+            response=response,
+        )
 
     @router.post("/bff/agora/workshops/{workshop_id}/research-runs", status_code=202)
     def create_workshop_research_run(
         workshop_id: str,
+        response: Response,
+        body: Optional[WorkshopResearchRunRequest] = Body(default=None),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+        if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        _scope(authorization)
-        _not_implemented("POST /bff/agora/workshops/{workshop_id}/research-runs")
-        return {}
+        from models import ErrorCode
 
-    @router.post("/bff/agora/workshops/{workshop_id}/consultations", status_code=202)
+        scope = _scope(
+            authorization,
+            x_tenant_id,
+            write=True,
+            x_mfa_token=x_mfa_token,
+            mfa_required=True,
+        )
+        if body is None:
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "WorkshopResearchRunRequest body is required",
+                "REQUEST_BODY_REQUIRED",
+                precondition_failed="request_body",
+            )
+        session = _scoped_session(workshop_id, scope)
+        version_id = body.strategy_version_ref or session.get("selected_version_id")
+        link = store.get_version_link(workshop_id, str(version_id or ""))
+        if link is None:
+            raise bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "A selected workshop version is required for research",
+                "WORKSHOP_VERSION_REQUIRED",
+                precondition_failed="strategy_version_ref",
+            )
+        approval = _require_approval(
+            approval_decision_id=body.approval_decision_id,
+            workshop_id=workshop_id,
+            version_id=str(version_id),
+            session=session,
+            scope=scope,
+        )
+        safe_modes = {"stub", "handoff_only", "manual"}
+        if (
+            body.adapter not in safe_modes
+            or body.requested_mode not in safe_modes
+            or body.dispatch_mode not in safe_modes
+        ):
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Workshop research is restricted to non-live handoff modes",
+                "RESEARCH_ENVIRONMENT_FORBIDDEN",
+                precondition_failed="research_mode",
+            )
+        serialized_parameters = json.dumps(body.parameters, sort_keys=True).lower()
+        if any(token in serialized_parameters for token in ('"live"', '"canary"', '"production"')):
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Workshop research cannot target canary, live, or production",
+                "RESEARCH_ENVIRONMENT_FORBIDDEN",
+                precondition_failed="parameters.environment",
+            )
+        expected_version, command_key, request_id = _require_command_headers(
+            workshop_id=workshop_id,
+            if_match=if_match,
+            idempotency_key=idempotency_key,
+            request_id=x_request_id,
+        )
+        request_payload = body.model_dump(mode="json")
+        receipt, request_hash = _admit_command(
+            workshop_id=workshop_id,
+            scope=scope,
+            operation="dispatch_research",
+            expected_lock_version=expected_version,
+            idempotency_key=command_key,
+            request_id=request_id,
+            payload=request_payload,
+        )
+        replay = _require_replayable_receipt(receipt=receipt, workshop_id=workshop_id)
+        if replay is not None:
+            return _command_response(
+                receipt=receipt,
+                resource=replay,
+                session=store.get_session(workshop_id) or session,
+                scope=scope,
+                canonical_authority="research_orchestrator",
+                response=response,
+            )
+        registry_id = str(link["strategy_spec_registry_id"])
+        digest = hashlib.sha256(f"{workshop_id}:{command_key}".encode()).hexdigest()[:20]
+        try:
+            downstream = canonical.dispatch_research_run(
+                task_payload={
+                    "title": f"Strategy Workshop research {workshop_id}",
+                    "objective": body.research_context,
+                    "source_refs": [
+                        {"type": "strategy_workshop", "id": workshop_id},
+                        {"type": "workshop_version", "id": str(version_id)},
+                        {"type": "strategy_spec_registry", "id": registry_id},
+                        {"type": "approval_decision", "id": body.approval_decision_id},
+                    ],
+                    "constraints": {
+                        "tenant_id": scope.tenant_id,
+                        "environment_ceiling": "research",
+                        "no_live_capital": True,
+                    },
+                    "actor_id": scope.user_id,
+                    "idempotency_key": f"workshop-{digest}-task",
+                    "created_at": utc_now(),
+                },
+                run_payload={
+                    "adapter": body.adapter,
+                    "requested_mode": body.requested_mode,
+                    "dispatch_mode": body.dispatch_mode,
+                    "input_refs": [
+                        {"type": "strategy_spec", "id": registry_id},
+                        {"type": "workshop_version", "id": str(version_id)},
+                    ],
+                    "parameters": {
+                        **body.parameters,
+                        "workshop_id": workshop_id,
+                        "tenant_id": scope.tenant_id,
+                        "approval_decision_id": body.approval_decision_id,
+                    },
+                    "actor_id": scope.user_id,
+                    "idempotency_key": f"workshop-{digest}-run",
+                    "requested_at": utc_now(),
+                },
+            )
+        except CanonicalOperationError as exc:
+            _canonical_error(
+                workshop_id=workshop_id,
+                operation="dispatch_research",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                error=exc,
+            )
+        run = dict(downstream["run"])
+        run_id = str(run.get("run_id") or run.get("id") or "")
+        downstream_status = str(run.get("status") or "").lower()
+        if downstream_status == "rejected":
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="dispatch_research",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=409,
+                code=ErrorCode.PRECONDITION_FAILED,
+                message="Research orchestrator rejected the run",
+                reason="RESEARCH_RUN_REJECTED",
+                precondition_failed="research_dispatch",
+            )
+        resource = {
+            **downstream,
+            "downstream_status": downstream_status,
+            "downstream_terminal": downstream_status
+            in {"completed", "succeeded", "failed", "cancelled", "timed_out"},
+        }
+        receipt = _complete_or_raise(
+            workshop_id=workshop_id,
+            operation="dispatch_research",
+            scope=scope,
+            idempotency_key=command_key,
+            request_hash=request_hash,
+            result=resource,
+            canonical_refs={
+                "research_task_id": downstream["task"].get("task_id"),
+                "research_run_id": run_id,
+                "workshop_version_id": str(version_id),
+                "approval_decision_id": approval["approval_decision_id"],
+            },
+            event={
+                "event_id": f"wsevt-research-{digest}",
+                "actor_type": "operator",
+                "event_type": "research_dispatched",
+                "redacted_summary": "Research run admitted by canonical orchestrator",
+                "payload_refs_json": {
+                    "research_run_id": run_id,
+                    "workshop_version_id": str(version_id),
+                },
+                "trace_id": request_id,
+            },
+        )
+        _ws_publish(
+            workshop_id,
+            "research.run.progress",
+            {"run_id": run_id, "status": downstream_status},
+            utc_now_fn=utc_now,
+        )
+        return _command_response(
+            receipt=receipt,
+            resource=resource,
+            session=store.get_session(workshop_id) or session,
+            scope=scope,
+            canonical_authority="research_orchestrator",
+            response=response,
+        )
+
+    @router.post("/bff/agora/workshops/{workshop_id}/consultations", status_code=201)
     def create_workshop_consultation(
         workshop_id: str,
+        response: Response,
+        body: Optional[WorkshopConsultationRequest] = Body(default=None),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+        if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        _scope(authorization)
-        _not_implemented("POST /bff/agora/workshops/{workshop_id}/consultations")
-        return {}
+        from models import ErrorCode
+
+        scope = _scope(
+            authorization,
+            x_tenant_id,
+            write=True,
+            x_mfa_token=x_mfa_token,
+            mfa_required=True,
+        )
+        if body is None:
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "WorkshopConsultationRequest body is required",
+                "REQUEST_BODY_REQUIRED",
+                precondition_failed="request_body",
+            )
+        session = _scoped_session(workshop_id, scope)
+        if body.consultation_type not in {"committee", "advisory"}:
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "consultation_type must be committee or advisory",
+                "CONSULTATION_TYPE_INVALID",
+            )
+        version_id = str(session.get("selected_version_id") or "")
+        link = store.get_version_link(workshop_id, version_id)
+        if link is None:
+            raise bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "A selected workshop version is required for consultation",
+                "WORKSHOP_VERSION_REQUIRED",
+                precondition_failed="selected_version_id",
+            )
+        expected_version, command_key, request_id = _require_command_headers(
+            workshop_id=workshop_id,
+            if_match=if_match,
+            idempotency_key=idempotency_key,
+            request_id=x_request_id,
+        )
+        request_payload = body.model_dump(mode="json")
+        receipt, request_hash = _admit_command(
+            workshop_id=workshop_id,
+            scope=scope,
+            operation="open_consultation",
+            expected_lock_version=expected_version,
+            idempotency_key=command_key,
+            request_id=request_id,
+            payload=request_payload,
+        )
+        replay = _require_replayable_receipt(receipt=receipt, workshop_id=workshop_id)
+        if replay is not None:
+            return _command_response(
+                receipt=receipt,
+                resource=replay,
+                session=store.get_session(workshop_id) or session,
+                scope=scope,
+                canonical_authority="consultation_service",
+                response=response,
+            )
+        digest = hashlib.sha256(f"{workshop_id}:{command_key}".encode()).hexdigest()[:20]
+        consultation_id = f"cr-ws-{digest}"
+        try:
+            consultation = canonical.open_consultation(
+                request_id=consultation_id,
+                payload={
+                    "request_type": "strategy_review",
+                    "requested_by": {
+                        "actor_type": "operator",
+                        "actor_id": scope.user_id,
+                    },
+                    "target_type": "strategy_workshop",
+                    "target_id": workshop_id,
+                    "task": body.subject,
+                    "consultation_type": body.consultation_type,
+                    "context_refs": [
+                        {"type": "workshop_version", "id": version_id},
+                        {
+                            "type": "strategy_spec_registry",
+                            "id": link["strategy_spec_registry_id"],
+                        },
+                        *[
+                            {"type": "external_context", "id": ref}
+                            for ref in body.context_refs
+                        ],
+                    ],
+                    "priority": "normal",
+                    "metadata": {
+                        "tenant_id": scope.tenant_id,
+                        "owner_user_id": scope.user_id,
+                        "workshop_id": workshop_id,
+                        "workshop_version_id": version_id,
+                        "idempotency_key": command_key,
+                    },
+                    "trace_id": request_id,
+                },
+            )
+        except CanonicalOperationError as exc:
+            _canonical_error(
+                workshop_id=workshop_id,
+                operation="open_consultation",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                error=exc,
+            )
+        downstream_status = str(consultation.get("status") or "").lower()
+        resource = {
+            "consultation": consultation,
+            "downstream_status": downstream_status,
+            "downstream_terminal": downstream_status
+            in {"published", "cancelled", "failed"},
+        }
+        try:
+            receipt = _complete_or_raise(
+                workshop_id=workshop_id,
+                operation="open_consultation",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                result=resource,
+                canonical_refs={
+                    "consultation_request_id": consultation_id,
+                    "workshop_version_id": version_id,
+                },
+                event={
+                    "event_id": f"wsevt-consult-{digest}",
+                    "actor_type": "operator",
+                    "event_type": "consultation_started",
+                    "redacted_summary": "Consultation request opened",
+                    "payload_refs_json": {
+                        "consultation_request_id": consultation_id,
+                        "workshop_version_id": version_id,
+                    },
+                    "trace_id": request_id,
+                },
+            )
+        except HTTPException:
+            try:
+                canonical.cancel_consultation(
+                    consultation_id,
+                    actor_id=scope.user_id,
+                    trace_id=request_id,
+                )
+                store.fail_command(
+                    workshop_id=workshop_id,
+                    tenant_id=scope.tenant_id,
+                    user_id=scope.user_id,
+                    operation="open_consultation",
+                    idempotency_key=command_key,
+                    request_hash=request_hash,
+                    failure={"reason": "WORKSHOP_COMMIT_FAILED"},
+                    compensation={
+                        "consultation_request_id": consultation_id,
+                        "action": "cancelled",
+                    },
+                )
+            except Exception:
+                pass
+            raise
+        return _command_response(
+            receipt=receipt,
+            resource=resource,
+            session=store.get_session(workshop_id) or session,
+            scope=scope,
+            canonical_authority="consultation_service",
+            response=response,
+        )
 
     @router.post("/bff/agora/workshops/{workshop_id}/conclude")
     def conclude_workshop(
         workshop_id: str,
+        response: Response,
+        body: Optional[WorkshopConcludeRequest] = Body(default=None),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+        if_match: Optional[str] = Header(default=None, alias="If-Match"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        _scope(authorization)
-        _not_implemented("POST /bff/agora/workshops/{workshop_id}/conclude")
-        return {}
+        from models import ErrorCode
+
+        scope = _scope(
+            authorization,
+            x_tenant_id,
+            write=True,
+            x_mfa_token=x_mfa_token,
+            mfa_required=True,
+        )
+        if body is None:
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "WorkshopConcludeRequest body is required",
+                "REQUEST_BODY_REQUIRED",
+                precondition_failed="request_body",
+            )
+        session = _scoped_session(workshop_id, scope)
+        if session.get("status") != "in_review":
+            raise bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "Workshop must be in_review before conclude",
+                "WORKSHOP_NOT_IN_REVIEW",
+                precondition_failed="workshop_status",
+            )
+        version_id = body.final_version_id or session.get("selected_version_id")
+        link = store.get_version_link(workshop_id, str(version_id or ""))
+        if link is None:
+            raise bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "A valid final workshop version is required",
+                "WORKSHOP_VERSION_REQUIRED",
+                precondition_failed="final_version_id",
+            )
+        two_person_proof = _require_approval(
+            approval_decision_id=body.approval_decision_id,
+            workshop_id=workshop_id,
+            version_id=str(version_id),
+            session=session,
+            scope=scope,
+        )
+        expected_version, command_key, request_id = _require_command_headers(
+            workshop_id=workshop_id,
+            if_match=if_match,
+            idempotency_key=idempotency_key,
+            request_id=x_request_id,
+        )
+        request_payload = body.model_dump(mode="json")
+        receipt, request_hash = _admit_command(
+            workshop_id=workshop_id,
+            scope=scope,
+            operation="conclude",
+            expected_lock_version=expected_version,
+            idempotency_key=command_key,
+            request_id=request_id,
+            payload=request_payload,
+        )
+        replay = _require_replayable_receipt(receipt=receipt, workshop_id=workshop_id)
+        if replay is not None:
+            return _command_response(
+                receipt=receipt,
+                resource=replay,
+                session=store.get_session(workshop_id) or session,
+                scope=scope,
+                canonical_authority="workshop_store+strategy_registry+approval_decision_store",
+                response=response,
+            )
+        registry_id = str(link["strategy_spec_registry_id"])
+        try:
+            registry_readback = canonical.get_strategy_spec(registry_id)
+        except CanonicalOperationError as exc:
+            _canonical_error(
+                workshop_id=workshop_id,
+                operation="conclude",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                error=exc,
+            )
+        concluded_at = utc_now()
+        concluded_session = {
+            **session,
+            "selected_version_id": str(version_id),
+            "active_workshop_version_id": str(version_id),
+            "active_strategy_spec_registry_id": registry_id,
+            "final_workshop_version_id": str(version_id),
+            "final_strategy_spec_registry_id": registry_id,
+            "status": "concluded",
+            "concluded_at": concluded_at,
+            "lock_version": receipt.get("admitted_lock_version"),
+        }
+        no_direct_action = {
+            "deployment_triggered": False,
+            "order_submitted": False,
+            "live_capital_changed": False,
+        }
+        resource = {
+            "workshop": concluded_session,
+            "version": {**link, "strategy_spec": registry_readback},
+            "approval_decision_id": body.approval_decision_id,
+            "two_person_proof": two_person_proof,
+            "no_direct_action_proof": no_direct_action,
+        }
+        digest = hashlib.sha256(f"{workshop_id}:{command_key}".encode()).hexdigest()[:20]
+        receipt = _complete_or_raise(
+            workshop_id=workshop_id,
+            operation="conclude",
+            scope=scope,
+            idempotency_key=command_key,
+            request_hash=request_hash,
+            result=resource,
+            canonical_refs={
+                "workshop_version_id": str(version_id),
+                "strategy_spec_registry_id": registry_id,
+                "approval_decision_id": body.approval_decision_id,
+            },
+            session_updates={
+                "selected_version_id": str(version_id),
+                "active_workshop_version_id": str(version_id),
+                "active_strategy_spec_registry_id": registry_id,
+                "final_workshop_version_id": str(version_id),
+                "final_strategy_spec_registry_id": registry_id,
+                "status": "concluded",
+                "concluded_at": concluded_at,
+            },
+            event={
+                "event_id": f"wsevt-conclude-{digest}",
+                "actor_type": "operator",
+                "event_type": "concluded",
+                "redacted_summary": "Workshop concluded with approved final version",
+                "payload_refs_json": {
+                    "final_workshop_version_id": str(version_id),
+                    "final_strategy_spec_registry_id": registry_id,
+                    "approval_decision_id": body.approval_decision_id,
+                },
+                "trace_id": request_id,
+            },
+        )
+        _ws_publish(
+            workshop_id,
+            "workshop.concluded",
+            {
+                "final_workshop_version_id": str(version_id),
+                "final_strategy_spec_registry_id": registry_id,
+            },
+            utc_now_fn=utc_now,
+        )
+        return _command_response(
+            receipt=receipt,
+            resource=resource,
+            session=store.get_session(workshop_id) or concluded_session,
+            scope=scope,
+            canonical_authority="workshop_store+strategy_registry+approval_decision_store",
+            response=response,
+        )
 
     @router.get("/bff/agora/workshops/{workshop_id}/stream")
     async def stream_workshop(
