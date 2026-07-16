@@ -162,6 +162,55 @@ def _worker_workspace_root() -> Path | None:
     return Path(os.path.expanduser(raw)).resolve()
 
 
+def _first_symlink_component(path: Path) -> Path | None:
+    current = Path(path.anchor)
+    parts = path.parts[1:] if path.is_absolute() else path.parts
+    for part in parts:
+        current = current / part
+        try:
+            if current.is_symlink():
+                return current
+            if not current.exists():
+                return None
+        except OSError:
+            return current
+    return None
+
+
+def _status_root_from_runtime_path(raw: str, *, label: str) -> Path:
+    path = Path(os.path.expanduser(raw))
+    if not path.is_absolute():
+        raise RuntimeError(f"{label} must be absolute when set")
+    resolved = path.resolve()
+    parent = resolved.parent
+    if (
+        parent.name not in {"status", "heartbeats"}
+        or parent.parent.name != "worker-runtime"
+        or parent.parent.parent.name != ".orchestrator"
+    ):
+        raise RuntimeError(
+            f"{label} is not under .orchestrator/worker-runtime: {resolved}"
+        )
+    return parent.parent.parent.parent.resolve()
+
+
+def _supervisor_expected_status_root() -> Path | None:
+    roots: list[Path] = []
+    for env_name in ("ORCH_RUNNER_STATUS_PATH", "ORCH_HEARTBEAT_PATH"):
+        raw = str(os.environ.get(env_name) or "").strip()
+        if not raw:
+            continue
+        root = _status_root_from_runtime_path(raw, label=env_name)
+        if root not in roots:
+            roots.append(root)
+    if len(roots) > 1:
+        raise RuntimeError(
+            "ORCH_RUNNER_STATUS_PATH and ORCH_HEARTBEAT_PATH disagree on "
+            f"the supervisor coordination root: {roots[0]} != {roots[1]}"
+        )
+    return roots[0] if roots else None
+
+
 def _git_toplevel(path: Path) -> Path | None:
     proc = subprocess.run(
         ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
@@ -207,8 +256,11 @@ def validate_status_root_binding() -> None:
     expanded_root = Path(os.path.expanduser(raw_root))
     if not expanded_root.is_absolute():
         raise RuntimeError("PANTHEON_STATUS_ROOT must be an absolute path")
-    if _existing_path_is_symlink(expanded_root):
-        raise RuntimeError(f"PANTHEON_STATUS_ROOT cannot be a symlink: {expanded_root}")
+    symlink_component = _first_symlink_component(expanded_root)
+    if symlink_component is not None:
+        raise RuntimeError(
+            f"PANTHEON_STATUS_ROOT cannot include a symlink component: {symlink_component}"
+        )
 
     root = expanded_root.resolve()
     if root != STATUS_ROOT:
@@ -224,6 +276,12 @@ def validate_status_root_binding() -> None:
         raise RuntimeError(
             "PANTHEON_STATUS_ROOT must point at the supervisor coordination "
             "root, not the isolated task worktree"
+        )
+    expected_root = _supervisor_expected_status_root()
+    if expected_root is not None and root != expected_root:
+        raise RuntimeError(
+            "PANTHEON_STATUS_ROOT does not match the supervisor runtime "
+            f"coordination root: {root} != {expected_root}"
         )
 
     git_root = _git_toplevel(root)

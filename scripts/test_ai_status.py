@@ -106,6 +106,11 @@ class StatusRootRoutingTests(unittest.TestCase):
     def _init_repo(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=path, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
+        (path / ".gitkeep").write_text("fixture\n", encoding="utf-8")
+        subprocess.run(["git", "add", ".gitkeep"], cwd=path, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "fixture"], cwd=path, check=True)
 
     def _write_status_state(self, root: Path, *, owner: str, next_value: str) -> None:
         state = ai_status.default_state()
@@ -134,6 +139,7 @@ class StatusRootRoutingTests(unittest.TestCase):
         for rel in (
             "scripts/ai_status.py",
             "scripts/ai-status.sh",
+            "scripts/loop_done_guardrail.py",
             ".orchestrator/common.py",
             ".orchestrator/runtime_state.py",
             ".orchestrator/task_archive.py",
@@ -229,6 +235,18 @@ class StatusRootRoutingTests(unittest.TestCase):
             worktree_archive = worktree / "ai-task-archive" / "tasks" / "STALE.json"
             worktree_archive.parent.mkdir(parents=True)
             worktree_archive.write_text('{"task_id": "STALE"}\n', encoding="utf-8")
+            worktree_current = worktree / "current-work.md"
+            worktree_dashboard = worktree / "dashboard-bundle.json"
+            worktree_docs_site = worktree / "docs-site"
+            worktree_docs_status = worktree_docs_site / "ai-status.json"
+            worktree_docs_current = worktree_docs_site / "current-work.md"
+            worktree_docs_dashboard = worktree_docs_site / "dashboard-bundle.json"
+            worktree_docs_site.mkdir(parents=True)
+            worktree_current.write_text("stale current work\n", encoding="utf-8")
+            worktree_dashboard.write_text('{"stale": true}\n', encoding="utf-8")
+            worktree_docs_status.write_text('{"stale": "status"}\n', encoding="utf-8")
+            worktree_docs_current.write_text("stale docs current\n", encoding="utf-8")
+            worktree_docs_dashboard.write_text('{"stale": "dashboard"}\n', encoding="utf-8")
             worktree_task_lock = worktree / ".orchestrator" / "task-state.lock"
             worktree_activity_lock = worktree / ".orchestrator" / "activity-audit.lock"
             worktree_task_lock.write_text("stale-task-lock\n", encoding="utf-8")
@@ -239,10 +257,17 @@ class StatusRootRoutingTests(unittest.TestCase):
                     worktree / "ai-status.json",
                     worktree_log,
                     worktree_archive,
+                    worktree_current,
+                    worktree_dashboard,
+                    worktree_docs_status,
+                    worktree_docs_current,
+                    worktree_docs_dashboard,
                     worktree_task_lock,
                     worktree_activity_lock,
                 )
             }
+            central_runner_status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+            central_heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
 
             env = os.environ.copy()
             env.update(
@@ -253,8 +278,26 @@ class StatusRootRoutingTests(unittest.TestCase):
                     "ORCH_WORKSPACE_PATH": str(worktree),
                     "ORCH_RUN_ID": "codex-test-run",
                     "ORCH_TASK_ID": "CENTRAL-ROOT-001",
+                    "ORCH_RUNNER_STATUS_PATH": str(central_runner_status),
+                    "ORCH_HEARTBEAT_PATH": str(central_heartbeat),
                 }
             )
+
+            def run_status(args: list[str], *, actor: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+                command_env = dict(env)
+                command_env["AI_NAME"] = actor
+                if extra_env:
+                    command_env.update(extra_env)
+                return subprocess.run(
+                    ["bash", str(worktree / "scripts" / "ai-status.sh"), *args],
+                    cwd=worktree,
+                    env=command_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                    check=False,
+                )
+
             show = subprocess.run(
                 ["bash", str(worktree / "scripts" / "ai-status.sh"), "show", "CENTRAL-ROOT-001"],
                 cwd=worktree,
@@ -272,31 +315,64 @@ class StatusRootRoutingTests(unittest.TestCase):
                 ["progress", "CENTRAL-ROOT-001", "central progress only"],
                 ["handoff", "CENTRAL-ROOT-001", "Antigravity", "central handoff only"],
             ):
-                result = subprocess.run(
-                    ["bash", str(worktree / "scripts" / "ai-status.sh"), *args],
-                    cwd=worktree,
-                    env=env,
-                    capture_output=True,
-                    text=True,
-                    timeout=20,
-                    check=False,
-                )
+                result = run_status(args, actor="Codex2")
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
 
+            reopen = run_status(
+                ["reopen", "CENTRAL-ROOT-001", "review requested central changes only"],
+                actor="Antigravity",
+            )
+            self.assertEqual(reopen.returncode, 0, reopen.stderr + reopen.stdout)
+            second_handoff = run_status(
+                ["handoff", "CENTRAL-ROOT-001", "Antigravity", "central second review only"],
+                actor="Codex2",
+            )
+            self.assertEqual(second_handoff.returncode, 0, second_handoff.stderr + second_handoff.stdout)
+            approve = run_status(
+                ["approve", "CENTRAL-ROOT-001", "central approval only"],
+                actor="Antigravity",
+                extra_env={"REVIEW_NOTES_ZH": "central approve"},
+            )
+            self.assertEqual(approve.returncode, 0, approve.stderr + approve.stdout)
+            done = run_status(
+                ["done", "CENTRAL-ROOT-001", "central done and archive only"],
+                actor="Codex2",
+                extra_env={
+                    "TASK_REQUIRE_COMMIT_HASH": "0",
+                    "TASK_REQUIRE_GIT_CLEAN": "0",
+                    "TASK_RECORD_REMOTE_STATUS": "0",
+                    "TASK_REQUIRE_MERGED_PR": "0",
+                },
+            )
+            self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+
             central_state = json.loads((central / "ai-status.json").read_text(encoding="utf-8"))
-            task = ai_status.get_task(central_state, "CENTRAL-ROOT-001")
-            self.assertIsNotNone(task)
-            self.assertEqual(task["status"], "review")
-            self.assertEqual(task["next"], "central handoff only")
+            self.assertIsNone(ai_status.get_task(central_state, "CENTRAL-ROOT-001"))
+            archived = json.loads(
+                (central / "ai-task-archive" / "tasks" / "CENTRAL-ROOT-001.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(archived["task"]["status"], "done")
+            archive_index = json.loads((central / "ai-task-archive" / "index.json").read_text(encoding="utf-8"))
+            self.assertIn("CENTRAL-ROOT-001", archive_index["recent_terminal_ids"])
             central_events = [
                 json.loads(line)
                 for line in central_log.read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
-            self.assertIn("progress", {event.get("type") for event in central_events})
-            self.assertIn("handoff", {event.get("type") for event in central_events})
+            self.assertTrue(
+                {"progress", "handoff", "reopen", "review_approved", "done"}.issubset(
+                    {event.get("type") for event in central_events}
+                )
+            )
             self.assertTrue((central / ".orchestrator" / "task-state.lock").exists())
             self.assertTrue((central / ".orchestrator" / "activity-audit.lock").exists())
+            self.assertTrue((central / "current-work.md").exists())
+            self.assertTrue((central / "dashboard-bundle.json").exists())
+            self.assertTrue((central / "docs-site" / "ai-status.json").exists())
+            self.assertTrue((central / "docs-site" / "current-work.md").exists())
+            self.assertTrue((central / "docs-site" / "dashboard-bundle.json").exists())
             for path, before in stale_before.items():
                 self.assertEqual(
                     path.read_bytes(),
@@ -318,8 +394,21 @@ class StatusRootRoutingTests(unittest.TestCase):
             valid = root / "central"
             self._init_repo(valid)
             self._write_status_state(valid, owner="Codex2", next_value="valid")
+            other_valid = root / "other-central"
+            self._init_repo(other_valid)
+            self._write_status_state(other_valid, owner="Codex2", next_value="other valid")
             symlink = root / "central-link"
             symlink.symlink_to(valid, target_is_directory=True)
+            real_parent = root / "real-parent"
+            real_parent.mkdir()
+            component_target = real_parent / "component-central"
+            self._init_repo(component_target)
+            self._write_status_state(component_target, owner="Codex2", next_value="component")
+            link_parent = root / "linked-parent"
+            link_parent.symlink_to(real_parent, target_is_directory=True)
+            component_symlink_root = link_parent / "component-central"
+            runner_status = valid / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+            heartbeat = valid / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
 
             base_env = os.environ.copy()
             base_env.update(
@@ -328,15 +417,26 @@ class StatusRootRoutingTests(unittest.TestCase):
                     "PANTHEON_WORKTREE_ROOT": str(code_root),
                     "ORCH_WORKSPACE_PATH": str(code_root),
                     "ORCH_RUN_ID": "codex-test-run",
+                    "ORCH_RUNNER_STATUS_PATH": str(runner_status),
+                    "ORCH_HEARTBEAT_PATH": str(heartbeat),
                 }
             )
             cases = [
                 ({}, "PANTHEON_STATUS_ROOT is required"),
                 ({"PANTHEON_STATUS_ROOT": "relative-root"}, "absolute path"),
                 ({"PANTHEON_STATUS_ROOT": str(root / "missing")}, "does not exist"),
-                ({"PANTHEON_STATUS_ROOT": str(symlink)}, "cannot be a symlink"),
+                ({"PANTHEON_STATUS_ROOT": str(symlink)}, "symlink component"),
+                ({"PANTHEON_STATUS_ROOT": str(component_symlink_root)}, "symlink component"),
                 ({"PANTHEON_STATUS_ROOT": str(code_root)}, "not the isolated task worktree"),
-                ({"PANTHEON_STATUS_ROOT": str(root)}, "git repository root"),
+                ({"PANTHEON_STATUS_ROOT": str(other_valid)}, "does not match"),
+                (
+                    {
+                        "PANTHEON_STATUS_ROOT": str(root),
+                        "ORCH_RUNNER_STATUS_PATH": "",
+                        "ORCH_HEARTBEAT_PATH": "",
+                    },
+                    "git repository root",
+                ),
             ]
             for env_update, expected in cases:
                 with self.subTest(expected=expected):

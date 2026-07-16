@@ -59,7 +59,22 @@ class TestCoordinationRootValidation(unittest.TestCase):
             link = root / "central-link"
             link.symlink_to(target, target_is_directory=True)
             with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(link)}, clear=True):
-                with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
+                with self.assertRaisesRegex(RuntimeError, "symlink component"):
+                    wr.validate_coordination_root(root / "task-worktree")
+
+    def test_rejects_symlink_component_in_status_root(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-symlink-component-") as temp_dir:
+            root = Path(temp_dir)
+            real_parent = root / "real-parent"
+            real_parent.mkdir()
+            target = real_parent / "central"
+            _init_repo(target)
+            _write_status(target)
+            link_parent = root / "linked-parent"
+            link_parent.symlink_to(real_parent, target_is_directory=True)
+            status_root = link_parent / "central"
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(status_root)}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "symlink component"):
                     wr.validate_coordination_root(root / "task-worktree")
 
     def test_rejects_status_root_equal_to_workspace(self):
@@ -71,6 +86,26 @@ class TestCoordinationRootValidation(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "not the isolated task worktree"):
                     wr.validate_coordination_root(worktree)
 
+    def test_rejects_status_root_mismatched_with_runner_paths(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-second-root-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            other = root / "other"
+            worktree = root / "task-worktree"
+            for repo in (central, other, worktree):
+                _init_repo(repo)
+            _write_status(central)
+            _write_status(other)
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(other)}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "does not match"):
+                    wr.validate_coordination_root(
+                        worktree,
+                        heartbeat_path=heartbeat,
+                        status_path=status,
+                    )
+
     def test_child_command_runs_in_task_worktree_with_central_status_root(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-cwd-") as temp_dir:
             root = Path(temp_dir)
@@ -79,8 +114,8 @@ class TestCoordinationRootValidation(unittest.TestCase):
             _init_repo(central)
             _init_repo(worktree)
             _write_status(central)
-            heartbeat = root / "heartbeat.json"
-            status = root / "runner-status.json"
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
             env = os.environ.copy()
             env.update(
                 {

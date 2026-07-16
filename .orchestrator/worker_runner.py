@@ -48,7 +48,64 @@ def _git_toplevel(path: Path) -> Path | None:
     return Path(top).resolve() if top else None
 
 
-def validate_coordination_root(workspace_path: Path | None) -> Path | None:
+def _first_symlink_component(path: Path) -> Path | None:
+    current = Path(path.anchor)
+    parts = path.parts[1:] if path.is_absolute() else path.parts
+    for part in parts:
+        current = current / part
+        try:
+            if current.is_symlink():
+                return current
+            if not current.exists():
+                return None
+        except OSError:
+            return current
+    return None
+
+
+def _status_root_from_runtime_path(path: Path, *, label: str) -> Path:
+    resolved = path.expanduser().resolve()
+    parent = resolved.parent
+    if (
+        parent.name not in {"status", "heartbeats"}
+        or parent.parent.name != "worker-runtime"
+        or parent.parent.parent.name != ".orchestrator"
+    ):
+        raise RuntimeError(
+            f"{label} is not under .orchestrator/worker-runtime: {resolved}"
+        )
+    return parent.parent.parent.parent.resolve()
+
+
+def _expected_coordination_root(
+    *,
+    heartbeat_path: Path | None,
+    status_path: Path | None,
+) -> Path | None:
+    roots: list[Path] = []
+    for label, path in (
+        ("heartbeat_path", heartbeat_path),
+        ("status_path", status_path),
+    ):
+        if path is None:
+            continue
+        root = _status_root_from_runtime_path(path, label=label)
+        if root not in roots:
+            roots.append(root)
+    if len(roots) > 1:
+        raise RuntimeError(
+            "worker_runner heartbeat/status paths disagree on the supervisor "
+            f"coordination root: {roots[0]} != {roots[1]}"
+        )
+    return roots[0] if roots else None
+
+
+def validate_coordination_root(
+    workspace_path: Path | None,
+    *,
+    heartbeat_path: Path | None = None,
+    status_path: Path | None = None,
+) -> Path | None:
     """Validate the central coordination root before launching the worker CLI."""
 
     raw = str(os.environ.get("PANTHEON_STATUS_ROOT") or "").strip()
@@ -63,8 +120,11 @@ def validate_coordination_root(workspace_path: Path | None) -> Path | None:
     expanded = Path(os.path.expanduser(raw))
     if not expanded.is_absolute():
         raise RuntimeError("PANTHEON_STATUS_ROOT must be an absolute path")
-    if expanded.is_symlink():
-        raise RuntimeError(f"PANTHEON_STATUS_ROOT cannot be a symlink: {expanded}")
+    symlink_component = _first_symlink_component(expanded)
+    if symlink_component is not None:
+        raise RuntimeError(
+            f"PANTHEON_STATUS_ROOT cannot include a symlink component: {symlink_component}"
+        )
 
     root = expanded.resolve()
     if not root.exists() or not root.is_dir():
@@ -73,6 +133,15 @@ def validate_coordination_root(workspace_path: Path | None) -> Path | None:
         raise RuntimeError(
             "PANTHEON_STATUS_ROOT must point at the supervisor coordination "
             "root, not the isolated task worktree"
+        )
+    expected_root = _expected_coordination_root(
+        heartbeat_path=heartbeat_path,
+        status_path=status_path,
+    )
+    if expected_root is not None and root != expected_root:
+        raise RuntimeError(
+            "PANTHEON_STATUS_ROOT does not match the worker_runner runtime "
+            f"coordination root: {root} != {expected_root}"
         )
     if _git_toplevel(root) != root:
         raise RuntimeError(f"PANTHEON_STATUS_ROOT must be a git repository root: {root}")
@@ -137,7 +206,11 @@ def main(argv: list[str] | None = None) -> int:
     workspace_path = os.environ.get("PANTHEON_WORKTREE_ROOT") or os.environ.get("ORCH_WORKSPACE_PATH")
     if workspace_path:
         workspace_path = Path(os.path.expanduser(workspace_path)).resolve()
-    validate_coordination_root(workspace_path if isinstance(workspace_path, Path) else None)
+    validate_coordination_root(
+        workspace_path if isinstance(workspace_path, Path) else None,
+        heartbeat_path=heartbeat_path,
+        status_path=status_path,
+    )
     if workspace_path:
         try:
             os.chdir(workspace_path)
