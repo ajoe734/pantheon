@@ -40,6 +40,8 @@ The PR must contain exactly these nine execution briefs plus this review brief:
   state, task archive, or canonical task status is modified.
 - Confirm the nine briefs agree on owner/reviewer separation, disabled
   auto-merge, current-dev composition, exact-head review, and postmerge proof.
+- Confirm the central status-root brief explicitly requires recomposing any dev
+  advance and a new exact-head approval before merge.
 - Confirm PR #3757 is explicitly recorded as an unreviewed merge that cannot
   open the deploy gate without Claude's exact-merge audit.
 - Confirm PR #3758 is rejected until it has a deterministic two-writer lost
