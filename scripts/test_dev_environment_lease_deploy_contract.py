@@ -115,6 +115,9 @@ def test_heartbeat_and_guard_paths_are_bound_to_acquire_step_outputs() -> None:
         assert f"${{{{ steps.lease.outputs.{name} }}}}" in dev
     assert '--identity-json-out "${LEASE_IDENTITY_FILE}"' in dev
     assert '--token-stdin' in dev
+    assert 'initial_verify_log="${LEASE_HEARTBEAT_LOG}.initial-verify"' in dev
+    assert "for attempt in $(seq 1 50)" in dev
+    assert 'sleep 0.2' in dev
     assert "PANTHEON_DEV_ENVIRONMENT_LEASE_TOKEN_FD" not in dev
     assert ">> \"${GITHUB_ENV}\"" not in dev
 

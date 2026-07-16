@@ -344,14 +344,31 @@ jobs:
             --pid "${heartbeat_pid}" \
             --expected-cli "${controller}/scripts/dev_environment_lease.py" \
             --state-file "${LEASE_STATE_FILE}" >/dev/null
-          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-            python3 "${controller}/scripts/dev_environment_lease.py" verify \
-              --repository ajoe734/execute-plans \
-              --branch environment-coordination \
-              --path .pantheon/environment-leases/pantheon-dev-environment.json \
-              --resource pantheon-dev-environment \
-              --state-file "${LEASE_STATE_FILE}" \
-              --max-heartbeat-age-seconds 120 >/dev/null
+          initial_verify_log="${LEASE_HEARTBEAT_LOG}.initial-verify"
+          verify_ok=false
+          for attempt in $(seq 1 50); do
+            if PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+              python3 "${controller}/scripts/dev_environment_lease.py" verify \
+                --repository ajoe734/execute-plans \
+                --branch environment-coordination \
+                --path .pantheon/environment-leases/pantheon-dev-environment.json \
+                --resource pantheon-dev-environment \
+                --state-file "${LEASE_STATE_FILE}" \
+                --max-heartbeat-age-seconds 120 > /dev/null 2>"${initial_verify_log}"; then
+              verify_ok=true
+              break
+            fi
+            kill -0 "${heartbeat_pid}" 2>/dev/null || {
+              sed -n '1,200p' "${LEASE_HEARTBEAT_LOG}" >&2 || true
+              sed -n '1,200p' "${initial_verify_log}" >&2 || true
+              exit 75
+            }
+            sleep 0.2
+          done
+          if [[ "${verify_ok}" != "true" ]]; then
+            sed -n '1,200p' "${initial_verify_log}" >&2 || true
+            exit 75
+          fi
           lease_token=""
 
       - name: Deploy dev VM stack under lease
