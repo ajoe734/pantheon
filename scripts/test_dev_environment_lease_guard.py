@@ -467,6 +467,29 @@ def test_initial_and_final_remote_verify_failures_stop_heartbeat() -> None:
             assert heartbeat.poll() is not None
 
 
+def test_deploy_step_guard_does_not_retry_failed_remote_verify() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = prepare_fixture(Path(tmp))
+        heartbeat = start_fake_heartbeat(paths)
+        completed = subprocess.run(
+            ["bash", str(paths["guard"]), "true"],
+            cwd=REPO_ROOT,
+            env=guard_environment(paths, fail_at=1),
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        try:
+            heartbeat.wait(timeout=3)
+        finally:
+            stop_process(heartbeat)
+
+        assert completed.returncode == 75, completed.stderr
+        assert int(paths["verify_count"].read_text(encoding="utf-8")) == 1
+        assert heartbeat.poll() is not None
+
+
 def test_term_resistant_heartbeat_is_killed_after_identity_safe_wait() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         paths = prepare_fixture(Path(tmp))

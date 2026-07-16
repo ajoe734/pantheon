@@ -26,6 +26,32 @@ def _job(text: str, name: str, next_name: str | None = None) -> str:
     return text[start : text.index(f"  {next_name}:\n", start + 1)]
 
 
+def _workflow_step_run(job_name: str, step_name: str) -> str:
+    job = _job(_workflow(), job_name, "deploy-staging-live")
+    marker = f"      - name: {step_name}\n"
+    start = job.index(marker)
+    run_marker = "\n        run: |\n"
+    run_start = job.index(run_marker, start) + len(run_marker)
+    next_step = job.find("\n      - name:", run_start)
+    block = job[run_start:] if next_step < 0 else job[run_start:next_step]
+    lines = []
+    for line in block.splitlines():
+        if line.startswith("          "):
+            lines.append(line[10:])
+        elif not line:
+            lines.append("")
+        else:
+            break
+    return "\n".join(lines) + "\n"
+
+
+def _initial_heartbeat_verify_script() -> str:
+    run = _workflow_step_run("deploy-dev", "Start identity-bound lease heartbeat")
+    start = run.index('initial_verify_log="${LEASE_HEARTBEAT_LOG}.initial-verify"')
+    end = run.index('lease_token=""', start) + len('lease_token=""')
+    return run[start:end]
+
+
 def test_controller_checkout_is_an_exact_immutable_separate_trust_root() -> None:
     workflow = _workflow()
     dev = _job(workflow, "deploy-dev", "deploy-staging-live")
@@ -120,6 +146,123 @@ def test_heartbeat_and_guard_paths_are_bound_to_acquire_step_outputs() -> None:
     assert 'sleep 0.2' in dev
     assert "PANTHEON_DEV_ENVIRONMENT_LEASE_TOKEN_FD" not in dev
     assert ">> \"${GITHUB_ENV}\"" not in dev
+
+
+def _write_fake_initial_verify_cli(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        """#!/usr/bin/env python3
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+if sys.argv[1:2] != ["verify"]:
+    raise SystemExit(f"unsupported fake command: {sys.argv[1:]}")
+
+count_file = Path(os.environ["FAKE_INITIAL_VERIFY_COUNT_FILE"])
+count = int(count_file.read_text(encoding="utf-8") or "0") + 1
+count_file.write_text(f"{count}\\n", encoding="utf-8")
+failures = int(os.environ.get("FAKE_INITIAL_VERIFY_FAILURES", "0"))
+if count <= failures:
+    print("simulated stale lease visibility mismatch", file=sys.stderr)
+    raise SystemExit(75)
+print('{"status":"verified"}')
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _run_initial_verify_script(
+    tmp_path: Path, *, failures: int, heartbeat_pid: int, timeout: float = 15
+) -> subprocess.CompletedProcess[str]:
+    controller = tmp_path / "controller"
+    _write_fake_initial_verify_cli(controller / "scripts" / "dev_environment_lease.py")
+    count_file = tmp_path / "verify-count.txt"
+    count_file.write_text("0\n", encoding="utf-8")
+    state_file = tmp_path / "state.json"
+    state_file.write_text("{}\n", encoding="utf-8")
+    heartbeat_log = tmp_path / "heartbeat.log"
+    heartbeat_log.write_text("", encoding="utf-8")
+    script = tmp_path / "initial-verify.sh"
+    script.write_text(
+        "\n".join(
+            (
+                "set -euo pipefail",
+                f"controller={str(controller)!r}",
+                "lease_token='test-token'",
+                f"LEASE_STATE_FILE={str(state_file)!r}",
+                f"LEASE_HEARTBEAT_LOG={str(heartbeat_log)!r}",
+                f"heartbeat_pid={heartbeat_pid}",
+                _initial_heartbeat_verify_script(),
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    return subprocess.run(
+        ["bash", str(script)],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "FAKE_INITIAL_VERIFY_COUNT_FILE": str(count_file),
+            "FAKE_INITIAL_VERIFY_FAILURES": str(failures),
+        },
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def test_initial_heartbeat_verify_retries_stale_visibility_then_succeeds(
+    tmp_path: Path,
+) -> None:
+    heartbeat = subprocess.Popen(["sleep", "30"])
+    try:
+        result = _run_initial_verify_script(
+            tmp_path, failures=2, heartbeat_pid=heartbeat.pid
+        )
+    finally:
+        heartbeat.terminate()
+        heartbeat.wait(timeout=3)
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "verify-count.txt").read_text(encoding="utf-8") == "3\n"
+
+
+def test_initial_heartbeat_verify_permanent_mismatch_exits_75(
+    tmp_path: Path,
+) -> None:
+    heartbeat = subprocess.Popen(["sleep", "30"])
+    try:
+        result = _run_initial_verify_script(
+            tmp_path, failures=100, heartbeat_pid=heartbeat.pid, timeout=45
+        )
+    finally:
+        heartbeat.terminate()
+        heartbeat.wait(timeout=3)
+
+    assert result.returncode == 75
+    assert "simulated stale lease visibility mismatch" in result.stderr
+    assert (tmp_path / "verify-count.txt").read_text(encoding="utf-8") == "50\n"
+
+
+def test_initial_heartbeat_verify_aborts_immediately_when_heartbeat_dies(
+    tmp_path: Path,
+) -> None:
+    heartbeat = subprocess.Popen(["sleep", "30"])
+    heartbeat.terminate()
+    heartbeat.wait(timeout=3)
+
+    result = _run_initial_verify_script(
+        tmp_path, failures=100, heartbeat_pid=heartbeat.pid
+    )
+
+    assert result.returncode == 75
+    assert (tmp_path / "verify-count.txt").read_text(encoding="utf-8") == "1\n"
 
 
 def test_all_dev_mutations_and_public_proofs_use_pinned_wrapper() -> None:
