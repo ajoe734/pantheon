@@ -1,0 +1,93 @@
+{
+  "data": {
+    "counts": {
+      "pending_approvals": 1,
+      "open_alerts": 19,
+      "running_jobs": 0
+    },
+    "session": {
+      "operator_id": "pantheon-dev-operator",
+      "operatorId": "pantheon-dev-operator",
+      "display_label": "pantheon-dev-operator",
+      "displayLabel": "pantheon-dev-operator",
+      "roles": [
+        "operator"
+      ],
+      "session_kind": "bearer",
+      "sessionKind": "bearer",
+      "state": "active",
+      "fresh": true,
+      "mfa_verified": false
+    },
+    "transport": {
+      "bff_status": "ok",
+      "service": "operator-bff",
+      "api_version": "0.2.0"
+    }
+  },
+  "meta": {
+    "snapshot_at": "2026-07-16T20:51:02Z",
+    "surfaces": {
+      "shell_summary": {
+        "status": "degraded",
+        "source": "bff_composed",
+        "message": "Shell summary count sources are degraded.",
+        "freshness": {
+          "computed_at": "2026-07-16T20:51:02Z",
+          "ttl_seconds": 5.0,
+          "cache": "miss"
+        }
+      },
+      "pending_approvals": {
+        "status": "ok",
+        "source": "canonical",
+        "freshness": {
+          "computed_at": "2026-07-16T20:51:02Z",
+          "ttl_seconds": 5.0,
+          "cache": "miss"
+        }
+      },
+      "open_alerts": {
+        "status": "ok",
+        "source": "bff_cheap_count",
+        "source_surfaces": {
+          "incidents": {
+            "status": "ok",
+            "source": "service_client"
+          },
+          "governance_review_queue": {
+            "status": "ok",
+            "source": "service_client"
+          },
+          "approval_queue": {
+            "status": "ok",
+            "source": "canonical"
+          },
+          "kill_switch": {
+            "status": "ok",
+            "source": "service_store"
+          }
+        },
+        "note": "Cheap shell count avoids full alert feed aggregation.",
+        "freshness": {
+          "computed_at": "2026-07-16T20:51:02Z",
+          "ttl_seconds": 5.0,
+          "cache": "miss"
+        }
+      },
+      "running_jobs": {
+        "status": "unavailable",
+        "source": "missing",
+        "staleness": {
+          "served_from": "unverifiable",
+          "last_known_at": "2026-07-16T20:51:02Z"
+        },
+        "freshness": {
+          "computed_at": "2026-07-16T20:51:02Z",
+          "ttl_seconds": 5.0,
+          "cache": "miss"
+        }
+      }
+    }
+  }
+}

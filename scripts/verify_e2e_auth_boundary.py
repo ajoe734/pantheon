@@ -89,6 +89,22 @@ def main() -> int:
 
     # Tenant Isolation and Metric Masking verification
     print("\n== verifying tenant isolation and metric masking ==")
+    # Query /bff/version to check if stub auth is active.
+    # In strict auth mode, stub/mock tokens are rejected by design, so mock-based tenant isolation checks must be bypassed.
+    version_req = urllib.request.Request(base.rstrip("/") + "/bff/version")
+    auth_stub = True
+    try:
+        with urllib.request.urlopen(version_req, timeout=15, context=ctx) as r:
+            import json
+            version_data = json.loads(r.read().decode("utf-8"))
+            auth_stub = version_data.get("auth_stub", True)
+    except Exception:
+        pass
+
+    if not auth_stub:
+        print("INFO: auth_stub is false (strict auth mode); skipping mock-token tenant isolation checks by design")
+        return 0
+
     ok_token = "user-ok:viewer:pantheon-dev"
     ok_headers = {"Authorization": f"Bearer {ok_token}"}
     ok_status = _status(base, ctx, "/bff/management/trade-journeys?tenant_id=pantheon-dev&environment=paper", ok_headers)

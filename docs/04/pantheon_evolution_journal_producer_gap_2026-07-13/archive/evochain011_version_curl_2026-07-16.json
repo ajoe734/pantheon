@@ -1,0 +1,17 @@
+{
+  "service": "operator-bff",
+  "version": "0.2.0",
+  "source_commit_sha": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+  "commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+  "source_commit_known": true,
+  "image_digest": "unknown",
+  "build_time": "2026-07-16T19:27:37Z",
+  "environment": "dev",
+  "config_posture": {
+    "auth_stub": false,
+    "auth_mode": "strict",
+    "dev_login_enabled": true,
+    "mfa_required": false,
+    "assistant_kernel_enabled": true
+  }
+}

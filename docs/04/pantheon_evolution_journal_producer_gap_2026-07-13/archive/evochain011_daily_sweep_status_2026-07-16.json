@@ -1,0 +1,208 @@
+{
+  "result": {
+    "cooldown_blocked": 8,
+    "created_decisions": 2,
+    "existing_decisions": 9,
+    "items": [
+      {
+        "action_type": null,
+        "active_decision_id": "evo-pm-candidate_artifact-paper-artifact-persona-20260528-949a890a-v2-incident_cluster-inc-threshold-89",
+        "decision_id": null,
+        "incident_id": "inc-threshold-5394caf8b1b6",
+        "reason": "target already has an active EvolutionDecision; cooldown/observation single-active-rule blocks a new proposal",
+        "status": "cooldown_blocked",
+        "target_id": "paper-artifact-persona-20260528-949a890a-v2",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": "retrain",
+        "active_decision_id": null,
+        "decision_id": "evo-sweep-inc-threshold-dae307120b85",
+        "incident_id": "inc-threshold-dae307120b85",
+        "reason": "incident already has a linked EvolutionDecision",
+        "status": "existing",
+        "target_id": "paper-artifact-persona-20260528-81c9e6b9-v2-v2",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": "retrain",
+        "active_decision_id": null,
+        "decision_id": "evo-sweep-inc-threshold-719818cd7f22",
+        "incident_id": "inc-threshold-719818cd7f22",
+        "reason": "incident already has a linked EvolutionDecision",
+        "status": "existing",
+        "target_id": "paper-artifact-persona-20260528-5937dea1-v2-v2",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": "retrain",
+        "active_decision_id": null,
+        "decision_id": "evo-sweep-inc-threshold-50f2e21f161c",
+        "incident_id": "inc-threshold-50f2e21f161c",
+        "reason": "incident already has a linked EvolutionDecision",
+        "status": "existing",
+        "target_id": "artifact-tw-session-momentum-v1",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": null,
+        "active_decision_id": "evo-sweep-inc-threshold-50f2e21f161c",
+        "decision_id": null,
+        "incident_id": "inc-threshold-62a7368a9362",
+        "reason": "target already has an active EvolutionDecision; cooldown/observation single-active-rule blocks a new proposal",
+        "status": "cooldown_blocked",
+        "target_id": "artifact-tw-session-momentum-v1",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": null,
+        "active_decision_id": "evo-sweep-inc-threshold-dae307120b85",
+        "decision_id": null,
+        "incident_id": "inc-drift-12bdd9ab92b1",
+        "reason": "target already has an active EvolutionDecision; cooldown/observation single-active-rule blocks a new proposal",
+        "status": "cooldown_blocked",
+        "target_id": "paper-artifact-persona-20260528-81c9e6b9-v2-v2",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": null,
+        "active_decision_id": "evo-pm-candidate_artifact-paper-artifact-persona-20260528-597cbad2-v2-v2-incident_cluster-inc-threshold",
+        "decision_id": null,
+        "incident_id": "inc-drift-1ee40645d309",
+        "reason": "target already has an active EvolutionDecision; cooldown/observation single-active-rule blocks a new proposal",
+        "status": "cooldown_blocked",
+        "target_id": "paper-artifact-persona-20260528-597cbad2-v2-v2",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": "flag_for_review",
+        "active_decision_id": null,
+        "decision_id": "evo-sweep-inc-drift-6c68964cc4dc",
+        "incident_id": "inc-drift-6c68964cc4dc",
+        "reason": "incident already has a linked EvolutionDecision",
+        "status": "existing",
+        "target_id": "artifact-crypto-trend-carry-v1",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": "flag_for_review",
+        "active_decision_id": null,
+        "decision_id": "evo-sweep-inc-drift-b8d6921b624d",
+        "incident_id": "inc-drift-b8d6921b624d",
+        "reason": "incident already has a linked EvolutionDecision",
+        "status": "existing",
+        "target_id": "artifact-us-equity-momentum-v1",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": "flag_for_review",
+        "active_decision_id": null,
+        "decision_id": "evo-sweep-inc-drift-bdac5687d69b",
+        "incident_id": "inc-drift-bdac5687d69b",
+        "reason": "incident already has a linked EvolutionDecision",
+        "status": "existing",
+        "target_id": "paper-artifact-persona-20260528-04688755-v2",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": "flag_for_review",
+        "active_decision_id": null,
+        "decision_id": "evo-sweep-inc-drift-d79b2a961042",
+        "incident_id": "inc-drift-d79b2a961042",
+        "reason": "incident already has a linked EvolutionDecision",
+        "status": "existing",
+        "target_id": "paper-artifact-persona-20260528-cfedeed5",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": null,
+        "active_decision_id": "evo-pm-candidate_artifact-paper-artifact-persona-20260528-cfedeed5-v2-incident_cluster-inc-threshold-30",
+        "decision_id": null,
+        "incident_id": "inc-drift-5faee9c943dd",
+        "reason": "target already has an active EvolutionDecision; cooldown/observation single-active-rule blocks a new proposal",
+        "status": "cooldown_blocked",
+        "target_id": "paper-artifact-persona-20260528-cfedeed5-v2",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": "flag_for_review",
+        "active_decision_id": null,
+        "decision_id": "evo-sweep-inc-drift-b2b4ad14d5ae",
+        "incident_id": "inc-drift-b2b4ad14d5ae",
+        "reason": "incident already has a linked EvolutionDecision",
+        "status": "existing",
+        "target_id": "paper-artifact-persona-20260528-74e8b58f-v2-v2",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": null,
+        "active_decision_id": "evo-pm-candidate_artifact-paper-artifact-persona-20260528-949a890a-v2-incident_cluster-inc-threshold-89",
+        "decision_id": null,
+        "incident_id": "inc-drift-b2d92bbd64cd",
+        "reason": "target already has an active EvolutionDecision; cooldown/observation single-active-rule blocks a new proposal",
+        "status": "cooldown_blocked",
+        "target_id": "paper-artifact-persona-20260528-949a890a-v2",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": null,
+        "active_decision_id": "evo-sweep-inc-threshold-50f2e21f161c",
+        "decision_id": null,
+        "incident_id": "inc-drift-d2fb9e0385cc",
+        "reason": "target already has an active EvolutionDecision; cooldown/observation single-active-rule blocks a new proposal",
+        "status": "cooldown_blocked",
+        "target_id": "artifact-tw-session-momentum-v1",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": "flag_for_review",
+        "active_decision_id": null,
+        "decision_id": "evo-sweep-inc-drift-de899be74155",
+        "incident_id": "inc-drift-de899be74155",
+        "reason": "incident already has a linked EvolutionDecision",
+        "status": "existing",
+        "target_id": "paper-artifact-persona-20260528-6b2e514c-v2",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": null,
+        "active_decision_id": "evo-sweep-inc-threshold-719818cd7f22",
+        "decision_id": null,
+        "incident_id": "inc-drift-0d77c0499fe1",
+        "reason": "target already has an active EvolutionDecision; cooldown/observation single-active-rule blocks a new proposal",
+        "status": "cooldown_blocked",
+        "target_id": "paper-artifact-persona-20260528-5937dea1-v2-v2",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": "flag_for_review",
+        "active_decision_id": null,
+        "decision_id": "evo-sweep-inc-drift-bdde1ea687bd",
+        "incident_id": "inc-drift-bdde1ea687bd",
+        "reason": null,
+        "status": "created",
+        "target_id": "paper-artifact-persona-20260528-5937dea1",
+        "target_type": "candidate_artifact"
+      },
+      {
+        "action_type": "flag_for_review",
+        "active_decision_id": null,
+        "decision_id": "evo-sweep-inc-drift-cb5d720b2d1f",
+        "incident_id": "inc-drift-cb5d720b2d1f",
+        "reason": null,
+        "status": "created",
+        "target_id": "paper-artifact-persona-20260528-ba7de5a4-v2-v2",
+        "target_type": "candidate_artifact"
+      }
+    ],
+    "scanned_incidents": 19,
+    "scheduler_attach": {
+      "compose_profile": "evolution-daily-sweep-scheduler",
+      "route": "POST /api/evolution/daily-sweep",
+      "worker_module": "services.evolution.scheduler_worker"
+    },
+    "skipped_incidents": 0,
+    "sweep_id": "scheduled-daily"
+  },
+  "tick": 1
+}

@@ -1,0 +1,74 @@
+[
+  {
+    "persona_id": "persona-20260528-04688755",
+    "mutation_entry_id": null,
+    "evolution_href": "/management/evolution-journal?persona=persona-20260528-04688755&mutation_review=None",
+    "mutation_confidence": null
+  },
+  {
+    "persona_id": "persona-20260528-5937dea1",
+    "mutation_entry_id": null,
+    "evolution_href": "/management/evolution-journal?persona=persona-20260528-5937dea1&mutation_review=None",
+    "mutation_confidence": null
+  },
+  {
+    "persona_id": "persona-20260528-597cbad2",
+    "mutation_entry_id": null,
+    "evolution_href": "/management/evolution-journal?persona=persona-20260528-597cbad2&mutation_review=None",
+    "mutation_confidence": null
+  },
+  {
+    "persona_id": "persona-20260528-6b2e514c",
+    "mutation_entry_id": null,
+    "evolution_href": "/management/evolution-journal?persona=persona-20260528-6b2e514c&mutation_review=None",
+    "mutation_confidence": null
+  },
+  {
+    "persona_id": "persona-20260528-74e8b58f",
+    "mutation_entry_id": null,
+    "evolution_href": "/management/evolution-journal?persona=persona-20260528-74e8b58f&mutation_review=None",
+    "mutation_confidence": null
+  },
+  {
+    "persona_id": "persona-20260528-81c9e6b9",
+    "mutation_entry_id": null,
+    "evolution_href": "/management/evolution-journal?persona=persona-20260528-81c9e6b9&mutation_review=None",
+    "mutation_confidence": null
+  },
+  {
+    "persona_id": "persona-20260528-949a890a",
+    "mutation_entry_id": null,
+    "evolution_href": "/management/evolution-journal?persona=persona-20260528-949a890a&mutation_review=None",
+    "mutation_confidence": null
+  },
+  {
+    "persona_id": "persona-20260528-ba7de5a4",
+    "mutation_entry_id": null,
+    "evolution_href": "/management/evolution-journal?persona=persona-20260528-ba7de5a4&mutation_review=None",
+    "mutation_confidence": null
+  },
+  {
+    "persona_id": "persona-20260528-cfedeed5",
+    "mutation_entry_id": null,
+    "evolution_href": "/management/evolution-journal?persona=persona-20260528-cfedeed5&mutation_review=None",
+    "mutation_confidence": null
+  },
+  {
+    "persona_id": "persona-crypto",
+    "mutation_entry_id": null,
+    "evolution_href": "/management/evolution-journal?persona=persona-crypto&mutation_review=None",
+    "mutation_confidence": null
+  },
+  {
+    "persona_id": "persona-tw-equity",
+    "mutation_entry_id": null,
+    "evolution_href": "/management/evolution-journal?persona=persona-tw-equity&mutation_review=None",
+    "mutation_confidence": null
+  },
+  {
+    "persona_id": "persona-us-equity",
+    "mutation_entry_id": null,
+    "evolution_href": "/management/evolution-journal?persona=persona-us-equity&mutation_review=None",
+    "mutation_confidence": null
+  }
+]
