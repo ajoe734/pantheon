@@ -10691,7 +10691,11 @@ def dispatch_underutilization_sidecars(
     state: dict[str, Any],
     provider_report: dict[str, Any] | None = None,
 ) -> bool:
-    if config_has_pending_program_activity_outbox(config):
+    try:
+        status = load_status(config)
+    except KeyError:
+        status = {"tasks": []}
+    if status_has_pending_program_activity_outbox(status):
         return False
     settings = underutilization_settings(config)
     tracking = state.setdefault("underutilization", {})

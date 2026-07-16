@@ -146,6 +146,7 @@ class StatusRootRoutingTests(unittest.TestCase):
             ".orchestrator/runtime_state.py",
             ".orchestrator/task_archive.py",
             ".orchestrator/multi_repo_registry.py",
+            ".orchestrator/sequencing_gate.py",
             ".orchestrator/config.json",
         ):
             source = repo_root / rel
