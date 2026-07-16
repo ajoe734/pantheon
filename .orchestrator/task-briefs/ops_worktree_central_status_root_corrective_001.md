@@ -1,8 +1,10 @@
 # Task Brief: OPS-WORKTREE-CENTRAL-STATUS-ROOT-CORRECTIVE-001
 
 > Bootstrap workaround for this task itself: until the post-merge fix is
-> installed, Codex2 must run governed state/handoff commands through
-> `/home/lupin/code/pantheon/scripts/ai-status.sh` with `AI_NAME=Codex2`.
+> installed, every owner or reviewer must run governed state, review, handoff
+> and closeout commands through `/home/lupin/code/pantheon/scripts/ai-status.sh`
+> with its own real identity (`AI_NAME=Codex2` for the owner or
+> `AI_NAME=Antigravity` for the reviewer).
 > Git, edits and tests remain in this task worktree. Verify the transition with
 > the central `show` command.
 
@@ -54,3 +56,29 @@ Run the full worker runner, supervisor, runtime state and ai-status suites.
 Deliver code, tests, runbook and exact regression evidence through a reviewed
 PR to `dev`. Do not edit live coordination state by hand and do not claim the
 runtime is repaired until the separate post-merge install task passes.
+
+## First implementation pre-review (2026-07-16)
+
+Commit `7d3d01e2c` is an anchor only. Before opening or handing off a PR, the
+owner must correct these gaps:
+
+- a supplied root that points at a second, valid git repository with its own
+  `ai-status.json` currently passes. Bind the supervisor-expected central root
+  separately and reject this mismatch; add a two-valid-repository test;
+- reject a root reached through any symlinked path component, not only when
+  the final path itself is a symlink;
+- extend integration coverage beyond one Codex2 `show/progress/handoff`.
+  Exercise a distinct reviewer review/approve-or-reject transition and the
+  owner final `done` archive transition. Prove the central archive/index,
+  derived outputs and locks change as required while every corresponding
+  worktree-local file remains byte-identical;
+- run the adapter environment propagation and supervisor watchdog tests as
+  well as the required worker/supervisor/runtime/ai-status suites. If the full
+  supervisor suite has pre-existing failures, capture the same failures on
+  exact `origin/dev` as baseline evidence;
+- make `git diff --check` clean.
+
+The live Claude review run for `LOOP-PROD-DONE-GUARDRAIL-REPAIR-001`
+reproduced the defect: worktree-local `python3 scripts/ai_status.py show`
+hung until the planner terminated only that read-only child. Owner and
+reviewer paths are both in scope.
