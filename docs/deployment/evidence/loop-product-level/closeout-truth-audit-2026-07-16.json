@@ -1,0 +1,292 @@
+{
+  "audit_id": "closeout-truth-audit-2026-07-16",
+  "generated_at": "2026-07-16T12:32:58Z",
+  "mode": "read_only_evidence_replay",
+  "source_root": "docs/deployment/evidence/loop-product-level",
+  "selection": {
+    "included_manifests": 18,
+    "excluded_manifests": [
+      {
+        "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-002/evidence.json",
+        "reason": "manifest task.id is missing"
+      }
+    ],
+    "archive_mutation": "none"
+  },
+  "summary": {
+    "passed": 3,
+    "failed": 15,
+    "scanned": 18
+  },
+  "results": [
+    {
+      "task_id": "LOOP-PROD-000",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-000/evidence.json",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "overall_admission": "review_required_follow_up_merge_and_scope_split",
+      "result": "fail",
+      "gap_count": 9,
+      "gaps": [
+        "evidence overall admission is not done-eligible: review_required_follow_up_merge_and_scope_split",
+        "blocking acceptance requirement ID 'AC-05': status is 'pending_independent_review'",
+        "blocking acceptance requirement ID 'AC-06': status is 'pending_independent_provenance_and_scope_split_acceptance'",
+        "blocking acceptance requirement ID 'AC-07': status is 'pass_with_explicit_read_only_not_applicable'",
+        "blocking acceptance requirement ID 'AC-09': status is 'pending_independent_auth_scope_split_acceptance'",
+        "blocking residual risk 'RISK-POST-CUT-ADMISSION-HARDENING' remains open",
+        "blocking residual risk 'RISK-NORMALIZED-READBACK-PROVENANCE' remains open",
+        "missing security evidence: rbac status is not pass/not_applicable",
+        "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
+      ]
+    },
+    {
+      "task_id": "LOOP-PROD-001",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-001/evidence.json",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "overall_admission": "review_required_evidence_only",
+      "result": "fail",
+      "gap_count": 3,
+      "gaps": [
+        "evidence overall admission is not done-eligible: review_required_evidence_only",
+        "blocking acceptance requirement ID 'AC-05': status is 'pending_independent_review'",
+        "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
+      ]
+    },
+    {
+      "task_id": "LOOP-PROD-002",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-002/evidence.json",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "overall_admission": "pass",
+      "result": "pass",
+      "gap_count": 0,
+      "gaps": []
+    },
+    {
+      "task_id": "LOOP-PROD-AGORA-001",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-001/evidence.json",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "overall_admission": "approved",
+      "result": "fail",
+      "gap_count": 1,
+      "gaps": [
+        "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
+      ]
+    },
+    {
+      "task_id": "LOOP-PROD-AGORA-002",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AGORA-002/evidence.json",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "overall_admission": "review_required_evidence_only",
+      "result": "fail",
+      "gap_count": 2,
+      "gaps": [
+        "evidence overall admission is not done-eligible: review_required_evidence_only",
+        "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
+      ]
+    },
+    {
+      "task_id": "LOOP-PROD-ALPHA-001",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.json",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "overall_admission": "pass",
+      "result": "fail",
+      "gap_count": 1,
+      "gaps": [
+        "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
+      ]
+    },
+    {
+      "task_id": "LOOP-PROD-AUTH-001",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-AUTH-001/evidence.json",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "overall_admission": "blocked_pending_human_provisioned_deploy_secrets_and_hosted_redeploy",
+      "result": "fail",
+      "gap_count": 4,
+      "gaps": [
+        "evidence overall admission is not done-eligible: blocked_pending_human_provisioned_deploy_secrets_and_hosted_redeploy",
+        "blocking residual risk 'RISK-LOOP-PROD-AUTH-001-REDEPLOY-PENDING' remains open",
+        "blocking residual risk 'RISK-LOOP-PROD-AUTH-001-DEV-LOGIN-CREDENTIALS' remains open",
+        "blocking residual risk 'RISK-LOOP-PROD-AUTH-001-IMAGE-DIGEST' remains open"
+      ]
+    },
+    {
+      "task_id": "LOOP-PROD-CAP-001",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CAP-001/evidence.json",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "overall_admission": "pass",
+      "result": "fail",
+      "gap_count": 2,
+      "gaps": [
+        "product evidence schema validation failed: 'mutation_rule' is a required property",
+        "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
+      ]
+    },
+    {
+      "task_id": "LOOP-PROD-CONS-001",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-CONS-001/evidence.json",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "overall_admission": "review_required_evidence_only",
+      "result": "fail",
+      "gap_count": 1,
+      "gaps": [
+        "evidence overall admission is not done-eligible: review_required_evidence_only"
+      ]
+    },
+    {
+      "task_id": "LOOP-PROD-DIST-001",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DIST-001/evidence.json",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "overall_admission": "review_required_evidence_only",
+      "result": "fail",
+      "gap_count": 1,
+      "gaps": [
+        "evidence overall admission is not done-eligible: review_required_evidence_only"
+      ]
+    },
+    {
+      "task_id": "LOOP-PROD-IMIT-001",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-IMIT-001/evidence.json",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "overall_admission": "review_required_evidence_only",
+      "result": "fail",
+      "gap_count": 2,
+      "gaps": [
+        "evidence overall admission is not done-eligible: review_required_evidence_only",
+        "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
+      ]
+    },
+    {
+      "task_id": "LOOP-PROD-MAI-001",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-MAI-001/evidence.json",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "overall_admission": "blocked_strict_auth_posture_and_hosted_proof_not_available",
+      "result": "fail",
+      "gap_count": 22,
+      "gaps": [
+        "evidence overall admission is not done-eligible: blocked_strict_auth_posture_and_hosted_proof_not_available",
+        "blocking acceptance requirement ID 'AC-01': status is 'blocked_hosted_not_run'",
+        "blocking acceptance requirement ID 'AC-02': status is 'blocked_local_contract_only'",
+        "blocking acceptance requirement ID 'AC-03': status is 'blocked_hosted_chain_not_run'",
+        "blocking acceptance requirement ID 'AC-04': status is 'blocked_hosted_negative_matrix_not_run'",
+        "blocking acceptance requirement ID 'AC-05': status is 'blocked_hosted_restart_proof_not_run'",
+        "blocking acceptance requirement ID 'AC-06': status is 'pending_pr_checks_merge_and_independent_review'",
+        "blocking acceptance requirement ID 'AC-07': status is 'blocked_authoritative_terminal_readback_absent'",
+        "blocking acceptance requirement ID 'AC-08': status is 'blocked_hosted_rpo0_and_rollback_proof_absent'",
+        "blocking acceptance requirement ID 'AC-09': status is 'blocked_task_candidate_not_deployed'",
+        "blocking acceptance requirement ID 'AC-10': status is 'blocked_hosted_security_matrix_incomplete'",
+        "blocking residual risk 'RISK-LOOP-PROD-MAI-001-STRICT-SECRETS-DEPLOY' remains open",
+        "blocking residual risk 'RISK-LOOP-PROD-MAI-001-HOSTED-LIFECYCLE' remains open",
+        "blocking residual risk 'RISK-LOOP-PROD-MAI-001-RESTART-RPO0' remains open",
+        "blocking residual risk 'RISK-LOOP-PROD-MAI-001-DELIVERY-REVIEW' remains open",
+        "blocking residual risk 'RISK-LOOP-PROD-MAI-001-DEPLOYMENT-IDENTITY' remains open",
+        "missing security evidence: rbac status is not pass/not_applicable",
+        "missing security evidence: tenant_isolation status is not pass/not_applicable",
+        "missing security evidence: mfa status is not pass/not_applicable",
+        "missing security evidence: no_live_capital status is not pass/not_applicable",
+        "missing security evidence: two_person_approval status is not pass/not_applicable",
+        "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
+      ]
+    },
+    {
+      "task_id": "LOOP-PROD-OODA-001",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-OODA-001/evidence.json",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "overall_admission": "pass",
+      "result": "fail",
+      "gap_count": 1,
+      "gaps": [
+        "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
+      ]
+    },
+    {
+      "task_id": "LOOP-PROD-PER-001",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
+      "owner": "Codex2",
+      "reviewer": "Antigravity",
+      "overall_admission": "blocked",
+      "result": "fail",
+      "gap_count": 21,
+      "gaps": [
+        "product evidence schema validation failed: Additional properties are not allowed ('raw_evidence_ref' was unexpected)",
+        "evidence overall admission is not done-eligible: blocked",
+        "blocking acceptance requirement ID 'AC1': status is 'partial'",
+        "blocking acceptance requirement ID 'AC2': status is 'partial'",
+        "blocking acceptance requirement ID 'AC3': status is 'partial'",
+        "blocking acceptance requirement ID 'AC4': status is 'partial'",
+        "blocking acceptance requirement ID 'AC5': status is 'partial'",
+        "blocking acceptance requirement ID 'AC6': status is 'partial'",
+        "blocking acceptance requirement ID 'AC7': status is 'partial'",
+        "blocking acceptance requirement ID 'AC8': status is 'blocked'",
+        "blocking acceptance requirement ID 'AC9': status is 'blocked'",
+        "blocking acceptance requirement ID 'AC10': status is 'partial'",
+        "blocking residual risk 'RISK-001' remains open",
+        "blocking residual risk 'RISK-002' remains open",
+        "blocking residual risk 'RISK-003' remains open",
+        "blocking residual risk 'RISK-004' remains open",
+        "missing security evidence: rbac status is not pass/not_applicable",
+        "missing security evidence: tenant_isolation status is not pass/not_applicable",
+        "missing security evidence: mfa status is not pass/not_applicable",
+        "missing security evidence: no_live_capital status is not pass/not_applicable",
+        "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
+      ]
+    },
+    {
+      "task_id": "LOOP-PROD-REC-001",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-REC-001/evidence.json",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "overall_admission": "accepted_contract_evidence",
+      "result": "pass",
+      "gap_count": 0,
+      "gaps": []
+    },
+    {
+      "task_id": "LOOP-PROD-SRC-001",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SRC-001/evidence.json",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "overall_admission": "review_required_evidence_only",
+      "result": "fail",
+      "gap_count": 3,
+      "gaps": [
+        "evidence overall admission is not done-eligible: review_required_evidence_only",
+        "blocking acceptance requirement ID 'AC-05': status is 'pending_independent_review_and_merge'",
+        "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
+      ]
+    },
+    {
+      "task_id": "LOOP-PROD-TEACH-001",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEACH-001/evidence.json",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "overall_admission": "review_approved_owner_closeout_ready",
+      "result": "pass",
+      "gap_count": 0,
+      "gaps": []
+    },
+    {
+      "task_id": "LOOP-PROD-TEL-001",
+      "manifest": "docs/deployment/evidence/loop-product-level/LOOP-PROD-TEL-001/evidence.json",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "overall_admission": "pass",
+      "result": "fail",
+      "gap_count": 1,
+      "gaps": [
+        "missing reviewer verdict: no approved formal reviewer verdict recorded in record_log"
+      ]
+    }
+  ]
+}
