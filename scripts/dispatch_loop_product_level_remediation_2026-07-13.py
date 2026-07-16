@@ -3462,13 +3462,21 @@ def build_affected_state_projection(
             transitions = record.get(transition_field) if isinstance(record, dict) else None
             if not isinstance(record, dict) or not isinstance(transitions, list):
                 raise DispatchError("affected sequencing record is missing")
-            snapshots: list[dict[str, Any]] = []
+            snapshots: list[dict[str, Any] | None] = []
             for transition in transitions:
                 task = (
                     active_by_id.get(str(transition.get("task_id") or ""))
                     if isinstance(transition, dict)
                     else None
                 )
+                transition_after_status = (
+                    transition.get("after_status")
+                    if isinstance(transition, dict)
+                    else None
+                )
+                if task is None and transition_after_status == "absent":
+                    snapshots.append(None)
+                    continue
                 if not isinstance(task, dict):
                     raise DispatchError("affected sequencing task is missing")
                 snapshots.append(deepcopy(task))
@@ -3673,12 +3681,25 @@ def validate_affected_state_projection(
             ):
                 raise DispatchError("program_activity_outbox sequencing record drift")
             for transition, snapshot in zip(transitions, snapshots, strict=True):
+                if not isinstance(transition, dict):
+                    raise DispatchError(
+                        "program_activity_outbox sequencing transition drift"
+                    )
                 transition_task_id = (
                     str(transition.get("task_id") or "")
-                    if isinstance(transition, dict)
-                    else ""
                 )
                 current_task = active_by_id.get(transition_task_id)
+                if transition.get("after_status") == "absent":
+                    if (
+                        snapshot is not None
+                        or current_task is not None
+                        or transition.get("after_task_snapshot_sha256")
+                        != canonical_json_sha256(None)
+                    ):
+                        raise DispatchError(
+                            "program_activity_outbox absent sequencing task drift"
+                        )
+                    continue
                 if (
                     not isinstance(snapshot, dict)
                     or snapshot.get("id") != transition_task_id
@@ -4917,18 +4938,56 @@ def validate_program_graph_sources(
     state: dict[str, Any],
     catalog: dict[str, Any],
     projection: dict[str, Any],
+    *,
+    allow_fresh_unmaterialized_gated: bool = False,
 ) -> None:
     active_by_id, archived_by_id = _program_graph_sources(state, catalog)
     observed_ids = set(active_by_id) | set(archived_by_id)
     rows = {str(row["task_id"]): row for row in projection["tasks"]}
-    if observed_ids != set(rows):
-        missing = sorted(set(rows) - observed_ids)
-        foreign = sorted(observed_ids - set(rows))
-        raise DispatchError(
-            "program catalog graph source set mismatch: "
-            f"missing={missing} foreign={foreign}"
+    expected_ids = set(rows)
+    missing = expected_ids - observed_ids
+    foreign = observed_ids - expected_ids
+    if missing or foreign:
+        gated_ids = set(
+            (catalog.get("release_gate") or {}).get("gated_task_ids") or []
         )
-    for task_id, row in rows.items():
+        fresh_unmaterialized = bool(
+            catalog.get("overlay_applied") is True
+            and not foreign
+            and missing == gated_ids
+            and not archived_by_id
+        )
+        if fresh_unmaterialized and not allow_fresh_unmaterialized_gated:
+            epoch = validate_sequencing_epoch_record(
+                state,
+                catalog,
+                str(projection["catalog_sha256"]),
+            )
+            transitions = {
+                str(row.get("task_id") or ""): row
+                for row in (epoch or {}).get("task_transitions") or []
+                if isinstance(row, dict)
+            }
+            releases = state.get(PROGRAM_SEQUENCING_RELEASES_STATE_KEY) or {}
+            fresh_unmaterialized = bool(
+                isinstance(epoch, dict)
+                and epoch.get("install_mode") == "fresh_materialization"
+                and isinstance(releases, dict)
+                and str(catalog["program_id"]) not in releases
+                and all(
+                    transitions.get(task_id, {}).get("after_status") == "absent"
+                    for task_id in gated_ids
+                )
+            )
+        if not fresh_unmaterialized:
+            missing_sorted = sorted(missing)
+            foreign_sorted = sorted(foreign)
+            raise DispatchError(
+                "program catalog graph source set mismatch: "
+                f"missing={missing_sorted} foreign={foreign_sorted}"
+            )
+    for task_id in observed_ids:
+        row = rows[task_id]
         source = active_by_id.get(task_id) or archived_by_id.get(task_id)
         if not isinstance(source, dict):
             raise DispatchError(f"program catalog graph task is missing: {task_id}")
@@ -5296,7 +5355,12 @@ def ensure_completion_overlay(
         state[PROGRAM_GRAPH_BINDINGS_STATE_KEY] = bindings
     else:
         raise DispatchError("program catalog graph prestate is invalid")
-    validate_program_graph_sources(state, catalog, current_projection)
+    validate_program_graph_sources(
+        state,
+        catalog,
+        current_projection,
+        allow_fresh_unmaterialized_gated=(graph_prestate == "fresh"),
+    )
 
     key = str(catalog["completion_authority"]["live_overlay_state_key"])
     overlays = state.get(key)
@@ -5555,6 +5619,9 @@ def validate_sequencing_epoch_record(
     install_mode = str(record["install_mode"])
     applied_at = str(record["applied_at"])
     applied_time = parse_activity_timestamp(applied_at)
+    gated_ids = set(
+        (catalog.get("release_gate") or {}).get("gated_task_ids") or []
+    )
     for row in transitions:
         task_id = str(row.get("task_id") or "") if isinstance(row, dict) else ""
         if (
@@ -5608,30 +5675,44 @@ def validate_sequencing_epoch_record(
             before_contract_sha256 = canonical_json_sha256(None)
             before_source_ref_sha256 = canonical_json_sha256(None)
             before_status = "absent"
-        after, marker = _sequencing_epoch_after_task(
-            preimage if isinstance(preimage, dict) else None,
-            by_id[task_id],
-            catalog,
-            catalog_digest,
-            applied_at,
-            install_mode=install_mode,
-        )
+        if install_mode == "fresh_materialization" and task_id in gated_ids:
+            # Deferred hardening remains a catalog contract, not an active task,
+            # until the exact G2 release is admitted.
+            after = None
+            marker = None
+            after_contract_sha256 = canonical_json_sha256(None)
+            after_source_ref_sha256 = canonical_json_sha256(None)
+            after_status = "absent"
+            acceptance_deferral_sha256 = canonical_json_sha256(None)
+        else:
+            after, marker = _sequencing_epoch_after_task(
+                preimage if isinstance(preimage, dict) else None,
+                by_id[task_id],
+                catalog,
+                catalog_digest,
+                applied_at,
+                install_mode=install_mode,
+            )
+            after_contract_sha256 = task_contract_sha256(after)
+            after_source_ref_sha256 = canonical_json_sha256(
+                after.get("source_ref")
+            )
+            after_status = str(after["status"])
+            acceptance_deferral_sha256 = canonical_json_sha256(
+                after.get("acceptance_deferral")
+            )
         expected_transition = {
             "task_id": task_id,
             "before_task_snapshot": deepcopy(preimage),
             "before_task_snapshot_sha256": canonical_json_sha256(preimage),
             "after_task_snapshot_sha256": canonical_json_sha256(after),
             "before_task_contract_sha256": before_contract_sha256,
-            "after_task_contract_sha256": task_contract_sha256(after),
+            "after_task_contract_sha256": after_contract_sha256,
             "before_source_ref_sha256": before_source_ref_sha256,
-            "after_source_ref_sha256": canonical_json_sha256(
-                after.get("source_ref")
-            ),
+            "after_source_ref_sha256": after_source_ref_sha256,
             "before_status": before_status,
-            "after_status": str(after["status"]),
-            "acceptance_deferral_sha256": canonical_json_sha256(
-                after.get("acceptance_deferral")
-            ),
+            "after_status": after_status,
+            "acceptance_deferral_sha256": acceptance_deferral_sha256,
             "gate_marker_sha256": canonical_json_sha256(marker),
         }
         if row != expected_transition:
@@ -5844,14 +5925,33 @@ def install_fresh_sequencing_epoch(
     active_by_id, archived_by_id = _program_graph_sources(state, catalog)
     effective_tasks = catalog.get("tasks") or []
     expected_ids = [str(task["id"]) for task in effective_tasks]
-    if set(active_by_id) != set(expected_ids) or archived_by_id:
+    gated_ids = set((catalog.get("release_gate") or {}).get("gated_task_ids") or [])
+    expected_active_ids = set(expected_ids) - gated_ids
+    if set(active_by_id) != expected_active_ids or archived_by_id:
         raise DispatchError(
-            "fresh sequencing materialization requires all 48 tasks active"
+            "fresh sequencing materialization requires exactly the ungated tasks active"
         )
     effective_by_id = {str(task["id"]): task for task in effective_tasks}
-    gated_ids = set((catalog.get("release_gate") or {}).get("gated_task_ids") or [])
     transitions: list[dict[str, Any]] = []
     for task_id in expected_ids:
+        if task_id in gated_ids:
+            transitions.append(
+                {
+                    "task_id": task_id,
+                    "before_task_snapshot": None,
+                    "before_task_snapshot_sha256": canonical_json_sha256(None),
+                    "after_task_snapshot_sha256": canonical_json_sha256(None),
+                    "before_task_contract_sha256": canonical_json_sha256(None),
+                    "after_task_contract_sha256": canonical_json_sha256(None),
+                    "before_source_ref_sha256": canonical_json_sha256(None),
+                    "after_source_ref_sha256": canonical_json_sha256(None),
+                    "before_status": "absent",
+                    "after_status": "absent",
+                    "acceptance_deferral_sha256": canonical_json_sha256(None),
+                    "gate_marker_sha256": canonical_json_sha256(None),
+                }
+            )
+            continue
         task = active_by_id[task_id]
         validate_existing_task_provenance(
             task,
@@ -5860,13 +5960,8 @@ def install_fresh_sequencing_epoch(
             catalog_digest,
             source="fresh active",
         )
-        expected_status = "blocked" if task_id in gated_ids else "todo"
-        expected_marker = None
-        if task_id in gated_ids:
-            expected_marker = _validate_sequencing_gate_marker(
-                task.get("sequencing_release_gate"), catalog
-            )
-        elif "sequencing_release_gate" in task:
+        expected_status = "todo"
+        if "sequencing_release_gate" in task:
             raise DispatchError("ungated fresh task carries a sequencing marker")
         if task.get("status") != expected_status or task.get("last_update") != timestamp:
             raise DispatchError("fresh sequencing task state is not exact")
@@ -6087,15 +6182,18 @@ def validate_sequencing_release_record(
     transition_ids: list[str] = []
     for transition in transitions:
         task_id = str(transition.get("task_id") or "") if isinstance(transition, dict) else ""
+        epoch_transition = epoch_transitions.get(task_id) or {}
+        expected_before_status = epoch_transition.get("after_status")
         if (
             not isinstance(transition, dict)
             or set(transition) != transition_fields
             or task_id not in gated_ids
-            or transition.get("before_status") != "blocked"
+            or expected_before_status not in {"absent", "blocked"}
+            or transition.get("before_status") != expected_before_status
             or transition.get("after_status") != "todo"
             or task_id not in epoch_transitions
             or transition.get("before_task_snapshot_sha256")
-            != epoch_transitions[task_id].get("after_task_snapshot_sha256")
+            != epoch_transition.get("after_task_snapshot_sha256")
             or any(
                 not _is_lower_hex(transition.get(field), 64)
                 for field in (
@@ -6320,6 +6418,11 @@ def materialize(
                 )
                 preserved.append(f"{task_id}:g2-gated-blocked")
                 continue
+            # A genuinely fresh board must not materialize strict/security
+            # hardening before G2.  The effective catalog and sequencing epoch
+            # retain the contract; first release materializes it absent->todo.
+            preserved.append(f"{task_id}:g2-gated-unmaterialized")
+            continue
 
         if task_id in gated_ids and gate_open and persisted_release is None:
             if archive_payload is not None:
@@ -6441,16 +6544,20 @@ def materialize(
             continue
 
         materialized = build_task(task, catalog, catalog_digest, timestamp)
-        if task_id in gated_ids and not gate_open:
-            materialized["status"] = "blocked"
-            materialized["sequencing_release_gate"] = _sequencing_gate_marker(
-                catalog,
-                parked_at=timestamp,
-                previous_status="todo",
+        if task_id in gated_ids and gate_open and persisted_release is None:
+            materialized["sequencing_release_admission_sha256"] = (
+                release_admission_sha256
             )
-        elif task_id in gated_ids and gate_open and persisted_release is None:
-            raise DispatchError(
-                f"first G2 release requires a durably parked task: {task_id}"
+            released_transitions.append(
+                {
+                    "task_id": task_id,
+                    "before_task_snapshot_sha256": canonical_json_sha256(None),
+                    "after_task_snapshot_sha256": canonical_json_sha256(
+                        materialized
+                    ),
+                    "before_status": "absent",
+                    "after_status": "todo",
+                }
             )
         pending_materialized.append(materialized)
         created.append(task_id)

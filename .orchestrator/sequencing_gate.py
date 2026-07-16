@@ -538,6 +538,14 @@ def _task_matches_epoch_authority(
     transition: dict[str, Any],
 ) -> bool:
     source_ref = _source_ref(task)
+    if transition.get("after_status") == "absent":
+        return bool(
+            _has_exact_authority_source_ref(task)
+            and transition.get("after_source_ref_sha256")
+            == canonical_sha256(None)
+            and source_ref.get("task_contract_sha256")
+            == _task_contract_sha256(task)
+        )
     return bool(
         _has_exact_authority_source_ref(task)
         and transition.get("after_source_ref_sha256")
@@ -595,13 +603,32 @@ def _validated_epoch(status: dict[str, Any]) -> tuple[dict[str, Any], list[dict[
             if isinstance(transition, dict)
             else None
         )
+        is_gated = task_id in EXPECTED_GATED_TASK_IDS
+        fresh_deferred = bool(
+            epoch["install_mode"] == "fresh_materialization" and is_gated
+        )
+        expected_after_status = (
+            "absent" if fresh_deferred else ("blocked" if is_gated else "todo")
+        )
+        expected_marker = (
+            {
+                "schema_version": 1,
+                "gate_id": RELEASE_GATE_ID,
+                "release_predicate": RELEASE_PREDICATE,
+                "sequencing_overlay_sha256": SEQUENCING_OVERLAY_SHA256,
+                "state": "parked",
+                "previous_status": "todo",
+                "parked_at": epoch.get("applied_at"),
+            }
+            if is_gated and not fresh_deferred
+            else None
+        )
         if (
             not isinstance(transition, dict)
             or set(transition) != EPOCH_TRANSITION_FIELDS
             or not task_id
             or transition.get("before_status") != expected_before_status
-            or transition.get("after_status")
-            != ("blocked" if task_id in EXPECTED_GATED_TASK_IDS else "todo")
+            or transition.get("after_status") != expected_after_status
             or any(
                 not is_sha256(transition.get(field))
                 for field in EPOCH_TRANSITION_FIELDS
@@ -632,18 +659,18 @@ def _validated_epoch(status: dict[str, Any]) -> tuple[dict[str, Any], list[dict[
             )
             or (
                 transition.get("gate_marker_sha256")
-                != canonical_sha256(
-                    {
-                        "schema_version": 1,
-                        "gate_id": RELEASE_GATE_ID,
-                        "release_predicate": RELEASE_PREDICATE,
-                        "sequencing_overlay_sha256": SEQUENCING_OVERLAY_SHA256,
-                        "state": "parked",
-                        "previous_status": "todo",
-                        "parked_at": epoch.get("applied_at"),
-                    }
-                    if task_id in EXPECTED_GATED_TASK_IDS
-                    else None
+                != canonical_sha256(expected_marker)
+            )
+            or (
+                fresh_deferred
+                and any(
+                    transition.get(field) != null_sha256
+                    for field in (
+                        "after_task_snapshot_sha256",
+                        "after_task_contract_sha256",
+                        "after_source_ref_sha256",
+                        "acceptance_deferral_sha256",
+                    )
                 )
             )
             or (
@@ -659,7 +686,7 @@ def _validated_epoch(status: dict[str, Any]) -> tuple[dict[str, Any], list[dict[
         ):
             return None
         task_ids.append(task_id)
-        if transition["after_status"] == "blocked":
+        if is_gated:
             gated_ids.append(task_id)
     if tuple(task_ids) != EXPECTED_TASK_IDS or tuple(gated_ids) != EXPECTED_GATED_TASK_IDS:
         return None
@@ -805,16 +832,19 @@ def _validated_release_record(
         task_id_value = str(
             transition.get("task_id") if isinstance(transition, dict) else ""
         ).strip()
+        epoch_transition = epoch_by_id.get(task_id_value) or {}
+        expected_before_status = epoch_transition.get("after_status")
         if (
             not isinstance(transition, dict)
             or set(transition) != RELEASE_TRANSITION_FIELDS
             or task_id_value not in epoch_by_id
-            or transition.get("before_status") != "blocked"
+            or expected_before_status not in {"absent", "blocked"}
+            or transition.get("before_status") != expected_before_status
             or transition.get("after_status") != "todo"
             or not is_sha256(transition.get("before_task_snapshot_sha256"))
             or not is_sha256(transition.get("after_task_snapshot_sha256"))
             or transition.get("before_task_snapshot_sha256")
-            != epoch_by_id[task_id_value].get("after_task_snapshot_sha256")
+            != epoch_transition.get("after_task_snapshot_sha256")
         ):
             return None
         transition_ids.append(task_id_value)
@@ -957,7 +987,7 @@ def task_is_sequencing_parked(
         return definitely_gated or overlay_bound
     if not _task_matches_epoch_authority(task, epoch_transition):
         return True
-    epoch_gated = epoch_transition.get("after_status") == "blocked"
+    epoch_gated = task_id in EXPECTED_GATED_TASK_IDS
     if epoch_gated:
         return not task_has_valid_sequencing_release_admission(
             task,

@@ -5571,28 +5571,19 @@ def test_release_gate_is_exact_set_not_wave_and_runs_once_while_closed(
     )
 
     assert calls == 1
-    assert len(created) == 47
-    assert preserved == [
-        f"{g2_v2_fixture['contract']['target_task']}:done"
-    ]
+    assert len(created) == 28
     gated_ids = set(
         g2_v2_fixture["catalog"]["release_gate"]["gated_task_ids"]
     )
+    assert set(preserved) == {
+        f"{g2_v2_fixture['contract']['target_task']}:done",
+        *(f"{task_id}:g2-gated-unmaterialized" for task_id in gated_ids),
+    }
     state_by_id = {
         task["id"]: task for task in g2_v2_fixture["state"]["tasks"]
     }
-    assert {
-        task_id
-        for task_id, task in state_by_id.items()
-        if task.get("status") == "blocked"
-    } == gated_ids
-    assert state_by_id["LOOP-PROD-AUTH-001"]["wave"] == 0
+    assert not (set(state_by_id) & gated_ids)
     assert state_by_id["LOOP-PROD-PER-001"]["wave"] == 99
-    assert all(
-        state_by_id[task_id]["sequencing_release_gate"]["gate_id"]
-        == g2_v2_fixture["catalog"]["release_gate"]["gate_id"]
-        for task_id in gated_ids
-    )
     assert g2_v2_fixture["catalog"]["program_id"] not in (
         g2_v2_fixture["state"].get("program_sequencing_releases") or {}
     )
@@ -5692,7 +5683,7 @@ def test_explicit_sequencing_overlay_migrates_and_parks_complete_base_board() ->
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_after_first
 
 
-def test_explicit_sequencing_overlay_fresh_apply_creates_parked_gate_tasks() -> None:
+def test_explicit_sequencing_overlay_fresh_apply_defers_gate_tasks() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         prepare_status(root)
@@ -5711,10 +5702,12 @@ def test_explicit_sequencing_overlay_fresh_apply_creates_parked_gate_tasks() -> 
         dispatcher.catalog_path = lambda: CATALOG
         dispatcher.apply_sequencing_overlay(catalog, SEQUENCING_OVERLAY)
         gated_ids = set(catalog["release_gate"]["gated_task_ids"])
-        by_id = {task["id"]: task for task in after["tasks"] if task.get("id") in gated_ids}
-        assert set(by_id) == gated_ids
-        assert all(task["status"] == "blocked" for task in by_id.values())
-        assert all("sequencing_release_gate" in task for task in by_id.values())
+        by_id = {task["id"]: task for task in program_tasks(after)}
+        assert set(by_id) == {
+            task["id"] for task in catalog["tasks"]
+        } - gated_ids
+        assert all(task["status"] == "todo" for task in by_id.values())
+        assert all("sequencing_release_gate" not in task for task in by_id.values())
         epoch = after["program_sequencing_epochs"][catalog["program_id"]]
         assert epoch["schema_version"] == 2
         assert epoch["install_mode"] == "fresh_materialization"
@@ -5726,6 +5719,20 @@ def test_explicit_sequencing_overlay_fresh_apply_creates_parked_gate_tasks() -> 
             and row["before_task_contract_sha256"] == canonical_sha256(None)
             and row["before_source_ref_sha256"] == canonical_sha256(None)
             for row in epoch["task_transitions"]
+        )
+        gated_transitions = {
+            row["task_id"]: row
+            for row in epoch["task_transitions"]
+            if row["task_id"] in gated_ids
+        }
+        assert set(gated_transitions) == gated_ids
+        assert all(
+            row["after_status"] == "absent"
+            and row["after_task_snapshot_sha256"] == canonical_sha256(None)
+            and row["after_task_contract_sha256"] == canonical_sha256(None)
+            and row["after_source_ref_sha256"] == canonical_sha256(None)
+            and row["gate_marker_sha256"] == canonical_sha256(None)
+            for row in gated_transitions.values()
         )
 
 
@@ -5748,10 +5755,10 @@ def test_documented_default_apply_uses_authoritative_sequencing_overlay() -> Non
         dispatcher.apply_sequencing_overlay(catalog, SEQUENCING_OVERLAY)
         gated_ids = set(catalog["release_gate"]["gated_task_ids"])
         by_id = {task["id"]: task for task in program_tasks(after)}
-        assert set(by_id) == {task["id"] for task in catalog["tasks"]}
-        assert {
-            task_id for task_id, task in by_id.items() if task["status"] == "blocked"
-        } == gated_ids
+        assert set(by_id) == {
+            task["id"] for task in catalog["tasks"]
+        } - gated_ids
+        assert all(task["status"] == "todo" for task in by_id.values())
         assert after["program_sequencing_epochs"][catalog["program_id"]][
             "install_mode"
         ] == "fresh_materialization"
@@ -5771,11 +5778,9 @@ def test_test_base_opt_out_cannot_disable_overlay_for_live_shaped_status_root() 
         dispatcher.catalog_path = lambda: CATALOG
         dispatcher.apply_sequencing_overlay(catalog, SEQUENCING_OVERLAY)
         gated_ids = set(catalog["release_gate"]["gated_task_ids"])
-        assert {
-            task["id"]
-            for task in program_tasks(after)
-            if task.get("status") == "blocked"
-        } == gated_ids
+        assert {task["id"] for task in program_tasks(after)} == {
+            task["id"] for task in catalog["tasks"]
+        } - gated_ids
         assert catalog["program_id"] in after["program_sequencing_epochs"]
 
 
@@ -5982,8 +5987,11 @@ def test_valid_g2_release_is_durable_and_does_not_recheck_wall_clock(
         catalog_digest=g2_v2_fixture["catalog_digest"],
         timestamp=G2_RELEASED_AT,
     )
-    assert created == []
-    assert len(preserved) == 48
+    gated_ids = set(
+        g2_v2_fixture["catalog"]["release_gate"]["gated_task_ids"]
+    )
+    assert set(created) == gated_ids
+    assert len(preserved) == 29
     assert changed is True
     release_log = next(
         row for row in logs if row["type"] == "sequencing_gate_release"
@@ -5991,14 +5999,11 @@ def test_valid_g2_release_is_durable_and_does_not_recheck_wall_clock(
     release = g2_v2_fixture["state"]["program_sequencing_releases"][
         g2_v2_fixture["catalog"]["program_id"]
     ]
-    gated_ids = set(
-        g2_v2_fixture["catalog"]["release_gate"]["gated_task_ids"]
-    )
     assert {
         row["task_id"] for row in release["released_task_transitions"]
     } == gated_ids
     assert all(
-        row["before_status"] == "blocked" and row["after_status"] == "todo"
+        row["before_status"] == "absent" and row["after_status"] == "todo"
         for row in release["released_task_transitions"]
     )
     assert release_log["release_record_sha256"] == canonical_sha256(release)
