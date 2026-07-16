@@ -3,7 +3,7 @@
 Status: **blocked pre-closeout — do not mark `done`**
 
 Initial evidence captured: 2026-07-15 13:16-13:25 UTC
-Latest recheck: 2026-07-16 01:35 UTC
+Latest recheck: 2026-07-16 02:06 UTC
 
 Owner: Codex2
 Reviewer: Claude
@@ -16,17 +16,19 @@ a formal Persona Fleet mutation reference, and an active artifact-v2 binding.
 The task is nevertheless **not closeable**. The 2026-07-16 recheck resolved
 the original missing secret floor (`DEV_BFF_JWT_SECRET`,
 `DEV_BFF_OIDC_CLIENT_ID`, `DEV_BFF_OIDC_CLIENT_SECRET`, and
-`DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN` are present) and merged the runtime
-dependency fix needed by `policy-learning-svc`. The remaining blockers are:
+`DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN` are present), merged the runtime
+dependency fix needed by `policy-learning-svc`, and merged a deploy hygiene fix
+for target-tracked untracked residue. The remaining blockers are:
 
 1. latest `dev` root deploy at merge commit
-   `f43e10a3d288ca19aa6651b0d73aa3d44f1289db` could not complete because an
-   active local deploy guard cancels all Pantheon nonprod deploy runs except
-   allowlisted run `29464403186`;
-2. the allowlisted run targets `publish/v2026.07.15.2`
-   (`be105af5f1b381f518d767efb9f72813139d5077`), which is not latest `dev`
-   and does not contain `services/policy-learning/requirements.txt`
-   `jsonschema`;
+   `35d805940d1c21d1077689413c7f4f25add80d84` could not complete because a
+   respawned local proof guard cancels Pantheon nonprod deploy runs; latest-dev
+   runs `29465456181` and `29465639316` were externally cancelled before probes
+   could run;
+2. the latest successful allowlisted runs still target `publish/v2026.07.15.2`
+   (`be105af5f1b381f518d767efb9f72813139d5077`), not latest `dev`; run
+   `29465476610` used the bounded `permissive-stub` profile and skipped the
+   evolution dispatch and canonical lifecycle probes;
 3. hosted BFF/FE/browser/telemetry gates have not been re-proven against the
    latest `dev` merge commit;
 4. the current execute-plans integration gate remains red in the prior
@@ -49,6 +51,9 @@ the hosted-browser failure screenshot.
 
 The 2026-07-16 deploy-guard recheck is archived separately in
 `docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/archive/EVOLOOP-009-20260716-deploy-guard-evidence.json`.
+
+The 2026-07-16 proof-guard rerun evidence after PR #3732 is archived in
+`docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/archive/EVOLOOP-009-20260716-proof-guard-rerun-evidence.json`.
 
 ## Integrated PR ledger
 
@@ -79,6 +84,7 @@ Every row was re-read from GitHub on 2026-07-15 and reported `MERGED` into
 | EVOLOOP-010 | [#3647](https://github.com/ajoe734/pantheon/pull/3647) | `503d8da96aa581ec0b2cd253c4fea3e90309819d` |
 | EVOLOOP-011 | [#3663](https://github.com/ajoe734/pantheon/pull/3663) | `0a244c48651055af7889eeae5ddabbba316be326` |
 | EVOLOOP-009 dependency/dispatch recheck | [#3728](https://github.com/ajoe734/pantheon/pull/3728) | `f43e10a3d288ca19aa6651b0d73aa3d44f1289db` |
+| EVOLOOP-009 deploy hygiene fix | [#3732](https://github.com/ajoe734/pantheon/pull/3732) | `35d805940d1c21d1077689413c7f4f25add80d84` |
 
 ## Deployment readback
 
@@ -94,6 +100,9 @@ Every row was re-read from GitHub on 2026-07-15 and reported `MERGED` into
 | 2026-07-16 dependency fix | Strict deploy run [29462890670](https://github.com/ajoe734/pantheon/actions/runs/29462890670) passed the secret floor but failed in VM deploy because `policy-learning-svc` missed `jsonschema`. PR [#3727](https://github.com/ajoe734/pantheon/pull/3727) added the missing dependency on `dev`; PR [#3728](https://github.com/ajoe734/pantheon/pull/3728) merged bounded alignment and this task handoff. |
 | 2026-07-16 latest-dev deploy attempt | Runs [29464312537](https://github.com/ajoe734/pantheon/actions/runs/29464312537) and [29464359888](https://github.com/ajoe734/pantheon/actions/runs/29464359888), targeting `55b2202bb...` and then `f43e10a3d...`, were canceled before deploy. A local deploy guard process was observed canceling every Pantheon deploy run except allowlisted run `29464403186`, while restoring workflow `269991390` to `disabled_manually`. |
 | 2026-07-16 allowlisted deploy | [29464403186](https://github.com/ajoe734/pantheon/actions/runs/29464403186) succeeded but targets `publish/v2026.07.15.2` / `be105af5...`, not latest `dev`; `f43e10a3d...` is not an ancestor of that publish SHA, that publish SHA lacks `jsonschema` in `services/policy-learning/requirements.txt`, and the evolution dispatch, canonical lifecycle, and OpenClaw assistant probes were skipped. It cannot satisfy EVOLOOP-009 closeout. |
+| 2026-07-16 deploy hygiene rerun | [29465115954](https://github.com/ajoe734/pantheon/actions/runs/29465115954) targeted `c12bcaa...` and reached VM deploy, but the managed deploy worktree refused strict deploy because `scripts/reap_hung_workers.py` was untracked locally while the target commit tracked it. PR [#3732](https://github.com/ajoe734/pantheon/pull/3732) merged a narrow deploy hygiene fix that preserves target-tracked untracked residue without using `allow_dirty`. |
+| 2026-07-16 post-fix latest-dev deploy attempts | [29465456181](https://github.com/ajoe734/pantheon/actions/runs/29465456181) and [29465639316](https://github.com/ajoe734/pantheon/actions/runs/29465639316) targeted `35d805940d1c21d1077689413c7f4f25add80d84` with `allow_dirty=false`, `allow_example_env=false`, strict auth, and both evolution/canonical probes requested. Both were externally cancelled by a respawned local proof guard before probe evidence could run. |
+| 2026-07-16 proof-guard allowlisted deploy | [29465476610](https://github.com/ajoe734/pantheon/actions/runs/29465476610) succeeded but targets `publish/v2026.07.15.2` / `be105af5...`, used `permissive-stub`, skipped the evolution dispatch and canonical lifecycle probes, and therefore cannot satisfy EVOLOOP-009 closeout. |
 
 The most recent successful root deployment (`29390952944`, SHA
 `1fef00eb7f23da05fd964087db85426863331540`) predates the final EVOLOOP-007,
@@ -196,7 +205,7 @@ must not be hidden by the list-level success.
 | ID | Blocker / risk | Owner | Expiry / recheck |
 |---|---|---|---|
 | `EVOLOOP-009-B1` | Original secret floor resolved on 2026-07-16: required dev secrets are present and strict deploy runs pass the auth/secret floor. Keep `DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED` strict. | Human/Ops | resolved; recheck on next deploy |
-| `EVOLOOP-009-B2` | Clear or retarget the active deploy guard so a single latest `dev` strict deploy can run at `f43e10a3d...` or newer with evolution and canonical probes enabled. Do not accept the current allowlisted `publish/v2026.07.15.2` run as EVOLOOP-009 evidence. | Human/Ops + deploy owner | 2026-07-16 12:00 UTC |
+| `EVOLOOP-009-B2` | Clear or retarget the active proof/deploy guard so a single latest `dev` strict deploy can run at `35d805940...` or newer with evolution and canonical probes enabled. Do not accept the current allowlisted `publish/v2026.07.15.2` runs as EVOLOOP-009 evidence. | Human/Ops + deploy owner | 2026-07-16 12:00 UTC |
 | `EVOLOOP-009-B3` | Hosted BFF strict-auth/MFA posture must be re-proven after the latest `dev` deploy; synthetic source tokens must stop reading privileged routes. | Human/Ops + Codex | 2026-07-16 12:00 UTC |
 | `EVOLOOP-009-B4` | Repair and rerun execute-plans Gate 4/5/6/7; only deploy an immutable candidate from the successful exact-SHA gate. | Gate owners: Gemini, Codex, Codex2 | 2026-07-17 12:00 UTC |
 | `EVOLOOP-009-B5` | Make the hosted browser governed session load Persona Fleet and Evolution Journal, and visibly tie active binding id to artifact id/version. | execute-plans owner (Codex) | 2026-07-17 12:00 UTC |
