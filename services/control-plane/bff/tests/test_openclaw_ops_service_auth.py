@@ -134,3 +134,130 @@ def test_non_assistant_request_does_not_receive_or_require_assistant_token() -> 
         client.get_capabilities()
 
     assert "x-pantheon-service-token" not in captured["headers"]
+
+
+def test_servant_agent_ensure_uses_authenticated_adapter_contract() -> None:
+    captured: dict[str, object] = {}
+    persona_id = "agora-servant-da8656efa5da7a5fb8e0"
+    persona = {
+        "persona_id": persona_id,
+        "archetype": "agora_servant",
+        "_agent_sync_idempotency_key": "servant-ensure-request-1",
+        "metadata": {
+            "tenant_id": "pantheon-dev",
+            "agora_user_id": "operator-a",
+            "persona_class": "agora_servant",
+            "execution_authority": "none",
+            "interaction_capabilities": ["persona_opinion"],
+            "capability_snapshot_id": "cap-servant-fa58dfa6442aa620a3e9",
+        },
+    }
+
+    class _AgentResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def getcode(self) -> int:
+            return 201
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "status": "ok",
+                    "agent": {
+                        "status": "created",
+                        "agent_id": persona_id,
+                        "model_id": f"openclaw/{persona_id}",
+                        "workspace_ref": f"/home/node/.openclaw/workspaces/{persona_id}",
+                    },
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured["headers"] = _headers(request)
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return _AgentResponse()
+
+    client = OpenClawOpsClient(
+        base_url="http://openclaw-gateway-adapter:8104",
+        timeout_seconds=1.25,
+        service_token="adapter-secret",
+        service_auth_required=True,
+    )
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        agent = client.ensure_agora_servant_agent(persona)
+
+    assert agent["agent_id"] == persona_id
+    assert captured["headers"]["x-pantheon-service-token"] == "adapter-secret"
+    assert captured["headers"]["idempotency-key"]
+    assert captured["headers"]["x-request-id"]
+    assert captured["body"] == {
+        "persona_registry_ref": f"persona:{persona_id}",
+        "workspace_ref": f"/home/node/.openclaw/workspaces/{persona_id}",
+        "capability_snapshot": {
+            "allowed_capabilities": ["persona_opinion"],
+            "persona_class": "agora_servant",
+        },
+    }
+    assert captured["timeout"] == 135.0
+
+
+def test_servant_agent_ensure_fails_before_network_without_service_token() -> None:
+    persona = {
+        "persona_id": "agora-servant-da8656efa5da7a5fb8e0",
+        "archetype": "agora_servant",
+        "_agent_sync_idempotency_key": "servant-ensure-request-1",
+        "metadata": {
+            "tenant_id": "pantheon-dev",
+            "agora_user_id": "operator-a",
+            "persona_class": "agora_servant",
+            "execution_authority": "none",
+            "interaction_capabilities": ["persona_opinion"],
+            "capability_snapshot_id": "cap-servant-fa58dfa6442aa620a3e9",
+        },
+    }
+    client = OpenClawOpsClient(
+        base_url="http://openclaw-gateway-adapter:8104",
+        service_token="",
+        service_auth_required=True,
+    )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen") as urlopen:
+        with pytest.raises(OpenClawOpsClientError) as captured:
+            client.ensure_agora_servant_agent(persona)
+
+    assert captured.value.status_code == 503
+    assert captured.value.error_code == "OPENCLAW_ADAPTER_SERVICE_AUTH_MISCONFIGURED"
+    urlopen.assert_not_called()
+
+
+def test_servant_agent_ensure_rejects_unbound_admission_before_network() -> None:
+    client = OpenClawOpsClient(
+        base_url="http://openclaw-gateway-adapter:8104",
+        service_token="adapter-secret",
+        service_auth_required=True,
+    )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen") as urlopen:
+        with pytest.raises(OpenClawOpsClientError) as captured:
+            client.ensure_agora_servant_agent(
+                {
+                    "persona_id": "agora-servant-da8656efa5da7a5fb8e0",
+                    "_agent_sync_idempotency_key": "servant-ensure-request-1",
+                    "metadata": {
+                        "tenant_id": "pantheon-dev",
+                        "agora_user_id": "operator-a",
+                        "persona_class": "agora_servant",
+                        "execution_authority": "none",
+                        "interaction_capabilities": ["persona_opinion"],
+                        "capability_snapshot_id": "cap-servant-wrong",
+                    },
+                }
+            )
+
+    assert captured.value.error_code == "OPENCLAW_AGENT_ADMISSION_INVALID"
+    urlopen.assert_not_called()

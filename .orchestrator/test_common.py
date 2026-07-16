@@ -102,9 +102,19 @@ class JsonLoadResilienceTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmpdir:
             status_root = Path(tmpdir)
+            subprocess.run(["git", "init", "-q"], cwd=status_root, check=True)
             status_file = status_root / "ai-status.json"
             status_file.write_text("", encoding="utf-8")
             env = os.environ.copy()
+            for env_name in (
+                "PANTHEON_WORKTREE_ROOT",
+                "ORCH_WORKSPACE_PATH",
+                "ORCH_RUN_ID",
+                "ORCH_TASK_ID",
+                "ORCH_RUNNER_STATUS_PATH",
+                "ORCH_HEARTBEAT_PATH",
+            ):
+                env.pop(env_name, None)
             env["PANTHEON_STATUS_ROOT"] = str(status_root)
 
             result = subprocess.run(
