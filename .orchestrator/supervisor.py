@@ -1810,6 +1810,10 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
                 "",
                 "Generated in the worker workspace because the supervisor root did not have a task brief file.",
                 "",
+                "## Coordination Root",
+                "- Auto workers inherit `PANTHEON_STATUS_ROOT` from the supervisor.",
+                "- Run `./scripts/ai-status.sh` normally from this worktree; governed status, activity, archive and lock writes are routed to the validated central root.",
+                "",
             ]
         )
     return "\n".join(
@@ -1827,6 +1831,10 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
             "",
             "## Summary",
             str(task.get("summary_zh") or "-"),
+            "",
+            "## Coordination Root",
+            "- Auto workers inherit `PANTHEON_STATUS_ROOT` from the supervisor.",
+            "- Run `./scripts/ai-status.sh` normally from this worktree; governed status, activity, archive and lock writes are routed to the validated central root.",
             "",
         ]
     )

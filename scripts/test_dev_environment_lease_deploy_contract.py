@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -12,6 +14,9 @@ DEPLOY = ROOT / "scripts" / "deploy_nonprod_vm.sh"
 CONTROLLER_SHA = "ddf4d0d5d33a848b3c86e3be2f6713e2ad9c0524"
 CONTROLLER_SCRIPT_SHA256 = (
     "52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048"
+)
+CONTROLLER_WRAPPER_SHA256 = (
+    "f3995a2baedc2ff47178a0de8ad1952096df4de508d5a47c8e0042a151ab7ea8"
 )
 CHECKOUT_SHA = "34e114876b0b11c390a56381ad16ebd13914f8d5"
 AUTH_SHA = "c200f3691d83b41bf9bbd8638997a462592937ed"
@@ -27,6 +32,16 @@ def _job(text: str, name: str, next_name: str | None = None) -> str:
     if next_name is None:
         return text[start:]
     return text[start : text.index(f"  {next_name}:\n", start + 1)]
+
+
+def _git_show_sha256(ref_path: str) -> str:
+    result = subprocess.run(
+        ["git", "show", ref_path],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    )
+    return hashlib.sha256(result.stdout).hexdigest()
 
 
 def test_controller_checkout_is_an_exact_immutable_separate_trust_root() -> None:
@@ -54,6 +69,22 @@ def test_controller_checkout_is_an_exact_immutable_separate_trust_root() -> None
         )
         >= 7
     )
+
+
+def test_controller_checksums_match_pinned_controller_files() -> None:
+    workflow = _workflow()
+    dev = _job(workflow, "deploy-dev", "deploy-staging-live")
+
+    assert (
+        _git_show_sha256(f"{CONTROLLER_SHA}:scripts/dev_environment_lease.py")
+        == CONTROLLER_SCRIPT_SHA256
+    )
+    assert (
+        _git_show_sha256(f"{CONTROLLER_SHA}:scripts/run_with_dev_environment_lease.sh")
+        == CONTROLLER_WRAPPER_SHA256
+    )
+    assert dev.count(CONTROLLER_SCRIPT_SHA256) >= 7
+    assert dev.count(CONTROLLER_WRAPPER_SHA256) >= 7
 
 
 def test_dev_and_staging_are_independent_jobs_and_staging_has_no_lease_secret() -> None:
@@ -132,10 +163,21 @@ def test_initial_visibility_retry_is_only_on_immediate_post_acquire_verify() -> 
     assert dev.count("--initial-visibility-poll-seconds") == 1
     assert "--initial-visibility-wait-seconds 15" in initial_verify
     assert "--initial-visibility-poll-seconds 1" in initial_verify
-    assert "for attempt in $(seq 1 50)" not in dev
     assert initial_verify.index("verify-heartbeat-identity") < initial_verify.index(
         "--initial-visibility-wait-seconds 15"
     )
+
+
+def test_broad_initial_verify_retry_loop_is_absent() -> None:
+    dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
+    heartbeat_start = dev.index("      - name: Start identity-bound lease heartbeat")
+    next_step = dev.index("      - name: Deploy dev VM stack under lease", heartbeat_start)
+    initial_verify = dev[heartbeat_start:next_step]
+
+    assert "initial_verify_log=" not in initial_verify
+    assert "verify_ok=false" not in initial_verify
+    assert "for attempt in $(seq 1 50)" not in initial_verify
+    assert "> /dev/null 2>" not in initial_verify
 
 
 def test_all_dev_mutations_and_public_proofs_use_pinned_wrapper() -> None:
@@ -176,6 +218,13 @@ def test_token_steps_use_a_fixed_sanitized_path_and_clear_shell_git_injection() 
     assert dev.count('PYTHONPATH: ""') >= 7
     assert dev.count('PYTHONNOUSERSITE: "1"') >= 7
     assert dev.count('PYTHONSAFEPATH: "1"') >= 7
+    pythoninspect_yaml_values = re.findall(
+        r"(?m)^\s*PYTHONINSPECT:\s*(.+?)\s*$", dev
+    )
+    pythoninspect_shell_values = re.findall(r"\bPYTHONINSPECT=([^\s\\]*)", dev)
+    assert len(pythoninspect_yaml_values) >= 7
+    assert set(pythoninspect_yaml_values) == {'""'}
+    assert pythoninspect_shell_values == [""]
     assert dev.count('LD_PRELOAD: ""') >= 7
     assert dev.count('GIT_CONFIG_COUNT: "0"') >= 7
     assert dev.count('GIT_CONFIG_PARAMETERS: ""') >= 7

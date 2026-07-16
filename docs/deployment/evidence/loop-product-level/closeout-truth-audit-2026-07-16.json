@@ -1,10 +1,10 @@
 {
   "audit_id": "closeout-truth-audit-2026-07-16",
-  "generated_at": "2026-07-16T12:54:59Z",
+  "generated_at": "2026-07-16T16:22:16Z",
   "mode": "read_only_archive_snapshot_replay",
   "source_root": "/home/lupin/code/pantheon/ai-task-archive/tasks",
   "selection": {
-    "frozen_rule": "all live-root LOOP-PROD archive snapshots except governance/meta LOOP-PROD-000, LOOP-PROD-001, and LOOP-PROD-002",
+    "frozen_rule": "fixed 18 task IDs from FROZEN_ARCHIVE_REPLAY_TASK_IDS; governance/meta snapshots are excluded from unexpected-source errors but never used to derive the replay set",
     "frozen_task_ids": [
       "LOOP-PROD-AGORA-001",
       "LOOP-PROD-AGORA-002",
@@ -49,7 +49,8 @@
     "excluded_task_ids": [
       "LOOP-PROD-000",
       "LOOP-PROD-001",
-      "LOOP-PROD-002"
+      "LOOP-PROD-002",
+      "LOOP-PROD-PLANNING-BRIEFS-001"
     ],
     "excluded_snapshots": [
       {
@@ -65,6 +66,11 @@
       {
         "task_id": "LOOP-PROD-002",
         "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-002.json",
+        "reason": "governance/meta task excluded from frozen product-closure replay set"
+      },
+      {
+        "task_id": "LOOP-PROD-PLANNING-BRIEFS-001",
+        "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-PLANNING-BRIEFS-001.json",
         "reason": "governance/meta task excluded from frozen product-closure replay set"
       }
     ],
@@ -86,6 +92,8 @@
   "results": [
     {
       "task_id": "LOOP-PROD-AGORA-001",
+      "snapshot_task_id": "LOOP-PROD-AGORA-001",
+      "task_object_id": "LOOP-PROD-AGORA-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-AGORA-001.json",
       "snapshot_sha256_before": "16fddeca0129031a393421ec0b280092f610b161c64e3262f33aea66cc663ff3",
       "snapshot_sha256_after": "16fddeca0129031a393421ec0b280092f610b161c64e3262f33aea66cc663ff3",
@@ -106,6 +114,8 @@
     },
     {
       "task_id": "LOOP-PROD-AGORA-002",
+      "snapshot_task_id": "LOOP-PROD-AGORA-002",
+      "task_object_id": "LOOP-PROD-AGORA-002",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-AGORA-002.json",
       "snapshot_sha256_before": "d2fefb8807de4a6e0ea59e49a2e6488a4fd10a6fb1a47f275f51234c97930982",
       "snapshot_sha256_after": "d2fefb8807de4a6e0ea59e49a2e6488a4fd10a6fb1a47f275f51234c97930982",
@@ -127,6 +137,8 @@
     },
     {
       "task_id": "LOOP-PROD-ALPHA-001",
+      "snapshot_task_id": "LOOP-PROD-ALPHA-001",
+      "task_object_id": "LOOP-PROD-ALPHA-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-ALPHA-001.json",
       "snapshot_sha256_before": "aae98fcd1867e2f862a7237f8967685b45d4daa022ad7618e4e18a4ca38befd6",
       "snapshot_sha256_after": "aae98fcd1867e2f862a7237f8967685b45d4daa022ad7618e4e18a4ca38befd6",
@@ -147,6 +159,8 @@
     },
     {
       "task_id": "LOOP-PROD-AUTH-001",
+      "snapshot_task_id": "LOOP-PROD-AUTH-001",
+      "task_object_id": "LOOP-PROD-AUTH-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-AUTH-001.json",
       "snapshot_sha256_before": "b3a3bf44f699481f53e0d981341254d7b5df5e695011277dafb6546baff6aa6e",
       "snapshot_sha256_after": "b3a3bf44f699481f53e0d981341254d7b5df5e695011277dafb6546baff6aa6e",
@@ -170,6 +184,8 @@
     },
     {
       "task_id": "LOOP-PROD-CAP-001",
+      "snapshot_task_id": "LOOP-PROD-CAP-001",
+      "task_object_id": "LOOP-PROD-CAP-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-CAP-001.json",
       "snapshot_sha256_before": "edbb0a985ee73aa7386e35b95b4996741cf8957731a22c38310eb3f4d8cb4675",
       "snapshot_sha256_after": "edbb0a985ee73aa7386e35b95b4996741cf8957731a22c38310eb3f4d8cb4675",
@@ -191,6 +207,8 @@
     },
     {
       "task_id": "LOOP-PROD-CONS-001",
+      "snapshot_task_id": "LOOP-PROD-CONS-001",
+      "task_object_id": "LOOP-PROD-CONS-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-CONS-001.json",
       "snapshot_sha256_before": "85558b3dbfbfde846408ba3f704f143c198894bdbda8645356dc9d5ac97e313f",
       "snapshot_sha256_after": "85558b3dbfbfde846408ba3f704f143c198894bdbda8645356dc9d5ac97e313f",
@@ -211,6 +229,8 @@
     },
     {
       "task_id": "LOOP-PROD-DEP-001",
+      "snapshot_task_id": "LOOP-PROD-DEP-001",
+      "task_object_id": "LOOP-PROD-DEP-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-DEP-001.json",
       "snapshot_sha256_before": "838cb844a662873f21c98dbe9350efb915c96720ef04175b644839e37e4775ff",
       "snapshot_sha256_after": "838cb844a662873f21c98dbe9350efb915c96720ef04175b644839e37e4775ff",
@@ -231,6 +251,8 @@
     },
     {
       "task_id": "LOOP-PROD-DIST-001",
+      "snapshot_task_id": "LOOP-PROD-DIST-001",
+      "task_object_id": "LOOP-PROD-DIST-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-DIST-001.json",
       "snapshot_sha256_before": "cccea13c08069f45b42beb670401966e8c02e6fdbaeb4fb31b321f9aaeacaa15",
       "snapshot_sha256_after": "cccea13c08069f45b42beb670401966e8c02e6fdbaeb4fb31b321f9aaeacaa15",
@@ -251,6 +273,8 @@
     },
     {
       "task_id": "LOOP-PROD-GAP-ADDENDUM-001",
+      "snapshot_task_id": "LOOP-PROD-GAP-ADDENDUM-001",
+      "task_object_id": "LOOP-PROD-GAP-ADDENDUM-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-GAP-ADDENDUM-001.json",
       "snapshot_sha256_before": "1e5f9dd3207330fc333f5a5369933c561ef46d2307cd7aff6e7d3f68feace7ea",
       "snapshot_sha256_after": "1e5f9dd3207330fc333f5a5369933c561ef46d2307cd7aff6e7d3f68feace7ea",
@@ -271,6 +295,8 @@
     },
     {
       "task_id": "LOOP-PROD-GAP-ADDENDUM-002",
+      "snapshot_task_id": "LOOP-PROD-GAP-ADDENDUM-002",
+      "task_object_id": "LOOP-PROD-GAP-ADDENDUM-002",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-GAP-ADDENDUM-002.json",
       "snapshot_sha256_before": "3d77464b5cfa5fbd83e9c0cb70c90d7bf291cbc88fde2a7728fc1c77cb1b7c11",
       "snapshot_sha256_after": "3d77464b5cfa5fbd83e9c0cb70c90d7bf291cbc88fde2a7728fc1c77cb1b7c11",
@@ -291,6 +317,8 @@
     },
     {
       "task_id": "LOOP-PROD-IMIT-001",
+      "snapshot_task_id": "LOOP-PROD-IMIT-001",
+      "task_object_id": "LOOP-PROD-IMIT-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-IMIT-001.json",
       "snapshot_sha256_before": "ca130618c43f8b1f9994e4b91d08cf7e8b71a074ae1c33fd0c94752dcae865dc",
       "snapshot_sha256_after": "ca130618c43f8b1f9994e4b91d08cf7e8b71a074ae1c33fd0c94752dcae865dc",
@@ -312,6 +340,8 @@
     },
     {
       "task_id": "LOOP-PROD-MAI-001",
+      "snapshot_task_id": "LOOP-PROD-MAI-001",
+      "task_object_id": "LOOP-PROD-MAI-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-MAI-001.json",
       "snapshot_sha256_before": "b8f47bcc4ad354879d6293e9982f92b25dda096d7f31125e990005f5bcd3db30",
       "snapshot_sha256_after": "b8f47bcc4ad354879d6293e9982f92b25dda096d7f31125e990005f5bcd3db30",
@@ -354,6 +384,8 @@
     },
     {
       "task_id": "LOOP-PROD-OODA-001",
+      "snapshot_task_id": "LOOP-PROD-OODA-001",
+      "task_object_id": "LOOP-PROD-OODA-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-OODA-001.json",
       "snapshot_sha256_before": "032c0c60a52b4764da55a997f210396f31e7dcb424307b88e65f7825c935d103",
       "snapshot_sha256_after": "032c0c60a52b4764da55a997f210396f31e7dcb424307b88e65f7825c935d103",
@@ -374,6 +406,8 @@
     },
     {
       "task_id": "LOOP-PROD-REC-001",
+      "snapshot_task_id": "LOOP-PROD-REC-001",
+      "task_object_id": "LOOP-PROD-REC-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-REC-001.json",
       "snapshot_sha256_before": "3b2833e940cb77d12f516ba627ca8c7588131cf16e4f95bd8001fe546b566bb7",
       "snapshot_sha256_after": "3b2833e940cb77d12f516ba627ca8c7588131cf16e4f95bd8001fe546b566bb7",
@@ -392,6 +426,8 @@
     },
     {
       "task_id": "LOOP-PROD-RUNTIME-BOOT-001",
+      "snapshot_task_id": "LOOP-PROD-RUNTIME-BOOT-001",
+      "task_object_id": "LOOP-PROD-RUNTIME-BOOT-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-RUNTIME-BOOT-001.json",
       "snapshot_sha256_before": "c99dc16eb84b84ea179c4c2585b9b64a9be8399a68b40eaadca0971289e5c60f",
       "snapshot_sha256_after": "c99dc16eb84b84ea179c4c2585b9b64a9be8399a68b40eaadca0971289e5c60f",
@@ -412,6 +448,8 @@
     },
     {
       "task_id": "LOOP-PROD-SRC-001",
+      "snapshot_task_id": "LOOP-PROD-SRC-001",
+      "task_object_id": "LOOP-PROD-SRC-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-SRC-001.json",
       "snapshot_sha256_before": "261443d55221b5882aa7b7b83a2c4d86777ecb876b574bbc9a60d7c95b44a8dc",
       "snapshot_sha256_after": "261443d55221b5882aa7b7b83a2c4d86777ecb876b574bbc9a60d7c95b44a8dc",
@@ -436,6 +474,8 @@
     },
     {
       "task_id": "LOOP-PROD-TEACH-001",
+      "snapshot_task_id": "LOOP-PROD-TEACH-001",
+      "task_object_id": "LOOP-PROD-TEACH-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-TEACH-001.json",
       "snapshot_sha256_before": "423a94aa92c6159a3b4a824e7c39c279b42825d2a6df585208de969f26584346",
       "snapshot_sha256_after": "423a94aa92c6159a3b4a824e7c39c279b42825d2a6df585208de969f26584346",
@@ -454,6 +494,8 @@
     },
     {
       "task_id": "LOOP-PROD-TEL-001",
+      "snapshot_task_id": "LOOP-PROD-TEL-001",
+      "task_object_id": "LOOP-PROD-TEL-001",
       "snapshot": "/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-TEL-001.json",
       "snapshot_sha256_before": "a1d8f1c658a140c673719daaa1fb900492fca0f83e9675f3448e2b5a7167e648",
       "snapshot_sha256_after": "a1d8f1c658a140c673719daaa1fb900492fca0f83e9675f3448e2b5a7167e648",

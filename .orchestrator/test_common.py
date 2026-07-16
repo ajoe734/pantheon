@@ -102,9 +102,19 @@ class JsonLoadResilienceTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmpdir:
             status_root = Path(tmpdir)
+            subprocess.run(["git", "init", "-q"], cwd=status_root, check=True)
             status_file = status_root / "ai-status.json"
             status_file.write_text("", encoding="utf-8")
             env = os.environ.copy()
+            for env_name in (
+                "PANTHEON_WORKTREE_ROOT",
+                "ORCH_WORKSPACE_PATH",
+                "ORCH_RUN_ID",
+                "ORCH_TASK_ID",
+                "ORCH_RUNNER_STATUS_PATH",
+                "ORCH_HEARTBEAT_PATH",
+            ):
+                env.pop(env_name, None)
             env["PANTHEON_STATUS_ROOT"] = str(status_root)
 
             result = subprocess.run(
@@ -743,6 +753,720 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
                     log_path, shared=True, nonblocking=False
                 ):
                     common.activity_audit_source_paths_unlocked(log_path)
+
+
+class LogicalActivityReaderTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.log_path = self.root / "ai-activity-log.jsonl"
+        self.archive_dir = self.root / "archive" / "logs"
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
+        self.legacy_dir = self.root / ".orchestrator" / "logs" / "activity-log-archive"
+        self.legacy_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _write_gz(self, path: Path, entries: list[dict]):
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            for entry in entries:
+                handle.write(json.dumps(entry) + "\n")
+
+    def _make_entries(self, start_id: int, count: int) -> list[dict]:
+        return [
+            {
+                "event_id": f"event-{i}",
+                "ts": "2026-07-16T12:00:00Z",
+                "agent": "Test",
+                "message": f"entry {i}"
+            }
+            for i in range(start_id, start_id + count)
+        ]
+
+    def test_exact_1000_line_overlap_two_archives_and_callback(self):
+        entries1 = self._make_entries(0, 1500)
+        entries2 = self._make_entries(500, 1500)
+
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        self._write_gz(f1, entries1)
+        self._write_gz(f2, entries2)
+
+        collapsed_info = []
+        def on_collapse(prev_p, next_p, lines, bytes_count, digest):
+            collapsed_info.append({
+                "prev_source": str(prev_p),
+                "next_source": str(next_p),
+                "lines": lines,
+                "bytes": bytes_count,
+                "digest": digest
+            })
+
+        results = list(common.stream_logical_activity(self.log_path, on_collapse=on_collapse))
+        self.assertEqual(len(results), 2000)
+        for idx, (entry, _, _) in enumerate(results):
+            self.assertEqual(entry["event_id"], f"event-{idx}")
+
+        self.assertEqual(len(collapsed_info), 1)
+        self.assertEqual(collapsed_info[0]["prev_source"], str(f1))
+        self.assertEqual(collapsed_info[0]["next_source"], str(f2))
+
+    def test_three_consecutive_legacy_overlaps(self):
+        entries1 = self._make_entries(0, 1500)
+        entries2 = self._make_entries(500, 2000)
+        entries3 = self._make_entries(1500, 1500)
+
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        f3 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1301Z.gz"
+        self._write_gz(f1, entries1)
+        self._write_gz(f2, entries2)
+        self._write_gz(f3, entries3)
+
+        results = list(common.stream_logical_activity(self.log_path))
+        self.assertEqual(len(results), 3000)
+        for idx, (entry, _, _) in enumerate(results):
+            self.assertEqual(entry["event_id"], f"event-{idx}")
+
+    def test_legacy_archive_to_active_log_overlap(self):
+        entries1 = self._make_entries(500, 1000)
+        entries_active = self._make_entries(500, 1500)
+
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        self._write_gz(f1, entries1)
+        self.log_path.write_text("".join(json.dumps(e) + "\n" for e in entries_active), encoding="utf-8")
+
+        results = list(common.stream_logical_activity(self.log_path))
+        self.assertEqual(len(results), 1500)
+        for idx, (entry, _, _) in enumerate(results):
+            self.assertEqual(entry["event_id"], f"event-{500 + idx}")
+
+    def test_invalid_overlaps_rejected(self):
+        # 999 lines of overlap
+        entries1_999 = self._make_entries(0, 1499)
+        entries2_999 = self._make_entries(500, 1499)
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        self._write_gz(f1, entries1_999)
+        self._write_gz(f2, entries2_999)
+        with self.assertRaisesRegex(RuntimeError, "duplicate across sources|payload mismatch|Invalid overlap length|Non-collapsible 1000-line overlap"):
+            list(common.stream_logical_activity(self.log_path))
+
+        f1.unlink()
+        f2.unlink()
+
+        # 1001 lines of overlap
+        entries1_1001 = self._make_entries(0, 1501)
+        entries2_1001 = self._make_entries(500, 1501)
+        self._write_gz(f1, entries1_1001)
+        self._write_gz(f2, entries2_1001)
+        with self.assertRaisesRegex(RuntimeError, "duplicate across sources|payload mismatch|Invalid overlap length|Non-collapsible 1000-line overlap"):
+            list(common.stream_logical_activity(self.log_path))
+
+        f1.unlink()
+        f2.unlink()
+
+        # Content differs by 1 byte in overlap
+        entries1 = self._make_entries(0, 1500)
+        entries2 = self._make_entries(500, 1500)
+        entries2[0]["message"] = "different content"
+        self._write_gz(f1, entries1)
+        self._write_gz(f2, entries2)
+        with self.assertRaisesRegex(RuntimeError, "duplicate across sources|payload mismatch|Invalid overlap length|Non-collapsible 1000-line overlap|mismatch in 1000-line candidate"):
+            list(common.stream_logical_activity(self.log_path))
+
+        f1.unlink()
+        f2.unlink()
+
+        # Unknown filename format with overlap
+        entries1 = self._make_entries(0, 1500)
+        entries2 = self._make_entries(500, 1500)
+        f1_bad = self.archive_dir / "ai-activity-log.jsonl-custom-format.gz"
+        self._write_gz(f1_bad, entries1)
+        self._write_gz(f2, entries2)
+        with self.assertRaisesRegex(RuntimeError, "duplicate across sources|payload mismatch|Invalid overlap length|Non-collapsible 1000-line overlap|Unknown source format"):
+            list(common.stream_logical_activity(self.log_path))
+
+    def test_strict_name_sequence_violation_rejected(self):
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        entries1 = self._make_entries(0, 1500)
+        entries2 = self._make_entries(500, 1500)
+        self._write_gz(f1, entries1)
+        self._write_gz(f2, entries2)
+
+        with mock.patch("common.activity_audit_source_paths_unlocked", return_value=[f2, f1]):
+            with self.assertRaisesRegex(RuntimeError, "Strict name sequence violation"):
+                list(common.stream_logical_activity(self.log_path))
+
+    def test_duplicate_checks_and_payload_mismatch(self):
+        entries1 = [{"event_id": "dup", "payload": "A"}]
+        entries2 = [{"event_id": "dup", "payload": "B"}]
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        self._write_gz(f1, entries1)
+        self._write_gz(f2, entries2)
+        with self.assertRaisesRegex(RuntimeError, "payload mismatch"):
+            list(common.stream_logical_activity(self.log_path))
+
+        f1.unlink()
+        f2.unlink()
+
+        entries = [{"event_id": "dup"}, {"event_id": "dup"}]
+        self._write_gz(f1, entries)
+        with self.assertRaisesRegex(RuntimeError, "duplicate activity event_id"):
+            list(common.stream_logical_activity(self.log_path))
+
+        f1.unlink()
+
+        entries = self._make_entries(0, 1500)
+        entries[600] = entries[500]
+        self._write_gz(f1, entries)
+        with self.assertRaisesRegex(RuntimeError, "duplicate activity event_id"):
+            list(common.stream_logical_activity(self.log_path))
+
+        f1.unlink()
+
+        entries1 = self._make_entries(0, 1500)
+        entries2 = self._make_entries(500, 1500)
+        f1_ca = self.archive_dir / "ai-activity-log.jsonl-a5c3586ee6a53b62a47dfb199587d809284961f56705e05e9ccf1bd7c3178afe.gz"
+        f2_ca = self.archive_dir / "ai-activity-log.jsonl-b5c3586ee6a53b62a47dfb199587d809284961f56705e05e9ccf1bd7c3178afe.gz"
+        self._write_gz(f1_ca, entries1)
+        self._write_gz(f2_ca, entries2)
+        with self.assertRaisesRegex(RuntimeError, "duplicate across sources|payload mismatch|Non-collapsible 1000-line overlap"):
+            list(common.stream_logical_activity(self.log_path))
+
+    def test_corruptions_and_security(self):
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f1.write_bytes(b"invalid gzip bytes")
+        with self.assertRaisesRegex(RuntimeError, "Truncated or corrupt gzip"):
+            list(common.stream_logical_activity(self.log_path))
+
+        f1.unlink()
+
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        with gzip.open(f1, "wt", encoding="utf-8") as handle:
+            handle.write("{bad json}\n")
+        with self.assertRaisesRegex(RuntimeError, "Bad JSON"):
+            list(common.stream_logical_activity(self.log_path))
+
+        f1.unlink()
+
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        target = self.root / "some-file"
+        target.write_text("{}", encoding="utf-8")
+        f1.symlink_to(target)
+        with self.assertRaisesRegex(RuntimeError, "Source is a symlink or changed|Source is not a regular file|activity audit source leaf cannot be a symlink"):
+            list(common.stream_logical_activity(self.log_path))
+
+    def test_source_replacement_and_mutation_during_read(self):
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        entries = self._make_entries(0, 100)
+        self._write_gz(f1, entries)
+
+        gen = common.stream_logical_activity(self.log_path)
+        next(gen)
+        f1.write_bytes(b"some new mutated bytes that change size and contents")
+        with self.assertRaisesRegex(RuntimeError, "Source mutated or truncated during read|Truncated or corrupt gzip"):
+            list(gen)
+
+    def test_os_replace_to_different_inode_during_read(self):
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        entries = self._make_entries(0, 1500)
+        self._write_gz(f1, entries)
+
+        gen = common.stream_logical_activity(self.log_path)
+        for _ in range(500):
+            next(gen)
+
+        # Replace the file on disk with a new file of identical size/contents but different inode
+        f_temp = self.root / "temp-replace.gz"
+        self._write_gz(f_temp, entries)
+        os.replace(f_temp, f1)
+
+        with self.assertRaisesRegex(RuntimeError, "Source replaced during read"):
+            list(gen)
+
+    def test_same_inode_same_size_mtime_mutation_during_read(self):
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        entries = self._make_entries(0, 1500)
+        self._write_gz(f1, entries)
+
+        gen = common.stream_logical_activity(self.log_path)
+        for _ in range(500):
+            next(gen)
+
+        # Mutate the file content in-place but keep exact same size on disk, and update mtime
+        raw = f1.read_bytes()
+        mutated_raw = raw[:-10] + b"MUTATED!!!"
+        self.assertEqual(len(raw), len(mutated_raw))
+        f1.write_bytes(mutated_raw)
+
+        # Touch mtime_ns
+        stat_info = f1.stat()
+        os.utime(f1, ns=(stat_info.st_atime_ns, stat_info.st_mtime_ns + 1000000000))
+
+        with self.assertRaisesRegex(RuntimeError, "Source mutated or truncated during read"):
+            list(gen)
+
+    def test_simultaneous_and_reentrant_readers(self):
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        entries1 = self._make_entries(0, 1500)
+        entries2 = self._make_entries(500, 1500)
+        self._write_gz(f1, entries1)
+        self._write_gz(f2, entries2)
+
+        import threading
+
+        # 1. Real two-thread barrier test
+        barrier = threading.Barrier(2)
+        errors = []
+
+        def worker_thread():
+            try:
+                # Wait for both threads to start simultaneously
+                barrier.wait()
+                results = list(common.stream_logical_activity(self.log_path))
+                # Validate length and content
+                if len(results) != 2000:
+                    errors.append(f"Expected 2000 results, got {len(results)}")
+            except Exception as exc:
+                errors.append(str(exc))
+
+        t1 = threading.Thread(target=worker_thread)
+        t2 = threading.Thread(target=worker_thread)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        self.assertEqual(errors, [], f"Threaded execution failed: {errors}")
+
+        # 2. Nested read test: nested read invoked from on_collapse callback with nested callback disabled
+        nested_results = []
+        nested_run_completed = False
+
+        def on_collapse(prev_p, next_p, lines, bytes_count, digest):
+            nonlocal nested_run_completed
+            if not nested_run_completed:
+                # Trigger nested read with on_collapse = None (callback disabled!)
+                nested_list = list(common.stream_logical_activity(self.log_path, on_collapse=None))
+                nested_results.extend(nested_list)
+                nested_run_completed = True
+
+        outer_results = list(common.stream_logical_activity(self.log_path, on_collapse=on_collapse))
+        self.assertTrue(nested_run_completed)
+        self.assertEqual(len(outer_results), 2000)
+        self.assertEqual(len(nested_results), 2000)
+        self.assertEqual(
+            [e[0]["event_id"] for e in outer_results],
+            [e[0]["event_id"] for e in nested_results]
+        )
+
+    def test_overlap_failures_without_event_ids(self):
+        # Generate logs with NO event_id (e.g. just raw messages)
+        no_id_entries = [{"message": f"line {i}"} for i in range(1500)]
+
+        # 1) Exact 1000-line overlap (should succeed and collapse 1000 lines)
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+
+        self._write_gz(f1, no_id_entries)
+        # Suffix of f1 has lines 500 to 1499 (1000 lines). So f2 starts with lines 500 to 1499.
+        f2_entries = no_id_entries[500:] + [{"message": f"extra {i}"} for i in range(500)]
+        self._write_gz(f2, f2_entries)
+
+        res = list(common.stream_logical_activity(self.log_path))
+        self.assertEqual(len(res), 2000) # 1500 (f1) + 1000 (f2 minus 1000 collapsed)
+
+        f1.unlink()
+        f2.unlink()
+
+        # 2) 999-line overlap (should fail closed)
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        self._write_gz(f1, no_id_entries)
+        # Suffix of f1 of length 999 is lines 501 to 1499.
+        f2_entries = no_id_entries[501:] + [{"message": f"extra {i}"} for i in range(500)]
+        self._write_gz(f2, f2_entries)
+        with self.assertRaisesRegex(RuntimeError, "Invalid overlap length 999"):
+            list(common.stream_logical_activity(self.log_path))
+
+        f1.unlink()
+        f2.unlink()
+
+        # 3) 1001-line overlap (should fail closed)
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        self._write_gz(f1, no_id_entries)
+        # Suffix of f1 of length 1001 is lines 499 to 1499.
+        f2_entries = no_id_entries[499:] + [{"message": f"extra {i}"} for i in range(500)]
+        self._write_gz(f2, f2_entries)
+        with self.assertRaisesRegex(RuntimeError, "Invalid overlap length 1001"):
+            list(common.stream_logical_activity(self.log_path))
+
+        f1.unlink()
+        f2.unlink()
+
+        # 4) One-byte mismatch in 1000-line overlap (should fail closed)
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        self._write_gz(f1, no_id_entries)
+        f2_entries = no_id_entries[500:] + [{"message": f"extra {i}"} for i in range(500)]
+        # Mutate one byte in f2's overlap prefix
+        f2_entries[0]["message"] = "line 500 mutated"
+        self._write_gz(f2, f2_entries)
+        with self.assertRaisesRegex(RuntimeError, "Invalid overlap length|mismatch in 1000-line candidate"):
+            list(common.stream_logical_activity(self.log_path))
+
+        f1.unlink()
+        f2.unlink()
+
+        # 5) Non-adjacent matching older tail (should fail closed)
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        f3 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1301Z.gz"
+
+        # Write f1
+        self._write_gz(f1, no_id_entries)
+        # Write f2 with completely different content (no overlap with f1)
+        f2_entries = [{"message": f"diff {i}"} for i in range(1500)]
+        self._write_gz(f2, f2_entries)
+        # Write f3 with prefix matching f1's suffix (1000 lines)
+        f3_entries = no_id_entries[500:] + [{"message": f"extra {i}"} for i in range(500)]
+        self._write_gz(f3, f3_entries)
+
+        with self.assertRaisesRegex(RuntimeError, "Matching non-adjacent older tail detected"):
+            list(common.stream_logical_activity(self.log_path))
+
+        f1.unlink()
+        f2.unlink()
+        f3.unlink()
+
+        # 6) Unknown format file immediately rejected without overlap
+        f_unknown = self.archive_dir / "ai-activity-log.jsonl-unknown.gz"
+        f_unknown.write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "Unknown source format"):
+            list(common.stream_logical_activity(self.log_path))
+        f_unknown.unlink()
+
+    def test_truncated_and_corrupt_gzip(self):
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+
+        # 1. Valid gzip that is then truncated
+        entries = [{"message": f"line {i}"} for i in range(100)]
+        self._write_gz(f1, entries)
+
+        # Read raw bytes and write only first half of it
+        raw_bytes = f1.read_bytes()
+        f1.write_bytes(raw_bytes[:len(raw_bytes)//2])
+
+        with self.assertRaisesRegex(RuntimeError, "Truncated or corrupt gzip/file"):
+            list(common.stream_logical_activity(self.log_path))
+
+        f1.unlink()
+
+    def test_gzip_invalid_utf8(self):
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+
+        # Write invalid UTF-8 bytes to gzip
+        import gzip
+        with gzip.open(f1, "wb") as f:
+            f.write(b"{\"message\": \"hello\"}\n")
+            f.write(b"\xff\xff\xff\n") # invalid UTF-8
+
+        with self.assertRaisesRegex(RuntimeError, "Bad UTF-8"):
+            list(common.stream_logical_activity(self.log_path))
+
+        f1.unlink()
+
+    def test_incident_minimized_fixture_overlap(self):
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+
+        # 500 prefix lines in f1
+        entries1 = [{"message": f"prefix {i}"} for i in range(500)]
+
+        # 1000 lines of overlap: 100 with event_id, 900 without
+        overlap = []
+        for i in range(1000):
+            if i % 10 == 0:
+                overlap.append({"event_id": f"evt-{i}", "message": f"overlap event {i}"})
+            else:
+                overlap.append({"message": f"overlap non-event {i}"})
+
+        entries1.extend(overlap)
+        self._write_gz(f1, entries1)
+
+        # f2 has the 1000 overlap lines plus 500 suffix lines
+        entries2 = list(overlap)
+        entries2.extend([{"message": f"suffix {i}"} for i in range(500)])
+        self._write_gz(f2, entries2)
+
+        # New logical reader returns 100 event IDs exactly once and preserves all non-overlap lines
+        res = list(common.stream_logical_activity(self.log_path))
+
+        # Total rows: 500 (prefix) + 1000 (overlap) + 500 (suffix) = 2000
+        self.assertEqual(len(res), 2000)
+
+        # Verify the 100 event IDs are returned exactly once
+        yielded_ids = [entry["event_id"] for entry, _, _ in res if "event_id" in entry]
+        self.assertEqual(len(yielded_ids), 100)
+        self.assertEqual(len(set(yielded_ids)), 100)
+
+        # Demonstrate that if we don't collapse (by introducing 1-byte difference in overlap),
+        # it fails with duplicate event ID
+        # Mutate f2's overlap by 1 byte
+        entries2[1]["message"] = "mutated overlap line"
+        self._write_gz(f2, entries2)
+
+        with self.assertRaisesRegex(RuntimeError, "duplicate across sources|payload mismatch|mismatch in 1000-line candidate"):
+            list(common.stream_logical_activity(self.log_path))
+
+        f1.unlink()
+        f2.unlink()
+
+    def test_inserted_1609_adjacent_lineage_and_non_adjacent_failures(self):
+        # 1. Successful case: T1450Z -> T1609Z -> active (produces adjacent folds without false non-adjacent failure)
+        f_1450 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        f_1609 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1609Z.gz"
+
+        overlap_1 = [{"message": f"overlap_1_{i}"} for i in range(1000)]
+        overlap_2 = [{"message": f"overlap_2_{i}"} for i in range(1000)]
+
+        # f_1450: length 1001. suffix (last 1000 lines) is overlap_1.
+        entries_1450 = [{"message": "extra_1450"}] + overlap_1
+        self._write_gz(f_1450, entries_1450)
+
+        # f_1609: prefix (first 1000 lines) is overlap_1. suffix (last 1000 lines) is overlap_2.
+        entries_1609 = overlap_1 + overlap_2
+        self._write_gz(f_1609, entries_1609)
+
+        # active (log_path): prefix is overlap_2.
+        entries_active = overlap_2 + [{"message": "extra_active"}]
+        self.log_path.write_text(
+            "\n".join(json.dumps(e) for e in entries_active) + "\n",
+            encoding="utf-8"
+        )
+
+        # Run logical activity streaming
+        res = list(common.stream_logical_activity(self.log_path))
+        # Expected logical entries count: 1 + 1000 (overlap_1) + 1000 (overlap_2) + 1 = 2002
+        self.assertEqual(len(res), 2002)
+
+        # Clean up files
+        f_1450.unlink()
+        f_1609.unlink()
+        if self.log_path.exists():
+            self.log_path.unlink()
+
+        # 2. Failure case: a truly older non-adjacent match must fail
+        f_older = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f_1450 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        f_1609 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1609Z.gz"
+
+        # f_older has overlap_1 as suffix
+        entries_older = [{"message": f"older_{i}"} for i in range(500)] + overlap_1
+        self._write_gz(f_older, entries_older)
+
+        # f_1450 has completely different content (no overlap_1)
+        entries_1450 = [{"message": f"diff_1450_{i}"} for i in range(1001)]
+        self._write_gz(f_1450, entries_1450)
+
+        # f_1609 prefix matches overlap_1 (which matches f_older's suffix, not its immediate predecessor f_1450's suffix)
+        entries_1609 = overlap_1 + overlap_2
+        self._write_gz(f_1609, entries_1609)
+
+        # active log prefix matches overlap_2
+        entries_active = overlap_2 + [{"message": "extra_active"}]
+        self.log_path.write_text(
+            "\n".join(json.dumps(e) for e in entries_active) + "\n",
+            encoding="utf-8"
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Matching non-adjacent older tail detected"):
+            list(common.stream_logical_activity(self.log_path))
+
+        # Clean up
+        f_older.unlink()
+        f_1450.unlink()
+        f_1609.unlink()
+        if self.log_path.exists():
+            self.log_path.unlink()
+
+    def test_recover_status_activity_outbox_integration(self):
+        import sys
+        sys.path.append(str(common.ROOT / "scripts"))
+        import ai_status
+
+        old_status_root = getattr(ai_status, "STATUS_ROOT", None)
+        old_status_file = getattr(ai_status, "STATUS_FILE", None)
+        old_log_file = getattr(ai_status, "LOG_FILE", None)
+
+        ai_status.STATUS_ROOT = self.root
+        ai_status.STATUS_FILE = self.root / "ai-status.json"
+        ai_status.LOG_FILE = self.root / "ai-activity-log.jsonl"
+
+        old_env = os.environ.get("PANTHEON_STATUS_ROOT")
+        os.environ["PANTHEON_STATUS_ROOT"] = str(self.root)
+        try:
+            # We must create a dummy ai-status.json in self.root
+            status_json_path = self.root / "ai-status.json"
+            dummy_state = {
+                "schema_version": 1,
+                "agents": [],
+                "tasks": [],
+                "incidents": [],
+                "status_activity_outbox": None
+            }
+            status_json_path.write_text(json.dumps(dummy_state), encoding="utf-8")
+
+            # 1. Identical already-present payload via logical overlap is idempotent and clears
+            # Create a 1000-line overlap between f1 and f2
+            f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+            f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+
+            no_id_entries = [{"message": f"line {i}"} for i in range(1500)]
+            # Add one event with event_id in the overlap (e.g. line 500)
+            target_event = {"event_id": "event-outbox-1", "message": "hello outbox"}
+            no_id_entries[500] = target_event
+            self._write_gz(f1, no_id_entries)
+
+            # Same suffix in f2 starts at 500
+            f2_entries = no_id_entries[500:] + [{"message": f"extra {i}"} for i in range(500)]
+            self._write_gz(f2, f2_entries)
+
+            # Write target_event to the outbox state
+            outbox_payload = {
+                "schema_version": 1,
+                "transaction_id": "ai-status-tx-" + common._canonical_json_sha256([target_event]),
+                "events": [target_event]
+            }
+            dummy_state["status_activity_outbox"] = outbox_payload
+            status_json_path.write_text(json.dumps(dummy_state), encoding="utf-8")
+
+            # Now call recover_status_activity_outbox
+            # It should return True (outbox recovered) and clear the outbox
+            res = ai_status.recover_status_activity_outbox(dummy_state)
+            self.assertTrue(res)
+            self.assertIsNone(dummy_state["status_activity_outbox"])
+
+            # Read back state from disk and verify it's cleared
+            disk_state = json.loads(status_json_path.read_text(encoding="utf-8"))
+            self.assertIsNone(disk_state["status_activity_outbox"])
+
+            # 2. Mismatched payload rejects
+            # Modify target_event to mismatch
+            mismatched_event = {"event_id": "event-outbox-1", "message": "mismatched hello"}
+            outbox_payload_mismatch = {
+                "schema_version": 1,
+                "transaction_id": "ai-status-tx-" + common._canonical_json_sha256([mismatched_event]),
+                "events": [mismatched_event]
+            }
+            dummy_state["status_activity_outbox"] = outbox_payload_mismatch
+            status_json_path.write_text(json.dumps(dummy_state), encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "activity outbox payload conflict"):
+                ai_status.recover_status_activity_outbox(dummy_state)
+
+            # Verify outbox state is unchanged on disk
+            disk_state = json.loads(status_json_path.read_text(encoding="utf-8"))
+            self.assertEqual(disk_state["status_activity_outbox"], outbox_payload_mismatch)
+
+            # 3. Corruption/source replacement leaves outbox and state bytes unchanged
+            # Let's restore the valid outbox payload
+            dummy_state["status_activity_outbox"] = outbox_payload_mismatch
+            status_json_path.write_text(json.dumps(dummy_state), encoding="utf-8")
+
+            # Truncate f1 to corrupt it
+            f1.write_bytes(b"corrupt header bytes")
+
+            with self.assertRaisesRegex(RuntimeError, "Truncated or corrupt gzip/file"):
+                ai_status.recover_status_activity_outbox(dummy_state)
+
+            # Verify outbox state on disk is still unchanged
+            disk_state = json.loads(status_json_path.read_text(encoding="utf-8"))
+            self.assertEqual(disk_state["status_activity_outbox"], outbox_payload_mismatch)
+
+        finally:
+            if old_env is not None:
+                os.environ["PANTHEON_STATUS_ROOT"] = old_env
+            else:
+                os.environ.pop("PANTHEON_STATUS_ROOT", None)
+            if old_status_root is not None:
+                ai_status.STATUS_ROOT = old_status_root
+            if old_status_file is not None:
+                ai_status.STATUS_FILE = old_status_file
+            if old_log_file is not None:
+                ai_status.LOG_FILE = old_log_file
+
+    def test_sqlite_db_removed_on_lifecycle_events(self):
+        # Prepare a valid file
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
+
+        import glob
+        import tempfile
+        temp_dir = tempfile.gettempdir()
+
+        def get_db_files():
+            return set(glob.glob(os.path.join(temp_dir, "*.db")))
+
+        # Case 1: Success path
+        db_before = get_db_files()
+
+        # Start generator
+        gen = common.stream_logical_activity(self.log_path)
+
+        # During iteration, the temp DB file should exist
+        first_item = next(gen)
+        db_during = get_db_files() - db_before
+        self.assertEqual(len(db_during), 1)
+        db_path = list(db_during)[0]
+        self.assertTrue(os.path.exists(db_path))
+
+        # Consume the rest
+        list(gen)
+
+        # After success, DB file must be removed
+        self.assertFalse(os.path.exists(db_path))
+
+        # Case 2: Validation failure path
+        # Re-write f1 to have validation failure (e.g. duplicate event_id)
+        self._write_gz(f1, [{"event_id": "ev1", "message": "msg"}, {"event_id": "ev1", "message": "msg"}])
+
+        db_before = get_db_files()
+        gen = common.stream_logical_activity(self.log_path)
+        try:
+            next(gen)
+            db_during = get_db_files() - db_before
+            self.assertEqual(len(db_during), 1)
+            db_path = list(db_during)[0]
+            self.assertTrue(os.path.exists(db_path))
+            list(gen) # Should raise RuntimeError
+        except RuntimeError:
+            pass
+
+        # After failure, DB file must be removed
+        self.assertFalse(os.path.exists(db_path))
+
+        # Case 3: Explicit generator close
+        self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
+        db_before = get_db_files()
+        gen = common.stream_logical_activity(self.log_path)
+        next(gen)
+        db_during = get_db_files() - db_before
+        self.assertEqual(len(db_during), 1)
+        db_path = list(db_during)[0]
+        self.assertTrue(os.path.exists(db_path))
+
+        # Explicit close
+        gen.close()
+
+        # After close, DB file must be removed
+        self.assertFalse(os.path.exists(db_path))
 
 
 if __name__ == "__main__":
