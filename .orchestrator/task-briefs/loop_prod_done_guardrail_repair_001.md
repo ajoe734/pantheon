@@ -1,9 +1,11 @@
 # Task Brief: LOOP-PROD-DONE-GUARDRAIL-REPAIR-001
 
 > Temporary coordination routing: until
-> `OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-001` is accepted, Codex2 must run
-> governed state/handoff commands through
-> `/home/lupin/code/pantheon/scripts/ai-status.sh` with `AI_NAME=Codex2`.
+> `OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-001` is accepted, every owner or
+> reviewer working this task must run governed state, review, handoff and
+> closeout commands through `/home/lupin/code/pantheon/scripts/ai-status.sh`
+> with its own real identity (`AI_NAME=Codex2` for the owner or
+> `AI_NAME=Claude` for the reviewer).
 > Do not use the task-worktree wrapper for state. Git and tests stay in the
 > task worktree. Verify the result with the central `show` command.
 
