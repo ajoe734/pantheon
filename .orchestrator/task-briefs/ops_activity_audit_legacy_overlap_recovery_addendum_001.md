@@ -8,8 +8,8 @@
 
 ## 新確認事實
 
-- 2026-07-16 對中央 status root `/home/lupin/code/pantheon` 做只讀掃描時，共找到 411 個 gzip archive，加上 active log 共 412 個來源。
-- 全歷史只有五組相鄰 suffix/prefix 重疊：原 brief 的四組 1,000 行，以及下列唯一一組 999 行：
+- 2026-07-16 對中央 status root `/home/lupin/code/pantheon` 做只讀掃描時，`archive/logs/` 有 411 個 timestamp gzip archive，`.orchestrator/logs/activity-log-archive/` 另有 10 個舊格式 gzip archive，加上 active log，共 422 個來源。先前只計算第一個 archive 目錄所得的 412 是不完整 snapshot，本段取代該數字。
+- 在這份 422-source snapshot 中共有六組相鄰 suffix/prefix 重疊：五組 1,000 行，以及下列唯一一組 999 行：
   - `archive/logs/ai-activity-log.jsonl-2026-05-24T1237Z.gz`
   - `archive/logs/ai-activity-log.jsonl-2026-05-24T1239Z.gz`
 - 兩個檔案各有 1,001 行。前者 suffix 999 行與後者 prefix 999 行逐 byte 相同；1,000 行比較不相同。
@@ -20,10 +20,17 @@
 - 解壓後完整內容 SHA-256：
   - `T1237Z.gz`：`8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57`
   - `T1239Z.gz`：`da6a102178c82fb4eca8d0794ed5b419f0c97770e0ad63542dde0033e7efa3ff`
-- 這 999 行中的重複 event ID payload 全部相同，沒有 payload mismatch。content-addressed archive 與其他舊格式來源沒有重疊。
+- 這 999 行中的重複 event ID payload 全部相同，沒有 payload mismatch。10 個 `legacy_ts_old` 來源沒有 overlap；本 snapshot 沒有 active `.gz` content-addressed source。
+- 目前五組 standard 1,000-line folds 是：
+  - `ai-activity-log.jsonl-2026-07-16T0358Z.gz -> ai-activity-log.jsonl-2026-07-16T1130Z.gz`
+  - `ai-activity-log.jsonl-2026-07-16T1301Z.gz -> ai-activity-log.jsonl-2026-07-16T1404Z.gz`
+  - `ai-activity-log.jsonl-2026-07-16T1404Z.gz -> ai-activity-log.jsonl-2026-07-16T1450Z.gz`
+  - `ai-activity-log.jsonl-2026-07-16T1450Z.gz -> ai-activity-log.jsonl-2026-07-16T1609Z.gz`
+  - `ai-activity-log.jsonl-2026-07-16T1609Z.gz -> active ai-activity-log.jsonl`
+- 原 brief 的 `ai-activity-log.jsonl-2026-07-16T1450Z.gz -> active` 是較早 snapshot 的 lineage 簡寫；`ai-activity-log.jsonl-2026-07-16T1609Z.gz` 已合法插入該鏈，current inventory 必須呈現完整 basename 的 `2026-07-16T1450Z -> 2026-07-16T1609Z -> active`，不得同時宣稱存在 direct `2026-07-16T1450Z -> active` adjacent fold。
 - 現有檔案只能證明這是一個封閉的歷史例外；無法證明當年的精確 race 時序。實作與 evidence 不得把推測寫成已確認根因。
 
-上列 source count 是掃描快照，不是可硬編碼的未來常數；例外 pair、行數與 hashes 則是本次封閉例外的必要識別資料。
+上列 source count、active tail 與 standard fold count 是掃描快照，不是可硬編碼的未來常數；例外 pair、行數與 hashes 則是本次封閉例外的必要識別資料。若正式驗收前發生新 rotation，fleet 必須先重新建立完整 typed inventory 與 lineage，不能沿用舊數字或把新來源跳過。
 
 ## 對原 brief 的修正
 
@@ -45,7 +52,9 @@
 - 相同 999 行內容換成其他 timestamp basename 時拒絕。
 - exact pair 任一 overlap byte 不同、event ID payload 不同、來源順序反轉或來源被替換時拒絕。
 - 原 brief 的 generic 999／1001 fail-closed 測試必須保留，不得改成全面接受。
-- 完整中央 inventory 必須同時證明：五組 fold；其中四組 1,000 行、一組 pinned 999 行；其他 overlap 為零；所有 duplicate payload mismatch 為零。
+- 在上述 422-source snapshot 與 hashes 未變時，完整中央 inventory 必須同時證明：六組 fold；其中五組 standard 1,000 行、一組 pinned 999 行；其他 overlap 為零；所有 duplicate payload mismatch 為零。
+- inventory 必須分型列出 411 個 `legacy_ts_std`、10 個 `legacy_ts_old` 與一個 active source，不能只掃 `archive/logs/` 後宣稱是完整歷史。
+- tail lineage 必須由實際相鄰來源動態產生；在本 snapshot 應為 `2026-07-16T1450Z -> 2026-07-16T1609Z -> active`。測試 fixture 必須使用完整 basename，並覆蓋 timestamp archive 插入後，舊的 direct archive-to-active 關係被新相鄰鏈取代，不得被 non-adjacent detector 誤判。
 - evidence 必須分開列出 standard 1,000 folds 與 pinned exception fold，並包含 physical/logical/event-ID/duplicate/within-source/fold 指標表。
 - 所有測試須使用 repo 外的隔離 `PANTHEON_STATUS_ROOT`，並證明 task worktree 與中央原始 activity source hashes 均未改變。
 
