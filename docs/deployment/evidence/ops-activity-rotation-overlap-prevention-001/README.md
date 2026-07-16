@@ -38,6 +38,12 @@ Not changed:
   sequence gaps/forks, duplicate sequence/transaction/archive, stale/missing
   active control, second boundary exception, symlink leaves, and unstable
   sources.
+- Hardened restart recovery so pending intent, staged archive, staged tail,
+  installed archive, and lineage reads all use stable regular-file checks and
+  reject symlink leaves.
+- Generalized activity source classification to the configured `.jsonl` log
+  basename so supervisor/common writers using non-default isolated test log
+  names share the same content-addressed lineage contract.
 
 ## Central Read-Only Preconditions
 
@@ -61,20 +67,34 @@ python3 -m py_compile .orchestrator/common.py .orchestrator/test_common.py scrip
 python3 .orchestrator/test_common.py
 python3 -m unittest scripts.test_activity_audit_logical_inventory
 env -u ORCH_RUN_ID -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH PANTHEON_STATUS_ROOT=/tmp/pantheon-ops-activity-rotation-test-status-root python3 -m unittest scripts.test_ai_status
+python3 .orchestrator/test_supervisor_watchdog.py
+python3 .orchestrator/test_worker_runner_heartbeat.py
+python3 .orchestrator/test_runtime_state.py
+env -u PANTHEON_STATUS_ROOT -u ORCH_RUN_ID -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH timeout 240 python3 .orchestrator/test_supervisor.py
 git diff --check
 ```
 
 Results:
 
 - `py_compile`: passed.
-- `.orchestrator/test_common.py`: 58 tests passed.
+- `.orchestrator/test_common.py`: 61 tests passed.
 - `scripts.test_activity_audit_logical_inventory`: 19 tests passed.
 - isolated `scripts.test_ai_status`: 74 tests passed.
+- `.orchestrator/test_supervisor_watchdog.py`: 28 tests passed.
+- `.orchestrator/test_worker_runner_heartbeat.py`: 13 tests passed.
+- `.orchestrator/test_runtime_state.py`: passed.
+- isolated `.orchestrator/test_supervisor.py`: 277 tests passed.
 - `git diff --check`: passed.
 
 A plain inherited-env `scripts.test_ai_status` run was interrupted after it
 attempted to use the central `PANTHEON_STATUS_ROOT`; the accepted validation is
 the isolated-root command listed above.
+
+A plain inherited-env `.orchestrator/test_supervisor.py` run reached the
+discussion-planning dispatch section and timed out while inheriting the
+auto-worker central `PANTHEON_STATUS_ROOT`. The accepted supervisor validation
+is the isolated-env command listed above; the previously stuck single test
+passed under that environment before the full isolated suite passed.
 
 ## Status Command Note
 

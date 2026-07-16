@@ -852,7 +852,12 @@ def read_regular_file_snapshot(
         | getattr(os, "O_NONBLOCK", 0)
         | getattr(os, "O_NOFOLLOW", 0)
     )
-    descriptor = os.open(path, flags)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        if path.is_symlink():
+            raise RuntimeError(f"{source} must be a stable regular file: {path}") from exc
+        raise
     try:
         descriptor_stat = os.fstat(descriptor)
         path_stat = path.lstat()
@@ -1156,10 +1161,14 @@ def _validated_activity_rotation_intent(
 
 def _load_activity_rotation_intent(log_path: Path) -> dict[str, Any] | None:
     path = activity_rotation_intent_path(log_path)
-    if not path.exists():
+    if not path.exists() and not path.is_symlink():
         return None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        intent_bytes = read_regular_file_bytes(
+            path,
+            source="activity rotation intent",
+        )
+        payload = json.loads(intent_bytes.decode("utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("activity rotation intent is unreadable") from exc
     return _validated_activity_rotation_intent(log_path, payload)
@@ -1465,7 +1474,10 @@ def recover_activity_log_rotation_unlocked(log_path: Path) -> Path | None:
     lineage_path = activity_rotation_lineage_path(log_path)
 
     try:
-        tail = stage_tail.read_bytes()
+        tail = read_regular_file_bytes(
+            stage_tail,
+            source="activity rotation tail stage",
+        )
     except OSError as exc:
         raise RuntimeError("activity rotation tail stage is missing") from exc
     if hashlib.sha256(tail).hexdigest() != intent["tail_sha256"]:
@@ -1479,14 +1491,14 @@ def recover_activity_log_rotation_unlocked(log_path: Path) -> Path | None:
     if _sha256_bytes(active_bytes) != intent["active_sha256"]:
         raise RuntimeError("activity rotation active control digest mismatch")
 
-    if stage_archive.is_file():
+    if stage_archive.exists() or stage_archive.is_symlink():
         try:
-            archive_payload = _read_gzip_bytes(stage_archive)
+            _compressed, archive_payload = _activity_archive_payload(stage_archive)
         except (OSError, EOFError, gzip.BadGzipFile) as exc:
             raise RuntimeError("activity rotation archive stage is unreadable") from exc
-    elif archive_path.is_file():
+    elif archive_path.exists() or archive_path.is_symlink():
         try:
-            archive_payload = _read_gzip_bytes(archive_path)
+            _compressed, archive_payload = _activity_archive_payload(archive_path)
         except (OSError, EOFError, gzip.BadGzipFile) as exc:
             raise RuntimeError("activity rotation archive is unreadable") from exc
     else:
@@ -1522,7 +1534,7 @@ def recover_activity_log_rotation_unlocked(log_path: Path) -> Path | None:
     previous_lineage_sha = intent["lineage_previous_sha256"]
     current_lineage = (
         read_regular_file_bytes(lineage_path, source="activity rotation lineage")
-        if lineage_path.exists()
+        if lineage_path.exists() or lineage_path.is_symlink()
         else b""
     )
     current_lineage_sha = _sha256_bytes(current_lineage)
@@ -1571,7 +1583,8 @@ def prepare_activity_audit_unlocked(log_path: Path) -> None:
 def assert_activity_audit_stable_unlocked(log_path: Path) -> None:
     """Fail closed when a shared reader observes unfinished writer recovery."""
 
-    if activity_rotation_intent_path(log_path).exists():
+    intent_path = activity_rotation_intent_path(log_path)
+    if intent_path.exists() or intent_path.is_symlink():
         raise RuntimeError("activity rotation recovery is pending")
     if log_path.is_file():
         data = log_path.read_bytes()
@@ -1956,22 +1969,22 @@ def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
 
 def classify_source(path: Path) -> str:
     name = path.name
-    if name == "ai-activity-log.jsonl":
+    if name.endswith(".jsonl"):
         return "active"
-    if re.match(r"^ai-activity-log\.jsonl-\d{4}-\d{2}-\d{2}T\d{4}Z\.gz$", name):
+    if re.match(r"^.+\.jsonl-\d{4}-\d{2}-\d{2}T\d{4}Z\.gz$", name):
         return "legacy_ts_std"
-    if re.match(r"^ai-activity-log-\d{8}T\d{6}Z\.jsonl\.gz$", name):
+    if re.match(r"^.+-\d{8}T\d{6}Z\.jsonl\.gz$", name):
         return "legacy_ts_old"
-    if re.match(r"^ai-activity-log\.jsonl-[a-f0-9]{64}\.gz$", name):
+    if re.match(r"^.+\.jsonl-[a-f0-9]{64}\.gz$", name):
         return "content_addressed"
     return "unknown"
 
 
 def extract_timestamp_from_name(name: str) -> str:
-    m = re.match(r"^ai-activity-log\.jsonl-(\d{4}-\d{2}-\d{2}T\d{4})Z\.gz$", name)
+    m = re.match(r"^.+\.jsonl-(\d{4}-\d{2}-\d{2}T\d{4})Z\.gz$", name)
     if m:
         return m.group(1)
-    m = re.match(r"^ai-activity-log-(\d{8}T\d{6})Z\.jsonl\.gz$", name)
+    m = re.match(r"^.+-(\d{8}T\d{6})Z\.jsonl\.gz$", name)
     if m:
         return m.group(1)
     return ""
