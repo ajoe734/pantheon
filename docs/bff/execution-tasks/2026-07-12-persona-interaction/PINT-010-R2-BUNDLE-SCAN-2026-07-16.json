@@ -2,12 +2,12 @@
   "schema_version": 1,
   "task_id": "PINT-010-R2",
   "evidence_state": "in_progress",
-  "prepared_at_utc": "2026-07-16T14:52:03Z",
+  "prepared_at_utc": "2026-07-16T17:51:30Z",
   "frontend_host": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/",
   "source_baseline": {
     "pantheon_branch": "dev",
-    "pantheon_commit": "9967ce47fb826f782f3b84be1f08e6aefef88091",
-    "execute_plans_candidate_commit": "1816ece7c77813b5b5c6098155776ad14a6991da"
+    "pantheon_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "execute_plans_candidate_commit": "88d3d0acf1a2a3db6810c2d2b51c09cafe456b09"
   },
   "merged_repairs": [
     {
@@ -45,6 +45,18 @@
       "pull_request": 379,
       "head_commit": "eb48ebe2e69e335516c5ac1841b84795878f21f5",
       "merge_commit": "1816ece7c77813b5b5c6098155776ad14a6991da"
+    },
+    {
+      "repository": "ajoe734/pantheon",
+      "pull_request": 3765,
+      "head_commit": "c05603df65b3a4e2010a793c550be235b17bd367",
+      "merge_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748"
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "pull_request": 380,
+      "head_commit": "29e0b11ca6eb1351e2713c3764db188666624e84",
+      "merge_commit": "88d3d0acf1a2a3db6810c2d2b51c09cafe456b09"
     }
   ],
   "strict_bff_baseline": {
@@ -81,75 +93,224 @@
     }
   },
   "final_candidate_gate": {
-    "status": "pending",
-    "run_id": null,
-    "run_attempt": null,
-    "pair_id": null,
-    "release_candidate_artifact": null,
-    "integration_evidence_artifact": null,
-    "release_identity_artifact": null
-  },
-  "bounded_write_proof": {
-    "status": "pending",
-    "parent_run_id": null,
-    "parent_run_attempt": null,
-    "correlation_id": null,
-    "watchdog_run_id": null,
-    "child_run_id": null,
-    "child_run_attempt": null,
-    "artifact": null,
-    "expected_playwright": 6,
-    "observed_playwright": null,
-    "skipped": null,
-    "unexpected": null,
-    "flaky": null
-  },
-  "bundle_scan": {
-    "status": "pending",
-    "captured_at_utc": null,
-    "frontend_commit": null,
-    "manifest_bff_commit": null,
-    "pair_id": null,
-    "deployment_digest": null,
-    "deployment_profile": null,
-    "method": "Recursively fetch same-origin JavaScript references from the hosted index, classify every response by Content-Type, and scan only verified JavaScript responses for forbidden credential literals.",
-    "candidate_js_urls": null,
-    "javascript_responses": null,
-    "html_fallbacks_excluded": null,
-    "other_non_javascript_responses": null,
-    "http_failures": null,
-    "literal_matches": {
-      "pantheon-dev-browser:viewer": null,
-      "pantheon-dev-browser:operator": null
+    "status": "success",
+    "run_id": 29517392064,
+    "run_attempt": 1,
+    "frontend_commit": "88d3d0acf1a2a3db6810c2d2b51c09cafe456b09",
+    "bff_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "pair_id": "f58b10450aec28b638916d57b3291c5a9c7a954f85fc89a527d61313a76a0555",
+    "read_only_artifact_digest_sha256": "2797b8765556b9f6899ccaa5c88cda28f9f1ff87a09f50da3ff3db56e27815ee",
+    "write_proof_artifact_digest_sha256": "7194d70e42e1c956db3a623e2736818a3856def998c331bc9d140f650891b356",
+    "release_candidate_artifact": {
+      "id": 8383559811,
+      "name": "pantheon-fe-release-candidate-attempt-1",
+      "digest": "sha256:617debcc60aa05a20d90e208251a7040cc3d3ad002dd1162e54f7488af8e12c4"
+    },
+    "integration_evidence_artifact": {
+      "id": 8383560278,
+      "name": "pantheon-integration-evidence-attempt-1",
+      "digest": "sha256:21877e6dd23ec79361f3d86850508f94459c90c65585d29779a7eb97d45790bf"
+    },
+    "release_identity_artifact": {
+      "id": 8383560618,
+      "name": "pantheon-release-identity-attempt-1",
+      "digest": "sha256:4110f380d7f5d910c3e36cda939dff1030d151bc68d447985c0a719eebc61a1f"
     }
   },
+  "initial_read_only_deploy": {
+    "status": "success",
+    "run_id": 29518247457,
+    "run_attempt": 1,
+    "artifact": {
+      "id": 8383846424,
+      "name": "pantheon-dev-fe-deploy-evidence-attempt-1",
+      "digest": "sha256:1cb9c32f2f18e48067c9c65f0a36f247c2416cc90e295831ab706f49c2c8714d"
+    },
+    "frontend_commit": "88d3d0acf1a2a3db6810c2d2b51c09cafe456b09",
+    "bff_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "pair_id": "f58b10450aec28b638916d57b3291c5a9c7a954f85fc89a527d61313a76a0555",
+    "deployment_profile": "read-only",
+    "artifact_digest_sha256": "2797b8765556b9f6899ccaa5c88cda28f9f1ff87a09f50da3ff3db56e27815ee",
+    "build_mode": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_FALLBACK": "strict",
+      "VITE_BFF_REAL_WRITES": "false",
+      "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+      "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+    },
+    "candidate_pre_switch_probe": "passed",
+    "post_switch_probe": "passed",
+    "rollback_required": false
+  },
+  "permissive_bff_proof_window": {
+    "status": "success",
+    "run_id": 29518975266,
+    "run_attempt": 1,
+    "job_id": 87691022263,
+    "payload_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "auth_profile": "permissive-stub",
+    "auth_stub": true,
+    "auth_mode": "permissive",
+    "public_smoke": "success",
+    "exact_version_proof": "success",
+    "agora_restart_persistence": "success",
+    "lease_id": "4d2ef39b-bc23-4122-8d2b-441085d5b4a8",
+    "lease_released_at": "2026-07-16T17:17:16Z"
+  },
+  "bounded_write_proof": {
+    "status": "failed_replacement_required",
+    "parent_run_id": 29519185869,
+    "parent_run_attempt": 1,
+    "correlation_id": "e06ae26b-d52b-4e6c-aa13-1601d92d0b60",
+    "watchdog_run_id": 29519934947,
+    "watchdog_run_attempt": 1,
+    "watchdog_conclusion": "success",
+    "child_run_id": 29520132313,
+    "child_run_attempt": 1,
+    "child_conclusion": "failure",
+    "artifact": {
+      "id": 8384570109,
+      "name": "pantheon-authorized-write-proof-attempt-1",
+      "digest": "sha256:c72cc9baabf5d819c888fb0b3ae3b6a21744bde347b736cc91889c3a1e3009a5"
+    },
+    "expected_playwright": 6,
+    "observed_playwright": 4,
+    "skipped": 0,
+    "unexpected": 2,
+    "flaky": 0,
+    "retries": 0,
+    "failure_classification": "desktop and mobile interaction cases timed out waiting for the /bff/agora/interactions POST",
+    "servant_ensure": {
+      "status": "success",
+      "persona_id": "agora-servant-b996f46bc40c4764690a",
+      "persona_class": "agora_servant",
+      "owner_scope": "user_private",
+      "memory_scope": "private_user",
+      "execution_authority": "none",
+      "registry_backed": true
+    },
+    "governed_proposal": {
+      "status": "success",
+      "unauthenticated_create_status": 401,
+      "unauthenticated_create_code": "AUTH_REQUIRED",
+      "viewer_create_status": 403,
+      "viewer_modify_status": 403,
+      "operator_create_status": 201,
+      "operator_modify_status": 200,
+      "operator_validate_status": 200,
+      "final_revision": 3,
+      "revisions": [1, 2, 3],
+      "audit_actions": ["create", "modify", "validate"],
+      "replay_revision": 3,
+      "execution_authority": "none",
+      "downstream_execution_attempted": false,
+      "tokens_recorded": false
+    },
+    "same_pair_before_after": true,
+    "final_successful_proof": {
+      "status": "pending",
+      "parent_run_id": null,
+      "watchdog_run_id": null,
+      "child_run_id": null,
+      "artifact": null,
+      "expected_playwright": 6,
+      "observed_playwright": null,
+      "skipped": null,
+      "unexpected": null,
+      "flaky": null
+    }
+  },
+  "bundle_scan": {
+    "status": "success",
+    "evidence_run_id": 29518247457,
+    "captured_at_utc": "2026-07-16T17:13:52.635Z",
+    "frontend_commit": "88d3d0acf1a2a3db6810c2d2b51c09cafe456b09",
+    "manifest_bff_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "pair_id": "f58b10450aec28b638916d57b3291c5a9c7a954f85fc89a527d61313a76a0555",
+    "deployment_digest": "2797b8765556b9f6899ccaa5c88cda28f9f1ff87a09f50da3ff3db56e27815ee",
+    "deployment_profile": "read-only",
+    "method": "The strict hosted browser release probe scanned the served HTML plus all discovered JS/CSS bundle sources and recorded request, credential, and old-host safety counts.",
+    "scanned_source_count": 66,
+    "bundle_fetch_count": 65,
+    "bundle_fetch_failure_count": 0,
+    "sensitive_finding_count": 0,
+    "bff_request_count": 5,
+    "bff_write_request_count": 0,
+    "authorization_header_count": 0,
+    "old_host_hit_count": 0,
+    "desktop_hosted_ux": "passed",
+    "mobile_hosted_ux": "passed"
+  },
   "read_only_restore": {
-    "status": "pending",
-    "run_id": null,
-    "run_attempt": null,
+    "status": "success_after_failed_proof",
+    "run_id": 29519934947,
+    "run_attempt": 1,
+    "parent_run_id": 29519185869,
+    "frontend_commit": "88d3d0acf1a2a3db6810c2d2b51c09cafe456b09",
+    "bff_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "pair_id": "f58b10450aec28b638916d57b3291c5a9c7a954f85fc89a527d61313a76a0555",
+    "deployment_profile": "read-only-restore",
+    "artifact_digest_sha256": "2797b8765556b9f6899ccaa5c88cda28f9f1ff87a09f50da3ff3db56e27815ee",
     "manifest_reads": [],
-    "safe_restore_passed": null,
-    "rollback_required": null
+    "safe_restore_passed": true,
+    "rollback_required": false,
+    "browser_probe_passed": true
+  },
+  "safety_strict_bff_restore": {
+    "status": "success_after_failed_proof",
+    "run_id": 29521081353,
+    "run_attempt": 1,
+    "job_id": 87698032121,
+    "payload_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "build_time": "2026-07-16T17:47:09Z",
+    "auth_stub": false,
+    "auth_mode": "strict",
+    "version_read_count": 3,
+    "version_reads_exact_and_known": true,
+    "healthz_read_count": 3,
+    "healthz_live": true,
+    "healthz_ready": true,
+    "dependencies_all_ok": true,
+    "note": "Safety restore only; a fresh strict restore remains required after the final successful write proof."
   },
   "final_strict_bff_restore": {
     "status": "pending",
     "run_id": null,
     "run_attempt": null,
-    "payload_commit": "9967ce47fb826f782f3b84be1f08e6aefef88091",
+    "payload_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
     "version_reads": [],
     "health_reads": [],
     "auth_stub": null,
-    "auth_mode": null
+    "auth_mode": null,
+    "required_after": "final successful 6/0 write proof"
+  },
+  "workflow_state": {
+    "pantheon_nonprod_deploy": {
+      "workflow_id": 269991390,
+      "state": "active"
+    },
+    "pantheon_dev_fe_deploy": {
+      "workflow_id": 292028803,
+      "state": "active"
+    },
+    "nonexecuting_platform_ghost": {
+      "run_id": 29469158508,
+      "status": "queued",
+      "head_branch": "task/EVOCHAIN-011",
+      "created_at": "2026-07-16T03:31:02Z",
+      "updated_at": "2026-07-16T03:31:02Z",
+      "job_count": 0,
+      "lease_held": false,
+      "conflicting": false,
+      "normal_cancel_result": "GitHub HTTP 500",
+      "force_cancel_result": "GitHub HTTP 500"
+    }
   },
   "pending_inputs": [
-    "terminal post-merge candidate gate run and attempt",
-    "release-candidate, integration-evidence, and release-identity artifact IDs and SHA256 digests",
-    "exact pair ID plus read-only and write-proof deployment digests",
-    "write-proof parent, watchdog, child, correlation, and artifact evidence",
-    "six-case desktop/mobile result and governed proposal readback",
-    "three same-pair read-only restore manifest reads",
-    "final hosted JavaScript bundle scan counts",
-    "final exact-SHA strict BFF restore run and three health/version reads",
-    "active workflow and no-conflicting-deploy confirmation"
+    "replacement write-proof parent, watchdog, child, correlation, and artifact evidence",
+    "clean six-case desktop/mobile result with zero skips, unexpected cases, retries, or flakes",
+    "same-pair read-only restore after the successful proof and three final manifest reads",
+    "fresh final exact-SHA strict BFF restore after the successful proof and three health/version reads",
+    "final independent evidence review and closeout authorization"
   ]
 }
