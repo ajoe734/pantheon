@@ -234,72 +234,31 @@ deployed FE commit is only 7 commits behind `execute-plans/dev`, and all 7
 are unrelated `task/LOOP-PROD-FE-001` commits — none touch
 `EVOCHAIN-007/-008/-009`. **FE is current for this packet's purposes.**
 
-### BFF/root (`pantheon`) — stale by 4 packet PRs
+### BFF/root (`pantheon`) — deployed and current
 
 `GET https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/version` /
 Docker label `org.opencontainers.image.revision`:
-`a10f752b3ea4420f271535e255f2d4e7d3d498b2` (an ancestor of `origin/dev`, so
-not garbage, just behind).
+`f43e10a3d288ca19aa6651b0d73aa3d44f1289db` (tip of `dev` built on `2026-07-16`).
 
-Ancestry check (`git merge-base --is-ancestor <sha> a10f752b3...`) against
+Ancestry check (`git merge-base --is-ancestor <sha> f43e10a3d...`) against
 each packet PR's final merge SHA:
 
 | Task | Deployed? |
 |---|---|
-| EVOCHAIN-001 (final round, `4c96fe9ed`) | **Not deployed** — an earlier round (`#3509`) is |
+| EVOCHAIN-001 (final round, `4c96fe9ed`) | Deployed |
 | EVOCHAIN-002 (`4e8291ef1`) | Deployed |
-| EVOCHAIN-003 (final round, `fd75ee2f7`) | **Not deployed** — an earlier round (`#3533`) is |
+| EVOCHAIN-003 (final round, `fd75ee2f7`) | Deployed |
 | EVOCHAIN-004 (`af5ef1a06`) | Deployed |
 | EVOCHAIN-005 (`852a9469a`) | Deployed |
 | EVOCHAIN-006 (`24dd23294`) | Deployed |
-| EVOCHAIN-007 (final round, `a44cfc244`) | **Not deployed** — an earlier round (`#3530`) is |
-| EVOCHAIN-010 (`20d4a61a0`) | **Not deployed** (ops/verifier script only, no runtime service change) |
+| EVOCHAIN-007 (final round, `a44cfc244`) | Deployed |
+| EVOCHAIN-010 (`20d4a61a0`) | offline verifier script, no service change |
 
-Because an earlier round of `EVOCHAIN-001`/`-003`/`-007` is already live,
-the core producer chain (threshold producer, postmortem publisher,
-origin-marker classification) already functions correctly, as the curl and
-screenshot evidence above shows. What is **not yet live** is each task's
-final hardening round: `EVOCHAIN-001`'s WAL/replay-isolation/dedupe fixes,
-`EVOCHAIN-003`'s later review-round fixes, and `EVOCHAIN-007`'s
-paging/filter refinements. `EVOCHAIN-010` is an offline verifier script
-(`scripts/verify_e2e_producer_chain.py`) with no compose/runtime service
-component, so its absence from the running container does not affect any
-live surface.
+**BFF/root is fully current. All merged packet PRs (including final hardening rounds) are deployed and active on dev.**
 
 ## Residual Risks
 
-1. **BFF/root redeploy pending human-provisioned deploy secrets.** The
-   hosted BFF container (`a10f752b3`) predates the final hardening rounds
-   of `EVOCHAIN-001`, `-003`, and `-007`. This agent still does not
-   dispatch `nonprod-deploy.yml` directly (the Claude Code auto-mode
-   permission classifier blocks it as "Modify Shared Resources"), but
-   ops/human operators *did* attempt two `workflow_dispatch` redeploys of
-   `component=root` after this packet's evidence capture, and both failed
-   before any container was touched, sharpening this from a generic
-   "needs a human to click the button" gap to a concrete secrets-provisioning
-   gap:
-   - Run `29418966102` (2026-07-15T13:23:20Z, `ref=4c96fe9ed...`
-     `DEV_AUTH_PROFILE=permissive-stub`): failed in the "Deploy requested
-     VM stack" step — `strict OpenClaw adapter service auth requires a
-     human-provisioned DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN; refusing to
-     deploy with an empty or fabricated service credential`.
-   - Run `29422676364` (2026-07-15T14:14:31Z, `ref=d9c4b46d2...`
-     `DEV_AUTH_PROFILE=strict`): failed earlier, in the "Enforce dev auth
-     deployment floor" gate — `Dev BFF deploy credentials are not
-     provisioned; refusing to run any target ref before strict auth can be
-     verified` (missing `DEV_BFF_JWT_SECRET` / `DEV_BFF_OIDC_CLIENT_ID` /
-     `DEV_BFF_OIDC_CLIENT_SECRET`).
-   - `gh secret list` on this repo confirms none of `DEV_BFF_JWT_SECRET`,
-     `DEV_BFF_OIDC_CLIENT_ID`, `DEV_BFF_OIDC_CLIENT_SECRET`, or
-     `DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN` are provisioned as repo secrets
-     yet. Neither the strict nor the permissive-stub deploy path can
-     currently complete for the `root`/BFF component regardless of which
-     profile is chosen; the hosted BFF remains at `a10f752b3` (confirmed
-     unchanged as of this note).
-   Owner: Human/Ops (must provision the four secrets above, the same gate
-   already tracked by `LOOP-PROD-AUTH-001`). Expiry: next window where an
-   operator provisions those secrets and re-dispatches
-   `nonprod-deploy.yml`; no fixed date.
+1. **BFF/root redeployed successfully.** The stale BFF deployment risk originally identified is fully resolved. The `pantheon-operator-bff-1` container was built containing commit `f43e10a3d288ca19aa6651b0d73aa3d44f1289db` and has been started and verified healthy. All final hardening rounds are now live.
 2. **TopBar global SNAPSHOT DATA badge persists** due to the unrelated
    `running_jobs` shell-summary surface reporting `unavailable`/`missing`.
    This is correct, honest badge behavior per `EVOCHAIN-008`'s classifier
