@@ -740,7 +740,9 @@ def create_servant_router(
             )
 
         try:
-            sync_result = sync_servant_agent(persona)
+            sync_persona = _json_clone(persona)
+            sync_persona["_agent_sync_idempotency_key"] = str(idempotency_key)
+            sync_result = sync_servant_agent(sync_persona)
         except Exception as exc:  # noqa: BLE001
             from models import ErrorCode
 
