@@ -1,8 +1,9 @@
 {
   "schema_version": 1,
   "task_id": "PINT-010-R2",
-  "evidence_state": "in_progress",
-  "prepared_at_utc": "2026-07-16T18:35:10Z",
+  "evidence_state": "complete",
+  "acceptance_status": "accepted",
+  "prepared_at_utc": "2026-07-16T19:31:43Z",
   "frontend_host": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/",
   "source_baseline": {
     "pantheon_branch": "dev",
@@ -110,8 +111,10 @@
     "write_proof_parent_run_id": 29519185869,
     "write_proof_child_run_id": 29520132313,
     "write_proof_watchdog_run_id": 29519934947,
-    "playwright_expected": 4,
+    "playwright_passed": 4,
     "playwright_unexpected": 2,
+    "permissive_bff_run_id": 29518975266,
+    "strict_safety_restore_run_id": 29521081353,
     "replacement_pull_request": 381
   },
   "final_candidate_gate": {
@@ -172,45 +175,89 @@
   },
   "permissive_bff_proof_window": {
     "status": "success",
-    "run_id": 29518975266,
+    "rejected_attempt": {
+      "run_id": 29525959905,
+      "status": "rejected_pre_deploy",
+      "failure_classification": "lease API HTTP 400 during acquire/read-after-write against an expired predecessor owner",
+      "deploy_ran": false,
+      "bff_changed": false,
+      "write_proof_window_opened": false
+    },
+    "run_id": 29526445708,
     "run_attempt": 1,
-    "job_id": 87691022263,
+    "job_id": 87715949316,
     "payload_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
     "auth_profile": "permissive-stub",
     "auth_stub": true,
     "auth_mode": "permissive",
-    "public_smoke": "success",
-    "exact_version_proof": "success",
-    "agora_restart_persistence": "success",
-    "lease_id": "4d2ef39b-bc23-4122-8d2b-441085d5b4a8",
-    "lease_released_at": "2026-07-16T17:17:16Z"
+    "version_read_count": 3,
+    "version_reads_exact_and_known": true,
+    "healthz_read_count": 3,
+    "healthz_live": true,
+    "healthz_ready": true,
+    "dependencies_all_ok": true
   },
   "bounded_write_proof": {
-    "status": "failed_replacement_required",
-    "candidate_status": "superseded_rejected_diagnostic_history",
-    "candidate_frontend_commit": "88d3d0acf1a2a3db6810c2d2b51c09cafe456b09",
-    "candidate_pair_id": "f58b10450aec28b638916d57b3291c5a9c7a954f85fc89a527d61313a76a0555",
-    "parent_run_id": 29519185869,
+    "status": "success",
+    "candidate_frontend_commit": "b13635514618ad46e3855772e9ed1a0fa1fce3d4",
+    "candidate_bff_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
+    "candidate_pair_id": "433a21fe127a3bde0020b9444869f565e99ed4b36b7ade2c3ea89aa5185a8d36",
+    "read_only_artifact_digest_sha256": "61dfc0986f57cb696b0a6aa7b21af6d3eb8aa25fe8b5b63f7f3ad556afd47360",
+    "write_proof_artifact_digest_sha256": "db21014d4c69404aeb23987012cff1d54dd1eaa5f33d10700a9a2cae6d53e660",
+    "parent_run_id": 29526662869,
     "parent_run_attempt": 1,
-    "correlation_id": "e06ae26b-d52b-4e6c-aa13-1601d92d0b60",
-    "watchdog_run_id": 29519934947,
+    "correlation_id": "5baa7d49-394a-43a5-8ea4-ade765313277",
+    "parent_jobs": {
+      "deploy_exact_candidate": 87716670643,
+      "coordinate_bounded_proof": 87718210667,
+      "confirm_read_only_restore": 87720081823
+    },
+    "parent_artifacts": {
+      "deploy_evidence": {
+        "id": 8387096770,
+        "name": "pantheon-dev-fe-deploy-evidence-attempt-1",
+        "digest": "sha256:7d6e3fbc78d3e902b9fb6d38e2c23b6aa16b697ef9702c5fe7d9e4965db655b5"
+      },
+      "proof_binding": {
+        "id": 8387165728,
+        "name": "pantheon-proof-binding-attempt-1",
+        "digest": "sha256:0536a99c7c1f171cb82f6914d052fc6ec0dc59208ab1766a5de50af30b8da962"
+      },
+      "child_claim": {
+        "id": 8387231666,
+        "name": "pantheon-proof-child-claim-attempt-1",
+        "digest": "sha256:a1373dc2c64d2ed93be463ad39b0080a43ad2714aa586d94ece49ba6981c0ba9"
+      }
+    },
+    "watchdog_run_id": 29527293543,
     "watchdog_run_attempt": 1,
     "watchdog_conclusion": "success",
-    "child_run_id": 29520132313,
+    "watchdog_jobs": {
+      "authenticate_parent": 87718776813,
+      "watch_bounded_proof": 87718876632,
+      "restore_read_only": 87720078613
+    },
+    "child_run_id": 29527452120,
     "child_run_attempt": 1,
-    "child_conclusion": "failure",
+    "child_conclusion": "success",
+    "child_jobs": {
+      "authorize": 87719310624,
+      "proof": 87719347860
+    },
     "artifact": {
-      "id": 8384570109,
+      "id": 8387313123,
       "name": "pantheon-authorized-write-proof-attempt-1",
-      "digest": "sha256:c72cc9baabf5d819c888fb0b3ae3b6a21744bde347b736cc91889c3a1e3009a5"
+      "digest": "sha256:3999572b0c5ff0d4e9682427320ce0bb61ce12256fb383a007bdb59c17489fad"
     },
     "expected_playwright": 6,
-    "observed_playwright": 4,
+    "observed_playwright": 6,
     "skipped": 0,
-    "unexpected": 2,
+    "unexpected": 0,
     "flaky": 0,
     "retries": 0,
-    "failure_classification": "desktop and mobile interaction cases timed out waiting for the /bff/agora/interactions POST",
+    "duration_ms": 71935.323,
+    "desktop_expected": 3,
+    "mobile_expected": 3,
     "servant_ensure": {
       "status": "success",
       "persona_id": "agora-servant-b996f46bc40c4764690a",
@@ -238,23 +285,8 @@
       "tokens_recorded": false
     },
     "same_pair_before_after": true,
-    "final_successful_proof": {
-      "status": "pending",
-      "candidate_frontend_commit": "b13635514618ad46e3855772e9ed1a0fa1fce3d4",
-      "candidate_bff_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
-      "candidate_pair_id": "433a21fe127a3bde0020b9444869f565e99ed4b36b7ade2c3ea89aa5185a8d36",
-      "read_only_artifact_digest_sha256": "61dfc0986f57cb696b0a6aa7b21af6d3eb8aa25fe8b5b63f7f3ad556afd47360",
-      "write_proof_artifact_digest_sha256": "db21014d4c69404aeb23987012cff1d54dd1eaa5f33d10700a9a2cae6d53e660",
-      "parent_run_id": null,
-      "watchdog_run_id": null,
-      "child_run_id": null,
-      "artifact": null,
-      "expected_playwright": 6,
-      "observed_playwright": null,
-      "skipped": null,
-      "unexpected": null,
-      "flaky": null
-    }
+    "before_after_write_digest_sha256": "db21014d4c69404aeb23987012cff1d54dd1eaa5f33d10700a9a2cae6d53e660",
+    "accepted_at": "2026-07-16T19:18:01Z"
   },
   "bundle_scan": {
     "status": "success",
@@ -282,20 +314,21 @@
     "pre_post_manifest_stable": true
   },
   "read_only_restore": {
-    "status": "success_after_failed_proof",
-    "candidate_status": "superseded_rejected_diagnostic_history",
-    "run_id": 29519934947,
+    "status": "success",
+    "run_id": 29527293543,
     "run_attempt": 1,
-    "parent_run_id": 29519185869,
-    "frontend_commit": "88d3d0acf1a2a3db6810c2d2b51c09cafe456b09",
+    "restore_job_id": 87720078613,
+    "parent_run_id": 29526662869,
+    "frontend_commit": "b13635514618ad46e3855772e9ed1a0fa1fce3d4",
     "bff_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
-    "pair_id": "f58b10450aec28b638916d57b3291c5a9c7a954f85fc89a527d61313a76a0555",
-    "deployment_profile": "read-only-restore",
-    "artifact_digest_sha256": "2797b8765556b9f6899ccaa5c88cda28f9f1ff87a09f50da3ff3db56e27815ee",
-    "manifest_reads": [],
+    "pair_id": "433a21fe127a3bde0020b9444869f565e99ed4b36b7ade2c3ea89aa5185a8d36",
+    "deployment_profile": "read-only",
+    "artifact_digest_sha256": "61dfc0986f57cb696b0a6aa7b21af6d3eb8aa25fe8b5b63f7f3ad556afd47360",
+    "manifest_read_count": 3,
+    "accepted_at": "2026-07-16T19:25:04.844Z",
     "safe_restore_passed": true,
     "rollback_required": false,
-    "browser_probe_passed": true
+    "same_pair_restored": true
   },
   "safety_strict_bff_restore": {
     "status": "success_after_failed_proof",
@@ -312,18 +345,25 @@
     "healthz_live": true,
     "healthz_ready": true,
     "dependencies_all_ok": true,
-    "note": "Safety restore only; a fresh strict restore remains required after the final successful write proof."
+    "note": "Historical safety restore after the superseded failed proof; final strict run 29527966606 supersedes it."
   },
   "final_strict_bff_restore": {
-    "status": "pending",
-    "run_id": null,
-    "run_attempt": null,
+    "status": "success",
+    "run_id": 29527966606,
+    "run_attempt": 1,
+    "job_id": 87721031182,
     "payload_commit": "aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748",
-    "version_reads": [],
-    "health_reads": [],
-    "auth_stub": null,
-    "auth_mode": null,
-    "required_after": "final successful 6/0 write proof"
+    "started_at": "2026-07-16T19:26:09Z",
+    "completed_at": "2026-07-16T19:28:45Z",
+    "build_time": "2026-07-16T19:27:37Z",
+    "version_read_count": 3,
+    "version_reads_exact_and_known": true,
+    "healthz_read_count": 3,
+    "healthz_live": true,
+    "healthz_ready": true,
+    "dependencies_all_ok": true,
+    "auth_stub": false,
+    "auth_mode": "strict"
   },
   "workflow_state": {
     "pantheon_nonprod_deploy": {
@@ -334,24 +374,20 @@
       "workflow_id": 292028803,
       "state": "active"
     },
-    "nonexecuting_platform_ghost": {
+    "no_nonterminal_deploy": true,
+    "historical_nonexecuting_platform_ghost": {
       "run_id": 29469158508,
-      "status": "queued",
+      "observed_status": "queued",
       "head_branch": "task/EVOCHAIN-011",
       "created_at": "2026-07-16T03:31:02Z",
       "updated_at": "2026-07-16T03:31:02Z",
       "job_count": 0,
       "lease_held": false,
       "conflicting": false,
+      "present_in_final_nonterminal_deploy_list": false,
       "normal_cancel_result": "GitHub HTTP 500",
       "force_cancel_result": "GitHub HTTP 500"
     }
   },
-  "pending_inputs": [
-    "fresh #381 pair write-proof parent, watchdog, child, correlation, and artifact evidence",
-    "clean six-case desktop/mobile result with zero skips, unexpected cases, retries, or flakes",
-    "same-pair read-only restore after the successful proof and three final manifest reads",
-    "fresh final exact-SHA strict BFF restore after the successful proof and three health/version reads",
-    "final independent evidence review and closeout authorization"
-  ]
+  "pending_inputs": []
 }

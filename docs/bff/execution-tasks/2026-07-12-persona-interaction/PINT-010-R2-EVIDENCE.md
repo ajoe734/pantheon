@@ -2,13 +2,11 @@
 
 Date: 2026-07-16 UTC
 Owner: Codex2
-Reviewer: pending final evidence review
-Status: in progress. The canonical Persona eligibility repair, deployment
-reliability repairs, governed OpenClaw adapter repair, exact merged frontend
-candidate gate, read-only deployment, independent bundle scan, and safe
-recovery from one superseded failed hosted proof are recorded. A clean 6/0
-hosted write proof against the fresh #381 pair, its subsequent fresh final
-strict BFF restore, and final evidence review remain. This task is not `done`.
+Reviewer: Codex
+Status: accepted. The canonical Persona eligibility and OpenClaw adapter
+repairs, exact #381 candidate, clean 6/0 hosted write proof, independently
+restored same-pair read-only frontend, and fresh final strict BFF restore are
+complete. Superseded failures remain recorded as diagnostic history.
 
 ## 2026-07-16 closure record
 
@@ -208,12 +206,13 @@ returned the exact known SHA with build time `2026-07-16T17:47:09Z`,
 restore after the failed proof, not the final strict restore required after a
 future successful 6/0 proof.
 
-Both deploy workflows are active: Pantheon Nonprod Deploy ID `269991390` and
-Pantheon Dev FE Deploy ID `292028803`. Pantheon run `29469158508` remains an
-old GitHub-queued platform ghost on `task/EVOCHAIN-011`: it has zero jobs, has
-not updated since `03:31:02Z`, and holds no lease. Both normal cancel and force
-cancel returned GitHub HTTP 500. It is recorded transparently as non-executing
-and non-conflicting, not hidden as a clean queue.
+Both deploy workflows were active during recovery: Pantheon Nonprod Deploy ID
+`269991390` and Pantheon Dev FE Deploy ID `292028803`. Pantheon run
+`29469158508` was observed as an old GitHub-queued platform ghost on
+`task/EVOCHAIN-011`: it had zero jobs, had not updated since `03:31:02Z`, and
+held no lease. Both normal cancel and force cancel returned GitHub HTTP 500.
+It remains recorded transparently as historical, non-executing diagnostic
+state rather than being hidden as a clean queue.
 
 ### Fresh accepted #381 candidate
 
@@ -257,31 +256,88 @@ viewer and operator literal counts were zero, and pre/post manifest identity
 remained stable. These are the authoritative counts in
 `PINT-010-R2-BUNDLE-SCAN-2026-07-16.json`.
 
-### Pending final hosted evidence — do not treat as passed
+### Accepted #381 write proof and final restoration
 
-The following fields are intentionally unresolved. They must be replaced with
-terminal run IDs, attempt numbers, artifact IDs and SHA256 digests, exact pair
-identity, timestamps, and inspected result values before review:
+The first permissive-profile dispatch
+[`29525959905`](https://github.com/ajoe734/pantheon/actions/runs/29525959905)
+was rejected before deployment. Its lease acquire/read-after-write path received
+GitHub API HTTP 400 while reading an expired predecessor owner. No deploy step
+ran, the BFF remained unchanged, and no write-proof window opened. This is an
+infrastructure coordination failure, not application or proof evidence.
 
-1. A fresh attempt-1 parent write-proof deployment for pair
-   `433a21fe127a3bde0020b9444869f565e99ed4b36b7ade2c3ea89aa5185a8d36`, its new
-   correlation ID, independently authorized child proof, and watchdog run.
-2. Child artifact inspection proving six expected desktop/mobile cases, zero
-   skipped, unexpected, or flaky cases; unauthenticated 401 `AUTH_REQUIRED`;
-   viewer ensure/create/modify 403; operator create 201, modify 200, validate
-   200; revisions `1,2,3`; audit `create,modify,validate`; replay at revision
-   3; `executionAuthority=none`; no downstream execution; and no recorded
-   bearer value.
-3. Before/after successful write-proof manifests proving the same FE/BFF pair, pair ID,
-   and deployment digest throughout the bounded proof.
-4. Independent same-pair read-only FE restore after that successful proof and
-   three final live manifest reads.
-5. A fresh final exact-SHA strict BFF restore after that successful proof, with
-   three live `/healthz` and
-   `/bff/version` reads, and `auth_stub=false`, `auth_mode=strict`.
-6. Final evidence review and closeout authorization.
+Replacement Pantheon run
+[`29526445708`](https://github.com/ajoe734/pantheon/actions/runs/29526445708),
+attempt 1, job `87715949316`, completed successfully for exact BFF SHA
+`aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748`. Three `/bff/version` reads and
+three `/healthz` reads confirmed the exact known SHA, `auth_stub=true`,
+`auth_mode=permissive`, live/ready true, and all dependencies healthy.
 
-No closeout or `done` claim is permitted while any item above is unresolved.
+Fresh parent run
+[`29526662869`](https://github.com/ajoe734/execute-plans/actions/runs/29526662869),
+attempt 1, used correlation ID
+`5baa7d49-394a-43a5-8ea4-ade765313277`. All three jobs succeeded:
+
+- deploy exact gated candidate: job `87716670643`;
+- coordinate bounded authenticated Persona proof: job `87718210667`;
+- confirm independent same-pair read-only restore: job `87720081823`.
+
+Its immutable artifacts were:
+
+| Artifact | ID | GitHub artifact digest |
+| --- | ---: | --- |
+| `pantheon-dev-fe-deploy-evidence-attempt-1` | `8387096770` | `sha256:7d6e3fbc78d3e902b9fb6d38e2c23b6aa16b697ef9702c5fe7d9e4965db655b5` |
+| `pantheon-proof-binding-attempt-1` | `8387165728` | `sha256:0536a99c7c1f171cb82f6914d052fc6ec0dc59208ab1766a5de50af30b8da962` |
+| `pantheon-proof-child-claim-attempt-1` | `8387231666` | `sha256:a1373dc2c64d2ed93be463ad39b0080a43ad2714aa586d94ece49ba6981c0ba9` |
+
+Independent watchdog
+[`29527293543`](https://github.com/ajoe734/execute-plans/actions/runs/29527293543),
+attempt 1, passed exact-parent authentication (`87718776813`), bounded proof
+watching (`87718876632`), and exact read-only restore (`87720078613`).
+
+Independently authorized child
+[`29527452120`](https://github.com/ajoe734/execute-plans/actions/runs/29527452120),
+attempt 1, passed authorization job `87719310624` and proof job `87719347860`.
+Artifact `pantheon-authorized-write-proof-attempt-1` ID `8387313123`, digest
+`sha256:3999572b0c5ff0d4e9682427320ce0bb61ce12256fb383a007bdb59c17489fad`,
+contains the accepted proof.
+
+The focused Playwright result was exactly six expected cases in
+`71935.323ms`: three desktop and three mobile, with zero skipped, unexpected,
+or flaky cases and no retry. Servant preflight resolved exact Persona
+`agora-servant-b996f46bc40c4764690a`, class `agora_servant`, owner scope
+`user_private`, memory scope `private_user`, registry-backed, and
+`executionAuthority=none`.
+
+The governed proposal proof returned unauthenticated 401 `AUTH_REQUIRED`,
+viewer create/modify 403, operator create 201, modify 200, and validate 200.
+Canonical readback contained revisions `1,2,3`, audit actions
+`create,modify,validate`, final and replay revision 3,
+`downstreamExecutionAttempted=false`, and `tokensRecorded=false`.
+
+Before and after proof manifests remained exact pair
+`433a21fe127a3bde0020b9444869f565e99ed4b36b7ade2c3ea89aa5185a8d36`
+with write-proof digest
+`db21014d4c69404aeb23987012cff1d54dd1eaa5f33d10700a9a2cae6d53e660`;
+the accepted write-proof manifest time was `2026-07-16T19:18:01Z`.
+
+The watchdog restored that same pair with read-only digest
+`61dfc0986f57cb696b0a6aa7b21af6d3eb8aa25fe8b5b63f7f3ad556afd47360`.
+Three independent manifest reads matched, the accepted restore timestamp was
+`2026-07-16T19:25:04.844Z`, `safeRestore` passed, and
+`rollbackRequired=false`.
+
+Final Pantheon strict run
+[`29527966606`](https://github.com/ajoe734/pantheon/actions/runs/29527966606),
+attempt 1, job `87721031182`, completed successfully from `19:26:09Z` through
+`19:28:45Z`. Three `/bff/version` reads returned exact known SHA
+`aa68f7508fcb58d403a1f845fa1d6a8f5a3fe748`, build time
+`2026-07-16T19:27:37Z`, `auth_stub=false`, and `auth_mode=strict`. Three
+`/healthz` reads returned live/ready true with every dependency healthy.
+
+At final verification both deploy workflows were active and no nonterminal
+Pantheon or execute-plans deployment remained. The final runtime evidence is
+complete and accepted; no live-capital, broker, order, capital-binding,
+runtime-binding, or memory authority was granted or exercised.
 
 ## Historical 2026-07-14 record
 
