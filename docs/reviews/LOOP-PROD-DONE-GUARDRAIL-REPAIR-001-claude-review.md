@@ -104,3 +104,65 @@ No code changes required from this review. The PR is mechanically `BEHIND`
 should resync before merge, but that does not affect this review's verdict.
 Handing back to Codex2 for closeout per
 `.orchestrator/skills/task-closeout-finalization.md`.
+
+## Round 2 — Fresh Approval At Current Head (2026-07-16)
+
+Per the task brief's "Final merge gate": the branch advanced past the
+originally-approved head through additional `dev` merges (unrelated
+`OPS-DEPLOY-WORKFLOW-GUARD-001`, `OPS-DEPLOY-STRICT-POSTURE-QUOTE-001`,
+`pint-persona-eligibility-canonical`, `LOOP-PROD-SEQ-RECONCILE-001`,
+`OPS-LEASE-READ-AFTER-WRITE-001`, `OPS-LEASE-READ-AFTER-WRITE-PIN-001` PRs)
+plus two owner closeout-record commits (`bf589e129`, `1ad72f05e`) that only
+touch this task's own brief/review docs. That makes the previous approval
+(naming `b60a8d84481ea08233cc4fc6486c84ef57c93dc9`) stale under the gate's
+own rule, so this is a fresh independent re-verification naming the new
+head.
+
+### Verdict: Approved
+
+PR under review: `ajoe734/pantheon#3748` at head
+`1ad72f05e669ce1fa2f6f0ffed35a89b5194f04c` (base `dev`, `mergeStateStatus:
+BEHIND`, `mergeable: MERGEABLE`, required checks — Commit trailers /
+Runtime mirror guard / Smoke acceptance — all pass).
+
+### Independent Re-Verification
+
+- `git diff --stat b60a8d84481ea08233cc4fc6486c84ef57c93dc9 HEAD --
+  scripts/loop_done_guardrail.py scripts/ai_status.py
+  scripts/test_loop_done_guardrail.py
+  docs/deployment/evidence/loop-product-level/closeout-truth-audit-2026-07-16.json
+  docs/deployment/evidence/loop-product-level/closeout-truth-audit-2026-07-16.md`
+  — empty. None of the reviewed guard/audit files changed since the
+  originally-approved head; every diff since then is unrelated `dev` drift
+  or this task's own doc-only closeout commits.
+- `python3 -m pytest scripts/test_loop_done_guardrail.py -q` — 59 passed,
+  re-run at the current head.
+- `python3 -m py_compile scripts/loop_done_guardrail.py scripts/ai_status.py
+  scripts/test_loop_done_guardrail.py` — clean.
+- Re-ran the read-only replay independently against the live archive root
+  (`/home/lupin/code/pantheon/ai-task-archive/tasks`) with the exact 18-ID
+  frozen set at the current head: exit 1, 2/18 passed (`LOOP-PROD-REC-001`,
+  `LOOP-PROD-TEACH-001`), identical classifications/gaps/repair-task-IDs
+  to the Round 1 run. Diffed the fresh `/tmp/verify-audit2.json` against
+  the committed `closeout-truth-audit-2026-07-16.json` with `generated_at`
+  excluded — byte-for-byte match, and every result's
+  `snapshot_hash_unchanged` is `true`.
+- `git status --short` under `ai-task-archive/tasks/` shows no modified
+  (`M`) frozen snapshot files after the replay — archive still untouched.
+
+### Outage Note
+
+`scripts/ai_status.py` / `scripts/ai-status.sh` are down fleet-wide (every
+subcommand, including read-only `show`, raises `RuntimeError: activity
+event_id duplicate across sources:
+worker-commit-deb673789747a71068bff9f2578ad9f41d7b8253` from
+`recover_status_activity_outbox()`). This approval is recorded here, in the
+canonical review-artifact channel already established for this task,
+because the central status wrapper's `approve`/`note` commands cannot run
+during the outage. Once the outage is fixed, this approval should be
+mirrored into `ai-status.json` for the task's status history.
+
+No code changes required. Handing back to Codex2: resync the `BEHIND` PR
+against current `dev` if GitHub still requires it for merge (should be a
+clean fast-forward with no overlapping files per the diff above), then
+merge and finalize per this fresh approval.
