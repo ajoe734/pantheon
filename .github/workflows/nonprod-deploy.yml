@@ -197,7 +197,7 @@ jobs:
           PYTHONNOUSERSITE: "1"
           PYTHONSAFEPATH: "1"
           PYTHONSTARTUP: ""
-          PYTHONINSPECT: "0"
+          PYTHONINSPECT: ""
           CDPATH: ""
           HOME: /home/runner
           LD_PRELOAD: ""
@@ -277,7 +277,7 @@ jobs:
           PYTHONNOUSERSITE: "1"
           PYTHONSAFEPATH: "1"
           PYTHONSTARTUP: ""
-          PYTHONINSPECT: "0"
+          PYTHONINSPECT: ""
           CDPATH: ""
           HOME: /home/runner
           LD_PRELOAD: ""
@@ -312,7 +312,7 @@ jobs:
           exec {token_fd}<<<"${lease_token}"
           env -i \
             PATH="${PATH}" HOME="${HOME}" LANG=C.UTF-8 \
-            PYTHONNOUSERSITE=1 PYTHONSAFEPATH=1 PYTHONSTARTUP= PYTHONINSPECT=0 \
+            PYTHONNOUSERSITE=1 PYTHONSAFEPATH=1 PYTHONSTARTUP= PYTHONINSPECT= \
             python3 "${controller}/scripts/dev_environment_lease.py" heartbeat-loop \
               --repository ajoe734/execute-plans \
               --branch environment-coordination \
@@ -367,7 +367,7 @@ jobs:
           PYTHONNOUSERSITE: "1"
           PYTHONSAFEPATH: "1"
           PYTHONSTARTUP: ""
-          PYTHONINSPECT: "0"
+          PYTHONINSPECT: ""
           CDPATH: ""
           HOME: /home/runner
           LD_PRELOAD: ""
@@ -580,7 +580,7 @@ jobs:
           PYTHONNOUSERSITE: "1"
           PYTHONSAFEPATH: "1"
           PYTHONSTARTUP: ""
-          PYTHONINSPECT: "0"
+          PYTHONINSPECT: ""
           CDPATH: ""
           HOME: /home/runner
           LD_PRELOAD: ""
@@ -632,7 +632,7 @@ jobs:
           PYTHONNOUSERSITE: "1"
           PYTHONSAFEPATH: "1"
           PYTHONSTARTUP: ""
-          PYTHONINSPECT: "0"
+          PYTHONINSPECT: ""
           CDPATH: ""
           HOME: /home/runner
           LD_PRELOAD: ""
@@ -698,7 +698,7 @@ jobs:
           PYTHONNOUSERSITE: "1"
           PYTHONSAFEPATH: "1"
           PYTHONSTARTUP: ""
-          PYTHONINSPECT: "0"
+          PYTHONINSPECT: ""
           CDPATH: ""
           HOME: /home/runner
           LD_PRELOAD: ""
@@ -774,7 +774,7 @@ jobs:
           PYTHONNOUSERSITE: "1"
           PYTHONSAFEPATH: "1"
           PYTHONSTARTUP: ""
-          PYTHONINSPECT: "0"
+          PYTHONINSPECT: ""
           CDPATH: ""
           HOME: /home/runner
           LD_PRELOAD: ""

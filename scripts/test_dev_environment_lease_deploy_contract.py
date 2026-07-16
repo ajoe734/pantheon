@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -176,6 +177,13 @@ def test_token_steps_use_a_fixed_sanitized_path_and_clear_shell_git_injection() 
     assert dev.count('PYTHONPATH: ""') >= 7
     assert dev.count('PYTHONNOUSERSITE: "1"') >= 7
     assert dev.count('PYTHONSAFEPATH: "1"') >= 7
+    pythoninspect_yaml_values = re.findall(
+        r"(?m)^\s*PYTHONINSPECT:\s*(.+?)\s*$", dev
+    )
+    pythoninspect_shell_values = re.findall(r"\bPYTHONINSPECT=([^\s\\]*)", dev)
+    assert len(pythoninspect_yaml_values) >= 7
+    assert set(pythoninspect_yaml_values) == {'""'}
+    assert pythoninspect_shell_values == [""]
     assert dev.count('LD_PRELOAD: ""') >= 7
     assert dev.count('GIT_CONFIG_COUNT: "0"') >= 7
     assert dev.count('GIT_CONFIG_PARAMETERS: ""') >= 7
