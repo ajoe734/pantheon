@@ -726,6 +726,143 @@ class TestDeepEvidenceChecks(unittest.TestCase):
             self.assertTrue(any("jsonschema library is not installed" in g for g in gaps), gaps)
 
 
+class TestArchiveReplayAudit(unittest.TestCase):
+    def _write_snapshot(
+        self,
+        root: Path,
+        file_id: str,
+        *,
+        task_id: str | None = None,
+        review_file: str = "",
+    ) -> Path:
+        path = root / f"{file_id}.json"
+        data = {
+            "version": 1,
+            "task_id": file_id,
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": {
+                "id": task_id or file_id,
+                "status": "done",
+                "owner": "Owner",
+                "reviewer": "Reviewer",
+                "review_file": review_file,
+                "product_level_required": True,
+            },
+        }
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return path
+
+    def test_frozen_archive_replay_task_ids_are_exact(self):
+        expected = [
+            "LOOP-PROD-AGORA-001",
+            "LOOP-PROD-AGORA-002",
+            "LOOP-PROD-ALPHA-001",
+            "LOOP-PROD-AUTH-001",
+            "LOOP-PROD-CAP-001",
+            "LOOP-PROD-CONS-001",
+            "LOOP-PROD-DEP-001",
+            "LOOP-PROD-DIST-001",
+            "LOOP-PROD-GAP-ADDENDUM-001",
+            "LOOP-PROD-GAP-ADDENDUM-002",
+            "LOOP-PROD-IMIT-001",
+            "LOOP-PROD-MAI-001",
+            "LOOP-PROD-OODA-001",
+            "LOOP-PROD-REC-001",
+            "LOOP-PROD-RUNTIME-BOOT-001",
+            "LOOP-PROD-SRC-001",
+            "LOOP-PROD-TEACH-001",
+            "LOOP-PROD-TEL-001",
+        ]
+        self.assertEqual(list(guardrail.FROZEN_ARCHIVE_REPLAY_TASK_IDS), expected)
+
+    def test_archive_replay_rejects_missing_and_extra_sources(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_snapshot(root, "LOOP-PROD-A")
+            self._write_snapshot(root, "LOOP-PROD-C")
+            audit = guardrail.audit_archive_root(
+                root,
+                excluded_task_ids=set(),
+                frozen_task_ids=("LOOP-PROD-A", "LOOP-PROD-B"),
+            )
+        errors = audit["selection"]["source_set_errors"]
+        self.assertTrue(any("missing frozen archive snapshot: LOOP-PROD-B.json" in e for e in errors), errors)
+        self.assertTrue(any("unexpected LOOP-PROD archive snapshot: LOOP-PROD-C.json" in e for e in errors), errors)
+
+    def test_archive_replay_rejects_malformed_snapshot(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "LOOP-PROD-A.json").write_text("{not-json", encoding="utf-8")
+            audit = guardrail.audit_archive_root(
+                root,
+                excluded_task_ids=set(),
+                frozen_task_ids=("LOOP-PROD-A",),
+            )
+        self.assertEqual(audit["results"][0]["classification"], "stale_evidence")
+        self.assertTrue(any("failed to parse archive snapshot JSON" in g for g in audit["results"][0]["gaps"]))
+
+    def test_archive_replay_rejects_filename_task_id_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_snapshot(root, "LOOP-PROD-A", task_id="LOOP-PROD-B")
+            audit = guardrail.audit_archive_root(
+                root,
+                excluded_task_ids=set(),
+                frozen_task_ids=("LOOP-PROD-A",),
+            )
+        gaps = audit["results"][0]["gaps"]
+        self.assertTrue(any("archive filename/task ID mismatch" in g for g in gaps), gaps)
+
+    def test_archive_replay_rejects_duplicate_task_ids(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_snapshot(root, "LOOP-PROD-A", task_id="LOOP-PROD-DUP")
+            self._write_snapshot(root, "LOOP-PROD-B", task_id="LOOP-PROD-DUP")
+            audit = guardrail.audit_archive_root(
+                root,
+                excluded_task_ids=set(),
+                frozen_task_ids=("LOOP-PROD-A", "LOOP-PROD-B"),
+            )
+        second_gaps = audit["results"][1]["gaps"]
+        self.assertTrue(any("duplicate archive task id" in g for g in second_gaps), second_gaps)
+
+    def test_archive_replay_hashes_are_immutable(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            path = self._write_snapshot(root, "LOOP-PROD-A")
+            before = guardrail._sha256_file(path)
+            audit = guardrail.audit_archive_root(
+                root,
+                excluded_task_ids=set(),
+                frozen_task_ids=("LOOP-PROD-A",),
+            )
+            after = guardrail._sha256_file(path)
+        result = audit["results"][0]
+        self.assertEqual(before, after)
+        self.assertEqual(result["snapshot_sha256_before"], result["snapshot_sha256_after"])
+        self.assertTrue(result["snapshot_hash_unchanged"])
+
+    def test_archive_replay_classification_and_repair_ids(self):
+        self.assertEqual(
+            guardrail._classify_archive_replay_result(["blocking residual risk 'R' remains open"]),
+            "false_closure",
+        )
+        self.assertEqual(
+            guardrail._classify_archive_replay_result(["product-level closeout requires evidence"]),
+            "stale_evidence",
+        )
+        self.assertEqual(
+            guardrail._follow_up_task_id("LOOP-PROD-X", "false_closure"),
+            "LOOP-PROD-X-FALSE-CLOSEOUT-REPAIR",
+        )
+        self.assertEqual(
+            guardrail._follow_up_task_id("LOOP-PROD-X", "stale_evidence"),
+            "LOOP-PROD-X-STALE-EVIDENCE-REPAIR",
+        )
+        self.assertIsNone(guardrail._follow_up_task_id("LOOP-PROD-X", "valid_closure"))
+
+
 
 if __name__ == "__main__":
     unittest.main()
