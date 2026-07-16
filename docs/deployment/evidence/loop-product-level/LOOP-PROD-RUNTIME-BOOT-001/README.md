@@ -224,6 +224,33 @@ Still open and unrelated: the live canonical status root's
 (tracked separately; not repaired here, and not caused by this corrective
 task's git-tracked-file-only change).
 
+## Follow-up evidence candidate: `corrective-001-checks.json`
+
+Per the Codex planner review on PR #3742 (2026-07-16T12:50:08Z): the
+doc-only reviewer-identity fix is a valid interim change but does not
+bind checks.json to the final candidate, and completion.json/protected
+Ed25519 ledger evidence remains absent. `corrective-001-checks.json` in
+this directory closes that specific gap for the corrective task's own
+diff -- it is a follow-up evidence candidate, not a rewrite of the
+frozen primary `checks.json` above. It records: PR ancestry for #3652,
+#3738, and #3742 (including verified ancestry of PR #3738's merge commit
+into `origin/dev`); the exact merged diff (the one-line audit-row
+restoration plus the three README commits); the restored audit blob's
+`git hash-object` and SHA-256; the current (unmodified) writer registry
+digest; a fresh `runtime_lock_source_inventory('.')` recomputation
+showing zero unregistered direct writers (with the expected file-count
+drift from the frozen primary freeze explained, not silently ignored);
+and a full re-run of every named validation command from the primary
+`checks.json`, all passing against the current worktree.
+
+This file is evidence binding, not completion. Per the task contract:
+GitHub green checks, this file, the README correction, a placeholder
+signature, or an owner signature are not completion. Only the assigned
+distinct reviewer `Codex2` may independently verify this evidence and
+either create the real signed `completion.json` (plus ledger/policy/
+revocation binding) or leave the task open with the exact unavailable
+signing authority.
+
 Note on the commit gate: `scripts/check_staged_generated_files.py`
 (installed as `.githooks/pre-commit` since commit `c876328961`, 2026-04-28)
 deliberately blocks any new worker commit that stages the root
