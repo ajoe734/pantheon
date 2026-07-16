@@ -43,6 +43,7 @@ class ReapStaleInProgressSequencingGuardTests(unittest.TestCase):
             mock.patch.multiple(
                 reap_stale_in_progress,
                 STATUS_FILE=self.status_file,
+                LOG_FILE=self.root / "ai-activity-log.jsonl",
                 STATE_FILE=self.state_file,
                 LOCK_FILE=self.lock_file,
                 DRY_RUN=dry_run,

@@ -754,6 +754,60 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
                 ):
                     common.activity_audit_source_paths_unlocked(log_path)
 
+    def test_strict_reader_returns_active_and_rotated_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+            archive_dir = log_path.parent / "archive" / "logs"
+            archive_dir.mkdir(parents=True)
+            archived = archive_dir / f"{log_path.name}-0001.gz"
+            with gzip.open(archived, "wt", encoding="utf-8") as handle:
+                handle.write('{"event_id":"archived-event","type":"old"}\n')
+            log_path.write_text(
+                '{"event_id":"active-event","type":"current"}\n',
+                encoding="utf-8",
+            )
+
+            records = common.read_activity_audit_records(log_path)
+
+        self.assertEqual(
+            [record["event_id"] for record in records],
+            ["archived-event", "active-event"],
+        )
+
+    def test_strict_reader_rejects_duplicate_event_ids_across_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+            archive_dir = log_path.parent / "archive" / "logs"
+            archive_dir.mkdir(parents=True)
+            archived = archive_dir / f"{log_path.name}-0001.gz"
+            row = '{"event_id":"duplicate-event","type":"test"}\n'
+            with gzip.open(archived, "wt", encoding="utf-8") as handle:
+                handle.write(row)
+            log_path.write_text(row, encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "duplicate activity audit event_id",
+            ):
+                common.read_activity_audit_records(log_path)
+
+    def test_strict_reader_rejects_duplicate_json_keys_and_bad_event_digest(
+        self,
+    ) -> None:
+        malformed_rows = (
+            '{"event_id":"one","event_id":"two"}\n',
+            '{"event_id":"loop-product-event-' + "0" * 64 + '","type":"test"}\n',
+        )
+        for row in malformed_rows:
+            with self.subTest(row=row), tempfile.TemporaryDirectory() as tmpdir:
+                log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+                log_path.write_text(row, encoding="utf-8")
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "malformed|digest mismatch",
+                ):
+                    common.read_activity_audit_records(log_path)
+
 
 class LogicalActivityReaderTests(unittest.TestCase):
     def setUp(self):

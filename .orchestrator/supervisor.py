@@ -40,12 +40,13 @@ from common import (
     execution_context_files,
     load_config,
     load_json,
-    load_status,
+    load_status as _load_status,
     new_runtime_id,
     normalize_agent_id,
     is_github_cli_auth_failure,
     preserve_github_cli_auth_env,
     relpath,
+    read_activity_audit_records,
     selected_shared_files,
     shell_quote,
     snapshot_task,
@@ -164,6 +165,44 @@ GENERIC_WORKER_EXIT_REASON = "Worker exited before the task reached a terminal s
 PLANNING_STATE_FILE = THIS_DIR / "planning-state.json"
 PLANNING_PHASE_DIR = THIS_DIR.parent / "docs" / "02-architecture" / "consensus" / "phase1"
 _UNSET = object()
+
+
+class _SequencingAuditedStatus(dict[str, Any]):
+    release_audit_proof: sequencing_gate.SequencingReleaseAuditProof | None
+
+
+def sequencing_status_with_release_audit(
+    status: dict[str, Any],
+    durable_records: list[dict[str, Any]],
+) -> _SequencingAuditedStatus:
+    audited = _SequencingAuditedStatus(status)
+    audited.release_audit_proof = (
+        sequencing_gate.build_sequencing_release_audit_proof(
+            audited,
+            durable_records,
+        )
+    )
+    return audited
+
+
+def load_status(config: dict[str, Any]) -> dict[str, Any]:
+    """Load status with an in-memory proof from the external audit plane."""
+
+    status = _load_status(config)
+    if not sequencing_gate.status_declares_sequencing_release(status):
+        return sequencing_status_with_release_audit(status, [])
+    try:
+        log_path = config_path(config, "activity_log", "ai-activity-log.jsonl")
+        records = read_activity_audit_records(
+            log_path,
+            stop_after=lambda entry: (
+                entry.get("program_id") == sequencing_gate.PROGRAM_ID
+                and entry.get("type") == "sequencing_gate_release"
+            ),
+        )
+    except (KeyError, OSError, RuntimeError, UnicodeError):
+        records = []
+    return sequencing_status_with_release_audit(status, records)
 
 
 def supervisor_pid_path(config: dict[str, Any]) -> Path:
@@ -8840,10 +8879,44 @@ def task_is_sidecar(task: dict[str, Any]) -> bool:
 status_has_pending_program_activity_outbox = (
     sequencing_gate.status_has_pending_program_activity_outbox
 )
-task_has_valid_sequencing_release_admission = (
-    sequencing_gate.task_has_valid_sequencing_release_admission
-)
-task_is_sequencing_parked = sequencing_gate.task_is_sequencing_parked
+def _sequencing_proof_from_status(
+    status: dict[str, Any] | None,
+) -> sequencing_gate.SequencingReleaseAuditProof | None:
+    return (
+        getattr(status, "release_audit_proof", None)
+        if status is not None
+        else None
+    )
+
+
+def task_has_valid_sequencing_release_admission(
+    task: dict[str, Any],
+    status: dict[str, Any],
+    *,
+    release_audit_proof: sequencing_gate.SequencingReleaseAuditProof | None = None,
+) -> bool:
+    return sequencing_gate.task_has_valid_sequencing_release_admission(
+        task,
+        status,
+        release_audit_proof=(
+            release_audit_proof or _sequencing_proof_from_status(status)
+        ),
+    )
+
+
+def task_is_sequencing_parked(
+    task: dict[str, Any],
+    status: dict[str, Any] | None = None,
+    *,
+    release_audit_proof: sequencing_gate.SequencingReleaseAuditProof | None = None,
+) -> bool:
+    return sequencing_gate.task_is_sequencing_parked(
+        task,
+        status,
+        release_audit_proof=(
+            release_audit_proof or _sequencing_proof_from_status(status)
+        ),
+    )
 
 
 def config_has_pending_program_activity_outbox(config: dict[str, Any]) -> bool:

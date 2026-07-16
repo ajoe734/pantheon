@@ -21,7 +21,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import local
-from typing import Any, Mapping, Generator, Callable
+from typing import Any, Callable, Generator, Mapping
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
@@ -1692,6 +1692,96 @@ def read_activity_log_tail_bytes(
     with activity_audit_lock_file(log_path, shared=True, nonblocking=False):
         assert_activity_audit_stable_unlocked(log_path)
         return _tail_bytes_unlocked(log_path, max_lines)
+
+
+def _strict_activity_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise RuntimeError(f"duplicate activity audit JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def read_activity_audit_records(
+    log_path: Path,
+    *,
+    stop_after: Callable[[dict[str, Any]], bool] | None = None,
+) -> list[dict[str, Any]]:
+    """Return a strict snapshot, optionally stopping at the newest matching source."""
+
+    with activity_audit_lock_file(log_path, shared=False, nonblocking=False):
+        prepare_activity_audit_unlocked(log_path)
+    with activity_audit_lock_file(log_path, shared=True, nonblocking=False):
+        assert_activity_audit_stable_unlocked(log_path)
+        records: list[dict[str, Any]] = []
+        event_ids: set[str] = set()
+        sources = activity_audit_source_paths_unlocked(log_path)
+        if stop_after is not None:
+            sources = list(reversed(sources))
+        for source in sources:
+            source_matched = False
+            try:
+                if source.suffix == ".gz":
+                    with gzip.open(
+                        source,
+                        "rt",
+                        encoding="utf-8",
+                        errors="strict",
+                    ) as handle:
+                        body = handle.read()
+                else:
+                    body = source.read_text(encoding="utf-8", errors="strict")
+            except (OSError, EOFError, UnicodeError, gzip.BadGzipFile) as exc:
+                raise RuntimeError(
+                    f"activity audit source is unreadable: {source}"
+                ) from exc
+            for line_number, line in enumerate(body.splitlines(), start=1):
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(
+                        line,
+                        object_pairs_hook=_strict_activity_json_pairs,
+                    )
+                except (json.JSONDecodeError, RuntimeError) as exc:
+                    raise RuntimeError(
+                        f"activity audit row is malformed: {source}:{line_number}"
+                    ) from exc
+                if not isinstance(entry, dict):
+                    raise RuntimeError(
+                        f"activity audit row is not an object: {source}:{line_number}"
+                    )
+                if "event_id" in entry:
+                    event_id = entry.get("event_id")
+                    if not isinstance(event_id, str) or not event_id.strip():
+                        raise RuntimeError(
+                            f"activity audit event_id is invalid: {source}:{line_number}"
+                        )
+                    if event_id in event_ids:
+                        raise RuntimeError(
+                            f"duplicate activity audit event_id: {event_id}"
+                        )
+                    event_ids.add(event_id)
+                    if event_id.startswith("loop-product-event-"):
+                        unsigned = {
+                            key: value
+                            for key, value in entry.items()
+                            if key != "event_id"
+                        }
+                        expected = "loop-product-event-" + _canonical_json_sha256(
+                            unsigned
+                        )
+                        if event_id != expected:
+                            raise RuntimeError(
+                                f"activity audit event_id digest mismatch: {event_id}"
+                            )
+                records.append(entry)
+                if stop_after is not None and stop_after(entry):
+                    source_matched = True
+            if source_matched:
+                break
+        return records
 
 
 def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:

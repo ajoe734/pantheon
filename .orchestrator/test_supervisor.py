@@ -33,7 +33,7 @@ def _sequencing_source_ref(authority, task_id: str) -> dict:
     }
 
 
-def _sequencing_release_status(*, released: bool) -> dict:
+def _sequencing_release_status(*, released: bool, audited: bool = True) -> dict:
     authority = supervisor.sequencing_gate
     program_id = authority.PROGRAM_ID
     task_id = "LOOP-PROD-AUTH-001"
@@ -143,6 +143,31 @@ def _sequencing_release_status(*, released: bool) -> dict:
     }
     if released:
         task["sequencing_release_admission_sha256"] = release_admission_sha
+    if released and audited:
+        event = {
+            "ordinal": 0,
+            "event_count": 1,
+            "ts": release["released_at"],
+            "agent": "Codex",
+            "type": "sequencing_gate_release",
+            "task_id": authority.TARGET_TASK_ID,
+            "message": "Released exact sequencing gate after G2 admission",
+            "program_id": authority.PROGRAM_ID,
+            "catalog_sha256": authority.EFFECTIVE_CATALOG_SHA256,
+            "transaction_id": "loop-product-tx-" + "4" * 64,
+            "actor_policy_sha256": "5" * 64,
+            "affected_state_projection_sha256": "6" * 64,
+            "release_gate_id": authority.RELEASE_GATE_ID,
+            "sequencing_overlay_sha256": authority.SEQUENCING_OVERLAY_SHA256,
+            "release_record_sha256": authority.canonical_sha256(release),
+            "released_task_transition_set_sha256": release[
+                "released_task_transition_set_sha256"
+            ],
+        }
+        event["event_id"] = "loop-product-event-" + authority.canonical_sha256(
+            event
+        )
+        return supervisor.sequencing_status_with_release_audit(status, [event])
     return status
 
 
@@ -1551,6 +1576,36 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             queue_delivery_event.call_args.args[1]["task_id"],
             released_task["id"],
         )
+
+    def test_status_only_release_without_durable_audit_never_dispatches(self) -> None:
+        released = _sequencing_release_status(released=True, audited=False)
+        task = released["tasks"][0]
+        self.assertFalse(
+            supervisor.task_has_valid_sequencing_release_admission(task, released)
+        )
+        self.assertTrue(supervisor.task_is_sequencing_parked(task, released))
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=released),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "normalize_mainline_task_assignment",
+                return_value=False,
+            ),
+            mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                return_value=True,
+            ) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                self.config,
+                {"queue": {"events": {}}, "workers": {}},
+            )
+
+        self.assertFalse(changed)
+        queue_delivery_event.assert_not_called()
 
     def test_epoch_requires_the_exact_ordered_48_task_identity(self) -> None:
         authority = supervisor.sequencing_gate

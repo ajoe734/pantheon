@@ -661,6 +661,48 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
             },
         }
 
+    @staticmethod
+    def _sequencing_release_audit(state: dict) -> dict:
+        release = state["program_sequencing_releases"][sequencing_gate.PROGRAM_ID]
+        event = {
+            "ordinal": 0,
+            "event_count": 1,
+            "ts": release["released_at"],
+            "agent": "Codex",
+            "type": "sequencing_gate_release",
+            "task_id": sequencing_gate.TARGET_TASK_ID,
+            "message": "Released exact sequencing gate after G2 admission",
+            "program_id": sequencing_gate.PROGRAM_ID,
+            "catalog_sha256": sequencing_gate.EFFECTIVE_CATALOG_SHA256,
+            "transaction_id": "loop-product-tx-" + "1" * 64,
+            "actor_policy_sha256": "2" * 64,
+            "affected_state_projection_sha256": "3" * 64,
+            "release_gate_id": sequencing_gate.RELEASE_GATE_ID,
+            "sequencing_overlay_sha256": (
+                sequencing_gate.SEQUENCING_OVERLAY_SHA256
+            ),
+            "release_record_sha256": sequencing_gate.canonical_sha256(release),
+            "released_task_transition_set_sha256": release[
+                "released_task_transition_set_sha256"
+            ],
+        }
+        event["event_id"] = "loop-product-event-" + sequencing_gate.canonical_sha256(
+            event
+        )
+        return event
+
+    @classmethod
+    def _sequencing_release_proof(
+        cls,
+        state: dict,
+    ) -> sequencing_gate.SequencingReleaseAuditProof:
+        proof = sequencing_gate.build_sequencing_release_audit_proof(
+            state,
+            [cls._sequencing_release_audit(state)],
+        )
+        assert proof is not None
+        return proof
+
     def test_only_absent_or_null_program_outbox_is_clear(self) -> None:
         ai_status.assert_program_activity_outbox_clear({})
         ai_status.assert_program_activity_outbox_clear(
@@ -790,9 +832,23 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
     def test_exact_shared_release_decision_allows_normal_lifecycle(self) -> None:
         state = self._released_sequencing_state()
         task = state["tasks"][0]
-        self.assertFalse(ai_status.task_is_sequencing_parked(task, state))
+        proof = self._sequencing_release_proof(state)
+        self.assertFalse(
+            ai_status.task_is_sequencing_parked(
+                task,
+                state,
+                release_audit_proof=proof,
+            )
+        )
 
-        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(
+                ai_status,
+                "sequencing_release_audit_proof",
+                return_value=proof,
+            ),
+        ):
             ai_status.command_start(
                 state,
                 ["LOOP-PROD-AUTH-001", "released by exact shared admission"],
@@ -800,6 +856,67 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
 
         self.assertEqual(task["status"], "in_progress")
         self.assertEqual(task["next"], "released by exact shared admission")
+
+    def test_status_only_release_without_durable_audit_stays_parked(self) -> None:
+        state = self._released_sequencing_state()
+        task = state["tasks"][0]
+        before = deepcopy(state)
+
+        self.assertTrue(ai_status.task_is_sequencing_parked(task, state))
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(
+                ai_status,
+                "sequencing_release_audit_proof",
+                return_value=None,
+            ),
+            self.assertRaisesRegex(
+                SystemExit,
+                "start rejected for sequencing-parked task",
+            ),
+        ):
+            ai_status.command_start(state, [task["id"], "forged release"])
+
+        self.assertEqual(state, before)
+
+    def test_assign_metadata_cannot_overwrite_lifecycle_or_sequencing_provenance(
+        self,
+    ) -> None:
+        state = self._released_sequencing_state()
+        task = state["tasks"][0]
+        task_id = "LOOP-PROD-000"
+        task["id"] = task_id
+        task["status"] = "todo"
+        task["source_ref"] = self._sequencing_source_ref(task_id)
+        task.pop("sequencing_release_admission_sha256", None)
+        before = deepcopy(state)
+
+        forged_metadata = {
+            "status": "done",
+            "owner": "Claude",
+            "source_ref": {"forged": True},
+            "sequencing_release_admission_sha256": "0" * 64,
+        }
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Codex",
+                    "TASK_METADATA_JSON": json.dumps(forged_metadata),
+                },
+                clear=False,
+            ),
+            self.assertRaisesRegex(
+                SystemExit,
+                "TASK_METADATA_JSON cannot override.*owner.*sequencing_release.*source_ref.*status",
+            ),
+        ):
+            ai_status.command_assign(
+                state,
+                [task_id, "Codex", "Claude", "Must remain governed"],
+            )
+
+        self.assertEqual(state, before)
 
     def test_reordered_or_replaced_epoch_identity_keeps_release_parked(
         self,

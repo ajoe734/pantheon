@@ -35,8 +35,10 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
 
 from runtime_state import canonical_task_state_lock_file  # noqa: E402
 import sequencing_gate  # noqa: E402
+from common import read_activity_audit_records  # noqa: E402
 
 STATUS_FILE = ROOT / "ai-status.json"
+LOG_FILE = ROOT / "ai-activity-log.jsonl"
 STATE_FILE = ROOT / ".orchestrator" / "reap-in-progress-state.json"
 LOCK_FILE = ROOT / ".orchestrator" / "reap-in-progress.lock"
 
@@ -107,6 +109,25 @@ def main() -> int:
             )
             return 0
 
+        release_audit_records = []
+        if sequencing_gate.status_declares_sequencing_release(data):
+            try:
+                release_audit_records = read_activity_audit_records(
+                    LOG_FILE,
+                    stop_after=lambda entry: (
+                        entry.get("program_id") == sequencing_gate.PROGRAM_ID
+                        and entry.get("type") == "sequencing_gate_release"
+                    ),
+                )
+            except (OSError, RuntimeError, UnicodeError):
+                release_audit_records = []
+        release_audit_proof = (
+            sequencing_gate.build_sequencing_release_audit_proof(
+                data,
+                release_audit_records,
+            )
+        )
+
         running = _running_task_ids()
         now = time.time()
         try:
@@ -118,7 +139,11 @@ def main() -> int:
         for task in data.get("tasks", []):
             if task.get("status") != "in_progress":
                 continue
-            if sequencing_gate.task_is_sequencing_parked(task, data):
+            if sequencing_gate.task_is_sequencing_parked(
+                task,
+                data,
+                release_audit_proof=release_audit_proof,
+            ):
                 continue
             tid = task["id"]
             if tid in running:

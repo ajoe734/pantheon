@@ -21,8 +21,10 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 import sequencing_gate
+from common import read_activity_audit_records
 
 STATUS_FILE = ROOT / "ai-status.json"
+LOG_FILE = ROOT / "ai-activity-log.jsonl"
 ARCHIVE_DIR = ROOT / "ai-task-archive" / "tasks"
 STATE_FILE = ROOT / ".orchestrator" / "auto-unblock-state.json"
 AI_STATUS_CLI = ROOT / "scripts" / "ai_status.py"
@@ -46,21 +48,58 @@ def _parse_iso(ts: str) -> float:
         return 0.0
 
 
-def _valid_release_admission(data: dict, task: dict) -> bool:
+def _valid_release_admission(
+    data: dict,
+    task: dict,
+    release_audit_proof: sequencing_gate.SequencingReleaseAuditProof | None = None,
+) -> bool:
     """Compatibility adapter for callers that use the legacy argument order."""
 
-    return sequencing_gate.task_has_valid_sequencing_release_admission(task, data)
+    return sequencing_gate.task_has_valid_sequencing_release_admission(
+        task,
+        data,
+        release_audit_proof=(
+            release_audit_proof
+            or getattr(data, "release_audit_proof", None)
+        ),
+    )
 
 
 def _sequencing_parked(
     data: dict,
     task: dict,
     parked_ids: set[str] | None = None,
+    release_audit_proof: sequencing_gate.SequencingReleaseAuditProof | None = None,
 ) -> bool:
     """Compatibility adapter; shared authority derives membership from data."""
 
     _ = parked_ids
-    return sequencing_gate.task_is_sequencing_parked(task, data)
+    return sequencing_gate.task_is_sequencing_parked(
+        task,
+        data,
+        release_audit_proof=(
+            release_audit_proof
+            or getattr(data, "release_audit_proof", None)
+        ),
+    )
+
+
+def _release_audit_proof(
+    data: dict,
+) -> sequencing_gate.SequencingReleaseAuditProof | None:
+    if not sequencing_gate.status_declares_sequencing_release(data):
+        return None
+    try:
+        records = read_activity_audit_records(
+            LOG_FILE,
+            stop_after=lambda entry: (
+                entry.get("program_id") == sequencing_gate.PROGRAM_ID
+                and entry.get("type") == "sequencing_gate_release"
+            ),
+        )
+    except (OSError, RuntimeError, UnicodeError):
+        return None
+    return sequencing_gate.build_sequencing_release_audit_proof(data, records)
 
 
 def _running_task_ids() -> set[str]:
@@ -85,6 +124,7 @@ def main() -> int:
         print("auto-unblock paused: program_activity_outbox is pending")
         return 0
     tasks = data.get("tasks", [])
+    release_audit_proof = _release_audit_proof(data)
     done = {t["id"] for t in tasks if t.get("status") in DONE_STATUSES} | _archived_ids()
     running = _running_task_ids()
     now = time.time()
@@ -98,7 +138,11 @@ def main() -> int:
             continue
         # Sequencing gates are released only by the catalog-bound G2 verifier.
         # A malformed marker also fails closed for supervisor/operator repair.
-        if _sequencing_parked(data, t):
+        if _sequencing_parked(
+            data,
+            t,
+            release_audit_proof=release_audit_proof,
+        ):
             continue
         tid = t["id"]
         deps = t.get("depends_on") or []

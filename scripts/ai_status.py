@@ -51,6 +51,7 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 import task_archive as task_archive_module
+import sequencing_gate
 from task_archive import (
     ARCHIVE_TASKS_DIR,
     DEFAULT_RECENT_LIMIT as DEFAULT_ARCHIVE_RECENT_LIMIT,
@@ -86,6 +87,7 @@ from common import (
     canonical_task_state_lock_path,
     durable_write_bytes,
     prepare_activity_audit_unlocked,
+    read_activity_audit_records,
     read_activity_log_tail_bytes,
     rotate_activity_log_unlocked,
     stream_logical_activity,
@@ -871,12 +873,36 @@ def assert_task_lifecycle_mutation_allowed(
     """Reject status-writer mutations while sequencing owns task admission."""
 
     assert_program_activity_outbox_clear(state)
-    if task_is_sequencing_parked(task, state):
+    if task_is_sequencing_parked(
+        task,
+        state,
+        release_audit_proof=sequencing_release_audit_proof(state),
+    ):
         task_id = str(task.get("id") or "unknown task")
         raise SystemExit(
             f"{action} rejected for sequencing-parked task {task_id}; "
             "only the authoritative dispatcher may release the sequencing gate."
         )
+
+
+def sequencing_release_audit_proof(
+    state: dict[str, Any],
+) -> sequencing_gate.SequencingReleaseAuditProof | None:
+    """Resolve the status release only from the external durable audit plane."""
+
+    if not sequencing_gate.status_declares_sequencing_release(state):
+        return None
+    try:
+        records = read_activity_audit_records(
+            LOG_FILE,
+            stop_after=lambda entry: (
+                entry.get("program_id") == sequencing_gate.PROGRAM_ID
+                and entry.get("type") == "sequencing_gate_release"
+            ),
+        )
+    except (OSError, RuntimeError, UnicodeError):
+        return None
+    return sequencing_gate.build_sequencing_release_audit_proof(state, records)
 
 
 @contextmanager
@@ -2169,6 +2195,46 @@ def task_metadata_from_env() -> dict[str, Any]:
             metadata[field_name] = parsed
 
     return metadata
+
+
+ASSIGN_METADATA_RESERVED_FIELDS = frozenset(
+    {
+        "id",
+        "title",
+        "summary_zh",
+        "phase",
+        "owner",
+        "reviewer",
+        "status",
+        "depends_on",
+        "artifacts",
+        "acceptance",
+        "next",
+        "last_update",
+        "waiting_for",
+        "delivery",
+        "terminal_outcome",
+        "review_file",
+        "review_notes",
+        "review_notes_zh",
+        "source_ref",
+    }
+)
+
+
+def validate_assign_metadata(metadata: dict[str, Any]) -> None:
+    """Keep extension metadata out of lifecycle and provenance authority."""
+
+    reserved = sorted(
+        key
+        for key in metadata
+        if key in ASSIGN_METADATA_RESERVED_FIELDS or key.startswith("sequencing_")
+    )
+    if reserved:
+        raise SystemExit(
+            "TASK_METADATA_JSON cannot override assignment lifecycle, contract, or "
+            "provenance fields: " + ", ".join(reserved)
+        )
 
 
 def dependency_is_satisfied(resolver: TaskResolver, dep_id: str) -> bool:
@@ -4320,6 +4386,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     metadata = task_metadata_from_env()
+    validate_assign_metadata(metadata)
     ensure_agent(owner)
     ensure_agent(reviewer)
     if owner == reviewer:

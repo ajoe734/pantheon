@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -25,6 +26,7 @@ SEQUENCING_OVERLAY_SHA256 = (
 )
 RELEASE_GATE_ID = "hardening-after-g2-paper-trade-v1"
 RELEASE_PREDICATE = "g2_evidence_contract_v2_valid"
+TARGET_TASK_ID = "LOOP-PROD-VERIFY-EXEC-001"
 EXPECTED_TASK_IDS = (
     "LOOP-PROD-000",
     "LOOP-PROD-001",
@@ -197,6 +199,27 @@ RELEASE_TRANSITION_FIELDS = {
     "before_status",
     "after_status",
 }
+RELEASE_AUDIT_COMMON_FIELDS = {
+    "event_id",
+    "ordinal",
+    "event_count",
+    "ts",
+    "agent",
+    "type",
+    "task_id",
+    "message",
+    "program_id",
+    "catalog_sha256",
+    "transaction_id",
+    "actor_policy_sha256",
+    "affected_state_projection_sha256",
+}
+RELEASE_AUDIT_EXTRA_FIELDS = {
+    "release_gate_id",
+    "sequencing_overlay_sha256",
+    "release_record_sha256",
+    "released_task_transition_set_sha256",
+}
 EPOCH_FIELDS = {
     "schema_version",
     "program_id",
@@ -256,10 +279,24 @@ def parse_utc(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _is_exact_utc_z(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and value.endswith("Z")
+        and parse_utc(value) is not None
+    )
+
+
 def status_has_pending_program_activity_outbox(status: dict[str, Any]) -> bool:
     """Treat every present non-null dispatcher transaction as pending."""
 
     return status.get("program_activity_outbox") is not None
+
+
+def status_declares_sequencing_release(status: dict[str, Any]) -> bool:
+    releases = status.get("program_sequencing_releases")
+    record = releases.get(PROGRAM_ID) if isinstance(releases, dict) else None
+    return isinstance(record, dict) and bool(record)
 
 
 def _source_ref(task: dict[str, Any]) -> dict[str, Any]:
@@ -382,23 +419,14 @@ def _validated_epoch(status: dict[str, Any]) -> tuple[dict[str, Any], list[dict[
     return epoch, transitions
 
 
-def task_has_valid_sequencing_release_admission(
-    task: dict[str, Any],
+def _validated_release_record(
     status: dict[str, Any],
-) -> bool:
-    """Accept only the task-scoped tag from the exact immutable 19-task release."""
-
-    task_id = str(task.get("id") or "").strip()
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]] | None:
     epoch_result = _validated_epoch(status)
     if epoch_result is None:
-        return False
+        return None
     epoch, epoch_transitions = epoch_result
     epoch_by_id = {str(row["task_id"]): row for row in epoch_transitions}
-    if (
-        task_id not in EXPECTED_GATED_TASK_IDS
-        or not _task_matches_epoch_authority(task, epoch_by_id[task_id])
-    ):
-        return False
 
     releases = status.get("program_sequencing_releases")
     record = releases.get(PROGRAM_ID) if isinstance(releases, dict) else None
@@ -407,10 +435,8 @@ def task_has_valid_sequencing_release_admission(
         if isinstance(record, dict)
         else None
     )
-    task_admission = task.get("sequencing_release_admission_sha256")
     if (
-        not is_sha256(task_admission)
-        or not isinstance(record, dict)
+        not isinstance(record, dict)
         or set(record) != RELEASE_RECORD_FIELDS
         or record.get("schema_version") != 1
         or record.get("program_id") != PROGRAM_ID
@@ -418,13 +444,12 @@ def task_has_valid_sequencing_release_admission(
         or record.get("sequencing_overlay_sha256") != SEQUENCING_OVERLAY_SHA256
         or record.get("release_gate_id") != RELEASE_GATE_ID
         or record.get("release_predicate") != RELEASE_PREDICATE
-        or record.get("release_admission_sha256") != task_admission
         or not isinstance(record.get("reviewer"), str)
         or not record["reviewer"].strip()
         or not isinstance(transitions, list)
         or len(transitions) != len(EXPECTED_GATED_TASK_IDS)
     ):
-        return False
+        return None
     if any(
         not is_sha256(record.get(field))
         for field in (
@@ -439,7 +464,7 @@ def task_has_valid_sequencing_release_admission(
             "released_task_transition_set_sha256",
         )
     ):
-        return False
+        return None
 
     applied_at = parse_utc(epoch.get("applied_at"))
     closeout_at = parse_utc(record.get("closeout_at"))
@@ -450,16 +475,19 @@ def task_has_valid_sequencing_release_admission(
         or closeout_at is None
         or g2_issued_at is None
         or released_at is None
+        or not _is_exact_utc_z(record.get("closeout_at"))
+        or not _is_exact_utc_z(record.get("g2_issued_at"))
+        or not _is_exact_utc_z(record.get("released_at"))
         or closeout_at > g2_issued_at
         or g2_issued_at > released_at
         or applied_at > released_at
     ):
-        return False
+        return None
     admission = {
         field: record.get(field) for field in RELEASE_ADMISSION_FIELDS
     }
     if record.get("release_admission_sha256") != canonical_sha256(admission):
-        return False
+        return None
 
     transition_ids: list[str] = []
     for transition in transitions:
@@ -477,12 +505,107 @@ def task_has_valid_sequencing_release_admission(
             or transition.get("before_task_snapshot_sha256")
             != epoch_by_id[task_id_value].get("after_task_snapshot_sha256")
         ):
-            return False
+            return None
         transition_ids.append(task_id_value)
     if (
         tuple(transition_ids) != EXPECTED_GATED_TASK_IDS
         or record.get("released_task_transition_set_sha256")
         != canonical_sha256(transitions)
+    ):
+        return None
+    return record, epoch_by_id
+
+
+@dataclass(frozen=True)
+class SequencingReleaseAuditProof:
+    release_record_sha256: str
+    event_id: str
+
+
+def build_sequencing_release_audit_proof(
+    status: dict[str, Any],
+    durable_records: list[dict[str, Any]],
+) -> SequencingReleaseAuditProof | None:
+    """Bind a release record to its one external, durable activity event."""
+
+    if status_has_pending_program_activity_outbox(status):
+        return None
+    release_result = _validated_release_record(status)
+    if release_result is None:
+        return None
+    record, _ = release_result
+    candidates = [
+        entry
+        for entry in durable_records
+        if isinstance(entry, dict)
+        and entry.get("program_id") == PROGRAM_ID
+        and entry.get("type") == "sequencing_gate_release"
+    ]
+    if len(candidates) != 1:
+        return None
+    event = candidates[0]
+    unsigned = {key: value for key, value in event.items() if key != "event_id"}
+    expected_event_id = "loop-product-event-" + canonical_sha256(unsigned)
+    release_record_sha256 = canonical_sha256(record)
+    ordinal = event.get("ordinal")
+    event_count = event.get("event_count")
+    if (
+        set(event) != RELEASE_AUDIT_COMMON_FIELDS | RELEASE_AUDIT_EXTRA_FIELDS
+        or event.get("event_id") != expected_event_id
+        or type(ordinal) is not int
+        or type(event_count) is not int
+        or ordinal < 0
+        or event_count <= ordinal
+        or not isinstance(event.get("agent"), str)
+        or not event["agent"].strip()
+        or event.get("task_id") != TARGET_TASK_ID
+        or event.get("message")
+        != "Released exact sequencing gate after G2 admission"
+        or event.get("catalog_sha256") != EFFECTIVE_CATALOG_SHA256
+        or event.get("sequencing_overlay_sha256")
+        != SEQUENCING_OVERLAY_SHA256
+        or event.get("release_gate_id") != RELEASE_GATE_ID
+        or event.get("release_record_sha256") != release_record_sha256
+        or event.get("released_task_transition_set_sha256")
+        != record.get("released_task_transition_set_sha256")
+        or event.get("ts") != record.get("released_at")
+        or not _is_exact_utc_z(event.get("ts"))
+        or not isinstance(event.get("transaction_id"), str)
+        or re.fullmatch(
+            r"loop-product-tx-[0-9a-f]{64}", event["transaction_id"]
+        )
+        is None
+        or not is_sha256(event.get("actor_policy_sha256"))
+        or not is_sha256(event.get("affected_state_projection_sha256"))
+    ):
+        return None
+    return SequencingReleaseAuditProof(
+        release_record_sha256=release_record_sha256,
+        event_id=expected_event_id,
+    )
+
+
+def task_has_valid_sequencing_release_admission(
+    task: dict[str, Any],
+    status: dict[str, Any],
+    *,
+    release_audit_proof: SequencingReleaseAuditProof | None = None,
+) -> bool:
+    """Accept only the task-scoped tag from the exact audited 19-task release."""
+
+    task_id = str(task.get("id") or "").strip()
+    release_result = _validated_release_record(status)
+    if release_result is None:
+        return False
+    record, epoch_by_id = release_result
+    task_admission = task.get("sequencing_release_admission_sha256")
+    if (
+        task_id not in EXPECTED_GATED_TASK_IDS
+        or not _task_matches_epoch_authority(task, epoch_by_id[task_id])
+        or not is_sha256(task_admission)
+        or record.get("release_admission_sha256") != task_admission
+        or not isinstance(release_audit_proof, SequencingReleaseAuditProof)
+        or release_audit_proof.release_record_sha256 != canonical_sha256(record)
     ):
         return False
     return True
@@ -491,6 +614,8 @@ def task_has_valid_sequencing_release_admission(
 def task_is_sequencing_parked(
     task: dict[str, Any],
     status: dict[str, Any] | None = None,
+    *,
+    release_audit_proof: SequencingReleaseAuditProof | None = None,
 ) -> bool:
     """Fail closed from exact task IDs, epoch membership, marker, and admission."""
 
@@ -523,7 +648,11 @@ def task_is_sequencing_parked(
         return True
     epoch_gated = epoch_transition.get("after_status") == "blocked"
     if epoch_gated:
-        return not task_has_valid_sequencing_release_admission(task, status)
+        return not task_has_valid_sequencing_release_admission(
+            task,
+            status,
+            release_audit_proof=release_audit_proof,
+        )
     if classification not in PRE_G2_CLASSIFICATIONS:
         return True
     return False
