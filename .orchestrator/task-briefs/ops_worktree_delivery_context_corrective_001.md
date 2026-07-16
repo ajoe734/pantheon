@@ -19,33 +19,53 @@
 - 根因：`collect_done_delivery_metadata()` 經 repository registry 把 Pantheon delivery repository 固定解析到中央 checkout；它沒有使用 worker 已提供的 `PANTHEON_WORKTREE_ROOT`／`ORCH_WORKSPACE_PATH`。因此狀態寫入位置與交付證據來源被錯誤地綁成同一路徑。
 - 即使 subject gate 被繞過，中央 checkout 的其他 worker／runtime dirty entries 仍會污染後續 clean-worktree 判斷。
 
+### 2026-07-16 live lost-update evidence
+
+- `LOOP-PROD-SEQ-RECONCILE-001` 對 PR `#3779` exact head `8c0c00f5f3d4a678d6550d72770feb6f916a8a6c` 的 governed handoff events 已寫入中央 activity log，時間分別為 `2026-07-16T21:48:15Z` 與重試的 `2026-07-16T21:52:04Z`。
+- 後續從不同 checkout 排隊執行 status commands 後，中央 `ai-status.json` 卻回到 `status=in_progress`、`last_update=2026-07-16T20:02:39Z` 與舊 `next`；兩筆 handoff events 仍存在。這是可觀察的 event/status divergence，不可當成顯示延遲。
+- 當時 supervisor 的受管 command runtime 位於 `/home/lupin/pantheon-ci-deploy/dev-root`，但既有 worker prompt 仍允許從 task／中央 checkout 呼叫相對路徑 `scripts/ai-status.sh`。只固定 data root，沒有固定 executable runtime 與 runtime SHA，仍可能讓已啟動 worker 執行舊 command semantics。
+- 不得手改 live status 修復。必須先交付下列 command-runtime pin、排空 pre-pin workers，再由 owner 重做一次 governed handoff；recovery 後必須是一個 current `review` state，既有兩筆 incident events保留為歷史證據而不得刪除或偽裝成 exactly-once。
+
 中央 task record 內仍可能保留初始 `af8f0bbf...` acceptance。該值是 historical candidate，不再是 closeout authority。postmerge owner 必須先用下方指定的 governed `assign` metadata update 寫入 `approved_delivery_head=da0ae611...`、`superseded_candidate_head=af8f0bbf...`、source PR 與 merge SHA，再用 `note` 解釋 reconciliation；不得手改 `ai-status.json`。若 PR、head、branch、review notes 或 ancestry 任一不符，停止 replay 並重新 review，不得自行猜測。
 
 ## Machine-readable execution slices 與順序
 
-本 brief 合併後必須建立兩個中央 task；只有文字提到等待不算 materialized dependency。
+本 brief 合併後必須建立三個中央 task；只有文字提到等待不算 materialized dependency。
 
-### 1. `OPS-WORKTREE-DELIVERY-CONTEXT-CORRECTIVE-001`
+### 1. `OPS-STATUS-COMMAND-RUNTIME-PIN-001`
+
+- Owner：`Codex2`。
+- Reviewer：`Claude`。
+- Priority：`P0`。
+- `depends_on`：
+  - `OPS-WORKTREE-CENTRAL-STATUS-ROOT-CORRECTIVE-001`
+- 交付：supervisor-issued installed command path／SHA binding、worker prompt/env cutover、pre-pin worker drain、lost-update regressions、reviewed implementation PR、exact postmerge install evidence。
+- 既有 `OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002` 與 PR `#3763` 在此 task 完成前不得核准或結案；完成後必須用新 command lease 重跑，不得沿用 2026-07-16 21:48 前的舊證據。
+- 不可修改產品、交易、frontend、broker 或歷史 activity/archive；不可把任意 caller-provided path 當成 trusted command root。
+
+### 2. `OPS-WORKTREE-DELIVERY-CONTEXT-CORRECTIVE-001`
 
 - Owner：`Codex2`。
 - Reviewer：`Antigravity`。
 - `depends_on`：
   - `OPS-WORKTREE-CENTRAL-STATUS-ROOT-CORRECTIVE-001`
   - `OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002`
+  - `OPS-STATUS-COMMAND-RUNTIME-PIN-001`
 - 交付：resolver implementation、regression tests、premerge evidence、reviewed implementation PR。
 - 此 task 不可執行來源 task 的正式 `done`；`LOOP-PROD-PLANNING-BRIEFS-002` 只有 owner `Codex` 有 closeout authority。
 
-### 2. `OPS-WORKTREE-DELIVERY-CONTEXT-POSTMERGE-001`
+### 3. `OPS-WORKTREE-DELIVERY-CONTEXT-POSTMERGE-001`
 
 - Owner：`Codex`。
 - Reviewer：`Antigravity`。
 - `depends_on`：
   - `OPS-WORKTREE-DELIVERY-CONTEXT-CORRECTIVE-001`
   - `OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002`
+  - `OPS-STATUS-COMMAND-RUNTIME-PIN-001`
 - 交付：安裝 exact merged command runtime、stale／isolated worktree proof、來源 task 真實 `done` replay、postmerge evidence-only PR。
 - 此 task 也負責在 proof 成功後，以本次 planning revision PR 經 Antigravity 核准的 final head／merge 正式 close `OPS-WORKTREE-DELIVERY-CONTEXT-PLAN-001`；不得沿用已被本 revision 取代的 PR #3762 head，也不得拿 unrelated HEAD 作 delivery evidence。
 
-Owner 與 reviewer 必須是不同 admitted fleet identity。兩個 PR 都必須保持 auto-merge 關閉；reviewer 必須在各自 final exact head 獨立重跑驗證，owner 不得以自己的輸出代替 reviewer evidence。
+Owner 與 reviewer 必須是不同 admitted fleet identity。三個 PR 都必須保持 auto-merge 關閉；reviewer 必須在各自 final exact head 獨立重跑驗證，owner 不得以自己的輸出代替 reviewer evidence。
 
 ### Governed materialization commands
 
@@ -55,9 +75,25 @@ Planning revision PR 合併後，由 `Codex` 從已安裝 command runtime 執行
 INSTALLED_COMMAND_ROOT=/absolute/path/to/installed/pantheon
 export PANTHEON_STATUS_ROOT=/absolute/path/to/central/pantheon
 AI_NAME=Codex \
+TASK_PHASE='Wave -1 P0 status command runtime pin' \
+TASK_SUMMARY_ZH='固定 fleet 狀態命令到 supervisor 核發的 installed runtime 與 exact SHA，排空舊 worker 後證明跨 worktree 不再發生 lost update。' \
+TASK_DEPENDS_ON='OPS-WORKTREE-CENTRAL-STATUS-ROOT-CORRECTIVE-001' \
+TASK_ARTIFACTS='.orchestrator/common.py,.orchestrator/supervisor.py,.orchestrator/templates/wakeup.txt,.orchestrator/test_common.py,.orchestrator/test_supervisor.py,scripts/ai-status.sh,scripts/ai_status.py,scripts/sync-dev-root.sh,scripts/test_status_command_runtime_pin.py,docs/deployment/evidence/ops-status-command-runtime-pin-001/' \
+TASK_ACCEPTANCE='Issue one absolute installed command path and exact runtime SHA from the supervisor lease,Remove relative worktree status command guidance from new worker prompts,Drain every pre-pin worker and queued status command before cutover,Reject missing mismatched symlinked uninstalled or task-worktree command roots,Preserve task worktree cwd while canonical mutations stay under PANTHEON_STATUS_ROOT,Reproduce the 2026-07-16 event status divergence then prove zero lost updates under concurrent writers,Install only an exact merged dev SHA and restart workers with new leases,Receive Claude exact-head approval with auto-merge disabled' \
+TASK_BRANCH='task/OPS-STATUS-COMMAND-RUNTIME-PIN-001' \
+TASK_CLASS=execution \
+TASK_AUTO_CREATED_BY='OPS-WORKTREE-DELIVERY-CONTEXT-PLAN-001' \
+TASK_AUTO_GENERATED=true \
+TASK_MUTATES_CANONICAL=true \
+TASK_METADATA_JSON='{"target_repo":"pantheon","merge_target":"dev","fleet_lane":"status-command-runtime","product_level_required":true,"priority":"P0","transition_guard_required":true,"source_ref":{"brief":".orchestrator/task-briefs/ops_worktree_delivery_context_corrective_001.md","incident_task":"LOOP-PROD-SEQ-RECONCILE-001","incident_pr":3779},"non_goals":["No product trading change","No history rewrite","No arbitrary stale-worktree patching"],"dispatch_rules":["Owner and reviewer differ","Auto-merge off","Drain pre-pin workers before install","Exact-head review required"]}' \
+"$INSTALLED_COMMAND_ROOT/scripts/ai-status.sh" assign \
+OPS-STATUS-COMMAND-RUNTIME-PIN-001 Codex2 Claude \
+'Pin governed status commands to installed runtime'
+
+AI_NAME=Codex \
 TASK_PHASE='Wave -1 fleet runtime delivery-context corrective' \
 TASK_SUMMARY_ZH='分離中央 canonical mutation root 與 task-worktree delivery evidence root，保留既有 closeout gates 並提供 fail-closed regression。' \
-TASK_DEPENDS_ON='OPS-WORKTREE-CENTRAL-STATUS-ROOT-CORRECTIVE-001,OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002' \
+TASK_DEPENDS_ON='OPS-WORKTREE-CENTRAL-STATUS-ROOT-CORRECTIVE-001,OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002,OPS-STATUS-COMMAND-RUNTIME-PIN-001' \
 TASK_ARTIFACTS='scripts/ai_status.py,scripts/test_ai_status.py,.orchestrator/multi_repo_registry.py,docs/deployment/evidence/ops-worktree-delivery-context-corrective-001/' \
 TASK_ACCEPTANCE='Use validated worker delivery root while canonical writes stay central,Fail closed on workspace env lease path and repository mismatch,Preserve existing task trailer clean remote merge and ancestry settings,Prove central dirty checkout cannot contaminate clean task closeout,Publish premerge evidence and receive Antigravity exact-head approval,Merge with auto-merge disabled and close through governed done' \
 TASK_BRANCH='task/OPS-WORKTREE-DELIVERY-CONTEXT-CORRECTIVE-001' \
@@ -73,7 +109,7 @@ OPS-WORKTREE-DELIVERY-CONTEXT-CORRECTIVE-001 Codex2 Antigravity \
 AI_NAME=Codex \
 TASK_PHASE='Wave -1 delivery-context postmerge proof' \
 TASK_SUMMARY_ZH='安裝 delivery-context exact merge，從 stale worktree 證明中央 mutation 隔離，並由 Codex 正式重播來源 task done。' \
-TASK_DEPENDS_ON='OPS-WORKTREE-DELIVERY-CONTEXT-CORRECTIVE-001,OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002' \
+TASK_DEPENDS_ON='OPS-WORKTREE-DELIVERY-CONTEXT-CORRECTIVE-001,OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002,OPS-STATUS-COMMAND-RUNTIME-PIN-001' \
 TASK_ARTIFACTS='.orchestrator/task-briefs/ops_worktree_delivery_context_corrective_001.md,docs/deployment/evidence/ops-worktree-delivery-context-postmerge-001/' \
 TASK_ACCEPTANCE='Install the exact corrective merge from configured dev,Prove stale worktree commands mutate central state exactly once,Keep all delivery-worktree coordination sentinels byte-identical,Replay LOOP-PROD-PLANNING-BRIEFS-002 done from approved head,Close this planning task from its revised approved head,Publish redacted postmerge evidence through exact-head review,Merge with auto-merge disabled and close through governed done' \
 TASK_BRANCH='task/OPS-WORKTREE-DELIVERY-CONTEXT-POSTMERGE-001' \
@@ -87,6 +123,32 @@ OPS-WORKTREE-DELIVERY-CONTEXT-POSTMERGE-001 Codex Antigravity \
 'Install and replay worktree delivery-context closeout'
 ```
 
+## Command runtime pin contract
+
+`OPS-STATUS-COMMAND-RUNTIME-PIN-001` owns the executable boundary only；delivery repository selection remains in the next slice。
+
+1. Supervisor must issue each new worker lease an absolute `PANTHEON_COMMAND_ROOT` and exact `PANTHEON_COMMAND_RUNTIME_SHA` from the installed supervisor checkout. The root must be an existing non-symlink Git root for `ajoe734/pantheon` and its `HEAD` must equal the issued SHA and be an ancestor of configured `origin/dev`.
+2. Generated wakeup prompts must invoke `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh`; they must not recommend a relative worktree-local status command. Git operations tests and product edits continue in `PANTHEON_WORKTREE_ROOT`／`ORCH_WORKSPACE_PATH`.
+3. New-runtime `scripts/ai-status.sh` and `scripts/ai_status.py` must validate that executable root、issued SHA、active `ORCH_RUN_ID` lease、task id、status root and workspace root match before canonical mutation. Missing or conflicting binding fails before status、activity、archive、derived or outbox writes.
+4. Controlled manual/postmerge commands without `ORCH_RUN_ID` must call the installed absolute executable and provide the same command root／SHA explicitly. Ordinary local read-only development may remain local but cannot claim governed central mutation evidence.
+5. Historical worktree files are not rewritten. Cutover is an operational transition: stop new dispatch、wait all queued status commands to exit、inventory and terminate only remaining pre-pin worker runs after their safe handoff boundary、install the exact reviewed merge、restart supervisor、then redispatch from new leases. Record old/new PIDs、run IDs、command paths and SHA bindings.
+6. After cutover no live worker process、prompt、lease or queued command may reference a pre-pin executable. If drain cannot prove that invariant the install is rolled back and central mutations stay frozen；不得同時允許兩個 command epochs。
+7. Regression must reproduce the incident shape with two worktrees and queued writers: committed handoff event cannot coexist with an older active task postimage. Test crash、queue ordering、stale lease、wrong SHA、symlink root、relative path、worktree-local executable、supervisor restart and rollback. Exact final state and activity event IDs must be asserted, not only process exit codes.
+8. The postmerge proof must use a disposable pre-pin worktree without editing it：the old relative command is not accepted as governed evidence；the lease-issued absolute command succeeds、mutates central state exactly once and leaves every worktree sentinel byte-identical.
+
+Runtime-pin owner 與 reviewer 至少重跑：
+
+```bash
+python3 scripts/test_status_command_runtime_pin.py
+python3 .orchestrator/test_common.py
+python3 .orchestrator/test_supervisor.py
+python3 scripts/test_ai_status.py
+bash -n scripts/ai-status.sh scripts/sync-dev-root.sh
+python3 -m py_compile scripts/ai_status.py .orchestrator/common.py .orchestrator/supervisor.py scripts/test_status_command_runtime_pin.py
+```
+
+若實作者把 regression 放進既有標準 test module，可保留 module 名稱，但不得減少上述 command-root、lease、drain、concurrency、rollback 與 postmerge coverage；evidence 必須記 exact test count、exit code、candidate SHA、installed SHA 與 pre/post worker inventory。
+
 ## Implementation scope
 
 - `scripts/ai_status.py`
@@ -95,11 +157,11 @@ OPS-WORKTREE-DELIVERY-CONTEXT-POSTMERGE-001 Codex Antigravity \
 - `docs/deployment/evidence/ops-worktree-delivery-context-corrective-001/`：只記 candidate／premerge evidence。
 - `docs/deployment/evidence/ops-worktree-delivery-context-postmerge-001/`：由獨立 postmerge task 建立。
 
-若 implementation 需要修改其他檔案，owner 必須先在中央 task note 說明原因；不得順便重構 supervisor、runtime pin、產品或部署流程。`OPS-STATUS-COMMAND-RUNTIME-PIN-001` 另負責讓 stale worktree wrapper 自動跳到已安裝 command runtime，本 task 不提前實作該功能。
+若 delivery-context implementation 需要修改其他檔案，owner 必須先在中央 task note 說明原因；不得順便重構 supervisor、runtime pin、產品或部署流程。command-runtime pin 由前一個獨立 slice 交付，本 slice 不重做。
 
 ## Root selection 決定表
 
-`collect_done_delivery_metadata()` 先沿用既有 `task_primary_repository_id()`／repository registry 決定 task repository id 與 configured GitHub slug，再依下表選 delivery root；不得從目錄名稱猜 repository id。Registry path authority 必須錨定 validated canonical root，不得錨定 executable checkout：Pantheon repository anchor 是 `PANTHEON_STATUS_ROOT`；cross-repo anchor 是中央 config／registry 從 `PANTHEON_STATUS_ROOT` 解析出的 registered `local_path`。`INSTALLED_COMMAND_ROOT` 只提供受驗證的程式碼，永遠不是 repository-path authority。
+`collect_done_delivery_metadata()` 先沿用既有 `task_primary_repository_id()`／repository registry 決定 task repository id 與 configured GitHub slug，再依下表選 delivery root；不得從目錄名稱猜 repository id。Registry path authority 必須錨定 validated canonical root，不得錨定 executable checkout：Pantheon repository anchor 是 `PANTHEON_STATUS_ROOT`；cross-repo anchor 是中央 config／registry 從 `PANTHEON_STATUS_ROOT` 解析出的 registered `local_path`。`PANTHEON_COMMAND_ROOT` 只提供受驗證的程式碼，永遠不是 repository-path authority。
 
 | Runtime context | Workspace env | Required behavior |
 |---|---|---|
@@ -205,14 +267,14 @@ Reviewer 必須在獨立 clean checkout 的 exact PR `headRefOid` 重跑同一�
 
 ## PR flow（auto-merge 關閉）
 
-標準 `task_finalize.sh`／一般 `safe_pr.sh` 會啟用 auto-merge，因此本 task 不得使用它們。兩個 slices 都使用：
+標準 `task_finalize.sh`／一般 `safe_pr.sh` 會啟用 auto-merge，因此本 task 不得使用它們。三個 slices 都使用：
 
 1. `worker_commit.py` + private index + explicit scope 建 commit。
 2. normal non-force `git push -u origin <task-branch>`。
 3. `gh pr create --base dev --head <task-branch>`；不得加 auto-merge label，也不得執行 `gh pr merge --auto`。
-4. Antigravity 對 final exact head 完成 governed approval，確認 `autoMergeRequest=null`。
+4. runtime-pin slice 由 Claude、其餘兩個 slices 由 Antigravity 對 final exact head 完成 governed approval，確認 `autoMergeRequest=null`。
 5. approval 後才由 owner／chair 執行一次普通 `gh pr merge <PR> --merge`。
-6. merge 後由該 task owner 從 exact task delivery worktree執行 governed `done`：implementation slice 由 `Codex2` close；postmerge evidence PR 則由 `Codex` close。postmerge dependency 只有在 implementation active record 已正式歸檔為 completed 後才算滿足。
+6. merge 後由該 task owner 從 exact task delivery worktree執行 governed `done`：runtime-pin 與 delivery-context implementation slices 由 `Codex2` close；postmerge evidence PR 則由 `Codex` close。postmerge dependency 只有在兩個 implementation active records 已正式歸檔為 completed 後才算滿足。
 
 Implementation PR 只含 code、tests 與 premerge evidence。真正安裝與 live replay 不得偽裝成 implementation PR 內已完成；它們由 postmerge slice 在 implementation merge 後執行，再以 evidence-only PR 經 exact-head review 合併。
 
@@ -226,8 +288,9 @@ Implementation PR 只含 code、tests 與 premerge evidence。真正安裝與 li
    - `origin` 為 `ajoe734/pantheon`
    - clean、upstream可稽核、HEAD 是 configured `origin/dev` ancestor
    - PR #3759 merge commit為 `290ed7df72a745dcef486cf65b3c9d06eaa2de4b`
-4. 因 `OPS-STATUS-COMMAND-RUNTIME-PIN-001` 尚未交付，replay 必須執行已安裝的新 command runtime，而不是 stale worktree-local `scripts/ai_status.py`。command cwd／env 明確設成：
-   - executable：`$INSTALLED_COMMAND_ROOT/scripts/ai-status.sh`，其中 `INSTALLED_COMMAND_ROOT` 是已驗證 exact merge 的 absolute path
+4. `OPS-STATUS-COMMAND-RUNTIME-PIN-001` 必須已正式完成；replay 必須執行 lease／operator binding 指定的已安裝 command runtime，而不是 stale worktree-local `scripts/ai_status.py`。command cwd／env 明確設成：
+   - executable：`$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh`，其中 `PANTHEON_COMMAND_ROOT` 是已驗證 exact merge 的 absolute path
+   - `PANTHEON_COMMAND_RUNTIME_SHA=<exact-installed-sha>`，且 command root `HEAD` 必須相同
    - `export PANTHEON_STATUS_ROOT=<central-root>`；steps 5–7 的每個 governed command 都必須繼承同一 validated binding，不可 fallback 到 installed checkout
    - `PANTHEON_WORKTREE_ROOT=<source-worktree>`
    - `ORCH_WORKSPACE_PATH=<source-worktree>`
@@ -238,10 +301,10 @@ Implementation PR 只含 code、tests 與 premerge evidence。真正安裝與 li
    ```bash
    AI_NAME=Codex \
    TASK_METADATA_JSON='{"approved_delivery_head":"da0ae61140278251a7b8fb35bf183aff658fef1b","superseded_candidate_head":"af8f0bbf2683b442a4b06b02db93c7ead7ef182d","source_pr":3759,"source_merge_sha":"290ed7df72a745dcef486cf65b3c9d06eaa2de4b"}' \
-   "$INSTALLED_COMMAND_ROOT/scripts/ai-status.sh" assign \
+   "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" assign \
    LOOP-PROD-PLANNING-BRIEFS-002 Codex Antigravity \
    'Review final ten-file fleet planning publication'
-   AI_NAME=Codex "$INSTALLED_COMMAND_ROOT/scripts/ai-status.sh" note \
+   AI_NAME=Codex "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" note \
    LOOP-PROD-PLANNING-BRIEFS-002 \
    'Historical candidate af8f0bbf was superseded by governed approved head da0ae611; replay authority is PR #3759 merge 290ed7df.'
    ```
@@ -256,10 +319,10 @@ Implementation PR 只含 code、tests 與 premerge evidence。真正安裝與 li
      --arg branch "$PLANNING_BRANCH" \
      '{approved_delivery_pr:$pr,approved_delivery_head:$head,approved_delivery_merge:$merge,approved_delivery_branch:$branch}')"
    AI_NAME=Codex TASK_METADATA_JSON="$PLANNING_METADATA" \
-   "$INSTALLED_COMMAND_ROOT/scripts/ai-status.sh" assign \
+   "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" assign \
    OPS-WORKTREE-DELIVERY-CONTEXT-PLAN-001 Codex Antigravity \
    'Publish worktree delivery-context corrective brief'
-   AI_NAME=Codex "$INSTALLED_COMMAND_ROOT/scripts/ai-status.sh" note \
+   AI_NAME=Codex "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" note \
    OPS-WORKTREE-DELIVERY-CONTEXT-PLAN-001 \
    "Closeout authority is revision PR $PLANNING_PR_NUMBER head $PLANNING_HEAD merge $PLANNING_MERGE."
    ```
@@ -276,13 +339,14 @@ Implementation PR 只含 code、tests 與 premerge evidence。真正安裝與 li
 - 不清理、stash、reset 或提交中央 dirty checkout 的其他人檔案。
 - 不繞過 task-id、trailers、clean、remote、PR merge、reviewer 或 ancestry gate。
 - 不以手改 `ai-status.json`／archive JSON 取代正式 `done` 驗收。
-- 不在本 task 實作 stale wrapper command-runtime pin；該邊界屬於 `OPS-STATUS-COMMAND-RUNTIME-PIN-001`。
+- 不修改歷史 worktree 的 tracked wrapper；command-runtime pin 透過受管 executable binding、worker drain 與新 lease cutover交付。
 
 ## 完成定義
 
 只有在下列全部成立後才可完成：
 
-- implementation 與 postmerge tasks 已按上述 machine-readable dependencies 建立；
+- runtime-pin、implementation 與 postmerge tasks 已按上述 machine-readable dependencies 建立；
+- runtime-pin PR 已由 Claude exact-head 核准並合併，pre-pin workers 已排空，exact merge 已安裝且新 leases 不再引用相對 worktree status command；
 - implementation PR 已由 Antigravity 對 final exact head 核准、auto-merge 關閉並合併；
 - exact merge 已安裝，兩個真實 proof 成功，postmerge evidence-only PR 已獨立核准並合併；
 - `LOOP-PROD-PLANNING-BRIEFS-002` 與本 planning task 都由 owner `Codex` 透過 installed governed command 正式歸檔；
