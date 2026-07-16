@@ -21,7 +21,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import local
-from typing import Any, Mapping
+from typing import Any, Mapping, Generator, Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
@@ -1281,6 +1281,343 @@ def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
                 f"activity audit source leaf cannot be a symlink: {source}"
             )
     return sources
+
+
+def classify_source(path: Path) -> str:
+    name = path.name
+    if name == "ai-activity-log.jsonl":
+        return "active"
+    if re.match(r"^ai-activity-log\.jsonl-\d{4}-\d{2}-\d{2}T\d{4}Z\.gz$", name):
+        return "legacy_ts_std"
+    if re.match(r"^ai-activity-log-\d{8}T\d{6}Z\.jsonl\.gz$", name):
+        return "legacy_ts_old"
+    if re.match(r"^ai-activity-log\.jsonl-[a-f0-9]{64}\.gz$", name):
+        return "content_addressed"
+    return "unknown"
+
+
+def extract_timestamp_from_name(name: str) -> str:
+    m = re.match(r"^ai-activity-log\.jsonl-(\d{4}-\d{2}-\d{2}T\d{4})Z\.gz$", name)
+    if m:
+        return m.group(1)
+    m = re.match(r"^ai-activity-log-(\d{8}T\d{6})Z\.jsonl\.gz$", name)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def stream_logical_activity(
+    log_path: Path,
+    on_collapse: Callable[[Path | None, Path, int, int, str], None] | None = None,
+) -> Generator[tuple[dict[str, Any], Path, int], None, None]:
+    """A bounded-memory, streaming logical activity reader that collapses legacy overlaps
+    and fails closed on any invalid duplicates, corruptions, or mutations.
+    Yields (entry, source_path, line_number).
+    """
+    log_path = log_path.expanduser().resolve()
+    with activity_audit_lock_file(log_path, shared=True):
+        yield from _stream_logical_activity_unlocked(log_path, on_collapse)
+
+
+def _stream_logical_activity_unlocked(
+    log_path: Path,
+    on_collapse: Callable[[Path | None, Path, int, int, str], None] | None = None,
+) -> Generator[tuple[dict[str, Any], Path, int], None, None]:
+    import sqlite3
+    import tempfile
+
+    sources = activity_audit_source_paths_unlocked(log_path)
+
+    # Group sources to process legacy_ts_old files before legacy_ts_std and active,
+    # while preserving the original relative order within each group to allow
+    # chronological order checks to work correctly.
+    group_old = []
+    group_std = []
+    for src in sources:
+        if classify_source(src) == "legacy_ts_old":
+            group_old.append(src)
+        else:
+            group_std.append(src)
+    sources = group_old + group_std
+
+    # Initialize O(1)-memory task-local SQLite database
+    db_file = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    db_path = db_file.name
+    db_file.close()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("CREATE TABLE seen_events (event_id TEXT PRIMARY KEY, digest TEXT)")
+        conn.execute("CREATE TABLE source_events (source_idx INTEGER, event_id TEXT, PRIMARY KEY (source_idx, event_id))")
+        conn.execute("CREATE TABLE file_digests (path TEXT PRIMARY KEY, prefix_digest TEXT, suffix_digest TEXT)")
+        conn.commit()
+
+        # To keep only the immediate canonical predecessor's buffer in RAM,
+        # we track the last source processed, and its 1001-line suffix buffer.
+        prev_source = None
+        prev_buffer_1001 = []
+
+        max_ts_std = None
+        max_ts_old = None
+
+        decompressed_hashes = {}
+        verify_successor_hash = False
+
+        for s_idx, source in enumerate(sources):
+            current_hasher = hashlib.sha256()
+            s_class = classify_source(source)
+            if s_class == "unknown":
+                raise RuntimeError(f"Unknown source format: {source.name}")
+
+            if s_class == "legacy_ts_std":
+                ts = extract_timestamp_from_name(source.name)
+                if ts:
+                    if max_ts_std is not None and ts <= max_ts_std:
+                        raise RuntimeError(f"Strict name sequence violation: {source.name} is out of chronological order")
+                    max_ts_std = ts
+            elif s_class == "legacy_ts_old":
+                ts = extract_timestamp_from_name(source.name)
+                if ts:
+                    if max_ts_old is not None and ts <= max_ts_old:
+                        raise RuntimeError(f"Strict name sequence violation: {source.name} is out of chronological order")
+                    max_ts_old = ts
+
+            # Verify file type and lock stability
+            fd = os.open(source, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0))
+            fd_closed = False
+            try:
+                fd_stat = os.fstat(fd)
+                if not stat.S_ISREG(fd_stat.st_mode):
+                    raise RuntimeError(f"Source is not a regular file: {source}")
+                path_stat_before = source.lstat()
+                if stat.S_ISLNK(path_stat_before.st_mode) or path_stat_before.st_dev != fd_stat.st_dev or path_stat_before.st_ino != fd_stat.st_ino:
+                    raise RuntimeError(f"Source is a symlink or changed: {source}")
+
+                size_before = fd_stat.st_size
+                mtime_ns_before = fd_stat.st_mtime_ns
+
+                file_obj = os.fdopen(fd, "rb")
+                fd_closed = True
+                try:
+                    if source.suffix == ".gz":
+                        try:
+                            gzip_file = gzip.GzipFile(fileobj=file_obj, mode="rb")
+                            binary_stream = gzip_file
+                        except Exception as exc:
+                            raise RuntimeError(f"Failed to open gzip source {source}: {exc}")
+                    else:
+                        binary_stream = file_obj
+
+                    line_number = 0
+                    current_buffer_1001: list[bytes] = []
+
+                    # Buffer the first 1001 lines of the current file
+                    while True:
+                        line = binary_stream.readline()
+                        if not line:
+                            break
+                        line_number += 1
+                        current_hasher.update(line)
+                        current_buffer_1001.append(line)
+                        if len(current_buffer_1001) == 1001:
+                            break
+
+                    # Check for overlaps using prefix/suffix buffers of 1001 lines
+                    should_collapse = False
+                    overlap_len = 0
+                    max_check = min(len(prev_buffer_1001), len(current_buffer_1001))
+                    for k in (999, 1000, 1001):
+                        if k <= max_check:
+                            if current_buffer_1001[:k] == prev_buffer_1001[-k:]:
+                                overlap_len = k
+
+                    if prev_source is not None:
+                        if (
+                            prev_source.name == "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
+                            and source.name == "ai-activity-log.jsonl-2026-05-24T1239Z.gz"
+                        ):
+                            if overlap_len != 999:
+                                raise RuntimeError(f"Invalid overlap length {overlap_len} between {prev_source.name} and {source.name}")
+
+                    if overlap_len > 0:
+                        # Reject non-adjacent matching legacy older tail by checking standard/old classification and position
+                        # Here, we strictly iterate the source list once in its exact order and collapse only immediately adjacent sources.
+                        if prev_source is not None:
+                            if overlap_len == 1000:
+                                prev_class = classify_source(prev_source)
+                                curr_class = classify_source(source)
+                                if prev_class == "legacy_ts_std" and curr_class in ("legacy_ts_std", "active"):
+                                    should_collapse = True
+                                elif prev_class == "legacy_ts_old" and curr_class == "legacy_ts_old":
+                                    should_collapse = True
+                                else:
+                                    raise RuntimeError(f"Non-collapsible 1000-line overlap between {prev_source.name} and {source.name}")
+                            elif overlap_len == 999:
+                                # ONLY the pinned historical exception can pass
+                                if (
+                                    prev_source.name == "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
+                                    and source.name == "ai-activity-log.jsonl-2026-05-24T1239Z.gz"
+                                ):
+                                    prev_hash = decompressed_hashes.get(prev_source.name)
+                                    if prev_hash != "8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57":
+                                        raise RuntimeError(f"Invalid predecessor hash for historical exception: {prev_hash}")
+
+                                    overlap_bytes = b"".join(current_buffer_1001[:999])
+                                    if len(overlap_bytes) != 5325808:
+                                        raise RuntimeError(f"Invalid overlap bytes length: {len(overlap_bytes)}")
+                                    overlap_sha = hashlib.sha256(overlap_bytes).hexdigest()
+                                    if overlap_sha != "0a3b56f720a5aa493d8968edfff8e32e0df98e410f6334d6790f10a06019f247":
+                                        raise RuntimeError(f"Invalid overlap SHA-256: {overlap_sha}")
+
+                                    should_collapse = True
+                                else:
+                                    raise RuntimeError(f"Invalid overlap length {overlap_len} between {prev_source.name} and {source.name}")
+                            else:
+                                raise RuntimeError(f"Invalid overlap length {overlap_len} between {prev_source.name} and {source.name}")
+                        else:
+                            raise RuntimeError(f"Overlap detected with no predecessor: {source.name}")
+                    else:
+                        # Check for the explicit mismatch case for a 1000-line candidate (proving exactly 999 of 1000 raw lines are equal)
+                        if len(prev_buffer_1001) >= 1000 and len(current_buffer_1001) >= 1000:
+                            matches = sum(1 for a, b in zip(prev_buffer_1001[-1000:], current_buffer_1001[:1000]) if a == b)
+                            if matches == 999:
+                                raise RuntimeError(f"Invalid overlap: mismatch in 1000-line candidate between {prev_source.name} and {source.name}")
+
+                    # Disk-backed check for non-adjacent older tail matching
+                    if len(current_buffer_1001) >= 1000:
+                        prefix_1000_digest = hashlib.sha256(b"".join(current_buffer_1001[:1000])).hexdigest()
+                        # Query if prefix_1000_digest matches any suffix_1000_digest of an older file (which is NOT the immediate predecessor)
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "SELECT path FROM file_digests WHERE suffix_digest = ? LIMIT 2",
+                            (prefix_1000_digest,)
+                        )
+                        while True:
+                            row = cursor.fetchone()
+                            if not row:
+                                break
+                            matched_path = Path(row[0])
+                            if prev_source is not None and (matched_path == prev_source or matched_path.resolve() == prev_source.resolve()):
+                                continue
+                            raise RuntimeError(f"Matching non-adjacent older tail detected: {row[0]} -> {source}")
+
+                    # Setup helper to validate a row and check for duplicates using SQLite
+                    def process_line(raw_line: bytes, l_num: int, is_collapsed_prefix: bool):
+                        if not raw_line.strip():
+                            return None
+                        try:
+                            decoded = raw_line.decode("utf-8", errors="strict")
+                        except UnicodeError as exc:
+                            raise RuntimeError(f"Bad UTF-8 in {source}:{l_num}: {exc}")
+                        try:
+                            entry = json.loads(decoded)
+                        except json.JSONDecodeError as exc:
+                            raise RuntimeError(f"Bad JSON in {source}:{l_num}: {exc}")
+                        if not isinstance(entry, dict):
+                            raise RuntimeError(f"activity audit row is not an object: {source}:{l_num}")
+
+                        event_id = str(entry.get("event_id") or "").strip()
+                        if event_id:
+                            # SQLite-based within-source uniqueness check (O(1) memory)
+                            cursor = conn.cursor()
+                            cursor.execute("SELECT 1 FROM source_events WHERE source_idx = ? AND event_id = ?", (s_idx, event_id))
+                            if cursor.fetchone():
+                                raise RuntimeError(f"duplicate activity event_id in {source}: {event_id}")
+                            cursor.execute("INSERT INTO source_events (source_idx, event_id) VALUES (?, ?)", (s_idx, event_id))
+
+                            digest = _canonical_json_sha256(entry)
+                            if not is_collapsed_prefix:
+                                # SQLite-based unique event ID check
+                                cursor.execute("SELECT digest FROM seen_events WHERE event_id = ?", (event_id,))
+                                row = cursor.fetchone()
+                                if row:
+                                    detail = "payload mismatch" if row[0] != digest else "duplicate across sources"
+                                    raise RuntimeError(f"activity event_id {detail}: {event_id}")
+                                cursor.execute("INSERT INTO seen_events (event_id, digest) VALUES (?, ?)", (event_id, digest))
+                        return entry
+
+                    # Process the buffered prefix (up to 1001 lines)
+                    for idx, raw_line in enumerate(current_buffer_1001):
+                        is_col = should_collapse and (idx < overlap_len)
+                        entry = process_line(raw_line, idx + 1, is_collapsed_prefix=is_col)
+                        if entry is not None and not is_col:
+                            yield entry, source, idx + 1
+
+                    sliding_window_1001 = list(current_buffer_1001)
+
+                    # Stream and process the rest of the lines
+                    while True:
+                        line = binary_stream.readline()
+                        if not line:
+                            break
+                        line_number += 1
+                        current_hasher.update(line)
+                        sliding_window_1001.append(line)
+                        if len(sliding_window_1001) > 1001:
+                            sliding_window_1001.pop(0)
+
+                        entry = process_line(line, line_number, is_collapsed_prefix=False)
+                        if entry is not None:
+                            yield entry, source, line_number
+
+                    # Record prefix and suffix digests for non-adjacent overlap check
+                    if len(current_buffer_1001) >= 1000:
+                        prefix_1000_digest = hashlib.sha256(b"".join(current_buffer_1001[:1000])).hexdigest()
+                        suffix_1000_digest = hashlib.sha256(b"".join(sliding_window_1001[-1000:])).hexdigest()
+                        conn.execute(
+                            "INSERT INTO file_digests (path, prefix_digest, suffix_digest) VALUES (?, ?, ?)",
+                            (str(source), prefix_1000_digest, suffix_1000_digest)
+                        )
+
+                    # Trigger collapse diagnostic callback if collapsed
+                    if should_collapse:
+                        digest = hashlib.sha256(b"".join(current_buffer_1001[:overlap_len])).hexdigest()
+                        bytes_count = sum(len(line) for line in current_buffer_1001[:overlap_len])
+                        if on_collapse:
+                            on_collapse(prev_source, source, overlap_len, bytes_count, digest)
+
+                    # Commit SQLite transaction at the end of each source file for batch optimization
+                    conn.commit()
+
+                    source_hash = current_hasher.hexdigest()
+                    decompressed_hashes[source.name] = source_hash
+
+                    if source.name == "ai-activity-log.jsonl-2026-05-24T1237Z.gz":
+                        if source_hash != "8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57":
+                            raise RuntimeError(f"Invalid predecessor hash for historical exception: {source_hash}")
+                    elif source.name == "ai-activity-log.jsonl-2026-05-24T1239Z.gz":
+                        if source_hash != "da6a102178c82fb4eca8d0794ed5b419f0c97770e0ad63542dde0033e7efa3ff":
+                            raise RuntimeError(f"Invalid successor hash for historical exception: {source_hash}")
+
+                    # Store suffix of current file as the single predecessor buffer in RAM
+                    prev_source = source
+                    prev_buffer_1001 = list(sliding_window_1001)
+
+                except (EOFError, gzip.BadGzipFile, OSError) as exc:
+                    raise RuntimeError(f"Truncated or corrupt gzip/file {source}: {exc}")
+                finally:
+                    file_obj.close()
+
+                # Verify inode and mutation metadata post-read
+                path_stat_after = source.lstat()
+                if stat.S_ISLNK(path_stat_after.st_mode) or path_stat_after.st_dev != fd_stat.st_dev or path_stat_after.st_ino != fd_stat.st_ino:
+                    raise RuntimeError(f"Source replaced during read: {source}")
+                if path_stat_after.st_size != size_before or path_stat_after.st_mtime_ns != mtime_ns_before:
+                    raise RuntimeError(f"Source mutated or truncated during read: {source}")
+
+            except Exception:
+                if not fd_closed:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                raise
+    finally:
+        conn.close()
+        try:
+            os.unlink(db_path)
+        except OSError:
+            pass
 
 
 def append_activity_log_entries_unlocked(
