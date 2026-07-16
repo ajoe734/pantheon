@@ -4,14 +4,16 @@ Verifies:
 - create_agora_router() mounts without errors and does not break existing routes
 - GET /bff/agora/me returns the §18 envelope ({data, meta}) with capability scope
 - GET /bff/agora/capabilities returns the filtered capability manifest
-- POST /bff/agora/servant/ensure returns HTTP 501 (genuinely new stub route)
+- POST /bff/agora/servant/ensure provisions a governed user-private servant
 - Unauthenticated requests to new endpoints return HTTP 401
 - Package imports are consistent (models, router, sub-module factories)
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -292,6 +294,100 @@ def test_agora_servant_ensure_reconciles_existing_profile(monkeypatch, tmp_path)
     assert len(calls) == 2
 
 
+def test_ensured_servant_is_exactly_eligible_for_paper_persona_opinion(monkeypatch, tmp_path):
+    """The supported proof path uses ensure, not full trading Persona provisioning."""
+    store = ReadSurfaceStore(
+        str(tmp_path / "read_surfaces.json"),
+        allow_local_snapshot_fallback=False,
+    )
+    monkeypatch.setattr(bff_main, "read_store", store)
+    expected_persona_id = "agora-servant-" + hashlib.sha256(
+        "pantheon-dev\0agora-test-user\0agora_servant".encode("utf-8")
+    ).hexdigest()[:20]
+    store.upsert_persona_capability_snapshot(
+        snapshot_id="cap-older-without-opinion",
+        persona_id=expected_persona_id,
+        capabilities=["research_only"],
+        generated_at="2026-01-01T00:00:00Z",
+    )
+    monkeypatch.setattr(
+        bff_main,
+        "_ensure_agora_servant_openclaw_agent",
+        lambda persona: {
+            "status": "created",
+            "agent_id": persona["persona_id"],
+            "model_id": f"openclaw/{persona['persona_id']}",
+            "workspace_ref": f"/home/node/.openclaw/workspaces/{persona['persona_id']}",
+        },
+    )
+    client = _client(monkeypatch)
+    suffix = uuid.uuid4().hex
+    ensure_headers = {
+        "Authorization": _OPERATOR_AUTH,
+        "Idempotency-Key": f"ensure-paper-opinion-{suffix}",
+        "X-Request-Id": f"req-ensure-paper-opinion-{suffix}",
+    }
+    ensured = client.post("/bff/agora/servant/ensure", headers=ensure_headers)
+    replayed = client.post(
+        "/bff/agora/servant/ensure",
+        headers={**ensure_headers, "X-Request-Id": f"req-ensure-paper-opinion-replay-{suffix}"},
+    )
+    assert ensured.status_code == replayed.status_code == 200, ensured.text
+    persona_id = ensured.json()["data"]["persona_id"]
+    assert persona_id == expected_persona_id
+    assert replayed.json()["data"]["persona_id"] == persona_id
+    assert ensured.json()["data"]["status"] == "paper_only"
+    assert ensured.json()["data"]["policy"]["execution_authority"] == "none"
+
+    stored = store.get_persona(persona_id)
+    assert stored is not None
+    assert stored["tenant_id"] == "pantheon-dev"
+    assert stored["tenantId"] == "pantheon-dev"
+    assert stored["lifecycle_state"] == "paper_only"
+    assert stored["metadata"]["deployment_stage"] == "paper"
+    assert stored["metadata"]["environment_ceiling"] == "paper"
+    assert stored["metadata"]["execution_authority"] == "none"
+    assert store.list_personas()[0]["tenant_id"] == "pantheon-dev"
+
+    # An older snapshot for the same Persona exists first in storage.  The
+    # explicit canonical pointer must select the ensured grant exactly.
+    assert store.get_capability_snapshot_for_persona(persona_id)["snapshot_id"] == "cap-older-without-opinion"
+    snapshot = store.get_capability_snapshot(stored["metadata"]["capability_snapshot_id"])
+    assert snapshot is not None
+    assert snapshot["capabilities"] == ["persona_opinion"]
+    assert snapshot["allowed_capabilities"] == ["persona_opinion"]
+    assert snapshot["metadata"]["execution_authority"] == "none"
+
+    context = client.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={
+            "Authorization": _OPERATOR_AUTH,
+            "Idempotency-Key": f"context-paper-opinion-{suffix}",
+        },
+        json={
+            "environment": "paper",
+            "context_refs": [
+                {"type": "strategy", "id": "strategy-paper-opinion", "version_id": "v1"}
+            ],
+        },
+    )
+    assert context.status_code == 200, context.text
+    eligibility = client.post(
+        "/bff/agora/interactions/participants:eligible",
+        headers={"Authorization": _OPERATOR_AUTH},
+        json={
+            "workshop_id": context.json()["data"]["workshop_id"],
+            "mode": "consult",
+            "environment": "paper",
+            "required_capability": "persona_opinion",
+        },
+    )
+    assert eligibility.status_code == 200, eligibility.text
+    included = eligibility.json()["data"]["included"]
+    assert [row["persona_id"] for row in included] == [persona_id]
+    assert included[0]["capability_snapshot_id"] == snapshot["snapshot_id"]
+
+
 def test_agora_servant_ensure_requires_idempotency_headers(monkeypatch, tmp_path):
     monkeypatch.setattr(
         bff_main,
@@ -303,6 +399,69 @@ def test_agora_servant_ensure_requires_idempotency_headers(monkeypatch, tmp_path
     resp = client.post("/bff/agora/servant/ensure", headers={"Authorization": _OPERATOR_AUTH})
     assert resp.status_code == 422
     assert resp.json()["error"]["details"]["precondition_failed"] == "Idempotency-Key"
+
+
+def test_agora_servant_ensure_viewer_cannot_create_persona_or_capability_snapshot(monkeypatch, tmp_path):
+    store = ReadSurfaceStore(
+        str(tmp_path / "read_surfaces.json"),
+        allow_local_snapshot_fallback=False,
+    )
+    monkeypatch.setattr(bff_main, "read_store", store)
+    sync_calls = []
+    monkeypatch.setattr(
+        bff_main,
+        "_ensure_agora_servant_openclaw_agent",
+        lambda persona: sync_calls.append(persona) or {},
+    )
+    client = _client(monkeypatch)
+    before_personas = store.list_personas()
+    response = client.post(
+        "/bff/agora/servant/ensure",
+        headers={
+            "Authorization": "Bearer agora-test-viewer:viewer",
+            "Idempotency-Key": "viewer-cannot-ensure-servant",
+            "X-Request-Id": "req-viewer-cannot-ensure-servant",
+        },
+    )
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["details"]["precondition_failed"] == "role_check"
+    assert store.list_personas() == before_personas
+    assert not any(
+        snapshot.get("canonicalWriteAuthority") == "persona_capability_service"
+        for snapshot in (store._local_dataset("capability_snapshots") or {}).values()
+    )
+    assert sync_calls == []
+
+
+def test_agora_servant_sync_failure_leaves_new_persona_ineligible(monkeypatch, tmp_path):
+    store = ReadSurfaceStore(
+        str(tmp_path / "read_surfaces.json"),
+        allow_local_snapshot_fallback=False,
+    )
+    monkeypatch.setattr(bff_main, "read_store", store)
+
+    def fail_sync(_persona):
+        raise RuntimeError("OpenClaw unavailable")
+
+    monkeypatch.setattr(bff_main, "_ensure_agora_servant_openclaw_agent", fail_sync)
+    client = _client(monkeypatch)
+    response = client.post(
+        "/bff/agora/servant/ensure",
+        headers={
+            "Authorization": _OPERATOR_AUTH,
+            "Idempotency-Key": "failed-sync-cannot-admit-servant",
+            "X-Request-Id": "req-failed-sync-cannot-admit-servant",
+        },
+    )
+    assert response.status_code == 503, response.text
+    servants = [
+        persona
+        for persona in store.list_personas()
+        if (persona.get("metadata") or {}).get("persona_class") == "agora_servant"
+    ]
+    assert len(servants) == 1
+    assert servants[0]["lifecycle_state"] == "draft"
+    assert store.get_capability_snapshot_for_persona(servants[0]["persona_id"]) is None
 
 
 def test_agora_servant_ensure_unauthenticated_returns_401(monkeypatch):
