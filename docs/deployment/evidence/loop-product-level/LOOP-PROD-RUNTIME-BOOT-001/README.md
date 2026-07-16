@@ -202,15 +202,54 @@ deselects, `scripts/test_ai_status.py`,
 added on `dev` since the freeze).
 
 `completion.json` remains intentionally absent. Per the primary evidence
-plan above, the owner must not fabricate or self-sign it; only the distinct
-reviewer `Claude2` may create the real Ed25519-signed completion once this
+plan above, the owner must not fabricate or self-sign it; only a distinct
+reviewer may create the real Ed25519-signed completion once this
 corrective PR is reviewed. No live install/apply/canonical mutation was
 performed as part of this restoration.
+
+Reviewer identity note: this restoration's commit trailers (`f5948969a`,
+`fbfad9dbd`) name `Claude2` as reviewer, reflecting the assignment in
+effect when those commits were authored. `Claude2` is no longer the
+active reviewer for this task; the task has since been reassigned to
+`Codex2` as the current distinct reviewer. Because the commits are
+already merged into `dev` (merge commit
+`8c9bc96e5e8728a2340355b9357355d0c7368ff2`, PR #3738), their trailers are
+historical record and are not rewritten. `Codex2` must independently
+verify the exact merge diff, ancestry, and recorded test results above
+before creating `completion.json`, or leave this task open with the
+precise unavailable signing authority if it cannot.
 
 Still open and unrelated: the live canonical status root's
 `ai-status.sh` / `ai_status.py` activity-log duplicate-`event_id` outage
 (tracked separately; not repaired here, and not caused by this corrective
 task's git-tracked-file-only change).
+
+## Follow-up evidence candidate: `corrective-001-checks.json`
+
+Per the Codex planner review on PR #3742 (2026-07-16T12:50:08Z): the
+doc-only reviewer-identity fix is a valid interim change but does not
+bind checks.json to the final candidate, and completion.json/protected
+Ed25519 ledger evidence remains absent. `corrective-001-checks.json` in
+this directory closes that specific gap for the corrective task's own
+diff -- it is a follow-up evidence candidate, not a rewrite of the
+frozen primary `checks.json` above. It records: PR ancestry for #3652,
+#3738, and #3742 (including verified ancestry of PR #3738's merge commit
+into `origin/dev`); the exact merged diff (the one-line audit-row
+restoration plus the three README commits); the restored audit blob's
+`git hash-object` and SHA-256; the current (unmodified) writer registry
+digest; a fresh `runtime_lock_source_inventory('.')` recomputation
+showing zero unregistered direct writers (with the expected file-count
+drift from the frozen primary freeze explained, not silently ignored);
+and a full re-run of every named validation command from the primary
+`checks.json`, all passing against the current worktree.
+
+This file is evidence binding, not completion. Per the task contract:
+GitHub green checks, this file, the README correction, a placeholder
+signature, or an owner signature are not completion. Only the assigned
+distinct reviewer `Codex2` may independently verify this evidence and
+either create the real signed `completion.json` (plus ledger/policy/
+revocation binding) or leave the task open with the exact unavailable
+signing authority.
 
 Note on the commit gate: `scripts/check_staged_generated_files.py`
 (installed as `.githooks/pre-commit` since commit `c876328961`, 2026-04-28)

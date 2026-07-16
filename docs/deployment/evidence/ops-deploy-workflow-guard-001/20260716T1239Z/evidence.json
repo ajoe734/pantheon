@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "task_id": "OPS-DEPLOY-WORKFLOW-GUARD-001",
+  "captured_at": "2026-07-16T12:39:34Z",
+  "branch_head": "d7325101d77cccc38fe1487ff670802c7b77c440",
+  "prior_task_pr": {
+    "number": 3735,
+    "state": "MERGED",
+    "task_commit": "8b1524e7a41998a505cbdef92bf6382bc3963fe8",
+    "merge_commit": "b7fe5d9220de5ad2e57584eb5f3dc6e109823c0c",
+    "checks": "all required checks succeeded before merge"
+  },
+  "live_cron_guard": {
+    "installed": true,
+    "crontab_tag": "pantheon-shared-deploy-workflow-guard",
+    "command": "[ -f /home/lupin/pantheon-ci-deploy/dev-root/scripts/check_shared_deploy_workflow_disabled.py ] && python3 /home/lupin/pantheon-ci-deploy/dev-root/scripts/check_shared_deploy_workflow_disabled.py --enable",
+    "log_path": "/home/lupin/code/pantheon/.orchestrator/logs/shared-deploy-workflow-guard-cron.log",
+    "observed_reenable_window": "2026-07-16T11:44:03Z_to_2026-07-16T11:58:03Z",
+    "observed_outcome": "cron guard repeatedly re-enabled watched workflows left disabled_manually by another worker"
+  },
+  "watched_workflow_state": {
+    "checked_at": "2026-07-16T12:39:34Z",
+    "ajoe734/pantheon#269991390": "active",
+    "ajoe734/execute-plans#292028803": "active",
+    "detector_command": "python3 scripts/check_shared_deploy_workflow_disabled.py",
+    "detector_exit_code": 0
+  },
+  "validation": {
+    "command": "python3 -m pytest -q scripts/test_dev_environment_lease.py scripts/test_dev_environment_lease_deploy_contract.py scripts/test_dev_environment_lease_guard.py scripts/test_reap_hung_workers.py scripts/test_check_shared_deploy_workflow_disabled.py",
+    "result": "53 passed, 13 subtests passed in 23.86s"
+  },
+  "remaining_live_proof_blocker": {
+    "summary": "The requested clean concurrent deploy proof is still blocked by unowned queued/deploy-path state; this task did not cancel or force-cancel any unowned run.",
+    "unowned_queued_run": {
+      "repo": "ajoe734/pantheon",
+      "workflow_id": "269991390",
+      "run_id": 29469158508,
+      "branch": "task/EVOCHAIN-011",
+      "event": "workflow_dispatch",
+      "status": "queued",
+      "created_at": "2026-07-16T03:31:02Z",
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/29469158508"
+    },
+    "recent_related_failures": [
+      {
+        "repo": "ajoe734/pantheon",
+        "run_id": 29494634993,
+        "branch": "dev",
+        "conclusion": "failure",
+        "failing_step": "Start identity-bound lease heartbeat",
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29494634993"
+      },
+      {
+        "repo": "ajoe734/pantheon",
+        "run_id": 29498360289,
+        "branch": "master",
+        "conclusion": "failure",
+        "failing_step": "Deploy requested VM stack",
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29498360289"
+      }
+    ]
+  }
+}
