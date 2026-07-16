@@ -50,6 +50,8 @@ class FakeClient:
         self.delete_conflicts = 0
         self.put_expected_shas: list[str | None] = []
         self.deleted = False
+        self.scripted_content: list[lease.RemoteContent | None] = []
+        self.get_content_calls = 0
 
     def get_ref(self, repository: str, branch: str):
         self._assert_repo(repository)
@@ -68,6 +70,12 @@ class FakeClient:
 
     def get_content(self, repository: str, branch: str, path: str):
         self._assert_location(repository, branch, path)
+        self.get_content_calls += 1
+        if self.scripted_content:
+            remote = self.scripted_content[0]
+            if len(self.scripted_content) > 1:
+                self.scripted_content.pop(0)
+            return copy.deepcopy(remote)
         if self.state is None:
             return None
         return lease.RemoteContent(
@@ -315,6 +323,136 @@ class LeaseManagerTests(unittest.TestCase):
                 lease.public_state(client.state, content_sha="blob-current"),
                 max_heartbeat_age_seconds=120,
             )
+
+    def test_initial_verify_retries_only_the_exact_expired_predecessor(self) -> None:
+        client = FakeClient()
+        predecessor = state_for(
+            owner="execute-plans:previous",
+            lease_id="22222222-2222-4222-8222-222222222222",
+            heartbeat=NOW - timedelta(minutes=6),
+            expires=NOW - timedelta(seconds=1),
+        )
+        predecessor_sha = "1" * 40
+        client.state = copy.deepcopy(predecessor)
+        client.content_sha = predecessor_sha
+        acquired, content_sha, _ = manager(client).acquire(
+            mode="deployment",
+            owner="execute-plans:current",
+            ttl_seconds=300,
+            wait_seconds=0,
+            poll_seconds=0.01,
+            expected_backend_sha="b" * 40,
+            run_url="https://github.com/ajoe734/pantheon/actions/runs/2",
+        )
+        local = lease.public_state(acquired, content_sha=content_sha)
+        current = lease.RemoteContent(
+            state=copy.deepcopy(client.state),
+            content_sha=str(client.content_sha),
+            server_now=client.now,
+        )
+        client.scripted_content = [
+            lease.RemoteContent(
+                state=predecessor,
+                content_sha=predecessor_sha,
+                server_now=client.now,
+            ),
+            current,
+        ]
+
+        result = manager(client).verify(
+            local,
+            max_heartbeat_age_seconds=120,
+            initial_visibility_wait_seconds=0.1,
+            initial_visibility_poll_seconds=0.001,
+        )
+
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(result["leaseId"], acquired["leaseId"])
+        self.assertEqual(client.get_content_calls, 3)  # acquire + two verifies
+
+    def test_initial_verify_fails_immediately_for_foreign_active_replacement(self) -> None:
+        client = FakeClient()
+        local_state = state_for(
+            owner="execute-plans:current",
+            mode="deployment",
+            lease_id="33333333-3333-4333-8333-333333333333",
+        )
+        local_state["previousContentSha"] = "1" * 40
+        local = lease.public_state(local_state, content_sha="2" * 40)
+        client.state = state_for(
+            owner="execute-plans:foreign",
+            mode="deployment",
+            lease_id="44444444-4444-4444-8444-444444444444",
+            heartbeat=NOW + timedelta(seconds=1),
+        )
+        client.content_sha = "3" * 40
+
+        with self.assertRaisesRegex(lease.LeaseLost, "leaseId changed"):
+            manager(client).verify(
+                local,
+                max_heartbeat_age_seconds=120,
+                initial_visibility_wait_seconds=10,
+                initial_visibility_poll_seconds=1,
+            )
+        self.assertEqual(client.get_content_calls, 1)
+
+    def test_initial_verify_times_out_if_exact_predecessor_remains_visible(self) -> None:
+        client = FakeClient()
+        local_state = state_for(
+            owner="execute-plans:current",
+            mode="deployment",
+            lease_id="33333333-3333-4333-8333-333333333333",
+            heartbeat=NOW,
+        )
+        local_state["previousContentSha"] = "1" * 40
+        local = lease.public_state(local_state, content_sha="2" * 40)
+        predecessor = state_for(
+            owner="execute-plans:previous",
+            mode="deployment",
+            lease_id="22222222-2222-4222-8222-222222222222",
+            heartbeat=NOW - timedelta(minutes=6),
+            expires=NOW - timedelta(seconds=1),
+        )
+        client.scripted_content = [
+            lease.RemoteContent(
+                state=predecessor,
+                content_sha="1" * 40,
+                server_now=NOW,
+            )
+        ]
+
+        with self.assertRaisesRegex(
+            lease.LeaseLost, "bounded timeout"
+        ):
+            manager(client).verify(
+                local,
+                max_heartbeat_age_seconds=120,
+                initial_visibility_wait_seconds=0.01,
+                initial_visibility_poll_seconds=0.001,
+            )
+        self.assertGreater(client.get_content_calls, 1)
+
+    def test_initial_verify_does_not_retry_predecessor_without_opt_in(self) -> None:
+        client = FakeClient()
+        local_state = state_for(
+            owner="execute-plans:current",
+            mode="deployment",
+            lease_id="33333333-3333-4333-8333-333333333333",
+        )
+        local_state["previousContentSha"] = "1" * 40
+        local = lease.public_state(local_state, content_sha="2" * 40)
+        client.state = state_for(
+            owner="execute-plans:previous",
+            mode="deployment",
+            lease_id="22222222-2222-4222-8222-222222222222",
+            heartbeat=NOW - timedelta(minutes=6),
+            expires=NOW - timedelta(seconds=1),
+        )
+        client.content_sha = "1" * 40
+
+        with self.assertRaisesRegex(lease.LeaseLost, "leaseId changed"):
+            manager(client).verify(local, max_heartbeat_age_seconds=120)
+        self.assertEqual(client.get_content_calls, 1)
 
     def test_heartbeat_renews_with_current_blob_sha(self) -> None:
         client = FakeClient()

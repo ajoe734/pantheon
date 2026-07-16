@@ -87,7 +87,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: ajoe734/pantheon
-          ref: 65a1d653222ab378c994df6c40349139cd429831
+          ref: ddf4d0d5d33a848b3c86e3be2f6713e2ad9c0524
           path: .lease-controller
           fetch-depth: 1
           persist-credentials: false
@@ -219,11 +219,11 @@ jobs:
           unset BASH_ENV ENV PYTHONPATH PYTHONHOME CDPATH
           unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
           controller="${GITHUB_WORKSPACE}/.lease-controller"
-          [[ "$(git -C "${controller}" rev-parse HEAD)" == "65a1d653222ab378c994df6c40349139cd429831" ]]
+          [[ "$(git -C "${controller}" rev-parse HEAD)" == "ddf4d0d5d33a848b3c86e3be2f6713e2ad9c0524" ]]
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            5e72d6a4d2c945d79a9a1fcc2e205584b9a1f06cc53c973c7ba3ae76205db102 "${controller}/scripts/dev_environment_lease.py" \
+            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
             f3995a2baedc2ff47178a0de8ad1952096df4de508d5a47c8e0042a151ab7ea8 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
 
@@ -306,7 +306,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           printf '%s  %s\n' \
-            5e72d6a4d2c945d79a9a1fcc2e205584b9a1f06cc53c973c7ba3ae76205db102 "${controller}/scripts/dev_environment_lease.py" \
+            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
             f3995a2baedc2ff47178a0de8ad1952096df4de508d5a47c8e0042a151ab7ea8 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           exec {token_fd}<<<"${lease_token}"
@@ -351,7 +351,9 @@ jobs:
               --path .pantheon/environment-leases/pantheon-dev-environment.json \
               --resource pantheon-dev-environment \
               --state-file "${LEASE_STATE_FILE}" \
-              --max-heartbeat-age-seconds 120 >/dev/null
+              --max-heartbeat-age-seconds 120 \
+              --initial-visibility-wait-seconds 15 \
+              --initial-visibility-poll-seconds 1 >/dev/null
           lease_token=""
 
       - name: Deploy dev VM stack under lease
@@ -418,7 +420,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            5e72d6a4d2c945d79a9a1fcc2e205584b9a1f06cc53c973c7ba3ae76205db102 "${controller}/scripts/dev_environment_lease.py" \
+            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
             f3995a2baedc2ff47178a0de8ad1952096df4de508d5a47c8e0042a151ab7ea8 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           case "${DEV_AUTH_PROFILE}" in
@@ -609,7 +611,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            5e72d6a4d2c945d79a9a1fcc2e205584b9a1f06cc53c973c7ba3ae76205db102 "${controller}/scripts/dev_environment_lease.py" \
+            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
             f3995a2baedc2ff47178a0de8ad1952096df4de508d5a47c8e0042a151ab7ea8 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           # The service token is streamed over stdin ahead of the smoke script so
@@ -660,7 +662,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            5e72d6a4d2c945d79a9a1fcc2e205584b9a1f06cc53c973c7ba3ae76205db102 "${controller}/scripts/dev_environment_lease.py" \
+            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
             f3995a2baedc2ff47178a0de8ad1952096df4de508d5a47c8e0042a151ab7ea8 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
@@ -728,7 +730,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            5e72d6a4d2c945d79a9a1fcc2e205584b9a1f06cc53c973c7ba3ae76205db102 "${controller}/scripts/dev_environment_lease.py" \
+            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
             f3995a2baedc2ff47178a0de8ad1952096df4de508d5a47c8e0042a151ab7ea8 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
@@ -806,7 +808,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           printf '%s  %s\n' \
-            5e72d6a4d2c945d79a9a1fcc2e205584b9a1f06cc53c973c7ba3ae76205db102 "${controller}/scripts/dev_environment_lease.py" \
+            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
             f3995a2baedc2ff47178a0de8ad1952096df4de508d5a47c8e0042a151ab7ea8 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
 
@@ -913,7 +915,7 @@ jobs:
             echo "## Dev deployment"
             echo "- Payload: \`${{ steps.target.outputs.sha }}\`"
             echo "- Lease: \`${{ steps.lease.outputs.lease_id }}\`"
-            echo "- Controller: \`65a1d653222ab378c994df6c40349139cd429831\`"
+            echo "- Controller: \`ddf4d0d5d33a848b3c86e3be2f6713e2ad9c0524\`"
             echo "- Target: \`dev/${TARGET_COMPONENT}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
