@@ -79,3 +79,80 @@ python3 scripts/check_shared_deploy_workflow_disabled.py
 
 git diff --check
 ```
+
+## Independent Claude Review (governed approval)
+
+Reviewer: Claude. Audited independently, not implemented by the reviewer.
+
+Scope of the audit:
+
+- Diffed the originally unreviewed merge commit
+  `d963586c9803744a5745104e9b490c2aeae651cc` (PR #3757,
+  `87c2f7e50bc66b23e16436aa32775fcf2fedd8bb`) directly. It removes the broad
+  `for attempt in $(seq 1 50)` initial-verify loop, repoints the
+  `.lease-controller` checkout and both pinned SHA-256 checksums from
+  `65a1d653222ab378c994df6c40349139cd429831` to
+  `ddf4d0d5d33a848b3c86e3be2f6713e2ad9c0524` (the PR #3754 merge commit), and
+  adds `--initial-visibility-wait-seconds 15` /
+  `--initial-visibility-poll-seconds 1` to exactly one `verify` call (the
+  immediate post-acquire verify in "Start identity-bound lease heartbeat").
+  No defect found in that diff; it matches the four required-implementation
+  items in the task brief line for line.
+- Recomputed `sha256sum` of `scripts/dev_environment_lease.py` and
+  `scripts/run_with_dev_environment_lease.sh` as read at commit
+  `ddf4d0d5d33a848b3c86e3be2f6713e2ad9c0524` and confirmed both match the
+  checksums pinned in `.github/workflows/nonprod-deploy.yml` exactly.
+- Grepped every `dev_environment_lease.py verify` invocation in the workflow:
+  only the post-acquire verify (line 348) carries the two opt-in flags; the
+  release-step verify (line 895) and the deploy-step guard's `verify_lease()`
+  in the pinned `run_with_dev_environment_lease.sh` remain strict with no
+  visibility retry. The two other `seq 1 40` / `seq 1 20` loops present in
+  the workflow are unrelated heartbeat-termination polling, not verify
+  retries, and are not the PR #3755 loop.
+- Reran the full mandatory validation set on the current worktree (composed
+  to `origin/dev` `d3848722c9b3ff9f3125996a485efcb4c2dcdea3`, which already
+  contains PR #3760 merge `be2d61636f9e9c4bb19cbc9a82633334c173415f`):
+  `python3 -m pytest -q scripts/test_dev_environment_lease.py
+  scripts/test_dev_environment_lease_guard.py
+  scripts/test_dev_environment_lease_deploy_contract.py
+  scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py
+  scripts/test_check_shared_deploy_workflow_disabled.py` -> 64 passed, 19
+  subtests passed (one more test than the 63 recorded above; the extra
+  passing test was picked up from unrelated dev churn between the owner's
+  last run and this review, not a regression); `python3 -m py_compile
+  scripts/dev_environment_lease.py`; workflow YAML parse; `python3
+  scripts/check_shared_deploy_workflow_disabled.py`; `git diff --check` -
+  all clean.
+- Confirmed every named test in "Mandatory validation" exists and passes:
+  `test_initial_verify_retries_only_the_exact_expired_predecessor`,
+  `test_initial_verify_fails_immediately_for_foreign_active_replacement`,
+  `test_initial_verify_fails_immediately_for_wrong_predecessor_sha`,
+  `test_initial_verify_fails_immediately_without_valid_predecessor_sha`,
+  `test_initial_verify_does_not_retry_predecessor_without_opt_in`,
+  `test_initial_verify_times_out_if_exact_predecessor_remains_visible`,
+  `test_initial_visibility_bounds_fail_closed`,
+  `test_initial_visibility_retry_is_only_on_immediate_post_acquire_verify`,
+  `test_broad_initial_verify_retry_loop_is_absent`,
+  `test_deploy_step_guard_does_not_retry_failed_remote_verify`.
+- No Pantheon proof was dispatched by this review.
+
+Verdict: **APPROVED**. Final audited head: PR #3760 merge
+`be2d61636f9e9c4bb19cbc9a82633334c173415f`, already merged into `origin/dev`
+(ancestor of current `origin/dev` `d3848722c9b3ff9f3125996a485efcb4c2dcdea3`).
+The PR #3757 premature unreviewed merge
+(`87c2f7e50bc66b23e16436aa32775fcf2fedd8bb`) is confirmed clean on
+independent audit but remains recorded above as a process failure, not as
+the basis for this approval.
+
+Status-tool note: `python3 scripts/ai_status.py show` and every write
+command are currently failing on every invocation with `RuntimeError:
+activity log changed during rotation recovery` (raised from
+`.orchestrator/common.py:recover_activity_log_rotation_unlocked`). This is a
+distinct failure mode from the duplicate-`event_id` outage recorded
+2026-07-16 and later marked resolved; it blocks recording this approval
+through `scripts/ai-status.sh approve`. This task is also not present in
+`ai-status.json` (`tasks` list has no `OPS-LEASE-READ-AFTER-WRITE-PIN-001`
+entry), consistent with how other `OPS-*` corrective tasks in this fleet run
+as task-brief plus evidence-directory records outside the tracked task
+board. The approval above is the durable governed record until the status
+tool is healthy and/or a human reconciles this task into `ai-status.json`.
