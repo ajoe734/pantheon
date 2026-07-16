@@ -88,7 +88,7 @@ EXPECTED_SEQUENCING_SOURCE_HASHES = {
     "merge_pr_3737_sha": "a4b5df9a51bc3da6df0d39d422d9db4edc553aba",
 }
 EXPECTED_SEQUENCING_OVERLAY_SHA256 = (
-    "ec4e2d0209fdf430a279a3dd669923f9c3b4abb84d785501993c425b528b55b6"
+    "7596b40ac4a0cd25b801196798c8eb54706f6a9cecfa764ff5f751165f0db11e"
 )
 EXPECTED_PRODUCT_EVIDENCE_SCHEMA_SHA256 = (
     "5340d8394a31fa9badf4519b2cdbac4f02317e9d930ddd250c8b7374015d3a73"
@@ -155,6 +155,7 @@ G2_EVIDENCE_CONTRACT_KEYS = {
     "hosted_probe_path",
     "canonical_record_bundle_path",
     "canonical_source_resolution",
+    "verifier_source_files",
     "canonical_telemetry_dsn_env",
     "canonical_database_name",
     "canonical_database_role",
@@ -237,6 +238,20 @@ G2_CANONICAL_QUERY_EVENT_TYPES = (
     "risk_evaluation",
     "signal_generation",
     "trade_decision",
+)
+G2_VERIFIER_SOURCE_FILES = (
+    {
+        "path": "services/trade_journey/hosted_lifecycle_probe.py",
+        "sha256": "c3f098e8034ff4040bd8859066844e5e2681cbdbd26946584c5b6bab7e5f7c07",
+    },
+    {
+        "path": "services/trade_journey/lifecycle_projector.py",
+        "sha256": "43473f121f5bde17435dbd401697ac99455eb1ebdc534ee93b29318df8cb496f",
+    },
+    {
+        "path": "services/trade_journey/correlation_envelope.py",
+        "sha256": "60c6877fa558640ee91570fc430f8b3ab935c3d2905d4ce55027fe8e04b5c4b1",
+    },
 )
 G2_EVIDENCE_KEYS = {
     "schema_version",
@@ -483,8 +498,11 @@ SEQUENCING_RELEASE_ADMISSION_FIELDS = frozenset(
         "reviewer",
         "review_binding_sha256",
         "review_approval_event_sha256",
+        "owner_closeout_event_sha256",
         "review_verdict_sha256",
         "g2_issued_at",
+        "g2_expires_at",
+        "g2_fresh_until",
         "closeout_at",
     }
 )
@@ -6104,6 +6122,8 @@ def validate_sequencing_release_record(
         "sequencing_epoch_sha256",
         "released_at",
         "g2_issued_at",
+        "g2_expires_at",
+        "g2_fresh_until",
         "closeout_at",
         "g2_evidence_sha256",
         "canonical_record_bundle_sha256",
@@ -6122,6 +6142,7 @@ def validate_sequencing_release_record(
         "reviewer",
         "review_binding_sha256",
         "review_approval_event_sha256",
+        "owner_closeout_event_sha256",
         "review_verdict_sha256",
         "release_admission_sha256",
         "released_task_transitions",
@@ -6157,9 +6178,16 @@ def validate_sequencing_release_record(
         raise DispatchError("program sequencing release record is not exact")
     parse_activity_timestamp(record.get("released_at"))
     g2_issued_at = parse_activity_timestamp(record.get("g2_issued_at"))
+    g2_expires_at = parse_activity_timestamp(record.get("g2_expires_at"))
+    g2_fresh_until = parse_activity_timestamp(record.get("g2_fresh_until"))
     closeout_at = parse_activity_timestamp(record.get("closeout_at"))
     released_at = parse_activity_timestamp(record.get("released_at"))
-    if g2_issued_at > closeout_at or closeout_at > released_at:
+    if (
+        g2_issued_at > closeout_at
+        or closeout_at > released_at
+        or released_at > g2_fresh_until
+        or g2_fresh_until > g2_expires_at
+    ):
         raise DispatchError("program sequencing release chronology is invalid")
     epoch = validate_sequencing_epoch_record(state, catalog, catalog_digest)
     if epoch is None or parse_activity_timestamp(epoch.get("applied_at")) > released_at:
@@ -6222,6 +6250,8 @@ def validate_sequencing_release_record(
     digest_fields = SEQUENCING_RELEASE_ADMISSION_FIELDS - {
         "reviewer",
         "g2_issued_at",
+        "g2_expires_at",
+        "g2_fresh_until",
         "closeout_at",
         "g2_artifact_commit_sha",
         "g2_artifact_merge_target_sha",
@@ -6295,8 +6325,13 @@ def _build_sequencing_release_record(
     ):
         raise DispatchError("G2 release did not transition the exact gated task set")
     released_at = parse_activity_timestamp(timestamp)
-    if parse_activity_timestamp(admission["g2_issued_at"]) > released_at:
-        raise DispatchError("G2 release predates its admitted evidence")
+    if (
+        parse_activity_timestamp(admission["g2_issued_at"]) > released_at
+        or released_at > parse_activity_timestamp(admission["g2_fresh_until"])
+        or parse_activity_timestamp(admission["g2_fresh_until"])
+        > parse_activity_timestamp(admission["g2_expires_at"])
+    ):
+        raise DispatchError("G2 release is outside its admitted evidence window")
     return {
         "schema_version": 2,
         "program_id": str(catalog["program_id"]),
@@ -6693,6 +6728,10 @@ def _resolve_g2_closeout_task(
     catalog: dict[str, Any],
     contract: Mapping[str, Any],
 ) -> tuple[dict[str, Any], datetime]:
+    if state.get("status_archive_outbox") is not None or state.get(
+        "status_activity_outbox"
+    ) is not None:
+        raise DispatchError("G2 closeout has a pending status transaction")
     target_id = str(contract["target_task"])
     active = state.get("tasks")
     if not isinstance(active, list) or any(not isinstance(item, dict) for item in active):
@@ -6730,6 +6769,8 @@ def _resolve_g2_closeout_task(
         closeout_at = _parse_g2_timestamp(
             archive.get("archived_at"), label="G2 archived_at"
         )
+        if task.get("last_update") != archive.get("archived_at"):
+            raise DispatchError("G2 archive and task closeout timestamps differ")
     elif matches:
         task = matches[0]
         closeout_at = _parse_g2_timestamp(
@@ -6766,8 +6807,11 @@ def _resolve_g2_closeout_task(
         or delivery.get("merge_target_branch") != "dev"
         or not _is_lower_hex(delivery.get("commit"), 40)
         or not _is_lower_hex(delivery.get("merge_target_sha"), 40)
+        or delivery.get("recorded_at") != task.get("last_update")
     ):
         raise DispatchError("G2 closeout delivery truth is not accepted")
+    if not isinstance(task.get("next"), str) or not task["next"].strip():
+        raise DispatchError("G2 closeout message is missing")
     source_ref = task.get("source_ref")
     source_hashes = catalog.get("source_hashes") or {}
     target_spec = next(
@@ -6840,6 +6884,38 @@ def _g2_closeout_task_projection(task: Mapping[str, Any]) -> dict[str, Any]:
         "acceptance_deferral": deepcopy(task.get("acceptance_deferral")),
         "task_contract_sha256": task_contract_sha256(dict(task)),
     }
+
+
+def _validate_g2_verifier_sources(
+    contract: Mapping[str, Any],
+    *,
+    authoritative_commit_sha: str | None = None,
+) -> None:
+    expected = [dict(row) for row in G2_VERIFIER_SOURCE_FILES]
+    if contract.get("verifier_source_files") != expected:
+        raise DispatchError("G2 verifier source contract is not exact")
+    for row in expected:
+        relative_path = _safe_repo_relative_path(
+            row["path"],
+            label="G2 verifier source path",
+        )
+        local_raw = read_rooted_regular_bytes(
+            REPO_ROOT,
+            relative_path,
+            label="G2 verifier source",
+        )
+        if sha256_bytes(local_raw) != row["sha256"]:
+            raise DispatchError("G2 verifier source bytes drifted")
+        if authoritative_commit_sha is not None:
+            committed_raw = _git_output(
+                REPO_ROOT,
+                "show",
+                f"{authoritative_commit_sha}:{relative_path}",
+            )
+            if sha256_bytes(committed_raw) != row["sha256"]:
+                raise DispatchError(
+                    "G2 authoritative verifier source bytes drifted"
+                )
 
 
 def _validate_g2_implementation_git_delivery(
@@ -7045,6 +7121,10 @@ def _validate_g2_committed_artifacts(
         artifact_commit,
         str(contract["required_github_workflow_path"]),
     )
+    _validate_g2_verifier_sources(
+        contract,
+        authoritative_commit_sha=authoritative_remote_head,
+    )
     expected_paths = {
         str(contract["evidence_path"]),
         str(contract["canonical_record_bundle_path"]),
@@ -7086,7 +7166,9 @@ def _read_trusted_g2_deployment_identity(
     hosted_readback: Mapping[str, Any],
     expected_deployment_sha: str,
     issued_at: datetime,
+    now: datetime,
     max_age_seconds: int,
+    max_future_skew_seconds: int,
 ) -> tuple[dict[str, Any], bytes]:
     root = TRUSTED_G2_DEPLOYMENT_IDENTITY_ROOT
     path = TRUSTED_G2_DEPLOYMENT_IDENTITY_PATH
@@ -7155,6 +7237,8 @@ def _read_trusted_g2_deployment_identity(
         != manifest.get("image_manifest_digest")
         or observed_at > issued_at
         or issued_at - observed_at > timedelta(seconds=max_age_seconds)
+        or observed_at > now + timedelta(seconds=max_future_skew_seconds)
+        or now - observed_at > timedelta(seconds=max_age_seconds)
     ):
         raise DispatchError("G2 trusted deployment identity manifest mismatch")
     return manifest, raw
@@ -7171,6 +7255,7 @@ def _validate_g2_product_evidence(
     observed_at: datetime,
     expected_deployment_sha: str,
     closeout_at: datetime,
+    now: datetime,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if set(admission) != G2_CLOSEOUT_ADMISSION_KEYS:
         raise DispatchError("G2 closeout admission schema is not exact")
@@ -7479,8 +7564,14 @@ def _validate_g2_product_evidence(
             hosted_readback=hosted_readback,
             expected_deployment_sha=expected_deployment_sha,
             issued_at=issued_at,
+            now=now,
             max_age_seconds=int(contract["max_evidence_age_seconds"]),
+            max_future_skew_seconds=int(contract["max_future_skew_seconds"]),
         )
+    )
+    trusted_deployment_observed_at = _parse_g2_timestamp(
+        trusted_deployment.get("observed_at"),
+        label="G2 trusted deployment observed_at",
     )
     canonical_root_deploy = deployment["canonical_root_deploy"]
     if (
@@ -7563,12 +7654,11 @@ def _validate_g2_product_evidence(
         verdict_at,
         merged_at,
         closeout_at,
+        trusted_deployment_observed_at,
     ]
-    if any(
-        issued_at - value
-        > timedelta(seconds=contract["max_evidence_age_seconds"])
-        for value in chronology
-    ):
+    max_age = timedelta(seconds=contract["max_evidence_age_seconds"])
+    max_skew = timedelta(seconds=contract["max_future_skew_seconds"])
+    if any(value > now + max_skew or now - value > max_age for value in chronology):
         raise DispatchError("G2 closeout chronology is stale")
     if (
         admission.get("reviewer") != reviewer
@@ -7600,6 +7690,9 @@ def _validate_g2_product_evidence(
                 "head_sha": delivery_pull_request["head_sha"],
                 "merge_sha": delivery_pull_request["merge_sha"],
             },
+            "oldest_evidence_at": min(chronology).isoformat().replace(
+                "+00:00", "Z"
+            ),
         },
     )
 
@@ -7659,6 +7752,12 @@ def _validate_g2_reviewer_binding(
         <= _parse_g2_timestamp(closeout_at, label="G2 closeout timestamp")
     ):
         raise DispatchError("G2 reviewer binding chronology is invalid")
+    def is_target_closeout_audit(record: dict[str, Any]) -> bool:
+        return bool(
+            record.get("task_id") == closeout_task.get("id")
+            and record.get("type") in {"review_approved", "done"}
+        )
+
     def is_exact_review_event(record: dict[str, Any]) -> bool:
         return (
             record.get("type") == "review_approved"
@@ -7669,18 +7768,15 @@ def _validate_g2_reviewer_binding(
 
     if review_audit_records is None:
         try:
-            matches = find_activity_audit_records_unlocked(
+            audit_records = find_activity_audit_records_unlocked(
                 LOG_PATH,
-                predicate=is_exact_review_event,
+                predicate=is_target_closeout_audit,
             )
         except RuntimeError as exc:
-            raise DispatchError("G2 reviewer approval audit is unreadable") from exc
+            raise DispatchError("G2 closeout audit is unreadable") from exc
     else:
-        matches = [
-            record
-            for record in review_audit_records
-            if is_exact_review_event(record)
-        ]
+        audit_records = list(review_audit_records)
+    matches = [record for record in audit_records if is_exact_review_event(record)]
     event_fields = {
         "event_id",
         "ts",
@@ -7702,9 +7798,42 @@ def _validate_g2_reviewer_binding(
         != "loop-product-event-" + canonical_json_sha256(unsigned)
     ):
         raise DispatchError("G2 reviewer approval audit binding is invalid")
+    done_matches = [
+        record
+        for record in audit_records
+        if record.get("type") == "done"
+        and record.get("task_id") == closeout_task.get("id")
+        and record.get("agent") == closeout_task.get("owner")
+    ]
+    done_event_fields = {
+        "event_id",
+        "ts",
+        "agent",
+        "type",
+        "task_id",
+        "message",
+        "delivery",
+    }
+    if len(done_matches) != 1 or set(done_matches[0]) != done_event_fields:
+        raise DispatchError("G2 owner closeout audit is not exact")
+    done_event = done_matches[0]
+    done_unsigned = {
+        key: deepcopy(value)
+        for key, value in done_event.items()
+        if key != "event_id"
+    }
+    if (
+        done_event.get("ts") != closeout_task.get("last_update")
+        or done_event.get("message") != closeout_task.get("next")
+        or done_event.get("delivery") != closeout_task.get("delivery")
+        or done_event.get("event_id")
+        != "ai-status-event-" + canonical_json_sha256(done_unsigned)
+    ):
+        raise DispatchError("G2 owner closeout audit binding is invalid")
     return {
         "review_binding_sha256": canonical_json_sha256(binding),
         "review_approval_event_sha256": canonical_json_sha256(event),
+        "owner_closeout_event_sha256": canonical_json_sha256(done_event),
     }
 
 
@@ -7849,6 +7978,9 @@ async def _query_authoritative_g2_rows(
                     "payload #>> '{metadata,run_id}' END "
                     "WHEN jsonb_typeof(payload -> 'run_id') = 'string' "
                     "THEN payload ->> 'run_id' END = $5 "
+                    "AND COALESCE(NULLIF(payload #>> '{loop_run_id}', ''), "
+                    "NULLIF(payload #>> '{metadata,loop_run_id}', ''), "
+                    "'lr-' || $5) = $6 "
                     "AND CASE WHEN payload -> 'signal_id' IS NULL OR "
                     "payload -> 'signal_id' IN "
                     "('null'::jsonb, '\"\"'::jsonb, '[]'::jsonb, '{}'::jsonb) "
@@ -7857,7 +7989,24 @@ async def _query_authoritative_g2_rows(
                     "payload #>> '{metadata,signal_id}' <> '' THEN "
                     "payload #>> '{metadata,signal_id}' END "
                     "WHEN jsonb_typeof(payload -> 'signal_id') = 'string' "
-                    "THEN payload ->> 'signal_id' END = $6 "
+                    "THEN payload ->> 'signal_id' END = $7 "
+                    "AND COALESCE(NULLIF(payload #>> "
+                    "'{target,strategy_id}', ''), "
+                    "NULLIF(payload #>> '{strategy_id}', ''), "
+                    "NULLIF(payload #>> '{metadata,strategy_id}', '')) = $8 "
+                    "AND NULLIF(payload #>> '{runtime_id}', '') = $9 "
+                    "AND NULLIF(payload #>> '{binding_id}', '') = $10 "
+                    "AND NULLIF(payload #>> '{capital_pool_id}', '') = $11 "
+                    "AND COALESCE(NULLIF(payload #>> "
+                    "'{authority_refs,persona_id}', ''), "
+                    "NULLIF(payload #>> '{metadata,persona_id}', ''), "
+                    "NULLIF(payload #>> '{persona_id}', '')) = $12 "
+                    "AND NULLIF(payload #>> "
+                    "'{persona_capital_binding_id}', '') = $13 "
+                    "AND NULLIF(payload #>> '{artifact_id}', '') = $14 "
+                    "AND NULLIF(payload #>> '{artifact_version}', '') = $15 "
+                    "AND COALESCE(NULLIF(payload #>> '{plan_id}', ''), "
+                    "NULLIF(payload #>> '{deployment_plan_id}', '')) = $16 "
                     "AND CASE WHEN payload #> "
                     "'{correlation_envelope,trace_id}' IS NULL OR "
                     "payload #> '{correlation_envelope,trace_id}' IN "
@@ -7868,14 +8017,24 @@ async def _query_authoritative_g2_rows(
                     "WHEN jsonb_typeof(payload #> "
                     "'{correlation_envelope,trace_id}') = 'string' "
                     "THEN payload #>> '{correlation_envelope,trace_id}' "
-                    "END = $7 "
+                    "END = $17 "
                     "ORDER BY ingested_seq",
                     event_types,
                     identity["tenant_id"],
                     identity["environment"],
                     identity["journey_id"],
                     identity["run_id"],
+                    identity["loop_run_id"],
                     identity["signal_id"],
+                    identity["strategy_id"],
+                    identity["runtime_id"],
+                    identity["binding_id"],
+                    identity["capital_pool_id"],
+                    identity["persona_id"],
+                    identity["persona_capital_binding_id"],
+                    identity["artifact_id"],
+                    identity["artifact_version"],
+                    identity["plan_id"],
                     identity["trace_id"],
                 )
                 if isolation != "repeatable read" or read_only not in {
@@ -8868,6 +9027,7 @@ def _validate_g2_evidence(
     if contract.get("version") != 4:
         raise DispatchError("G2 evidence contract version mismatch")
     _validate_git_repository_trust(REPO_ROOT)
+    _validate_g2_verifier_sources(contract)
     evidence, evidence_raw, _ = _read_g2_artifact(
         contract, "evidence_path", label="G2 evidence manifest"
     )
@@ -8997,7 +9157,16 @@ def _validate_g2_evidence(
         _parse_g2_timestamp(row["created_at"], label="G2 row created_at")
         for row in rows
     )
-    if issued_at - earliest > max_age:
+    pre_closeout_freshness_points = [
+        earliest,
+        projection_at,
+        captured_at,
+        observed_at,
+    ]
+    if any(
+        value > now + max_skew or now - value > max_age
+        for value in pre_closeout_freshness_points
+    ):
         raise DispatchError("G2 canonical lifecycle is stale")
     closeout_task, closeout_at = _resolve_g2_closeout_task(
         state, catalog, contract
@@ -9014,7 +9183,24 @@ def _validate_g2_evidence(
         observed_at=observed_at,
         expected_deployment_sha=str(hosted["expected_deployment_sha"]),
         closeout_at=closeout_at,
+        now=now,
     )
+    product_oldest_at = _parse_g2_timestamp(
+        product_truth.get("oldest_evidence_at"),
+        label="G2 product oldest evidence timestamp",
+    )
+    freshness_points = [
+        *pre_closeout_freshness_points,
+        product_oldest_at,
+        closeout_at,
+        issued_at,
+    ]
+    g2_fresh_until = min(
+        expires_at,
+        *(value + max_age for value in freshness_points),
+    )
+    if now > g2_fresh_until:
+        raise DispatchError("G2 evidence freshness deadline elapsed")
     product_raw = read_rooted_regular_bytes(
         REPO_ROOT,
         contract["closeout_manifest_path"],
@@ -9080,6 +9266,8 @@ def _validate_g2_evidence(
         ),
         "canonical_source_attestation": canonical_source_attestation,
         "g2_issued_at": issued_at.isoformat().replace("+00:00", "Z"),
+        "g2_expires_at": expires_at.isoformat().replace("+00:00", "Z"),
+        "g2_fresh_until": g2_fresh_until.isoformat().replace("+00:00", "Z"),
         "g2_hosted_deployment_sha": str(product_truth["deployment_sha"]),
         **artifact_binding,
         **product_admission,
@@ -9154,6 +9342,39 @@ def check_g2_evidence_valid(
         ) is not None
     except Exception:
         return False
+
+
+def validate_g2_release_fresh_at_commit(
+    state: dict[str, Any],
+    catalog: dict[str, Any],
+    catalog_digest: str,
+    *,
+    now: datetime,
+) -> None:
+    """Recheck the admitted evidence clock immediately before status commit."""
+
+    if now.tzinfo is None:
+        raise DispatchError("G2 commit-time verifier now must be timezone-aware")
+    now = now.astimezone(timezone.utc)
+    record = validate_sequencing_release_record(state, catalog, catalog_digest)
+    if record is None:
+        raise DispatchError("G2 commit-time verifier requires a release record")
+    contract = catalog.get("g2_evidence_contract") or {}
+    max_age = timedelta(seconds=int(contract["max_evidence_age_seconds"]))
+    max_skew = timedelta(seconds=int(contract["max_future_skew_seconds"]))
+    issued_at = parse_activity_timestamp(record.get("g2_issued_at"))
+    expires_at = parse_activity_timestamp(record.get("g2_expires_at"))
+    fresh_until = parse_activity_timestamp(record.get("g2_fresh_until"))
+    released_at = parse_activity_timestamp(record.get("released_at"))
+    if (
+        issued_at > now + max_skew
+        or released_at > now + max_skew
+        or now - issued_at > max_age
+        or now > expires_at
+        or now > fresh_until
+        or fresh_until > expires_at
+    ):
+        raise DispatchError("G2 evidence expired before atomic status commit")
 
 
 def _require_exact_keys(value: Any, expected: set[str], *, label: str) -> dict[str, Any]:
@@ -9304,6 +9525,10 @@ def _validate_g2_overlay_contract(
         raise DispatchError("G2 evidence freshness policy mismatch")
     if value.get("stable_identity_fields") != list(G2_STABLE_IDENTITY_FIELDS):
         raise DispatchError("G2 stable identity contract mismatch")
+    if value.get("verifier_source_files") != [
+        dict(row) for row in G2_VERIFIER_SOURCE_FILES
+    ]:
+        raise DispatchError("G2 verifier source contract mismatch")
     if value.get("required_github_checks") != [
         {"name": "Commit trailers", "app_id": 15368},
         {"name": "Runtime mirror guard", "app_id": 15368},
@@ -9712,6 +9937,10 @@ def main() -> int:
             source_catalog=(source_catalog if overlay_path else None),
             source_catalog_digest=(source_catalog_digest if overlay_path else None),
         )
+        original_releases = state.get(PROGRAM_SEQUENCING_RELEASES_STATE_KEY) or {}
+        if not isinstance(original_releases, dict):
+            raise DispatchError("program sequencing releases must be an object")
+        original_release_present = str(catalog["program_id"]) in original_releases
         proposed = deepcopy(state)
 
         timestamp = iso_now()
@@ -9831,6 +10060,20 @@ def main() -> int:
             )
         )
         preflight_activity_events(transaction, existing_events)
+        proposed_releases = (
+            proposed.get(PROGRAM_SEQUENCING_RELEASES_STATE_KEY) or {}
+        )
+        if (
+            not original_release_present
+            and isinstance(proposed_releases, dict)
+            and str(catalog["program_id"]) in proposed_releases
+        ):
+            validate_g2_release_fresh_at_commit(
+                proposed,
+                catalog,
+                catalog_digest,
+                now=datetime.now(timezone.utc),
+            )
         if file_signature(STATUS_PATH) != original_signature:
             raise DispatchError(
                 "ai-status.json changed concurrently; no write performed, rerun dispatch"

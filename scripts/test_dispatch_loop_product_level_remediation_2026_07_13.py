@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import fcntl
 import gzip
 import hashlib
@@ -3580,12 +3580,14 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
             "review_file": contract["closeout_manifest_path"],
             "review_notes_zh": ["Codex2 approved the canonical G2 evidence."],
             "last_update": G2_CLOSEOUT_AT,
+            "next": "Finalize exact G2 evidence after approved review.",
             "delivery": {
                 "commit": "0" * 40,
                 "head_merged_to_target": True,
                 "merge_target_branch": "dev",
                 "merge_target_sha": "0" * 40,
                 "push_status": "in_sync",
+                "recorded_at": G2_CLOSEOUT_AT,
             },
         }
     )
@@ -3605,6 +3607,17 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     workflow_path.write_bytes(
         (ROOT / ".github" / "workflows" / "branch-ci.yml").read_bytes()
     )
+    verifier_source_paths = [
+        tmp_path / row["path"]
+        for row in contract["verifier_source_files"]
+    ]
+    for source_path, row in zip(
+        verifier_source_paths,
+        contract["verifier_source_files"],
+        strict=True,
+    ):
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_bytes((ROOT / row["path"]).read_bytes())
 
     _fixture_git(tmp_path, "init", "-b", "dev")
     _fixture_git(tmp_path, "config", "user.name", "G2 Fixture")
@@ -3615,6 +3628,7 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         str(schema_path.relative_to(tmp_path)),
         str(activity_log.relative_to(tmp_path)),
         str(workflow_path.relative_to(tmp_path)),
+        *(str(path.relative_to(tmp_path)) for path in verifier_source_paths),
     )
     _fixture_git(tmp_path, "commit", "-m", "fixture: canonical base")
     implementation_base_sha = _fixture_git(tmp_path, "rev-parse", "HEAD")
@@ -4036,8 +4050,24 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
             "loop-product-event-"
             + dispatcher.canonical_json_sha256(review_event)
         )
+        done_event = {
+            "ts": G2_CLOSEOUT_AT,
+            "agent": closeout_task["owner"],
+            "type": "done",
+            "task_id": closeout_task["id"],
+            "message": closeout_task["next"],
+            "delivery": deepcopy(closeout_task["delivery"]),
+        }
+        done_event["event_id"] = (
+            "ai-status-event-"
+            + dispatcher.canonical_json_sha256(done_event)
+        )
         activity_log.write_text(
-            json.dumps(review_event, ensure_ascii=False) + "\n",
+            "\n".join(
+                json.dumps(event, ensure_ascii=False)
+                for event in (review_event, done_event)
+            )
+            + "\n",
             encoding="utf-8",
         )
         return artifact_head_sha, merge_target_sha
@@ -4436,14 +4466,23 @@ def test_g2_v4_canonical_query_is_read_only_qualified_and_identity_scoped(
         assert f"payload #>> '{{metadata,{field}}}' <> ''" in query
     assert "payload #> '{correlation_envelope,trace_id}' IN" in query
     assert "jsonb_typeof(payload -> 'trace_id') = 'string'" in query
-    assert "THEN payload #>> '{correlation_envelope,trace_id}' END = $7" in query
-    assert observed["args"][1:7] == (
-        g2_v2_fixture["identity"]["tenant_id"],
-        g2_v2_fixture["identity"]["environment"],
-        g2_v2_fixture["identity"]["journey_id"],
-        g2_v2_fixture["identity"]["run_id"],
-        g2_v2_fixture["identity"]["signal_id"],
-        g2_v2_fixture["identity"]["trace_id"],
+    assert "THEN payload #>> '{correlation_envelope,trace_id}' END = $17" in query
+    for field in (
+        "loop_run_id",
+        "strategy_id",
+        "runtime_id",
+        "binding_id",
+        "capital_pool_id",
+        "persona_id",
+        "persona_capital_binding_id",
+        "artifact_id",
+        "artifact_version",
+        "plan_id",
+    ):
+        assert field in query
+    assert observed["args"][1:] == tuple(
+        g2_v2_fixture["identity"][field]
+        for field in g2_v2_fixture["dispatcher"].G2_STABLE_IDENTITY_FIELDS
     )
     assert source_identity == {
         "database": "pantheon",
@@ -4726,6 +4765,85 @@ def test_g2_v4_rejects_missing_governed_reviewer_approval_event(
         )
 
 
+def test_g2_v4_rejects_missing_governed_owner_done_event(
+    g2_v2_fixture: dict,
+) -> None:
+    activity_log = g2_v2_fixture["dispatcher"].LOG_PATH
+    records = activity_log.read_text(encoding="utf-8").splitlines()
+    activity_log.write_text(records[0] + "\n", encoding="utf-8")
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="owner closeout audit is not exact",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+@pytest.mark.parametrize(
+    "outbox_key",
+    ["status_archive_outbox", "status_activity_outbox"],
+)
+def test_g2_v4_rejects_pending_closeout_status_transaction(
+    g2_v2_fixture: dict,
+    outbox_key: str,
+) -> None:
+    g2_v2_fixture["state"][outbox_key] = {"pending": True}
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="closeout has a pending status transaction",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v4_rejects_closeout_without_recorded_delivery_timestamp(
+    g2_v2_fixture: dict,
+) -> None:
+    g2_v2_fixture["closeout_task"]["delivery"].pop("recorded_at")
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="closeout delivery truth is not accepted",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v4_rejects_drifted_verifier_source_bytes(
+    g2_v2_fixture: dict,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    source = (
+        dispatcher.REPO_ROOT
+        / g2_v2_fixture["contract"]["verifier_source_files"][0]["path"]
+    )
+    source.write_bytes(source.read_bytes() + b"\n# drift\n")
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="verifier source bytes drifted",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
 def test_g2_v2_rejects_stale_evidence(g2_v2_fixture: dict) -> None:
     evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
     evidence["issued_at"] = "2026-07-13T00:03:00Z"
@@ -4737,6 +4855,23 @@ def test_g2_v2_rejects_stale_evidence(g2_v2_fixture: dict) -> None:
         g2_v2_fixture["catalog"],
         now=g2_v2_fixture["now"],
     )
+
+
+def test_g2_v4_rejects_canonical_rows_stale_against_verifier_now(
+    g2_v2_fixture: dict,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    verifier_now = datetime(2026, 7, 16, 0, 1, 30, tzinfo=timezone.utc)
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="canonical lifecycle is stale",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=verifier_now,
+        )
 
 
 def test_g2_v4_rejects_non_authoritative_status_root(
@@ -4787,6 +4922,67 @@ def test_g2_v2_rejects_false_active_or_archive_closeout(
         g2_v2_fixture["catalog"],
         now=g2_v2_fixture["now"],
     )
+
+
+def test_g2_v4_rejects_active_done_without_source_approval_truth(
+    g2_v2_fixture: dict,
+) -> None:
+    target = g2_v2_fixture["state"]["tasks"][0]
+    target.pop("source_ref")
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="closeout source provenance mismatch",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v4_rejects_minimal_archived_done_without_admitted_review(
+    g2_v2_fixture: dict,
+) -> None:
+    target = g2_v2_fixture["state"]["tasks"].pop()
+    minimal = {
+        key: deepcopy(target[key])
+        for key in (
+            "id",
+            "status",
+            "terminal_outcome",
+            "owner",
+            "reviewer",
+            "last_update",
+            "next",
+            "delivery",
+        )
+    }
+    _write_json_artifact(
+        g2_v2_fixture["paths"]["archive"],
+        {
+            "version": 1,
+            "task_id": target["id"],
+            "archived_at": target["last_update"],
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": minimal,
+            "handoffs": [],
+            "blockers": [],
+        },
+    )
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="closeout review_file mismatch",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
 
 
 def test_g2_v2_rejects_missing_canonical_row(g2_v2_fixture: dict) -> None:
@@ -5094,6 +5290,8 @@ def test_g2_v2_rejects_archive_closeout_before_merged_delivery(
     _archive_closeout(g2_v2_fixture)
     archive = _read_artifact(g2_v2_fixture["paths"]["archive"])
     archive["archived_at"] = G2_VERDICT_AT
+    archive["task"]["last_update"] = G2_VERDICT_AT
+    archive["task"]["delivery"]["recorded_at"] = G2_VERDICT_AT
     _write_json_artifact(g2_v2_fixture["paths"]["archive"], archive)
 
     dispatcher = g2_v2_fixture["dispatcher"]
@@ -5118,6 +5316,7 @@ def test_g2_v4_rejects_closeout_after_verifier_now(
         if task.get("id") == target_id
     )
     closeout["last_update"] = "2026-07-15T00:04:00Z"
+    closeout["delivery"]["recorded_at"] = "2026-07-15T00:04:00Z"
 
     dispatcher = g2_v2_fixture["dispatcher"]
     with pytest.raises(
@@ -6045,6 +6244,64 @@ def test_valid_g2_release_is_durable_and_does_not_recheck_wall_clock(
     assert changed_again is False
 
 
+def test_new_g2_release_rechecks_freshness_immediately_before_commit(
+    g2_v2_fixture: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    tasks, _ = _park_complete_g2_catalog(g2_v2_fixture, monkeypatch)
+    admission = dispatcher._validate_g2_evidence(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        now=g2_v2_fixture["now"],
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "resolve_g2_evidence_admission",
+        lambda state, catalog: deepcopy(admission),
+    )
+    _, _, _, logs, changed = dispatcher.materialize(
+        state=g2_v2_fixture["state"],
+        tasks=tasks,
+        catalog=g2_v2_fixture["catalog"],
+        catalog_digest=g2_v2_fixture["catalog_digest"],
+        timestamp=G2_RELEASED_AT,
+    )
+    assert changed is True
+    dispatcher.enqueue_activity_outbox(
+        g2_v2_fixture["state"],
+        logs,
+        catalog=g2_v2_fixture["catalog"],
+        catalog_digest=g2_v2_fixture["catalog_digest"],
+    )
+    release = g2_v2_fixture["state"]["program_sequencing_releases"][
+        g2_v2_fixture["catalog"]["program_id"]
+    ]
+    assert release["g2_expires_at"] == G2_EXPIRES_AT
+    assert release["owner_closeout_event_sha256"] == admission[
+        "owner_closeout_event_sha256"
+    ]
+    dispatcher.validate_g2_release_fresh_at_commit(
+        g2_v2_fixture["state"],
+        g2_v2_fixture["catalog"],
+        g2_v2_fixture["catalog_digest"],
+        now=g2_v2_fixture["now"],
+    )
+    expired = datetime.fromisoformat(
+        release["g2_fresh_until"].replace("Z", "+00:00")
+    ) + timedelta(seconds=1)
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="expired before atomic status commit",
+    ):
+        dispatcher.validate_g2_release_fresh_at_commit(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            g2_v2_fixture["catalog_digest"],
+            now=expired,
+        )
+
+
 def test_pending_release_recovery_uses_committed_admission_after_artifact_drift(
     g2_v2_fixture: dict,
     monkeypatch: pytest.MonkeyPatch,
@@ -6367,12 +6624,12 @@ def test_release_gate_opens_once_for_valid_g2_exact_set(
     )
 
     assert calls == 1
-    assert created == []
-    assert len(preserved) == 48
-    by_id = {task["id"]: task for task in g2_v2_fixture["state"]["tasks"]}
-    assert by_id["LOOP-PROD-AUTH-001"]["status"] == "todo"
     gated_ids = set(
         g2_v2_fixture["catalog"]["release_gate"]["gated_task_ids"]
     )
+    assert set(created) == gated_ids
+    assert len(preserved) == 29
+    by_id = {task["id"]: task for task in g2_v2_fixture["state"]["tasks"]}
+    assert by_id["LOOP-PROD-AUTH-001"]["status"] == "todo"
     assert all(by_id[task_id]["status"] == "todo" for task_id in gated_ids)
     assert changed is True

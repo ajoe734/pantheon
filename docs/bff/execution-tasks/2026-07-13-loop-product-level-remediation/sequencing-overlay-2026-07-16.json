@@ -105,6 +105,20 @@
     "hosted_probe_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/hosted-lifecycle-proof.v1.json",
     "canonical_record_bundle_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/g2-canonical-records.v4.json",
     "canonical_source_resolution": "live_read_only_canonical_identity_and_projection_generation_v2",
+    "verifier_source_files": [
+      {
+        "path": "services/trade_journey/hosted_lifecycle_probe.py",
+        "sha256": "c3f098e8034ff4040bd8859066844e5e2681cbdbd26946584c5b6bab7e5f7c07"
+      },
+      {
+        "path": "services/trade_journey/lifecycle_projector.py",
+        "sha256": "43473f121f5bde17435dbd401697ac99455eb1ebdc534ee93b29318df8cb496f"
+      },
+      {
+        "path": "services/trade_journey/correlation_envelope.py",
+        "sha256": "60c6877fa558640ee91570fc430f8b3ab935c3d2905d4ce55027fe8e04b5c4b1"
+      }
+    ],
     "canonical_telemetry_dsn_env": "TELEMETRY_DB_DSN",
     "canonical_database_name": "pantheon",
     "canonical_database_role": "pantheon_app",

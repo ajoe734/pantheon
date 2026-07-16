@@ -19,10 +19,10 @@ SEQUENCING_ADDENDUM_SHA256 = (
 )
 MERGE_PR_3737_SHA = "a4b5df9a51bc3da6df0d39d422d9db4edc553aba"
 EFFECTIVE_CATALOG_SHA256 = (
-    "875f2cea8c3120f0024cf902e4718c7c15f521a9b61f0bb43356c1bb56ec8e11"
+    "44914a3590c3c750dee6d74565ec96b3f1b67f1ae6a1e3804d3d2ae8ae202bc4"
 )
 SEQUENCING_OVERLAY_SHA256 = (
-    "ec4e2d0209fdf430a279a3dd669923f9c3b4abb84d785501993c425b528b55b6"
+    "7596b40ac4a0cd25b801196798c8eb54706f6a9cecfa764ff5f751165f0db11e"
 )
 RELEASE_GATE_ID = "hardening-after-g2-paper-trade-v1"
 RELEASE_PREDICATE = "g2_evidence_contract_v4_valid"
@@ -39,7 +39,7 @@ SOURCE_GRAPH_PROJECTION_SHA256 = (
     "163f6686624e41120ba752de938e0283202026695358d7e4eca274fbad671cea"
 )
 EFFECTIVE_GRAPH_PROJECTION_SHA256 = (
-    "a24617c5c6cfe798f668443a097818e9a3f8c720ec5d2d0c35230262346126b1"
+    "899c24e25c8c5a713b81be650ce847dc1a032fff2205ac73876a1ebfd82d1d9a"
 )
 BASE_SOURCE_REF_FIELDS = {
     "plan",
@@ -268,6 +268,8 @@ RELEASE_RECORD_FIELDS = {
     "sequencing_epoch_sha256",
     "released_at",
     "g2_issued_at",
+    "g2_expires_at",
+    "g2_fresh_until",
     "closeout_at",
     "g2_evidence_sha256",
     "canonical_record_bundle_sha256",
@@ -286,6 +288,7 @@ RELEASE_RECORD_FIELDS = {
     "reviewer",
     "review_binding_sha256",
     "review_approval_event_sha256",
+    "owner_closeout_event_sha256",
     "review_verdict_sha256",
     "release_admission_sha256",
     "released_task_transitions",
@@ -309,8 +312,11 @@ RELEASE_ADMISSION_FIELDS = {
     "reviewer",
     "review_binding_sha256",
     "review_approval_event_sha256",
+    "owner_closeout_event_sha256",
     "review_verdict_sha256",
     "g2_issued_at",
+    "g2_expires_at",
+    "g2_fresh_until",
     "closeout_at",
 }
 SOURCE_ATTESTATION_FIELDS = {
@@ -739,6 +745,7 @@ def _validated_release_record(
             "target_task_snapshot_sha256",
             "review_binding_sha256",
             "review_approval_event_sha256",
+            "owner_closeout_event_sha256",
             "review_verdict_sha256",
             "sequencing_epoch_sha256",
             "release_admission_sha256",
@@ -807,17 +814,25 @@ def _validated_release_record(
     applied_at = parse_utc(epoch.get("applied_at"))
     closeout_at = parse_utc(record.get("closeout_at"))
     g2_issued_at = parse_utc(record.get("g2_issued_at"))
+    g2_expires_at = parse_utc(record.get("g2_expires_at"))
+    g2_fresh_until = parse_utc(record.get("g2_fresh_until"))
     released_at = parse_utc(record.get("released_at"))
     if (
         applied_at is None
         or closeout_at is None
         or g2_issued_at is None
+        or g2_expires_at is None
+        or g2_fresh_until is None
         or released_at is None
         or not _is_exact_utc_z(record.get("closeout_at"))
         or not _is_exact_utc_z(record.get("g2_issued_at"))
+        or not _is_exact_utc_z(record.get("g2_expires_at"))
+        or not _is_exact_utc_z(record.get("g2_fresh_until"))
         or not _is_exact_utc_z(record.get("released_at"))
         or g2_issued_at > closeout_at
         or closeout_at > released_at
+        or released_at > g2_fresh_until
+        or g2_fresh_until > g2_expires_at
         or applied_at > released_at
     ):
         return None
