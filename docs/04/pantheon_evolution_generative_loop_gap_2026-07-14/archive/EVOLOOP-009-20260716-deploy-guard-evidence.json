@@ -1,0 +1,83 @@
+{
+  "schema_version": "1.0",
+  "task_id": "EVOLOOP-009",
+  "captured_at": "2026-07-16T01:35:39Z",
+  "outcome": "blocked_pre_closeout",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "resolved_since_previous_evidence": {
+    "dev_secrets_present": [
+      "DEV_BFF_JWT_SECRET",
+      "DEV_BFF_OIDC_CLIENT_ID",
+      "DEV_BFF_OIDC_CLIENT_SECRET",
+      "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN"
+    ],
+    "strict_secret_floor": "passes in runs 29462890670, 29464058808, 29464170884, 29464312537, and 29464359888",
+    "policy_learning_dependency": {
+      "missing_dependency_run": "https://github.com/ajoe734/pantheon/actions/runs/29462890670",
+      "failure": "policy-learning-svc restarted on ModuleNotFoundError: No module named 'jsonschema'",
+      "base_fix_pr": "https://github.com/ajoe734/pantheon/pull/3727",
+      "task_alignment_pr": "https://github.com/ajoe734/pantheon/pull/3728",
+      "task_merge_sha": "f43e10a3d288ca19aa6651b0d73aa3d44f1289db"
+    }
+  },
+  "local_validation": {
+    "docker_build": "docker compose -f docker-compose.yml build policy-learning-svc",
+    "container_import_smoke": "docker run --rm evoloop-009-policy-learning-svc python -c \"import jsonschema; from services.research.imitation.bc_trainer import train; from services.research.imitation.eval_metrics import evaluate; import main; print('policy-learning import smoke ok')\"",
+    "pytest": "python3 -m pytest -q services/research/imitation/test_preference_models.py services/research/imitation/test_trajectory_models.py services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py",
+    "pytest_result": "41 passed"
+  },
+  "branch_and_pr": {
+    "branch": "task/EVOLOOP-009",
+    "pr": "https://github.com/ajoe734/pantheon/pull/3728",
+    "pr_state": "MERGED",
+    "merge_sha": "f43e10a3d288ca19aa6651b0d73aa3d44f1289db",
+    "branch_ci_runs": [
+      {
+        "run": "https://github.com/ajoe734/pantheon/actions/runs/29464211803",
+        "conclusion": "success"
+      },
+      {
+        "run": "https://github.com/ajoe734/pantheon/actions/runs/29464213513",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "latest_dev_deploy_attempts": [
+    {
+      "run": "https://github.com/ajoe734/pantheon/actions/runs/29464312537",
+      "target_sha": "55b2202bbf02f1ff58245728447b03320d9705a5",
+      "conclusion": "cancelled",
+      "stage": "Checkout requested ref",
+      "accepted_as_closeout_evidence": false
+    },
+    {
+      "run": "https://github.com/ajoe734/pantheon/actions/runs/29464359888",
+      "target_sha": "f43e10a3d288ca19aa6651b0d73aa3d44f1289db",
+      "conclusion": "cancelled",
+      "stage": "Checkout requested ref",
+      "accepted_as_closeout_evidence": false
+    }
+  ],
+  "deploy_guard_blocker": {
+    "observed": true,
+    "workflow_id": "269991390",
+    "workflow_state_after_probe": "disabled_manually",
+    "guard_command_summary": "local bash guard repeatedly disables Pantheon Nonprod Deploy and cancels all queued/in-progress Pantheon deploy runs except allowlisted run 29464403186",
+    "allowlisted_run": "https://github.com/ajoe734/pantheon/actions/runs/29464403186",
+    "allowlisted_conclusion": "success",
+    "allowlisted_head_branch": "publish/v2026.07.15.2",
+    "allowlisted_head_sha": "be105af5f1b381f518d767efb9f72813139d5077",
+    "allowlisted_is_latest_dev": false,
+    "latest_dev_sha": "f43e10a3d288ca19aa6651b0d73aa3d44f1289db",
+    "latest_dev_ancestor_of_allowlisted_sha": false,
+    "allowlisted_sha_has_policy_learning_jsonschema": false,
+    "allowlisted_evolution_dispatch_probe": "skipped",
+    "allowlisted_canonical_lifecycle_probe": "skipped",
+    "allowlisted_openclaw_assistant_smoke": "skipped"
+  },
+  "closeout_decision": {
+    "mark_done": false,
+    "reason": "Latest dev strict root deploy with evolution/canonical probes has not completed; hosted browser, BFF identity, and telemetry gates have not been re-proven at the merged dev SHA."
+  }
+}
