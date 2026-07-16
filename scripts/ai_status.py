@@ -87,6 +87,7 @@ from common import (
     prepare_activity_audit_unlocked,
     read_activity_log_tail_bytes,
     rotate_activity_log_unlocked,
+    stream_logical_activity,
 )
 
 # Derived dashboard rendering intentionally uses an atomic projection-only
@@ -1381,39 +1382,12 @@ def _activity_audit_sources() -> list[Path]:
 def _activity_event_index_unlocked() -> dict[str, str]:
     prepare_activity_audit_unlocked(LOG_FILE)
     result: dict[str, str] = {}
-    for source in _activity_audit_sources():
-        if source.suffix == ".gz":
-            with gzip.open(source, "rt", encoding="utf-8", errors="strict") as handle:
-                text = handle.read()
-        else:
-            text = source.read_text(encoding="utf-8", errors="strict")
-        source_ids: set[str] = set()
-        for line_number, line in enumerate(text.splitlines(), start=1):
-            if not line.strip():
-                continue
-            entry = json.loads(line)
-            if not isinstance(entry, dict):
-                raise RuntimeError(
-                    f"activity audit row is not an object: {source}:{line_number}"
-                )
-            event_id = str(entry.get("event_id") or "").strip()
-            if not event_id:
-                continue
-            if event_id in source_ids:
-                raise RuntimeError(
-                    f"duplicate activity event_id in {source}: {event_id}"
-                )
-            source_ids.add(event_id)
-            digest = _canonical_json_sha256(entry)
-            existing = result.get(event_id)
-            if existing is not None:
-                detail = (
-                    "payload mismatch"
-                    if existing != digest
-                    else "duplicate across sources"
-                )
-                raise RuntimeError(f"activity event_id {detail}: {event_id}")
-            result[event_id] = digest
+    for entry, source, line_number in stream_logical_activity(LOG_FILE):
+        event_id = str(entry.get("event_id") or "").strip()
+        if not event_id:
+            continue
+        digest = _canonical_json_sha256(entry)
+        result[event_id] = digest
     return result
 
 
