@@ -42,10 +42,15 @@ live dev volume.
 All added to
 `services/reconciliation-drift/tests/test_reconciliation_drift_store.py`:
 
-- `test_incident_pr3753_concurrent_distinct_writers_can_lose_an_update`
+- `test_incident_pr3753_concurrent_distinct_writers_lose_exactly_one_update`
   loads the exact PR #3753 source via
   `git show d55a0caf7772ceb15b7914fe74856929f96d0283:services/reconciliation-drift/store.py`
-  and reproduces two synchronized process-level writers losing an update.
+  and uses a shared `multiprocessing.Barrier` so both writer processes
+  complete their pre-write read of the map before either one is allowed to
+  replace the file. This forces the loss deterministically (asserts exactly
+  one of the two distinct records survives) on every run, independent of OS
+  scheduling; it replaces an earlier unsynchronized 60-write stress-race
+  version of this test that the reviewer rejected as non-deterministic.
 - `test_fixed_store_repeated_concurrent_process_writes_retain_every_record`
   proves the fixed store retains every record (4 writers x 40 puts each,
   repeated across 3 trials) under real concurrent processes.
@@ -60,15 +65,19 @@ All added to
   `test_json_store_treats_unrecoverable_map_as_fail_closed_error` each
   prove the read and the put both raise `ReconciliationStoreError`, and
   that the original bytes and SHA-256 are unchanged afterward.
-- `test_json_store_simulated_write_failure_keeps_original_and_cleans_tmp`
+- `test_json_store_simulated_replace_failure_keeps_original_and_cleans_tmp`
   monkeypatches `os.replace` to fail and proves the original file and its
   SHA-256 are unchanged and no `.tmp` file is left behind.
+- `test_json_store_simulated_fsync_failure_keeps_original_and_cleans_tmp`
+  separately monkeypatches `os.fsync` to fail on the temp file, before
+  `os.replace` is ever reached, and proves the same: original bytes and
+  SHA-256 unchanged, no `.tmp` file left behind.
 
 ## Verification
 
 ```text
 python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py -q
-10 passed
+11 passed
 
 python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py -q
 6 passed
@@ -77,7 +86,7 @@ python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_
 20 passed
 
 python3 -m pytest services/reconciliation-drift/tests/ -q
-67 passed
+68 passed
 
 git diff --check
 (no output; clean)

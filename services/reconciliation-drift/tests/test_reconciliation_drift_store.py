@@ -60,6 +60,34 @@ def _worker_put_many(module_path_str: str, module_name: str, data_dir_str: str, 
         store.put_evaluation({"evaluation_id": f"{prefix}-{index}", "status": "ok"})
 
 
+def _worker_incident_put_after_barrier(
+    module_path_str: str,
+    module_name: str,
+    data_dir_str: str,
+    evaluation_id: str,
+    barrier,
+) -> None:
+    """Put one record on the historical (PR #3753) store, but only replace
+    the file once every writer has completed its own pre-write read.
+
+    ``_write_map`` runs strictly after ``_read_map`` inside ``_put_record``,
+    so waiting on the barrier here guarantees both processes have already
+    read the (still-empty) map before either one replaces the file. That
+    removes all dependence on OS scheduling: the loss is forced every run,
+    not just likely under contention.
+    """
+    module = _load_module_from_path(Path(module_path_str), module_name)
+    store = module.ReconciliationDriftStore(data_dir_str)
+    original_write_map = store._write_map
+
+    def _write_map_after_barrier(path, payload):
+        barrier.wait(timeout=30)
+        return original_write_map(path, payload)
+
+    store._write_map = _write_map_after_barrier
+    store.put_evaluation({"evaluation_id": evaluation_id, "status": "ok"})
+
+
 def test_json_store_recovers_concatenated_maps_and_rewrites_valid_json(tmp_path: Path) -> None:
     module = _load_store_module()
     store = module.ReconciliationDriftStore(tmp_path)
@@ -168,7 +196,7 @@ def test_json_store_fails_closed_on_invalid_map_values(tmp_path: Path) -> None:
     assert hashlib.sha256(surviving_bytes).hexdigest() == original_sha
 
 
-def test_json_store_simulated_write_failure_keeps_original_and_cleans_tmp(
+def test_json_store_simulated_replace_failure_keeps_original_and_cleans_tmp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module = _load_store_module()
@@ -193,39 +221,75 @@ def test_json_store_simulated_write_failure_keeps_original_and_cleans_tmp(
     assert leftover_tmp_files == []
 
 
-def test_incident_pr3753_concurrent_distinct_writers_can_lose_an_update(tmp_path: Path) -> None:
-    """Reproduces the do-not-merge finding on the PR #3753 implementation.
+def test_json_store_simulated_fsync_failure_keeps_original_and_cleans_tmp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Injects a flush/fsync failure on the temporary file, before replace.
 
-    Two processes race a full unlocked read-modify-write cycle against the
-    same map file. Without a transaction-scoped lock, both can read the map
-    before either replaces it, so the second replace silently discards the
-    first writer's update.
+    This is a distinct failure point from ``os.replace`` failing: it proves
+    the durable-write step itself (flush the temp file, fsync it) fails
+    closed too, leaving the source bytes untouched and every task-created
+    temporary file removed, without ever reaching ``os.replace``.
+    """
+    module = _load_store_module()
+    store = module.ReconciliationDriftStore(tmp_path)
+    store.put_alert_handoff({"alert_id": "alert-a", "status": "sent"})
+    original = store.alerts_path.read_bytes()
+    original_sha = hashlib.sha256(original).hexdigest()
+
+    def _boom(*args, **kwargs):
+        raise OSError("simulated fsync failure")
+
+    monkeypatch.setattr(module.os, "fsync", _boom)
+
+    with pytest.raises(OSError):
+        store.put_alert_handoff({"alert_id": "alert-b", "status": "sent"})
+
+    surviving_bytes = store.alerts_path.read_bytes()
+    assert surviving_bytes == original
+    assert hashlib.sha256(surviving_bytes).hexdigest() == original_sha
+
+    leftover_tmp_files = list(tmp_path.glob(f".{store.alerts_path.name}.*.tmp"))
+    assert leftover_tmp_files == []
+
+
+def test_incident_pr3753_concurrent_distinct_writers_lose_exactly_one_update(tmp_path: Path) -> None:
+    """Deterministically reproduces the do-not-merge finding on PR #3753.
+
+    A shared barrier forces both writer processes to complete their
+    pre-write read of the (still-empty) map before either one is allowed to
+    replace the file. This does not depend on OS scheduling: whichever
+    writer replaces the file first or second, the other one always started
+    from the same stale empty read, so the loser's record is discarded
+    every single run.
     """
     module_path = _write_incident_store_module(tmp_path / "incident")
     data_dir = tmp_path / "incident" / "data"
-    count = 60
+    ctx = multiprocessing.get_context("fork")
+    barrier = ctx.Barrier(2)
 
     processes = [
-        multiprocessing.Process(
-            target=_worker_put_many,
-            args=(str(module_path), "incident_store_worker_a", str(data_dir), "a", count),
+        ctx.Process(
+            target=_worker_incident_put_after_barrier,
+            args=(str(module_path), "incident_barrier_worker_a", str(data_dir), "eval-a", barrier),
         ),
-        multiprocessing.Process(
-            target=_worker_put_many,
-            args=(str(module_path), "incident_store_worker_b", str(data_dir), "b", count),
+        ctx.Process(
+            target=_worker_incident_put_after_barrier,
+            args=(str(module_path), "incident_barrier_worker_b", str(data_dir), "eval-b", barrier),
         ),
     ]
     for process in processes:
         process.start()
     for process in processes:
-        process.join(timeout=60)
+        process.join(timeout=30)
         assert process.exitcode == 0
 
     payload = json.loads((data_dir / "drift_evaluations.json").read_text(encoding="utf-8"))
-    assert len(payload) < count * 2, (
-        "expected the historical unlocked implementation to lose at least one "
-        "concurrent update, proving the incident this task fixes"
+    assert len(payload) == 1, (
+        "expected the historical unlocked implementation to deterministically "
+        "lose exactly one of the two distinct concurrent records"
     )
+    assert set(payload) in ({"eval-a"}, {"eval-b"})
 
 
 def test_fixed_store_repeated_concurrent_process_writes_retain_every_record(tmp_path: Path) -> None:
