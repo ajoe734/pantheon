@@ -36,6 +36,7 @@ DEFAULT_ARCHIVE_EXCLUDED_TASK_IDS = {
     "LOOP-PROD-000",
     "LOOP-PROD-001",
     "LOOP-PROD-002",
+    "LOOP-PROD-PLANNING-BRIEFS-001",
 }
 
 FROZEN_ARCHIVE_REPLAY_TASK_IDS = (
@@ -600,7 +601,7 @@ def _task_from_archive_snapshot(
     task = snapshot_data.get("task")
     if not isinstance(task, dict):
         return None, "archive snapshot task object is missing"
-    task_id = str(task.get("id") or snapshot_data.get("task_id") or "").strip()
+    task_id = str(task.get("id") or "").strip()
     if not task_id:
         return None, "archive snapshot task.id is missing"
 
@@ -642,28 +643,51 @@ def audit_archive_root(
     excluded_task_ids: set[str],
     frozen_task_ids: tuple[str, ...] = FROZEN_ARCHIVE_REPLAY_TASK_IDS,
 ) -> dict[str, Any]:
-    snapshot_paths = sorted(archive_root.glob("LOOP-PROD*.json"))
-    snapshot_paths_by_id = {path.stem: path for path in snapshot_paths}
     frozen_task_id_set = set(frozen_task_ids)
+    frozen_snapshot_paths_by_id = {
+        task_id: archive_root / f"{task_id}.json" for task_id in frozen_task_ids
+    }
+    archive_task_ids_present: set[str] = set()
+    if archive_root.exists():
+        for path in sorted(archive_root.iterdir()):
+            if (
+                path.is_file()
+                and path.suffix == ".json"
+                and path.name.startswith("LOOP-PROD")
+            ):
+                archive_task_ids_present.add(path.stem)
+
     results: list[dict[str, Any]] = []
     excluded: list[dict[str, str]] = []
     source_set_errors: list[str] = []
 
+    duplicate_frozen_task_ids = sorted(
+        {
+            task_id
+            for index, task_id in enumerate(frozen_task_ids)
+            if task_id in frozen_task_ids[:index]
+        }
+    )
+    for task_id in duplicate_frozen_task_ids:
+        source_set_errors.append(f"duplicate frozen archive replay task id: {task_id}")
+
     missing_task_ids = [
-        task_id for task_id in frozen_task_ids if task_id not in snapshot_paths_by_id
+        task_id
+        for task_id, snapshot_path in frozen_snapshot_paths_by_id.items()
+        if not snapshot_path.is_file()
     ]
     for task_id in missing_task_ids:
         source_set_errors.append(f"missing frozen archive snapshot: {task_id}.json")
 
     unexpected_task_ids = sorted(
-        set(snapshot_paths_by_id) - frozen_task_id_set - excluded_task_ids
+        archive_task_ids_present - frozen_task_id_set - excluded_task_ids
     )
     for task_id in unexpected_task_ids:
         source_set_errors.append(f"unexpected LOOP-PROD archive snapshot: {task_id}.json")
 
     for task_id in sorted(excluded_task_ids):
-        snapshot_path = snapshot_paths_by_id.get(task_id)
-        if snapshot_path:
+        snapshot_path = archive_root / f"{task_id}.json"
+        if snapshot_path.is_file():
             excluded.append(
                 {
                     "task_id": task_id,
@@ -673,9 +697,10 @@ def audit_archive_root(
             )
 
     seen_replay_task_ids: dict[str, str] = {}
+    seen_snapshot_task_ids: dict[str, str] = {}
     for frozen_task_id in frozen_task_ids:
-        snapshot_path = snapshot_paths_by_id.get(frozen_task_id)
-        if snapshot_path is None:
+        snapshot_path = frozen_snapshot_paths_by_id[frozen_task_id]
+        if not snapshot_path.is_file():
             continue
 
         task_id_from_path = snapshot_path.stem
@@ -734,6 +759,24 @@ def audit_archive_root(
 
         precheck_gaps: list[str] = []
         replay_task_id = str(task["id"])
+        snapshot_task_id = str(snapshot_data.get("task_id") or "").strip()
+        if not snapshot_task_id:
+            precheck_gaps.append("archive snapshot top-level task_id is missing")
+        elif snapshot_task_id != task_id_from_path:
+            precheck_gaps.append(
+                "archive filename/task_id mismatch: "
+                f"file {task_id_from_path}.json contains task_id {snapshot_task_id}"
+            )
+        if snapshot_task_id:
+            if snapshot_task_id in seen_snapshot_task_ids:
+                precheck_gaps.append(
+                    "duplicate archive snapshot task_id: "
+                    f"{snapshot_task_id} also appears in "
+                    f"{seen_snapshot_task_ids[snapshot_task_id]}"
+                )
+            else:
+                seen_snapshot_task_ids[snapshot_task_id] = display_path
+
         if replay_task_id != task_id_from_path:
             precheck_gaps.append(
                 "archive filename/task ID mismatch: "
@@ -751,7 +794,9 @@ def audit_archive_root(
         classification = _classify_archive_replay_result(gaps)
         results.append(
             {
-                "task_id": task["id"],
+                "task_id": task_id_from_path,
+                "snapshot_task_id": snapshot_task_id,
+                "task_object_id": replay_task_id,
                 "snapshot": display_path,
                 "snapshot_sha256_before": before_hash,
                 "snapshot_sha256_after": after_hash,
@@ -767,7 +812,7 @@ def audit_archive_root(
                 "gap_count": len(gaps),
                 "gaps": gaps,
                 "required_follow_up_task_id": _follow_up_task_id(
-                    str(task["id"]),
+                    task_id_from_path,
                     classification,
                 ),
             }
@@ -792,8 +837,9 @@ def audit_archive_root(
         "source_root": str(archive_root),
         "selection": {
             "frozen_rule": (
-                "all live-root LOOP-PROD archive snapshots except governance/meta "
-                "LOOP-PROD-000, LOOP-PROD-001, and LOOP-PROD-002"
+                "fixed 18 task IDs from FROZEN_ARCHIVE_REPLAY_TASK_IDS; "
+                "governance/meta snapshots are excluded from unexpected-source "
+                "errors but never used to derive the replay set"
             ),
             "frozen_task_ids": list(frozen_task_ids),
             "included_task_ids": [result["task_id"] for result in results],
