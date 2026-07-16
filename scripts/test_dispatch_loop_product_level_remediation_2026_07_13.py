@@ -4021,7 +4021,7 @@ def test_g2_v2_rejects_product_evidence_leaf_symlink(
     dispatcher = g2_v2_fixture["dispatcher"]
     with pytest.raises(
         dispatcher.DispatchError,
-        match="G2 product evidence cannot be opened safely",
+        match="G2 product evidence must be a regular file",
     ):
         dispatcher._validate_g2_evidence(
             g2_v2_fixture["state"],
