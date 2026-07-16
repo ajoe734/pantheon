@@ -1094,6 +1094,10 @@ dump_dev_root_failure_diagnostics() {
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 operator-bff || true
   info "postgres logs after failure"
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 postgres || true
+  info "loop-run-projector-scheduler logs after failure"
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 loop-run-projector-scheduler || true
+  info "source-ingest-scheduler logs after failure"
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 source-ingest-scheduler || true
 }
 
 verify_dev_evolution_daily_sweep() {
