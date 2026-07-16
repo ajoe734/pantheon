@@ -1,5 +1,5 @@
 {
-  "scan_timestamp": "2026-07-16T18:12:32Z",
+  "scan_timestamp": "2026-07-16T18:35:46Z",
   "sources": [
     {
       "classification": "legacy_ts_std",
@@ -4635,13 +4635,13 @@
     {
       "classification": "active",
       "duplicate_ids_within": 0,
-      "event_id_line_count": 114,
-      "line_count": 1596,
+      "event_id_line_count": 115,
+      "line_count": 1628,
       "path": "ai-activity-log.jsonl",
-      "sha256_after": "6601414e0354a172a4837b6d2dc25e56938f7b66e4c279b8c701a63bb1136358",
-      "sha256_before": "6601414e0354a172a4837b6d2dc25e56938f7b66e4c279b8c701a63bb1136358",
+      "sha256_after": "6a412240d1a5c9a5b6c3fe2bde983b421528026b6691b54f24b9df6e33eb0467",
+      "sha256_before": "6a412240d1a5c9a5b6c3fe2bde983b421528026b6691b54f24b9df6e33eb0467",
       "stable": true,
-      "unique_event_ids_within": 114
+      "unique_event_ids_within": 115
     }
   ],
   "total_sources": 422

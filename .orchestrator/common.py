@@ -1489,11 +1489,16 @@ def _stream_logical_activity_unlocked(
                         # Query if prefix_1000_digest matches any suffix_1000_digest of an older file (which is NOT the immediate predecessor)
                         cursor = conn.cursor()
                         cursor.execute(
-                            "SELECT path FROM file_digests WHERE suffix_digest = ? AND path != ?",
-                            (prefix_1000_digest, str(prev_source) if prev_source else "")
+                            "SELECT path FROM file_digests WHERE suffix_digest = ? LIMIT 2",
+                            (prefix_1000_digest,)
                         )
-                        row = cursor.fetchone()
-                        if row:
+                        while True:
+                            row = cursor.fetchone()
+                            if not row:
+                                break
+                            matched_path = Path(row[0])
+                            if prev_source is not None and (matched_path == prev_source or matched_path.resolve() == prev_source.resolve()):
+                                continue
                             raise RuntimeError(f"Matching non-adjacent older tail detected: {row[0]} -> {source}")
 
                     # Setup helper to validate a row and check for duplicates using SQLite

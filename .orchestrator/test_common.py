@@ -1228,6 +1228,74 @@ class LogicalActivityReaderTests(unittest.TestCase):
         f1.unlink()
         f2.unlink()
 
+    def test_inserted_1609_adjacent_lineage_and_non_adjacent_failures(self):
+        # 1. Successful case: T1450Z -> T1609Z -> active (produces adjacent folds without false non-adjacent failure)
+        f_1450 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        f_1609 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1609Z.gz"
+
+        overlap_1 = [{"message": f"overlap_1_{i}"} for i in range(1000)]
+        overlap_2 = [{"message": f"overlap_2_{i}"} for i in range(1000)]
+
+        # f_1450: length 1001. suffix (last 1000 lines) is overlap_1.
+        entries_1450 = [{"message": "extra_1450"}] + overlap_1
+        self._write_gz(f_1450, entries_1450)
+
+        # f_1609: prefix (first 1000 lines) is overlap_1. suffix (last 1000 lines) is overlap_2.
+        entries_1609 = overlap_1 + overlap_2
+        self._write_gz(f_1609, entries_1609)
+
+        # active (log_path): prefix is overlap_2.
+        entries_active = overlap_2 + [{"message": "extra_active"}]
+        self.log_path.write_text(
+            "\n".join(json.dumps(e) for e in entries_active) + "\n",
+            encoding="utf-8"
+        )
+
+        # Run logical activity streaming
+        res = list(common.stream_logical_activity(self.log_path))
+        # Expected logical entries count: 1 + 1000 (overlap_1) + 1000 (overlap_2) + 1 = 2002
+        self.assertEqual(len(res), 2002)
+
+        # Clean up files
+        f_1450.unlink()
+        f_1609.unlink()
+        if self.log_path.exists():
+            self.log_path.unlink()
+
+        # 2. Failure case: a truly older non-adjacent match must fail
+        f_older = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f_1450 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        f_1609 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1609Z.gz"
+
+        # f_older has overlap_1 as suffix
+        entries_older = [{"message": f"older_{i}"} for i in range(500)] + overlap_1
+        self._write_gz(f_older, entries_older)
+
+        # f_1450 has completely different content (no overlap_1)
+        entries_1450 = [{"message": f"diff_1450_{i}"} for i in range(1001)]
+        self._write_gz(f_1450, entries_1450)
+
+        # f_1609 prefix matches overlap_1 (which matches f_older's suffix, not its immediate predecessor f_1450's suffix)
+        entries_1609 = overlap_1 + overlap_2
+        self._write_gz(f_1609, entries_1609)
+
+        # active log prefix matches overlap_2
+        entries_active = overlap_2 + [{"message": "extra_active"}]
+        self.log_path.write_text(
+            "\n".join(json.dumps(e) for e in entries_active) + "\n",
+            encoding="utf-8"
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Matching non-adjacent older tail detected"):
+            list(common.stream_logical_activity(self.log_path))
+
+        # Clean up
+        f_older.unlink()
+        f_1450.unlink()
+        f_1609.unlink()
+        if self.log_path.exists():
+            self.log_path.unlink()
+
     def test_recover_status_activity_outbox_integration(self):
         import sys
         sys.path.append(str(common.ROOT / "scripts"))

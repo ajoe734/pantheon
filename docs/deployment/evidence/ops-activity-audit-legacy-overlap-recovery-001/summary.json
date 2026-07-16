@@ -3381,16 +3381,16 @@
     }
   ],
   "identical_payload_duplicate_lines": 110,
-  "logical_entries": 1402540,
-  "logical_event_id_lines": 542,
+  "logical_entries": 1402572,
+  "logical_event_id_lines": 543,
   "payload_mismatch_duplicate_lines": 0,
-  "physical_event_id_lines": 652,
-  "physical_lines": 1642539,
-  "scan_time": "2026-07-16T18:12:32Z",
+  "physical_event_id_lines": 653,
+  "physical_lines": 1642571,
+  "scan_time": "2026-07-16T18:35:46Z",
   "total_byte_identical_folds": 240,
   "total_mismatch_folds": 0,
   "total_sources": 422,
-  "unique_event_ids": 542,
-  "unique_logical_event_ids": 542,
+  "unique_event_ids": 543,
+  "unique_logical_event_ids": 543,
   "within_source_duplicates": 0
 }

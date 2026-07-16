@@ -1,23 +1,23 @@
 # Verification Evidence: OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001
 
 ## Metadata
-- **Bootstrap Run ID**: `antigravity-bootstrap-20260716T1812Z`
+- **Bootstrap Run ID**: `antigravity-bootstrap-20260716T1835Z`
 - **Worktree Path**: `/tmp/pantheon-worker-worktrees/pantheon/ops-activity-audit-legacy-overlap-recovery-001`
-- **Base HEAD SHA**: `5d108e937ae59124e229710e8ab79e10f5f40800`
+- **Base HEAD SHA**: `f7810a60a0ba4bf02c83f0d1194cb330d96388d6`
 
 ## Metric Analysis
 | Metric | Count | Description |
 | :--- | :---: | :--- |
-| **Physical Lines** | 1,642,539 | Total lines scanned in all source files |
-| **Physical Event-ID Lines** | 652 | Lines with event_id in physical files |
-| **Unique Event IDs** | 542 | Distinct event_ids in physical files |
+| **Physical Lines** | 1,642,571 | Total lines scanned in all source files |
+| **Physical Event-ID Lines** | 653 | Lines with event_id in physical files |
+| **Unique Event IDs** | 543 | Distinct event_ids in physical files |
 | **Duplicate-ID Lines** | 110 | Duplicate event_id occurrences |
 | **Identical-Payload Dups** | 110 | Duplicate lines with identical payload |
 | **Payload-Mismatch Dups** | 0 | Duplicate lines with mismatching payload |
 | **Within-Source Duplicates** | 0 | Duplicate event_ids in the same file |
-| **Logical Entries** | 1,402,540 | Entries yielded by logical activity reader |
-| **Logical Event-ID Lines** | 542 | Lines with event_id in logical reader |
-| **Unique Logical Event IDs** | 542 | Distinct event_ids in logical reader |
+| **Logical Entries** | 1,402,572 | Entries yielded by logical activity reader |
+| **Logical Event-ID Lines** | 543 | Lines with event_id in logical reader |
+| **Unique Logical Event IDs** | 543 | Distinct event_ids in logical reader |
 | **Fold Counts** | 240 | Total legacy overlap folds identified |
 
 ## Summary of Legacy Log Folds
