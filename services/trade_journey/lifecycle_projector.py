@@ -19,11 +19,13 @@ import asyncio
 import copy
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import tempfile
 import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -203,42 +205,409 @@ class AtomicProjectionBundle:
         self.current = self.root / "current"
         self._before_switch = before_switch
 
+    @staticmethod
+    def _validate_immutable_generation(
+        final: Path,
+        expected: Mapping[str, Mapping[str, Any]],
+    ) -> None:
+        try:
+            metadata = final.lstat()
+            children = {path.name for path in final.iterdir()}
+        except OSError as exc:
+            raise LifecycleProjectionError(
+                "content-addressed projection generation is unreadable"
+            ) from exc
+        if (
+            final.is_symlink()
+            or not final.is_dir()
+            or metadata.st_mode & 0o222
+            or children != set(expected)
+        ):
+            raise LifecycleProjectionError(
+                "content-addressed projection generation is not immutable"
+            )
+        for name, payload in expected.items():
+            path = final / name
+            expected_raw = (
+                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n"
+            ).encode("utf-8")
+            try:
+                file_metadata = path.lstat()
+                raw = path.read_bytes()
+            except OSError as exc:
+                raise LifecycleProjectionError(
+                    "content-addressed projection file is unreadable"
+                ) from exc
+            if (
+                path.is_symlink()
+                or not path.is_file()
+                or file_metadata.st_mode & 0o222
+                or raw != expected_raw
+            ):
+                raise LifecycleProjectionError(
+                    "content-addressed projection generation digest collision"
+                )
+
     def publish(
         self,
         generation: int,
         journey_payload: Mapping[str, Any],
         loop_payload: Mapping[str, Any],
     ) -> Path:
-        self.generations.mkdir(parents=True, exist_ok=True)
-        generation_name = f"g{generation:012d}-{uuid.uuid4().hex[:12]}"
-        staging = self.generations / f".{generation_name}.tmp"
-        final = self.generations / generation_name
-        staging.mkdir()
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o755)
         try:
-            _atomic_write_json(staging / "trade_journey_events.json", journey_payload)
-            _atomic_write_json(staging / "loop_runs.json", loop_payload)
-            manifest = {
-                "schema_version": "pantheon.lifecycle-projection-bundle.v1",
-                "generation": generation,
-                "journey_sha256": _fingerprint(journey_payload),
-                "loop_runs_sha256": _fingerprint(loop_payload),
+            root_metadata = self.root.lstat()
+        except OSError as exc:
+            raise LifecycleProjectionError(
+                "projection bundle root is unreadable"
+            ) from exc
+        if (
+            self.root.is_symlink()
+            or not stat.S_ISDIR(root_metadata.st_mode)
+            or root_metadata.st_mode & 0o022
+        ):
+            raise LifecycleProjectionError(
+                "projection bundle root is not canonical"
+            )
+        lock_path = self.root / ".projection-publish.lock"
+        lock_flags = os.O_RDWR | os.O_CREAT
+        if hasattr(os, "O_CLOEXEC"):
+            lock_flags |= os.O_CLOEXEC
+        if hasattr(os, "O_NOFOLLOW"):
+            lock_flags |= os.O_NOFOLLOW
+        lock_fd: int | None = None
+        try:
+            lock_fd = os.open(lock_path, lock_flags, 0o600)
+            lock_metadata = os.fstat(lock_fd)
+            lock_path_metadata = lock_path.lstat()
+        except OSError as exc:
+            if lock_fd is not None:
+                os.close(lock_fd)
+            raise LifecycleProjectionError(
+                "projection publish lock is unavailable"
+            ) from exc
+        assert lock_fd is not None
+        try:
+            if (
+                lock_path.is_symlink()
+                or not stat.S_ISREG(lock_metadata.st_mode)
+                or not stat.S_ISREG(lock_path_metadata.st_mode)
+                or (lock_metadata.st_dev, lock_metadata.st_ino)
+                != (lock_path_metadata.st_dev, lock_path_metadata.st_ino)
+                or lock_metadata.st_uid != root_metadata.st_uid
+                or lock_metadata.st_mode & 0o077
+            ):
+                raise LifecycleProjectionError(
+                    "projection publish lock is not canonical"
+                )
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            return self._publish_locked(
+                generation,
+                journey_payload,
+                loop_payload,
+            )
+        finally:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
+
+    def _publish_locked(
+        self,
+        generation: int,
+        journey_payload: Mapping[str, Any],
+        loop_payload: Mapping[str, Any],
+    ) -> Path:
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o755)
+        try:
+            root_metadata = self.root.lstat()
+        except OSError as exc:
+            raise LifecycleProjectionError(
+                "projection bundle root is unreadable"
+            ) from exc
+        if (
+            self.root.is_symlink()
+            or not self.root.is_dir()
+            or root_metadata.st_mode & 0o022
+        ):
+            raise LifecycleProjectionError(
+                "projection bundle root is not canonical"
+            )
+        try:
+            self.generations.mkdir(mode=0o755)
+        except FileExistsError:
+            pass
+        try:
+            generations_metadata = self.generations.lstat()
+            generations_resolved = self.generations.resolve(strict=True)
+        except OSError as exc:
+            raise LifecycleProjectionError(
+                "projection generations root is unreadable"
+            ) from exc
+        if (
+            self.generations.is_symlink()
+            or not self.generations.is_dir()
+            or generations_metadata.st_mode & 0o022
+            or generations_resolved != self.root.resolve(strict=True) / "generations"
+        ):
+            raise LifecycleProjectionError(
+                "projection generations root is not canonical"
+            )
+        manifest = {
+            "schema_version": "pantheon.lifecycle-projection-bundle.v1",
+            "generation": generation,
+            "journey_sha256": _fingerprint(journey_payload),
+            "loop_runs_sha256": _fingerprint(loop_payload),
+        }
+        bundle_sha256 = _fingerprint(
+            {
+                "manifest": manifest,
+                "trade_journey_events": journey_payload,
+                "loop_runs": loop_payload,
             }
-            _atomic_write_json(staging / "manifest.json", manifest)
-            os.replace(staging, final)
+        )
+        generation_name = f"g{generation:012d}-{bundle_sha256}"
+        staging = self.generations / f".{generation_name}.{uuid.uuid4().hex}.tmp"
+        final = self.generations / generation_name
+        payloads = {
+            "manifest.json": manifest,
+            "trade_journey_events.json": journey_payload,
+            "loop_runs.json": loop_payload,
+        }
+        tmp_link: Path | None = None
+        previous_current_target: Path | None = None
+        switched = False
+        installed_current_identity: tuple[int, int] | None = None
+        final_metadata: os.stat_result | None = None
+
+        def validate_publish_identity() -> None:
+            if final_metadata is None:
+                raise LifecycleProjectionError(
+                    "projection generation identity was not captured"
+                )
+            try:
+                current_root = self.root.lstat()
+                current_generations = self.generations.lstat()
+                current_final_before = final.lstat()
+                current_generations_resolved = self.generations.resolve(
+                    strict=True
+                )
+            except OSError as exc:
+                raise LifecycleProjectionError(
+                    "projection publish identity became unreadable"
+                ) from exc
+            if (
+                self.root.is_symlink()
+                or self.generations.is_symlink()
+                or final.is_symlink()
+                or not stat.S_ISDIR(current_root.st_mode)
+                or not stat.S_ISDIR(current_generations.st_mode)
+                or not stat.S_ISDIR(current_final_before.st_mode)
+                or current_root.st_mode & 0o022
+                or current_generations.st_mode & 0o022
+                or current_final_before.st_mode & 0o222
+                or (current_root.st_dev, current_root.st_ino)
+                != (root_metadata.st_dev, root_metadata.st_ino)
+                or (current_generations.st_dev, current_generations.st_ino)
+                != (generations_metadata.st_dev, generations_metadata.st_ino)
+                or (current_final_before.st_dev, current_final_before.st_ino)
+                != (final_metadata.st_dev, final_metadata.st_ino)
+                or current_generations_resolved
+                != self.root.resolve(strict=True) / "generations"
+            ):
+                raise LifecycleProjectionError(
+                    "projection publish identity changed during switch"
+                )
+            self._validate_immutable_generation(final, payloads)
+            try:
+                current_generations_after = self.generations.lstat()
+                current_final_after = final.lstat()
+            except OSError as exc:
+                raise LifecycleProjectionError(
+                    "projection publish identity changed during validation"
+                ) from exc
+            if (
+                (current_generations_after.st_dev, current_generations_after.st_ino)
+                != (current_generations.st_dev, current_generations.st_ino)
+                or (current_final_after.st_dev, current_final_after.st_ino)
+                != (current_final_before.st_dev, current_final_before.st_ino)
+            ):
+                raise LifecycleProjectionError(
+                    "projection publish identity changed during validation"
+                )
+
+        try:
+            if final.exists() or final.is_symlink():
+                self._validate_immutable_generation(final, payloads)
+            else:
+                staging.mkdir()
+                for name, payload in payloads.items():
+                    _atomic_write_json(staging / name, payload)
+                for path in staging.iterdir():
+                    path.chmod(0o444)
+                staging.chmod(0o555)
+                try:
+                    os.rename(staging, final)
+                except OSError:
+                    if not final.exists() and not final.is_symlink():
+                        raise
+                    staging.chmod(0o755)
+                    for path in staging.iterdir():
+                        path.chmod(0o644)
+                    shutil.rmtree(staging)
+                    self._validate_immutable_generation(final, payloads)
+            final_metadata = final.lstat()
+            if self.current.is_symlink():
+                previous_current_target = self.current.readlink()
+                try:
+                    previous_resolved = self.current.resolve(strict=True)
+                    previous_resolved.relative_to(
+                        self.generations.resolve(strict=True)
+                    )
+                except (OSError, ValueError) as exc:
+                    raise LifecycleProjectionError(
+                        "current projection link is not canonical"
+                    ) from exc
+                if previous_current_target != (
+                    Path("generations") / previous_current_target.name
+                ):
+                    raise LifecycleProjectionError(
+                        "current projection link is not canonical"
+                    )
+            elif self.current.exists():
+                raise LifecycleProjectionError(
+                    "current projection path is not a symlink"
+                )
+            directory_flags = os.O_RDONLY
+            if hasattr(os, "O_DIRECTORY"):
+                directory_flags |= os.O_DIRECTORY
+            if hasattr(os, "O_CLOEXEC"):
+                directory_flags |= os.O_CLOEXEC
+            if hasattr(os, "O_NOFOLLOW"):
+                directory_flags |= os.O_NOFOLLOW
+            generations_fd = os.open(self.generations, directory_flags)
+            try:
+                opened_generations = os.fstat(generations_fd)
+                if (
+                    opened_generations.st_dev,
+                    opened_generations.st_ino,
+                ) != (
+                    generations_metadata.st_dev,
+                    generations_metadata.st_ino,
+                ):
+                    raise LifecycleProjectionError(
+                        "projection generations root changed during publish"
+                    )
+                os.fsync(generations_fd)
+            finally:
+                os.close(generations_fd)
+            validate_publish_identity()
             if self._before_switch is not None:
                 self._before_switch(final)
+            validate_publish_identity()
             tmp_link = self.root / f".current.{uuid.uuid4().hex}.tmp"
             os.symlink(str(Path("generations") / generation_name), tmp_link)
             os.replace(tmp_link, self.current)
-            directory_fd = os.open(self.root, os.O_RDONLY)
+            switched = True
             try:
+                current_metadata = self.current.lstat()
+                installed_current_identity = (
+                    current_metadata.st_dev,
+                    current_metadata.st_ino,
+                )
+                validate_publish_identity()
+                current_target = self.current.readlink()
+                current_resolved = self.current.resolve(strict=True)
+                current_resolved_metadata = current_resolved.lstat()
+            except OSError as exc:
+                raise LifecycleProjectionError(
+                    "current projection switch is unreadable"
+                ) from exc
+            if (
+                not stat.S_ISLNK(current_metadata.st_mode)
+                or current_target != Path("generations") / generation_name
+                or current_resolved != final
+                or (current_resolved_metadata.st_dev, current_resolved_metadata.st_ino)
+                != (final_metadata.st_dev, final_metadata.st_ino)
+            ):
+                raise LifecycleProjectionError(
+                    "current projection switch identity mismatch"
+                )
+            directory_fd = os.open(self.root, directory_flags)
+            try:
+                opened_root = os.fstat(directory_fd)
+                if (opened_root.st_dev, opened_root.st_ino) != (
+                    root_metadata.st_dev,
+                    root_metadata.st_ino,
+                ):
+                    raise LifecycleProjectionError(
+                        "projection bundle root changed during publish"
+                    )
                 os.fsync(directory_fd)
             finally:
                 os.close(directory_fd)
+            validate_publish_identity()
             return final
         except BaseException:
+            rollback_error: BaseException | None = None
+            should_rollback = False
+            if switched and installed_current_identity is not None:
+                try:
+                    rollback_current_metadata = self.current.lstat()
+                    should_rollback = (
+                        stat.S_ISLNK(rollback_current_metadata.st_mode)
+                        and (
+                            rollback_current_metadata.st_dev,
+                            rollback_current_metadata.st_ino,
+                        )
+                        == installed_current_identity
+                        and self.current.readlink()
+                        == Path("generations") / generation_name
+                    )
+                except OSError:
+                    should_rollback = False
+            if should_rollback:
+                try:
+                    if previous_current_target is None:
+                        self.current.unlink(missing_ok=True)
+                    else:
+                        rollback_link = (
+                            self.root / f".current.rollback.{uuid.uuid4().hex}.tmp"
+                        )
+                        try:
+                            os.symlink(str(previous_current_target), rollback_link)
+                            os.replace(rollback_link, self.current)
+                        finally:
+                            rollback_link.unlink(missing_ok=True)
+                    rollback_flags = os.O_RDONLY
+                    if hasattr(os, "O_DIRECTORY"):
+                        rollback_flags |= os.O_DIRECTORY
+                    if hasattr(os, "O_CLOEXEC"):
+                        rollback_flags |= os.O_CLOEXEC
+                    if hasattr(os, "O_NOFOLLOW"):
+                        rollback_flags |= os.O_NOFOLLOW
+                    rollback_fd = os.open(self.root, rollback_flags)
+                    try:
+                        os.fsync(rollback_fd)
+                    finally:
+                        os.close(rollback_fd)
+                except BaseException as rollback_exc:
+                    rollback_error = rollback_exc
+            if tmp_link is not None:
+                try:
+                    tmp_link.unlink()
+                except FileNotFoundError:
+                    pass
             if staging.exists():
+                staging.chmod(0o755)
+                for path in staging.iterdir():
+                    path.chmod(0o644)
                 shutil.rmtree(staging, ignore_errors=True)
+            if rollback_error is not None:
+                raise LifecycleProjectionError(
+                    "projection switch failed and rollback was unsuccessful"
+                ) from rollback_error
             raise
 
 
@@ -604,8 +973,8 @@ class LifecycleProjector:
             raise InvalidLifecycleEvent(f"invalid correlation_envelope: {exc}") from exc
         run_id = _first(event.get("run_id"), metadata.get("run_id"))
         identity: dict[str, Any] = {
-            "tenant_id": _first(envelope.get("tenant_id"), event.get("tenant_id"), metadata.get("tenant_id")),
-            "environment": _first(envelope.get("environment"), event.get("deployment_stage"), event.get("environment")),
+            "tenant_id": envelope.get("tenant_id"),
+            "environment": envelope.get("environment"),
             "journey_id": envelope.get("journey_id"),
             "run_id": run_id,
             "loop_run_id": _first(event.get("loop_run_id"), metadata.get("loop_run_id"), f"lr-{run_id}" if run_id else None),
@@ -621,14 +990,19 @@ class LifecycleProjector:
             "plan_id": _first(event.get("plan_id"), event.get("deployment_plan_id")),
             "trace_id": _first(envelope.get("trace_id"), event.get("trace_id")),
         }
-        missing = [field for field in STABLE_IDENTITY_FIELDS if _clean(identity.get(field)) is None]
+        missing = [
+            field
+            for field in STABLE_IDENTITY_FIELDS
+            if not isinstance(identity.get(field), str)
+            or _clean(identity.get(field)) is None
+        ]
         if missing:
             raise InvalidLifecycleEvent(
                 "canonical lifecycle identity missing: " + ", ".join(missing)
             )
         if str(identity["environment"]) != str(envelope["environment"]):
             raise InvalidLifecycleEvent("environment conflicts with correlation envelope")
-        return {field: str(identity[field]) for field in STABLE_IDENTITY_FIELDS}
+        return {field: identity[field] for field in STABLE_IDENTITY_FIELDS}
 
     @staticmethod
     def _admit_identity(state: dict[str, Any], identity: Mapping[str, str]) -> None:

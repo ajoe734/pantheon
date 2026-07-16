@@ -19,10 +19,10 @@ SEQUENCING_ADDENDUM_SHA256 = (
 )
 MERGE_PR_3737_SHA = "a4b5df9a51bc3da6df0d39d422d9db4edc553aba"
 EFFECTIVE_CATALOG_SHA256 = (
-    "d494e625c13b1792f1c2b163194d785fad2be8b891098cd77af752189f558eb1"
+    "875f2cea8c3120f0024cf902e4718c7c15f521a9b61f0bb43356c1bb56ec8e11"
 )
 SEQUENCING_OVERLAY_SHA256 = (
-    "e506f62930bf0cb4f8cf6c3d1661b07ed638ad0903b8e640df3e178d7e9e7602"
+    "ec4e2d0209fdf430a279a3dd669923f9c3b4abb84d785501993c425b528b55b6"
 )
 RELEASE_GATE_ID = "hardening-after-g2-paper-trade-v1"
 RELEASE_PREDICATE = "g2_evidence_contract_v4_valid"
@@ -31,12 +31,15 @@ CANONICAL_DATABASE_NAME = "pantheon"
 CANONICAL_DATABASE_ROLE = "pantheon_app"
 CANONICAL_DATABASE_SCHEMA = "public"
 CANONICAL_DATABASE_TABLE = "telemetry_events"
+CANONICAL_DATABASE_HOST = "postgres"
+CANONICAL_DATABASE_PORT = 5432
+CANONICAL_DATABASE_TLS_MODE = "verify-full"
 CANONICAL_PROJECTION_ROOT = "/data/bff/lifecycle-projection"
 SOURCE_GRAPH_PROJECTION_SHA256 = (
     "163f6686624e41120ba752de938e0283202026695358d7e4eca274fbad671cea"
 )
 EFFECTIVE_GRAPH_PROJECTION_SHA256 = (
-    "7f7a8f738d25a738895db68760a6002652c687fb25291ffe3283790cc12192dd"
+    "a24617c5c6cfe798f668443a097818e9a3f8c720ec5d2d0c35230262346126b1"
 )
 BASE_SOURCE_REF_FIELDS = {
     "plan",
@@ -275,6 +278,8 @@ RELEASE_RECORD_FIELDS = {
     "g2_artifact_merge_target_sha",
     "g2_authoritative_remote_head_sha",
     "g2_github_pr_snapshot_sha256",
+    "g2_artifact_github_pr_snapshot_sha256",
+    "g2_hosted_deployment_sha",
     "product_manifest_sha256",
     "product_manifest_sidecar_sha256",
     "target_task_snapshot_sha256",
@@ -296,6 +301,8 @@ RELEASE_ADMISSION_FIELDS = {
     "g2_artifact_merge_target_sha",
     "g2_authoritative_remote_head_sha",
     "g2_github_pr_snapshot_sha256",
+    "g2_artifact_github_pr_snapshot_sha256",
+    "g2_hosted_deployment_sha",
     "product_manifest_sha256",
     "product_manifest_sidecar_sha256",
     "target_task_snapshot_sha256",
@@ -311,13 +318,23 @@ SOURCE_ATTESTATION_FIELDS = {
     "role",
     "schema",
     "table",
+    "database_host",
+    "database_port",
+    "database_tls_mode",
+    "database_server_address",
+    "database_tls_protocol",
+    "database_tls_cipher",
     "projection_root",
     "live_source_high_watermark",
     "captured_generation_name",
     "current_generation_name",
+    "captured_projection_checkpoint",
+    "captured_projection_source_high_watermark",
     "current_projection_checkpoint",
+    "current_projection_source_high_watermark",
     "rows_sha256",
     "projection_sha256",
+    "current_projection_sha256",
 }
 RELEASE_TRANSITION_FIELDS = {
     "task_id",
@@ -688,6 +705,7 @@ def _validated_release_record(
             "canonical_record_bundle_sha256",
             "canonical_source_snapshot_sha256",
             "g2_github_pr_snapshot_sha256",
+            "g2_artifact_github_pr_snapshot_sha256",
             "hosted_probe_sha256",
             "product_manifest_sha256",
             "product_manifest_sidecar_sha256",
@@ -706,6 +724,7 @@ def _validated_release_record(
             "g2_artifact_commit_sha",
             "g2_artifact_merge_target_sha",
             "g2_authoritative_remote_head_sha",
+            "g2_hosted_deployment_sha",
         )
     ):
         return None
@@ -717,20 +736,41 @@ def _validated_release_record(
         or attestation.get("role") != CANONICAL_DATABASE_ROLE
         or attestation.get("schema") != CANONICAL_DATABASE_SCHEMA
         or attestation.get("table") != CANONICAL_DATABASE_TABLE
+        or attestation.get("database_host") != CANONICAL_DATABASE_HOST
+        or attestation.get("database_port") != CANONICAL_DATABASE_PORT
+        or attestation.get("database_tls_mode") != CANONICAL_DATABASE_TLS_MODE
+        or any(
+            not isinstance(attestation.get(field), str)
+            or not attestation[field]
+            for field in (
+                "database_server_address",
+                "database_tls_protocol",
+                "database_tls_cipher",
+            )
+        )
         or attestation.get("projection_root") != CANONICAL_PROJECTION_ROOT
         or type(attestation.get("live_source_high_watermark")) is not int
-        or type(attestation.get("current_projection_checkpoint")) is not int
-        or attestation["current_projection_checkpoint"]
-        < attestation["live_source_high_watermark"]
+        or attestation["live_source_high_watermark"] <= 0
+        or any(
+            type(attestation.get(field)) is not int
+            or attestation[field] != attestation["live_source_high_watermark"]
+            for field in (
+                "captured_projection_checkpoint",
+                "captured_projection_source_high_watermark",
+                "current_projection_checkpoint",
+                "current_projection_source_high_watermark",
+            )
+        )
         or not is_sha256(attestation.get("rows_sha256"))
         or not is_sha256(attestation.get("projection_sha256"))
+        or not is_sha256(attestation.get("current_projection_sha256"))
         or re.fullmatch(
-            r"g[0-9]{12}-[0-9a-f]{12}",
+            r"g[0-9]{12}-[0-9a-f]{64}",
             str(attestation.get("captured_generation_name") or ""),
         )
         is None
         or re.fullmatch(
-            r"g[0-9]{12}-[0-9a-f]{12}",
+            r"g[0-9]{12}-[0-9a-f]{64}",
             str(attestation.get("current_generation_name") or ""),
         )
         is None
@@ -749,8 +789,8 @@ def _validated_release_record(
         or not _is_exact_utc_z(record.get("closeout_at"))
         or not _is_exact_utc_z(record.get("g2_issued_at"))
         or not _is_exact_utc_z(record.get("released_at"))
-        or closeout_at > g2_issued_at
-        or g2_issued_at > released_at
+        or g2_issued_at > closeout_at
+        or closeout_at > released_at
         or applied_at > released_at
     ):
         return None

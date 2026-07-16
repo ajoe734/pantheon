@@ -15,7 +15,9 @@ This reconciliation describes all 48 immutable catalog tasks exactly once. It do
 | Merged addendum authority | PR #3737 merge `a4b5df9a51bc3da6df0d39d422d9db4edc553aba` |
 | Rejected interim delivery | PR #3746 head `5f51574df2791d7cb1c4551e46571ae5f06ea71a`, merged as `aae333959e0566759a4e7eb955f860d280fa5e3d`; retained as failed evidence, never as release authority |
 | Overlay schema | `schema_version: 2` |
-| Canonical overlay raw SHA-256 | `e506f62930bf0cb4f8cf6c3d1661b07ed638ad0903b8e640df3e178d7e9e7602` |
+| Canonical overlay raw SHA-256 | `ec4e2d0209fdf430a279a3dd669923f9c3b4abb84d785501993c425b528b55b6` |
+| Effective catalog SHA-256 | `875f2cea8c3120f0024cf902e4718c7c15f521a9b61f0bb43356c1bb56ec8e11` |
+| Effective graph projection SHA-256 | `a24617c5c6cfe798f668443a097818e9a3f8c720ec5d2d0c35230262346126b1` |
 
 The overlay and this derived view enforce these invariants:
 
@@ -159,23 +161,26 @@ The Hardening Wave opens only when the exact target `LOOP-PROD-VERIFY-EXEC-001` 
 | `hosted_probe_path` | `docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/hosted-lifecycle-proof.v1.json` |
 | `canonical_record_bundle_path` | `docs/deployment/evidence/loop-product-level/LOOP-PROD-VERIFY-EXEC-001/g2-canonical-records.v4.json` |
 | `canonical_source_resolution` | `live_read_only_canonical_identity_and_projection_generation_v2` |
-| Canonical database identity | database `pantheon`; role `pantheon_app`; schema/table `public.telemetry_events` |
+| Canonical database identity | database `pantheon`; role `pantheon_app`; schema/table `public.telemetry_events`; host `postgres`; port `5432`; TLS `verify-full` with `/etc/ssl/certs/ca-certificates.crt` |
+| Canonical query timeouts | connect `5s`; statement `5s`; total `15s` per read |
 | Canonical projection root | `/data/bff/lifecycle-projection` |
 | `artifact_commit_binding` | `reviewer_and_github_bound_git_tree_v2` |
 | Authoritative Git ref | `https://github.com/ajoe734/pantheon.git` at `refs/heads/dev` |
 | Authoritative GitHub repository | API `https://api.github.com`; repository `ajoe734/pantheon` |
-| `review_binding_schema` | `pantheon.g2-review-binding.v1` |
+| Required GitHub workflow | `.github/workflows/branch-ci.yml`, unchanged from each PR's exact merge base |
+| Required GitHub checks | `Commit trailers`, `Runtime mirror guard`, `Smoke acceptance`; GitHub Actions app `15368`; one successful `pull_request` workflow run/check suite on the exact head |
+| `review_binding_schema` | `pantheon.g2-review-binding.v2` |
 | `bundle_digest_algorithm` | `sha256(bytes)` |
 | `record_digest_algorithm` | `sha256(canonical-json)` |
 
 ### Canonical-record resolution and linked chain
 
 - The record bundle must use `pantheon.g2-canonical-record-bundle.v4`; its byte digest is recomputed with `sha256(bytes)`. Each referenced signal, order, fill, telemetry, and loop-run record digest is independently recomputed with `sha256(canonical-json)`.
-- Signal, order, fill, and telemetry IDs must resolve in a read-only repeatable-read transaction against the pinned `pantheon` / `pantheon_app` / `public.telemetry_events` identity. The query is scoped by the full stable natural identity and returns the complete lifecycle chain, not caller-selected evidence IDs. The loop-run ID resolves from one immutable, regular-file projection generation captured under the pinned root.
+- Signal, order, fill, and telemetry IDs must resolve in a read-only repeatable-read transaction against the pinned TLS database identity. The query is scoped by the full stable natural identity and reads the projector's complete 19-type canonical lifecycle inventory, including rejection, cancellation, failure, risk, acknowledgement, partial-fill, and alternate snapshot events; it never queries caller-selected evidence IDs. The admitted bundle must contain exactly one complete target lifecycle, so a hidden failed event or a second chain fails closed.
 - Event order is exactly prefix `signal_generation`, `trade_decision`, then at least 1 occurrence of repeat group `order_submitted`, `paper_fill_simulated`, `position_snapshot`, then suffix `reconciliation_completed`. The evidence roles bind signal=`signal_generation`, order=`order_submitted`, fill=`paper_fill_simulated`, telemetry=`reconciliation_completed`.
-- Event sequence numbers, ingestion timestamps, creation timestamps, causality links, deterministic event identities, projection source offsets, and source high-water marks must agree. Reordered events or a projection ahead of/behind its claimed chain fail closed.
+- Event sequence numbers, ingestion timestamps, creation timestamps, causality links, deterministic event identities, projection source offsets, event/count summaries, and source high-water marks must agree. The verifier reads DB watermark/rows, reads captured plus current projection, then repeats the TLS DB read; both DB snapshots, both projection controllers, and all four checkpoint/source-high-watermark fields must be exactly equal. Any concurrent append, lag, lead, or reordered event fails closed.
 - Every record and projection must agree on all stable identity fields: `tenant_id`, `environment`, `journey_id`, `run_id`, `loop_run_id`, `signal_id`, `strategy_id`, `runtime_id`, `binding_id`, `capital_pool_id`, `persona_id`, `persona_capital_binding_id`, `artifact_id`, `artifact_version`, `plan_id`, `trace_id`. This binds tenant, paper environment, journey/run/loop-run, signal, strategy/runtime/binding/capital/persona/artifact/plan, and trace identity.
-- The durable source attestation binds the database identity, projection root, source high-water mark, captured/current generation names, current projection checkpoint, and canonical row/projection digests into the release admission.
+- The durable source attestation binds database host/port/server address/TLS protocol/cipher, projection root, source high-water mark, captured/current checkpoint and projection-source watermark, captured/current generation names, and canonical row/captured/current-projection digests into the release admission. Generation directories use `gNNNNNNNNNNNN-<full 64-hex bundle SHA-256>` names and read-only files/directories; a truncated random suffix or mutable generation is rejected.
 
 ### Environment, projection, and freshness
 
@@ -191,18 +196,25 @@ The Hardening Wave opens only when the exact target `LOOP-PROD-VERIFY-EXEC-001` 
 | Maximum chain span | `3600 seconds` |
 | Maximum future skew | `300 seconds` |
 
-The hosted proof must use `pantheon.loop-prod-tel-002-hosted-proof.v1`. Projection artifacts must use `pantheon.lifecycle-projection-bundle.v1`, `pantheon.trade-journey-projection.v1`, and `pantheon.loop-run-projection.v1`. The projection controller must be exactly `mode=live`, `accepted_live=true`, `truth_level=canonical_live`, `status=ready`, `backlog=0`; its current checkpoint must cover the live database high-water mark. Bundle capture, evidence issue/expiry, event creation/ingestion, hosted observation, and projection checkpoint timestamps/offsets must be fresh and monotonically ordered within these limits.
+The hosted proof must use `pantheon.loop-prod-tel-002-hosted-proof.v1`. Projection artifacts must use `pantheon.lifecycle-projection-bundle.v1`, `pantheon.trade-journey-projection.v1`, and `pantheon.loop-run-projection.v1`. The projection controller must be exactly `mode=live`, `accepted_live=true`, `truth_level=canonical_live`, `status=ready`, `backlog=0`; its current and captured checkpoints must equal the live database high-water mark. The prospective package chronology is implementation merge ≤ evidence issue ≤ artifact review ≤ artifact PR merge ≤ owner closeout ≤ gate release. No prewritten future issue timestamp or `closeout <= issued` shortcut is accepted.
 
-Operationally, validation requires read-only access to the pinned telemetry database identity, regular-file access beneath the pinned projection root, network access to the authoritative Git remote and GitHub API, and a caught-up live projector. Missing credentials, unavailable authority, shallow/replaced/alternate Git object state, symlinked projection artifacts, or stale controller state fail closed; no evidence is fabricated or inferred.
+Operationally, validation requires `verify-full` TLS on the pinned PostgreSQL service, non-symlinked and non-group/world-writable projection-root and `generations/` directories, regular immutable generation files, network access to the authoritative Git remote/GitHub API, and a caught-up live projector. All cooperating publishers hold `.projection-publish.lock` across generation creation, `current` switch, post-switch verification, and rollback; rollback also refuses to overwrite a newer `current` inode. The SQL identity predicate uses the projector's field-specific envelope/root/metadata precedence, and the current generation must retain the exact captured target event chain plus loop-run core at the same database high-water mark. Missing credentials, plaintext/current compose defaults, unavailable authority, shallow/replaced/alternate Git object state, redirected projection parents, divergent current target content, or stale controller state fail closed; no evidence is fabricated or inferred.
 
 ### Accepted closeout-truth admission
 
 The verifier admits the target only when all of the following are true:
 
-- The active or safely archived task is terminal `done` with a completed outcome, exact task/program/source/addendum/PR/overlay/task-contract provenance, and a delivery commit merged through the exact GitHub pull request to the authoritative `dev` ref. Merge parents, remote ancestry, successful GitHub check run, artifact blobs, and product manifest must all agree.
+- The active or safely archived task is terminal `done` with a completed outcome and exact task/program/source/addendum/PR/overlay/task-contract provenance. Generic owner closeout delivery identifies the merged target; the independent review binding separately identifies the artifact PR head. GitHub must report both implementation and artifact PRs merged to `dev`, their exact protected workflow unchanged, and their required checks from one successful `pull_request` workflow run. Merge parents, remote ancestry, bytes at artifact head/merge/captured target/current remote, and product manifest must all agree.
 - The full product `evidence.json` validates against the repository product-evidence schema, its companion SHA-256 sidecar matches the exact bytes, and the task snapshot digest matches the admitted manifest.
-- The assigned owner and reviewer are distinct. The reviewer approval is captured atomically as `pantheon.g2-review-binding.v1` and as a content-addressed program audit event; both bind the exact artifact head, five artifact digests, and implementation PR number/head/merge. The formal verdict is positive and digest-bound, every acceptance row is pass/not-applicable, and no blocking residual risk remains.
+- The assigned owner and reviewer are distinct. The reviewer approval is captured atomically as `pantheon.g2-review-binding.v2` and as a content-addressed central audit event; both bind the exact artifact head, artifact PR number/head, five artifact digests, and implementation PR number/head/merge. The artifact package binds the stable prospective closeout contract, while the terminal outcome, notes, delivery and archive are resolved after merge. The formal verdict is positive and digest-bound, every acceptance row is pass/not-applicable, and no blocking residual risk remains.
 - A false-closed active task, a minimal archived `done` record, stale evidence, wrong source authority, wrong tenant/environment/run/status, or any chain/projection mismatch keeps the gate closed.
+
+### Operational prerequisites and trust boundaries
+
+- Current compose defaults do not provision the required PostgreSQL `verify-full` TLS identity. Until that is deployed, `TELEMETRY_DB_DSN` includes the exact TLS mode, and both DB reads attest a TLS session, G2 remains closed by design.
+- Git ancestry proves that the deployment SHA claim is in the admitted history; it is not by itself OCI/VM provenance. Admission therefore resolves `/var/lib/pantheon/g2-deployment-identity.json` as a non-symlinked, root-owned, non-group/world-writable external authority and requires its exact deployment/runtime/source commit SHA, `sha256:<64>` image-manifest digest, deployment workflow run/job identity, timestamp, and canonical hosted-readback digest to match the reviewed artifact. Until the Pantheon-owned deployment flow installs that manifest from the same hosted cut, G2 remains closed; this reconciliation does not manufacture that missing deploy authority.
+- The central reviewer event is content- and chronology-bound, but reviewer authenticity still relies on the protected supervisor/worker identity boundary; `AI_NAME` plus an unkeyed event hash is not an external signature. If that protected identity cannot be demonstrated at G2 time, the gate must remain closed rather than treating the self-hash as independent attribution.
+- This dispatcher is itself listed in the protected runtime capability manifest. After the corrective PR merges, its final byte SHA must be reissued through the protected bootstrap/reviewer ledger before the merged dispatcher can mutate central state; a locally passing candidate or stale capability manifest is not operational release evidence.
 
 ## 5. Detailed 48-task derived matrix
 

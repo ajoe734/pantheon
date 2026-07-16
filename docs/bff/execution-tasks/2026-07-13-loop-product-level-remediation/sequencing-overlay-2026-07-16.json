@@ -110,6 +110,34 @@
     "canonical_database_role": "pantheon_app",
     "canonical_database_schema": "public",
     "canonical_database_table": "telemetry_events",
+    "canonical_query_event_types": [
+      "broker_position_snapshot",
+      "fill_received",
+      "order_accepted",
+      "order_canceled",
+      "order_cancelled",
+      "order_filled",
+      "order_partially_filled",
+      "order_rejection",
+      "order_rejection_simulated",
+      "order_submitted",
+      "paper_fill_simulated",
+      "paper_order_simulated",
+      "position_snapshot",
+      "position_snapshot_received",
+      "reconciliation_completed",
+      "reconciliation_failed",
+      "risk_evaluation",
+      "signal_generation",
+      "trade_decision"
+    ],
+    "canonical_database_host": "postgres",
+    "canonical_database_port": 5432,
+    "canonical_database_tls_mode": "verify-full",
+    "canonical_database_tls_ca_path": "/etc/ssl/certs/ca-certificates.crt",
+    "canonical_connect_timeout_seconds": 5,
+    "canonical_statement_timeout_seconds": 5,
+    "canonical_total_timeout_seconds": 15,
     "canonical_projection_root_env": "LIFECYCLE_PROJECTION_ROOT",
     "canonical_projection_root": "/data/bff/lifecycle-projection",
     "artifact_commit_binding": "reviewer_and_github_bound_git_tree_v2",
@@ -117,7 +145,22 @@
     "required_git_remote_ref": "refs/heads/dev",
     "required_github_api_base_url": "https://api.github.com",
     "required_github_repository": "ajoe734/pantheon",
-    "review_binding_schema": "pantheon.g2-review-binding.v1",
+    "required_github_workflow_path": ".github/workflows/branch-ci.yml",
+    "required_github_checks": [
+      {
+        "name": "Commit trailers",
+        "app_id": 15368
+      },
+      {
+        "name": "Runtime mirror guard",
+        "app_id": 15368
+      },
+      {
+        "name": "Smoke acceptance",
+        "app_id": 15368
+      }
+    ],
+    "review_binding_schema": "pantheon.g2-review-binding.v2",
     "bundle_digest_algorithm": "sha256(bytes)",
     "record_digest_algorithm": "sha256(canonical-json)",
     "record_bundle_schema": "pantheon.g2-canonical-record-bundle.v4",

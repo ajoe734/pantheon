@@ -6,6 +6,7 @@ import argparse
 import asyncio
 from collections import Counter
 from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import errno
@@ -16,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import re
+import ssl
 import stat
 import subprocess
 import sys
@@ -23,20 +25,36 @@ import tempfile
 from types import ModuleType
 from typing import Any, Iterator, Mapping
 from urllib import error as urllib_error
+from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+AUTHORITATIVE_STATUS_ROOT = Path("/home/lupin/code/pantheon")
+TRUSTED_GIT_BINARY = Path("/usr/bin/git")
+TRUSTED_SYSTEM_CA_PATH = Path("/etc/ssl/certs/ca-certificates.crt")
+TRUSTED_G2_DEPLOYMENT_IDENTITY_ROOT = Path("/var/lib/pantheon")
+TRUSTED_G2_DEPLOYMENT_IDENTITY_PATH = (
+    TRUSTED_G2_DEPLOYMENT_IDENTITY_ROOT / "g2-deployment-identity.json"
+)
+TRUSTED_G2_DEPLOYMENT_IDENTITY_OWNER_UID = 0
+G2_DEPLOYMENT_IDENTITY_SCHEMA = "pantheon.g2-deployment-identity.v1"
 ORCHESTRATOR_DIR = REPO_ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 from common import (
+    activity_audit_lock_file,
     activity_audit_source_paths_unlocked,
     append_activity_log_entries_unlocked,
     assert_activity_audit_stable_unlocked,
     prepare_activity_audit_unlocked,
-    read_activity_audit_records,
+    read_activity_audit_records_unlocked,
+)
+
+_ACTIVITY_AUDIT_LOCK_HELD: ContextVar[bool] = ContextVar(
+    "loop_product_activity_audit_lock_held",
+    default=False,
 )
 
 DEFAULT_CATALOG_PATH = (
@@ -70,7 +88,7 @@ EXPECTED_SEQUENCING_SOURCE_HASHES = {
     "merge_pr_3737_sha": "a4b5df9a51bc3da6df0d39d422d9db4edc553aba",
 }
 EXPECTED_SEQUENCING_OVERLAY_SHA256 = (
-    "e506f62930bf0cb4f8cf6c3d1661b07ed638ad0903b8e640df3e178d7e9e7602"
+    "ec4e2d0209fdf430a279a3dd669923f9c3b4abb84d785501993c425b528b55b6"
 )
 EXPECTED_PRODUCT_EVIDENCE_SCHEMA_SHA256 = (
     "5340d8394a31fa9badf4519b2cdbac4f02317e9d930ddd250c8b7374015d3a73"
@@ -142,6 +160,14 @@ G2_EVIDENCE_CONTRACT_KEYS = {
     "canonical_database_role",
     "canonical_database_schema",
     "canonical_database_table",
+    "canonical_query_event_types",
+    "canonical_database_host",
+    "canonical_database_port",
+    "canonical_database_tls_mode",
+    "canonical_database_tls_ca_path",
+    "canonical_connect_timeout_seconds",
+    "canonical_statement_timeout_seconds",
+    "canonical_total_timeout_seconds",
     "canonical_projection_root_env",
     "canonical_projection_root",
     "artifact_commit_binding",
@@ -149,6 +175,8 @@ G2_EVIDENCE_CONTRACT_KEYS = {
     "required_git_remote_ref",
     "required_github_api_base_url",
     "required_github_repository",
+    "required_github_workflow_path",
+    "required_github_checks",
     "review_binding_schema",
     "bundle_digest_algorithm",
     "record_digest_algorithm",
@@ -188,6 +216,27 @@ G2_STABLE_IDENTITY_FIELDS = (
     "artifact_version",
     "plan_id",
     "trace_id",
+)
+G2_CANONICAL_QUERY_EVENT_TYPES = (
+    "broker_position_snapshot",
+    "fill_received",
+    "order_accepted",
+    "order_canceled",
+    "order_cancelled",
+    "order_filled",
+    "order_partially_filled",
+    "order_rejection",
+    "order_rejection_simulated",
+    "order_submitted",
+    "paper_fill_simulated",
+    "paper_order_simulated",
+    "position_snapshot",
+    "position_snapshot_received",
+    "reconciliation_completed",
+    "reconciliation_failed",
+    "risk_evaluation",
+    "signal_generation",
+    "trade_decision",
 )
 G2_EVIDENCE_KEYS = {
     "schema_version",
@@ -233,6 +282,27 @@ G2_CLOSEOUT_ADMISSION_KEYS = {
     "reviewer",
     "review_verdict_sha256",
 }
+G2_DEPLOYMENT_IDENTITY_ADMISSION_KEYS = {
+    "status",
+    "deployment_sha",
+    "runtime_commit_sha",
+    "runtime_source_commit_sha",
+    "image_manifest_digest",
+    "deployment_manifest_sha256",
+    "hosted_readback_sha256",
+}
+G2_TRUSTED_DEPLOYMENT_IDENTITY_KEYS = {
+    "schema_version",
+    "environment",
+    "deployment_sha",
+    "runtime_commit_sha",
+    "runtime_source_commit_sha",
+    "image_manifest_digest",
+    "hosted_readback_sha256",
+    "deployment_run_id",
+    "deployment_job_id",
+    "observed_at",
+}
 G2_RECORD_BUNDLE_KEYS = {
     "schema_version",
     "captured_at",
@@ -256,13 +326,23 @@ G2_SOURCE_ATTESTATION_KEYS = {
     "role",
     "schema",
     "table",
+    "database_host",
+    "database_port",
+    "database_tls_mode",
+    "database_server_address",
+    "database_tls_protocol",
+    "database_tls_cipher",
     "projection_root",
     "live_source_high_watermark",
     "captured_generation_name",
     "current_generation_name",
+    "captured_projection_checkpoint",
+    "captured_projection_source_high_watermark",
     "current_projection_checkpoint",
+    "current_projection_source_high_watermark",
     "rows_sha256",
     "projection_sha256",
+    "current_projection_sha256",
 }
 G2_REVIEW_BINDING_KEYS = {
     "schema_version",
@@ -271,6 +351,7 @@ G2_REVIEW_BINDING_KEYS = {
     "artifact_commit_sha",
     "artifact_sha256",
     "implementation_pr",
+    "artifact_pr",
 }
 G2_REVIEW_ARTIFACT_DIGEST_FIELDS = {
     "g2_evidence_sha256",
@@ -394,6 +475,8 @@ SEQUENCING_RELEASE_ADMISSION_FIELDS = frozenset(
         "g2_artifact_merge_target_sha",
         "g2_authoritative_remote_head_sha",
         "g2_github_pr_snapshot_sha256",
+        "g2_artifact_github_pr_snapshot_sha256",
+        "g2_hosted_deployment_sha",
         "product_manifest_sha256",
         "product_manifest_sidecar_sha256",
         "target_task_snapshot_sha256",
@@ -1146,7 +1229,7 @@ def read_rooted_regular_bytes(
     if hasattr(os, "O_NOFOLLOW"):
         directory_flags |= os.O_NOFOLLOW
     try:
-        directory_fd = os.open(root.resolve(strict=True), directory_flags)
+        directory_fd = os.open(root, directory_flags)
     except OSError as exc:
         raise DispatchError(f"{label} root cannot be opened safely") from exc
     descriptor: int | None = None
@@ -2330,6 +2413,69 @@ def _is_lower_hex(value: Any, length: int) -> bool:
     )
 
 
+def _g2_source_attestation_is_exact(
+    value: Any,
+    contract: Mapping[str, Any],
+) -> bool:
+    if not isinstance(value, Mapping) or set(value) != G2_SOURCE_ATTESTATION_KEYS:
+        return False
+    expected_identity = {
+        "database": contract.get("canonical_database_name"),
+        "role": contract.get("canonical_database_role"),
+        "schema": contract.get("canonical_database_schema"),
+        "table": contract.get("canonical_database_table"),
+        "database_host": contract.get("canonical_database_host"),
+        "database_port": contract.get("canonical_database_port"),
+        "database_tls_mode": contract.get("canonical_database_tls_mode"),
+        "projection_root": contract.get("canonical_projection_root"),
+    }
+    if any(value.get(key) != expected for key, expected in expected_identity.items()):
+        return False
+    if any(
+        not isinstance(value.get(field), str) or not value[field]
+        for field in (
+            "database_server_address",
+            "database_tls_protocol",
+            "database_tls_cipher",
+        )
+    ):
+        return False
+    live_high_watermark = value.get("live_source_high_watermark")
+    freshness_fields = (
+        "captured_projection_checkpoint",
+        "captured_projection_source_high_watermark",
+        "current_projection_checkpoint",
+        "current_projection_source_high_watermark",
+    )
+    if (
+        type(live_high_watermark) is not int
+        or live_high_watermark <= 0
+        or any(
+            type(value.get(field)) is not int
+            or value[field] != live_high_watermark
+            for field in freshness_fields
+        )
+    ):
+        return False
+    if any(
+        not _is_lower_hex(value.get(field), 64)
+        for field in (
+            "rows_sha256",
+            "projection_sha256",
+            "current_projection_sha256",
+        )
+    ):
+        return False
+    return all(
+        isinstance(value.get(field), str)
+        and re.fullmatch(r"g[0-9]{12}-[0-9a-f]{64}", value[field]) is not None
+        for field in (
+            "captured_generation_name",
+            "current_generation_name",
+        )
+    )
+
+
 def _safe_repo_relative_path(value: Any, *, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise DispatchError(f"{label} is invalid")
@@ -2340,28 +2486,45 @@ def _safe_repo_relative_path(value: Any, *, label: str) -> str:
 
 
 def _sanitized_git_environment() -> dict[str, str]:
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.upper().startswith("GIT_")
+    return {
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/nonexistent",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
     }
-    environment.update(
-        {
-            "GIT_CONFIG_GLOBAL": os.devnull,
-            "GIT_CONFIG_NOSYSTEM": "1",
-        }
-    )
-    return environment
+
+
+def _trusted_git_binary() -> str:
+    try:
+        binary = TRUSTED_GIT_BINARY.resolve(strict=True)
+        metadata = binary.stat()
+    except OSError as exc:
+        raise DispatchError("trusted Git binary is unavailable") from exc
+    if (
+        binary != TRUSTED_GIT_BINARY
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    ):
+        raise DispatchError("trusted Git binary identity is invalid")
+    return str(binary)
 
 
 def _git_output(root: Path, *args: str) -> bytes:
     try:
         result = subprocess.run(
             [
-                "git",
+                _trusted_git_binary(),
                 "--no-replace-objects",
                 "-c",
                 "credential.helper=",
+                "-c",
+                "protocol.file.allow=never",
+                "-c",
+                "protocol.ext.allow=never",
                 "-C",
                 str(root),
                 *args,
@@ -2432,6 +2595,30 @@ def _validate_git_repository_trust(root: Path) -> None:
             raise DispatchError("G2 Git repository metadata is unreadable") from exc
 
 
+def _validate_g2_status_root_authority() -> None:
+    raw = str(os.environ.get("PANTHEON_STATUS_ROOT") or "")
+    if not raw or not Path(raw).is_absolute():
+        raise DispatchError("G2 requires an explicit absolute central status root")
+    try:
+        expected = AUTHORITATIVE_STATUS_ROOT.resolve(strict=True)
+        status_root = STATUS_ROOT.resolve(strict=True)
+        repository_root = REPO_ROOT.resolve(strict=True)
+        metadata = STATUS_ROOT.lstat()
+    except OSError as exc:
+        raise DispatchError("G2 central status root is unavailable") from exc
+    if (
+        status_root != expected
+        or repository_root != expected
+        or Path(raw).resolve(strict=True) != expected
+        or STATUS_ROOT.is_symlink()
+        or not stat.S_ISDIR(metadata.st_mode)
+        or STATUS_PATH != expected / "ai-status.json"
+        or LOG_PATH != expected / "ai-activity-log.jsonl"
+        or ARCHIVE_ROOT != expected / "ai-task-archive" / "tasks"
+    ):
+        raise DispatchError("G2 central status root authority mismatch")
+
+
 def _resolve_authoritative_git_remote_ref(
     remote_url: str,
     remote_ref: str,
@@ -2439,10 +2626,14 @@ def _resolve_authoritative_git_remote_ref(
     try:
         result = subprocess.run(
             [
-                "git",
+                _trusted_git_binary(),
                 "--no-replace-objects",
                 "-c",
                 "credential.helper=",
+                "-c",
+                "protocol.file.allow=never",
+                "-c",
+                "protocol.ext.allow=never",
                 "ls-remote",
                 "--refs",
                 remote_url,
@@ -2450,6 +2641,7 @@ def _resolve_authoritative_git_remote_ref(
             ],
             check=False,
             capture_output=True,
+            cwd="/",
             env=_sanitized_git_environment(),
             timeout=30,
         )
@@ -2468,7 +2660,29 @@ def _resolve_authoritative_git_remote_ref(
     return rows[0][0]
 
 
+class _RejectHttpRedirects(urllib_request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        raise urllib_error.HTTPError(
+            req.full_url,
+            code,
+            "G2 GitHub redirects are forbidden",
+            headers,
+            fp,
+        )
+
+
 def _github_api_json(url: str) -> dict[str, Any]:
+    parsed = urllib_parse.urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "api.github.com"
+        or parsed.port not in (None, 443)
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+        or not parsed.path.startswith("/repos/ajoe734/pantheon/")
+    ):
+        raise DispatchError("G2 authoritative GitHub URL is invalid")
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "pantheon-g2-evidence-validator",
@@ -2478,9 +2692,26 @@ def _github_api_json(url: str) -> dict[str, Any]:
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        with urllib_request.urlopen(
-            urllib_request.Request(url, headers=headers), timeout=30
-        ) as response:
+        ca_path = TRUSTED_SYSTEM_CA_PATH.resolve(strict=True)
+        ca_metadata = TRUSTED_SYSTEM_CA_PATH.lstat()
+        if (
+            ca_path != TRUSTED_SYSTEM_CA_PATH
+            or TRUSTED_SYSTEM_CA_PATH.is_symlink()
+            or not stat.S_ISREG(ca_metadata.st_mode)
+            or ca_metadata.st_uid != 0
+            or ca_metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        ):
+            raise DispatchError("trusted system CA bundle identity is invalid")
+        context = ssl.create_default_context(cafile=str(ca_path))
+        opener = urllib_request.build_opener(
+            urllib_request.ProxyHandler({}),
+            urllib_request.HTTPSHandler(context=context),
+            _RejectHttpRedirects(),
+        )
+        request = urllib_request.Request(url, headers=headers)
+        with opener.open(request, timeout=30) as response:
+            if response.geturl() != url or response.status != 200:
+                raise DispatchError("G2 authoritative GitHub response is not exact")
             raw = response.read()
     except (OSError, urllib_error.URLError, ValueError) as exc:
         raise DispatchError("G2 authoritative GitHub query failed") from exc
@@ -2504,18 +2735,83 @@ def _resolve_authoritative_github_pr(
         f"{str(((pull.get('head') or {}).get('sha')) or '')}/check-runs?per_page=100"
     )
     check_runs = checks_payload.get("check_runs")
-    if not isinstance(check_runs, list):
+    total_count = checks_payload.get("total_count")
+    if (
+        not isinstance(check_runs, list)
+        or type(total_count) is not int
+        or total_count != len(check_runs)
+        or total_count > 100
+    ):
         raise DispatchError("G2 authoritative GitHub checks are missing")
+    workflow_runs_payload = _github_api_json(
+        f"{api_base}/repos/{repository}/actions/runs?head_sha="
+        f"{str(((pull.get('head') or {}).get('sha')) or '')}"
+        "&event=pull_request&per_page=100"
+    )
+    workflow_runs = workflow_runs_payload.get("workflow_runs")
+    workflow_run_total = workflow_runs_payload.get("total_count")
+    if (
+        not isinstance(workflow_runs, list)
+        or type(workflow_run_total) is not int
+        or workflow_run_total != len(workflow_runs)
+        or workflow_run_total > 100
+    ):
+        raise DispatchError("G2 authoritative GitHub workflow runs are missing")
+    protection = _github_api_json(
+        f"{api_base}/repos/{repository}/branches/dev/protection/required_status_checks"
+    )
+    protected_checks = protection.get("checks")
+    if not isinstance(protected_checks, list):
+        raise DispatchError("G2 authoritative branch check policy is missing")
     checks = sorted(
         [
             {
                 "name": str(row.get("name") or ""),
+                "status": str(row.get("status") or ""),
                 "conclusion": str(row.get("conclusion") or ""),
+                "head_sha": str(row.get("head_sha") or ""),
+                "app_id": (row.get("app") or {}).get("id"),
+                "check_suite_id": (row.get("check_suite") or {}).get("id"),
             }
             for row in check_runs
             if isinstance(row, dict)
         ],
-        key=lambda row: (row["name"], row["conclusion"]),
+        key=lambda row: (
+            row["name"],
+            str(row["app_id"]),
+            row["status"],
+            row["conclusion"],
+        ),
+    )
+    required_checks_policy = {
+        "strict": protection.get("strict"),
+        "checks": sorted(
+            [
+                {
+                    "name": str(row.get("context") or ""),
+                    "app_id": row.get("app_id"),
+                }
+                for row in protected_checks
+                if isinstance(row, dict)
+            ],
+            key=lambda row: (row["name"], str(row["app_id"])),
+        ),
+    }
+    normalized_workflow_runs = sorted(
+        [
+            {
+                "id": row.get("id"),
+                "check_suite_id": row.get("check_suite_id"),
+                "event": str(row.get("event") or ""),
+                "path": str(row.get("path") or ""),
+                "head_sha": str(row.get("head_sha") or ""),
+                "status": str(row.get("status") or ""),
+                "conclusion": str(row.get("conclusion") or ""),
+            }
+            for row in workflow_runs
+            if isinstance(row, dict)
+        ],
+        key=lambda row: (str(row["check_suite_id"]), str(row["id"])),
     )
     return {
         "repository": repository,
@@ -2528,7 +2824,73 @@ def _resolve_authoritative_github_pr(
         "head_sha": (pull.get("head") or {}).get("sha"),
         "merge_sha": pull.get("merge_commit_sha"),
         "checks": checks,
+        "workflow_runs": normalized_workflow_runs,
+        "required_checks_policy": required_checks_policy,
     }
+
+
+def _github_pull_has_exact_required_checks(
+    contract: Mapping[str, Any],
+    pull_request: Mapping[str, Any],
+    head_sha: str,
+) -> bool:
+    required = contract.get("required_github_checks")
+    checks = pull_request.get("checks")
+    workflow_runs = pull_request.get("workflow_runs")
+    if (
+        not isinstance(required, list)
+        or not required
+        or not isinstance(checks, list)
+        or not isinstance(workflow_runs, list)
+    ):
+        return False
+    expected_policy = {
+        "strict": True,
+        "checks": sorted(
+            deepcopy(required),
+            key=lambda row: (str(row["name"]), str(row["app_id"])),
+        ),
+    }
+    if pull_request.get("required_checks_policy") != expected_policy:
+        return False
+    matched_checks: list[Mapping[str, Any]] = []
+    for required_check in required:
+        matches = [
+            row
+            for row in checks
+            if isinstance(row, dict)
+            and row.get("name") == required_check.get("name")
+            and row.get("app_id") == required_check.get("app_id")
+        ]
+        if (
+            len(matches) != 1
+            or matches[0].get("status") != "completed"
+            or matches[0].get("conclusion") != "success"
+            or matches[0].get("head_sha") != head_sha
+            or type(matches[0].get("check_suite_id")) is not int
+        ):
+            return False
+        matched_checks.append(matches[0])
+    suite_ids = {row["check_suite_id"] for row in matched_checks}
+    if len(suite_ids) != 1:
+        return False
+    matching_runs = [
+        row
+        for row in workflow_runs
+        if isinstance(row, Mapping)
+        and row.get("check_suite_id") in suite_ids
+    ]
+    return bool(
+        len(matching_runs) == 1
+        and type(matching_runs[0].get("id")) is int
+        and matching_runs[0]["id"] > 0
+        and matching_runs[0].get("event") == "pull_request"
+        and matching_runs[0].get("path")
+        == contract.get("required_github_workflow_path")
+        and matching_runs[0].get("head_sha") == head_sha
+        and matching_runs[0].get("status") == "completed"
+        and matching_runs[0].get("conclusion") == "success"
+    )
 
 
 def load_runtime_lock_protocol(catalog: dict[str, Any]) -> ModuleType:
@@ -2841,7 +3203,11 @@ def shared_dispatch_locks(
                     shared=shared,
                     nonblocking=True,
                 ):
-                    yield admission
+                    token = _ACTIVITY_AUDIT_LOCK_HELD.set(True)
+                    try:
+                        yield admission
+                    finally:
+                        _ACTIVITY_AUDIT_LOCK_HELD.reset(token)
     except DispatchError:
         raise
     except (BlockingIOError, TimeoutError) as exc:
@@ -5653,6 +6019,8 @@ def validate_sequencing_release_record(
         "g2_artifact_merge_target_sha",
         "g2_authoritative_remote_head_sha",
         "g2_github_pr_snapshot_sha256",
+        "g2_artifact_github_pr_snapshot_sha256",
+        "g2_hosted_deployment_sha",
         "product_manifest_sha256",
         "product_manifest_sidecar_sha256",
         "target_task_snapshot_sha256",
@@ -5696,7 +6064,7 @@ def validate_sequencing_release_record(
     g2_issued_at = parse_activity_timestamp(record.get("g2_issued_at"))
     closeout_at = parse_activity_timestamp(record.get("closeout_at"))
     released_at = parse_activity_timestamp(record.get("released_at"))
-    if closeout_at > g2_issued_at or g2_issued_at > released_at:
+    if g2_issued_at > closeout_at or closeout_at > released_at:
         raise DispatchError("program sequencing release chronology is invalid")
     epoch = validate_sequencing_epoch_record(state, catalog, catalog_digest)
     if epoch is None or parse_activity_timestamp(epoch.get("applied_at")) > released_at:
@@ -5760,6 +6128,7 @@ def validate_sequencing_release_record(
         "g2_artifact_commit_sha",
         "g2_artifact_merge_target_sha",
         "g2_authoritative_remote_head_sha",
+        "g2_hosted_deployment_sha",
         "canonical_source_attestation",
     }
     attestation = record.get("canonical_source_attestation")
@@ -5772,33 +6141,9 @@ def validate_sequencing_release_record(
             record.get("g2_artifact_merge_target_sha"), 40
         )
         or not _is_lower_hex(record.get("g2_authoritative_remote_head_sha"), 40)
+        or not _is_lower_hex(record.get("g2_hosted_deployment_sha"), 40)
         or not _is_lower_hex(record.get("sequencing_epoch_sha256"), 64)
-        or not isinstance(attestation, dict)
-        or set(attestation) != G2_SOURCE_ATTESTATION_KEYS
-        or attestation.get("database") != contract.get("canonical_database_name")
-        or attestation.get("role") != contract.get("canonical_database_role")
-        or attestation.get("schema") != contract.get("canonical_database_schema")
-        or attestation.get("table") != contract.get("canonical_database_table")
-        or attestation.get("projection_root")
-        != contract.get("canonical_projection_root")
-        or type(attestation.get("live_source_high_watermark")) is not int
-        or type(attestation.get("current_projection_checkpoint")) is not int
-        or attestation["current_projection_checkpoint"]
-        < attestation["live_source_high_watermark"]
-        or not _is_lower_hex(attestation.get("rows_sha256"), 64)
-        or not _is_lower_hex(attestation.get("projection_sha256"), 64)
-        or not isinstance(attestation.get("captured_generation_name"), str)
-        or not isinstance(attestation.get("current_generation_name"), str)
-        or re.fullmatch(
-            r"g[0-9]{12}-[0-9a-f]{12}",
-            str(attestation.get("captured_generation_name") or ""),
-        )
-        is None
-        or re.fullmatch(
-            r"g[0-9]{12}-[0-9a-f]{12}",
-            str(attestation.get("current_generation_name") or ""),
-        )
-        is None
+        or not _g2_source_attestation_is_exact(attestation, contract)
         or not isinstance(reviewer, str)
         or not reviewer.strip()
         or reviewer not in set(catalog.get("allowed_owners") or [])
@@ -6376,17 +6721,13 @@ def _resolve_g2_closeout_task(
 
 
 def _g2_closeout_task_projection(task: Mapping[str, Any]) -> dict[str, Any]:
-    """Bind reviewed closeout truth without a self-referential Git SHA."""
+    """Bind the stable prospective closeout contract before its PR is merged."""
 
-    review_notes = task.get("review_notes_zh", task.get("review_notes"))
     return {
         "id": task.get("id"),
-        "status": task.get("status"),
-        "terminal_outcome": task.get("terminal_outcome"),
         "owner": task.get("owner"),
         "reviewer": task.get("reviewer"),
         "review_file": task.get("review_file"),
-        "review_notes": deepcopy(review_notes),
         "acceptance": deepcopy(task.get("acceptance")),
         "source_ref": deepcopy(task.get("source_ref")),
         "acceptance_deferral": deepcopy(task.get("acceptance_deferral")),
@@ -6398,6 +6739,7 @@ def _validate_g2_implementation_git_delivery(
     pull_request: Mapping[str, Any],
     closeout_task: Mapping[str, Any],
     validated_base_sha: str,
+    required_workflow_path: str,
 ) -> None:
     head_sha = str(pull_request.get("head_sha") or "")
     merge_sha = str(pull_request.get("merge_sha") or "")
@@ -6422,6 +6764,11 @@ def _validate_g2_implementation_git_delivery(
     )
     if len(parents) != 2 or parents != [validated_base_sha, head_sha]:
         raise DispatchError("G2 implementation merge does not contain its exact head")
+    _validate_required_workflow_unchanged(
+        validated_base_sha,
+        head_sha,
+        required_workflow_path,
+    )
     _git_output(
         REPO_ROOT,
         "merge-base",
@@ -6431,15 +6778,73 @@ def _validate_g2_implementation_git_delivery(
     )
 
 
+def _validate_g2_hosted_deployment_git_ancestry(
+    deployment_sha: str,
+    implementation_merge_sha: str,
+    authoritative_remote_head_sha: str,
+) -> None:
+    if not all(
+        _is_lower_hex(value, 40)
+        for value in (
+            deployment_sha,
+            implementation_merge_sha,
+            authoritative_remote_head_sha,
+        )
+    ):
+        raise DispatchError("G2 hosted deployment Git identity is invalid")
+    _git_output(REPO_ROOT, "cat-file", "-e", f"{deployment_sha}^{{commit}}")
+    _git_output(
+        REPO_ROOT,
+        "merge-base",
+        "--is-ancestor",
+        implementation_merge_sha,
+        deployment_sha,
+    )
+    _git_output(
+        REPO_ROOT,
+        "merge-base",
+        "--is-ancestor",
+        deployment_sha,
+        authoritative_remote_head_sha,
+    )
+
+
+def _validate_required_workflow_unchanged(
+    base_sha: str,
+    head_sha: str,
+    relative_path: str,
+) -> None:
+    workflow_path = _safe_repo_relative_path(
+        relative_path,
+        label="G2 required workflow path",
+    )
+    base_bytes = _git_output(REPO_ROOT, "show", f"{base_sha}:{workflow_path}")
+    head_bytes = _git_output(REPO_ROOT, "show", f"{head_sha}:{workflow_path}")
+    if not base_bytes or head_bytes != base_bytes:
+        raise DispatchError("G2 required workflow changed in the admitted PR")
+
+
 def _validate_g2_committed_artifacts(
     closeout_task: Mapping[str, Any],
     contract: Mapping[str, Any],
     artifact_bytes: Mapping[str, bytes],
+    *,
+    closeout_at: str,
 ) -> dict[str, str]:
     delivery = closeout_task.get("delivery")
+    review_binding = closeout_task.get("review_binding")
+    artifact_pr_binding = (
+        review_binding.get("artifact_pr")
+        if isinstance(review_binding, Mapping)
+        else None
+    )
     if not isinstance(delivery, Mapping):
         raise DispatchError("G2 artifact delivery metadata is missing")
-    artifact_commit = str(delivery.get("commit") or "")
+    artifact_commit = str(
+        review_binding.get("artifact_commit_sha")
+        if isinstance(review_binding, Mapping)
+        else ""
+    )
     merge_target = str(delivery.get("merge_target_sha") or "")
     required_url = str(contract.get("required_git_remote_url") or "")
     required_ref = str(contract.get("required_git_remote_ref") or "")
@@ -6450,19 +6855,67 @@ def _validate_g2_committed_artifacts(
         or not _is_lower_hex(merge_target, 40)
         or required_url != "https://github.com/ajoe734/pantheon.git"
         or required_ref != "refs/heads/dev"
+        or not isinstance(artifact_pr_binding, Mapping)
+        or set(artifact_pr_binding) != {"number", "head_sha"}
+        or type(artifact_pr_binding.get("number")) is not int
+        or artifact_pr_binding["number"] <= 0
+        or artifact_pr_binding.get("head_sha") != artifact_commit
     ):
         raise DispatchError("G2 artifact commit binding policy is invalid")
     authoritative_remote_head = _resolve_authoritative_git_remote_ref(
         required_url,
         required_ref,
     )
-    for commit in (artifact_commit, merge_target, authoritative_remote_head):
+    authoritative_artifact_pr = _resolve_authoritative_github_pr(
+        contract,
+        int(artifact_pr_binding["number"]),
+    )
+    artifact_merge_sha = str(authoritative_artifact_pr.get("merge_sha") or "")
+    reviewed_at = _parse_g2_timestamp(
+        review_binding.get("reviewed_at") if isinstance(review_binding, Mapping) else None,
+        label="G2 artifact review timestamp",
+    )
+    artifact_merged_at = _parse_g2_timestamp(
+        authoritative_artifact_pr.get("merged_at"),
+        label="G2 artifact PR merge timestamp",
+    )
+    if (
+        authoritative_artifact_pr.get("repository")
+        != contract.get("required_github_repository")
+        or authoritative_artifact_pr.get("number")
+        != artifact_pr_binding["number"]
+        or authoritative_artifact_pr.get("url")
+        != "https://github.com/ajoe734/pantheon/pull/"
+        + str(artifact_pr_binding["number"])
+        or authoritative_artifact_pr.get("state") != "closed"
+        or authoritative_artifact_pr.get("merged") is not True
+        or authoritative_artifact_pr.get("base") != "dev"
+        or authoritative_artifact_pr.get("head_sha") != artifact_commit
+        or not _is_lower_hex(artifact_merge_sha, 40)
+        or not _github_pull_has_exact_required_checks(
+            contract,
+            authoritative_artifact_pr,
+            artifact_commit,
+        )
+        or not (
+            reviewed_at
+            <= artifact_merged_at
+            <= _parse_g2_timestamp(closeout_at, label="G2 closeout timestamp")
+        )
+    ):
+        raise DispatchError("G2 artifact PR does not resolve against GitHub truth")
+    for commit in (
+        artifact_commit,
+        artifact_merge_sha,
+        merge_target,
+        authoritative_remote_head,
+    ):
         _git_output(REPO_ROOT, "cat-file", "-e", f"{commit}^{{commit}}")
     _git_output(
         REPO_ROOT,
         "merge-base",
         "--is-ancestor",
-        artifact_commit,
+        artifact_merge_sha,
         merge_target,
     )
     _git_output(
@@ -6473,13 +6926,18 @@ def _validate_g2_committed_artifacts(
         authoritative_remote_head,
     )
     merge_parents = (
-        _git_output(REPO_ROOT, "show", "-s", "--format=%P", merge_target)
+        _git_output(REPO_ROOT, "show", "-s", "--format=%P", artifact_merge_sha)
         .decode("utf-8")
         .strip()
         .split()
     )
     if len(merge_parents) != 2 or merge_parents[1] != artifact_commit:
         raise DispatchError("G2 artifact merge does not contain its exact head")
+    _validate_required_workflow_unchanged(
+        merge_parents[0],
+        artifact_commit,
+        str(contract["required_github_workflow_path"]),
+    )
     expected_paths = {
         str(contract["evidence_path"]),
         str(contract["canonical_record_bundle_path"]),
@@ -6490,7 +6948,12 @@ def _validate_g2_committed_artifacts(
     if set(artifact_bytes) != expected_paths:
         raise DispatchError("G2 committed artifact set is not exact")
     for relative_path, expected_raw in artifact_bytes.items():
-        for commit in (artifact_commit, merge_target):
+        for commit in (
+            artifact_commit,
+            artifact_merge_sha,
+            merge_target,
+            authoritative_remote_head,
+        ):
             committed_raw = _git_output(
                 REPO_ROOT,
                 "show",
@@ -6505,7 +6968,89 @@ def _validate_g2_committed_artifacts(
         "g2_artifact_commit_sha": artifact_commit,
         "g2_artifact_merge_target_sha": merge_target,
         "g2_authoritative_remote_head_sha": authoritative_remote_head,
+        "g2_artifact_github_pr_snapshot_sha256": canonical_json_sha256(
+            authoritative_artifact_pr
+        ),
     }
+
+
+def _read_trusted_g2_deployment_identity(
+    *,
+    hosted_readback: Mapping[str, Any],
+    expected_deployment_sha: str,
+    issued_at: datetime,
+    max_age_seconds: int,
+) -> tuple[dict[str, Any], bytes]:
+    root = TRUSTED_G2_DEPLOYMENT_IDENTITY_ROOT
+    path = TRUSTED_G2_DEPLOYMENT_IDENTITY_PATH
+    try:
+        root_metadata = root.lstat()
+        path_metadata = path.lstat()
+        resolved_root = root.resolve(strict=True)
+        resolved_path = path.resolve(strict=True)
+    except OSError as exc:
+        raise DispatchError(
+            "G2 trusted deployment identity manifest is unavailable"
+        ) from exc
+    if (
+        not root.is_absolute()
+        or not path.is_absolute()
+        or path.parent != root
+        or resolved_root != root
+        or resolved_path != path
+        or root.is_symlink()
+        or path.is_symlink()
+        or not stat.S_ISDIR(root_metadata.st_mode)
+        or not stat.S_ISREG(path_metadata.st_mode)
+        or root_metadata.st_uid != TRUSTED_G2_DEPLOYMENT_IDENTITY_OWNER_UID
+        or path_metadata.st_uid != TRUSTED_G2_DEPLOYMENT_IDENTITY_OWNER_UID
+        or root_metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        or path_metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    ):
+        raise DispatchError(
+            "G2 trusted deployment identity manifest authority mismatch"
+        )
+    manifest, raw = read_regular_json(
+        path,
+        label="G2 trusted deployment identity manifest",
+    )
+    capture_epoch = hosted_readback.get("capture_time_hosted_readback")
+    observed_at = _parse_g2_timestamp(
+        manifest.get("observed_at"),
+        label="G2 trusted deployment identity observed_at",
+    )
+    if (
+        set(manifest) != G2_TRUSTED_DEPLOYMENT_IDENTITY_KEYS
+        or manifest.get("schema_version") != G2_DEPLOYMENT_IDENTITY_SCHEMA
+        or manifest.get("environment") != "dev"
+        or manifest.get("deployment_sha") != expected_deployment_sha
+        or manifest.get("runtime_commit_sha") != expected_deployment_sha
+        or manifest.get("runtime_source_commit_sha")
+        != expected_deployment_sha
+        or re.fullmatch(
+            r"sha256:[0-9a-f]{64}",
+            str(manifest.get("image_manifest_digest") or ""),
+        )
+        is None
+        or manifest.get("hosted_readback_sha256")
+        != canonical_json_sha256(hosted_readback)
+        or type(manifest.get("deployment_run_id")) is not int
+        or manifest["deployment_run_id"] <= 0
+        or type(manifest.get("deployment_job_id")) is not int
+        or manifest["deployment_job_id"] <= 0
+        or not isinstance(capture_epoch, Mapping)
+        or capture_epoch.get("observed_at") != manifest.get("observed_at")
+        or capture_epoch.get("deployment_sha") != expected_deployment_sha
+        or capture_epoch.get("runtime_commit_sha") != expected_deployment_sha
+        or capture_epoch.get("runtime_source_commit_sha")
+        != expected_deployment_sha
+        or capture_epoch.get("image_manifest_digest")
+        != manifest.get("image_manifest_digest")
+        or observed_at > issued_at
+        or issued_at - observed_at > timedelta(seconds=max_age_seconds)
+    ):
+        raise DispatchError("G2 trusted deployment identity manifest mismatch")
+    return manifest, raw
 
 
 def _validate_g2_product_evidence(
@@ -6733,26 +7278,28 @@ def _validate_g2_product_evidence(
         delivery_pull_request.get("merged_at"), label="G2 delivery merged_at"
     )
     checks = implementation.get("required_checks") if isinstance(implementation, dict) else None
+    required_check_contract = contract.get("required_github_checks")
     if (
-        not isinstance(checks, list)
-        or not checks
+        not isinstance(required_check_contract, list)
+        or not required_check_contract
+        or not isinstance(checks, list)
+        or len(checks) != len(required_check_contract)
         or any(
             not isinstance(row, dict)
+            or set(row) != {"workflow", "event", "conclusion"}
+            or row.get("event") != "pull_request"
             or str(row.get("conclusion") or "").lower()
-            not in {"success", "passed", "pass"}
+            != "success"
             for row in checks
         )
+        or sorted(str(row.get("workflow") or "") for row in checks)
+        != sorted(str(row.get("name") or "") for row in required_check_contract)
     ):
         raise DispatchError("G2 delivery checks are not successful")
     authoritative_pr = _resolve_authoritative_github_pr(
         contract,
         delivery_pull_request["number"],
     )
-    authoritative_check_pairs = {
-        (row.get("name"), row.get("conclusion"))
-        for row in authoritative_pr.get("checks") or []
-        if isinstance(row, dict)
-    }
     if (
         authoritative_pr.get("repository")
         != contract.get("required_github_repository")
@@ -6767,10 +7314,10 @@ def _validate_g2_product_evidence(
         != delivery_pull_request["head_sha"]
         or authoritative_pr.get("merge_sha")
         != delivery_pull_request["merge_sha"]
-        or any(
-            (str(row.get("workflow") or ""), str(row.get("conclusion") or ""))
-            not in authoritative_check_pairs
-            for row in checks
+        or not _github_pull_has_exact_required_checks(
+            contract,
+            authoritative_pr,
+            str(delivery_pull_request["head_sha"]),
         )
     ):
         raise DispatchError("G2 delivery does not resolve against GitHub truth")
@@ -6801,6 +7348,7 @@ def _validate_g2_product_evidence(
         delivery_pull_request,
         closeout_task,
         str(validation["validated_base_sha"]),
+        str(contract["required_github_workflow_path"]),
     )
 
     deployment = manifest.get("deployment")
@@ -6819,17 +7367,45 @@ def _validate_g2_product_evidence(
             or row.get("deployment_sha") != expected_deployment_sha
         ):
             raise DispatchError("G2 deployment identity is not accepted")
+    trusted_deployment, trusted_deployment_raw = (
+        _read_trusted_g2_deployment_identity(
+            hosted_readback=hosted_readback,
+            expected_deployment_sha=expected_deployment_sha,
+            issued_at=issued_at,
+            max_age_seconds=int(contract["max_evidence_age_seconds"]),
+        )
+    )
+    canonical_root_deploy = deployment["canonical_root_deploy"]
+    if (
+        canonical_root_deploy.get("run_id")
+        != trusted_deployment["deployment_run_id"]
+        or canonical_root_deploy.get("job_id")
+        != trusted_deployment["deployment_job_id"]
+        or canonical_root_deploy.get("runtime_commit_sha")
+        != trusted_deployment["runtime_commit_sha"]
+        or canonical_root_deploy.get("runtime_source_commit_sha")
+        != trusted_deployment["runtime_source_commit_sha"]
+        or canonical_root_deploy.get("image_manifest_digest")
+        != trusted_deployment["image_manifest_digest"]
+    ):
+        raise DispatchError("G2 canonical deployment manifest mismatch")
     identity_admission = deployment.get("identity_admission")
     if (
         not isinstance(identity_admission, dict)
+        or set(identity_admission) != G2_DEPLOYMENT_IDENTITY_ADMISSION_KEYS
+        or str(identity_admission.get("status") or "").lower() != "accepted"
         or identity_admission.get("deployment_sha")
         != expected_deployment_sha
-        or any(
-            str(identity_admission.get(field) or "").lower()
-            not in {"success", "passed", "pass", "accepted", "approved"}
-            for field in ("status", "conclusion")
-            if field in identity_admission
-        )
+        or identity_admission.get("runtime_commit_sha")
+        != expected_deployment_sha
+        or identity_admission.get("runtime_source_commit_sha")
+        != expected_deployment_sha
+        or identity_admission.get("image_manifest_digest")
+        != trusted_deployment["image_manifest_digest"]
+        or identity_admission.get("deployment_manifest_sha256")
+        != sha256_bytes(trusted_deployment_raw)
+        or identity_admission.get("hosted_readback_sha256")
+        != trusted_deployment["hosted_readback_sha256"]
     ):
         raise DispatchError("G2 deployment identity admission mismatch")
 
@@ -6867,8 +7443,8 @@ def _validate_g2_product_evidence(
         or observed_at > validated_at
         or max(evidence_cut_at, validated_at) > verdict_at
         or verdict_at > merged_at
-        or merged_at > closeout_at
-        or closeout_at > issued_at
+        or merged_at > issued_at
+        or issued_at > closeout_at
     ):
         raise DispatchError("G2 closeout chronology is invalid")
     chronology = [
@@ -6906,7 +7482,12 @@ def _validate_g2_product_evidence(
             "closeout_at": closeout_at.isoformat().replace("+00:00", "Z"),
         },
         {
-            "reviewed_at": verdict["recorded_at"],
+            "product_verdict_at": verdict["recorded_at"],
+            "implementation_merged_at": delivery_pull_request["merged_at"],
+            "deployment_sha": expected_deployment_sha,
+            "implementation_github_pr_snapshot_sha256": (
+                github_pr_snapshot_sha256
+            ),
             "implementation_pr": {
                 "number": delivery_pull_request["number"],
                 "head_sha": delivery_pull_request["head_sha"],
@@ -6923,11 +7504,16 @@ def _validate_g2_reviewer_binding(
     artifact_commit_sha: str,
     artifact_sha256: Mapping[str, str],
     product_truth: Mapping[str, Any],
+    evidence_issued_at: datetime,
     closeout_at: str,
+    review_audit_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, str]:
     binding = closeout_task.get("review_binding")
     implementation_pr = (
         binding.get("implementation_pr") if isinstance(binding, dict) else None
+    )
+    artifact_pr = (
+        binding.get("artifact_pr") if isinstance(binding, dict) else None
     )
     binding_artifacts = (
         binding.get("artifact_sha256") if isinstance(binding, dict) else None
@@ -6937,7 +7523,6 @@ def _validate_g2_reviewer_binding(
         or set(binding) != G2_REVIEW_BINDING_KEYS
         or binding.get("schema_version") != contract.get("review_binding_schema")
         or binding.get("reviewer") != closeout_task.get("reviewer")
-        or binding.get("reviewed_at") != product_truth.get("reviewed_at")
         or not _is_lower_hex(binding.get("artifact_commit_sha"), 40)
         or binding.get("artifact_commit_sha") != artifact_commit_sha
         or not isinstance(binding_artifacts, dict)
@@ -6946,17 +7531,34 @@ def _validate_g2_reviewer_binding(
         or not isinstance(implementation_pr, dict)
         or set(implementation_pr) != {"number", "head_sha", "merge_sha"}
         or implementation_pr != product_truth.get("implementation_pr")
+        or not isinstance(artifact_pr, dict)
+        or set(artifact_pr) != {"number", "head_sha"}
+        or type(artifact_pr.get("number")) is not int
+        or artifact_pr["number"] <= 0
+        or artifact_pr.get("head_sha") != artifact_commit_sha
     ):
         raise DispatchError("G2 reviewer binding is not exact")
     reviewed_at = _parse_g2_timestamp(
         binding.get("reviewed_at"), label="G2 reviewer binding timestamp"
     )
-    if reviewed_at > _parse_g2_timestamp(closeout_at, label="G2 closeout timestamp"):
-        raise DispatchError("G2 reviewer binding postdates closeout")
-    try:
-        records = read_activity_audit_records(LOG_PATH)
-    except RuntimeError as exc:
-        raise DispatchError("G2 reviewer approval audit is unreadable") from exc
+    implementation_merged_at = _parse_g2_timestamp(
+        product_truth.get("implementation_merged_at"),
+        label="G2 implementation merge timestamp",
+    )
+    if not (
+        implementation_merged_at
+        <= evidence_issued_at
+        <= reviewed_at
+        <= _parse_g2_timestamp(closeout_at, label="G2 closeout timestamp")
+    ):
+        raise DispatchError("G2 reviewer binding chronology is invalid")
+    if review_audit_records is None:
+        try:
+            records = read_activity_audit_records_unlocked(LOG_PATH)
+        except RuntimeError as exc:
+            raise DispatchError("G2 reviewer approval audit is unreadable") from exc
+    else:
+        records = review_audit_records
     matches = [
         record
         for record in records
@@ -7001,15 +7603,89 @@ def _normalized_authoritative_g2_timestamp(value: Any) -> str:
     return parsed.isoformat().replace("+00:00", "Z")
 
 
+def _parse_authoritative_g2_dsn(
+    dsn: str,
+    contract: Mapping[str, Any],
+) -> dict[str, Any]:
+    try:
+        parsed = urllib_parse.urlsplit(dsn)
+        port = parsed.port
+    except ValueError as exc:
+        raise DispatchError("G2 canonical telemetry DSN is invalid") from exc
+    try:
+        query = urllib_parse.parse_qsl(
+            parsed.query,
+            keep_blank_values=True,
+            strict_parsing=True,
+        )
+    except ValueError as exc:
+        raise DispatchError("G2 canonical telemetry DSN query is invalid") from exc
+    username = urllib_parse.unquote(parsed.username or "")
+    password = urllib_parse.unquote(parsed.password or "")
+    database = urllib_parse.unquote(parsed.path.removeprefix("/"))
+    if (
+        parsed.scheme not in {"postgres", "postgresql"}
+        or parsed.hostname != contract.get("canonical_database_host")
+        or port != contract.get("canonical_database_port")
+        or username != contract.get("canonical_database_role")
+        or not password
+        or database != contract.get("canonical_database_name")
+        or parsed.path.count("/") != 1
+        or parsed.fragment
+        or query != [("sslmode", contract.get("canonical_database_tls_mode"))]
+    ):
+        raise DispatchError("G2 canonical telemetry DSN authority mismatch")
+    ca_path = Path(str(contract.get("canonical_database_tls_ca_path") or ""))
+    try:
+        resolved_ca = ca_path.resolve(strict=True)
+        ca_metadata = ca_path.lstat()
+    except OSError as exc:
+        raise DispatchError("G2 canonical telemetry CA bundle is unavailable") from exc
+    if (
+        not ca_path.is_absolute()
+        or resolved_ca != TRUSTED_SYSTEM_CA_PATH
+        or ca_path.is_symlink()
+        or not stat.S_ISREG(ca_metadata.st_mode)
+        or ca_metadata.st_uid != 0
+        or ca_metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    ):
+        raise DispatchError("G2 canonical telemetry CA authority mismatch")
+    return {
+        "host": parsed.hostname,
+        "port": port,
+        "database": database,
+        "role": username,
+        "tls_mode": query[0][1],
+        "ca_path": str(resolved_ca),
+    }
+
+
 async def _query_authoritative_g2_rows(
     dsn: str,
+    contract: Mapping[str, Any],
     identity: Mapping[str, str],
     event_types: list[str],
-) -> tuple[dict[str, str], int, list[dict[str, Any]]]:
+) -> tuple[dict[str, Any], int, list[dict[str, Any]]]:
+    connection_policy = _parse_authoritative_g2_dsn(dsn, contract)
     try:
         import asyncpg  # type: ignore[import]
 
-        connection = await asyncpg.connect(dsn)
+        ssl_context = ssl.create_default_context(
+            cafile=connection_policy["ca_path"]
+        )
+        ssl_context.check_hostname = True
+        ssl_context.verify_mode = ssl.CERT_REQUIRED
+        connection = await asyncpg.connect(
+            dsn,
+            ssl=ssl_context,
+            timeout=contract["canonical_connect_timeout_seconds"],
+            command_timeout=contract["canonical_statement_timeout_seconds"],
+            server_settings={
+                "statement_timeout": str(
+                    int(contract["canonical_statement_timeout_seconds"]) * 1000
+                )
+            },
+        )
         try:
             async with connection.transaction(
                 isolation="repeatable_read",
@@ -7024,7 +7700,17 @@ async def _query_authoritative_g2_rows(
                 source_record = await connection.fetchrow(
                     "SELECT current_database() AS database, "
                     "current_user AS role, current_schema() AS schema, "
-                    "to_regclass('public.telemetry_events')::text AS table_name"
+                    "to_regclass('public.telemetry_events')::text AS table_name, "
+                    "(SELECT relkind FROM pg_class WHERE oid = "
+                    "to_regclass('public.telemetry_events')) AS table_kind, "
+                    "inet_server_addr()::text AS server_address, "
+                    "inet_server_port() AS server_port, "
+                    "(SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()) "
+                    "AS tls_enabled, "
+                    "(SELECT version FROM pg_stat_ssl WHERE pid = pg_backend_pid()) "
+                    "AS tls_protocol, "
+                    "(SELECT cipher FROM pg_stat_ssl WHERE pid = pg_backend_pid()) "
+                    "AS tls_cipher"
                 )
                 high_watermark = int(
                     await connection.fetchval(
@@ -7040,9 +7726,35 @@ async def _query_authoritative_g2_rows(
                     "AND payload #>> '{correlation_envelope,tenant_id}' = $2 "
                     "AND payload #>> '{correlation_envelope,environment}' = $3 "
                     "AND payload #>> '{correlation_envelope,journey_id}' = $4 "
-                    "AND payload ->> 'run_id' = $5 "
-                    "AND payload ->> 'signal_id' = $6 "
-                    "AND payload ->> 'trace_id' = $7 "
+                    "AND CASE WHEN payload -> 'run_id' IS NULL OR "
+                    "payload -> 'run_id' IN "
+                    "('null'::jsonb, '\"\"'::jsonb, '[]'::jsonb, '{}'::jsonb) "
+                    "THEN CASE WHEN jsonb_typeof(payload #> "
+                    "'{metadata,run_id}') = 'string' AND "
+                    "payload #>> '{metadata,run_id}' <> '' THEN "
+                    "payload #>> '{metadata,run_id}' END "
+                    "WHEN jsonb_typeof(payload -> 'run_id') = 'string' "
+                    "THEN payload ->> 'run_id' END = $5 "
+                    "AND CASE WHEN payload -> 'signal_id' IS NULL OR "
+                    "payload -> 'signal_id' IN "
+                    "('null'::jsonb, '\"\"'::jsonb, '[]'::jsonb, '{}'::jsonb) "
+                    "THEN CASE WHEN jsonb_typeof(payload #> "
+                    "'{metadata,signal_id}') = 'string' AND "
+                    "payload #>> '{metadata,signal_id}' <> '' THEN "
+                    "payload #>> '{metadata,signal_id}' END "
+                    "WHEN jsonb_typeof(payload -> 'signal_id') = 'string' "
+                    "THEN payload ->> 'signal_id' END = $6 "
+                    "AND CASE WHEN payload #> "
+                    "'{correlation_envelope,trace_id}' IS NULL OR "
+                    "payload #> '{correlation_envelope,trace_id}' IN "
+                    "('null'::jsonb, '\"\"'::jsonb, '[]'::jsonb, '{}'::jsonb) "
+                    "THEN CASE WHEN jsonb_typeof(payload -> 'trace_id') "
+                    "= 'string' AND payload ->> 'trace_id' <> '' "
+                    "THEN payload ->> 'trace_id' END "
+                    "WHEN jsonb_typeof(payload #> "
+                    "'{correlation_envelope,trace_id}') = 'string' "
+                    "THEN payload #>> '{correlation_envelope,trace_id}' "
+                    "END = $7 "
                     "ORDER BY ingested_seq",
                     event_types,
                     identity["tenant_id"],
@@ -7063,7 +7775,10 @@ async def _query_authoritative_g2_rows(
                 if not isinstance(source_record, Mapping):
                     raise DispatchError("G2 canonical telemetry identity is missing")
         finally:
-            await connection.close()
+            await asyncio.wait_for(
+                connection.close(),
+                timeout=contract["canonical_connect_timeout_seconds"],
+            )
     except DispatchError:
         raise
     except Exception as exc:
@@ -7079,7 +7794,22 @@ async def _query_authoritative_g2_rows(
         if str(source_record["table_name"] or "").split(".")[-1]
         == "telemetry_events"
         else "",
+        "database_host": str(connection_policy["host"]),
+        "database_port": int(connection_policy["port"]),
+        "database_tls_mode": str(connection_policy["tls_mode"]),
+        "database_server_address": str(source_record["server_address"] or ""),
+        "database_tls_protocol": str(source_record["tls_protocol"] or ""),
+        "database_tls_cipher": str(source_record["tls_cipher"] or ""),
     }
+    if (
+        source_record["table_kind"] not in {"r", "p"}
+        or source_record["server_port"] != connection_policy["port"]
+        or source_record["tls_enabled"] is not True
+        or not source_identity["database_server_address"]
+        or not source_identity["database_tls_protocol"]
+        or not source_identity["database_tls_cipher"]
+    ):
+        raise DispatchError("G2 canonical telemetry TLS or relation identity mismatch")
     rows: list[dict[str, Any]] = []
     try:
         for record in records:
@@ -7120,9 +7850,21 @@ def _read_g2_projection_generation(
     *,
     label: str,
 ) -> dict[str, Any]:
-    if not re.fullmatch(r"g[0-9]{12}-[0-9a-f]{12}", generation_name):
+    if not re.fullmatch(r"g[0-9]{12}-[0-9a-f]{64}", generation_name):
         raise DispatchError(f"{label} generation name is invalid")
-    generations_root = (projection_root / "generations").resolve(strict=True)
+    generations_root = projection_root / "generations"
+    try:
+        generations_before = generations_root.lstat()
+        generations_resolved = generations_root.resolve(strict=True)
+    except OSError as exc:
+        raise DispatchError(f"{label} generations root is unavailable") from exc
+    if (
+        generations_root.is_symlink()
+        or not stat.S_ISDIR(generations_before.st_mode)
+        or generations_before.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        or generations_resolved != generations_root
+    ):
+        raise DispatchError(f"{label} generations root is not canonical")
     generation = generations_root / generation_name
     try:
         before = generation.lstat()
@@ -7130,25 +7872,116 @@ def _read_g2_projection_generation(
         resolved.relative_to(generations_root)
     except (OSError, ValueError) as exc:
         raise DispatchError(f"{label} generation is unavailable") from exc
-    if generation.is_symlink() or not stat.S_ISDIR(before.st_mode) or resolved != generation:
+    if (
+        generation.is_symlink()
+        or not stat.S_ISDIR(before.st_mode)
+        or before.st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+        or resolved != generation
+    ):
         raise DispatchError(f"{label} generation directory is not canonical")
-    manifest, _ = read_regular_json(
-        generation / "manifest.json",
+    paths = {
+        "manifest": str(Path(generation_name) / "manifest.json"),
+        "trade_journey_events": str(
+            Path(generation_name) / "trade_journey_events.json"
+        ),
+        "loop_runs": str(Path(generation_name) / "loop_runs.json"),
+    }
+    try:
+        children = {path.name for path in generation.iterdir()}
+    except OSError as exc:
+        raise DispatchError(f"{label} projection files are unavailable") from exc
+    if children != {Path(path).name for path in paths.values()}:
+        raise DispatchError(f"{label} projection file set is not exact")
+    for relative_path in paths.values():
+        path = generations_root / relative_path
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            raise DispatchError(f"{label} projection file is unavailable") from exc
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+        ):
+            raise DispatchError(f"{label} projection file is not immutable")
+    manifest, _ = read_rooted_regular_json(
+        generations_root,
+        paths["manifest"],
         label=f"{label} manifest",
     )
-    journeys, _ = read_regular_json(
-        generation / "trade_journey_events.json",
+    journeys, _ = read_rooted_regular_json(
+        generations_root,
+        paths["trade_journey_events"],
         label=f"{label} journey projection",
     )
-    loops, _ = read_regular_json(
-        generation / "loop_runs.json",
+    loops, _ = read_rooted_regular_json(
+        generations_root,
+        paths["loop_runs"],
         label=f"{label} loop projection",
     )
-    return {
+    projection = {
         "manifest": manifest,
         "trade_journey_events": journeys,
         "loop_runs": loops,
     }
+    try:
+        after = generation.lstat()
+        generations_after = generations_root.lstat()
+    except OSError as exc:
+        raise DispatchError(f"{label} generation changed during read") from exc
+    bundle_sha256 = hashlib.sha256(
+        json.dumps(
+            projection,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    expected_generation = int(generation_name[1:13])
+    if (
+        (before.st_dev, before.st_ino, before.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_mtime_ns)
+        or generations_root.is_symlink()
+        or not stat.S_ISDIR(generations_after.st_mode)
+        or generations_after.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        or (
+            generations_before.st_dev,
+            generations_before.st_ino,
+            generations_before.st_mtime_ns,
+            generations_before.st_ctime_ns,
+        )
+        != (
+            generations_after.st_dev,
+            generations_after.st_ino,
+            generations_after.st_mtime_ns,
+            generations_after.st_ctime_ns,
+        )
+        or generation_name != f"g{expected_generation:012d}-{bundle_sha256}"
+        or manifest.get("generation") != expected_generation
+        or journeys.get("generation") != expected_generation
+        or loops.get("generation") != expected_generation
+        or manifest.get("journey_sha256")
+        != hashlib.sha256(
+            json.dumps(
+                journeys,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        or manifest.get("loop_runs_sha256")
+        != hashlib.sha256(
+            json.dumps(
+                loops,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        or journeys.get("controller") != loops.get("controller")
+    ):
+        raise DispatchError(f"{label} projection generation integrity mismatch")
+    return projection
 
 
 def _resolve_authoritative_g2_snapshot(
@@ -7170,28 +8003,40 @@ def _resolve_authoritative_g2_snapshot(
     if not dsn or not projection_root_value:
         raise DispatchError("G2 authoritative canonical source configuration is missing")
     try:
-        event_order = contract.get("event_order_contract") or {}
-        event_types = sorted(
-            {
-                *list(event_order.get("prefix") or []),
-                *list(event_order.get("repeat_group") or []),
-                *list(event_order.get("suffix") or []),
-            }
+        from services.trade_journey.lifecycle_projector import (
+            LIFECYCLE_EVENT_TYPES,
         )
+
+        event_types = contract.get("canonical_query_event_types")
+        if (
+            event_types != list(G2_CANONICAL_QUERY_EVENT_TYPES)
+            or tuple(sorted(LIFECYCLE_EVENT_TYPES))
+            != G2_CANONICAL_QUERY_EVENT_TYPES
+        ):
+            raise DispatchError("G2 canonical lifecycle event inventory drifted")
         source_identity, source_high_watermark, rows = asyncio.run(
-            _query_authoritative_g2_rows(dsn, identity, event_types)
+            asyncio.wait_for(
+                _query_authoritative_g2_rows(dsn, contract, identity, event_types),
+                timeout=contract["canonical_total_timeout_seconds"],
+            )
         )
     except RuntimeError as exc:
         raise DispatchError("G2 authoritative canonical query runtime is unavailable") from exc
     try:
-        projection_root = Path(projection_root_value).expanduser().resolve(strict=True)
+        configured_projection_root = Path(projection_root_value).expanduser()
         expected_root = Path(
             str(contract.get("canonical_projection_root") or "")
         )
+        root_before = configured_projection_root.lstat()
+        projection_root = configured_projection_root.resolve(strict=True)
         if (
             not expected_root.is_absolute()
+            or not configured_projection_root.is_absolute()
+            or configured_projection_root != expected_root
             or projection_root != expected_root
-            or projection_root.stat().st_mode & stat.S_IWOTH
+            or configured_projection_root.is_symlink()
+            or not stat.S_ISDIR(root_before.st_mode)
+            or root_before.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
         ):
             raise DispatchError("G2 canonical projection root identity mismatch")
         projection = _read_g2_projection_generation(
@@ -7199,7 +8044,20 @@ def _resolve_authoritative_g2_snapshot(
             generation_name,
             label="G2 captured canonical projection",
         )
-        current_generation = (projection_root / "current").resolve(strict=True)
+        current_link = projection_root / "current"
+        current_link_before = current_link.lstat()
+        current_target_before = current_link.readlink()
+        if (
+            not stat.S_ISLNK(current_link_before.st_mode)
+            or current_target_before
+            != Path("generations") / current_target_before.name
+            or not re.fullmatch(
+                r"g[0-9]{12}-[0-9a-f]{64}",
+                current_target_before.name,
+            )
+        ):
+            raise DispatchError("G2 current projection link is not canonical")
+        current_generation = current_link.resolve(strict=True)
         current_generation.relative_to(
             (projection_root / "generations").resolve(strict=True)
         )
@@ -7208,38 +8066,189 @@ def _resolve_authoritative_g2_snapshot(
             current_generation.name,
             label="G2 current canonical projection",
         )
+        current_link_after = current_link.lstat()
+        root_after = projection_root.lstat()
+        if (
+            (current_link_before.st_dev, current_link_before.st_ino)
+            != (current_link_after.st_dev, current_link_after.st_ino)
+            or current_link.readlink() != current_target_before
+            or projection_root.is_symlink()
+            or (
+                root_before.st_dev,
+                root_before.st_ino,
+                root_before.st_mtime_ns,
+                root_before.st_ctime_ns,
+            )
+            != (
+                root_after.st_dev,
+                root_after.st_ino,
+                root_after.st_mtime_ns,
+                root_after.st_ctime_ns,
+            )
+        ):
+            raise DispatchError("G2 current projection changed during read")
     except Exception as exc:
         raise DispatchError(
             "G2 authoritative canonical projection read failed"
         ) from exc
+    try:
+        (
+            fresh_source_identity,
+            fresh_source_high_watermark,
+            fresh_rows,
+        ) = asyncio.run(
+            asyncio.wait_for(
+                _query_authoritative_g2_rows(
+                    dsn,
+                    contract,
+                    identity,
+                    event_types,
+                ),
+                timeout=contract["canonical_total_timeout_seconds"],
+            )
+        )
+    except RuntimeError as exc:
+        raise DispatchError(
+            "G2 canonical post-projection telemetry query is unavailable"
+        ) from exc
+    if (
+        fresh_source_identity != source_identity
+        or fresh_source_high_watermark != source_high_watermark
+        or canonical_json_sha256(fresh_rows) != canonical_json_sha256(rows)
+    ):
+        raise DispatchError(
+            "G2 canonical telemetry changed while projection truth was resolved"
+        )
     expected_source_identity = {
         "database": contract.get("canonical_database_name"),
         "role": contract.get("canonical_database_role"),
         "schema": contract.get("canonical_database_schema"),
         "table": contract.get("canonical_database_table"),
+        "database_host": contract.get("canonical_database_host"),
+        "database_port": contract.get("canonical_database_port"),
+        "database_tls_mode": contract.get("canonical_database_tls_mode"),
     }
     current_controller = current_projection["loop_runs"].get("controller")
+    captured_controller = projection["loop_runs"].get("controller")
     if (
-        source_identity != expected_source_identity
+        any(
+            source_identity.get(field) != value
+            for field, value in expected_source_identity.items()
+        )
+        or not isinstance(source_identity.get("database_server_address"), str)
+        or not source_identity["database_server_address"]
+        or not isinstance(source_identity.get("database_tls_protocol"), str)
+        or not source_identity["database_tls_protocol"]
+        or not isinstance(source_identity.get("database_tls_cipher"), str)
+        or not source_identity["database_tls_cipher"]
+        or not isinstance(captured_controller, Mapping)
         or not isinstance(current_controller, Mapping)
+        or type(captured_controller.get("checkpoint")) is not int
+        or captured_controller["checkpoint"] != source_high_watermark
+        or type(captured_controller.get("source_high_watermark")) is not int
+        or captured_controller["source_high_watermark"] != source_high_watermark
         or current_controller.get("mode") != "live"
         or current_controller.get("accepted_live") is not True
         or current_controller.get("truth_level") != "canonical_live"
         or current_controller.get("status") != "ready"
         or type(current_controller.get("checkpoint")) is not int
-        or current_controller["checkpoint"] < source_high_watermark
+        or current_controller["checkpoint"] != source_high_watermark
+        or type(current_controller.get("source_high_watermark")) is not int
+        or current_controller["source_high_watermark"] != source_high_watermark
         or current_controller.get("backlog") != 0
     ):
         raise DispatchError("G2 canonical source identity or freshness mismatch")
+    captured_events = projection["trade_journey_events"].get("events")
+    current_events = current_projection["trade_journey_events"].get("events")
+    captured_records = projection["loop_runs"].get("records")
+    current_records = current_projection["loop_runs"].get("records")
+    if (
+        not isinstance(captured_events, list)
+        or not isinstance(current_events, list)
+        or not isinstance(captured_records, Mapping)
+        or not isinstance(current_records, Mapping)
+        or any(not isinstance(event, Mapping) for event in captured_events)
+        or any(not isinstance(event, Mapping) for event in current_events)
+    ):
+        raise DispatchError("G2 canonical current projection is malformed")
+
+    def target_events(events: list[Any]) -> list[dict[str, Any]]:
+        return [
+            dict(event)
+            for event in events
+            if all(
+                str(event.get(field) or "") == identity[field]
+                for field in G2_STABLE_IDENTITY_FIELDS
+            )
+        ]
+
+    captured_target_events = target_events(captured_events)
+    current_target_events = target_events(current_events)
+    captured_projected_ids = [
+        str(event.get("canonical_event_id") or "")
+        for event in captured_target_events
+    ]
+    current_projected_ids = [
+        str(event.get("canonical_event_id") or "")
+        for event in current_target_events
+    ]
+    captured_loop_record = captured_records.get(identity["loop_run_id"])
+    current_loop_record = current_records.get(identity["loop_run_id"])
+    if (
+        not captured_target_events
+        or not current_target_events
+        or any(not event_id for event_id in captured_projected_ids)
+        or any(not event_id for event_id in current_projected_ids)
+        or len(captured_projected_ids) != len(set(captured_projected_ids))
+        or len(current_projected_ids) != len(set(current_projected_ids))
+        or canonical_json_sha256(current_target_events)
+        != canonical_json_sha256(captured_target_events)
+        or not isinstance(captured_loop_record, Mapping)
+        or not isinstance(current_loop_record, Mapping)
+    ):
+        raise DispatchError("G2 canonical current target chain mismatch")
+    mutable_loop_fields = {"controller_generation", "last_projected_at"}
+    captured_loop_core = {
+        key: value
+        for key, value in captured_loop_record.items()
+        if key not in mutable_loop_fields
+    }
+    current_loop_core = {
+        key: value
+        for key, value in current_loop_record.items()
+        if key not in mutable_loop_fields
+    }
+    current_manifest = current_projection["manifest"]
+    if (
+        canonical_json_sha256(current_loop_core)
+        != canonical_json_sha256(captured_loop_core)
+        or current_loop_record.get("controller_generation")
+        != current_manifest.get("generation")
+        or current_loop_record.get("last_projected_at")
+        != current_controller.get("last_projection_success_at")
+        or current_loop_record.get("deployment_sha")
+        != current_controller.get("deployment_sha")
+        or current_controller.get("deployment_sha")
+        != captured_controller.get("deployment_sha")
+    ):
+        raise DispatchError("G2 canonical current loop-run projection mismatch")
     attestation = {
         **source_identity,
         "projection_root": str(projection_root),
         "live_source_high_watermark": source_high_watermark,
         "captured_generation_name": generation_name,
         "current_generation_name": current_generation.name,
+        "captured_projection_checkpoint": captured_controller.get("checkpoint"),
+        "captured_projection_source_high_watermark": captured_controller.get(
+            "source_high_watermark"
+        ),
         "current_projection_checkpoint": current_controller["checkpoint"],
+        "current_projection_source_high_watermark": current_controller[
+            "source_high_watermark"
+        ],
         "rows_sha256": canonical_json_sha256(rows),
         "projection_sha256": canonical_json_sha256(projection),
+        "current_projection_sha256": canonical_json_sha256(current_projection),
     }
     return {
         "source_high_watermark": source_high_watermark,
@@ -7386,11 +8395,13 @@ def _validate_g2_projection_bundle(
         )
     candidate = candidates[0]
     selected = candidate.get("selected_events") or []
+    selected_event_ids = {event["event_id"] for event in selected}
     if (
         selected[-1]["event_type"] != "reconciliation_completed"
         or candidate.get("identity") != dict(identity)
+        or selected_event_ids != set(event_ids)
     ):
-        raise DispatchError("G2 natural lifecycle resolution mismatch")
+        raise DispatchError("G2 bundle is not scoped to one exact natural lifecycle")
     rows_by_id = {row["event_id"]: row for row in rows}
     selected_created_times = [
         _parse_g2_timestamp(
@@ -7467,8 +8478,11 @@ def _validate_g2_projection_bundle(
         or not _is_lower_hex(controller.get("deployment_sha"), 40)
         or controller.get("accepted_live") is not True
         or type(controller.get("checkpoint")) is not int
-        or controller["checkpoint"] < source["source_high_watermark"]
+        or controller["checkpoint"] != source["source_high_watermark"]
+        or type(controller.get("source_high_watermark")) is not int
+        or controller["source_high_watermark"] != source["source_high_watermark"]
         or type(controller.get("backlog")) is not int
+        or controller["backlog"] != 0
         or type(controller.get("generation")) is not int
         or controller.get("generation") != manifest.get("generation")
     ):
@@ -7506,13 +8520,30 @@ def _validate_g2_projection_bundle(
         not isinstance(event, dict) for event in projected_events
     ):
         raise DispatchError("G2 journey projection events are malformed")
-    projected_ids = [str(event.get("canonical_event_id") or "") for event in projected_events]
-    if len(projected_ids) != len(set(projected_ids)) or not set(
-        event["event_id"] for event in selected
-    ).issubset(set(projected_ids)):
+    projected_ids = [
+        str(event.get("canonical_event_id") or "") for event in projected_events
+    ]
+    target_projected_events = [
+        event
+        for event in projected_events
+        if all(
+            str(event.get(field) or "") == identity[field]
+            for field in G2_STABLE_IDENTITY_FIELDS
+        )
+    ]
+    target_projected_ids = {
+        str(event.get("canonical_event_id") or "")
+        for event in target_projected_events
+    }
+    if (
+        len(projected_ids) != len(set(projected_ids))
+        or target_projected_ids != selected_event_ids
+        or len(target_projected_events) != len(selected_event_ids)
+    ):
         raise DispatchError("G2 journey projection event set mismatch")
     projected_by_id = {
-        str(event["canonical_event_id"]): event for event in projected_events
+        str(event["canonical_event_id"]): event
+        for event in target_projected_events
     }
     selected_rows_by_id = {
         row["event_id"]: row
@@ -7564,6 +8595,25 @@ def _validate_g2_projection_bundle(
         or loop_record.get("source_modes") != ["live"]
         or loop_record.get("accepted_live") is not True
         or loop_record.get("projection_mode") != "live"
+        or type(loop_record.get("canonical_event_count")) is not int
+        or loop_record["canonical_event_count"] != len(selected)
+        or type(loop_record.get("fill_event_count")) is not int
+        or loop_record["fill_event_count"]
+        != sum(
+            event["event_type"]
+            in {
+                "paper_fill_simulated",
+                "fill_received",
+                "order_partially_filled",
+                "order_filled",
+            }
+            for event in selected
+        )
+        or type(loop_record.get("position_event_count")) is not int
+        or loop_record["position_event_count"]
+        != sum("position_snapshot" in event["event_type"] for event in selected)
+        or type(loop_record.get("reconciliation_event_count")) is not int
+        or loop_record["reconciliation_event_count"] != 1
         or loop_record.get("last_canonical_event_id")
         != selected[-1]["event_id"]
         or isinstance(loop_record.get("last_source_offset"), bool)
@@ -7620,7 +8670,7 @@ def _validate_g2_projection_bundle(
         raise DispatchError("G2 hosted proof payload is missing")
     generation_name = ((proof.get("projection") or {}).get("generation_name"))
     if not isinstance(generation_name, str) or not re.fullmatch(
-        rf"g{manifest['generation']:012d}-[0-9a-f]{{12}}", generation_name
+        rf"g{manifest['generation']:012d}-[0-9a-f]{{64}}", generation_name
     ):
         raise DispatchError("G2 hosted projection generation name is invalid")
     try:
@@ -7655,23 +8705,15 @@ def _validate_g2_projection_bundle(
         or set(attestation) != G2_SOURCE_ATTESTATION_KEYS
         or type(authoritative.get("source_high_watermark")) is not int
         or authoritative["source_high_watermark"]
-        < source["source_high_watermark"]
+        != source["source_high_watermark"]
         or canonical_json_sha256(authoritative.get("rows"))
         != canonical_json_sha256(rows)
         or canonical_json_sha256(authoritative.get("projection"))
         != canonical_json_sha256(bundle.get("projection"))
-        or attestation.get("database") != contract.get("canonical_database_name")
-        or attestation.get("role") != contract.get("canonical_database_role")
-        or attestation.get("schema") != contract.get("canonical_database_schema")
-        or attestation.get("table") != contract.get("canonical_database_table")
-        or attestation.get("projection_root")
-        != contract.get("canonical_projection_root")
+        or not _g2_source_attestation_is_exact(attestation, contract)
         or attestation.get("live_source_high_watermark")
         != authoritative["source_high_watermark"]
         or attestation.get("captured_generation_name") != generation_name
-        or type(attestation.get("current_projection_checkpoint")) is not int
-        or attestation["current_projection_checkpoint"]
-        < authoritative["source_high_watermark"]
         or attestation.get("rows_sha256")
         != canonical_json_sha256(authoritative.get("rows"))
         or attestation.get("projection_sha256")
@@ -7696,12 +8738,14 @@ def _validate_g2_evidence(
     catalog: dict[str, Any],
     *,
     now: datetime,
+    review_audit_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if now.tzinfo is None:
         raise DispatchError("G2 verifier now must be timezone-aware")
     now = now.astimezone(timezone.utc)
     if catalog.get("overlay_applied") is not True:
         raise DispatchError("G2 verifier requires the validated sequencing overlay")
+    _validate_g2_status_root_authority()
     contract = _require_exact_keys(
         catalog.get("g2_evidence_contract"),
         G2_EVIDENCE_CONTRACT_KEYS,
@@ -7844,6 +8888,8 @@ def _validate_g2_evidence(
     closeout_task, closeout_at = _resolve_g2_closeout_task(
         state, catalog, contract
     )
+    if closeout_at > now or closeout_at > expires_at:
+        raise DispatchError("G2 closeout chronology is invalid")
     product_admission, product_truth = _validate_g2_product_evidence(
         closeout_task=closeout_task,
         contract=contract,
@@ -7889,6 +8935,12 @@ def _validate_g2_evidence(
             str(contract["closeout_manifest_path"]): product_raw,
             sidecar_relative: sidecar_raw,
         },
+        closeout_at=product_admission["closeout_at"],
+    )
+    _validate_g2_hosted_deployment_git_ancestry(
+        str(product_truth["deployment_sha"]),
+        str(product_truth["implementation_pr"]["merge_sha"]),
+        str(artifact_binding["g2_authoritative_remote_head_sha"]),
     )
     artifact_sha256 = {
         "g2_evidence_sha256": sha256_bytes(evidence_raw),
@@ -7903,7 +8955,9 @@ def _validate_g2_evidence(
         artifact_commit_sha=artifact_binding["g2_artifact_commit_sha"],
         artifact_sha256=artifact_sha256,
         product_truth=product_truth,
+        evidence_issued_at=issued_at,
         closeout_at=product_admission["closeout_at"],
+        review_audit_records=review_audit_records,
     )
     return {
         **artifact_sha256,
@@ -7912,6 +8966,7 @@ def _validate_g2_evidence(
         ),
         "canonical_source_attestation": canonical_source_attestation,
         "g2_issued_at": issued_at.isoformat().replace("+00:00", "Z"),
+        "g2_hosted_deployment_sha": str(product_truth["deployment_sha"]),
         **artifact_binding,
         **product_admission,
         **review_binding,
@@ -7927,11 +8982,34 @@ def resolve_g2_evidence_admission(
     """Return the exact validated byte snapshot used for one release decision."""
 
     try:
-        return _validate_g2_evidence(
-            state,
-            catalog,
-            now=now or datetime.now(timezone.utc),
-        )
+        validation_now = now or datetime.now(timezone.utc)
+        if _ACTIVITY_AUDIT_LOCK_HELD.get():
+            review_audit_records = read_activity_audit_records_unlocked(LOG_PATH)
+            return _validate_g2_evidence(
+                state,
+                catalog,
+                now=validation_now,
+                review_audit_records=review_audit_records,
+            )
+        _validate_g2_status_root_authority()
+        with activity_audit_lock_file(
+            LOG_PATH,
+            shared=False,
+            nonblocking=False,
+        ):
+            prepare_activity_audit_unlocked(LOG_PATH)
+        with activity_audit_lock_file(
+            LOG_PATH,
+            shared=True,
+            nonblocking=False,
+        ):
+            review_audit_records = read_activity_audit_records_unlocked(LOG_PATH)
+            return _validate_g2_evidence(
+                state,
+                catalog,
+                now=validation_now,
+                review_audit_records=review_audit_records,
+            )
     except Exception:
         return None
 
@@ -8085,6 +9163,9 @@ def _validate_g2_overlay_contract(
         "canonical_database_role": "pantheon_app",
         "canonical_database_schema": "public",
         "canonical_database_table": "telemetry_events",
+        "canonical_database_host": "postgres",
+        "canonical_database_tls_mode": "verify-full",
+        "canonical_database_tls_ca_path": "/etc/ssl/certs/ca-certificates.crt",
         "canonical_projection_root_env": "LIFECYCLE_PROJECTION_ROOT",
         "canonical_projection_root": "/data/bff/lifecycle-projection",
         "artifact_commit_binding": "reviewer_and_github_bound_git_tree_v2",
@@ -8092,7 +9173,8 @@ def _validate_g2_overlay_contract(
         "required_git_remote_ref": "refs/heads/dev",
         "required_github_api_base_url": "https://api.github.com",
         "required_github_repository": "ajoe734/pantheon",
-        "review_binding_schema": "pantheon.g2-review-binding.v1",
+        "required_github_workflow_path": ".github/workflows/branch-ci.yml",
+        "review_binding_schema": "pantheon.g2-review-binding.v2",
     }
     if any(value.get(key) != expected for key, expected in exact_scalars.items()):
         raise DispatchError("G2 evidence contract scalar policy mismatch")
@@ -8100,6 +9182,10 @@ def _validate_g2_overlay_contract(
         "max_evidence_age_seconds": 86400,
         "max_chain_span_seconds": 3600,
         "max_future_skew_seconds": 300,
+        "canonical_database_port": 5432,
+        "canonical_connect_timeout_seconds": 5,
+        "canonical_statement_timeout_seconds": 5,
+        "canonical_total_timeout_seconds": 15,
     }
     if any(
         isinstance(value.get(key), bool) or value.get(key) != expected
@@ -8108,6 +9194,16 @@ def _validate_g2_overlay_contract(
         raise DispatchError("G2 evidence freshness policy mismatch")
     if value.get("stable_identity_fields") != list(G2_STABLE_IDENTITY_FIELDS):
         raise DispatchError("G2 stable identity contract mismatch")
+    if value.get("required_github_checks") != [
+        {"name": "Commit trailers", "app_id": 15368},
+        {"name": "Runtime mirror guard", "app_id": 15368},
+        {"name": "Smoke acceptance", "app_id": 15368},
+    ]:
+        raise DispatchError("G2 required GitHub check policy mismatch")
+    if value.get("canonical_query_event_types") != list(
+        G2_CANONICAL_QUERY_EVENT_TYPES
+    ):
+        raise DispatchError("G2 canonical query event type policy mismatch")
     event_order = value.get("event_order_contract")
     if (
         not isinstance(event_order, dict)

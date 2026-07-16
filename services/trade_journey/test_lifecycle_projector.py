@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from copy import deepcopy
+import fcntl
 import json
+import os
 from pathlib import Path
 import uuid
 
@@ -13,7 +16,10 @@ from services.trade_journey.correlation_envelope import (
 from services.trade_journey.lifecycle_projector import (
     AtomicProjectionBundle,
     ConflictingLifecycleEvent,
+    InvalidLifecycleEvent,
+    LifecycleProjectionError,
     LifecycleProjector,
+    _fingerprint,
 )
 
 
@@ -287,6 +293,27 @@ def test_missing_identity_is_quarantined_and_cursor_progresses(tmp_path):
     assert projector.controller["accepted_live"] is False
 
 
+def test_identity_fallback_treats_empty_collections_as_missing_but_rejects_non_strings():
+    event = deepcopy(lifecycle_rows()[0]["payload"])
+    event["run_id"] = []
+    event["signal_id"] = {}
+
+    identity = LifecycleProjector._identity(event)
+
+    assert identity["run_id"] == IDENTITY["run_id"]
+    assert identity["signal_id"] == IDENTITY["signal_id"]
+
+    event["run_id"] = 7
+    with pytest.raises(InvalidLifecycleEvent, match="identity missing: run_id"):
+        LifecycleProjector._identity(event)
+
+    event = deepcopy(lifecycle_rows()[0]["payload"])
+    event["tenant_id"] = IDENTITY["tenant_id"]
+    event["correlation_envelope"]["tenant_id"] = {}
+    with pytest.raises(InvalidLifecycleEvent, match="identity missing: tenant_id"):
+        LifecycleProjector._identity(event)
+
+
 def test_bundle_failure_never_switches_partial_generation_or_checkpoint(tmp_path):
     def fail_before_switch(_path: Path) -> None:
         raise OSError("injected switch failure")
@@ -307,6 +334,168 @@ def test_bundle_failure_never_switches_partial_generation_or_checkpoint(tmp_path
     )
     assert (tmp_path / "current" / "manifest.json").is_file()
     assert recovered.checkpoint == 1
+
+
+def test_bundle_generation_is_content_addressed_immutable_and_idempotent(tmp_path):
+    publisher = AtomicProjectionBundle(tmp_path)
+    journeys = {"generation": 7, "controller": {"checkpoint": 7}, "events": []}
+    loops = {"generation": 7, "controller": {"checkpoint": 7}, "records": {}}
+    manifest = {
+        "schema_version": "pantheon.lifecycle-projection-bundle.v1",
+        "generation": 7,
+        "journey_sha256": _fingerprint(journeys),
+        "loop_runs_sha256": _fingerprint(loops),
+    }
+    expected_bundle_sha = _fingerprint(
+        {
+            "manifest": manifest,
+            "trade_journey_events": journeys,
+            "loop_runs": loops,
+        }
+    )
+
+    published = publisher.publish(7, journeys, loops)
+    assert published.name == f"g000000000007-{expected_bundle_sha}"
+    assert published.stat().st_mode & 0o777 == 0o555
+    assert all(path.stat().st_mode & 0o777 == 0o444 for path in published.iterdir())
+    assert publisher.publish(7, journeys, loops) == published
+    assert publisher.current.resolve() == published
+
+
+def test_bundle_publish_rejects_symlinked_generations_root(tmp_path):
+    external = tmp_path / "external-generations"
+    external.mkdir()
+    (tmp_path / "generations").symlink_to(external, target_is_directory=True)
+    publisher = AtomicProjectionBundle(tmp_path)
+    journeys = {"generation": 7, "controller": {"checkpoint": 7}, "events": []}
+    loops = {"generation": 7, "controller": {"checkpoint": 7}, "records": {}}
+
+    with pytest.raises(
+        LifecycleProjectionError,
+        match="generations root is not canonical",
+    ):
+        publisher.publish(7, journeys, loops)
+
+    assert list(external.iterdir()) == []
+
+
+def test_bundle_publish_rejects_generation_swap_before_current_switch(tmp_path):
+    journeys = {"generation": 7, "controller": {"checkpoint": 7}, "events": []}
+    loops = {"generation": 7, "controller": {"checkpoint": 7}, "records": {}}
+    initial = AtomicProjectionBundle(tmp_path).publish(7, journeys, loops)
+    previous_target = (tmp_path / "current").readlink()
+
+    def replace_generation(final: Path) -> None:
+        relocated = final.with_name(final.name + ".relocated")
+        final.rename(relocated)
+        final.symlink_to(relocated, target_is_directory=True)
+
+    journeys["generation"] = 8
+    loops["generation"] = 8
+    with pytest.raises(
+        LifecycleProjectionError,
+        match="publish identity changed during switch",
+    ):
+        AtomicProjectionBundle(
+            tmp_path,
+            before_switch=replace_generation,
+        ).publish(8, journeys, loops)
+
+    assert (tmp_path / "current").readlink() == previous_target
+    assert (tmp_path / "current").resolve() == initial
+
+
+def test_bundle_publish_holds_cross_process_lock_through_switch(tmp_path):
+    observed_locked = False
+
+    def assert_locked(_final: Path) -> None:
+        nonlocal observed_locked
+        descriptor = os.open(tmp_path / ".projection-publish.lock", os.O_RDWR)
+        try:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            observed_locked = True
+        finally:
+            os.close(descriptor)
+
+    journeys = {"generation": 7, "controller": {"checkpoint": 7}, "events": []}
+    loops = {"generation": 7, "controller": {"checkpoint": 7}, "records": {}}
+    AtomicProjectionBundle(tmp_path, before_switch=assert_locked).publish(
+        7,
+        journeys,
+        loops,
+    )
+
+    assert observed_locked is True
+
+
+def test_bundle_publish_rolls_back_current_when_post_switch_fsync_fails(
+    tmp_path,
+    monkeypatch,
+):
+    journeys = {"generation": 7, "controller": {"checkpoint": 7}, "events": []}
+    loops = {"generation": 7, "controller": {"checkpoint": 7}, "records": {}}
+    initial = AtomicProjectionBundle(tmp_path).publish(7, journeys, loops)
+    previous_target = (tmp_path / "current").readlink()
+    journeys["generation"] = 8
+    loops["generation"] = 8
+    real_fsync = os.fsync
+    failed = False
+
+    def fail_first_root_fsync(descriptor: int) -> None:
+        nonlocal failed
+        target = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
+        if target == tmp_path and not failed:
+            failed = True
+            raise OSError("injected root fsync failure")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", fail_first_root_fsync)
+
+    with pytest.raises(OSError, match="injected root fsync failure"):
+        AtomicProjectionBundle(tmp_path).publish(8, journeys, loops)
+
+    assert failed is True
+    assert (tmp_path / "current").readlink() == previous_target
+    assert (tmp_path / "current").resolve() == initial
+
+
+def test_bundle_rollback_does_not_clobber_newer_concurrent_current(
+    tmp_path,
+    monkeypatch,
+):
+    journeys = {"generation": 7, "controller": {"checkpoint": 7}, "events": []}
+    loops = {"generation": 7, "controller": {"checkpoint": 7}, "records": {}}
+    initial = AtomicProjectionBundle(tmp_path).publish(7, journeys, loops)
+    journeys["generation"] = 9
+    loops["generation"] = 9
+    concurrent = AtomicProjectionBundle(tmp_path).publish(9, journeys, loops)
+    reset_link = tmp_path / ".current.reset.tmp"
+    reset_link.symlink_to(Path("generations") / initial.name)
+    os.replace(reset_link, tmp_path / "current")
+    journeys["generation"] = 8
+    loops["generation"] = 8
+    real_fsync = os.fsync
+    failed = False
+
+    def install_concurrent_current_then_fail(descriptor: int) -> None:
+        nonlocal failed
+        target = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
+        if target == tmp_path and not failed:
+            failed = True
+            concurrent_link = tmp_path / ".current.concurrent.tmp"
+            concurrent_link.symlink_to(Path("generations") / concurrent.name)
+            os.replace(concurrent_link, tmp_path / "current")
+            raise OSError("injected concurrent switch")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", install_concurrent_current_then_fail)
+
+    with pytest.raises(OSError, match="injected concurrent switch"):
+        AtomicProjectionBundle(tmp_path).publish(8, journeys, loops)
+
+    assert failed is True
+    assert (tmp_path / "current").resolve() == concurrent
 
 
 def test_source_failure_preserves_last_good_bundle(tmp_path):

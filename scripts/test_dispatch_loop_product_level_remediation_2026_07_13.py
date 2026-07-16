@@ -3092,7 +3092,7 @@ def test_sequencing_overlay_v2_is_exact_and_partitions_all_48_tasks() -> None:
         in dispatcher.GATED_SEQUENCING_CLASSIFICATIONS
     }
     assert set(catalog["release_gate"]["gated_task_ids"]) == gated
-    assert catalog["g2_evidence_contract"]["version"] == 2
+    assert catalog["g2_evidence_contract"]["version"] == 4
     assert (
         catalog["g2_evidence_contract"]["target_task"]
         == "LOOP-PROD-VERIFY-EXEC-001"
@@ -3237,10 +3237,45 @@ G2_EVIDENCE_CUT_AT = "2026-07-15T00:02:20Z"
 G2_VALIDATED_AT = "2026-07-15T00:02:20Z"
 G2_VERDICT_AT = "2026-07-15T00:02:30Z"
 G2_MERGED_AT = "2026-07-15T00:02:40Z"
-G2_ISSUED_AT = "2026-07-15T00:03:00Z"
-G2_EXPIRES_AT = "2026-07-16T00:03:00Z"
+G2_ISSUED_AT = "2026-07-15T00:02:45Z"
+G2_REVIEWED_AT = "2026-07-15T00:02:50Z"
+G2_ARTIFACT_MERGED_AT = "2026-07-15T00:02:55Z"
+G2_CLOSEOUT_AT = "2026-07-15T00:03:00Z"
+G2_RELEASED_AT = "2026-07-15T00:03:01Z"
+G2_EXPIRES_AT = "2026-07-16T00:02:45Z"
 G2_NOW = datetime(2026, 7, 15, 0, 3, 1, tzinfo=timezone.utc)
 G2_DEPLOYMENT_SHA = "d" * 40
+G2_IMAGE_MANIFEST_DIGEST = "sha256:" + "9" * 64
+
+
+def _g2_hosted_readback_payload(deployment_sha: str) -> dict:
+    return {
+        "pre_deploy": {"status": "pass"},
+        "capture_time_hosted_readback": {
+            "status": "pass",
+            "observed_at": G2_PROBE_AT,
+            "deployment_sha": deployment_sha,
+            "runtime_commit_sha": deployment_sha,
+            "runtime_source_commit_sha": deployment_sha,
+            "image_manifest_digest": G2_IMAGE_MANIFEST_DIGEST,
+        },
+    }
+
+
+def _g2_trusted_deployment_identity_payload(deployment_sha: str) -> dict:
+    hosted_readback = _g2_hosted_readback_payload(deployment_sha)
+    return {
+        "schema_version": "pantheon.g2-deployment-identity.v1",
+        "environment": "dev",
+        "deployment_sha": deployment_sha,
+        "runtime_commit_sha": deployment_sha,
+        "runtime_source_commit_sha": deployment_sha,
+        "image_manifest_digest": G2_IMAGE_MANIFEST_DIGEST,
+        "hosted_readback_sha256": canonical_sha256(hosted_readback),
+        "deployment_run_id": 5001,
+        "deployment_job_id": 6001,
+        "observed_at": G2_PROBE_AT,
+    }
 
 
 def _fixture_git(repo: Path, *args: str) -> str:
@@ -3261,10 +3296,22 @@ def _product_evidence_payload(
     implementation_base_sha: str,
     implementation_head_sha: str,
     implementation_merge_sha: str,
+    deployment_sha: str,
+    deployment_manifest_sha256: str,
 ) -> dict:
     task_id = contract["target_task"]
     review_file = contract["closeout_manifest_path"]
     sidecar = str(Path(review_file).with_name("evidence.sha256"))
+    canonical_root_deploy = {
+        "conclusion": "success",
+        "deployment_sha": deployment_sha,
+        "run_id": 5001,
+        "job_id": 6001,
+        "runtime_commit_sha": deployment_sha,
+        "runtime_source_commit_sha": deployment_sha,
+        "image_manifest_digest": G2_IMAGE_MANIFEST_DIGEST,
+    }
+    hosted_readback = _g2_hosted_readback_payload(deployment_sha)
     return {
         "schema_version": "loop_product_evidence.v1",
         "schema_status": {
@@ -3331,10 +3378,15 @@ def _product_evidence_payload(
             },
             "required_checks": [
                 {
-                    "workflow": "Branch CI Gate",
+                    "workflow": name,
                     "event": "pull_request",
                     "conclusion": "success",
                 }
+                for name in (
+                    "Commit trailers",
+                    "Runtime mirror guard",
+                    "Smoke acceptance",
+                )
             ],
         },
         "validation": {
@@ -3351,18 +3403,20 @@ def _product_evidence_payload(
             "public_bff_base_url": "https://pantheon-dev.invalid",
             "publish_cut": {
                 "conclusion": "success",
-                "deployment_sha": G2_DEPLOYMENT_SHA,
+                "deployment_sha": deployment_sha,
             },
-            "canonical_root_deploy": {
-                "conclusion": "success",
-                "deployment_sha": G2_DEPLOYMENT_SHA,
+            "canonical_root_deploy": canonical_root_deploy,
+            "identity_admission": {
+                "status": "accepted",
+                "deployment_sha": deployment_sha,
+                "runtime_commit_sha": deployment_sha,
+                "runtime_source_commit_sha": deployment_sha,
+                "image_manifest_digest": G2_IMAGE_MANIFEST_DIGEST,
+                "deployment_manifest_sha256": deployment_manifest_sha256,
+                "hosted_readback_sha256": canonical_sha256(hosted_readback),
             },
-            "identity_admission": {"deployment_sha": G2_DEPLOYMENT_SHA},
         },
-        "hosted_readback": {
-            "pre_deploy": {"status": "pass"},
-            "capture_time_hosted_readback": {"status": "pass"},
-        },
+        "hosted_readback": hosted_readback,
         "behavioral_proof": {
             "duplicate_safety": {"proof": ["canonical IDs"], "status": "pass"},
             "failure_and_degraded_behavior": {
@@ -3437,8 +3491,28 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
 
     dispatcher = _load_dispatcher_module()
     production_g2_resolver = dispatcher._resolve_authoritative_g2_snapshot
+    trusted_deployment_path = tmp_path / "g2-deployment-identity.json"
     dispatcher.catalog_path = lambda: CATALOG
     monkeypatch.setattr(dispatcher, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(dispatcher, "STATUS_ROOT", tmp_path)
+    monkeypatch.setattr(dispatcher, "AUTHORITATIVE_STATUS_ROOT", tmp_path)
+    monkeypatch.setattr(dispatcher, "STATUS_PATH", tmp_path / "ai-status.json")
+    monkeypatch.setattr(
+        dispatcher,
+        "TRUSTED_G2_DEPLOYMENT_IDENTITY_ROOT",
+        tmp_path,
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "TRUSTED_G2_DEPLOYMENT_IDENTITY_PATH",
+        trusted_deployment_path,
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "TRUSTED_G2_DEPLOYMENT_IDENTITY_OWNER_UID",
+        os.getuid(),
+    )
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(tmp_path))
     catalog = load_catalog()
     dispatcher.apply_sequencing_overlay(catalog, SEQUENCING_OVERLAY)
     catalog_digest = dispatcher.canonical_json_sha256(catalog)
@@ -3455,6 +3529,7 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
             "terminal_outcome": "completed",
             "review_file": contract["closeout_manifest_path"],
             "review_notes_zh": ["Codex2 approved the canonical G2 evidence."],
+            "last_update": G2_CLOSEOUT_AT,
             "delivery": {
                 "commit": "0" * 40,
                 "head_merged_to_target": True,
@@ -3471,9 +3546,15 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     archive_root = tmp_path / "ai-task-archive" / "tasks"
     archive_root.mkdir(parents=True)
     monkeypatch.setattr(dispatcher, "ARCHIVE_ROOT", archive_root)
+    (tmp_path / "ai-status.json").write_text("{}\n", encoding="utf-8")
     schema_path = tmp_path / "schemas" / "product-evidence.schema.json"
     schema_path.parent.mkdir(parents=True)
     schema_path.write_bytes(PRODUCT_EVIDENCE_SCHEMA.read_bytes())
+    workflow_path = tmp_path / ".github" / "workflows" / "branch-ci.yml"
+    workflow_path.parent.mkdir(parents=True)
+    workflow_path.write_bytes(
+        (ROOT / ".github" / "workflows" / "branch-ci.yml").read_bytes()
+    )
 
     _fixture_git(tmp_path, "init", "-b", "dev")
     _fixture_git(tmp_path, "config", "user.name", "G2 Fixture")
@@ -3483,6 +3564,7 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         "add",
         str(schema_path.relative_to(tmp_path)),
         str(activity_log.relative_to(tmp_path)),
+        str(workflow_path.relative_to(tmp_path)),
     )
     _fixture_git(tmp_path, "commit", "-m", "fixture: canonical base")
     implementation_base_sha = _fixture_git(tmp_path, "rev-parse", "HEAD")
@@ -3521,10 +3603,11 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     projector = LifecycleProjector(
         state_path=projection_root / "controller_state.json",
         bundle_root=projection_root,
-        deployment_sha=G2_DEPLOYMENT_SHA,
+        deployment_sha=implementation_merge_sha,
         clock=lambda: G2_PROJECTED_AT,
     )
     projector.project_records(rows, mode="live", source_high_watermark=len(rows))
+    projection_root.chmod(0o755)
     current = projection_root / "current"
     manifest = json.loads((current / "manifest.json").read_text(encoding="utf-8"))
     journeys = json.loads(
@@ -3537,7 +3620,7 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         probe.run_probe(
             source=FakeSource(len(rows), rows),
             projection_root=projection_root,
-            expected_sha=G2_DEPLOYMENT_SHA,
+            expected_sha=implementation_merge_sha,
             timeout_seconds=1.0,
             poll_seconds=0.001,
         )
@@ -3573,6 +3656,12 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
             "role": contract["canonical_database_role"],
             "schema": contract["canonical_database_schema"],
             "table": contract["canonical_database_table"],
+            "database_host": contract["canonical_database_host"],
+            "database_port": contract["canonical_database_port"],
+            "database_tls_mode": contract["canonical_database_tls_mode"],
+            "database_server_address": "10.0.0.2",
+            "database_tls_protocol": "TLSv1.3",
+            "database_tls_cipher": "TLS_AES_256_GCM_SHA384",
             "projection_root": contract["canonical_projection_root"],
             "live_source_high_watermark": bundle["source"][
                 "source_high_watermark"
@@ -3583,9 +3672,19 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
             "current_generation_name": hosted["proof"]["projection"][
                 "generation_name"
             ],
+            "captured_projection_checkpoint": loops["controller"]["checkpoint"],
+            "captured_projection_source_high_watermark": loops["controller"][
+                "source_high_watermark"
+            ],
             "current_projection_checkpoint": loops["controller"]["checkpoint"],
+            "current_projection_source_high_watermark": loops["controller"][
+                "source_high_watermark"
+            ],
             "rows_sha256": dispatcher.canonical_json_sha256(rows),
             "projection_sha256": dispatcher.canonical_json_sha256(
+                bundle["projection"]
+            ),
+            "current_projection_sha256": dispatcher.canonical_json_sha256(
                 bundle["projection"]
             ),
         },
@@ -3609,6 +3708,41 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         "_resolve_authoritative_git_remote_ref",
         lambda _url, _ref: authoritative_remote_head["sha"],
     )
+    def github_checks(head_sha: str) -> list[dict]:
+        check_suite_id = int(head_sha[:12], 16)
+        return [
+            {
+                "name": row["name"],
+                "status": "completed",
+                "conclusion": "success",
+                "head_sha": head_sha,
+                "app_id": row["app_id"],
+                "check_suite_id": check_suite_id,
+            }
+            for row in contract["required_github_checks"]
+        ]
+
+    def github_workflow_runs(head_sha: str) -> list[dict]:
+        check_suite_id = int(head_sha[:12], 16)
+        return [
+            {
+                "id": check_suite_id + 1,
+                "check_suite_id": check_suite_id,
+                "event": "pull_request",
+                "path": contract["required_github_workflow_path"],
+                "head_sha": head_sha,
+                "status": "completed",
+                "conclusion": "success",
+            }
+        ]
+
+    required_checks_policy = {
+        "strict": True,
+        "checks": sorted(
+            deepcopy(contract["required_github_checks"]),
+            key=lambda row: (row["name"], str(row["app_id"])),
+        ),
+    }
     authoritative_github_pr = {
         "repository": contract["required_github_repository"],
         "number": 4001,
@@ -3619,12 +3753,23 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         "base": "dev",
         "head_sha": implementation_head_sha,
         "merge_sha": implementation_merge_sha,
-        "checks": [{"name": "Branch CI Gate", "conclusion": "success"}],
+        "checks": github_checks(implementation_head_sha),
+        "workflow_runs": github_workflow_runs(implementation_head_sha),
+        "required_checks_policy": required_checks_policy,
     }
+    authoritative_artifact_prs: dict[int, dict] = {}
+
+    def resolve_authoritative_github_pr(_contract: dict, number: int) -> dict:
+        if number == 4001:
+            return deepcopy(authoritative_github_pr)
+        if number in authoritative_artifact_prs:
+            return deepcopy(authoritative_artifact_prs[number])
+        raise AssertionError(f"unexpected fixture PR query: {number}")
+
     monkeypatch.setattr(
         dispatcher,
         "_resolve_authoritative_github_pr",
-        lambda _contract, _number: deepcopy(authoritative_github_pr),
+        resolve_authoritative_github_pr,
     )
 
     def repo_path(relative: str) -> Path:
@@ -3645,6 +3790,11 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         "actor": closeout_task["reviewer"],
         "reference": f"ai-status.json#{contract['target_task']}",
     }
+    trusted_deployment_digest = _write_json_artifact(
+        trusted_deployment_path,
+        _g2_trusted_deployment_identity_payload(implementation_merge_sha),
+    )
+    trusted_deployment_path.chmod(0o600)
     product = _product_evidence_payload(
         contract=contract,
         closeout_task=closeout_task,
@@ -3652,6 +3802,8 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         implementation_base_sha=implementation_base_sha,
         implementation_head_sha=implementation_head_sha,
         implementation_merge_sha=implementation_merge_sha,
+        deployment_sha=implementation_merge_sha,
+        deployment_manifest_sha256=trusted_deployment_digest,
     )
     product_digest = _write_json_artifact(product_path, product)
     sidecar_path = product_path.with_name("evidence.sha256")
@@ -3757,6 +3909,24 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
             f"fixture: merge G2 artifacts {artifact_commit_counter}",
         )
         merge_target_sha = _fixture_git(tmp_path, "rev-parse", "HEAD")
+        artifact_pr_number = 5000 + artifact_commit_counter
+        authoritative_artifact_prs[artifact_pr_number] = {
+            "repository": contract["required_github_repository"],
+            "number": artifact_pr_number,
+            "url": (
+                "https://github.com/ajoe734/pantheon/pull/"
+                + str(artifact_pr_number)
+            ),
+            "state": "closed",
+            "merged": True,
+            "merged_at": G2_ARTIFACT_MERGED_AT,
+            "base": "dev",
+            "head_sha": artifact_head_sha,
+            "merge_sha": merge_target_sha,
+            "checks": github_checks(artifact_head_sha),
+            "workflow_runs": github_workflow_runs(artifact_head_sha),
+            "required_checks_policy": deepcopy(required_checks_policy),
+        }
         _fixture_git(
             tmp_path,
             "update-ref",
@@ -3765,7 +3935,7 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         )
         closeout_task["delivery"].update(
             {
-                "commit": artifact_head_sha,
+                "commit": merge_target_sha,
                 "merge_target_sha": merge_target_sha,
             }
         )
@@ -3773,7 +3943,7 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         review_binding = {
             "schema_version": contract["review_binding_schema"],
             "reviewer": closeout_task["reviewer"],
-            "reviewed_at": G2_VERDICT_AT,
+            "reviewed_at": G2_REVIEWED_AT,
             "artifact_commit_sha": artifact_head_sha,
             "artifact_sha256": {
                 "g2_evidence_sha256": hashlib.sha256(
@@ -3797,10 +3967,14 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
                 "head_sha": implementation_head_sha,
                 "merge_sha": implementation_merge_sha,
             },
+            "artifact_pr": {
+                "number": artifact_pr_number,
+                "head_sha": artifact_head_sha,
+            },
         }
         closeout_task["review_binding"] = review_binding
         review_event = {
-            "ts": G2_VERDICT_AT,
+            "ts": G2_REVIEWED_AT,
             "agent": closeout_task["reviewer"],
             "type": "review_approved",
             "task_id": closeout_task["id"],
@@ -3828,6 +4002,7 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         "authoritative_snapshot": authoritative_snapshot,
         "authoritative_remote_head": authoritative_remote_head,
         "authoritative_github_pr": authoritative_github_pr,
+        "authoritative_artifact_prs": authoritative_artifact_prs,
         "commit_artifacts": commit_artifacts,
         "artifact_head_sha": artifact_head_sha,
         "artifact_merge_target_sha": artifact_merge_target_sha,
@@ -3843,6 +4018,7 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
             "probe": probe_path,
             "product": product_path,
             "sidecar": sidecar_path,
+            "trusted_deployment": trusted_deployment_path,
             "archive": archive_root / f"{contract['target_task']}.json",
         },
     }
@@ -3893,7 +4069,7 @@ def _archive_closeout(fixture: dict, *, outcome: str = "completed") -> None:
         {
             "version": 1,
             "task_id": task["id"],
-            "archived_at": G2_ISSUED_AT,
+            "archived_at": G2_CLOSEOUT_AT,
             "terminal_status": "done",
             "terminal_outcome": outcome,
             "task": task,
@@ -3972,23 +4148,30 @@ def test_g2_v4_production_resolver_reads_pinned_immutable_generation(
         contract["canonical_projection_root_env"], str(projection_root)
     )
     bundle = _read_artifact(g2_v2_fixture["paths"]["bundle"])
+    query_count = 0
 
-    async def query_rows(_dsn: str, identity: dict, event_types: list[str]):
+    async def query_rows(
+        _dsn: str,
+        _contract: dict,
+        identity: dict,
+        event_types: list[str],
+    ):
+        nonlocal query_count
+        query_count += 1
         assert identity == g2_v2_fixture["identity"]
-        assert set(event_types) == {
-            "signal_generation",
-            "trade_decision",
-            "order_submitted",
-            "paper_fill_simulated",
-            "position_snapshot",
-            "reconciliation_completed",
-        }
+        assert event_types == list(dispatcher.G2_CANONICAL_QUERY_EVENT_TYPES)
         return (
             {
                 "database": contract["canonical_database_name"],
                 "role": contract["canonical_database_role"],
                 "schema": contract["canonical_database_schema"],
                 "table": contract["canonical_database_table"],
+                "database_host": contract["canonical_database_host"],
+                "database_port": contract["canonical_database_port"],
+                "database_tls_mode": contract["canonical_database_tls_mode"],
+                "database_server_address": "10.0.0.2",
+                "database_tls_protocol": "TLSv1.3",
+                "database_tls_cipher": "TLS_AES_256_GCM_SHA384",
             },
             bundle["source"]["source_high_watermark"],
             deepcopy(bundle["rows"]),
@@ -4008,6 +4191,104 @@ def test_g2_v4_production_resolver_reads_pinned_immutable_generation(
     assert snapshot["projection"] == bundle["projection"]
     assert snapshot["attestation"]["captured_generation_name"] == generation_name
     assert snapshot["attestation"]["projection_root"] == str(projection_root)
+    assert query_count == 2
+
+
+def test_g2_v4_rejects_symlinked_projection_generations_root(
+    g2_v2_fixture: dict,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    projection_root = g2_v2_fixture["projection_root"].resolve()
+    generations = projection_root / "generations"
+    external = projection_root.parent / "external-projection-generations"
+    generations.rename(external)
+    generations.symlink_to(external, target_is_directory=True)
+    generation_name = _read_artifact(g2_v2_fixture["paths"]["probe"])[
+        "proof"
+    ]["projection"]["generation_name"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="generations root is not canonical",
+    ):
+        dispatcher._read_g2_projection_generation(
+            projection_root,
+            generation_name,
+            label="G2 captured canonical projection",
+        )
+
+
+def test_g2_v4_rejects_divergent_current_target_projection(
+    g2_v2_fixture: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.trade_journey.lifecycle_projector import AtomicProjectionBundle
+
+    dispatcher = g2_v2_fixture["dispatcher"]
+    contract = deepcopy(g2_v2_fixture["contract"])
+    projection_root = g2_v2_fixture["projection_root"].resolve()
+    contract["canonical_projection_root"] = str(projection_root)
+    monkeypatch.setenv(contract["canonical_telemetry_dsn_env"], "fixture-dsn")
+    monkeypatch.setenv(
+        contract["canonical_projection_root_env"], str(projection_root)
+    )
+    bundle = _read_artifact(g2_v2_fixture["paths"]["bundle"])
+    source_identity = {
+        key: value
+        for key, value in g2_v2_fixture["authoritative_snapshot"][
+            "attestation"
+        ].items()
+        if key
+        in {
+            "database",
+            "role",
+            "schema",
+            "table",
+            "database_host",
+            "database_port",
+            "database_tls_mode",
+            "database_server_address",
+            "database_tls_protocol",
+            "database_tls_cipher",
+        }
+    }
+
+    async def query_rows(_dsn, _contract, _identity, _event_types):
+        return (
+            source_identity,
+            bundle["source"]["source_high_watermark"],
+            deepcopy(bundle["rows"]),
+        )
+
+    monkeypatch.setattr(dispatcher, "_query_authoritative_g2_rows", query_rows)
+    captured_generation_name = _read_artifact(g2_v2_fixture["paths"]["probe"])[
+        "proof"
+    ]["projection"]["generation_name"]
+    journeys = deepcopy(bundle["projection"]["trade_journey_events"])
+    loops = deepcopy(bundle["projection"]["loop_runs"])
+    new_generation = int(journeys["generation"]) + 1
+    journeys["generation"] = new_generation
+    loops["generation"] = new_generation
+    journeys["controller"]["generation"] = new_generation
+    loops["controller"]["generation"] = new_generation
+    loop_record = next(iter(loops["records"].values()))
+    loop_record["controller_generation"] = new_generation
+    journeys["events"] = journeys["events"][:-1]
+    AtomicProjectionBundle(projection_root).publish(
+        new_generation,
+        journeys,
+        loops,
+    )
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="current target chain mismatch",
+    ):
+        g2_v2_fixture["production_g2_resolver"](
+            contract,
+            g2_v2_fixture["identity"],
+            captured_generation_name,
+        )
 
 
 def test_g2_v4_canonical_query_is_read_only_qualified_and_identity_scoped(
@@ -4048,6 +4329,12 @@ def test_g2_v4_canonical_query_is_read_only_qualified_and_identity_scoped(
                 "role": "pantheon_app",
                 "schema": "public",
                 "table_name": "telemetry_events",
+                "table_kind": "r",
+                "server_address": "10.0.0.2",
+                "server_port": 5432,
+                "tls_enabled": True,
+                "tls_protocol": "TLSv1.3",
+                "tls_cipher": "TLS_AES_256_GCM_SHA384",
             }
 
         async def fetch(self, sql: str, *args):
@@ -4058,22 +4345,46 @@ def test_g2_v4_canonical_query_is_read_only_qualified_and_identity_scoped(
         async def close(self):
             observed["closed"] = True
 
-    async def connect(dsn: str):
+    async def connect(dsn: str, **kwargs):
         observed["dsn"] = dsn
+        observed["connect_kwargs"] = kwargs
         return Connection()
 
     monkeypatch.setitem(sys.modules, "asyncpg", SimpleNamespace(connect=connect))
     source_identity, high, rows = asyncio.run(
         dispatcher._query_authoritative_g2_rows(
-            "fixture-dsn",
+            (
+                "postgresql://pantheon_app:secret@postgres:5432/"
+                "pantheon?sslmode=verify-full"
+            ),
+            g2_v2_fixture["contract"],
             g2_v2_fixture["identity"],
             [row["event_type"] for row in bundle["rows"]],
         )
     )
 
     assert observed["transaction"] == ("repeatable_read", True)
+    assert observed["dsn"] == (
+        "postgresql://pantheon_app:secret@postgres:5432/"
+        "pantheon?sslmode=verify-full"
+    )
+    assert set(observed["connect_kwargs"]) == {
+        "ssl",
+        "timeout",
+        "command_timeout",
+        "server_settings",
+    }
     assert "FROM public.telemetry_events" in str(observed["query"])
     assert "event_id = ANY" not in str(observed["query"])
+    query = str(observed["query"])
+    for field in ("run_id", "signal_id"):
+        assert f"payload -> '{field}' IN" in query
+        assert "'[]'::jsonb, '{}'::jsonb" in query
+        assert f"jsonb_typeof(payload #> '{{metadata,{field}}}') = 'string'" in query
+        assert f"payload #>> '{{metadata,{field}}}' <> ''" in query
+    assert "payload #> '{correlation_envelope,trace_id}' IN" in query
+    assert "jsonb_typeof(payload -> 'trace_id') = 'string'" in query
+    assert "THEN payload #>> '{correlation_envelope,trace_id}' END = $7" in query
     assert observed["args"][1:7] == (
         g2_v2_fixture["identity"]["tenant_id"],
         g2_v2_fixture["identity"]["environment"],
@@ -4087,10 +4398,74 @@ def test_g2_v4_canonical_query_is_read_only_qualified_and_identity_scoped(
         "role": "pantheon_app",
         "schema": "public",
         "table": "telemetry_events",
+        "database_host": "postgres",
+        "database_port": 5432,
+        "database_tls_mode": "verify-full",
+        "database_server_address": "10.0.0.2",
+        "database_tls_protocol": "TLSv1.3",
+        "database_tls_cipher": "TLS_AES_256_GCM_SHA384",
     }
     assert high == bundle["source"]["source_high_watermark"]
     assert rows == bundle["rows"]
     assert observed["closed"] is True
+
+
+def test_g2_v4_rejects_database_watermark_change_during_projection_read(
+    g2_v2_fixture: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    contract = deepcopy(g2_v2_fixture["contract"])
+    projection_root = g2_v2_fixture["projection_root"].resolve()
+    contract["canonical_projection_root"] = str(projection_root)
+    monkeypatch.setenv(contract["canonical_telemetry_dsn_env"], "fixture-dsn")
+    monkeypatch.setenv(
+        contract["canonical_projection_root_env"],
+        str(projection_root),
+    )
+    bundle = _read_artifact(g2_v2_fixture["paths"]["bundle"])
+    source_identity = {
+        key: value
+        for key, value in g2_v2_fixture["authoritative_snapshot"][
+            "attestation"
+        ].items()
+        if key
+        in {
+            "database",
+            "role",
+            "schema",
+            "table",
+            "database_host",
+            "database_port",
+            "database_tls_mode",
+            "database_server_address",
+            "database_tls_protocol",
+            "database_tls_cipher",
+        }
+    }
+    query_count = 0
+
+    async def query_rows(_dsn, _contract, _identity, _event_types):
+        nonlocal query_count
+        query_count += 1
+        high_watermark = bundle["source"]["source_high_watermark"]
+        if query_count == 2:
+            high_watermark += 1
+        return source_identity, high_watermark, deepcopy(bundle["rows"])
+
+    monkeypatch.setattr(dispatcher, "_query_authoritative_g2_rows", query_rows)
+    generation_name = _read_artifact(g2_v2_fixture["paths"]["probe"])[
+        "proof"
+    ]["projection"]["generation_name"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="changed while projection truth was resolved",
+    ):
+        g2_v2_fixture["production_g2_resolver"](
+            contract,
+            g2_v2_fixture["identity"],
+            generation_name,
+        )
 
 
 def test_g2_v3_rejects_uncommitted_admitted_artifact_bytes(
@@ -4201,6 +4576,47 @@ def test_g2_v4_rejects_self_attested_github_pr_truth(
         )
 
 
+def test_g2_v4_rejects_required_check_from_push_workflow(
+    g2_v2_fixture: dict,
+) -> None:
+    g2_v2_fixture["authoritative_github_pr"]["workflow_runs"][0][
+        "event"
+    ] = "push"
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="does not resolve against GitHub truth",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v4_rejects_artifact_pr_merge_before_review(
+    g2_v2_fixture: dict,
+) -> None:
+    artifact_pr_number = g2_v2_fixture["closeout_task"]["review_binding"][
+        "artifact_pr"
+    ]["number"]
+    g2_v2_fixture["authoritative_artifact_prs"][artifact_pr_number][
+        "merged_at"
+    ] = G2_MERGED_AT
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="artifact PR does not resolve against GitHub truth",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
 def test_g2_v4_rejects_wrong_implementation_merge_base(
     g2_v2_fixture: dict,
 ) -> None:
@@ -4230,7 +4646,10 @@ def test_g2_v4_rejects_reviewer_binding_not_bound_to_artifact_head(
     ] = g2_v2_fixture["implementation_head_sha"]
     dispatcher = g2_v2_fixture["dispatcher"]
 
-    with pytest.raises(dispatcher.DispatchError, match="reviewer binding is not exact"):
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="artifact commit binding policy is invalid",
+    ):
         dispatcher._validate_g2_evidence(
             g2_v2_fixture["state"],
             g2_v2_fixture["catalog"],
@@ -4266,6 +4685,27 @@ def test_g2_v2_rejects_stale_evidence(g2_v2_fixture: dict) -> None:
         g2_v2_fixture["catalog"],
         now=g2_v2_fixture["now"],
     )
+
+
+def test_g2_v4_rejects_non_authoritative_status_root(
+    g2_v2_fixture: dict,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    other_root = tmp_path / "other-status-root"
+    other_root.mkdir()
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(other_root))
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="central status root authority mismatch",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
 
 
 def test_g2_v2_rejects_wrong_merge_sha_authority(g2_v2_fixture: dict) -> None:
@@ -4480,6 +4920,75 @@ def test_g2_v2_rejects_opaque_hosted_readback_without_positive_observation(
         )
 
 
+def test_g2_v4_rejects_vacuous_deployment_identity_admission(
+    g2_v2_fixture: dict,
+) -> None:
+    product = _read_artifact(g2_v2_fixture["paths"]["product"])
+    product["deployment"]["identity_admission"] = {
+        "deployment_sha": G2_DEPLOYMENT_SHA,
+    }
+    _rewrite_product(g2_v2_fixture, product)
+
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="deployment identity admission mismatch",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v4_rejects_missing_trusted_deployment_identity_manifest(
+    g2_v2_fixture: dict,
+) -> None:
+    g2_v2_fixture["paths"]["trusted_deployment"].unlink()
+
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="trusted deployment identity manifest is unavailable",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v4_rejects_artifact_self_asserted_deployment_identity(
+    g2_v2_fixture: dict,
+) -> None:
+    product = _read_artifact(g2_v2_fixture["paths"]["product"])
+    candidate_digest = "sha256:" + "a" * 64
+    product["deployment"]["canonical_root_deploy"][
+        "image_manifest_digest"
+    ] = candidate_digest
+    product["deployment"]["identity_admission"][
+        "image_manifest_digest"
+    ] = candidate_digest
+    product["hosted_readback"]["capture_time_hosted_readback"][
+        "image_manifest_digest"
+    ] = candidate_digest
+    product["deployment"]["identity_admission"][
+        "hosted_readback_sha256"
+    ] = canonical_sha256(product["hosted_readback"])
+    _rewrite_product(g2_v2_fixture, product)
+
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="trusted deployment identity manifest mismatch",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
 def test_g2_v2_rejects_blank_behavioral_proof_reference(
     g2_v2_fixture: dict,
 ) -> None:
@@ -4534,6 +5043,29 @@ def test_g2_v2_rejects_archive_closeout_before_merged_delivery(
     archive = _read_artifact(g2_v2_fixture["paths"]["archive"])
     archive["archived_at"] = G2_VERDICT_AT
     _write_json_artifact(g2_v2_fixture["paths"]["archive"], archive)
+
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="closeout chronology is invalid",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v4_rejects_closeout_after_verifier_now(
+    g2_v2_fixture: dict,
+) -> None:
+    target_id = g2_v2_fixture["contract"]["target_task"]
+    closeout = next(
+        task
+        for task in g2_v2_fixture["state"]["tasks"]
+        if task.get("id") == target_id
+    )
+    closeout["last_update"] = "2026-07-15T00:04:00Z"
 
     dispatcher = g2_v2_fixture["dispatcher"]
     with pytest.raises(
@@ -4645,7 +5177,7 @@ def test_g2_v2_rejects_status_identity_environment_run_and_order_mutations(
     )
 
 
-def test_g2_v2_accepts_declared_chain_when_bundle_has_later_complete_lifecycle(
+def test_g2_v4_rejects_bundle_with_a_second_complete_lifecycle(
     g2_v2_fixture: dict,
 ) -> None:
     import uuid
@@ -4779,7 +5311,7 @@ def test_g2_v2_accepts_declared_chain_when_bundle_has_later_complete_lifecycle(
     projector = LifecycleProjector(
         state_path=projection_root / "controller_state.json",
         bundle_root=projection_root,
-        deployment_sha=G2_DEPLOYMENT_SHA,
+        deployment_sha=g2_v2_fixture["implementation_merge_sha"],
         clock=lambda: G2_PROJECTED_AT,
     )
     projector.project_records(
@@ -4806,9 +5338,9 @@ def test_g2_v2_accepts_declared_chain_when_bundle_has_later_complete_lifecycle(
         baseline_high_watermark=0,
         high_watermark=len(combined_rows),
         journeys=journeys,
-        loops=loops,
-        generation_name=current.resolve().name,
-        expected_sha=G2_DEPLOYMENT_SHA,
+            loops=loops,
+            generation_name=current.resolve().name,
+            expected_sha=g2_v2_fixture["implementation_merge_sha"],
     )
     hosted = _read_artifact(g2_v2_fixture["paths"]["probe"])
     hosted["proof"] = proof
@@ -4858,66 +5390,44 @@ def test_g2_v2_accepts_declared_chain_when_bundle_has_later_complete_lifecycle(
                 "captured_generation_name": proof["projection"][
                     "generation_name"
                 ],
-                "current_generation_name": proof["projection"][
-                    "generation_name"
-                ],
-                "current_projection_checkpoint": loops["controller"][
-                    "checkpoint"
-                ],
+                    "current_generation_name": proof["projection"][
+                        "generation_name"
+                    ],
+                    "captured_projection_checkpoint": loops["controller"][
+                        "checkpoint"
+                    ],
+                    "captured_projection_source_high_watermark": loops[
+                        "controller"
+                    ]["source_high_watermark"],
+                    "current_projection_checkpoint": loops["controller"][
+                        "checkpoint"
+                    ],
+                    "current_projection_source_high_watermark": loops[
+                        "controller"
+                    ]["source_high_watermark"],
                 "rows_sha256": dispatcher.canonical_json_sha256(
                     combined_rows
                 ),
-                "projection_sha256": dispatcher.canonical_json_sha256(
-                    bundle["projection"]
-                ),
+                    "projection_sha256": dispatcher.canonical_json_sha256(
+                        bundle["projection"]
+                    ),
+                    "current_projection_sha256": dispatcher.canonical_json_sha256(
+                        bundle["projection"]
+                    ),
             },
         }
     )
     g2_v2_fixture["commit_artifacts"]()
 
-    dispatcher._validate_g2_evidence(
-        g2_v2_fixture["state"],
-        g2_v2_fixture["catalog"],
-        now=g2_v2_fixture["now"],
-    )
-
-
-def test_g2_v2_rejects_cross_chain_record_reference_splice(
-    g2_v2_fixture: dict,
-) -> None:
-    from services.trade_journey import hosted_lifecycle_probe as probe
-
-    test_g2_v2_accepts_declared_chain_when_bundle_has_later_complete_lifecycle(
-        g2_v2_fixture
-    )
-    dispatcher = g2_v2_fixture["dispatcher"]
-    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
-    bundle = _read_artifact(g2_v2_fixture["paths"]["bundle"])
-    other_candidate = next(
-        candidate
-        for candidate in probe._complete_candidates(bundle["rows"])
-        if candidate["identity"] != evidence["identity"]
-    )
-    other_fill_id = next(
-        event["event_id"]
-        for event in other_candidate["selected_events"]
-        if event["event_type"] == "paper_fill_simulated"
-    )
-    other_fill = next(
-        row for row in bundle["rows"] if row["event_id"] == other_fill_id
-    )
-    evidence["records"]["fill"] = {
-        "event_id": other_fill["event_id"],
-        "event_type": other_fill["event_type"],
-        "sha256": dispatcher.canonical_json_sha256(other_fill),
-    }
-    _rewrite_g2(g2_v2_fixture, evidence)
-
-    assert not dispatcher.check_g2_evidence_valid(
-        g2_v2_fixture["state"],
-        g2_v2_fixture["catalog"],
-        now=g2_v2_fixture["now"],
-    )
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="one exact natural lifecycle",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
 
 
 def _park_complete_g2_catalog(
@@ -5417,7 +5927,7 @@ def test_valid_g2_release_is_durable_and_does_not_recheck_wall_clock(
         tasks=tasks,
         catalog=g2_v2_fixture["catalog"],
         catalog_digest=g2_v2_fixture["catalog_digest"],
-        timestamp=G2_ISSUED_AT,
+        timestamp=G2_RELEASED_AT,
     )
     assert created == []
     assert len(preserved) == 48
@@ -5499,7 +6009,7 @@ def test_pending_release_recovery_uses_committed_admission_after_artifact_drift(
         tasks=tasks,
         catalog=g2_v2_fixture["catalog"],
         catalog_digest=g2_v2_fixture["catalog_digest"],
-        timestamp=G2_ISSUED_AT,
+        timestamp=G2_RELEASED_AT,
     )
     assert changed is True
     dispatcher.enqueue_activity_outbox(
@@ -5595,7 +6105,7 @@ def test_persisted_release_admission_tamper_fails_closed(
         tasks=tasks,
         catalog=g2_v2_fixture["catalog"],
         catalog_digest=g2_v2_fixture["catalog_digest"],
-        timestamp=G2_ISSUED_AT,
+        timestamp=G2_RELEASED_AT,
     )
     assert changed is True
     dispatcher.enqueue_activity_outbox(
@@ -5795,7 +6305,7 @@ def test_release_gate_opens_once_for_valid_g2_exact_set(
         tasks=tasks,
         catalog=g2_v2_fixture["catalog"],
         catalog_digest=g2_v2_fixture["catalog_digest"],
-        timestamp=G2_ISSUED_AT,
+        timestamp=G2_RELEASED_AT,
     )
 
     assert calls == 1

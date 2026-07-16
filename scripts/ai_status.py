@@ -1714,7 +1714,7 @@ def parse_bool_env(name: str) -> bool | None:
 
 
 G2_REVIEW_TARGET_TASK_ID = "LOOP-PROD-VERIFY-EXEC-001"
-G2_REVIEW_BINDING_SCHEMA = "pantheon.g2-review-binding.v1"
+G2_REVIEW_BINDING_SCHEMA = "pantheon.g2-review-binding.v2"
 G2_REVIEW_ARTIFACT_DIGEST_FIELDS = {
     "g2_evidence_sha256",
     "canonical_record_bundle_sha256",
@@ -1762,12 +1762,27 @@ def collect_g2_review_binding(
         "artifact_commit_sha",
         "artifact_sha256",
         "implementation_pr",
+        "artifact_pr",
     }:
         raise SystemExit("REVIEW_BINDING_JSON schema is not exact")
     artifact_sha256 = supplied.get("artifact_sha256")
     implementation_pr = supplied.get("implementation_pr")
+    artifact_pr = supplied.get("artifact_pr")
+    delivery = task.get("delivery")
+    task_artifact_commit = (
+        delivery.get("commit") if isinstance(delivery, dict) else None
+    )
+    task_artifact_pr_number = (
+        delivery.get("pr_number") if isinstance(delivery, dict) else None
+    )
+    if task_artifact_pr_number is None:
+        task_artifact_pr_number = task.get("pr_number")
     if (
         not _is_lower_hex(supplied.get("artifact_commit_sha"), 40)
+        or (
+            task_artifact_commit is not None
+            and supplied.get("artifact_commit_sha") != task_artifact_commit
+        )
         or not isinstance(artifact_sha256, dict)
         or set(artifact_sha256) != G2_REVIEW_ARTIFACT_DIGEST_FIELDS
         or any(not _is_lower_hex(value, 64) for value in artifact_sha256.values())
@@ -1777,6 +1792,18 @@ def collect_g2_review_binding(
         or implementation_pr["number"] <= 0
         or not _is_lower_hex(implementation_pr.get("head_sha"), 40)
         or not _is_lower_hex(implementation_pr.get("merge_sha"), 40)
+        or not isinstance(artifact_pr, dict)
+        or set(artifact_pr) != {"number", "head_sha"}
+        or type(artifact_pr.get("number")) is not int
+        or artifact_pr["number"] <= 0
+        or (
+            task_artifact_pr_number is not None
+            and (
+                type(task_artifact_pr_number) is not int
+                or artifact_pr.get("number") != task_artifact_pr_number
+            )
+        )
+        or artifact_pr.get("head_sha") != supplied.get("artifact_commit_sha")
     ):
         raise SystemExit("REVIEW_BINDING_JSON values are invalid")
     return {
@@ -1786,6 +1813,7 @@ def collect_g2_review_binding(
         "artifact_commit_sha": supplied["artifact_commit_sha"],
         "artifact_sha256": deepcopy(artifact_sha256),
         "implementation_pr": deepcopy(implementation_pr),
+        "artifact_pr": deepcopy(artifact_pr),
     }
 
 

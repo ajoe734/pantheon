@@ -649,19 +649,31 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
                 "role": sequencing_gate.CANONICAL_DATABASE_ROLE,
                 "schema": sequencing_gate.CANONICAL_DATABASE_SCHEMA,
                 "table": sequencing_gate.CANONICAL_DATABASE_TABLE,
+                "database_host": sequencing_gate.CANONICAL_DATABASE_HOST,
+                "database_port": sequencing_gate.CANONICAL_DATABASE_PORT,
+                "database_tls_mode": sequencing_gate.CANONICAL_DATABASE_TLS_MODE,
+                "database_server_address": "10.0.0.2",
+                "database_tls_protocol": "TLSv1.3",
+                "database_tls_cipher": "TLS_AES_256_GCM_SHA384",
                 "projection_root": sequencing_gate.CANONICAL_PROJECTION_ROOT,
                 "live_source_high_watermark": 6,
-                "captured_generation_name": "g000000000001-abcdef123456",
-                "current_generation_name": "g000000000001-abcdef123456",
+                "captured_generation_name": "g000000000001-" + "a" * 64,
+                "current_generation_name": "g000000000001-" + "a" * 64,
+                "captured_projection_checkpoint": 6,
+                "captured_projection_source_high_watermark": 6,
                 "current_projection_checkpoint": 6,
+                "current_projection_source_high_watermark": 6,
                 "rows_sha256": "1" * 64,
                 "projection_sha256": "2" * 64,
+                "current_projection_sha256": "6" * 64,
             },
             "hosted_probe_sha256": "b" * 64,
             "g2_artifact_commit_sha": "1" * 40,
             "g2_artifact_merge_target_sha": "2" * 40,
             "g2_authoritative_remote_head_sha": "3" * 40,
             "g2_github_pr_snapshot_sha256": "3" * 64,
+            "g2_artifact_github_pr_snapshot_sha256": "6" * 64,
+            "g2_hosted_deployment_sha": "4" * 40,
             "product_manifest_sha256": "c" * 64,
             "product_manifest_sidecar_sha256": "d" * 64,
             "target_task_snapshot_sha256": "e" * 64,
@@ -669,8 +681,8 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
             "review_binding_sha256": "4" * 64,
             "review_approval_event_sha256": "5" * 64,
             "review_verdict_sha256": "f" * 64,
-            "g2_issued_at": "2026-07-16T01:00:00Z",
-            "closeout_at": "2026-07-16T00:30:00Z",
+            "g2_issued_at": "2026-07-16T00:30:00Z",
+            "closeout_at": "2026-07-16T01:00:00Z",
         }
         release_admission_sha256 = sequencing_gate.canonical_sha256(admission)
         release = {
@@ -1120,6 +1132,10 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 "head_sha": "b" * 40,
                 "merge_sha": "c" * 40,
             },
+            "artifact_pr": {
+                "number": 5001,
+                "head_sha": "a" * 40,
+            },
         }
         with mock.patch.dict(
             os.environ,
@@ -1136,6 +1152,10 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
         binding = task["review_binding"]
         self.assertEqual(binding["artifact_commit_sha"], "a" * 40)
+        self.assertEqual(
+            binding["artifact_pr"],
+            {"number": 5001, "head_sha": "a" * 40},
+        )
         self.assertEqual(binding["reviewer"], "Claude")
         event = append_log.call_args.args[0]
         unsigned = {key: value for key, value in event.items() if key != "event_id"}
@@ -1143,6 +1163,48 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             event["event_id"],
             "loop-product-event-" + ai_status._canonical_json_sha256(unsigned),
         )
+
+    def test_g2_approve_rejects_conflicting_or_boolean_task_pr_number(self) -> None:
+        task = self.state["tasks"][0]
+        task["id"] = "LOOP-PROD-VERIFY-EXEC-001"
+        task["source_ref"] = {"g2_release_checkpoint": True}
+        task["pr_number"] = True
+        supplied = {
+            "artifact_commit_sha": "a" * 40,
+            "artifact_sha256": {
+                "g2_evidence_sha256": "1" * 64,
+                "canonical_record_bundle_sha256": "2" * 64,
+                "hosted_probe_sha256": "3" * 64,
+                "product_manifest_sha256": "4" * 64,
+                "product_manifest_sidecar_sha256": "5" * 64,
+            },
+            "implementation_pr": {
+                "number": 4001,
+                "head_sha": "b" * 40,
+                "merge_sha": "c" * 40,
+            },
+            "artifact_pr": {"number": 1, "head_sha": "a" * 40},
+        }
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Claude",
+                "REVIEW_BINDING_JSON": json.dumps(supplied),
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(
+                SystemExit,
+                "REVIEW_BINDING_JSON values are invalid",
+            ):
+                ai_status.command_approve(
+                    self.state,
+                    [task["id"], "Reviewed exact G2 artifacts."],
+                )
+
+        self.assertEqual(task["status"], "review")
+        self.assertNotIn("review_binding", task)
 
     def test_done_requires_owner_and_review_approved(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
