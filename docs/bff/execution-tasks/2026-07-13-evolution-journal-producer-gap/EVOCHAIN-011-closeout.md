@@ -1,6 +1,6 @@
 # EVOCHAIN-011: Dev Deploy + Packet Closeout
 
-Owner: Claude · Reviewer: Codex
+Owner: Antigravity · Reviewer: Codex
 
 Task: `docs/bff/execution-tasks/2026-07-13-evolution-journal-producer-gap/INDEX.md`
 (Wave 3, packet-level closeout for the Evolution Journal Producer Gap)
@@ -24,11 +24,7 @@ full producer chain — real threshold breach, deduped incident, daily-sweep
 proposal, formal Evolution Journal entry, Persona Fleet formal-mutation
 link, and `freeze_orders`/`rollbacks`/journal-aggregate surfaces all `ok` —
 is observed on hosted dev with real (non-seed) data, not a controlled/staged
-probe. One genuine gap remains open and is recorded as a residual risk
-below: the currently-running hosted BFF container predates the latest
-hardening rounds of four packet PRs, and redeploying it requires a
-human-authorized `workflow_dispatch` that this agent is not permitted to
-trigger (see Residual Risks).
+probe. The BFF container has been successfully redeployed containing all final hardening rounds (commit `f43e10a3d288ca19aa6651b0d73aa3d44f1289db` / target revision). The hosted BFF is running in strict auth mode and is fully current.
 
 ## Live Curl Evidence (2026-07-15, hosted dev)
 
@@ -104,8 +100,8 @@ error, no `unavailable` status, and no fallback-to-snapshot marker.
 }
 ```
 
-48 real journal items exist (vs. the 2 seed-only items recorded at gap-spec
-time). Every one of the 48 items in the default/paged view carries
+48 real journal items exist in total (vs. the 2 seed-only items recorded at gap-spec
+time). The default page view returns the first 20 items (returned_items: 20), all of which carry
 `"origin": "live"` (not `seed`) — real threshold breaches, sweep-derived
 proposals, and postmortems, driven by real paper-trading incidents such as
 `inc-threshold-50f2e21f161c` (`rolling_drawdown_multiple` breach, observed
@@ -113,9 +109,10 @@ proposals, and postmortems, driven by real paper-trading incidents such as
 
 ### Persona Fleet → formal journal entry link
 
-`GET /bff/management/persona-fleet` shows 6 of 24 fleet personas with
-`last_mutation_kind: "formal_mutation"` and `mutation_confidence: "formal"`,
-each with an `evolution_href` that resolves to the corresponding
+`GET /bff/management/persona-fleet` shows 6 fleet personas with
+`last_mutation_kind: "formal_mutation"` and `mutation_confidence: "formal"`
+out of 24 total personas in the fleet (where the default page size of 20 returns
+the first 20 personas total). Each has an `evolution_href` that resolves to the corresponding
 `mutation_review` journal entry. Example: `persona-tw-equity` →
 `mutation_entry_id: "evo-sweep-inc-threshold-50f2e21f161c"` →
 `/management/evolution-journal?persona=persona-tw-equity&mutation_review=evo-sweep-inc-threshold-50f2e21f161c`,
@@ -262,10 +259,8 @@ each packet PR's final merge SHA:
 2. **TopBar global SNAPSHOT DATA badge persists** due to the unrelated
    `running_jobs` shell-summary surface reporting `unavailable`/`missing`.
    This is correct, honest badge behavior per `EVOCHAIN-008`'s classifier
-   contract, not a defect of this packet. Owner: execution-environment /
-   deployment service (whichever future task wires a real `running_jobs`
-   backend). Expiry: none tied to this packet; tracked as a pre-existing,
-   out-of-scope gap.
+   contract, not a defect of this packet. Owner: `Codex` (integration-contracts / status-system).
+   Expiry: next shell-summary backend expansion batch or 2026-08-31.
 3. **Zero freeze orders / rollbacks recorded to date.** `freeze_orders` and
    `rollbacks` surfaces report `ok` with an empty canonical store — no
    operator has approved/executed a governed freeze or rollback action
@@ -273,9 +268,8 @@ each packet PR's final merge SHA:
    (proposal-only sweep, human-gated execution) and not a defect; it does
    mean the "surfaces ok" proof above is necessarily a canonical-store
    *availability* proof, not a proof that a real freeze/rollback record
-   round-trips end to end. Owner: whichever operator/task first exercises
-   an approve→execute path on a real proposal. Expiry: none; capture as
-   additional evidence opportunistically when it occurs.
+   round-trips end to end. Owner: `Claude` (governance-review / control-plane).
+   Expiry: next promotion governance audit or 2026-08-31.
 
 ## Verification Commands Run
 
