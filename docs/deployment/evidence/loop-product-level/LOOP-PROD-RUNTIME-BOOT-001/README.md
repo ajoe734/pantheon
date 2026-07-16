@@ -158,3 +158,56 @@ worker-commit-25c0969133ec31f889e948398d2291c43440256c`), the same defect
 Codex2 already reported repeatedly. Reproduced independently; not attempted
 to repair here since it requires the governed incident/recovery path, not an
 ad-hoc edit to `ai-activity-log.jsonl` or its rotated archives.
+
+## LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001: append-only row restoration
+
+The merge sequence behind PR #3652 (multiple `origin/dev` merge-resolution
+commits on the primary task branch) silently dropped one append-only
+`ai-activity-log.jsonl` row instead of preserving it: the `worker_commit`
+entry for `AG-UIPOL-011` (commit `01e298ac66b613cd3414816b62a4bea975984f2e`,
+`ts` `2026-07-14T08:29:09Z`, staged file
+`e2e/agora-narrow-responsive-hosted.spec.ts`). Confirmed by diffing the
+merge commit `6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3` against its
+first parent: exactly one line removed, no other historical row touched.
+
+This corrective task restores only that exact row as a single append-only
+addition at the current tail of `ai-activity-log.jsonl`. The restored blob
+(`git hash-object ai-activity-log.jsonl`) is byte-identical to the
+pre-deletion blob (`b1cb15a46d60d4f430d3bda6635683ec9b7bc95c`, taken from
+the merge commit's first parent). No other row was altered; `tasks.json`
+and archived task snapshots are untouched.
+
+The restored row falls outside the writer-registry's frozen
+`source_inventory` roots (`.orchestrator`, `scripts`), so it does not
+require recomputing or refreezing `checks.json` / the writer registry.
+Recomputing `runtime_state.runtime_lock_source_inventory('.')` against the
+current worktree still reports `unregistered_direct_writers: []`; the file
+hashes it reports differ from the frozen `checks.json` only because
+unrelated tasks (for example `OPS-DEPLOY-WORKFLOW-GUARD-001`) advanced
+`.orchestrator`/`scripts` content on `dev` after the primary bootstrap PR's
+freeze -- that drift is expected for a point-in-time freeze and is not
+caused by, or a reason to touch, this corrective restoration.
+
+Re-ran the complete named validation suite recorded in `checks.json`
+(`.orchestrator/test_runtime_state.py`, `test_common.py`,
+`test_file_inbox.py`, `test_watch_events.py`,
+`test_supervisor_watchdog.py`, `test_approval_queue.py`,
+`test_task_archive_index_legacy_id.py`, `test_supervisor.py` with the same
+deselects, `scripts/test_ai_status.py`,
+`scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py`,
+`scripts/test_planning_state.py`, `test_orchestrator_bundle.py`,
+`test_orchestrator_queue_triage.py`, `scripts/git/test_index_safety.py`,
+`test_dashboard_server.py`); all still pass (one incidental extra pass in
+`scripts/test_ai_status.py`, 72 vs. the recorded 71, from an unrelated test
+added on `dev` since the freeze).
+
+`completion.json` remains intentionally absent. Per the primary evidence
+plan above, the owner must not fabricate or self-sign it; only the distinct
+reviewer `Claude2` may create the real Ed25519-signed completion once this
+corrective PR is reviewed. No live install/apply/canonical mutation was
+performed as part of this restoration.
+
+Still open and unrelated: the live canonical status root's
+`ai-status.sh` / `ai_status.py` activity-log duplicate-`event_id` outage
+(tracked separately; not repaired here, and not caused by this corrective
+task's git-tracked-file-only change).
