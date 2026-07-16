@@ -104,4 +104,4 @@ mismatches outside this task's touched behavior:
 This task does not modify `.orchestrator/config.json` or sidecar eligibility
 policy.
 The same four selected tests also fail on `origin/dev` baseline commit
-`d55a0caf7` with the same observed values.
+`ddf4d0d5d` with the same observed values.
