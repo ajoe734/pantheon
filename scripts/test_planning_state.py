@@ -500,7 +500,7 @@ class PlanningStateTests(unittest.TestCase):
                     mock.patch.object(planning_state, "save_derived_state") as save_derived,
                     mock.patch.object(planning_state, "save_session") as save_session,
                     mock.patch.object(planning_state.ai_status, "sync_all") as sync_status,
-                    self.assertRaisesRegex(SystemExit, "sequencing-parked task"),
+                    self.assertRaisesRegex(SystemExit, "sequencing-governed task"),
                 ):
                     planning_state.command_materialize(session, [])
 
@@ -508,6 +508,89 @@ class PlanningStateTests(unittest.TestCase):
                 save_session.assert_not_called()
                 sync_status.assert_not_called()
                 self.assertEqual(status_file.read_bytes(), before)
+
+    def test_upsert_rejects_valid_pre_g2_epoch_task_before_provenance_overwrite(self) -> None:
+        authority = planning_state.sequencing_gate
+        null_sha256 = authority.canonical_sha256(None)
+
+        def source_ref(task_id: str) -> dict:
+            return {
+                "program_id": authority.PROGRAM_ID,
+                "catalog_sha256": authority.EFFECTIVE_CATALOG_SHA256,
+                "source_catalog_sha256": authority.SOURCE_CATALOG_SHA256,
+                "sequencing_addendum_sha256": authority.SEQUENCING_ADDENDUM_SHA256,
+                "merge_pr_3737_sha": authority.MERGE_PR_3737_SHA,
+                "sequencing_overlay_sha256": authority.SEQUENCING_OVERLAY_SHA256,
+                "release_gate_id": authority.RELEASE_GATE_ID,
+                "sequencing_classification": (
+                    authority.EXPECTED_CLASSIFICATION_BY_TASK_ID[task_id]
+                ),
+            }
+
+        transitions = []
+        for index, task_id in enumerate(authority.EXPECTED_TASK_IDS, start=1):
+            gated = task_id in authority.EXPECTED_GATED_TASK_IDS
+            transitions.append(
+                {
+                    "task_id": task_id,
+                    "before_task_snapshot_sha256": f"{index:064x}",
+                    "after_task_snapshot_sha256": f"{index + 100:064x}",
+                    "before_task_contract_sha256": "1" * 64,
+                    "after_task_contract_sha256": "2" * 64,
+                    "before_source_ref_sha256": "3" * 64,
+                    "after_source_ref_sha256": authority.canonical_sha256(
+                        source_ref(task_id)
+                    ),
+                    "before_status": "todo",
+                    "after_status": "blocked" if gated else "todo",
+                    "acceptance_deferral_sha256": "4" * 64,
+                    "gate_marker_sha256": "5" * 64 if gated else null_sha256,
+                }
+            )
+        epoch = {
+            "schema_version": 1,
+            "program_id": authority.PROGRAM_ID,
+            "source_catalog_sha256": authority.SOURCE_CATALOG_SHA256,
+            "effective_catalog_sha256": authority.EFFECTIVE_CATALOG_SHA256,
+            "sequencing_overlay_sha256": authority.SEQUENCING_OVERLAY_SHA256,
+            "release_gate_id": authority.RELEASE_GATE_ID,
+            "install_mode": "base_epoch_migration",
+            "applied_at": "2026-07-16T00:00:00Z",
+            "source_graph_projection_sha256": "6" * 64,
+            "effective_graph_projection_sha256": "7" * 64,
+            "task_count": authority.EXPECTED_TASK_COUNT,
+            "task_transitions": transitions,
+            "task_transition_set_sha256": authority.canonical_sha256(transitions),
+        }
+        task = {
+            "id": "LOOP-PROD-000",
+            "status": "todo",
+            "source_ref": source_ref("LOOP-PROD-000"),
+        }
+        state = {
+            "tasks": [task],
+            "program_sequencing_epochs": {authority.PROGRAM_ID: epoch},
+        }
+        self.assertFalse(authority.task_is_sequencing_parked(task, state))
+
+        with self.assertRaisesRegex(SystemExit, "sequencing-governed task"):
+            planning_state.upsert_materialized_task(
+                state,
+                {
+                    "id": task["id"],
+                    "title": "Must not overwrite sequencing provenance",
+                    "owner": "Codex",
+                    "reviewer": "Codex2",
+                    "phase": "Phase 3",
+                    "summary_zh": "不得覆寫 sequencing source_ref。",
+                    "depends_on": [],
+                    "artifacts": [],
+                    "acceptance": [],
+                },
+                materialization_ref={"session_id": "planning-session"},
+            )
+
+        self.assertEqual(task["source_ref"], source_ref(task["id"]))
 
     def test_materialize_preserves_existing_execution_truth_and_only_backfills_source_refs(self) -> None:
         with tempfile.TemporaryDirectory(prefix="planning-state-backfill-") as temp_dir:

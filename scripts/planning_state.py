@@ -1938,6 +1938,11 @@ def upsert_materialized_task(
     task_id = str(payload.get("id") or "").strip()
     existing = ai_status.get_task(state, task_id)
     task_for_admission = existing if isinstance(existing, dict) else payload
+    if task_id in sequencing_gate.EXPECTED_TASK_IDS:
+        raise SystemExit(
+            f"Planning materialization rejected for sequencing-governed task {task_id}; "
+            "the authoritative dispatcher owns all 48 sequencing task contracts."
+        )
     if sequencing_gate.task_is_sequencing_parked(task_for_admission, state):
         raise SystemExit(
             f"Planning materialization rejected for sequencing-parked task {task_id}; "
@@ -2018,6 +2023,11 @@ def _command_materialize_locked(session: dict[str, Any], _args: list[str]) -> No
         task_id = str(payload.get("id") or "").strip()
         existing = ai_status.get_task(state, task_id)
         task_for_admission = existing if isinstance(existing, dict) else payload
+        if task_id in sequencing_gate.EXPECTED_TASK_IDS:
+            raise SystemExit(
+                f"Planning materialization rejected for sequencing-governed task {task_id}; "
+                "the authoritative dispatcher owns all 48 sequencing task contracts."
+            )
         if sequencing_gate.task_is_sequencing_parked(task_for_admission, state):
             raise SystemExit(
                 f"Planning materialization rejected for sequencing-parked task {task_id}; "
