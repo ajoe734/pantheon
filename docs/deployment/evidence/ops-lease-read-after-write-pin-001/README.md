@@ -61,7 +61,9 @@ Workflow contract tests cover:
 
 ## Validation
 
-Run locally on `task/OPS-LEASE-READ-AFTER-WRITE-PIN-001`:
+Run locally on `task/OPS-LEASE-READ-AFTER-WRITE-PIN-001` after composing
+`origin/dev` `135d266b8de855c187d3307d41d86376833d728c` into final head
+`caf1b42dcda55575312986ada60c427876ce45f6`:
 
 ```text
 python3 -m pytest -q scripts/test_dev_environment_lease.py scripts/test_dev_environment_lease_guard.py scripts/test_dev_environment_lease_deploy_contract.py scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_check_shared_deploy_workflow_disabled.py
