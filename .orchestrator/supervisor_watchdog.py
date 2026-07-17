@@ -692,13 +692,15 @@ def summarize_decision(
 
 
 def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:
+    lock_manager = runtime_state_lock(
+        config,
+        shared=False,
+        nonblocking=True,
+    )
+    lock_acquired = False
     try:
-        with runtime_state_lock(
-            config,
-            shared=False,
-            nonblocking=True,
-        ):
-            return _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
+        lock_manager.__enter__()
+        lock_acquired = True
     except (BlockingIOError, OSError) as exc:
         if not (isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK)):
             raise
@@ -731,6 +733,14 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
             pass
 
         return result
+
+    try:
+        return _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
+    except BaseException:
+        lock_manager.__exit__(*sys.exc_info())
+        raise
+    else:
+        lock_manager.__exit__(None, None, None)
 
 
 def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:
