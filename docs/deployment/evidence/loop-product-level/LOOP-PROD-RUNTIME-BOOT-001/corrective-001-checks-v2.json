@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "protocol_id": "pantheon-runtime-task-audit-lock-v1",
+  "task_id": "LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001",
+  "parent_task_id": "LOOP-PROD-RUNTIME-BOOT-001",
+  "status": "corrective_evidence_candidate_v2",
+  "owner": "Antigravity",
+  "assigned_reviewer": "Codex2",
+  "supersedes": {
+    "file": "corrective-001-checks.json",
+    "reason": "That file recorded PR #3742 as state OPEN, bound to commit 42acecd2bf2ab0198b5138dcb27eb013d7465ffa, and its source-inventory/test recomputation was taken at that pre-merge commit. PR #3742 has since merged. This file re-binds the same evidence categories to PR #3742's actual final head and merge ancestry, and to a fresh composition of origin/dev. corrective-001-checks.json is left in place, unmodified, as the historical (now-stale) draft it documents itself to be; it is not rewritten or deleted."
+  },
+  "purpose": "Re-binds the exact final state of this corrective task's own changes (row restoration + reviewer-identity correction) to PR ancestry, the exact merged diff, the restored audit blob, the writer registry, a fresh source-inventory recomputation composed against current origin/dev, and a full re-run of every named validation command. Does not modify the frozen primary-task checks.json, the frozen corrective-001-checks.json, or the writer registry, and is not itself completion evidence.",
+  "pr_ancestry": {
+    "primary_bootstrap_pr": {
+      "repo": "ajoe734/pantheon",
+      "number": 3652,
+      "state": "MERGED",
+      "merged_at": "2026-07-15T22:56:12Z",
+      "merge_commit": "6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3"
+    },
+    "corrective_pr_1_row_restoration": {
+      "repo": "ajoe734/pantheon",
+      "number": 3738,
+      "title": "LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001: document commit-gate bypass",
+      "state": "MERGED",
+      "commits": [
+        "f5948969af7708a140c600f2f90594b9c15d3da5",
+        "fbfad9dbde05a876dfda6d6281a8ebc0897d1276"
+      ],
+      "merge_commit": "8c9bc96e5e8728a2340355b9357355d0c7368ff2",
+      "merged_at": "2026-07-16T12:31:59Z",
+      "verified_ancestor_of_dev": true,
+      "verification_command": "git merge-base --is-ancestor 8c9bc96e5e8728a2340355b9357355d0c7368ff2 origin/dev",
+      "note": "Commit trailers on f5948969a/fbfad9dbd name Claude2 as reviewer -- the assignment in effect when authored. Historical record, not rewritten."
+    },
+    "corrective_pr_2_reviewer_identity_fix": {
+      "repo": "ajoe734/pantheon",
+      "number": 3742,
+      "title": "LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001: correct stale reviewer identity",
+      "commit": "42acecd2bf2ab0198b5138dcb27eb013d7465ffa",
+      "head_ref_oid": "5ba2c88089234d16bb82806f7dee19f44ce5e790",
+      "state": "MERGED",
+      "merged_at": "2026-07-16T13:11:45Z",
+      "merge_commit": "6a24a3ebb36259a4259ccd2dcdc053826eb4e1d5",
+      "verified_ancestor_of_dev": true,
+      "verification_command": "git merge-base --is-ancestor 6a24a3ebb36259a4259ccd2dcdc053826eb4e1d5 origin/dev",
+      "note": "corrective-001-checks.json (v1) recorded this PR as OPEN bound to its head commit 42acecd2b; that was accurate at the time of writing but became stale once the PR merged. This entry replaces that stale binding with the actual merge commit and confirmed dev ancestry. Per the Codex planner review on PR #3742 (2026-07-16T12:50:08Z, PRR_kwDOR5tTNs8AAAABGPcd1Q): the doc-only reviewer-identity fix was itself a valid interim change; this v2 evidence file is the further follow-up that binds it to its final merged state."
+    },
+    "corrective_pr_3_evidence_rebind": {
+      "repo": "ajoe734/pantheon",
+      "number": 3756,
+      "title": "LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001: rebind evidence to PR #3742 merged state",
+      "state": "OPEN",
+      "note": "This is the follow-up PR that this evidence file (corrective-001-checks-v2.json) is itself part of. Its exact head SHA and merge commit are not yet known at authoring time and MUST NOT be fabricated. base_commit below is the origin/dev-composed commit this file's diff, source-inventory recomputation, and validation re-run were taken against, immediately before this file was added. Codex2 must resolve this PR's actual number/head/merge SHA from GitHub once opened, verify it is an ancestor of origin/dev, and confirm this file's recorded base_commit matches this file's own first parent before treating any of the bindings below as accepted."
+    }
+  },
+  "base_commit": {
+    "sha": "7097e8d2a7c15593763bdba302a8b3950a998b04",
+    "description": "task/LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001, merged with origin/dev tip; merge commit was 0a824cecde63d2f7092faa09e93533d0711e955e.",
+    "dev_head_at_composition": "7097e8d2a7c15593763bdba302a8b3950a998b04",
+    "verification_command": "git merge-base --is-ancestor HEAD origin/dev"
+  },
+  "exact_merged_diff": {
+    "ai_activity_log_jsonl": {
+      "change": "+1 line, 0 removed, appended at tail",
+      "restored_row": "{\"ts\": \"2026-07-14T08:29:09Z\", \"agent\": \"Antigravity\", \"type\": \"worker_commit\", \"task_id\": \"AG-UIPOL-011\", \"message\": \"Worker commit 01e298ac66b6 recorded 1 staged file(s) for AG-UIPOL-011.\", \"commit\": \"01e298ac66b613cd3414816b62a4bea975984f2e\", \"scope\": [\"e2e/agora-narrow-responsive-hosted.spec.ts\"], \"staged\": [\"e2e/agora-narrow-responsive-hosted.spec.ts\"], \"index_file\": \"/tmp/git-index-ag-uipol-011-fe-gate\", \"default_index_refreshed\": true, \"default_index_refresh_error\": null}",
+      "dropped_by": "one of PR #3652's origin/dev merge-resolution commits on the primary task branch",
+      "dropped_from": "diff of merge commit 6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3 against its first parent",
+      "still_present_and_byte_identical_at_base_commit": true,
+      "reverify_command": "git hash-object ai-activity-log.jsonl"
+    },
+    "readme_changes": {
+      "commit_f5948969a": "+53 lines (restoration narrative)",
+      "commit_fbfad9dbd": "+17 lines (commit-gate bypass rationale)",
+      "commit_42acecd2b": "+14/-2 lines (reviewer identity note)"
+    },
+    "other_files_touched_by_corrective_prs_1_and_2": []
+  },
+  "restored_audit_blob": {
+    "file": "ai-activity-log.jsonl",
+    "git_hash_object_sha1": "b1cb15a46d60d4f430d3bda6635683ec9b7bc95c",
+    "sha256": "bd242576fb45f1ea3c58f6b8af6f036e4b3fc26626a7167edf2450b3cdca7009",
+    "pre_deletion_blob_source": "first parent of merge commit 6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3",
+    "byte_identical_to_pre_deletion_blob": true,
+    "reverified_at_base_commit": "0a824cecde63d2f7092faa09e93533d0711e955e",
+    "verification_command": "git hash-object ai-activity-log.jsonl"
+  },
+  "writer_registry": {
+    "path": ".orchestrator/runtime-task-audit-writer-registry.json",
+    "sha256": "43f92870cc3209afff461fa57671631c7ffb8de9f2a3452fdf82cde80ffe6c74",
+    "modified_by_this_task": false,
+    "note": "Unchanged since corrective-001-checks.json (v1); restored row falls outside the frozen source_inventory roots (.orchestrator, scripts), so the registry does not require recomputation for this corrective task."
+  },
+  "source_inventory_recomputation": {
+    "recomputed_at_commit": "0a824cecde63d2f7092faa09e93533d0711e955e",
+    "algorithm": "sha256(canonical-json(path-to-sha256))",
+    "writer_scanner_id": "pantheon-canonical-writer-ast-v1",
+    "roots": [
+      ".orchestrator",
+      "scripts"
+    ],
+    "file_count": 406,
+    "sha256": "f9eb8e734bc14d6423986a111a91e3af0ab4020ccfc8489611a8faf4e874eca27e",
+    "unregistered_direct_writers": [],
+    "verification_command": "python3 -c \"import sys; sys.path.insert(0,'.orchestrator'); from runtime_state import runtime_lock_source_inventory; print(runtime_lock_source_inventory('.'))\"",
+    "drift_vs_frozen_primary_checks_json": {
+      "frozen_file_count": 399,
+      "frozen_sha256": "1e702db985e6356b40f48018e6b88de32e42be74edb8f623972e636c88fbdb09",
+      "explanation": "Expected: unrelated tasks (for example OPS-DEPLOY-WORKFLOW-GUARD-001, PINT-010-R2, LOOP-PROD-SEQ-RECONCILE-001, OPS-STATUS-COMMAND-RUNTIME-PIN-001) advanced .orchestrator/scripts content on dev after the primary bootstrap PR's freeze. Not caused by, and not a reason to touch, this corrective restoration. The frozen primary checks.json is intentionally left unmodified."
+    },
+    "drift_vs_corrective_001_checks_v1": {
+      "v1_file_count": 404,
+      "v1_sha256": "43e9fa155d9eabaf7f348bab31a3a6b98ccf468c2cab7b31d999df7d8a24aa3a",
+      "v2_sha256_differs_from_v1": true,
+      "explanation": "File count changed from 404 to 406 and content hashes of registered-root files advanced between v1's recomputation commit (42acecd2b) and this v2 recomputation's base_commit (7097e8d2a7c15593763bdba302a8b3950a998b04), consistent with ordinary unrelated dev churn. No unregistered direct writer appeared at either point."
+    }
+  },
+  "writer_surface_verdict": "passed",
+  "validation_commands": [
+    {
+      "command": "PYTHONPATH=.orchestrator:scripts python3 -m pytest -q .orchestrator/test_runtime_state.py .orchestrator/test_common.py .orchestrator/test_file_inbox.py .orchestrator/test_watch_events.py .orchestrator/test_supervisor_watchdog.py .orchestrator/test_approval_queue.py .orchestrator/test_task_archive_index_legacy_id.py",
+      "conclusion": "passed",
+      "result": "131 passed, 60 subtests passed in 39.71s"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator:scripts python3 -m pytest -q .orchestrator/test_supervisor.py --deselect .orchestrator/test_supervisor.py::RuntimeConfigTests::test_antigravity_workers_are_in_dispatcher_pool --deselect .orchestrator/test_supervisor.py::RuntimeConfigTests::test_claude2_new_work_target_and_concurrency_are_capped --deselect .orchestrator/test_supervisor.py::RuntimeConfigTests::test_claude_concurrency_is_explicitly_capped_at_three --deselect .orchestrator/test_supervisor.py::UnderutilizationSidecarDispatchTests::test_unregistered_runtime_config_agent_is_not_eligible_for_sidecars",
+      "conclusion": "passed",
+      "result": "276 passed, 1 deselected in 1037.00s"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator:scripts python3 -m pytest -q scripts/test_ai_status.py",
+      "conclusion": "passed",
+      "result": "74 passed in 42.52s"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator:scripts python3 -m pytest -q scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py",
+      "conclusion": "passed",
+      "result": "191 passed in 552.70s -- 2 more than the 189 recorded in the frozen primary checks.json, from unrelated tests added on dev since the freeze"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator:scripts python3 -m pytest -q scripts/test_planning_state.py scripts/test_orchestrator_bundle.py scripts/test_orchestrator_queue_triage.py scripts/git/test_index_safety.py scripts/test_dashboard_server.py .orchestrator/test_task_archive_index_legacy_id.py",
+      "conclusion": "passed",
+      "result": "44 passed in 26.10s"
+    },
+    {
+      "command": "python3 -m py_compile <9 registered writer files> && git diff --check && runtime_lock_source_inventory('.') assertion",
+      "conclusion": "passed",
+      "result": "py_compile exit 0 for all 9 registered writers; git diff --check exit 0; unregistered_direct_writers == [] over 406 files"
+    }
+  ],
+  "known_unrelated_outage": {
+    "description": "The live canonical status root fails closed on every scripts/ai-status.sh / scripts/ai_status.py invocation with RuntimeError: activity event_id duplicate across sources. Reproduced independently at base_commit with a distinct duplicate event_id (worker-commit-deb673789747a71068bff9f2578ad9f41d7b8253) than previously reported, confirming the outage is ongoing and not self-resolving as unrelated workers keep committing.",
+    "not_caused_by_or_repaired_by_this_task": true,
+    "requires": "the governed incident/recovery path, not an ad-hoc edit to ai-activity-log.jsonl, its rotated archives, or scripts/ai_status.py from this task"
+  },
+  "scope_boundary": {
+    "in_scope": [
+      "restore exactly the one dropped append-only ai-activity-log.jsonl row (already done in PR #3738, reverified here)",
+      "correct the disabled reviewer identity (Claude2 -> Codex2) in forward-looking guidance (already done in PR #3742, reverified here)",
+      "bind this evidence to the exact final candidate: PR #3742's actual merged state, restored audit blob, writer registry digest, complete source inventory composed against current origin/dev, full validation results, zero unregistered direct writers",
+      "record PR ancestry and the exact merged diff"
+    ],
+    "out_of_scope": [
+      "live install/apply or any canonical runtime mutation",
+      "48-task materialization",
+      "modifying the frozen primary docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001/checks.json, the frozen corrective-001-checks.json (v1), or the writer registry",
+      "creating or fabricating completion.json",
+      "repairing the ai-status.py activity-log duplicate-event_id outage"
+    ]
+  },
+  "completion_authority": {
+    "owner_may_not_self_sign": true,
+    "required_reviewer": "Codex2",
+    "required_action": "Independently verify this file's own PR ancestry once opened (resolving corrective_pr_3_evidence_rebind's real number/head/merge SHA), the exact merge diff, PR #3742's actual merged state, the restored row, the writer registry, the source inventory, and the recorded test results above, then either create a real protected Ed25519-signed completion.json plus ledger/policy/revocation binding and formally review this evidence, or leave the task open with the exact unavailable signing authority.",
+    "not_completion": [
+      "GitHub green checks",
+      "a README correction alone",
+      "this evidence file alone",
+      "a placeholder signature",
+      "an owner signature",
+      "status-only approval"
+    ]
+  }
+}
