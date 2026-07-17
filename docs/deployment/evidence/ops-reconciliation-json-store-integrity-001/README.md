@@ -231,6 +231,40 @@ This evidence-only update does not alter the validated store or test content.
 The resulting pushed PR head needs a fresh Antigravity governed approval and
 GitHub approval; no earlier approval applies to it.
 
+### Second dev-tip compose revalidation
+
+PR #3778's head `3ea0bf073700bf06082cda902d24da5a89760f31` sat with
+`reviews: []` while `origin/dev` advanced 4 commits (none touching
+`services/reconciliation-drift/` or this evidence directory) to
+`a2299892573014143fbe5d20de5a775a18589f90`. The candidate was composed again
+with that `origin/dev` tip. The resulting merge commit
+`f58ba7f7a5c4cc644b0ba8a0b2e3c3b2fec92435` was revalidated:
+
+```text
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py -q
+48 passed in 35.98s
+
+python3 -m pytest services/reconciliation-drift/tests/ -q
+79 passed in 93.50s
+
+python3 -m py_compile services/reconciliation-drift/store.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py
+(no output; passed)
+
+git diff --check origin/dev...HEAD
+(no output; clean)
+
+git show --check --oneline HEAD
+(no whitespace errors)
+
+python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge
+(no output; passed)
+```
+
+This evidence-only update does not alter the validated store or test content.
+The resulting pushed PR head needs a fresh Antigravity governed approval and
+GitHub approval; no earlier approval (including the empty-review state on
+`3ea0bf073...`) applies to it.
+
 ## Scope boundary
 
 - Owned layer: `services/reconciliation-drift/store.py` JSON-backed map
