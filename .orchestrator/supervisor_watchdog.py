@@ -63,6 +63,7 @@ def watchdog_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("heartbeat_stale_seconds", max(900, int(float(supervisor_settings.get("stall_after_seconds", 300))) * 3))
     settings.setdefault("state_file", ".orchestrator/watchdog-state.json")
     settings.setdefault("metrics_file", ".orchestrator/metrics/supervisor-watchdog.jsonl")
+    settings.setdefault("contention_metrics_file", ".orchestrator/metrics/supervisor-watchdog-contention.jsonl")
     settings.setdefault("restart_budget_window_seconds", 900)
     settings.setdefault("max_restarts_per_window", 2)
     settings.setdefault("max_restarts_per_hour", 4)
@@ -370,6 +371,59 @@ def append_watchdog_metric(config: dict[str, Any], payload: dict[str, Any], sett
         )
 
 
+def append_watchdog_contention_metric(config: dict[str, Any], payload: dict[str, Any], settings: dict[str, Any] | None = None) -> None:
+    settings = settings or watchdog_settings(config)
+    path = resolve_repo_path(settings.get("contention_metrics_file"), ".orchestrator/metrics/supervisor-watchdog-contention.jsonl")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise RuntimeError(f"contention metrics data leaf cannot be a symlink: {path}")
+
+    event = {
+        "version": 1,
+        "event_id": f"watchdog-contention-{int(time.time() * 1000)}-{os.getpid()}",
+        "at": utc_now(),
+        **payload,
+    }
+    serialized = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
+
+    lock_path = path.with_suffix(".lock")
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+    try:
+        lock_descriptor = os.open(lock_path, flags, 0o600)
+        fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+
+        write_flags = os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, write_flags, 0o600)
+        try:
+            _assert_regular_watchdog_leaf(path, descriptor, label="contention metrics")
+            offset = os.lseek(descriptor, 0, os.SEEK_END)
+            if offset and os.pread(descriptor, 1, offset - 1) != b"\n":
+                raise RuntimeError(f"contention metrics is not newline terminated: {path}")
+            view = memoryview(serialized)
+            while view:
+                written = os.write(descriptor, view)
+                if written <= 0:
+                    raise OSError("contention metrics append made no progress")
+                view = view[written:]
+            os.fsync(descriptor)
+            _assert_regular_watchdog_leaf(path, descriptor, label="contention metrics")
+            if _pread_exact(descriptor, len(serialized), offset) != serialized:
+                raise RuntimeError(f"contention metrics readback mismatch: {path}")
+        finally:
+            os.close(descriptor)
+
+        directory_descriptor = os.open(path.parent, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+
+        fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(lock_descriptor)
+
+
 def load_runtime_state_file(config: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     path = config_path(config, "state_file")
     try:
@@ -631,12 +685,45 @@ def summarize_decision(
 
 
 def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:
-    with runtime_state_lock(
-        config,
-        shared=False,
-        nonblocking=False,
-    ):
-        return _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
+    try:
+        with runtime_state_lock(
+            config,
+            shared=False,
+            nonblocking=True,
+        ):
+            return _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
+    except (BlockingIOError, OSError) as exc:
+        if not (isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK)):
+            raise
+        # We hit lock contention.
+        # Construct a skip/contention result without writing to the locked state files.
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        pid = read_pid_file(supervisor_pid_path(config))
+        runtime_state, state_error = load_runtime_state_file(config)
+        heartbeat_age = heartbeat_age_seconds(runtime_state, now)
+        settings = watchdog_settings(config)
+        resource = resource_snapshot(config, runtime_state, settings)
+        lock_held = supervisor_lock_held(config)
+
+        result = {
+            "decision": "skip",
+            "reason": "lock_contention",
+            "pid": pid,
+            "new_pid": None,
+            "heartbeat_age_seconds": heartbeat_age,
+            "resource": resource,
+            "restart_count_window": 0,
+            "restart_count_hour": 0,
+            "log_path": None,
+            "lock_held": lock_held,
+        }
+
+        try:
+            append_watchdog_contention_metric(config, result, settings)
+        except Exception:
+            pass
+
+        return result
 
 
 def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:

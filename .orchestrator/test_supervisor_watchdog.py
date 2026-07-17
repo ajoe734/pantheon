@@ -31,6 +31,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
             "watchdog": {
                 "state_file": str(self.root / "watchdog-state.json"),
                 "metrics_file": str(self.root / "metrics.jsonl"),
+                "contention_metrics_file": str(self.root / "metrics-contention.jsonl"),
                 "heartbeat_stale_seconds": 900,
                 "restart_budget_window_seconds": 900,
                 "max_restarts_per_window": 2,
@@ -551,6 +552,191 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.assertEqual(result["decision"], "restart_supervisor")
         self.assertEqual(result["reason"], "missing_pid")
         self.assertFalse(result["lock_held"])
+
+    def test_lock_contention_returns_skip_immediately(self) -> None:
+        """When the runtime-admission lock is held, run_watchdog returns skip/lock_contention immediately without blocking or modifying files."""
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lock_handle.close)
+
+        self.write_pid(123)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": "2026-05-18T13:00:00Z",
+                "lifecycle": "running"
+            }
+        })
+
+        with mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result["decision"], "skip")
+        self.assertEqual(result["reason"], "lock_contention")
+        self.assertEqual(result["pid"], 123)
+
+        watchdog_state_file = self.root / "watchdog-state.json"
+        self.assertFalse(watchdog_state_file.exists())
+
+        # Verify contention metric write
+        contention_file = self.root / "metrics-contention.jsonl"
+        self.assertTrue(contention_file.exists())
+        lines = contention_file.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 1)
+        event = json.loads(lines[0])
+        self.assertEqual(event["decision"], "skip")
+        self.assertEqual(event["reason"], "lock_contention")
+
+    def test_lock_contention_multi_tick_bounded(self) -> None:
+        """Simulate 10+ cron ticks under contention: all exit immediately with skip, leaving the lock untouched."""
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lock_handle.close)
+
+        self.write_pid(123)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": "2026-05-18T13:00:00Z",
+                "lifecycle": "running"
+            }
+        })
+
+        for _ in range(12):
+            with mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()):
+                result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+            self.assertEqual(result["decision"], "skip")
+            self.assertEqual(result["reason"], "lock_contention")
+
+    def test_lock_contention_subprocess_launches(self) -> None:
+        """Spawn 12 concurrent watchdog processes via subprocess while the lock is held,
+        proving they all exit immediately with exit code 0, do not accumulate, and write to contention metrics."""
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lock_handle.close)
+
+        # Write config.json under self.root/.orchestrator so scripts can find it
+        config_path = self.root / ".orchestrator" / "config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(self.config, f)
+
+        self.write_pid(123)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": "2026-05-18T13:00:00Z",
+                "lifecycle": "running"
+            }
+        })
+
+        import subprocess
+        processes = []
+        for _ in range(12):
+            p = subprocess.Popen(
+                [sys.executable, str(Path(supervisor_watchdog.__file__).resolve()), "--config", str(config_path), "--json"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            processes.append(p)
+
+        outputs = []
+        for p in processes:
+            stdout, stderr = p.communicate(timeout=5.0)
+            outputs.append((p.returncode, stdout, stderr))
+
+        for code, stdout, stderr in outputs:
+            self.assertEqual(code, 0, f"Subprocess failed with stderr: {stderr.decode()}")
+            data = json.loads(stdout.decode())
+            self.assertEqual(data["decision"], "skip")
+            self.assertEqual(data["reason"], "lock_contention")
+
+        # Contention metrics file should contain exactly 12 events
+        contention_file = self.root / "metrics-contention.jsonl"
+        self.assertTrue(contention_file.exists())
+        lines = contention_file.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 12)
+        for line in lines:
+            event = json.loads(line)
+            self.assertEqual(event["decision"], "skip")
+            self.assertEqual(event["reason"], "lock_contention")
+
+    def test_lock_release_and_probe_updates_state(self) -> None:
+        """After releasing the lock, a subsequent probe succeeds, updates the state files, and is healthy."""
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        with mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()):
+            result1 = supervisor_watchdog.run_watchdog(self.config, restart=True)
+        self.assertEqual(result1["decision"], "skip")
+
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+        lock_handle.close()
+
+        now = datetime.now(timezone.utc)
+        self.write_pid(123)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": supervisor_watchdog.isoformat_utc(now),
+                "lifecycle": "running"
+            }
+        })
+
+        with (
+            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+        ):
+            result2 = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result2["decision"], "observe_only")
+        self.assertEqual(result2["reason"], "supervisor_healthy")
+
+        watchdog_state_file = self.root / "watchdog-state.json"
+        self.assertTrue(watchdog_state_file.exists())
+
+        # Validate with supervisor_runtime_health.py --require-watchdog --json
+        # We lock supervisor.lock to simulate that the supervisor process is alive
+        sup_lock_path = self.state_file.parent / "supervisor.lock"
+        sup_lock_handle = open(sup_lock_path, "w", encoding="utf-8")
+        fcntl.flock(sup_lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        config_path = self.root / ".orchestrator" / "config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(self.config, f)
+
+        import subprocess
+        health_script_path = Path(__file__).resolve().parent.parent / "scripts" / "supervisor_runtime_health.py"
+        p = subprocess.Popen(
+            [sys.executable, str(health_script_path), "--repo", str(self.root), "--require-watchdog", "--json"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stdout, stderr = p.communicate(timeout=5.0)
+
+        fcntl.flock(sup_lock_handle.fileno(), fcntl.LOCK_UN)
+        sup_lock_handle.close()
+
+        self.assertEqual(p.returncode, 0, f"Health check failed with stderr: {stderr.decode()}")
+        health_report = json.loads(stdout.decode())
+        self.assertTrue(health_report["healthy"])
 
 
 class ActiveWorkerCountDedupeTests(unittest.TestCase):
