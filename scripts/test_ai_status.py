@@ -102,6 +102,38 @@ def _commit_terminal_archive_with_sigkill(
         ai_status.commit_state_with_activity_outbox(state, [])
 
 
+class StrictActivityTailParsingTests(unittest.TestCase):
+    def test_derived_activity_tail_readers_reject_duplicate_keys(self) -> None:
+        ambiguous_rows = (
+            '{"event_id":"first","event_id":"second",'
+            '"type":"task_helper_claimed"}\n',
+            '{"event_id":"nested","type":"task_helper_claimed",'
+            '"metadata":{"role":"a","role":"b"}}\n',
+        )
+        readers = (
+            ("load_logs", ai_status.load_logs),
+            ("recent_helper_claims", ai_status.recent_helper_claims),
+        )
+        original_log_file = ai_status.LOG_FILE
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                ai_status.LOG_FILE = Path(tmpdir) / "ai-activity-log.jsonl"
+                for shape, ambiguous in enumerate(ambiguous_rows):
+                    for reader_name, reader in readers:
+                        with self.subTest(shape=shape, reader=reader_name):
+                            ai_status.LOG_FILE.write_text(
+                                ambiguous,
+                                encoding="utf-8",
+                            )
+                            with self.assertRaisesRegex(
+                                RuntimeError,
+                                "duplicate JSON key",
+                            ):
+                                reader()
+        finally:
+            ai_status.LOG_FILE = original_log_file
+
+
 class StatusRootRoutingTests(unittest.TestCase):
     def _init_repo(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)

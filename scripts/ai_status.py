@@ -79,6 +79,7 @@ from runtime_state import (
     load_runtime_state_snapshot,
 )
 from common import (
+    DuplicateActivityJSONKeyError,
     activity_audit_lock_path,
     activity_audit_source_paths_unlocked,
     append_activity_log_entries_unlocked,
@@ -87,6 +88,7 @@ from common import (
     prepare_activity_audit_unlocked,
     read_activity_log_tail_bytes,
     rotate_activity_log_unlocked,
+    strict_activity_json_loads,
     validated_activity_event_digests_unlocked,
 )
 
@@ -867,12 +869,22 @@ def load_logs() -> list[dict[str, Any]]:
         if not line:
             continue
         try:
-            logs.append(json.loads(line))
+            entry = strict_activity_json_loads(line)
+        except DuplicateActivityJSONKeyError as exc:
+            raise RuntimeError(
+                f"ai-activity-log.jsonl line {line_no} contains {exc}"
+            ) from exc
         except json.JSONDecodeError as exc:
             print(
                 f"Warning: skipping malformed ai-activity-log.jsonl line {line_no}: {exc}",
                 file=sys.stderr,
             )
+            continue
+        if not isinstance(entry, dict):
+            raise RuntimeError(
+                f"ai-activity-log.jsonl line {line_no} is not an object row"
+            )
+        logs.append(entry)
     return logs
 
 
@@ -1071,13 +1083,22 @@ def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dic
         if not stripped:
             continue
         try:
-            entry = json.loads(stripped)
+            entry = strict_activity_json_loads(stripped)
+        except DuplicateActivityJSONKeyError as exc:
+            raise RuntimeError(
+                "ai-activity-log.jsonl tail line "
+                f"-{line_no} contains {exc}"
+            ) from exc
         except json.JSONDecodeError as exc:
             print(
                 f"Warning: skipping malformed ai-activity-log.jsonl tail line -{line_no}: {exc}",
                 file=sys.stderr,
             )
             continue
+        if not isinstance(entry, dict):
+            raise RuntimeError(
+                f"ai-activity-log.jsonl tail line -{line_no} is not an object row"
+            )
         if str(entry.get("type") or "") != "task_helper_claimed":
             continue
         claims.append(

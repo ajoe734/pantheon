@@ -52,6 +52,20 @@ def _jsonl(entries: list[dict]) -> bytes:
     ).encode("utf-8")
 
 
+class StrictRecoveryParserTests(unittest.TestCase):
+    def test_active_and_gzip_payload_event_ids_reject_duplicate_keys(self):
+        ambiguous = (
+            b'{"event_id":"first","event_id":"second",'
+            b'"metadata":{"role":"a","role":"b"}}\n'
+        )
+        for source in ("active activity log", "superseding gzip payload"):
+            with self.subTest(source=source), self.assertRaisesRegex(
+                recovery.RecoveryProofError,
+                "duplicate JSON key",
+            ):
+                recovery._event_ids(ambiguous, source=source)
+
+
 class PendingIntentIncidentFixture(unittest.TestCase):
     """Builds the exact stranded-intent incident inside an isolated root."""
 

@@ -158,7 +158,11 @@ def _event_ids(payload: bytes, *, source: str) -> list[str]:
     ids: list[str] = []
     for line_no, line in enumerate(payload.splitlines(), start=1):
         try:
-            entry = json.loads(line.decode("utf-8"))
+            entry = common.strict_activity_json_loads(line.decode("utf-8"))
+        except common.DuplicateActivityJSONKeyError as exc:
+            raise RecoveryProofError(
+                f"{source} line {line_no} contains {exc}"
+            ) from exc
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise RecoveryProofError(
                 f"{source} line {line_no} is not valid JSON"

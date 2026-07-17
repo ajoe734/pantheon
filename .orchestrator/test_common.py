@@ -12,6 +12,7 @@ import sys
 import tempfile
 import tracemalloc
 import unittest
+from itertools import islice
 from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
@@ -409,39 +410,118 @@ class ClaudeAuthTests(unittest.TestCase):
 
 
 class RecentTaskActivityTests(unittest.TestCase):
-    def test_recent_task_activity_reads_from_tail_without_full_log_scan(self) -> None:
+    def test_recent_task_activity_returns_latest_rows_from_validated_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             activity_log = root / "ai-activity-log.jsonl"
-            lines = []
-            for idx in range(40):
-                lines.append(json.dumps({"task_id": f"OTHER-{idx}", "message": f"other-{idx}"}))
-            for idx in range(8):
-                lines.append(json.dumps({"task_id": "TASK-1", "message": f"match-{idx}"}))
-            activity_log.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-            result = common._recent_task_activity({"paths": {"activity_log": str(activity_log)}}, "TASK-1", limit=3)
-
-        self.assertEqual([entry["message"] for entry in result], ["match-5", "match-6", "match-7"])
-
-    def test_recent_task_activity_ignores_partial_tail_line(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            activity_log = root / "ai-activity-log.jsonl"
+            archive_dir = root / "archive" / "logs"
+            archive_dir.mkdir(parents=True)
+            archive = (
+                archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+            )
+            archived = [
+                {
+                    "event_id": f"archived-{idx}",
+                    "task_id": "TASK-1",
+                    "message": f"match-{idx}",
+                }
+                for idx in range(5)
+            ]
+            with gzip.open(archive, "wt", encoding="utf-8") as handle:
+                handle.write("".join(json.dumps(row) + "\n" for row in archived))
+            active = [
+                {
+                    "event_id": f"active-{idx}",
+                    "task_id": "TASK-1",
+                    "message": f"match-{idx + 5}",
+                }
+                for idx in range(3)
+            ]
             activity_log.write_text(
-                "\n".join(
-                    [
-                        json.dumps({"task_id": "TASK-1", "message": "older"}),
-                        json.dumps({"task_id": "TASK-1", "message": "newer"}),
-                    ]
-                )
-                + '\n{"task_id": "TASK-1", "message": "partial"',
+                "".join(json.dumps(row) + "\n" for row in active),
                 encoding="utf-8",
             )
 
             result = common._recent_task_activity({"paths": {"activity_log": str(activity_log)}}, "TASK-1", limit=3)
 
-        self.assertEqual([entry["message"] for entry in result], ["older", "newer"])
+        self.assertEqual([entry["message"] for entry in result], ["match-5", "match-6", "match-7"])
+
+    def test_recent_task_activity_rejects_late_invalid_row_before_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            activity_log = root / "ai-activity-log.jsonl"
+            activity_log.write_text(
+                json.dumps(
+                    {
+                        "event_id": "valid-first",
+                        "task_id": "TASK-1",
+                        "message": "must-not-return",
+                    }
+                )
+                + "\n{bad late json}\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "Bad JSON"):
+                common._recent_task_activity(
+                    {"paths": {"activity_log": str(activity_log)}},
+                    "TASK-1",
+                    limit=3,
+                )
+
+    def test_recent_task_activity_rejects_duplicate_keys_in_active_and_gzip(self) -> None:
+        ambiguous = (
+            '{"event_id":"ambiguous","task_id":"OTHER",'
+            '"task_id":"TASK-1","metadata":{"role":"a","role":"b"}}\n'
+        )
+        for source_kind in ("active", "gzip"):
+            with self.subTest(source=source_kind), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                activity_log = root / "ai-activity-log.jsonl"
+                if source_kind == "active":
+                    activity_log.write_text(ambiguous, encoding="utf-8")
+                else:
+                    archive_dir = root / "archive" / "logs"
+                    archive_dir.mkdir(parents=True)
+                    archive = (
+                        archive_dir
+                        / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+                    )
+                    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+                        handle.write(ambiguous)
+
+                with self.assertRaisesRegex(RuntimeError, "duplicate JSON key"):
+                    common._recent_task_activity(
+                        {"paths": {"activity_log": str(activity_log)}},
+                        "TASK-1",
+                        limit=3,
+                    )
+
+    def test_recent_task_activity_fails_closed_on_partial_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            activity_log = root / "ai-activity-log.jsonl"
+            activity_log.write_text(
+                json.dumps(
+                    {
+                        "event_id": "complete",
+                        "task_id": "TASK-1",
+                        "message": "older",
+                    }
+                )
+                + '\n{"task_id":"TASK-1","message":"partial"',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "interrupted trailing row",
+            ):
+                common._recent_task_activity(
+                    {"paths": {"activity_log": str(activity_log)}},
+                    "TASK-1",
+                    limit=3,
+                )
 
 
 class StableCanonicalLockPathTests(unittest.TestCase):
@@ -1623,6 +1703,17 @@ class LogicalActivityReaderTests(unittest.TestCase):
             next(stream)
         self.assertEqual(callbacks, [])
 
+    def test_islice_cannot_hide_late_validation_failure(self):
+        self.log_path.write_text(
+            json.dumps({"event_id": "first", "message": "must-not-return"})
+            + "\n{bad late json}\n",
+            encoding="utf-8",
+        )
+
+        stream = common.stream_logical_activity(self.log_path)
+        with self.assertRaisesRegex(RuntimeError, "Bad JSON"):
+            list(islice(stream, 1))
+
     def test_duplicate_json_keys_rejected_before_first_row_in_active_and_gzip(self):
         ambiguous_rows = {
             "top-level": (
@@ -1658,6 +1749,47 @@ class LogicalActivityReaderTests(unittest.TestCase):
                     ):
                         next(stream)
                     self.assertEqual(source.read_bytes(), before)
+
+    def test_activity_control_records_reject_duplicate_json_keys(self):
+        self.log_path.write_text(
+            '{"record_type":"activity_rotation_head",'
+            '"record_type":"activity_rotation_head"}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "duplicate JSON key"):
+            list(common.stream_logical_activity(self.log_path))
+        self.log_path.unlink()
+
+        intent_path = common.activity_rotation_intent_path(self.log_path)
+        common.ensure_parent(intent_path)
+        intent_path.write_text(
+            '{"schema_version":2,"schema_version":2}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "intent is unreadable"):
+            common._load_activity_rotation_intent(self.log_path)
+        intent_path.unlink()
+
+        lineage_path = common.activity_rotation_lineage_path(self.log_path)
+        common.ensure_parent(lineage_path)
+        lineage_path.write_text(
+            '{"sequence":1,"sequence":1}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "lineage row is unreadable"):
+            common._load_activity_rotation_lineage_unlocked(self.log_path)
+        lineage_path.unlink()
+
+        resolutions_path = common.activity_rotation_resolutions_path(
+            self.log_path
+        )
+        common.ensure_parent(resolutions_path)
+        resolutions_path.write_text(
+            '{"sequence":1,"sequence":1}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "resolution row is unreadable"):
+            common._load_activity_rotation_resolutions_unlocked(self.log_path)
 
     def test_validation_snapshot_memory_is_bounded_by_window_not_history(self):
         row_count = 12000
@@ -2145,7 +2277,6 @@ class LogicalActivityReaderTests(unittest.TestCase):
             gen = common.stream_logical_activity(self.log_path)
             next(gen)
             assert_all_snapshots_unlinked()
-
             list(gen)
             assert_all_snapshots_unlinked()
 
@@ -2179,6 +2310,25 @@ class LogicalActivityReaderTests(unittest.TestCase):
                 finally:
                     gen.close()
             assert_all_snapshots_unlinked()
+
+    def test_deliberate_break_occurs_after_full_validation_and_explicit_close(self):
+        self._write_active(self._make_entries(0, 3))
+        real_final_validation = common._assert_activity_sources_stable_unlocked
+
+        with mock.patch.object(
+            common,
+            "_assert_activity_sources_stable_unlocked",
+            wraps=real_final_validation,
+        ) as final_validation:
+            stream = common.stream_logical_activity(self.log_path)
+            observed = []
+            for entry, _source, _line_number in stream:
+                observed.append(entry["event_id"])
+                break
+
+            self.assertEqual(observed, ["event-0"])
+            final_validation.assert_called_once()
+            stream.close()
 
     def test_validation_complete_event_lookup_omits_unrequested_payloads(self):
         entries = [

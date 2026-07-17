@@ -17,13 +17,14 @@ import uuid
 import hashlib
 import urllib.error
 import urllib.request
+from collections import deque
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import local
-from typing import Any, Mapping, Generator, Callable, Iterable
+from typing import Any, Mapping, Generator, Callable, Iterable, Final
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
@@ -1086,7 +1087,9 @@ class HistoricalActivityOverlapException:
     overlap_line_count: int
 
 
-HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS = (
+HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS: Final[
+    tuple[HistoricalActivityOverlapException, ...]
+] = (
     HistoricalActivityOverlapException(
         predecessor_name="ai-activity-log.jsonl-2026-05-24T1237Z.gz",
         predecessor_gzip_sha256=(
@@ -1405,6 +1408,10 @@ def _activity_archive_payload(path: Path) -> tuple[bytes, bytes]:
     except (OSError, EOFError, gzip.BadGzipFile) as exc:
         raise RuntimeError(f"activity rotation archive is unreadable: {path}") from exc
     return compressed, payload
+
+
+def _activity_archive_backup_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.bak")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1904,8 +1911,16 @@ def _validated_activity_rotation_resolution_row(
     if validate_archives:
         validation_path = archive_path
         if not archive_path.exists() and not archive_path.is_symlink():
-            raise RuntimeError("activity resolution superseded archive is missing")
-        metrics = _stream_activity_archive_metrics(archive_path)
+            backup_path = _activity_archive_backup_path(archive_path)
+            if not backup_path.exists() and not backup_path.is_symlink():
+                raise RuntimeError(
+                    "activity resolution superseded archive is missing"
+                )
+            # A preserved incident backup is only a validation source. The
+            # resolution row's compressed/payload digests and counts below
+            # still have to match, and the streaming reader rejects symlinks.
+            validation_path = backup_path
+        metrics = _stream_activity_archive_metrics(validation_path)
         if metrics.gzip_sha256 != row.get("archive_gzip_sha256"):
             raise RuntimeError(
                 "activity resolution superseded archive gzip digest mismatch"
@@ -2807,7 +2822,11 @@ def _assert_activity_sources_stable_unlocked(
     final_sources = _ordered_activity_sources_unlocked(log_path)
     if [str(source) for source in final_sources] != [str(source) for source in sources]:
         raise RuntimeError("activity audit source set changed during validation")
+    if len(sources) != len(snapshots):
+        raise RuntimeError("activity source snapshot count mismatch")
     for source, snapshot in zip(sources, snapshots):
+        if source != snapshot.path:
+            raise RuntimeError("activity source snapshot identity mismatch")
         descriptor = os.open(
             source,
             os.O_RDONLY
@@ -2887,12 +2906,31 @@ def _build_logical_activity_snapshot_unlocked(
     log_path: Path,
     *,
     capture_logical_entries: bool = True,
+    recent_task_id: str | None = None,
+    recent_limit: int | None = None,
 ) -> sqlite3.Connection:
     """Validate every source into an unlink-on-create, disk-backed snapshot."""
+
+    if (recent_task_id is None) != (recent_limit is None):
+        raise RuntimeError("recent activity snapshot query is incomplete")
+    if recent_task_id is not None and (
+        capture_logical_entries
+        or not isinstance(recent_task_id, str)
+        or not recent_task_id
+        or recent_task_id != recent_task_id.strip()
+        or not isinstance(recent_limit, int)
+        or recent_limit <= 0
+    ):
+        raise RuntimeError("recent activity snapshot query is invalid")
 
     sources = _ordered_activity_sources_unlocked(log_path)
     conn = _open_ephemeral_activity_snapshot_database()
     snapshots: list[_ActivitySourceSnapshot] = []
+    recent_entries: deque[tuple[str, str, int]] | None = (
+        deque(maxlen=recent_limit)
+        if recent_task_id is not None and recent_limit is not None
+        else None
+    )
     try:
         conn.execute(
             "CREATE TABLE seen_events (event_id TEXT PRIMARY KEY, digest TEXT)"
@@ -2919,6 +2957,24 @@ def _build_logical_activity_snapshot_unlocked(
             "line_count INTEGER NOT NULL, byte_count INTEGER NOT NULL, "
             "sha256 TEXT NOT NULL)"
         )
+
+        def capture_entry(
+            entry: dict[str, Any],
+            decoded: str,
+            source: Path,
+            line_number: int,
+        ) -> None:
+            if capture_logical_entries:
+                conn.execute(
+                    "INSERT INTO logical_entries "
+                    "(payload, source_path, line_number) VALUES (?, ?, ?)",
+                    (decoded, str(source), line_number),
+                )
+                return
+            if recent_entries is not None and (
+                str(entry.get("task_id") or "").strip() == recent_task_id
+            ):
+                recent_entries.append((decoded, str(source), line_number))
 
         prev_source: Path | None = None
         prev_source_payload_sha256: str | None = None
@@ -3232,21 +3288,13 @@ def _build_logical_activity_snapshot_unlocked(
                             physical_line_number,
                             is_collapsed_prefix=is_collapsed,
                         )
-                        if (
-                            processed is not None
-                            and not is_collapsed
-                            and capture_logical_entries
-                        ):
-                            _entry, decoded = processed
-                            conn.execute(
-                                "INSERT INTO logical_entries "
-                                "(payload, source_path, line_number) "
-                                "VALUES (?, ?, ?)",
-                                (
-                                    decoded,
-                                    str(source),
-                                    physical_line_number,
-                                ),
+                        if processed is not None and not is_collapsed:
+                            entry, decoded = processed
+                            capture_entry(
+                                entry,
+                                decoded,
+                                source,
+                                physical_line_number,
                             )
                     conn.commit()
 
@@ -3267,18 +3315,9 @@ def _build_logical_activity_snapshot_unlocked(
                             line_number,
                             is_collapsed_prefix=False,
                         )
-                        if processed is not None and capture_logical_entries:
-                            _entry, decoded = processed
-                            conn.execute(
-                                "INSERT INTO logical_entries "
-                                "(payload, source_path, line_number) "
-                                "VALUES (?, ?, ?)",
-                                (
-                                    decoded,
-                                    str(source),
-                                    line_number,
-                                ),
-                            )
+                        if processed is not None:
+                            entry, decoded = processed
+                            capture_entry(entry, decoded, source, line_number)
                         if current_line_count % 1000 == 0:
                             conn.commit()
 
@@ -3357,6 +3396,12 @@ def _build_logical_activity_snapshot_unlocked(
                     os.close(descriptor)
 
         _assert_activity_sources_stable_unlocked(log_path, sources, snapshots)
+        if recent_entries is not None:
+            conn.executemany(
+                "INSERT INTO logical_entries "
+                "(payload, source_path, line_number) VALUES (?, ?, ?)",
+                recent_entries,
+            )
         conn.commit()
     except BaseException:
         conn.close()
@@ -3423,6 +3468,56 @@ def validated_activity_event_digests_unlocked(
         conn.close()
 
 
+def _resolved_activity_log_path(log_path: Path) -> Path:
+    requested_log_path = log_path.expanduser()
+    if requested_log_path.is_symlink():
+        raise RuntimeError(
+            f"activity audit source leaf cannot be a symlink: {requested_log_path}"
+        )
+    return requested_log_path.resolve()
+
+
+def validated_recent_task_activity(
+    log_path: Path,
+    task_id: str,
+    *,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    """Return recent task rows only after validating all logical history.
+
+    The validation pass retains at most ``limit`` matching rows in Python
+    memory and exposes none until source ordering, identity, content, JSON,
+    and overlap checks complete under the shared activity lock.
+    """
+
+    if (
+        not isinstance(task_id, str)
+        or not task_id
+        or task_id != task_id.strip()
+        or not isinstance(limit, int)
+        or limit <= 0
+    ):
+        raise RuntimeError("recent task activity request is not canonical")
+    resolved_log_path = _resolved_activity_log_path(log_path)
+    with activity_audit_lock_file(resolved_log_path, shared=True):
+        snapshot = _build_logical_activity_snapshot_unlocked(
+            resolved_log_path,
+            capture_logical_entries=False,
+            recent_task_id=task_id,
+            recent_limit=limit,
+        )
+    try:
+        return [
+            entry
+            for entry, _source, _line_number in _replay_logical_activity_snapshot(
+                snapshot,
+                None,
+            )
+        ]
+    finally:
+        snapshot.close()
+
+
 def stream_logical_activity(
     log_path: Path,
     on_collapse: Callable[[Path | None, Path, int, int, str], None] | None = None,
@@ -3435,12 +3530,7 @@ def stream_logical_activity(
     turn incomplete source validation into apparent success.
     """
 
-    requested_log_path = log_path.expanduser()
-    if requested_log_path.is_symlink():
-        raise RuntimeError(
-            f"activity audit source leaf cannot be a symlink: {requested_log_path}"
-        )
-    log_path = requested_log_path.resolve()
+    log_path = _resolved_activity_log_path(log_path)
     snapshot: sqlite3.Connection | None = None
     try:
         with activity_audit_lock_file(log_path, shared=True):
@@ -3798,53 +3888,7 @@ def task_brief_path(task_id: str | None) -> Path:
 
 def _recent_task_activity(config: dict[str, Any], task_id: str, *, limit: int = 6) -> list[dict[str, Any]]:
     path = config_path(config, "activity_log")
-    with activity_audit_lock_file(path, shared=True, nonblocking=False):
-        if not path.exists():
-            return []
-
-        entries: list[dict[str, Any]] = []
-        chunk_size = 64 * 1024
-        max_scan_bytes = 16 * 1024 * 1024
-        scanned = 0
-
-        with path.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            position = handle.tell()
-            buffer = b""
-
-            while position > 0 and len(entries) < limit and scanned < max_scan_bytes:
-                read_size = min(chunk_size, position)
-                position -= read_size
-                handle.seek(position)
-                chunk = handle.read(read_size)
-                scanned += read_size
-                buffer = chunk + buffer
-                lines = buffer.splitlines()
-
-                if position > 0:
-                    buffer = lines[0] if lines else buffer
-                    complete_lines = lines[1:]
-                else:
-                    buffer = b""
-                    complete_lines = lines
-
-                for raw_line in reversed(complete_lines):
-                    line = raw_line.decode("utf-8", errors="ignore").strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = json.loads(line)
-                    except json.JSONDecodeError:
-                        # Ignore a partially-written tail line rather than stalling dispatch.
-                        continue
-                    if str(entry.get("task_id") or "").strip() != task_id:
-                        continue
-                    entries.append(entry)
-                    if len(entries) >= limit:
-                        break
-
-        entries.reverse()
-        return entries
+    return validated_recent_task_activity(path, task_id, limit=limit)
 
 
 def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None:
