@@ -7,6 +7,7 @@ import uuid
 import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Literal, Optional
+from urllib.parse import unquote, urlsplit
 
 from fastapi import APIRouter, Header, HTTPException, BackgroundTasks, Query
 from fastapi.responses import StreamingResponse
@@ -18,7 +19,7 @@ from ..governance.router import (
     build_proposal_record,
 )
 from ..governance.store import ProposalConflict, ProposalStore, payload_fingerprint
-from .provider import authority_boundary, build_participant_admission
+from .provider import _persona_version, authority_boundary, build_participant_admission
 from .runner import drain_interaction_outbox, run_selected_persona_interaction
 from .store import InteractionConflict, InteractionLifecycleStore
 
@@ -250,7 +251,8 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                               bff_error: Callable[..., HTTPException], utc_now: Callable[[], str],
                               get_read_store: Callable[[], Any], workshop_store: Any,
                               proposal_store: ProposalStore,
-                              interaction_store: Optional[Any] = None) -> APIRouter:
+                              interaction_store: Optional[Any] = None,
+                              canonical_context_ref_resolver: Optional[Callable[..., Any]] = None) -> APIRouter:
     router = APIRouter(tags=["agora-interaction"])
     # The production proposal store also owns command idempotency/outbox state,
     # so restarts and independent BFF workers share one durable truth.
@@ -544,10 +546,13 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                 if body.source_route != body.return_route or not str(body.source_route).startswith("/") or "://" in str(body.source_route):
                     from models import ErrorCode
                     raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Daily source/return routes are not a canonical local binding", "source_route_invalid")
-                route_tail = str(body.source_route).rstrip("/").rsplit("/", 1)[-1]
-                if route_tail != str(focused["id"]):
+                source_path = unquote(urlsplit(str(body.source_route)).path).rstrip("/")
+                if focused["kind"] == "persona" and source_path != f"/management/personas/{focused['id']}":
                     from models import ErrorCode
-                    raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Focused object does not match the source route", "focused_source_route_mismatch")
+                    raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Persona source route is not canonical", "focused_source_route_mismatch")
+                if focused["kind"] == "workshop" and source_path != f"/agora/strategy-workshop/{focused['id']}":
+                    from models import ErrorCode
+                    raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Workshop source route is not canonical", "focused_source_route_mismatch")
                 canonical_read = get_read_store()
                 personas = {
                     _persona_id(item): item
@@ -559,30 +564,141 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                     if not persona or persona.get("tenant_id") != resolved.tenant_id:
                         from models import ErrorCode
                         raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Selected Persona is not canonical in this tenant", "selected_persona_not_found")
-                journal_items = [item for item in normalized_refs if item["kind"] == "journal_entry"]
-                if journal_items:
-                    journal_reader = getattr(canonical_read, "list_decision_journal_entries", None)
-                    if not callable(journal_reader):
-                        from models import ErrorCode
-                        raise bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Canonical journal readback is unavailable", "journal_store_unavailable")
-                    journal_rows = {
+                from models import ErrorCode
+                journal_reader = getattr(canonical_read, "list_decision_journal_entries", None)
+                journal_rows = (
+                    {
                         str(item.get("id") or item.get("entry_id") or ""): item
                         for item in journal_reader() if isinstance(item, dict)
                     }
-                    for item in journal_items:
-                        row = journal_rows.get(item["id"])
-                        if row is None or (row.get("tenant_id") and row.get("tenant_id") != resolved.tenant_id):
-                            from models import ErrorCode
-                            raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Journal entry is not canonical in this tenant", "journal_entry_not_found")
-                decision_items = [item for item in normalized_refs if item["kind"] == "decision_event"]
-                if decision_items:
-                    from agora.trading_room.router import _get_store as get_trading_room_store
-                    decision_store = get_trading_room_store()
-                    for item in decision_items:
-                        row = decision_store.get_decision_event(item["id"])
-                        if row is None or (row.get("tenant_id") and row.get("tenant_id") != resolved.tenant_id):
-                            from models import ErrorCode
-                            raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Decision event is not canonical in this tenant", "decision_event_not_found")
+                    if callable(journal_reader) else None
+                )
+                def legacy_canonical_ref(kind: str, ref_id: str) -> Optional[Dict[str, Any]]:
+                    if kind == "decision_event":
+                        from agora.trading_room.router import _get_store as get_trading_room_store
+                        return get_trading_room_store().get_decision_event(ref_id)
+                    if kind == "journal_entry":
+                        if journal_rows is None:
+                            raise bff_error(
+                                503, ErrorCode.DEPENDENCY_UNAVAILABLE,
+                                "Canonical journal readback is unavailable", "journal_store_unavailable",
+                            )
+                        return journal_rows.get(ref_id)
+                    singular = getattr(canonical_read, f"get_{kind}", None)
+                    if callable(singular):
+                        row = singular(ref_id)
+                        return row if isinstance(row, dict) else None
+                    plural = getattr(canonical_read, f"list_{kind}s", None)
+                    if not callable(plural):
+                        raise bff_error(
+                            503, ErrorCode.DEPENDENCY_UNAVAILABLE,
+                            f"Canonical {kind} readback is unavailable",
+                            f"{kind}_store_unavailable",
+                        )
+                    rows = plural()
+                    return next(
+                        (
+                            row for row in rows if isinstance(row, dict)
+                            and str(row.get("id") or row.get(f"{kind}_id") or "") == ref_id
+                        ),
+                        None,
+                    )
+
+                for ref in normalized_refs:
+                    kind, ref_id, ref_version = ref["kind"], ref["id"], ref.get("version")
+                    row: Optional[Dict[str, Any]]
+                    canonical_version: Optional[str] = None
+                    audience_verified = False
+                    if kind == "persona":
+                        row = personas.get(ref_id)
+                        canonical_version = _persona_version(row) if row else None
+                        audience_verified = bool(row and row.get("tenant_id") == resolved.tenant_id)
+                    elif kind == "strategy":
+                        canonical_version = str(session.get("active_strategy_spec_registry_id") or "") or None
+                        strategy_reader = getattr(canonical_read, "get_strategy_spec_detail", None)
+                        if not callable(strategy_reader):
+                            raise bff_error(
+                                503, ErrorCode.DEPENDENCY_UNAVAILABLE,
+                                "Canonical strategy registry readback is unavailable",
+                                "strategy_store_unavailable",
+                            )
+                        row = strategy_reader(ref_id, version_selector=ref_version)
+                        registry_id = str((row or {}).get("strategy_id") or (row or {}).get("id") or "")
+                        registry_version = str(
+                            (row or {}).get("strategy_spec_registry_id")
+                            or (row or {}).get("spec_version_id")
+                            or (row or {}).get("version_id")
+                            or (row or {}).get("version")
+                            or ""
+                        ) or None
+                        if (
+                            registry_id != ref_id
+                            or session.get("strategy_id") != ref_id
+                            or canonical_version != ref_version
+                            or (registry_version is not None and registry_version != ref_version)
+                        ):
+                            row = None
+                        audience_verified = row is not None
+                    elif kind == "workshop":
+                        row = workshop_store.get_session(ref_id)
+                        canonical_version = str((row or {}).get("selected_version_id") or "") or None
+                        audience_verified = bool(
+                            row and row.get("tenant_id") == resolved.tenant_id
+                            and row.get("user_id") == resolved.user_id
+                        )
+                    else:
+                        resolved_ref = None
+                        if callable(canonical_context_ref_resolver):
+                            resolved_ref = canonical_context_ref_resolver(
+                                kind=kind,
+                                ref_id=ref_id,
+                                ref_version=ref_version,
+                                resolved=resolved,
+                                session=session,
+                                context_refs=normalized_refs,
+                                authorization=authorization,
+                                source_route=body.source_route,
+                                focused_object=focused,
+                            )
+                        if isinstance(resolved_ref, dict) and "row" in resolved_ref:
+                            row = resolved_ref.get("row")
+                            audience_verified = resolved_ref.get("audience_verified") is True
+                            canonical_version = str(resolved_ref.get("canonical_version") or "") or None
+                        else:
+                            row = legacy_canonical_ref(kind, ref_id)
+                    if row is None:
+                        raise bff_error(
+                            409, ErrorCode.RESOURCE_CONFLICT,
+                            f"{kind} reference is not canonical", f"{kind}_not_found",
+                        )
+                    row_tenant = str(row.get("tenant_id") or "")
+                    row_user = str(row.get("owner_user_id") or row.get("user_id") or "")
+                    if (row_tenant and row_tenant != resolved.tenant_id) or (
+                        row_user and row_user != resolved.user_id
+                    ):
+                        raise bff_error(
+                            403, ErrorCode.FORBIDDEN,
+                            f"{kind} reference is outside the interaction audience",
+                            f"{kind}_audience_mismatch",
+                        )
+                    if not audience_verified and not (
+                        row_tenant == resolved.tenant_id and row_user == resolved.user_id
+                    ):
+                        raise bff_error(
+                            503, ErrorCode.DEPENDENCY_UNAVAILABLE,
+                            f"Canonical {kind} audience could not be verified",
+                            f"{kind}_scope_unavailable",
+                        )
+                    if ref_version is not None:
+                        canonical_version = canonical_version or str(
+                            row.get("version_id") or row.get("version") or row.get("revision") or ""
+                        ) or None
+                        if canonical_version != str(ref_version):
+                            raise bff_error(
+                                409, ErrorCode.RESOURCE_CONFLICT,
+                                f"{kind} reference version is not canonical",
+                                f"{kind}_version_mismatch",
+                            )
                 authoritative_cutoff = resolved_at
                 focused_kind = str(focused["kind"])
                 advice_environment = (

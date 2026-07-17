@@ -297,6 +297,80 @@ def test_expired_invocation_lease_is_recovered_once_after_restart(
     assert terminal["attempt"] == 2
 
 
+def test_recovery_filters_status_before_limit_so_old_queued_work_is_not_starved(
+    postgres_stores: tuple[InteractionLifecycleStore, InteractionLifecycleStore],
+) -> None:
+    first, restarted = postgres_stores
+    old_id = "interaction-old-queued"
+    _create(first, old_id)
+    for index in range(25):
+        interaction_id = f"interaction-new-completed-{index:02d}"
+        _create(first, interaction_id)
+        first.finalize(
+            interaction_id,
+            status="completed",
+            synthesis=None,
+            missing_participant_ids=[],
+            degraded_participant_ids=[],
+            outbox=[],
+        )
+
+    recoverable = restarted.recoverable(
+        "tenant-pint013", "operator-pint013", limit=25,
+    )
+    assert [item["interaction_id"] for item in recoverable] == [old_id]
+
+
+def test_running_recovery_respects_unexpired_invocation_lease_without_provider_dispatch(
+    postgres_stores: tuple[InteractionLifecycleStore, InteractionLifecycleStore],
+) -> None:
+    first, restarted = postgres_stores
+    interaction_id = "interaction-running-live-lease"
+    _create(first, interaction_id)
+    first.mark_running(interaction_id)
+    invocation = _invocation(interaction_id, status="running")
+    claimed_row, claimed = first.claim_invocation(
+        interaction_id, invocation, lease_owner="active-provider-worker",
+    )
+    assert claimed is True
+    assert claimed_row["attempt"] == 1
+
+    recoverable = restarted.recoverable(
+        "tenant-pint013", "operator-pint013", limit=25,
+    )
+    assert [item["interaction_id"] for item in recoverable] == [interaction_id]
+
+    provider_dispatches: list[str] = []
+    recovered_row, recovery_claimed = restarted.claim_invocation(
+        interaction_id, invocation, lease_owner="recovery-worker",
+    )
+    if recovery_claimed:
+        provider_dispatches.append(invocation["invocation_id"])
+    assert recovery_claimed is False
+    assert provider_dispatches == []
+    assert recovered_row["lease_owner"] == "active-provider-worker"
+    assert recovered_row["attempt"] == 1
+
+
+def test_postgres_recovery_takes_deterministic_oldest_queued_batch(
+    postgres_stores: tuple[InteractionLifecycleStore, InteractionLifecycleStore],
+) -> None:
+    first, restarted = postgres_stores
+    for index in range(30):
+        interaction_id = f"interaction-queued-{index:02d}"
+        _create(first, interaction_id)
+        with first._connect() as conn:
+            conn.execute(
+                f"UPDATE {first._request_table} SET created_at=%s,updated_at=%s "
+                "WHERE interaction_id=%s",
+                (f"2026-07-17T00:00:{index:02d}Z", f"2026-07-17T00:00:{index:02d}Z", interaction_id),
+            )
+    assert [
+        item["interaction_id"]
+        for item in restarted.recoverable("tenant-pint013", "operator-pint013", limit=25)
+    ] == [f"interaction-queued-{index:02d}" for index in range(25)]
+
+
 def test_failed_outbox_dispatch_replays_after_restart_then_stays_completed(
     postgres_stores: tuple[InteractionLifecycleStore, InteractionLifecycleStore],
 ) -> None:

@@ -127,6 +127,11 @@ class InteractionLifecycleStore:
                 ON {self._request_table} (tenant_id, owner_user_id, created_at DESC, interaction_id)
             """)
             conn.execute(f"""
+                CREATE INDEX IF NOT EXISTS ix_persona_interaction_recovery
+                ON {self._request_table}
+                    (tenant_id, owner_user_id, status, created_at, interaction_id)
+            """)
+            conn.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self._invocation_table} (
                     invocation_id TEXT PRIMARY KEY,
                     interaction_id TEXT NOT NULL REFERENCES {self._request_table}(interaction_id),
@@ -578,8 +583,13 @@ class InteractionLifecycleStore:
                 return current, True
         if current.get("status") not in {"failed", "degraded"}:
             raise InteractionConflict("only failed or degraded interactions may be retried")
+        latest_by_persona: Dict[str, Dict[str, Any]] = {}
+        for item in current["provider_invocations"]:
+            persona_id = str((item.get("participant") or {}).get("persona_id") or "")
+            if persona_id:
+                latest_by_persona[persona_id] = item
         retryable = {
-            item["invocation_id"] for item in current["provider_invocations"]
+            item["invocation_id"] for item in latest_by_persona.values()
             if item.get("status") == "failed" and (item.get("error") or {}).get("retryable") is True
         }
         if not retryable:
@@ -881,8 +891,32 @@ class InteractionLifecycleStore:
                  "completed_at": _timestamp(row[6]) if row[6] else None} for row in rows]
 
     def recoverable(self, tenant_id: str, user_id: str, *, limit: int = 25) -> List[Dict[str, Any]]:
-        return [item for item in self.list(tenant_id, user_id, page_size=limit)
-                if item["status"] in {"queued", "running"}]
+        if self.backend == "memory":
+            with self._lock:
+                ids = [
+                    interaction_id
+                    for interaction_id, request in self._requests.items()
+                    if request["tenant_id"] == tenant_id
+                    and request["owner_user_id"] == user_id
+                    and request["status"] in {"queued", "running"}
+                ]
+                ids.sort(
+                    key=lambda value: (self._requests[value]["created_at"], value),
+                )
+                return [self._materialize_locked(value) for value in ids[:limit]]
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT interaction_id FROM {self._request_table} "
+                "WHERE tenant_id=%s AND owner_user_id=%s "
+                "AND status IN ('queued','running') "
+                "ORDER BY created_at ASC,interaction_id ASC LIMIT %s",
+                (tenant_id, user_id, limit),
+            ).fetchall()
+        return [
+            item
+            for row in rows
+            if (item := self.get(row[0], tenant_id, user_id)) is not None
+        ]
 
     def _materialize_locked(self, interaction_id: str) -> Dict[str, Any]:
         resource = copy.deepcopy(self._requests[interaction_id])

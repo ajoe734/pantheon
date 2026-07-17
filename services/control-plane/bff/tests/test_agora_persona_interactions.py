@@ -36,6 +36,20 @@ class FakeReadStore:
             return {"snapshot_id": f"snap-{persona_id}", "capabilities": ["research_only"]}
         return {"snapshot_id": f"snap-{persona_id}", "capabilities": ["persona_opinion"]}
 
+    def get_persona(self, persona_id):
+        return next(
+            (row for row in self.list_personas() if row.get("persona_id") == persona_id),
+            None,
+        )
+
+    def get_strategy_spec_detail(self, strategy_id, *, version_selector=None):
+        if strategy_id != "strategy-1" or version_selector != "v1":
+            return None
+        return {
+            "strategy_id": strategy_id,
+            "strategy_spec_registry_id": version_selector,
+        }
+
     def get_capability_snapshot(self, snapshot_id):
         if snapshot_id == "snap-wrong-persona":
             return {

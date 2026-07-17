@@ -16,6 +16,17 @@ from .provider import (
 from .store import InteractionLifecycleStore
 
 
+_TRANSIENT_PROVIDER_DEGRADED_REASONS = {
+    "OPENCLAW_UNAVAILABLE": 503,
+    "OPENCLAW_GATEWAY_UNAVAILABLE": 503,
+    "OPENCLAW_GATEWAY_TIMEOUT": 504,
+    "OPENCLAW_GATEWAY_INVOCATION_FAILED": 502,
+    "UPSTREAM_UNAVAILABLE": 503,
+    "OPENCLAW_TIMEOUT": 504,
+    "OPENCLAW_RATE_LIMITED": 429,
+}
+
+
 def _outbox(kind: str, identity: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "outbox_id": f"iob:{kind}:{identity}",
@@ -101,6 +112,23 @@ def _provider_error(exc: Exception) -> Dict[str, Any]:
         "message": str(exc)[:300] or "Persona provider response was invalid",
         "retryable": False,
     }
+
+
+def _raise_transient_provider_degraded(provider_payload: Dict[str, Any]) -> None:
+    provider_data = (
+        provider_payload.get("data")
+        if isinstance(provider_payload.get("data"), dict)
+        else provider_payload
+    )
+    if str(provider_data.get("status") or "").strip().lower() != "degraded":
+        return
+    output = provider_data.get("output") if isinstance(provider_data.get("output"), dict) else {}
+    reason = str(output.get("reason") or "").strip().upper()
+    status_code = _TRANSIENT_PROVIDER_DEGRADED_REASONS.get(reason)
+    if status_code is None:
+        return
+    message = str(output.get("message") or reason or "Persona provider is temporarily unavailable")
+    raise OpenClawOpsClientError(message, status_code=status_code, error_code=reason)
 
 
 def _synthesize(opinions: List[Dict[str, Any]], failed_persona_ids: List[str], created_at: str) -> Optional[Dict[str, Any]]:
@@ -219,6 +247,47 @@ def run_selected_persona_interaction(
             )
             frozen.append((persona, participant, admission))
 
+    opinions: List[Dict[str, Any]] = []
+    invocations: List[Dict[str, Any]] = []
+    failed_persona_ids: List[str] = []
+    in_progress_persona_ids: List[str] = []
+    if lifecycle_store is not None and invocation_attempt > 0:
+        prior = lifecycle_store.get(interaction_id, tenant_id, user_id)
+        if prior is None:
+            raise RuntimeError("retry interaction disappeared before provider selection")
+        latest_by_persona: Dict[str, Dict[str, Any]] = {}
+        for prior_invocation in prior.get("provider_invocations") or []:
+            persona_id = str((prior_invocation.get("participant") or {}).get("persona_id") or "")
+            if persona_id:
+                latest_by_persona[persona_id] = prior_invocation
+        opinions_by_invocation = {
+            str(opinion.get("provider_invocation_id") or ""): opinion
+            for opinion in prior.get("opinions") or []
+        }
+        retry_targets: List[tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]] = []
+        for item in frozen:
+            persona_id = str(item[1]["persona_id"])
+            latest = latest_by_persona.get(persona_id)
+            if latest is None:
+                retry_targets.append(item)
+                continue
+            latest_status = str(latest.get("status") or "")
+            if latest_status == "succeeded":
+                persisted_opinion = opinions_by_invocation.get(str(latest.get("invocation_id") or ""))
+                if persisted_opinion is None:
+                    raise RuntimeError("succeeded Persona invocation has no persisted opinion")
+                opinions.append(persisted_opinion)
+                invocations.append(latest)
+            elif latest_status == "failed" and (latest.get("error") or {}).get("retryable") is True:
+                retry_targets.append(item)
+            elif latest_status == "failed":
+                failed_persona_ids.append(persona_id)
+                invocations.append(latest)
+            else:
+                in_progress_persona_ids.append(persona_id)
+                invocations.append(latest)
+        frozen = retry_targets
+
     attempt_key = "" if invocation_attempt == 0 else f":retry:{invocation_attempt}"
     def attempt_event(component: str) -> str:
         return f"{component}{attempt_key}"
@@ -267,10 +336,6 @@ def run_selected_persona_interaction(
         workshop_store.create_event(requested_projection)
         _ws_publish(workshop_id, "consultation.started", started_sse["data"])
 
-    opinions: List[Dict[str, Any]] = []
-    invocations: List[Dict[str, Any]] = []
-    failed_persona_ids: List[str] = []
-    in_progress_persona_ids: List[str] = []
     client = (client_factory or OpenClawOpsClient)()
     lease_owner = f"bff:{uuid.uuid4().hex}"
     for index, (persona, participant, admission) in enumerate(frozen):
@@ -342,6 +407,7 @@ def run_selected_persona_interaction(
                 persona_admission=admission,
                 idempotency_key=invocation_id,
             )
+            _raise_transient_provider_degraded(provider_payload)
             raw_opinion, response_correlation_id, response_sha = validate_provider_opinion(
                 provider_payload,
                 expected_agent_id=admission["agent_id"],

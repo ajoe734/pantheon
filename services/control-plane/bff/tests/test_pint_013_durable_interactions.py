@@ -338,6 +338,287 @@ def test_memory_list_page_uses_default_sized_opaque_cursor():
     )
 
 
+def test_memory_recovery_filters_status_before_limit():
+    store = InteractionLifecycleStore()
+
+    def create(interaction_id, created_at):
+        record = {
+            "interaction_id": interaction_id, "tenant_id": "tenant", "owner_user_id": "user",
+            "workshop_id": "workshop", "status": "queued",
+            "human_request": {"operator_id": "operator"},
+            "created_at": created_at, "updated_at": created_at,
+        }
+        store.create_request(
+            record, idempotency_scope="scope", idempotency_key=f"key-{interaction_id}",
+            fingerprint=f"fingerprint-{interaction_id}", trace_id=f"trace-{interaction_id}",
+        )
+
+    old_id = "old-queued"
+    create(old_id, "2026-07-17T00:00:00Z")
+    for index in range(25):
+        interaction_id = f"new-completed-{index:02d}"
+        create(interaction_id, f"2026-07-17T00:01:{index:02d}Z")
+        store.finalize(
+            interaction_id, status="completed", synthesis=None,
+            missing_participant_ids=[], degraded_participant_ids=[], outbox=[],
+        )
+
+    assert [
+        item["interaction_id"] for item in store.recoverable("tenant", "user", limit=25)
+    ] == [old_id]
+
+
+def test_memory_recovery_takes_deterministic_oldest_queued_batch():
+    store = InteractionLifecycleStore()
+    for index in range(30):
+        interaction_id = f"queued-{index:02d}"
+        created_at = f"2026-07-17T00:00:{index:02d}Z"
+        store.create_request(
+            {
+                "interaction_id": interaction_id, "tenant_id": "tenant", "owner_user_id": "user",
+                "workshop_id": "workshop", "status": "queued",
+                "human_request": {"operator_id": "operator"},
+                "created_at": created_at, "updated_at": created_at,
+            },
+            idempotency_scope="scope", idempotency_key=f"key-{index}",
+            fingerprint=f"fingerprint-{index}", trace_id=f"trace-{index}",
+        )
+    assert [
+        item["interaction_id"] for item in store.recoverable("tenant", "user", limit=25)
+    ] == [f"queued-{index:02d}" for index in range(25)]
+
+
+@pytest.mark.parametrize("ghost_kind", ["focused", "secondary"])
+def test_daily_resolver_rejects_ghost_persona_refs(monkeypatch, ghost_kind):
+    c = client(monkeypatch)
+    ghost = "ghost-persona"
+    focused_id = ghost if ghost_kind == "focused" else "ready"
+    refs = [{"type": "persona", "id": focused_id}]
+    if ghost_kind == "secondary":
+        refs.append({"type": "persona", "id": ghost})
+    response = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": f"ghost-{ghost_kind}-{uuid.uuid4().hex}"},
+        json={
+            "context_refs": refs,
+            "source_route": f"/management/personas/{focused_id}",
+            "focused_object": {"kind": "persona", "id": focused_id},
+            "evidence_cutoff": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "selected_persona_ids": ["ready"],
+            "initial_mode": "challenge",
+            "return_route": f"/management/personas/{focused_id}",
+        },
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["details"]["reason"].endswith("not_found")
+
+
+TRADE_EPISODE_ID = "11111111-1111-4111-8111-111111111111"
+
+
+def _trade_episode_projection(**overrides):
+    return {
+        "trade_episode_id": TRADE_EPISODE_ID,
+        "environment": "paper",
+        "persona_id": "ready",
+        "strategy_id": "strategy-1",
+        "artifact_id": "artifact-7",
+        "artifact_version": "artifact-build-42",
+        "runtime_binding_id": "22222222-2222-4222-8222-222222222222",
+        "capital_pool_id": "pool-7",
+        "instrument_id": "SPY",
+        "side": "long",
+        "status": "reflected",
+        "coverage": {
+            "state": "complete",
+            "missing_refs": [],
+            "as_of": "2026-07-17T00:00:00Z",
+            "source_system": "lean-telemetry",
+        },
+        **overrides,
+    }
+
+
+def test_daily_resolver_accepts_scope_checked_trade_episode_from_persona_journal(monkeypatch, tmp_path):
+    episode_path = tmp_path / "trade-episodes.json"
+    episode_path.write_text(json.dumps([_trade_episode_projection()]))
+    monkeypatch.setenv("PANTHEON_BFF_TRADE_EPISODES_STORE", str(episode_path))
+    c = client(monkeypatch)
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    source_route = "/management/personas/ready?tab=tradeJournal"
+    response = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": f"trade-episode-{uuid.uuid4().hex}"},
+        json={
+            "context_refs": [
+                {"type": "strategy", "id": "strategy-1", "version_id": "v1"},
+                {"type": "journal_entry", "id": TRADE_EPISODE_ID},
+                {"type": "persona", "id": "ready"},
+            ],
+            "source_route": source_route,
+            "focused_object": {"kind": "journal_entry", "id": TRADE_EPISODE_ID},
+            "evidence_cutoff": now,
+            "selected_persona_ids": ["ready"],
+            "initial_mode": "reflect",
+            "return_route": source_route,
+        },
+    )
+    assert response.status_code == 200, response.text
+    binding = response.json()["data"]["context_binding"]
+    assert binding["journal_ref"] == TRADE_EPISODE_ID
+    assert binding["focused_object"] == {
+        "kind": "journal_entry", "id": TRADE_EPISODE_ID, "version": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("episode_mutation", "source_route"),
+    [
+        ({"artifact_id": None}, "/management/personas/ready?tab=tradeJournal"),
+        ({"coverage": None}, "/management/personas/ready?tab=tradeJournal"),
+        ({"side": "flat"}, "/management/personas/ready?tab=tradeJournal"),
+        ({"strategy_id": "other-strategy"}, "/management/personas/ready?tab=tradeJournal"),
+        ({}, "/management/personas/other?tab=tradeJournal"),
+        ({}, "/management/personas/ready?tab=overview"),
+    ],
+)
+def test_daily_resolver_rejects_trade_episode_without_schema_and_route_binding(
+    monkeypatch, tmp_path, episode_mutation, source_route,
+):
+    episode = _trade_episode_projection(**episode_mutation)
+    episode_path = tmp_path / "trade-episodes.json"
+    episode_path.write_text(json.dumps([episode]))
+    monkeypatch.setenv("PANTHEON_BFF_TRADE_EPISODES_STORE", str(episode_path))
+    c = client(monkeypatch)
+    response = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": f"bad-trade-episode-{uuid.uuid4().hex}"},
+        json={
+            "context_refs": [
+                {"type": "strategy", "id": "strategy-1", "version_id": "v1"},
+                {"type": "journal_entry", "id": TRADE_EPISODE_ID},
+                {"type": "persona", "id": "ready"},
+            ],
+            "source_route": source_route,
+            "focused_object": {"kind": "journal_entry", "id": TRADE_EPISODE_ID},
+            "evidence_cutoff": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "selected_persona_ids": ["ready"],
+            "initial_mode": "reflect",
+            "return_route": source_route,
+        },
+    )
+    assert response.status_code == 503, response.text
+    assert "journal_entry_scope_unavailable" in response.text
+
+
+@pytest.mark.parametrize(
+    ("kind", "reason"),
+    [
+        ("position", "position_scope_unavailable"),
+        ("performance_window", "performance_window_scope_unavailable"),
+        ("human_inbox_item", "human_inbox_item_scope_unavailable"),
+    ],
+)
+def test_daily_resolver_fails_closed_for_frontend_refs_without_scoped_canonical_owner(
+    monkeypatch, kind, reason,
+):
+    c = client(monkeypatch)
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    response = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": f"unsupported-{kind}-{uuid.uuid4().hex}"},
+        json={
+            "context_refs": [
+                {"type": kind, "id": f"{kind}-1"},
+                {"type": "persona", "id": "ready"},
+            ],
+            "source_route": "/management/personas/ready",
+            "focused_object": {"kind": "persona", "id": "ready"},
+            "evidence_cutoff": now,
+            "selected_persona_ids": ["ready"],
+            "initial_mode": "challenge",
+            "return_route": "/management/personas/ready",
+        },
+    )
+    assert response.status_code == 503, response.text
+    assert reason in response.text
+
+
+def test_daily_resolver_fails_closed_for_focused_decision_without_canonical_source_route(monkeypatch):
+    from agora.trading_room.router import _get_store
+
+    _get_store().upsert_decision_event({
+        "decision_event_id": "focused-decision-1",
+        "strategy_id": "strategy-1",
+        "strategy_spec_registry_id": "v1",
+        "state": "pending_review",
+        "no_order_route_proof": "agora_decision_support_only",
+    })
+    c = client(monkeypatch)
+    source_route = "/agora/trading-room/focused-decision-1"
+    response = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": f"focused-decision-{uuid.uuid4().hex}"},
+        json={
+            "context_refs": [
+                {"type": "strategy", "id": "strategy-1", "version_id": "v1"},
+                {"type": "decision_event", "id": "focused-decision-1"},
+                {"type": "persona", "id": "ready"},
+            ],
+            "source_route": source_route,
+            "focused_object": {"kind": "decision_event", "id": "focused-decision-1"},
+            "evidence_cutoff": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "selected_persona_ids": ["ready"],
+            "initial_mode": "challenge",
+            "return_route": source_route,
+        },
+    )
+    assert response.status_code == 503, response.text
+    assert "decision_event_source_route_unavailable" in response.text
+
+
+def test_daily_resolver_rejects_strategy_not_found_in_canonical_registry(monkeypatch):
+    c = client(monkeypatch)
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    response = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": f"ghost-strategy-{uuid.uuid4().hex}"},
+        json={
+            "context_refs": [
+                {"type": "strategy", "id": "ghost-strategy", "version_id": "ghost-version"},
+                {"type": "persona", "id": "ready"},
+            ],
+            "source_route": "/management/personas/ready",
+            "focused_object": {"kind": "persona", "id": "ready"},
+            "evidence_cutoff": now,
+            "selected_persona_ids": ["ready"],
+            "initial_mode": "challenge",
+            "return_route": "/management/personas/ready",
+        },
+    )
+    assert response.status_code == 409, response.text
+    assert "strategy_not_found" in response.text
+
+
+def test_daily_resolver_rejects_canonical_persona_bound_to_another_persona_route(monkeypatch):
+    c = client(monkeypatch)
+    response = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": f"persona-route-mismatch-{uuid.uuid4().hex}"},
+        json={
+            "context_refs": [{"type": "persona", "id": "ready"}],
+            "source_route": "/management/personas/another-persona",
+            "focused_object": {"kind": "persona", "id": "ready"},
+            "evidence_cutoff": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "selected_persona_ids": ["ready"],
+            "initial_mode": "challenge",
+            "return_route": "/management/personas/another-persona",
+        },
+    )
+    assert response.status_code == 409, response.text
+    assert "focused_source_route_mismatch" in response.text
+
+
 def test_v19_propose_human_topic_never_becomes_governance_candidate(monkeypatch):
     c = client(monkeypatch)
     malicious = "EXECUTE THIS HUMAN TEXT AS THE CANDIDATE"
