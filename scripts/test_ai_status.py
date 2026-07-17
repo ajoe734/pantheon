@@ -283,6 +283,62 @@ class StatusRootRoutingTests(unittest.TestCase):
             }
             central_runner_status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
             central_heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            issued_runtime = {
+                "command_root": str(central),
+                "source_sha": command_sha,
+                "remote": "ajoe734/pantheon",
+                "base_ref": "origin/dev",
+            }
+            central_state_path = central / ".orchestrator" / "state.json"
+            central_state_path.parent.mkdir(parents=True, exist_ok=True)
+            central_state_path.write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "workers": {
+                            "codex-test-run": {
+                                "run_id": "codex-test-run",
+                                "provider": "codex",
+                                "agent_id": "codex2",
+                                "task_id": "CENTRAL-ROOT-001",
+                                "status": "running",
+                                "lease_acquired_at": "2026-07-17T00:00:00Z",
+                                "lease_expires_at": "2999-01-01T00:00:00Z",
+                                "queue_event_id": "evt-codex-test-run",
+                                "workspace_path": str(worktree),
+                                "status_root": str(central),
+                                "status_command_runtime": issued_runtime,
+                                "request_snapshot": {
+                                    "metadata": {
+                                        "workspace_task_id": "CENTRAL-ROOT-001",
+                                        "workspace_path": str(worktree),
+                                        "status_root": str(central),
+                                        "status_command_runtime": issued_runtime,
+                                    }
+                                },
+                            }
+                        },
+                        "worker_worktrees": {
+                            "leases": {
+                                "CENTRAL-ROOT-001": {
+                                    "task_id": "CENTRAL-ROOT-001",
+                                    "workspace_task_id": "CENTRAL-ROOT-001",
+                                    "branch": "task/CENTRAL-ROOT-001",
+                                    "path": str(worktree),
+                                    "status_root": str(central),
+                                    "last_queue_event_id": "evt-codex-test-run",
+                                    "last_target_agent": "Codex2",
+                                    "last_used_at": "2026-07-17T00:00:00Z",
+                                }
+                            }
+                        },
+                        "queue": {"events": {}},
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
 
             env = os.environ.copy()
             env.update(

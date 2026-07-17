@@ -15,7 +15,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import local
-from typing import Any
+from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 try:
@@ -85,6 +85,7 @@ from runtime_state import (
     activity_audit_lock_file,
     canonical_task_state_lock_file,
     load_runtime_state_snapshot,
+    runtime_state_lock,
 )
 from common import (
     activity_audit_lock_path,
@@ -373,6 +374,242 @@ def status_command_metadata() -> dict[str, Any] | None:
         "wrapper_root": str(os.environ.get("PANTHEON_STATUS_COMMAND_WRAPPER_ROOT") or "").strip() or None,
     }
     return {key: value for key, value in payload.items() if value not in (None, "")}
+
+
+TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
+    "assign": 0,
+    "start": 0,
+    "progress": 0,
+    "note": 0,
+    "reopen": 0,
+    "handoff": 0,
+    "blocker": 0,
+    "done": 0,
+    "restore_approved": 0,
+    "supersede": 0,
+    "approve": 0,
+}
+ACTIVE_WORKER_LEASE_STATUSES = {
+    "running",
+    "started",
+    "waiting_approval",
+    "suspended_approval",
+    "manual_pending",
+    "retry_backoff",
+    "stalled",
+    "fallback",
+}
+
+
+def _parse_utc_timestamp(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _metadata_path(value: Any, *, label: str) -> Path:
+    text = str(value or "").strip()
+    if not text:
+        raise RuntimeError(f"{label} is required for active status command lease validation")
+    path = Path(os.path.expanduser(text))
+    if not path.is_absolute():
+        raise RuntimeError(f"{label} must be an absolute path")
+    symlink_component = _first_symlink_component(path)
+    if symlink_component is not None:
+        raise RuntimeError(f"{label} cannot include a symlink component: {symlink_component}")
+    return path.resolve()
+
+
+def _worker_status_command_runtime(worker: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    direct = worker.get("status_command_runtime")
+    if isinstance(direct, Mapping):
+        return direct
+    metadata = worker.get("metadata")
+    if isinstance(metadata, Mapping) and isinstance(metadata.get("status_command_runtime"), Mapping):
+        return metadata["status_command_runtime"]
+    snapshot = worker.get("request_snapshot")
+    if isinstance(snapshot, Mapping):
+        snapshot_metadata = snapshot.get("metadata")
+        if isinstance(snapshot_metadata, Mapping) and isinstance(snapshot_metadata.get("status_command_runtime"), Mapping):
+            return snapshot_metadata["status_command_runtime"]
+    return None
+
+
+def _worker_metadata_value(worker: Mapping[str, Any], key: str) -> Any:
+    value = worker.get(key)
+    if value not in (None, ""):
+        return value
+    snapshot = worker.get("request_snapshot")
+    if isinstance(snapshot, Mapping):
+        metadata = snapshot.get("metadata")
+        if isinstance(metadata, Mapping):
+            value = metadata.get(key)
+            if value not in (None, ""):
+                return value
+    return None
+
+
+def _command_task_id(command: str, args: list[str]) -> str | None:
+    index = TASK_ID_COMMAND_ARG_INDEX.get(command)
+    if index is None or len(args) <= index:
+        return None
+    return str(args[index] or "").strip() or None
+
+
+def _find_worker_worktree_lease(
+    runtime_state: Mapping[str, Any],
+    *,
+    worker: Mapping[str, Any],
+    task_id: str | None,
+    workspace_root: Path | None,
+    status_root: Path,
+) -> tuple[str, Mapping[str, Any]] | None:
+    raw_leases = (
+        runtime_state.get("worker_worktrees", {})
+        if isinstance(runtime_state.get("worker_worktrees"), Mapping)
+        else {}
+    ).get("leases", {})
+    if not isinstance(raw_leases, Mapping):
+        return None
+    snapshot = worker.get("request_snapshot")
+    metadata = snapshot.get("metadata") if isinstance(snapshot, Mapping) else None
+    workspace_task_id = ""
+    if isinstance(metadata, Mapping):
+        workspace_task_id = str(metadata.get("workspace_task_id") or "").strip()
+    workspace_task_id = workspace_task_id or str(task_id or "").strip()
+    if workspace_task_id and isinstance(raw_leases.get(workspace_task_id), Mapping):
+        return workspace_task_id, raw_leases[workspace_task_id]
+    for key, candidate in raw_leases.items():
+        if not isinstance(candidate, Mapping):
+            continue
+        if task_id and str(candidate.get("task_id") or "").strip() not in {"", task_id}:
+            continue
+        try:
+            candidate_status_root = _metadata_path(candidate.get("status_root"), label="worker_worktrees lease status_root")
+        except RuntimeError:
+            continue
+        if candidate_status_root != status_root:
+            continue
+        if workspace_root is not None:
+            try:
+                candidate_path = _metadata_path(candidate.get("path"), label="worker_worktrees lease path")
+            except RuntimeError:
+                continue
+            if candidate_path != workspace_root:
+                continue
+        return str(key), candidate
+    return None
+
+
+def validate_active_status_command_lease(command: str, args: list[str]) -> None:
+    """Validate the supervisor-issued worker lease before canonical mutation."""
+
+    run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
+    if not run_id:
+        return
+
+    config = load_config()
+    runtime_state = load_runtime_state_snapshot(config)
+    workers = runtime_state.get("workers", {})
+    if not isinstance(workers, Mapping):
+        raise RuntimeError("central runtime state has no worker records")
+    worker = workers.get(run_id)
+    if not isinstance(worker, Mapping):
+        raise RuntimeError(f"active status command lease not found for ORCH_RUN_ID={run_id}")
+
+    status = str(worker.get("status") or "").strip()
+    if status not in ACTIVE_WORKER_LEASE_STATUSES:
+        raise RuntimeError(
+            f"active status command lease for ORCH_RUN_ID={run_id} is not running: {status or 'missing'}"
+        )
+    expires_at = _parse_utc_timestamp(worker.get("lease_expires_at"))
+    if expires_at is None:
+        raise RuntimeError(f"active status command lease for ORCH_RUN_ID={run_id} has no lease_expires_at")
+    if datetime.now(timezone.utc) > expires_at:
+        raise RuntimeError(f"active status command lease for ORCH_RUN_ID={run_id} is expired")
+
+    command_task_id = _command_task_id(command, args)
+    env_task_id = str(os.environ.get("ORCH_TASK_ID") or "").strip()
+    worker_task_id = str(worker.get("task_id") or "").strip()
+    expected_task_id = command_task_id or env_task_id
+    if command_task_id and env_task_id and command_task_id != env_task_id:
+        raise RuntimeError(
+            f"status command task mismatch: argv task {command_task_id} != ORCH_TASK_ID {env_task_id}"
+        )
+    if worker_task_id and expected_task_id and worker_task_id != expected_task_id:
+        raise RuntimeError(
+            f"status command task mismatch: worker task {worker_task_id} != command task {expected_task_id}"
+        )
+    if worker_task_id and not expected_task_id:
+        raise RuntimeError(
+            f"status command task identity is required for worker task {worker_task_id}"
+        )
+
+    status_root = STATUS_ROOT.resolve()
+    worker_status_root = _metadata_path(
+        _worker_metadata_value(worker, "status_root"),
+        label="worker status_root",
+    )
+    if worker_status_root != status_root:
+        raise RuntimeError(
+            f"status command root mismatch: worker status_root {worker_status_root} != {status_root}"
+        )
+
+    workspace_root = _worker_workspace_root()
+    worker_workspace_raw = _worker_metadata_value(worker, "workspace_path")
+    if workspace_root is not None:
+        worker_workspace = _metadata_path(worker_workspace_raw, label="worker workspace_path")
+        if worker_workspace != workspace_root:
+            raise RuntimeError(
+                f"status command workspace mismatch: worker workspace {worker_workspace} != {workspace_root}"
+            )
+
+    runtime_metadata = status_command_metadata() or {}
+    issued_runtime = _worker_status_command_runtime(worker)
+    if not isinstance(issued_runtime, Mapping):
+        raise RuntimeError(f"active status command lease for ORCH_RUN_ID={run_id} has no issued command runtime")
+    issued_root = _metadata_path(issued_runtime.get("command_root"), label="issued command_root")
+    running_root = _metadata_path(runtime_metadata.get("command_root"), label="running command_root")
+    if issued_root != running_root:
+        raise RuntimeError(
+            f"status command runtime root mismatch: issued {issued_root} != running {running_root}"
+        )
+    issued_sha = str(issued_runtime.get("source_sha") or "").strip()
+    running_sha = str(runtime_metadata.get("source_sha") or "").strip()
+    if not issued_sha or issued_sha != running_sha:
+        raise RuntimeError(
+            f"status command runtime SHA mismatch: issued {issued_sha or 'missing'} != running {running_sha or 'missing'}"
+        )
+
+    lease_match = _find_worker_worktree_lease(
+        runtime_state,
+        worker=worker,
+        task_id=worker_task_id or expected_task_id,
+        workspace_root=workspace_root,
+        status_root=status_root,
+    )
+    if lease_match is None:
+        raise RuntimeError(f"active worktree lease not found for ORCH_RUN_ID={run_id}")
+    lease_key, lease = lease_match
+    if worker_task_id and str(lease.get("task_id") or "").strip() not in {"", worker_task_id}:
+        raise RuntimeError(
+            f"worktree lease task mismatch for {lease_key}: {lease.get('task_id')} != {worker_task_id}"
+        )
+    lease_status_root = _metadata_path(lease.get("status_root"), label="worktree lease status_root")
+    if lease_status_root != status_root:
+        raise RuntimeError(
+            f"worktree lease status root mismatch for {lease_key}: {lease_status_root} != {status_root}"
+        )
+    if workspace_root is not None:
+        lease_path = _metadata_path(lease.get("path"), label="worktree lease path")
+        if lease_path != workspace_root:
+            raise RuntimeError(
+                f"worktree lease path mismatch for {lease_key}: {lease_path} != {workspace_root}"
+            )
 
 
 def _path_parent_under_root(path: Path, root: Path) -> bool:
@@ -5033,15 +5270,27 @@ def main(argv: list[str]) -> int:
     if command not in commands:
         raise SystemExit(f"Unknown command: {command}")
 
-    with canonical_task_state_lock(shared=False):
+    def run_mutation() -> None:
         state = load_state()
         recover_status_archive_outbox(state)
         recover_status_activity_outbox(state)
         with buffer_activity_events():
             command_result = commands[command](state, args)
             if command_result is False:
-                return 0
+                return
             sync_all(state)
+
+    if str(os.environ.get("ORCH_RUN_ID") or "").strip():
+        config = load_config()
+        with runtime_state_lock(config, shared=True):
+            validate_active_status_command_lease(command, args)
+            with canonical_task_state_lock(shared=False):
+                run_mutation()
+        return 0
+
+    with canonical_task_state_lock(shared=False):
+        validate_active_status_command_lease(command, args)
+        run_mutation()
     return 0
 
 

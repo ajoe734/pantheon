@@ -47,6 +47,7 @@ from common import (
     relpath,
     selected_shared_files,
     shell_quote,
+    status_command_runtime_record_from_env,
     snapshot_task,
     spawn_background_process,
     status_command_runtime_env,
@@ -2170,6 +2171,9 @@ def start_worker_for_request(
     agent = agent_config_for(config, request.agent_id)
     adapter_name = delivery_mode_override or agent.get("adapter", "file_inbox")
     adapter = build_adapter(adapter_name, config=config, provider_capabilities=provider_report)
+    issued_command_env = status_command_runtime_env(config)
+    issued_command_runtime = status_command_runtime_record_from_env(issued_command_env)
+    request.metadata["status_command_runtime"] = issued_command_runtime
     result = adapter.deliver(request)
     if not result.ok:
         failure_worker = {
@@ -2237,6 +2241,7 @@ def start_worker_for_request(
         "workspace_path": request.metadata.get("workspace_path"),
         "workspace_branch": request.metadata.get("workspace_branch"),
         "status_root": request.metadata.get("status_root"),
+        "status_command_runtime": issued_command_runtime,
         "pid": result.pid,
         "heartbeat_path": result_metadata.get("heartbeat_path"),
         "runner_status_path": result_metadata.get("runner_status_path"),
@@ -6862,7 +6867,9 @@ def resume_claude_worker(
             "ORCH_WORKSPACE_PATH": str(workspace_root),
         }
     )
-    env.update(status_command_runtime_env(config))
+    issued_command_env = status_command_runtime_env(config)
+    issued_command_runtime = status_command_runtime_record_from_env(issued_command_env)
+    env.update(issued_command_env)
     runtime_paths = worker_runtime_paths(config, worker["run_id"])
     process, _ = spawn_background_process(
         command,
@@ -6888,10 +6895,12 @@ def resume_claude_worker(
     worker["heartbeat_path"] = str(runtime_paths["heartbeat_path"])
     worker["runner_status_path"] = str(runtime_paths["status_path"])
     worker["log_path"] = str(log_path)
+    worker["status_command_runtime"] = issued_command_runtime
     worker["resume_count"] = int(worker.get("resume_count", 0)) + 1
     worker["last_resumed_session_id"] = str(session_id)
     worker["command"] = command
     worker.setdefault("metadata", {})["shell_command"] = shell_quote(command)
+    worker["metadata"]["status_command_runtime"] = issued_command_runtime
     worker["metadata"]["resume_permission_mode"] = resume_permission_mode if worker.get("last_approval_id") else None
     worker["metadata"]["resume_allowed_tools"] = allowed_tools
     worker["metadata"]["heartbeat_path"] = str(runtime_paths["heartbeat_path"])

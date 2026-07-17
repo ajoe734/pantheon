@@ -606,7 +606,54 @@ def validate_status_command_runtime(
     }
 
 
-def status_command_runtime_env(config: dict[str, Any]) -> dict[str, str]:
+def status_command_runtime_record_from_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Return the supervisor-issued command runtime fields safe for state files."""
+
+    return {
+        "command_root": str(env.get(STATUS_COMMAND_ROOT_ENV) or ""),
+        "source_sha": str(env.get(STATUS_COMMAND_SHA_ENV) or ""),
+        "remote": str(env.get(STATUS_COMMAND_REMOTE_ENV) or ""),
+        "base_ref": str(env.get(STATUS_COMMAND_BASE_REF_ENV) or ""),
+    }
+
+
+def _status_command_runtime_env_from_record(record: Mapping[str, Any]) -> dict[str, str] | None:
+    raw_root = str(record.get("command_root") or record.get("root") or "").strip()
+    raw_sha = str(record.get("source_sha") or record.get("runtime_sha") or "").strip()
+    if not raw_root or not raw_sha:
+        return None
+    remote = str(record.get("remote") or "").strip()
+    base_ref = str(record.get("base_ref") or "").strip() or "origin/dev"
+    metadata = validate_status_command_runtime(
+        Path(raw_root).expanduser(),
+        expected_sha=raw_sha,
+        expected_remote=remote or None,
+        base_ref=base_ref,
+        require_merged=False,
+    )
+    return {
+        STATUS_COMMAND_ROOT_ENV: metadata["root"],
+        STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
+        STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
+        STATUS_COMMAND_BASE_REF_ENV: base_ref,
+        LEGACY_STATUS_COMMAND_ROOT_ENV: metadata["root"],
+        LEGACY_STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
+        LEGACY_STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
+        LEGACY_STATUS_COMMAND_BASE_REF_ENV: base_ref,
+    }
+
+
+def status_command_runtime_env(
+    config: dict[str, Any],
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
+    if isinstance(metadata, Mapping):
+        issued = metadata.get("status_command_runtime")
+        if isinstance(issued, Mapping):
+            issued_env = _status_command_runtime_env_from_record(issued)
+            if issued_env is not None:
+                return issued_env
+
     expected_remote = status_command_expected_remote(config)
     base_ref = status_command_base_ref(config)
     metadata = validate_status_command_runtime(
@@ -635,7 +682,7 @@ def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None
         "PANTHEON_STATUS_ROOT": str(status_root),
         "ORCH_WORKSPACE_PATH": str(workspace_root),
     }
-    env.update(status_command_runtime_env(config))
+    env.update(status_command_runtime_env(config, metadata))
     return env
 
 
