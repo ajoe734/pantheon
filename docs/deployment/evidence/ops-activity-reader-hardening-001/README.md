@@ -1,218 +1,223 @@
 # OPS-ACTIVITY-READER-HARDENING-001 Evidence
 
-Status: pre-review evidence for draft PR #3800. The task remains blocked on
-the exact-head review and merge of prerequisite PR #3797.
+Status: pre-review evidence for draft PR #3800. The validated reader code
+anchor is `fb2d4d1be69ee1f8908229fc8ab789e7b947fc86`; the task branch then
+merged `origin/dev` at `b027817c93f8be079e3bc93f4fc4414c8024e57e` without an
+owned-file conflict, producing integration head
+`8260649cd86c57636b66897f5f1f8dcec791e891`. Delivery remains blocked on
+prerequisite PR #3797 and a final Claude exact-head approval. Auto-merge
+remains disabled.
 
 ## Owned Scope
 
-- `.orchestrator/common.py`: validation-complete logical reader, strict
-  activity JSON parsing, stable source snapshot, and pinned exception registry
-- `.orchestrator/test_common.py`: early-stop, mutation, duplicate-key,
-  cleanup, source-leaf, and bounded-memory regressions
-- `scripts/ai_status.py`: validation-complete requested event lookup without
-  copying or replaying every logical payload into the control-plane process
-- `scripts/status_file_guard.py`: mirrored fail-closed validation for
-  canonical event IDs in a restored status outbox
-- `scripts/activity_audit_logical_inventory.py` and its direct test: shared
-  strict parsing plus hermetic/optional pinned-pair coverage
+- `.orchestrator/common.py`: validation-complete logical reader, strict JSON
+  decoder, source-stability checks, bounded recent-task projection, streamed
+  archive verification, and the closed historical exception registry
+- `.orchestrator/test_common.py`: normal drain, `break`, `islice`, explicit
+  close, caller-managed consumer exception, mutation/replacement, duplicate
+  key, source-leaf, fallback, registry, and bounded-memory regressions
+- `scripts/ai_status.py` and `scripts/test_ai_status.py`: derived tail readers
+  use strict decoding and the shared validation-complete recent-task API
+- `.orchestrator/activity_pending_intent_recovery.py` and its test: strict
+  active/gzip event-ID recovery scans
+- `scripts/status_file_guard.py` and its test: fail-closed canonical outbox ID
+  validation
+- `scripts/activity_audit_logical_inventory.py` and its test: shared strict
+  parsing plus hermetic and optional production-pair registry verification
 - the task brief and this redacted evidence note
 
 Not changed:
 
-- rotation or lineage semantics owned by PR #3797
-- structured non-adjacent-tail diagnostics owned by PR #3797
+- rotation, lineage, or non-adjacent-tail diagnostic semantics owned by #3797
 - dispatcher behavior owned by draft PR #3799
-- central activity/archive bytes or any coordination file by direct editing
+- central activity/archive bytes or coordination files by direct editing
 
-## Contract Delivered
+## Reader Contract
 
-`stream_logical_activity()` now performs these phases:
+`stream_logical_activity()` now validates the complete logical history before
+making its first row observable:
 
 1. acquire the shared activity lock;
-2. validate source order, JSON, event IDs, overlap rules, inode/metadata,
-   content-archive metrics, and raw SHA-256 before/after into a task-local
+2. resolve the active source, manifests, content-addressed archives, and safe
+   `.bak` fallback leaves;
+3. strictly parse and validate every active/gzip row, source ordering,
+   event-ID overlap, descriptor identity/metadata, compressed and payload
+   hashes/counts, and historical-overlap rules into an unlinked task-local
    SQLite snapshot;
-3. defer every logical row and collapse callback until validation completes;
-4. release the activity lock;
-5. replay the validated snapshot with bounded memory and close it on normal
-   completion, validation error, explicit close, or consumer exception.
+4. re-check all source identities and metrics, then release the lock;
+5. replay the validated snapshot with bounded Python memory.
 
-The SQLite file is unlinked immediately after opening. Its live connection
-retains disk-backed bounded storage during validation/replay, while normal
-close, SIGTERM, or SIGKILL releases the allocation without leaving an orphaned
-file. Temporary journaling is in-memory and non-durable because the snapshot
-is an ephemeral cache, never an authority. Content-addressed lineage and
-resolution archives are hashed and counted in chunks rather than retaining
-both complete compressed and decompressed payloads. The compressed SHA/count
-and decompressed payload metrics now come from the same byte stream, so an
-in-place A/B replacement cannot bind one compressed representation to another
-payload. The original descriptor has a single outer cleanup owner, including
-`fdopen()` failure.
+Late malformed rows, duplicate keys, missing or replaced sources, and invalid
+overlaps therefore fail before `next()`, `break`, or `islice` can expose a
+partial history. `validated_recent_task_activity()` applies the same complete
+validation and retains only a bounded `deque` projection for the requested
+task; `_recent_task_activity()` no longer has a private partial tail parser.
 
-As a result, `next()`, early `break`, `islice`, or a consumer exception cannot
-turn an unread late row, replaced source, or unverified later source into an
-apparently successful partial history.
+Snapshot cleanup is deterministic on normal exhaustion and explicit
+`close()`, and it is also a generator-finalization fallback. A Python
+consumer-body exception does not itself promise to close an arbitrary
+iterator; callers that stop abnormally must close/context-manage it. The
+consumer-exception regression uses `contextlib.closing()` to prove that
+contract rather than claiming automatic closure.
 
-The shared parser uses `object_pairs_hook` before dict construction and rejects
-duplicate keys at every object depth. It is used for active/gzip payload rows,
-the active lineage-head probe, rotation intents, lineage rows, resolution rows,
-and the inventory physical pass. Errors retain `duplicate JSON key` and the
-payload source/line where applicable.
+The SQLite snapshot is unlinked immediately after opening and uses in-memory
+temporary journaling. Archive gzip SHA/count and decompressed payload
+SHA/count are computed from the same descriptor stream. Backup and archive
+leaves are rejected before open unless `lstat()` identifies a regular,
+non-symlink file, with `O_NOFOLLOW` retained as the open-time guard. These
+properties avoid full-history Python retention and close both pathname-swap
+and same-payload/different-gzip identity gaps.
 
-Status outbox recovery and the restore guard require every requested
-`event_id` to be a non-empty canonical string with no surrounding whitespace.
-Alias pairs such as `id` and ` id ` are rejected before history lookup or
-append; they can no longer collapse to one reader key after a durable write.
+`strict_activity_json_loads()` uses `object_pairs_hook` before dict
+construction, rejecting duplicate keys at every object depth. The decoder is
+used for active/gzip rows, lineage-head probes, intents, lineage rows,
+resolution rows, inventory passes, pending-intent recovery, and derived
+status tails.
 
 ## Closed Historical Exception
 
-The production registry is a tuple containing one frozen, slotted
-`HistoricalActivityOverlapException`. It binds:
+The production registry has type
+`Final[tuple[HistoricalActivityOverlapException, ...]]`; its sole record is a
+frozen, slotted dataclass with this complete identity:
 
-- predecessor `ai-activity-log.jsonl-2026-05-24T1237Z.gz`: gzip 772,038
-  bytes / SHA-256 `ad7dd174...d6c5`; payload 5,326,818 bytes, 1,001 lines /
-  SHA-256 `8435543b...4e57`
-- successor `ai-activity-log.jsonl-2026-05-24T1239Z.gz`: gzip 771,941
-  bytes / SHA-256 `d211e27b...61da`; payload 5,326,326 bytes, 1,001 lines /
-  SHA-256 `da6a1021...3ff`
-- overlap: 999 lines, 5,325,808 bytes, SHA-256 `0a3b56f7...f247`
+- predecessor `ai-activity-log.jsonl-2026-05-24T1237Z.gz`
+  - gzip: 772,038 bytes,
+    `ad7dd174e0278a3c21b10024cd227f0d138052dd0945bc3b24159538d87ed6c5`
+  - payload: 5,326,818 bytes / 1,001 lines,
+    `8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57`
+- successor `ai-activity-log.jsonl-2026-05-24T1239Z.gz`
+  - gzip: 771,941 bytes,
+    `d211e27bc5337c8eff200e14d48800f949658e6c8b43d9fd22e54ea8c77061da`
+  - payload: 5,326,326 bytes / 1,001 lines,
+    `da6a102178c82fb4eca8d0794ed5b419f0c97770e0ad63542dde0033e7efa3ff`
+- overlap: 5,325,808 bytes / 999 lines,
+  `0a3b56f720a5aa493d8968edfff8e32e0df98e410f6334d6790f10a06019f247`
 
-Every basename, source payload, compressed source, count, and overlap check
-reads this registry. Reserved basenames remain identity-checked even when no
-fold is reached. Generic 999/1001 overlaps remain rejected.
+The direct registry test asserts exact tuple equality, including all names,
+hashes, byte counts, and line counts. Its hermetic 999-line pair does not read
+the central root and cannot skip. Mismatch matrices cover each count class and
+same-payload/different-gzip replacement; generic 999/1001 overlap remains
+rejected. The opt-in production integration copies the exact central pair to
+an isolated root and now fails, rather than skips, if explicitly enabled while
+the pair is unavailable.
 
-Core tests use a deterministic redacted 999-line pair and a test-scoped frozen
-registry; they do not read `/home/lupin/code/pantheon` and cannot silently skip.
-The production constants are asserted separately. An explicitly opt-in
-read-only integration copies the two existing gzip files into an isolated root
-and validates the production registry without locking or writing the central
-activity root.
+## Validation At Reader Anchor
 
-## Validation At Draft Head
-
-Commands were run from the isolated task worktree unless a disposable composed
-worktree is named explicitly.
+Commands ran in the isolated task worktree unless an isolated root or
+disposable composed worktree is named explicitly.
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 .orchestrator/test_common.py
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 -m pytest -q -p no:cacheprovider scripts/test_activity_audit_logical_inventory.py
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 -m pytest -q -p no:cacheprovider scripts/test_ai_status.py::CanonicalTaskStateAndActivityRecoveryTests -k 'not existing_archive_conflict_or_legacy_shape_preserves_active_task'
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 -m pytest -q -p no:cacheprovider scripts/test_status_file_guard.py
-PANTHEON_RUN_CENTRAL_ACTIVITY_INTEGRATION=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 -m pytest -q -p no:cacheprovider scripts/test_activity_audit_logical_inventory.py::TestActivityAuditLogicalInventory::test_optional_central_pinned_pair_read_only_integration
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 -m pytest -q -p no:cacheprovider scripts/test_activity_audit_logical_inventory.py scripts/test_status_file_guard.py
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 -m pytest -q -p no:cacheprovider .orchestrator/test_activity_pending_intent_recovery.py
+PANTHEON_RUN_CENTRAL_ACTIVITY_INTEGRATION=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 -m pytest -q -p no:cacheprovider scripts/test_activity_audit_logical_inventory.py::TestActivityAuditLogicalInventory::test_optional_central_pinned_pair_read_only_integration
+env -u ORCH_RUN_ID PANTHEON_STATUS_ROOT=/tmp/pantheon-reader-status-fb2d4d1be PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 -m unittest scripts.test_ai_status
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 .orchestrator/test_supervisor.py
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 .orchestrator/test_runtime_state.py
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 .orchestrator/test_supervisor_watchdog.py
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 .orchestrator/test_worker_runner_heartbeat.py
-python3 -m py_compile .orchestrator/common.py .orchestrator/test_common.py scripts/ai_status.py scripts/test_ai_status.py scripts/status_file_guard.py scripts/test_status_file_guard.py scripts/activity_audit_logical_inventory.py scripts/test_activity_audit_logical_inventory.py
-git diff --check
+python3 -m py_compile .orchestrator/common.py .orchestrator/test_common.py .orchestrator/activity_pending_intent_recovery.py .orchestrator/test_activity_pending_intent_recovery.py scripts/ai_status.py scripts/test_ai_status.py scripts/status_file_guard.py scripts/test_status_file_guard.py scripts/activity_audit_logical_inventory.py scripts/test_activity_audit_logical_inventory.py
+git diff --check "$(git merge-base origin/dev HEAD)" HEAD
 ```
 
 Results:
 
-- common: 73 tests passed at draft head `7bc885fd5`
-- inventory: 21 passed, one explicit opt-in skip, two subtests passed
-- isolated status recovery: 8 passed, one dependency-owned test deselected,
-  ten subtests passed
-- status restore guard: 16 passed
-- opt-in production pinned pair: 1 passed in 3.02 seconds
-- pending intent: 32 passed, 49 subtests passed
+- common: 78 tests passed in 19.720 seconds
+- inventory plus status guard: 39 passed, 1 opt-in skip, 10 subtests passed in
+  11.82 seconds
+- pending-intent recovery: 35 passed, 51 subtests passed in 11.40 seconds
+- explicitly enabled production pair: 1 passed in 0.92 seconds
+- full isolated status suite: 76 run; 75 passed and only
+  `test_existing_archive_conflict_or_legacy_shape_preserves_active_task`
+  failed on the unmerged #3797-owned archive-conflict behavior
+- supervisor: 277 passed
 - runtime state: passed
 - supervisor watchdog: 33 passed
 - worker runner heartbeat: 13 passed
-- py_compile and diff check: passed
+- `py_compile` and merge-base range `diff --check`: passed
 - PR #3800 Commit trailers, Runtime mirror guard, and Smoke acceptance: passed
 
-A 12,000-row fixture with a 2,048-byte payload per row measured a 7,319,009-byte
-`tracemalloc` peak, below the 12 MiB acceptance bound and independent of the
-roughly 24 MiB history size. This also exposed and removed two preflight
-`read_bytes()` calls that previously doubled peak memory.
+The 12,000-row active and rotated fixtures use 2,048-byte payloads and each
+remain below the 12 MiB `tracemalloc` ceiling. They cover both the active path
+and content-addressed lineage verification; neither stores complete logical
+history in Python memory.
 
-A second 12,000-row/2,048-byte fixture is rotated through the
-content-addressed lineage path and asserts the same 12 MiB ceiling. This covers
-the former full `read_regular_file_bytes()` plus `gzip.decompress()` manifest
-validation path, which the active-only fixture could not exercise.
+## Dispatcher Exact-Head Composition
 
-## Dispatcher Composition Proof
-
-A disposable worktree at PR #3799 head
-`2d00df10d9cd4751f0e704f59056cc32842ebc44` cherry-picked reader anchor
-`163927e31`. No dispatcher file was copied into this task branch.
+A disposable worktree at draft PR #3799 head
+`d3d99ccf8cbf8fd5d4c899e4f50d60facde74f93` cleanly merged reader anchor
+`fb2d4d1be69ee1f8908229fc8ab789e7b947fc86`; no dispatcher file was copied
+into this task branch.
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py --tb=short
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 -m pytest -q -p no:cacheprovider scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py --tb=short
 ```
 
-Result: **197 passed in 404.48 seconds**. This includes the active and gzip
-duplicate-key zero-write regressions that were the only two failures on the
-uncomposed PR #3799 head.
+Result: **197 passed in 417.41 seconds**.
 
-## Open Dependency And Baseline Failure
+The composition also found a dispatcher-owned residual gap: a non-loop-product
+`event_id` with surrounding whitespace is accepted and indexed under the raw
+key. The exact finding and requested active/gzip zero-write regressions were
+posted to PR #3799 in
+`https://github.com/ajoe734/pantheon/pull/3799#issuecomment-5004973200`.
+This reader task does not absorb that interpretation-layer fix.
+
+## Prerequisite State
 
 PR #3797 remains open at
-`988c2eb643728235935f397d2d0f2d9626572841`, required checks green, awaiting
-independent Claude exact-head review. It owns `ActivityAuditInvariantError`,
-the structured non-adjacent-tail diagnostic, and an `ai_status` existing
-archive conflict fix.
+`6872ab1d1d94605770817b99652c37842af2d95f`, is behind `dev`, has no approval,
+and currently has a failing Commit trailers gate. It owns
+`ActivityAuditInvariantError`, structured non-adjacent-tail diagnostics, and
+the archive-conflict behavior exercised by the one isolated status failure.
+Those changes are deliberately not copied into this branch.
 
-### Disposable prerequisite composition
+### Current exact-head dry composition
 
-While the dependency remains open, a disposable worktree merged its exact head
-into draft head `7bc885fd52181e6533bd5f9273403cb0576b43f7`. The two textual conflicts were
-resolved as a semantic union: both strict duplicate-key/registry definitions
-and `ActivityAuditInvariantError` are retained; the validation-snapshot
-non-adjacent-tail path raises the structured error using the rewritten loop's
-`source_idx` and `source_class` names; and both `time` and `tracemalloc` test
-imports are retained. The disposable tree does not alter this task branch or
-relax the merge-order gate.
+A disposable worktree at reader integration head
+`8260649cd86c57636b66897f5f1f8dcec791e891` merged #3797 exact head
+`6872ab1d1d94605770817b99652c37842af2d95f` without committing. Three content
+conflicts were resolved as a semantic union only in that worktree:
+
+- retain strict duplicate decoding, the immutable registry, the bounded
+  snapshot, and generic 999-overlap rejection;
+- add `ActivityAuditInvariantError` and raise its structured diagnostic from
+  the rewritten loop using `source_idx` and `source_class`;
+- retain both tasks' test imports and `ai_status` imports.
 
 Results on that exact composition:
 
-- common: 74 passed
-- isolated `CanonicalTaskStateAndActivityRecoveryTests`: 9 passed and 12
-  subtests passed, including the dependency's archive conflict regression
-- status restore guard: 16 passed
-- supervisor: 277 passed
-- inventory: 21 passed, one explicit opt-in skip, two subtests passed
-- pending intent: 32 passed, 49 subtests passed
-- runtime state: passed
-- supervisor watchdog: 33 passed
-- worker runner heartbeat: 13 passed
-- py_compile and diff check: passed
+- common: 79 tests passed in 17.077 seconds
+- full isolated status suite: 77 tests passed in 7.140 seconds
+- `py_compile`, staged `diff --check`, and unstaged `diff --check`: passed
 
-The dry-run also caught an unsafe mechanical conflict resolution: PR #3797's
-old reader used `s_idx`/`s_class`, while the snapshot builder uses
-`source_idx`/`source_class`. The final merge must use the latter names and rerun
-the same matrix after the dependency is present on `origin/dev`.
+The merge was aborted and the disposable worktree/root removed. This proves
+the current semantic composition recipe; it does not approve #3797 or bypass
+its failing gate.
 
-At the draft head, the dependency-owned
-`test_existing_archive_conflict_or_legacy_shape_preserves_active_task` remains
-the one deselected recovery test; it passes in the exact composition above. A
-whole-file `scripts/test_ai_status.py` run is not treated as hermetic evidence:
-67 tests and 19 subtests passed, while eight older command tests reached this
-worktree's activity root and correctly failed closed on the existing missing
-superseded resolution archive, and the dependency-owned subtest failed on the
-uncomposed head. No activity append occurred. After #3797 merges, this branch
-must be rebased with semantic conflict resolution and the isolated matrix rerun.
+After #3797 merges, this branch must merge the resulting `origin/dev` head as a
+semantic union, retaining strict decoding/registry/snapshot behavior and using
+the snapshot loop's `source_idx` and `source_class` names for the structured
+diagnostic. The full status suite and the matrix above must then be rerun with
+no dependency-owned failure.
 
 ## Governed Central Status Observation
 
-Three governed 30-second and one governed 180-second
-`AI_NAME=Codex ./scripts/ai-status.sh progress ...` attempts timed out before
-the bounded snapshot anchor. Four anonymous SQLite files from those exact
-attempt windows were later confirmed by schema, size, and lack of open file
-descriptors, then removed explicitly. They occupied about 2.85 GiB; no other
-temporary file was removed. Unlink-on-create prevents recurrence.
+All status commands used `AI_NAME=Codex` and the governed scripts. No canonical
+state, activity, resolution, or archive file was edited directly. The latest
+bounded `progress` attempt durably updated this task's canonical `next` field
+but timed out while recovering the existing activity outbox; the outbox entry
+remains durable and unapplied rather than being bypassed. Canonical task state
+therefore remains `in_progress` while the prerequisite and exact-head review
+gates are open.
 
-A later governed `sync` returned in 5.09 seconds, but a concurrent actor had
-already cleared the prior pending outbox, so this is not claimed as a full
-central-history recovery benchmark. The next governed `progress` durably
-updated this task's canonical state, then correctly failed closed before
-activity append because the existing resolution manifest references a missing
-superseded archive. Its preserved incident copy exists and matches the recorded
-gzip digest, but restoring or redefining that resolution layout is outside this
-task and was not attempted. The progress outbox remains durable for normal
-recovery after the owning repair resolves that external inconsistency.
+## Remaining Closeout Gates
 
-No state, activity, resolution, or archive file was edited manually. Canonical
-state shows this task `in_progress`; draft PR #3800 and all task anchors are
-published remotely.
+1. #3797 reaches an approved exact head and merges to `dev`.
+2. This branch composes that merge, reruns the entire matrix, and records a
+   clean full status result.
+3. #3799 resolves its canonical-ID consumer gap and the final exact heads are
+   recomposed.
+4. Claude approves the final #3800 head; required checks remain green.
+5. #3800 merges with auto-merge still off, then task-scoped artifacts are
+   finalized and `AI_NAME=Codex ./scripts/ai-status.sh done` performs governed
+   closeout.
