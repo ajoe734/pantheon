@@ -1445,6 +1445,18 @@ def _stream_activity_archive_metrics(path: Path) -> _ActivityArchiveMetrics:
     """Hash and count a gzip archive without retaining either full byte stream."""
 
     try:
+        path_stat_before = path.lstat()
+    except OSError as exc:
+        raise RuntimeError(
+            f"activity rotation archive is unreadable: {path}"
+        ) from exc
+    if stat.S_ISLNK(path_stat_before.st_mode) or not stat.S_ISREG(
+        path_stat_before.st_mode
+    ):
+        raise RuntimeError(
+            f"activity rotation archive must be a regular file: {path}"
+        )
+    try:
         descriptor = os.open(
             path,
             os.O_RDONLY
@@ -1455,7 +1467,6 @@ def _stream_activity_archive_metrics(path: Path) -> _ActivityArchiveMetrics:
         raise RuntimeError(f"activity rotation archive is unreadable: {path}") from exc
     try:
         descriptor_stat = os.fstat(descriptor)
-        path_stat_before = path.lstat()
         if (
             not stat.S_ISREG(descriptor_stat.st_mode)
             or stat.S_ISLNK(path_stat_before.st_mode)
