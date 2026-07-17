@@ -1288,6 +1288,10 @@ def _activity_archive_payload(path: Path) -> tuple[bytes, bytes]:
     return compressed, payload
 
 
+def _activity_archive_backup_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.bak")
+
+
 def _normalize_activity_lineage_archive_path(log_path: Path, value: Any) -> Path:
     relative = Path(str(value or ""))
     if not relative.parts or relative.is_absolute() or ".." in relative.parts:
@@ -1678,9 +1682,19 @@ def _validated_activity_rotation_resolution_row(
         row.get("superseding_relative_path"),
     )
     if validate_archives:
+        validation_path = archive_path
         if not archive_path.exists() and not archive_path.is_symlink():
-            raise RuntimeError("activity resolution superseded archive is missing")
-        compressed, payload = _activity_archive_payload(archive_path)
+            backup_path = _activity_archive_backup_path(archive_path)
+            if not backup_path.exists() and not backup_path.is_symlink():
+                raise RuntimeError(
+                    "activity resolution superseded archive is missing"
+                )
+            # Operators preserve incident artifacts with this exact suffix.
+            # The backup is safe only as a validation source: all pinned
+            # compressed/payload digests and conservation counts below still
+            # have to match, and read_regular_file_bytes rejects symlinks.
+            validation_path = backup_path
+        compressed, payload = _activity_archive_payload(validation_path)
         if _sha256_bytes(compressed) != row.get("archive_gzip_sha256"):
             raise RuntimeError(
                 "activity resolution superseded archive gzip digest mismatch"
@@ -2362,7 +2376,20 @@ def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
         for source in archive_sources
         if classify_source(source) == "content_addressed"
     ]
-    if set(discovered_content) != registered_content | superseded_content:
+    backed_up_superseded = {
+        path.resolve()
+        for path in superseded_archives
+        if not path.exists()
+        and not path.is_symlink()
+        and (
+            _activity_archive_backup_path(path).exists()
+            or _activity_archive_backup_path(path).is_symlink()
+        )
+    }
+    if (
+        set(discovered_content) | backed_up_superseded
+        != registered_content | superseded_content
+    ):
         raise RuntimeError("activity content-addressed archives do not match lineage")
     sources = list(legacy_sources)
     sources.extend(lineage_archives)

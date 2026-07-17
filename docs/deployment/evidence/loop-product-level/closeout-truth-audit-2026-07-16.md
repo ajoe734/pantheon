@@ -1,7 +1,7 @@
 # Loop Product Closeout Truth Audit
 
 - Audit ID: `closeout-truth-audit-2026-07-16`
-- Generated at: `2026-07-16T16:22:16Z`
+- Generated at: `2026-07-17T03:08:28Z`
 - Mode: `read_only_archive_snapshot_replay`
 - Source root: `/home/lupin/code/pantheon/ai-task-archive/tasks`
 - Archive mutation: `none`
@@ -37,4 +37,5 @@
 - `/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-000.json`: governance/meta task excluded from frozen product-closure replay set
 - `/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-001.json`: governance/meta task excluded from frozen product-closure replay set
 - `/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-002.json`: governance/meta task excluded from frozen product-closure replay set
+- `/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-DONE-GUARDRAIL-FINAL-REVIEW-001.json`: governance/meta task excluded from frozen product-closure replay set
 - `/home/lupin/code/pantheon/ai-task-archive/tasks/LOOP-PROD-PLANNING-BRIEFS-001.json`: governance/meta task excluded from frozen product-closure replay set
