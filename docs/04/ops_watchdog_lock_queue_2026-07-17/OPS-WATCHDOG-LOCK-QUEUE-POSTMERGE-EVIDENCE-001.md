@@ -177,6 +177,36 @@ Lock holder proof:
 `fuser -v /home/lupin/code/pantheon/.orchestrator/runtime-admission.lock`
 also identified PID `1802483` as the holder.
 
+Follow-up readback at `2026-07-17T06:34:20Z` used the correct dev-root repo
+argument:
+
+```bash
+python3 /home/lupin/pantheon-ci-deploy/dev-root/scripts/supervisor_runtime_health.py \
+  --repo /home/lupin/pantheon-ci-deploy/dev-root \
+  --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \
+  --require-watchdog --json
+```
+
+That read was healthy with watchdog state updated at `2026-07-17T06:33:01Z`
+and watchdog age `79.455415s`. The normal watchdog metrics did contain three
+consecutive successful scheduler events at `2026-07-17T06:28:02Z`,
+`2026-07-17T06:29:02Z`, and `2026-07-17T06:30:01Z`, each with
+`decision=observe_only`, `reason=supervisor_healthy`, and PID `1802483`.
+
+However, a fresh passive readback started at `2026-07-17T06:35:24Z` immediately
+returned to the bounded contention path:
+
+| Event time | Decision | Health result |
+|---|---|---|
+| `2026-07-17T06:36:01Z` | `skip/lock_contention` | false; watchdog age `181.528677s` |
+| `2026-07-17T06:37:02Z` | `skip/lock_contention` | false; watchdog age `241.805455s` |
+| `2026-07-17T06:38:01Z` | `skip/lock_contention` | false; watchdog age `303.2685s` |
+
+The current installed implementation still avoids unbounded waiter buildup, but
+the real scheduler did not sustain the required three consecutive healthy
+cycles with per-cycle health readback. The task remains blocked at product
+acceptance.
+
 ## Blocker
 
 The task cannot claim product-level acceptance because the required three
