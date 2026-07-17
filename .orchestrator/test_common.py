@@ -1614,6 +1614,43 @@ class LogicalActivityReaderTests(unittest.TestCase):
         self.assertEqual(observed, row_count)
         self.assertLess(peak, 12 * 1024 * 1024)
 
+    def test_content_addressed_validation_memory_is_bounded_by_window(self):
+        row_count = 12000
+        payload = "x" * 2048
+        with self.log_path.open("w", encoding="utf-8") as handle:
+            for index in range(row_count):
+                handle.write(
+                    json.dumps(
+                        {
+                            "event_id": f"content-bounded-{index:05d}",
+                            "payload": payload,
+                        },
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                )
+        with common.activity_audit_lock_file(self.log_path, shared=False):
+            archive = common.rotate_activity_log_unlocked(
+                self.log_path,
+                max_bytes=1,
+                keep_lines=0,
+            )
+        self.assertIsNotNone(archive)
+
+        import gc
+
+        gc.collect()
+        tracemalloc.start()
+        try:
+            observed = sum(
+                1 for _entry in common.stream_logical_activity(self.log_path)
+            )
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(observed, row_count)
+        self.assertLess(peak, 12 * 1024 * 1024)
+
     def test_simultaneous_and_reentrant_readers(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
@@ -2006,74 +2043,102 @@ class LogicalActivityReaderTests(unittest.TestCase):
             if old_log_file is not None:
                 ai_status.LOG_FILE = old_log_file
 
-    def test_sqlite_db_removed_on_lifecycle_events(self):
+    def test_sqlite_snapshot_is_unlinked_during_all_lifecycle_events(self):
         # Prepare a valid file
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
 
-        import glob
-        import tempfile
-        temp_dir = tempfile.gettempdir()
+        created_paths: list[str] = []
+        original_tempfile = common.tempfile.NamedTemporaryFile
 
-        def get_db_files():
-            return set(glob.glob(os.path.join(temp_dir, "*.db")))
+        def tracking_tempfile(*args, **kwargs):
+            handle = original_tempfile(*args, **kwargs)
+            if str(kwargs.get("prefix") or "").startswith(
+                "pantheon-activity-snapshot-"
+            ):
+                created_paths.append(handle.name)
+            return handle
 
-        # Case 1: Success path
-        db_before = get_db_files()
+        def assert_all_snapshots_unlinked() -> None:
+            self.assertTrue(created_paths)
+            self.assertTrue(all(not os.path.exists(path) for path in created_paths))
 
-        # Start generator
-        gen = common.stream_logical_activity(self.log_path)
-
-        # During iteration, the temp DB file should exist
-        first_item = next(gen)
-        db_during = get_db_files() - db_before
-        self.assertEqual(len(db_during), 1)
-        db_path = list(db_during)[0]
-        self.assertTrue(os.path.exists(db_path))
-
-        # Consume the rest
-        list(gen)
-
-        # After success, DB file must be removed
-        self.assertFalse(os.path.exists(db_path))
-
-        # Case 2: Validation failure path
-        # Re-write f1 to have validation failure (e.g. duplicate event_id)
-        self._write_gz(f1, [{"event_id": "ev1", "message": "msg"}, {"event_id": "ev1", "message": "msg"}])
-
-        db_before = get_db_files()
-        gen = common.stream_logical_activity(self.log_path)
-        with self.assertRaisesRegex(RuntimeError, "duplicate activity event_id"):
+        with mock.patch.object(
+            common.tempfile,
+            "NamedTemporaryFile",
+            side_effect=tracking_tempfile,
+        ):
+            # Case 1: success. The live SQLite connection retains the disk
+            # allocation, but its pathname is already gone before first yield.
+            gen = common.stream_logical_activity(self.log_path)
             next(gen)
-        self.assertEqual(get_db_files(), db_before)
+            assert_all_snapshots_unlinked()
 
-        # Case 3: Explicit generator close
-        self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
-        db_before = get_db_files()
-        gen = common.stream_logical_activity(self.log_path)
-        next(gen)
-        db_during = get_db_files() - db_before
-        self.assertEqual(len(db_during), 1)
-        db_path = list(db_during)[0]
-        self.assertTrue(os.path.exists(db_path))
+            list(gen)
+            assert_all_snapshots_unlinked()
 
-        # Explicit close
-        gen.close()
-
-        # After close, DB file must be removed
-        self.assertFalse(os.path.exists(db_path))
-
-        # Case 4: A consumer exception followed by explicit close releases
-        # only the validated replay resource; source validation already passed.
-        db_before = get_db_files()
-        gen = common.stream_logical_activity(self.log_path)
-        with self.assertRaisesRegex(RuntimeError, "consumer failed"):
-            try:
+            # Case 2: validation failure.
+            self._write_gz(
+                f1,
+                [
+                    {"event_id": "ev1", "message": "msg"},
+                    {"event_id": "ev1", "message": "msg"},
+                ],
+            )
+            gen = common.stream_logical_activity(self.log_path)
+            with self.assertRaisesRegex(RuntimeError, "duplicate activity event_id"):
                 next(gen)
-                raise RuntimeError("consumer failed")
-            finally:
-                gen.close()
-        self.assertEqual(get_db_files(), db_before)
+            assert_all_snapshots_unlinked()
+
+            # Case 3: explicit generator close.
+            self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
+            gen = common.stream_logical_activity(self.log_path)
+            next(gen)
+            assert_all_snapshots_unlinked()
+            gen.close()
+            assert_all_snapshots_unlinked()
+
+            # Case 4: a consumer exception followed by explicit close.
+            gen = common.stream_logical_activity(self.log_path)
+            with self.assertRaisesRegex(RuntimeError, "consumer failed"):
+                try:
+                    next(gen)
+                    raise RuntimeError("consumer failed")
+                finally:
+                    gen.close()
+            assert_all_snapshots_unlinked()
+
+    def test_validation_complete_event_lookup_omits_unrequested_payloads(self):
+        entries = [
+            {"event_id": "index-one", "message": "one"},
+            {"event_id": "index-two", "message": "two"},
+            {"message": "no event id"},
+        ]
+        self._write_active(entries)
+
+        with (
+            common.activity_audit_lock_file(self.log_path, shared=True),
+            mock.patch.object(
+                common,
+                "_build_logical_activity_snapshot_unlocked",
+                wraps=common._build_logical_activity_snapshot_unlocked,
+            ) as build_snapshot,
+        ):
+            event_index = common.validated_activity_event_digests_unlocked(
+                self.log_path,
+                {"index-two", "missing"},
+            )
+
+        self.assertEqual(
+            {
+                "index-two": common._canonical_json_sha256(entries[1]),
+            },
+            event_index,
+        )
+        build_snapshot.assert_called_once_with(
+            self.log_path,
+            capture_logical_entries=False,
+        )
 
 
 if __name__ == "__main__":

@@ -87,7 +87,7 @@ from common import (
     prepare_activity_audit_unlocked,
     read_activity_log_tail_bytes,
     rotate_activity_log_unlocked,
-    stream_logical_activity,
+    validated_activity_event_digests_unlocked,
 )
 
 # Derived dashboard rendering intentionally uses an atomic projection-only
@@ -1370,16 +1370,9 @@ def _activity_audit_sources() -> list[Path]:
     return activity_audit_source_paths_unlocked(LOG_FILE)
 
 
-def _activity_event_index_unlocked() -> dict[str, str]:
+def _activity_event_index_unlocked(event_ids: set[str]) -> dict[str, str]:
     prepare_activity_audit_unlocked(LOG_FILE)
-    result: dict[str, str] = {}
-    for entry, source, line_number in stream_logical_activity(LOG_FILE):
-        event_id = str(entry.get("event_id") or "").strip()
-        if not event_id:
-            continue
-        digest = _canonical_json_sha256(entry)
-        result[event_id] = digest
-    return result
+    return validated_activity_event_digests_unlocked(LOG_FILE, event_ids)
 
 
 def _validate_status_archive_outbox(value: Any) -> dict[str, Any]:
@@ -1529,8 +1522,9 @@ def recover_status_activity_outbox(state: dict[str, Any]) -> bool:
     if pending in (None, {}, []):
         return False
     pending = _validate_status_activity_outbox(pending)
+    pending_event_ids = {str(event["event_id"]) for event in pending["events"]}
     with activity_audit_lock_file(LOG_FILE, shared=False, nonblocking=False):
-        existing = _activity_event_index_unlocked()
+        existing = _activity_event_index_unlocked(pending_event_ids)
         missing: list[dict[str, Any]] = []
         for event in pending["events"]:
             event_id = str(event["event_id"])
@@ -1544,7 +1538,7 @@ def recover_status_activity_outbox(state: dict[str, Any]) -> bool:
             missing.append(event)
             existing[event_id] = digest
         _append_logs_unlocked(missing)
-        final = _activity_event_index_unlocked()
+        final = _activity_event_index_unlocked(pending_event_ids)
         if any(
             final.get(str(event["event_id"])) != _canonical_json_sha256(event)
             for event in pending["events"]

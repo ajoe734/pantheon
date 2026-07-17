@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -22,7 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import local
-from typing import Any, Mapping, Generator, Callable
+from typing import Any, Mapping, Generator, Callable, Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
@@ -1406,6 +1407,91 @@ def _activity_archive_payload(path: Path) -> tuple[bytes, bytes]:
     return compressed, payload
 
 
+@dataclass(frozen=True, slots=True)
+class _ActivityArchiveMetrics:
+    gzip_sha256: str
+    gzip_byte_count: int
+    payload_sha256: str
+    payload_byte_count: int
+    payload_line_count: int
+
+
+def _stream_activity_archive_metrics(path: Path) -> _ActivityArchiveMetrics:
+    """Hash and count a gzip archive without retaining either full byte stream."""
+
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError as exc:
+        raise RuntimeError(f"activity rotation archive is unreadable: {path}") from exc
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        path_stat_before = path.lstat()
+        if (
+            not stat.S_ISREG(descriptor_stat.st_mode)
+            or stat.S_ISLNK(path_stat_before.st_mode)
+            or path_stat_before.st_dev != descriptor_stat.st_dev
+            or path_stat_before.st_ino != descriptor_stat.st_ino
+        ):
+            raise RuntimeError(f"activity rotation archive changed: {path}")
+
+        gzip_hasher = hashlib.sha256()
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            gzip_hasher.update(chunk)
+        os.lseek(descriptor, 0, os.SEEK_SET)
+
+        payload_hasher = hashlib.sha256()
+        payload_byte_count = 0
+        payload_newline_count = 0
+        payload_last_byte = b""
+        with os.fdopen(os.dup(descriptor), "rb") as file_obj:
+            try:
+                with gzip.GzipFile(fileobj=file_obj, mode="rb") as handle:
+                    while True:
+                        chunk = handle.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        payload_hasher.update(chunk)
+                        payload_byte_count += len(chunk)
+                        payload_newline_count += chunk.count(b"\n")
+                        payload_last_byte = chunk[-1:]
+            except (EOFError, gzip.BadGzipFile, OSError) as exc:
+                raise RuntimeError(
+                    f"activity rotation archive is unreadable: {path}"
+                ) from exc
+
+        path_stat_after = path.lstat()
+        if (
+            stat.S_ISLNK(path_stat_after.st_mode)
+            or path_stat_after.st_dev != descriptor_stat.st_dev
+            or path_stat_after.st_ino != descriptor_stat.st_ino
+            or path_stat_after.st_size != descriptor_stat.st_size
+            or path_stat_after.st_mtime_ns != descriptor_stat.st_mtime_ns
+        ):
+            raise RuntimeError(
+                f"activity rotation archive changed during validation: {path}"
+            )
+        payload_line_count = payload_newline_count + int(
+            payload_byte_count > 0 and payload_last_byte != b"\n"
+        )
+        return _ActivityArchiveMetrics(
+            gzip_sha256=gzip_hasher.hexdigest(),
+            gzip_byte_count=descriptor_stat.st_size,
+            payload_sha256=payload_hasher.hexdigest(),
+            payload_byte_count=payload_byte_count,
+            payload_line_count=payload_line_count,
+        )
+    finally:
+        os.close(descriptor)
+
+
 def _normalize_activity_lineage_archive_path(log_path: Path, value: Any) -> Path:
     relative = Path(str(value or ""))
     if not relative.parts or relative.is_absolute() or ".." in relative.parts:
@@ -1525,14 +1611,14 @@ def _validate_activity_rotation_lineage_row(
     if validate_archive:
         if not archive_path.exists():
             raise RuntimeError("activity lineage archive is missing")
-        compressed, payload = _activity_archive_payload(archive_path)
-        if _sha256_bytes(compressed) != row.get("archive_gzip_sha256"):
+        metrics = _stream_activity_archive_metrics(archive_path)
+        if metrics.gzip_sha256 != row.get("archive_gzip_sha256"):
             raise RuntimeError("activity lineage archive gzip digest mismatch")
-        if _sha256_bytes(payload) != row.get("archive_payload_sha256"):
+        if metrics.payload_sha256 != row.get("archive_payload_sha256"):
             raise RuntimeError("activity lineage archive payload digest mismatch")
-        if len(payload) != row.get("archive_byte_count"):
+        if metrics.payload_byte_count != row.get("archive_byte_count"):
             raise RuntimeError("activity lineage archive byte count mismatch")
-        if _jsonl_line_count(payload) != row.get("archive_line_count"):
+        if metrics.payload_line_count != row.get("archive_line_count"):
             raise RuntimeError("activity lineage archive line count mismatch")
     return archive_path
 
@@ -1802,43 +1888,43 @@ def _validated_activity_rotation_resolution_row(
     if validate_archives:
         if not archive_path.exists() and not archive_path.is_symlink():
             raise RuntimeError("activity resolution superseded archive is missing")
-        compressed, payload = _activity_archive_payload(archive_path)
-        if _sha256_bytes(compressed) != row.get("archive_gzip_sha256"):
+        metrics = _stream_activity_archive_metrics(archive_path)
+        if metrics.gzip_sha256 != row.get("archive_gzip_sha256"):
             raise RuntimeError(
                 "activity resolution superseded archive gzip digest mismatch"
             )
-        if _sha256_bytes(payload) != row.get("archive_payload_sha256"):
+        if metrics.payload_sha256 != row.get("archive_payload_sha256"):
             raise RuntimeError(
                 "activity resolution superseded archive payload digest mismatch"
             )
-        if len(payload) != row.get("archive_byte_count"):
+        if metrics.payload_byte_count != row.get("archive_byte_count"):
             raise RuntimeError(
                 "activity resolution superseded archive byte count mismatch"
             )
-        if _jsonl_line_count(payload) != row.get("archive_line_count"):
+        if metrics.payload_line_count != row.get("archive_line_count"):
             raise RuntimeError(
                 "activity resolution superseded archive line count mismatch"
             )
         if not superseding_path.exists() and not superseding_path.is_symlink():
             raise RuntimeError("activity resolution superseding archive is missing")
-        superseding_compressed, superseding_payload = _activity_archive_payload(
-            superseding_path
-        )
-        if _sha256_bytes(superseding_compressed) != row.get("superseding_gzip_sha256"):
+        superseding_metrics = _stream_activity_archive_metrics(superseding_path)
+        if superseding_metrics.gzip_sha256 != row.get("superseding_gzip_sha256"):
             raise RuntimeError(
                 "activity resolution superseding archive gzip digest mismatch"
             )
-        if _sha256_bytes(superseding_payload) != row.get(
+        if superseding_metrics.payload_sha256 != row.get(
             "superseding_payload_sha256"
         ):
             raise RuntimeError(
                 "activity resolution superseding archive payload digest mismatch"
             )
-        if len(superseding_payload) != row.get("superseding_byte_count"):
+        if superseding_metrics.payload_byte_count != row.get(
+            "superseding_byte_count"
+        ):
             raise RuntimeError(
                 "activity resolution superseding archive byte count mismatch"
             )
-        if _jsonl_line_count(superseding_payload) != row.get(
+        if superseding_metrics.payload_line_count != row.get(
             "superseding_line_count"
         ):
             raise RuntimeError(
@@ -2735,20 +2821,49 @@ def _assert_activity_sources_stable_unlocked(
             os.close(descriptor)
 
 
-def _build_logical_activity_snapshot_unlocked(log_path: Path) -> Path:
-    """Validate every source and return a disk-backed immutable read snapshot."""
+def _open_ephemeral_activity_snapshot_database() -> sqlite3.Connection:
+    """Open an unlink-on-create SQLite store that cannot survive process death."""
 
-    import sqlite3
-
-    sources = _ordered_activity_sources_unlocked(log_path)
-    db_file = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    db_file = tempfile.NamedTemporaryFile(
+        prefix="pantheon-activity-snapshot-",
+        suffix=".db",
+        delete=False,
+    )
     db_path = Path(db_file.name)
     db_file.close()
-    conn = sqlite3.connect(db_path)
-    snapshots: list[_ActivitySourceSnapshot] = []
+    conn: sqlite3.Connection | None = None
     try:
+        conn = sqlite3.connect(db_path)
+        # The open connection owns the only reference after unlink. A normal
+        # close, SIGTERM, or SIGKILL therefore releases the disk allocation;
+        # no multi-gigabyte snapshot can be orphaned in the system temp dir.
+        db_path.unlink()
+        # This is an ephemeral validation cache, never a durable authority.
+        # Small in-memory rollback journals keep each bounded transaction
+        # atomic without fsyncing temporary data on every 1,000 rows.
+        conn.execute("PRAGMA journal_mode = MEMORY")
+        conn.execute("PRAGMA synchronous = OFF")
         conn.execute("PRAGMA cache_size = -2048")
         conn.execute("PRAGMA temp_store = FILE")
+        return conn
+    except BaseException:
+        if conn is not None:
+            conn.close()
+        db_path.unlink(missing_ok=True)
+        raise
+
+
+def _build_logical_activity_snapshot_unlocked(
+    log_path: Path,
+    *,
+    capture_logical_entries: bool = True,
+) -> sqlite3.Connection:
+    """Validate every source into an unlink-on-create, disk-backed snapshot."""
+
+    sources = _ordered_activity_sources_unlocked(log_path)
+    conn = _open_ephemeral_activity_snapshot_database()
+    snapshots: list[_ActivitySourceSnapshot] = []
+    try:
         conn.execute(
             "CREATE TABLE seen_events (event_id TEXT PRIMARY KEY, digest TEXT)"
         )
@@ -3012,7 +3127,7 @@ def _build_logical_activity_snapshot_unlocked(log_path: Path) -> Path:
                         current_line_number: int,
                         *,
                         is_collapsed_prefix: bool,
-                    ) -> dict[str, Any] | None:
+                    ) -> tuple[dict[str, Any], str] | None:
                         if not raw_line.strip():
                             return None
                         try:
@@ -3044,62 +3159,61 @@ def _build_logical_activity_snapshot_unlocked(log_path: Path) -> Path:
 
                         event_id = str(entry.get("event_id") or "").strip()
                         if event_id:
-                            cursor = conn.execute(
-                                "SELECT 1 FROM source_events "
-                                "WHERE source_idx = ? AND event_id = ?",
-                                (source_idx, event_id),
-                            )
-                            if cursor.fetchone():
+                            try:
+                                conn.execute(
+                                    "INSERT INTO source_events "
+                                    "(source_idx, event_id) VALUES (?, ?)",
+                                    (source_idx, event_id),
+                                )
+                            except sqlite3.IntegrityError as exc:
                                 raise RuntimeError(
                                     f"duplicate activity event_id in {source}: "
                                     f"{event_id}"
-                                )
-                            conn.execute(
-                                "INSERT INTO source_events "
-                                "(source_idx, event_id) VALUES (?, ?)",
-                                (source_idx, event_id),
-                            )
+                                ) from exc
                             digest = _canonical_json_sha256(entry)
                             if not is_collapsed_prefix:
-                                cursor = conn.execute(
-                                    "SELECT digest FROM seen_events "
-                                    "WHERE event_id = ?",
-                                    (event_id,),
-                                )
-                                row = cursor.fetchone()
-                                if row:
+                                try:
+                                    conn.execute(
+                                        "INSERT INTO seen_events "
+                                        "(event_id, digest) VALUES (?, ?)",
+                                        (event_id, digest),
+                                    )
+                                except sqlite3.IntegrityError as exc:
+                                    row = conn.execute(
+                                        "SELECT digest FROM seen_events "
+                                        "WHERE event_id = ?",
+                                        (event_id,),
+                                    ).fetchone()
                                     detail = (
                                         "payload mismatch"
-                                        if row[0] != digest
+                                        if row is None or row[0] != digest
                                         else "duplicate across sources"
                                     )
                                     raise RuntimeError(
                                         f"activity event_id {detail}: {event_id}"
-                                    )
-                                conn.execute(
-                                    "INSERT INTO seen_events "
-                                    "(event_id, digest) VALUES (?, ?)",
-                                    (event_id, digest),
-                                )
-                        return entry
+                                    ) from exc
+                        return entry, decoded
 
                     for index, raw_line in enumerate(current_buffer_1001):
                         is_collapsed = should_collapse and index < overlap_len
                         physical_line_number = buffer_first_line_number + index
-                        entry = process_line(
+                        processed = process_line(
                             raw_line,
                             physical_line_number,
                             is_collapsed_prefix=is_collapsed,
                         )
-                        if entry is not None and not is_collapsed:
+                        if (
+                            processed is not None
+                            and not is_collapsed
+                            and capture_logical_entries
+                        ):
+                            _entry, decoded = processed
                             conn.execute(
                                 "INSERT INTO logical_entries "
                                 "(payload, source_path, line_number) "
                                 "VALUES (?, ?, ?)",
                                 (
-                                    _canonical_json_line(entry)
-                                    .decode("utf-8")
-                                    .rstrip("\n"),
+                                    decoded,
                                     str(source),
                                     physical_line_number,
                                 ),
@@ -3118,20 +3232,19 @@ def _build_logical_activity_snapshot_unlocked(log_path: Path) -> Path:
                         sliding_window_1001.append(line)
                         if len(sliding_window_1001) > 1001:
                             sliding_window_1001.pop(0)
-                        entry = process_line(
+                        processed = process_line(
                             line,
                             line_number,
                             is_collapsed_prefix=False,
                         )
-                        if entry is not None:
+                        if processed is not None and capture_logical_entries:
+                            _entry, decoded = processed
                             conn.execute(
                                 "INSERT INTO logical_entries "
                                 "(payload, source_path, line_number) "
                                 "VALUES (?, ?, ?)",
                                 (
-                                    _canonical_json_line(entry)
-                                    .decode("utf-8")
-                                    .rstrip("\n"),
+                                    decoded,
                                     str(source),
                                     line_number,
                                 ),
@@ -3217,35 +3330,57 @@ def _build_logical_activity_snapshot_unlocked(log_path: Path) -> Path:
         conn.commit()
     except BaseException:
         conn.close()
-        db_path.unlink(missing_ok=True)
         raise
-    conn.close()
-    return db_path
+    return conn
 
 
 def _replay_logical_activity_snapshot(
-    db_path: Path,
+    conn: sqlite3.Connection,
     on_collapse: Callable[[Path | None, Path, int, int, str], None] | None,
 ) -> Generator[tuple[dict[str, Any], Path, int], None, None]:
-    import sqlite3
-
-    conn = sqlite3.connect(db_path)
-    try:
-        if on_collapse is not None:
-            for row in conn.execute(
-                "SELECT predecessor_path, successor_path, line_count, "
-                "byte_count, sha256 FROM collapse_events ORDER BY sequence"
-            ):
-                predecessor = Path(row[0]) if row[0] is not None else None
-                on_collapse(predecessor, Path(row[1]), row[2], row[3], row[4])
-        for payload, source_path, line_number in conn.execute(
-            "SELECT payload, source_path, line_number "
-            "FROM logical_entries ORDER BY sequence"
+    if on_collapse is not None:
+        for row in conn.execute(
+            "SELECT predecessor_path, successor_path, line_count, "
+            "byte_count, sha256 FROM collapse_events ORDER BY sequence"
         ):
-            entry = strict_activity_json_loads(payload)
-            if not isinstance(entry, dict):
-                raise RuntimeError("validated activity snapshot row is not an object")
-            yield entry, Path(source_path), line_number
+            predecessor = Path(row[0]) if row[0] is not None else None
+            on_collapse(predecessor, Path(row[1]), row[2], row[3], row[4])
+    for payload, source_path, line_number in conn.execute(
+        "SELECT payload, source_path, line_number "
+        "FROM logical_entries ORDER BY sequence"
+    ):
+        entry = strict_activity_json_loads(payload)
+        if not isinstance(entry, dict):
+            raise RuntimeError("validated activity snapshot row is not an object")
+        yield entry, Path(source_path), line_number
+
+
+def validated_activity_event_digests_unlocked(
+    log_path: Path,
+    event_ids: Iterable[str],
+) -> dict[str, str]:
+    """Validate all history and return digests only for requested event IDs.
+
+    The caller must hold the activity audit lock. Every source and event is
+    still parsed and validated; only the redundant logical replay copy is
+    omitted, and Python memory is bounded by the small requested ID set.
+    """
+
+    requested = {str(event_id).strip() for event_id in event_ids if str(event_id).strip()}
+    conn = _build_logical_activity_snapshot_unlocked(
+        log_path,
+        capture_logical_entries=False,
+    )
+    try:
+        result: dict[str, str] = {}
+        for event_id in requested:
+            row = conn.execute(
+                "SELECT digest FROM seen_events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            if row is not None:
+                result[event_id] = str(row[0])
+        return result
     finally:
         conn.close()
 
@@ -3268,14 +3403,14 @@ def stream_logical_activity(
             f"activity audit source leaf cannot be a symlink: {requested_log_path}"
         )
     log_path = requested_log_path.resolve()
-    snapshot_path: Path | None = None
+    snapshot: sqlite3.Connection | None = None
     try:
         with activity_audit_lock_file(log_path, shared=True):
-            snapshot_path = _build_logical_activity_snapshot_unlocked(log_path)
-        yield from _replay_logical_activity_snapshot(snapshot_path, on_collapse)
+            snapshot = _build_logical_activity_snapshot_unlocked(log_path)
+        yield from _replay_logical_activity_snapshot(snapshot, on_collapse)
     finally:
-        if snapshot_path is not None:
-            snapshot_path.unlink(missing_ok=True)
+        if snapshot is not None:
+            snapshot.close()
 
 
 def _stream_logical_activity_unlocked(
@@ -3284,11 +3419,11 @@ def _stream_logical_activity_unlocked(
 ) -> Generator[tuple[dict[str, Any], Path, int], None, None]:
     """Compatibility path for callers that already hold the activity lock."""
 
-    snapshot_path = _build_logical_activity_snapshot_unlocked(log_path)
+    snapshot = _build_logical_activity_snapshot_unlocked(log_path)
     try:
-        yield from _replay_logical_activity_snapshot(snapshot_path, on_collapse)
+        yield from _replay_logical_activity_snapshot(snapshot, on_collapse)
     finally:
-        snapshot_path.unlink(missing_ok=True)
+        snapshot.close()
 
 
 def append_activity_log_entries_unlocked(
