@@ -3637,55 +3637,91 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
         self.assertEqual(index["recent_terminal_ids"], ["LOCK-ONE"])
 
     def test_existing_archive_conflict_or_legacy_shape_preserves_active_task(self) -> None:
-        for existing in (
-            {
-                "version": 1,
-                "task_id": "LOCK-ONE",
-                "archived_at": "2026-07-14T00:03:00Z",
-                "terminal_status": "done",
-                "terminal_outcome": "completed",
-                "task": {
-                    **deepcopy(self._fixture_state()["tasks"][0]),
-                    "status": "done",
-                    "terminal_outcome": "completed",
-                },
-                "handoffs": [],
-                "blockers": [],
-            },
-            {
-                "id": "LOCK-ONE",
+        # 1. Version 1 snapshot, no conflict (identical)
+        existing_no_conflict = {
+            "version": 1,
+            "task_id": "LOCK-ONE",
+            "archived_at": "2026-07-14T00:03:00Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": {
+                **deepcopy(self._fixture_state()["tasks"][0]),
                 "status": "done",
                 "terminal_outcome": "completed",
-                "archived_at": "2026-07-14T00:03:00Z",
             },
+            "handoffs": [],
+            "blockers": [],
+        }
+        state = self._fixture_state()
+        terminal = state["tasks"][0]
+        terminal["status"] = "done"
+        terminal["terminal_outcome"] = "completed"
+        before = deepcopy(state)
+        with mock.patch.object(
+            ai_status,
+            "archived_task_snapshot",
+            return_value=existing_no_conflict,
         ):
-            with self.subTest(existing_shape=set(existing)):
-                state = self._fixture_state()
-                terminal = state["tasks"][0]
-                terminal["status"] = "done"
-                terminal["terminal_outcome"] = "superseded"
-                terminal["superseded_by"] = "LOCK-THREE"
-                before = deepcopy(state)
-                with mock.patch.object(
-                    ai_status,
-                    "archived_task_snapshot",
-                    return_value=existing,
-                ):
-                    if "version" in existing:
-                        snapshot = ai_status.archive_terminal_task_from_state(state, terminal)
-                    else:
-                        with self.assertRaises(RuntimeError):
-                            ai_status.archive_terminal_task_from_state(state, terminal)
-                        self.assertEqual(state, before)
-                        self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, state)
-                        continue
-                self.assertEqual(snapshot, existing)
-                self.assertEqual(state["tasks"], before["tasks"])
-                self.assertEqual(state["handoffs"], before["handoffs"])
-                self.assertEqual(state["blockers"], before["blockers"])
-                pending = state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]
-                self.assertEqual(pending["schema_version"], ai_status.STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION)
-                self.assertEqual(pending["snapshots"], [existing])
+            snapshot = ai_status.archive_terminal_task_from_state(state, terminal, archived_at="2026-07-14T00:03:00Z")
+        self.assertEqual(snapshot, existing_no_conflict)
+        self.assertEqual(state["tasks"], before["tasks"])
+        self.assertEqual(state["handoffs"], before["handoffs"])
+        self.assertEqual(state["blockers"], before["blockers"])
+        pending = state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]
+        self.assertEqual(pending["schema_version"], ai_status.STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION)
+        self.assertEqual(pending["snapshots"], [existing_no_conflict])
+
+        # 2. Version 1 snapshot, with conflict (raises RuntimeError)
+        existing_conflict = {
+            "version": 1,
+            "task_id": "LOCK-ONE",
+            "archived_at": "2026-07-14T00:03:00Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": {
+                **deepcopy(self._fixture_state()["tasks"][0]),
+                "status": "done",
+                "terminal_outcome": "completed",
+            },
+            "handoffs": [],
+            "blockers": [],
+        }
+        state = self._fixture_state()
+        terminal = state["tasks"][0]
+        terminal["status"] = "done"
+        terminal["terminal_outcome"] = "superseded"
+        terminal["superseded_by"] = "LOCK-THREE"
+        before = deepcopy(state)
+        with mock.patch.object(
+            ai_status,
+            "archived_task_snapshot",
+            return_value=existing_conflict,
+        ):
+            with self.assertRaises(RuntimeError):
+                ai_status.archive_terminal_task_from_state(state, terminal)
+        self.assertEqual(state, before)
+
+        # 3. Legacy snapshot (raises RuntimeError)
+        legacy_existing = {
+            "id": "LOCK-ONE",
+            "status": "done",
+            "terminal_outcome": "completed",
+            "archived_at": "2026-07-14T00:03:00Z",
+        }
+        state = self._fixture_state()
+        terminal = state["tasks"][0]
+        terminal["status"] = "done"
+        terminal["terminal_outcome"] = "superseded"
+        terminal["superseded_by"] = "LOCK-THREE"
+        before = deepcopy(state)
+        with mock.patch.object(
+            ai_status,
+            "archived_task_snapshot",
+            return_value=legacy_existing,
+        ):
+            with self.assertRaises(RuntimeError):
+                ai_status.archive_terminal_task_from_state(state, terminal)
+        self.assertEqual(state, before)
 
     def test_sigkill_at_each_archive_boundary_converges_without_vanishing_task(self) -> None:
         context = multiprocessing.get_context("fork")
