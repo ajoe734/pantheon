@@ -60,6 +60,20 @@ EXPECTED_INCIDENTS = {
     ("ai-activity-log.jsonl-2026-07-16T1404Z.gz", "ai-activity-log.jsonl-2026-07-16T1450Z.gz"),
 }
 
+SOURCE_CLASS_LABELS = {
+    "legacy_ts_std": "std",
+    "legacy_ts_old": "old",
+    "content_addressed": "content addressed",
+    "active": "active",
+}
+
+FOLD_CLASS_LABELS = {
+    "valid_legacy_rotation": "valid legacy",
+    "incident_lineage": "incident lineage",
+    "post_incident_rotation": "post-incident rotation",
+    "pinned_exception": "pinned",
+}
+
 @contextlib.contextmanager
 def open_fd_strictly(source: Path) -> Generator[tuple[int, Any], None, None]:
     """Open the file descriptor strictly, check symlink/replacement before reading."""
@@ -514,12 +528,12 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
             }
 
             # Compute classification counts
-            source_class_counts = {}
+            source_class_counts = {key: 0 for key in SOURCE_CLASS_LABELS}
             for src in source_infos:
                 cls = src["classification"]
                 source_class_counts[cls] = source_class_counts.get(cls, 0) + 1
 
-            fold_class_counts = {}
+            fold_class_counts = {key: 0 for key in FOLD_CLASS_LABELS}
             for f in folds:
                 ft = f["fold_type"]
                 fold_class_counts[ft] = fold_class_counts.get(ft, 0) + 1
@@ -615,30 +629,16 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
 
             run_id = os.environ.get("ORCH_RUN_ID", f"antigravity-bootstrap-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%MZ')}")
 
-            source_labels = {
-                "legacy_ts_std": "std",
-                "legacy_ts_old": "old",
-                "content_addressed": "content addressed",
-                "active": "active",
-            }
-            source_order = tuple(source_labels)
+            source_order = tuple(SOURCE_CLASS_LABELS)
             source_class_counts_str = "/".join(
-                f"{source_class_counts[key]} {source_labels.get(key, key)}"
+                f"{source_class_counts[key]} {SOURCE_CLASS_LABELS.get(key, key)}"
                 for key in (*source_order, *sorted(set(source_class_counts) - set(source_order)))
-                if source_class_counts.get(key, 0)
             )
 
-            fold_labels = {
-                "valid_legacy_rotation": "valid legacy",
-                "incident_lineage": "incident lineage",
-                "post_incident_rotation": "post-incident rotation",
-                "pinned_exception": "pinned",
-            }
-            fold_order = tuple(fold_labels)
+            fold_order = tuple(FOLD_CLASS_LABELS)
             fold_class_counts_str = "/".join(
-                f"{fold_class_counts[key]} {fold_labels.get(key, key)}"
+                f"{fold_class_counts[key]} {FOLD_CLASS_LABELS.get(key, key)}"
                 for key in (*fold_order, *sorted(set(fold_class_counts) - set(fold_order)))
-                if fold_class_counts.get(key, 0)
             )
 
             line_classes_parts = []
@@ -684,7 +684,12 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
             for pair in observed_incident_tail_pairs:
                 evidence_md.append(f"| `{pair['prev']}` | `{pair['next']}` |")
             evidence_md.append("")
-            if incident_tail_reaches_active:
+            if start_node is None:
+                evidence_md.append(
+                    "The historical 1450Z incident-tail start source is not present "
+                    "in this inventory; no incident-tail boundary is asserted."
+                )
+            elif incident_tail_reaches_active:
                 evidence_md.append(
                     "This exact-overlap component reaches the active log. It is "
                     "generated from verified adjacent fold diagnostics; superseded "

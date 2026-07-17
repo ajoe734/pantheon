@@ -218,9 +218,30 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         self.assertIn("source_class_counts", summary)
         self.assertIn("fold_class_counts", summary)
         self.assertIn("line_count_classes", summary)
-        self.assertEqual(summary["source_class_counts"], {"legacy_ts_std": 5, "active": 1})
-        self.assertEqual(summary["fold_class_counts"], {"incident_lineage": 4})
+        self.assertEqual(
+            summary["source_class_counts"],
+            {
+                "legacy_ts_std": 5,
+                "legacy_ts_old": 0,
+                "content_addressed": 0,
+                "active": 1,
+            },
+        )
+        self.assertEqual(
+            summary["fold_class_counts"],
+            {
+                "valid_legacy_rotation": 0,
+                "incident_lineage": 4,
+                "post_incident_rotation": 0,
+                "pinned_exception": 0,
+            },
+        )
         self.assertEqual(summary["line_count_classes"], {"1000": 4})
+        evidence_text = (
+            self.status_root / "evidence" / "evidence.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("0 content addressed", evidence_text)
+        self.assertIn("0 post-incident rotation", evidence_text)
 
     def test_fails_on_missing_incident_fold(self):
         # Setup files but WITHOUT the overlap so that folding fails
@@ -523,13 +544,11 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         f7 = self.archive_dir / "ai-activity-log.jsonl-2026-07-17T1754Z.gz"
         self._write_gz(f5, predecessor_overlap + active_entries)
         self._write_gz(f6, active_entries + [{"event_id": "f6-terminal"}])
-        self._write_gz(
-            f7,
-            [
-                {"event_id": "disjoint-successor-0"},
-                {"event_id": "disjoint-successor-1"},
-            ],
-        )
+        disjoint_successor_entries = [
+            {"event_id": f"disjoint-successor-{index}"}
+            for index in range(1001)
+        ]
+        self._write_gz(f7, disjoint_successor_entries)
         self.log_path.write_text(
             json.dumps({"event_id": "disjoint-active"}) + "\n",
             encoding="utf-8",
@@ -557,6 +576,27 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
                 "successor_source": f7.name,
                 "successor_class": "legacy_ts_std",
             },
+        )
+        self.assertFalse(
+            any(
+                fold["prev_source"] == f6.name
+                and fold["next_source"] == f7.name
+                for fold in summary["folds_details"]
+            )
+        )
+        logical_event_ids = {
+            entry["event_id"]
+            for entry, _source, _line in common.stream_logical_activity(
+                self.log_path
+            )
+            if entry.get("event_id")
+        }
+        self.assertIn("f6-terminal", logical_event_ids)
+        self.assertTrue(
+            {
+                entry["event_id"]
+                for entry in disjoint_successor_entries
+            }.issubset(logical_event_ids)
         )
         evidence_text = (self.status_root / "evidence" / "evidence.md").read_text(
             encoding="utf-8"
@@ -701,6 +741,11 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         )
         self.assertIn(self.pinned_exception.predecessor_payload_sha256, evidence_text)
         self.assertIn(self.pinned_exception.successor_payload_sha256, evidence_text)
+        self.assertIn(
+            "1450Z incident-tail start source is not present",
+            evidence_text,
+        )
+        self.assertNotIn("validated disjoint successor `None`", evidence_text)
 
     def test_production_pinned_registry_metadata_is_exact(self):
         self.assertEqual(len(self.production_pinned_registry), 1)
