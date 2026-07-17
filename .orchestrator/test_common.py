@@ -117,6 +117,14 @@ class JsonLoadResilienceTests(unittest.TestCase):
                 "ORCH_TASK_ID",
                 "ORCH_RUNNER_STATUS_PATH",
                 "ORCH_HEARTBEAT_PATH",
+                "PANTHEON_COMMAND_ROOT",
+                "PANTHEON_COMMAND_RUNTIME_SHA",
+                "PANTHEON_COMMAND_REMOTE",
+                "PANTHEON_COMMAND_BASE_REF",
+                "PANTHEON_STATUS_COMMAND_ROOT",
+                "PANTHEON_STATUS_COMMAND_SHA",
+                "PANTHEON_STATUS_COMMAND_REMOTE",
+                "PANTHEON_STATUS_COMMAND_BASE_REF",
             ):
                 env.pop(env_name, None)
             env["PANTHEON_STATUS_ROOT"] = str(status_root)
