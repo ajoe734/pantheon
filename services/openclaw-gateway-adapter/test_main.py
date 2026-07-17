@@ -1778,6 +1778,122 @@ class TestGovernedServantAgentSync(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["group"], 1000)
         self.assertEqual(run.call_args.kwargs["env"]["HOME"], "/home/node")
 
+    def _opinion_payload(self):
+        persona_id = "persona-alpha"
+        persona_version = "persona-alpha-v4"
+        snapshot_id = "snapshot-alpha-v9"
+        agent_id = adapter_main._persona_opinion_agent_id(
+            persona_id, persona_version, snapshot_id
+        )
+        return {
+            "persona_id": persona_id,
+            "persona_version": persona_version,
+            "agent_id": agent_id,
+            "workspace_ref": f"/home/node/.openclaw/workspaces/{agent_id}",
+            "capability_snapshot_id": snapshot_id,
+            "allowed_capabilities": ["persona_opinion"],
+            "environment_ceiling": "paper",
+            "execution_authority": "none",
+            "display_name": "Alpha",
+            "mandate": "trend",
+            "strategy_family": "momentum",
+            "traits": {"decision_style": "evidence-first"},
+        }
+
+    def test_persona_opinion_agent_requires_exact_frozen_admission(self):
+        payload = self._opinion_payload()
+        agent = {
+            "status": "created",
+            "agent_id": payload["agent_id"],
+            "workspace_ref": payload["workspace_ref"],
+        }
+        headers = {
+            **self._HEADERS,
+            "Idempotency-Key": "persona-opinion-agent-1",
+            "X-Request-Id": "persona-opinion-request-1",
+        }
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent) as sync,
+        ):
+            accepted = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers=headers,
+            )
+            changed = {**payload, "workspace_ref": "/home/node/.openclaw/workspaces/main"}
+            denied = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=changed,
+                headers={**headers, "Idempotency-Key": "persona-opinion-agent-2"},
+            )
+
+        self.assertEqual(accepted.status_code, 201, accepted.text)
+        self.assertEqual(accepted.json()["execution_authority"], "none")
+        self.assertEqual(len(accepted.json()["admission_fingerprint"]), 64)
+        self.assertEqual(denied.status_code, 422, denied.text)
+        sync.assert_called_once()
+
+    def test_persona_provider_invocation_uses_only_previously_admitted_exact_agent(self):
+        payload = self._opinion_payload()
+        agent = {
+            "status": "created",
+            "agent_id": payload["agent_id"],
+            "workspace_ref": payload["workspace_ref"],
+        }
+        ensure_headers = {
+            **self._HEADERS,
+            "Idempotency-Key": "persona-opinion-agent-invoke",
+            "X-Request-Id": "persona-opinion-request-invoke",
+        }
+        invocation_admission = {
+            key: payload[key]
+            for key in (
+                "persona_id", "persona_version", "agent_id", "workspace_ref",
+                "capability_snapshot_id", "allowed_capabilities",
+                "environment_ceiling", "execution_authority",
+            )
+        }
+        provider_result = MagicMock()
+        provider_result.to_dict.return_value = {
+            "provider": "openclaw",
+            "mode": "user",
+            "status": "completed",
+            "output": {"agent_id": payload["agent_id"], "json_events": []},
+        }
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent),
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke", return_value=provider_result) as invoke,
+        ):
+            ensured = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers=ensure_headers,
+            )
+            invoked = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                json={
+                    "mode": "user",
+                    "prompt": "Return opinion JSON",
+                    "context_pack": {},
+                    "metadata": {"allowed_tools": []},
+                    "agent_id": payload["agent_id"],
+                    "persona_admission": invocation_admission,
+                },
+                headers={
+                    "X-Pantheon-Service-Token": "adapter-secret",
+                    "X-Operator-Id": "operator-1",
+                },
+            )
+
+        self.assertEqual(ensured.status_code, 201, ensured.text)
+        self.assertEqual(invoked.status_code, 200, invoked.text)
+        self.assertEqual(invoke.call_args.kwargs["agent_id"], payload["agent_id"])
+        self.assertEqual(invoke.call_args.kwargs["metadata"]["allowed_tools"], [])
+        self.assertEqual(invoke.call_args.kwargs["metadata"]["execution_authority"], "none")
+        self.assertFalse(invoke.call_args.kwargs["metadata"]["persona_memory_mutated"])
+
 
 class TestSessions(unittest.TestCase):
     def test_list_sessions_degraded_when_upstream_absent(self):

@@ -56,7 +56,7 @@ from typing import Any, Dict, Iterator, List, Optional
 import httpx
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from integrations.openclaw.search_gateway import OpenClawSearchGateway, SearchPolicyError as OpenClawSearchPolicyError
 from services.knowledge.evidence import JsonlEvidenceRepository
@@ -807,13 +807,45 @@ def get_assistant_credentials() -> Dict[str, Any]:
 # Assistant readiness
 # ---------------------------------------------------------------------------
 
+class PersonaOpinionInvocationAdmission(BaseModel):
+    """Exact adapter-side proof for selecting a governed Persona agent."""
+
+    model_config = {"extra": "forbid"}
+
+    persona_id: str
+    persona_version: str
+    agent_id: str
+    workspace_ref: str
+    capability_snapshot_id: str
+    allowed_capabilities: List[str]
+    environment_ceiling: str
+    execution_authority: str
+
+    @model_validator(mode="after")
+    def validate_exact_admission(self) -> "PersonaOpinionInvocationAdmission":
+        _validate_persona_opinion_admission(self.model_dump(mode="json"))
+        return self
+
+
 class AssistantProviderInvokeRequest(BaseModel):
     mode: str = "user"
     prompt: str
+    agent_id: Optional[str] = None
+    persona_admission: Optional[PersonaOpinionInvocationAdmission] = None
     context_pack: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     messages: Optional[List[Dict[str, Any]]] = None
     attachments: Optional[List[Dict[str, Any]]] = None
+
+    @model_validator(mode="after")
+    def validate_agent_selection(self) -> "AssistantProviderInvokeRequest":
+        if self.agent_id is None and self.persona_admission is None:
+            return self
+        if self.agent_id is None or self.persona_admission is None:
+            raise ValueError("agent_id and persona_admission must be supplied together")
+        if self.agent_id != self.persona_admission.agent_id:
+            raise ValueError("agent_id does not match the governed Persona admission")
+        return self
 
 
 class AssistantSkillAuthorizeRequest(BaseModel):
@@ -1437,6 +1469,48 @@ def invoke_openclaw_provider(
     if x_trace_id:
         metadata.setdefault("trace_id", x_trace_id)
     mode = str(req.mode or "user").strip().lower() or "user"
+    if req.persona_admission is not None:
+        if mode != "user":
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "status": "provider_error",
+                    "error_code": "PERSONA_OPINION_MODE_DENIED",
+                    "message": "Governed Persona opinion agents may only run in user mode.",
+                },
+            )
+        try:
+            _assert_persona_opinion_admitted(req.persona_admission)
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "status": "provider_error",
+                    "error_code": "PERSONA_OPINION_ADMISSION_DENIED",
+                    "message": str(exc),
+                },
+            )
+        requested_tools = metadata.get("allowed_tools")
+        if requested_tools not in (None, []):
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "status": "provider_error",
+                    "error_code": "PERSONA_OPINION_TOOL_AUTHORITY_DENIED",
+                    "message": "Governed Persona opinion invocation has an empty tool allowlist.",
+                },
+            )
+        metadata.update({
+            "allowed_tools": [],
+            "execution_authority": "none",
+            "order_submitted": False,
+            "broker_called": False,
+            "capital_changed": False,
+            "runtime_bound": False,
+            "lifecycle_promoted": False,
+            "policy_mutated": False,
+            "persona_memory_mutated": False,
+        })
     if delegates_kernel_mode_to_codex(mode):
         try:
             result = _invoke_codex_runtime(req, metadata=metadata, mode=mode)
@@ -1455,15 +1529,17 @@ def invoke_openclaw_provider(
             },
         )
     try:
-        result = _OPENCLAW_AGENT_PROVIDER.invoke(
-            req.prompt,
-            mode=mode,
-            context_pack=req.context_pack or {},
-            metadata=metadata,
-            messages=req.messages,
-            operator_id=x_operator_id.strip(),
-            trace_id=x_trace_id,
-        )
+        invoke_kwargs: Dict[str, Any] = {
+            "mode": mode,
+            "context_pack": req.context_pack or {},
+            "metadata": metadata,
+            "messages": req.messages,
+            "operator_id": x_operator_id.strip(),
+            "trace_id": x_trace_id,
+        }
+        if req.agent_id is not None:
+            invoke_kwargs["agent_id"] = req.agent_id
+        result = _OPENCLAW_AGENT_PROVIDER.invoke(req.prompt, **invoke_kwargs)
     except GatewayOpenClawProviderError as exc:
         return JSONResponse(
             status_code=200,
@@ -1888,6 +1964,8 @@ _FORBIDDEN_SERVANT_CAPABILITIES = frozenset(
     {"runtimebinding", "brokerorder", "capitalbinding"}
 )
 _ALLOWED_SERVANT_CAPABILITIES = frozenset({"personaopinion"})
+_PERSONA_OPINION_AGENT_PREFIX = "persona-opinion-"
+_PERSONA_OPINION_ENVIRONMENTS = frozenset({"analysis", "research", "shadow", "paper"})
 
 
 class OpenClawAgentCapabilitySnapshot(BaseModel):
@@ -1905,8 +1983,65 @@ class OpenClawAgentEnsureRequest(BaseModel):
     capability_snapshot: OpenClawAgentCapabilitySnapshot
 
 
+class OpenClawPersonaOpinionEnsureRequest(BaseModel):
+    """Frozen Persona/version/capability admission for an advice-only agent."""
+
+    model_config = {"extra": "forbid"}
+
+    persona_id: str
+    persona_version: str
+    agent_id: str
+    workspace_ref: str
+    capability_snapshot_id: str
+    allowed_capabilities: List[str]
+    environment_ceiling: str
+    execution_authority: str
+    display_name: str
+    mandate: Optional[str] = None
+    strategy_family: Optional[str] = None
+    traits: Dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_exact_admission(self) -> "OpenClawPersonaOpinionEnsureRequest":
+        _validate_persona_opinion_admission(self.model_dump(mode="json"))
+        return self
+
+
 def _normalized_capability(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def _persona_opinion_agent_id(
+    persona_id: str,
+    persona_version: str,
+    capability_snapshot_id: str,
+) -> str:
+    digest = hashlib.sha256(
+        f"{persona_id}\0{persona_version}\0{capability_snapshot_id}".encode("utf-8")
+    ).hexdigest()[:24]
+    return f"{_PERSONA_OPINION_AGENT_PREFIX}{digest}"
+
+
+def _validate_persona_opinion_admission(admission: Dict[str, Any]) -> None:
+    persona_id = str(admission.get("persona_id") or "").strip()
+    persona_version = str(admission.get("persona_version") or "").strip()
+    snapshot_id = str(admission.get("capability_snapshot_id") or "").strip()
+    agent_id = str(admission.get("agent_id") or "").strip()
+    if not persona_id or not persona_version or not snapshot_id:
+        raise ValueError("Persona id, version, and capability snapshot are required")
+    expected_agent_id = _persona_opinion_agent_id(persona_id, persona_version, snapshot_id)
+    if agent_id != expected_agent_id:
+        raise ValueError("agent_id does not match the frozen Persona admission")
+    if admission.get("allowed_capabilities") != ["persona_opinion"]:
+        raise ValueError("Persona opinion admission must grant exactly persona_opinion")
+    if str(admission.get("execution_authority") or "") != "none":
+        raise ValueError("Persona opinion admission must have execution_authority=none")
+    if str(admission.get("environment_ceiling") or "") not in _PERSONA_OPINION_ENVIRONMENTS:
+        raise ValueError("Persona opinion admission exceeds the advisory environment ceiling")
+    expected_workspace = (_OPENCLAW_AGENT_WORKSPACE_ROOT / agent_id).resolve()
+    workspace = Path(str(admission.get("workspace_ref") or "").strip()).resolve()
+    if workspace != expected_workspace or _OPENCLAW_AGENT_WORKSPACE_ROOT not in workspace.parents:
+        raise ValueError("workspace_ref does not match the frozen Persona agent")
 
 
 def _servant_agent_request(req: OpenClawAgentEnsureRequest) -> Dict[str, Any]:
@@ -2013,11 +2148,60 @@ def _sync_servant_agent(req: OpenClawAgentEnsureRequest) -> Dict[str, Any]:
     )
 
 
+def _persona_opinion_soul(req: OpenClawPersonaOpinionEnsureRequest) -> str:
+    """Render the immutable advice-only identity for one frozen Persona agent."""
+
+    traits = json.dumps(req.traits, sort_keys=True, ensure_ascii=False)
+    return f"""# Governed Persona opinion agent
+
+You are {req.display_name} (`{req.persona_id}`), frozen at Persona version
+`{req.persona_version}` and capability snapshot `{req.capability_snapshot_id}`.
+
+Mandate: {req.mandate or '(not specified)'}
+Strategy family: {req.strategy_family or '(not specified)'}
+Traits: {traits}
+
+Your only capability is `persona_opinion`. Respond to the supplied immutable
+context with the exact JSON schema requested by Pantheon. You have
+`execution_authority=none`: do not call tools, submit orders, contact brokers,
+change capital, bind runtime, promote lifecycle, mutate policy, or read/write
+Persona memory. Never claim that any recommendation was executed.
+"""
+
+
+def _sync_persona_opinion_agent(req: OpenClawPersonaOpinionEnsureRequest) -> Dict[str, Any]:
+    persona = {
+        "persona_id": req.agent_id,
+        "name": req.display_name,
+        "mandate": req.mandate or "governed_persona_opinion",
+        "strategy_family": req.strategy_family or "governed_persona_opinion",
+        "lifecycle_state": "active",
+        "workspace_ref": req.workspace_ref,
+        "traits": req.traits,
+        "metadata": {
+            "execution_authority": "none",
+            "interaction_capabilities": ["persona_opinion"],
+            "source_persona_id": req.persona_id,
+            "source_persona_version": req.persona_version,
+            "capability_snapshot_id": req.capability_snapshot_id,
+        },
+    }
+
+    def constrained_soul_writer(workspace: str, _generic_soul: str) -> None:
+        _gateway_state_soul_writer(workspace, _persona_opinion_soul(req))
+
+    return ensure_agora_servant_agent(
+        persona,
+        runner=_gateway_state_agent_runner,
+        soul_writer=constrained_soul_writer,
+    )
+
+
 class _AgentEnsureIdempotencyConflict(RuntimeError):
     pass
 
 
-def _agent_ensure_fingerprint(req: OpenClawAgentEnsureRequest) -> str:
+def _agent_ensure_fingerprint(req: BaseModel) -> str:
     canonical = json.dumps(
         req.model_dump(mode="json"),
         sort_keys=True,
@@ -2027,10 +2211,11 @@ def _agent_ensure_fingerprint(req: OpenClawAgentEnsureRequest) -> str:
 
 
 def _ensure_agent_idempotently(
-    req: OpenClawAgentEnsureRequest,
+    req: BaseModel,
     *,
     idempotency_key: str,
     request_id: str,
+    sync_fn: Optional[Any] = None,
 ) -> tuple[int, Dict[str, Any]]:
     """Serialize reconciliation and durably replay an exact request.
 
@@ -2077,7 +2262,7 @@ def _ensure_agent_idempotently(
             connection.commit()
             return int(replay_status), payload
 
-        agent = _sync_servant_agent(req)
+        agent = (sync_fn or _sync_servant_agent)(req)
         status_code = 201 if agent.get("status") == "created" else 200
         payload = {
             "status": "ok",
@@ -2105,6 +2290,70 @@ def _ensure_agent_idempotently(
         raise
     finally:
         connection.close()
+
+
+def _persona_admission_fingerprint(admission: Dict[str, Any]) -> str:
+    selected = {
+        key: admission.get(key)
+        for key in (
+            "persona_id",
+            "persona_version",
+            "agent_id",
+            "workspace_ref",
+            "capability_snapshot_id",
+            "allowed_capabilities",
+            "environment_ceiling",
+            "execution_authority",
+        )
+    }
+    return hashlib.sha256(
+        json.dumps(selected, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _record_persona_opinion_admission(req: OpenClawPersonaOpinionEnsureRequest) -> str:
+    fingerprint = _persona_admission_fingerprint(req.model_dump(mode="json"))
+    _OPENCLAW_AGENT_IDEMPOTENCY_DB.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(_OPENCLAW_AGENT_IDEMPOTENCY_DB), timeout=10.0) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS persona_opinion_admissions (
+                agent_id TEXT PRIMARY KEY,
+                admission_fingerprint TEXT NOT NULL
+            )
+            """
+        )
+        existing = connection.execute(
+            "SELECT admission_fingerprint FROM persona_opinion_admissions WHERE agent_id = ?",
+            (req.agent_id,),
+        ).fetchone()
+        if existing is not None and str(existing[0]) != fingerprint:
+            raise _AgentEnsureIdempotencyConflict(
+                "Persona opinion agent was already admitted with different frozen claims"
+            )
+        connection.execute(
+            """
+            INSERT INTO persona_opinion_admissions (agent_id, admission_fingerprint)
+            VALUES (?, ?)
+            ON CONFLICT(agent_id) DO UPDATE SET admission_fingerprint = excluded.admission_fingerprint
+            """,
+            (req.agent_id, fingerprint),
+        )
+    return fingerprint
+
+
+def _assert_persona_opinion_admitted(admission: PersonaOpinionInvocationAdmission) -> None:
+    fingerprint = _persona_admission_fingerprint(admission.model_dump(mode="json"))
+    try:
+        with sqlite3.connect(str(_OPENCLAW_AGENT_IDEMPOTENCY_DB), timeout=2.0) as connection:
+            row = connection.execute(
+                "SELECT admission_fingerprint FROM persona_opinion_admissions WHERE agent_id = ?",
+                (admission.agent_id,),
+            ).fetchone()
+    except (sqlite3.Error, OSError) as exc:
+        raise ValueError("Persona opinion admission store is unavailable") from exc
+    if row is None or str(row[0]) != fingerprint:
+        raise ValueError("Persona opinion agent has not passed exact governed admission")
 
 
 @app.post("/api/openclaw-adapter/agents/ensure")
@@ -2155,6 +2404,63 @@ def ensure_servant_agent(
                 "message": str(exc)[:300],
             },
         )
+    return JSONResponse(status_code=status_code, content=payload)
+
+
+@app.post("/api/openclaw-adapter/agents/persona-opinion/ensure")
+def ensure_persona_opinion_agent(
+    req: OpenClawPersonaOpinionEnsureRequest,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+) -> JSONResponse:
+    """Admit and reconcile one immutable, advice-only Persona agent."""
+
+    if not str(idempotency_key or "").strip() or not str(x_request_id or "").strip():
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "invalid_request",
+                "error_code": "AGENT_SYNC_HEADERS_REQUIRED",
+                "message": "Idempotency-Key and X-Request-Id are required.",
+            },
+        )
+    try:
+        status_code, payload = _ensure_agent_idempotently(
+            req,
+            idempotency_key=str(idempotency_key).strip(),
+            request_id=str(x_request_id).strip(),
+            sync_fn=_sync_persona_opinion_agent,
+        )
+        fingerprint = _record_persona_opinion_admission(req)
+    except _AgentEnsureIdempotencyConflict as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "status": "conflict",
+                "error_code": "AGENT_SYNC_IDEMPOTENCY_CONFLICT",
+                "message": str(exc),
+            },
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "invalid_request",
+                "error_code": "PERSONA_OPINION_ADMISSION_DENIED",
+                "message": str(exc),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "upstream_unavailable",
+                "error_code": "OPENCLAW_PERSONA_AGENT_SYNC_FAILED",
+                "message": str(exc)[:300],
+            },
+        )
+    payload["admission_fingerprint"] = fingerprint
+    payload["execution_authority"] = "none"
     return JSONResponse(status_code=status_code, content=payload)
 
 

@@ -261,3 +261,69 @@ def test_servant_agent_ensure_rejects_unbound_admission_before_network() -> None
 
     assert captured.value.error_code == "OPENCLAW_AGENT_ADMISSION_INVALID"
     urlopen.assert_not_called()
+
+
+def test_persona_opinion_ensure_and_invoke_send_exact_agent_admission() -> None:
+    captured: list[dict[str, object]] = []
+    admission = {
+        "persona_id": "alpha",
+        "persona_version": "alpha-v2",
+        "agent_id": "persona-opinion-0123456789abcdef01234567",
+        "workspace_ref": "/home/node/.openclaw/workspaces/persona-opinion-0123456789abcdef01234567",
+        "capability_snapshot_id": "snapshot-alpha-v2",
+        "allowed_capabilities": ["persona_opinion"],
+        "environment_ceiling": "paper",
+        "execution_authority": "none",
+    }
+
+    class _Response:
+        def __init__(self, status, payload):
+            self.status = status
+            self.payload = payload
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return None
+        def getcode(self):
+            return self.status
+        def read(self):
+            return json.dumps(self.payload).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        body = json.loads(request.data.decode("utf-8"))
+        captured.append({"url": request.full_url, "body": body, "headers": _headers(request), "timeout": timeout})
+        if request.full_url.endswith("/agents/persona-opinion/ensure"):
+            return _Response(201, {
+                "status": "ok",
+                "execution_authority": "none",
+                "agent": {"agent_id": admission["agent_id"]},
+            })
+        return _Response(200, {"status": "ok", "data": {"status": "completed"}})
+
+    client = OpenClawOpsClient(
+        base_url="http://openclaw-gateway-adapter:8104",
+        service_token="adapter-secret",
+        service_auth_required=True,
+    )
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        client.ensure_persona_opinion_agent(
+            admission,
+            persona_profile={"name": "Alpha", "mandate": "trend"},
+        )
+        client.invoke_assistant_provider(
+            provider="openclaw",
+            mode="user",
+            prompt="opinion",
+            context_pack={"participant": {"persona_id": "alpha"}},
+            operator_id="operator-1",
+            agent_id=admission["agent_id"],
+            persona_admission=admission,
+        )
+
+    ensure_body = captured[0]["body"]
+    invoke_body = captured[1]["body"]
+    assert ensure_body["agent_id"] == admission["agent_id"]
+    assert ensure_body["allowed_capabilities"] == ["persona_opinion"]
+    assert invoke_body["agent_id"] == admission["agent_id"]
+    assert invoke_body["persona_admission"] == admission
+    assert captured[0]["headers"]["x-pantheon-service-token"] == "adapter-secret"
