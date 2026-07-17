@@ -1,12 +1,14 @@
 # OPS-ACTIVITY-READER-HARDENING-001 Evidence
 
 Status: pre-review evidence for draft PR #3800. The validated reader code
-anchor is `fb2d4d1be69ee1f8908229fc8ab789e7b947fc86`; the task branch then
-merged `origin/dev` at `b027817c93f8be079e3bc93f4fc4414c8024e57e` without an
-owned-file conflict, producing integration head
-`8260649cd86c57636b66897f5f1f8dcec791e891`. Delivery remains blocked on
-prerequisite PR #3797 and a final Claude exact-head approval. Auto-merge
-remains disabled.
+anchor is `fb2d4d1be69ee1f8908229fc8ab789e7b947fc86`. Subsequent `origin/dev`
+heads `b027817c93f8be079e3bc93f4fc4414c8024e57e` and
+`cb938a1d41b85baf6e40a0ecc4fb4133f42c5ccf` merged without an owned-file
+conflict, producing integration head
+`848e00a57e0dc140c6a5126c3e8c80caaf3ed1e6`. The latest merge preserves
+`dev`'s restored four-digit `legacy_ts_std` classifier alongside the reader
+changes. Delivery remains blocked on prerequisite PR #3797 and a final Claude
+exact-head approval. Auto-merge remains disabled.
 
 ## Owned Scope
 
@@ -122,7 +124,8 @@ git diff --check "$(git merge-base origin/dev HEAD)" HEAD
 
 Results:
 
-- common: 78 tests passed in 19.720 seconds
+- common: 78 tests passed in 18.372 seconds at the latest `dev` integration
+  head
 - inventory plus status guard: 39 passed, 1 opt-in skip, 10 subtests passed in
   11.82 seconds
 - pending-intent recovery: 35 passed, 51 subtests passed in 11.40 seconds
@@ -173,8 +176,8 @@ Those changes are deliberately not copied into this branch.
 
 ### Current exact-head dry composition
 
-A disposable worktree at reader integration head
-`8260649cd86c57636b66897f5f1f8dcec791e891` merged #3797 exact head
+A disposable worktree at the latest reader integration head
+`848e00a57e0dc140c6a5126c3e8c80caaf3ed1e6` merged #3797 exact head
 `6872ab1d1d94605770817b99652c37842af2d95f` without committing. Three content
 conflicts were resolved as a semantic union only in that worktree:
 
@@ -182,12 +185,13 @@ conflicts were resolved as a semantic union only in that worktree:
   snapshot, and generic 999-overlap rejection;
 - add `ActivityAuditInvariantError` and raise its structured diagnostic from
   the rewritten loop using `source_idx` and `source_class`;
+- retain latest `dev`'s `^.+\.jsonl-\d{4}\.gz$` `legacy_ts_std` classifier;
 - retain both tasks' test imports and `ai_status` imports.
 
 Results on that exact composition:
 
-- common: 79 tests passed in 17.077 seconds
-- full isolated status suite: 77 tests passed in 7.140 seconds
+- common: 79 tests passed in 18.974 seconds
+- full isolated status suite: 77 tests passed in 8.316 seconds
 - `py_compile`, staged `diff --check`, and unstaged `diff --check`: passed
 
 The merge was aborted and the disposable worktree/root removed. This proves
