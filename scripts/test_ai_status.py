@@ -3721,15 +3721,18 @@ class ActivityLogRotationTests(unittest.TestCase):
         assert archive is not None
         self.assertTrue(archive.exists())
         self.assertTrue(str(archive).endswith(".gz"))
-        # The active log now holds just the tail
+        # The active log now holds a lineage-head control record plus the tail.
         active_lines = log_path.read_bytes().splitlines()
-        self.assertEqual(len(active_lines), 8)
+        self.assertEqual(len(active_lines), 9)
+        control = json.loads(active_lines[0])
+        self.assertEqual(control["record_type"], "pantheon.activity.lineage_head.v1")
+        self.assertEqual(len(active_lines[1:]), 8)
         # The gzip archive and active tail form one disjoint audit corpus.
         import gzip as _gz
         with _gz.open(archive, "rb") as fh:
             archived = fh.read().splitlines()
         self.assertEqual(len(archived), 92)
-        self.assertEqual(len(archived) + len(active_lines), 100)
+        self.assertEqual(len(archived) + len(active_lines[1:]), 100)
 
     def test_rotation_preserves_stable_sidecar_inode(self) -> None:
         log_path = self._make_log(line_count=80)
@@ -3759,8 +3762,9 @@ class ActivityLogRotationTests(unittest.TestCase):
         ):
             ai_status.append_log({"ts": "2026-05-18T00:00:00Z", "msg": "new entry"})
         active_lines = log_path.read_text(encoding="utf-8").splitlines()
-        # 4 kept tail lines + 1 new = 5
-        self.assertEqual(len(active_lines), 5)
+        # 1 lineage-head control + 4 kept tail lines + 1 new = 6
+        self.assertEqual(len(active_lines), 6)
+        self.assertEqual(json.loads(active_lines[0])["record_type"], "pantheon.activity.lineage_head.v1")
         self.assertIn("new entry", active_lines[-1])
         archive_dir = log_path.parent / "archive" / "logs"
         archives = list(archive_dir.glob("*.gz"))
