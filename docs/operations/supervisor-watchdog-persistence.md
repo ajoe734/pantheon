@@ -92,6 +92,35 @@ tail -n 40 .orchestrator/logs/supervisor-watchdog-cron.log 2>/dev/null || true
 jq '.last_decision' .orchestrator/watchdog-state.json
 ```
 
+## Lock Contention & Single-Flight Behavior
+
+To prevent supervisor watchdog processes from queuing up and accumulating under lock contention (e.g., when `runtime-admission.lock` is held for a long time by a running supervisor or other worker loops), the watchdog implements a bounded, nonblocking single-flight protocol:
+
+1. **Nonblocking Contention Detection**:
+   - The watchdog attempts to acquire the `runtime-admission.lock` using a nonblocking lock.
+   - If the lock is already held, it immediately returns with a `skip` decision and the `lock_contention` reason without blocking or waiting.
+
+2. **Zero Locked-State Writes & Drop-Safe Metrics**:
+   - Under contention, the watchdog does not attempt to write to the main `watchdog-state.json` or `metrics.jsonl` files (which would trigger blocking writes).
+   - Instead, it attempts a nonblocking write to `.orchestrator/metrics/supervisor-watchdog-contention.jsonl` using a separate `.lock` file.
+   - If the contention metrics lock is also contended, the metric write is dropped and a message is written to `sys.stderr` to prevent secondary blocking loops.
+
+3. **Diagnostics & JSON Contract**:
+   - When run with `--json`, a contended watchdog probe exits with code `0` and outputs a structured JSON contract detailing the contention event:
+     ```json
+     {
+       "decision": "skip",
+       "reason": "lock_contention",
+       "pid": 123,
+       "new_pid": null,
+       "heartbeat_age_seconds": 45.0,
+       "resource": { ... },
+       "lock_held": true
+     }
+     ```
+   - Standard exit code for a contended run is `0` (since it is a recognized and handled operational state rather than a script crash).
+   - Under systemd or cron, multiple overlapping ticks will exit instantly instead of stacking up.
+
 ## Acceptance For Auto Worker Readiness
 
 Supervisor/auto-worker readiness is not satisfied until all of these are true:
