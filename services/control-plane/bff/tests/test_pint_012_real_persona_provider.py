@@ -5,9 +5,13 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from agora.interaction.runner import run_selected_persona_interaction
+from agora.interaction.provider import build_participant_admission
+from agora.interaction.router import SubmitInteractionRequest
 from openclaw_ops_client import OpenClawOpsClientError
 
 
@@ -168,10 +172,16 @@ def test_each_frozen_persona_invokes_a_distinct_admitted_agent_with_exact_contex
     for call in provider.calls:
         context = call["context_pack"]
         admission = call["persona_admission"]
+        frozen = context["frozen_persona_profile"]
         assert call["agent_id"] == context["participant"]["provider_agent_id"]
         assert admission["persona_version"] == context["participant"]["persona_version"]
+        assert admission["tenant_id"] == "pantheon-dev"
+        assert admission["requested_environment"] == "paper"
+        assert admission["display_name"] == frozen["display_name"]
+        assert admission["mandate"] == frozen["mandate"]
+        assert admission["archetype"] == frozen["archetype"]
+        assert admission["strategy_family"] == frozen["strategy_family"]
         assert context["context_refs"][0]["version_id"] == "v9"
-        frozen = context["frozen_persona_profile"]
         assert frozen["persona_id"] == context["participant"]["persona_id"]
         assert frozen["persona_version"] == context["participant"]["persona_version"]
         assert frozen["display_name"]
@@ -184,6 +194,34 @@ def test_each_frozen_persona_invokes_a_distinct_admitted_agent_with_exact_contex
     offered = [event for event in workshop.events if event["event_type"] == "opinion_offered"]
     assert len(offered) == 2
     assert all("priv-content-stub" not in event["private_content_ref"] for event in offered)
+
+
+def test_exact_admission_rejects_cross_tenant_and_environment_above_ceiling():
+    persona = ReadStore().list_personas()[0]
+    snapshot = ReadStore().get_capability_snapshot_for_persona("alpha")
+    with pytest.raises(ValueError, match="tenant"):
+        build_participant_admission(
+            persona=persona, capability_snapshot=snapshot, environment="paper",
+            tenant_id="other-tenant", captured_at="2026-07-17T10:00:00Z",
+        )
+    with pytest.raises(ValueError, match="ceiling"):
+        build_participant_admission(
+            persona={**persona, "environment_ceiling": "research"},
+            capability_snapshot=snapshot, environment="paper",
+            tenant_id="pantheon-dev", captured_at="2026-07-17T10:00:00Z",
+        )
+
+
+def test_submit_rejects_duplicate_persona_ids_before_any_provider_side_effect():
+    with pytest.raises(ValueError, match="must be unique"):
+        SubmitInteractionRequest.model_validate({
+            "workshop_id": "ws-1",
+            "mode": "challenge",
+            "environment": "paper",
+            "topic": "Challenge this thesis",
+            "participant_persona_ids": ["alpha", "alpha"],
+            "context_refs": [{"type": "strategy", "id": "strategy-1", "version_id": "v9"}],
+        })
 
 
 def test_partial_provider_failure_preserves_success_and_never_forges_missing_opinion():

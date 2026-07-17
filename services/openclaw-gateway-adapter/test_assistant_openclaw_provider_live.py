@@ -287,6 +287,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         result = provider.invoke(
             "Return opinion JSON",
             agent_id="persona-opinion-0123456789abcdef01234567",
+            session_id="fresh-persona-session-1",
             operator_id="op-1",
         )
 
@@ -295,6 +296,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             cmd[cmd.index("--agent") + 1],
             "persona-opinion-0123456789abcdef01234567",
         )
+        self.assertEqual(cmd[cmd.index("--session-id") + 1], "fresh-persona-session-1")
         self.assertEqual(
             result.output["agent_id"],
             "persona-opinion-0123456789abcdef01234567",

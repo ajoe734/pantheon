@@ -14,7 +14,8 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 
-ADVISORY_ENVIRONMENTS = frozenset({"analysis", "research", "shadow", "paper"})
+ADVISORY_ENVIRONMENT_ORDER = ("analysis", "research", "shadow", "paper")
+ADVISORY_ENVIRONMENTS = frozenset(ADVISORY_ENVIRONMENT_ORDER)
 PERSONA_WORKSPACE_ROOT = "/home/node/.openclaw/workspaces"
 
 
@@ -138,6 +139,7 @@ def build_participant_admission(
     persona: Dict[str, Any],
     capability_snapshot: Dict[str, Any],
     environment: str,
+    tenant_id: str,
     captured_at: str,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
     persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
@@ -150,6 +152,13 @@ def build_participant_admission(
         or capability_snapshot.get("allowed_capabilities")
         or []
     )
+    persona_tenant_id = str(persona.get("tenant_id") or "").strip()
+    lifecycle = str(persona.get("lifecycle_state") or "").strip().lower()
+    requested_environment = str(environment or "").strip().lower()
+    if not tenant_id or persona_tenant_id != tenant_id:
+        raise ValueError("Persona tenant does not match the interaction tenant")
+    if lifecycle not in {"active", "paper_running", "paper_only"}:
+        raise ValueError("Persona lifecycle is not operational")
     if not persona_id or snapshot_persona_id != persona_id or not snapshot_id:
         raise ValueError("Persona capability snapshot identity is incomplete or mismatched")
     if capabilities != ["persona_opinion"]:
@@ -158,23 +167,32 @@ def build_participant_admission(
     ceiling = str(
         persona.get("environment_ceiling") or metadata.get("environment_ceiling") or ""
     ).strip().lower()
-    if environment not in ADVISORY_ENVIRONMENTS or ceiling not in ADVISORY_ENVIRONMENTS:
+    if requested_environment not in ADVISORY_ENVIRONMENTS or ceiling not in ADVISORY_ENVIRONMENTS:
         raise ValueError("Persona opinion environment exceeds the advisory ceiling")
+    if ADVISORY_ENVIRONMENT_ORDER.index(requested_environment) > ADVISORY_ENVIRONMENT_ORDER.index(ceiling):
+        raise ValueError("Requested environment exceeds the Persona advisory ceiling")
     persona_version = _persona_version(persona)
     digest = hashlib.sha256(
-        f"{persona_id}\0{persona_version}\0{snapshot_id}".encode("utf-8")
+        f"{tenant_id}\0{persona_id}\0{persona_version}\0{snapshot_id}\0{requested_environment}".encode("utf-8")
     ).hexdigest()[:24]
     agent_id = f"persona-opinion-{digest}"
     workspace_ref = f"{PERSONA_WORKSPACE_ROOT}/{agent_id}"
     admission = {
         "persona_id": persona_id,
+        "tenant_id": tenant_id,
         "persona_version": persona_version,
         "agent_id": agent_id,
         "workspace_ref": workspace_ref,
         "capability_snapshot_id": snapshot_id,
         "allowed_capabilities": ["persona_opinion"],
         "environment_ceiling": ceiling,
+        "requested_environment": requested_environment,
         "execution_authority": "none",
+        "display_name": persona.get("display_name") or persona.get("name") or persona_id,
+        "mandate": persona.get("mandate"),
+        "archetype": persona.get("archetype") or metadata.get("archetype"),
+        "strategy_family": persona.get("strategy_family"),
+        "traits": persona.get("traits") or metadata.get("traits") or {},
     }
     participant = {
         "persona_id": persona_id,

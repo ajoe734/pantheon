@@ -151,6 +151,7 @@ def run_selected_persona_interaction(
             persona=persona,
             capability_snapshot=snapshot,
             environment=environment,
+            tenant_id=tenant_id,
             captured_at=occurred_at,
         )
         frozen.append((persona, participant, admission))

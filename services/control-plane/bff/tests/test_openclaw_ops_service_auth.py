@@ -267,13 +267,20 @@ def test_persona_opinion_ensure_and_invoke_send_exact_agent_admission() -> None:
     captured: list[dict[str, object]] = []
     admission = {
         "persona_id": "alpha",
+        "tenant_id": "pantheon-dev",
         "persona_version": "alpha-v2",
         "agent_id": "persona-opinion-0123456789abcdef01234567",
         "workspace_ref": "/home/node/.openclaw/workspaces/persona-opinion-0123456789abcdef01234567",
         "capability_snapshot_id": "snapshot-alpha-v2",
         "allowed_capabilities": ["persona_opinion"],
         "environment_ceiling": "paper",
+        "requested_environment": "paper",
         "execution_authority": "none",
+        "display_name": "Alpha",
+        "mandate": "trend",
+        "archetype": "trend_follower",
+        "strategy_family": "momentum",
+        "traits": {"decision_style": "evidence-first"},
     }
 
     class _Response:

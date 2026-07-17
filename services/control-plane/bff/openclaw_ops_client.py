@@ -248,25 +248,10 @@ class OpenClawOpsClient:
     ) -> Dict[str, Any]:
         """Admit one frozen Persona snapshot to an advice-only OpenClaw agent."""
 
-        payload = {
-            **admission,
-            "display_name": str(
-                persona_profile.get("display_name")
-                or persona_profile.get("name")
-                or admission.get("persona_id")
-            ),
-            "mandate": persona_profile.get("mandate"),
-            "strategy_family": persona_profile.get("strategy_family"),
-            "traits": dict(
-                persona_profile.get("traits")
-                or (
-                    persona_profile.get("metadata")
-                    if isinstance(persona_profile.get("metadata"), dict)
-                    else {}
-                ).get("traits")
-                or {}
-            ),
-        }
+        # Identity is frozen by the BFF admission builder.  Do not rebuild it
+        # from a mutable Registry projection here: that would create a TOCTOU
+        # window between admission and agent reconciliation.
+        payload = dict(admission)
         idempotency_key = str(
             uuid.uuid5(
                 uuid.NAMESPACE_URL,

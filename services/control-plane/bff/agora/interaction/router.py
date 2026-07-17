@@ -54,6 +54,12 @@ class SubmitInteractionRequest(EligibilityRequest):
     participant_persona_ids: List[str] = Field(min_length=1)
     context_refs: List[ContextRef] = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def unique_participants(self) -> "SubmitInteractionRequest":
+        if len(self.participant_persona_ids) != len(set(self.participant_persona_ids)):
+            raise ValueError("participant_persona_ids must be unique")
+        return self
+
 
 class InteractionStore(ProposalStore):
     """Backward-compatible isolated store for unit tests."""
@@ -172,6 +178,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                         persona=persona,
                         capability_snapshot=snapshot or {},
                         environment=body.environment,
+                        tenant_id=resolved.tenant_id,
                         captured_at=utc_now(),
                     )
                 except ValueError:
