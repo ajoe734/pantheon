@@ -782,6 +782,7 @@ class TestArchiveReplayAudit(unittest.TestCase):
                 "LOOP-PROD-000",
                 "LOOP-PROD-001",
                 "LOOP-PROD-002",
+                "LOOP-PROD-DONE-GUARDRAIL-FINAL-REVIEW-001",
                 "LOOP-PROD-PLANNING-BRIEFS-001",
             },
         )
