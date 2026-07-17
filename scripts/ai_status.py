@@ -88,6 +88,7 @@ from runtime_state import (
     runtime_state_lock,
 )
 from common import (
+    DuplicateActivityJSONKeyError,
     activity_audit_lock_path,
     activity_audit_source_paths_unlocked,
     append_activity_log_entries_unlocked,
@@ -96,7 +97,8 @@ from common import (
     prepare_activity_audit_unlocked,
     read_activity_log_tail_bytes,
     rotate_activity_log_unlocked,
-    stream_logical_activity,
+    strict_activity_json_loads,
+    validated_activity_event_digests_unlocked,
 )
 
 # Derived dashboard rendering intentionally uses an atomic projection-only
@@ -1295,12 +1297,22 @@ def load_logs() -> list[dict[str, Any]]:
         if not line:
             continue
         try:
-            logs.append(json.loads(line))
+            entry = strict_activity_json_loads(line)
+        except DuplicateActivityJSONKeyError as exc:
+            raise RuntimeError(
+                f"ai-activity-log.jsonl line {line_no} contains {exc}"
+            ) from exc
         except json.JSONDecodeError as exc:
             print(
                 f"Warning: skipping malformed ai-activity-log.jsonl line {line_no}: {exc}",
                 file=sys.stderr,
             )
+            continue
+        if not isinstance(entry, dict):
+            raise RuntimeError(
+                f"ai-activity-log.jsonl line {line_no} is not an object row"
+            )
+        logs.append(entry)
     return logs
 
 
@@ -1512,13 +1524,22 @@ def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dic
         if not stripped:
             continue
         try:
-            entry = json.loads(stripped)
+            entry = strict_activity_json_loads(stripped)
+        except DuplicateActivityJSONKeyError as exc:
+            raise RuntimeError(
+                "ai-activity-log.jsonl tail line "
+                f"-{line_no} contains {exc}"
+            ) from exc
         except json.JSONDecodeError as exc:
             print(
                 f"Warning: skipping malformed ai-activity-log.jsonl tail line -{line_no}: {exc}",
                 file=sys.stderr,
             )
             continue
+        if not isinstance(entry, dict):
+            raise RuntimeError(
+                f"ai-activity-log.jsonl tail line -{line_no} is not an object row"
+            )
         if str(entry.get("type") or "") != "task_helper_claimed":
             continue
         claims.append(
@@ -1824,16 +1845,9 @@ def _activity_audit_sources() -> list[Path]:
     return activity_audit_source_paths_unlocked(LOG_FILE)
 
 
-def _activity_event_index_unlocked() -> dict[str, str]:
+def _activity_event_index_unlocked(event_ids: set[str]) -> dict[str, str]:
     prepare_activity_audit_unlocked(LOG_FILE)
-    result: dict[str, str] = {}
-    for entry, source, line_number in stream_logical_activity(LOG_FILE):
-        event_id = str(entry.get("event_id") or "").strip()
-        if not event_id:
-            continue
-        digest = _canonical_json_sha256(entry)
-        result[event_id] = digest
-    return result
+    return validated_activity_event_digests_unlocked(LOG_FILE, event_ids)
 
 
 def _validate_status_archive_outbox(value: Any) -> dict[str, Any]:
@@ -1966,7 +1980,9 @@ def _validate_status_activity_outbox(value: Any) -> dict[str, Any]:
         or not events
         or any(
             not isinstance(event, dict)
-            or not str(event.get("event_id") or "").strip()
+            or not isinstance(event.get("event_id"), str)
+            or not event["event_id"]
+            or event["event_id"] != event["event_id"].strip()
             for event in events
         )
         or len({str(event["event_id"]) for event in events}) != len(events)
@@ -1983,8 +1999,9 @@ def recover_status_activity_outbox(state: dict[str, Any]) -> bool:
     if pending in (None, {}, []):
         return False
     pending = _validate_status_activity_outbox(pending)
+    pending_event_ids = {str(event["event_id"]) for event in pending["events"]}
     with activity_audit_lock_file(LOG_FILE, shared=False, nonblocking=False):
-        existing = _activity_event_index_unlocked()
+        existing = _activity_event_index_unlocked(pending_event_ids)
         missing: list[dict[str, Any]] = []
         for event in pending["events"]:
             event_id = str(event["event_id"])
@@ -1998,7 +2015,7 @@ def recover_status_activity_outbox(state: dict[str, Any]) -> bool:
             missing.append(event)
             existing[event_id] = digest
         _append_logs_unlocked(missing)
-        final = _activity_event_index_unlocked()
+        final = _activity_event_index_unlocked(pending_event_ids)
         if any(
             final.get(str(event["event_id"])) != _canonical_json_sha256(event)
             for event in pending["events"]

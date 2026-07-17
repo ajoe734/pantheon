@@ -167,7 +167,9 @@ def restored_status_bytes(
             or not pending["events"]
             or any(
                 not isinstance(event, dict)
-                or not str(event.get("event_id") or "").strip()
+                or not isinstance(event.get("event_id"), str)
+                or not event["event_id"]
+                or event["event_id"] != event["event_id"].strip()
                 for event in pending["events"]
             )
             or len({str(event["event_id"]) for event in pending["events"]})

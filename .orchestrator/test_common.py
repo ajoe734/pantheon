@@ -6,10 +6,14 @@ import hashlib
 import json
 import multiprocessing
 import os
+import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
+import tracemalloc
 import unittest
+from itertools import islice
 from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
@@ -114,6 +118,14 @@ class JsonLoadResilienceTests(unittest.TestCase):
                 "ORCH_TASK_ID",
                 "ORCH_RUNNER_STATUS_PATH",
                 "ORCH_HEARTBEAT_PATH",
+                "PANTHEON_COMMAND_ROOT",
+                "PANTHEON_COMMAND_RUNTIME_SHA",
+                "PANTHEON_COMMAND_REMOTE",
+                "PANTHEON_COMMAND_BASE_REF",
+                "PANTHEON_STATUS_COMMAND_ROOT",
+                "PANTHEON_STATUS_COMMAND_SHA",
+                "PANTHEON_STATUS_COMMAND_REMOTE",
+                "PANTHEON_STATUS_COMMAND_BASE_REF",
             ):
                 env.pop(env_name, None)
             env["PANTHEON_STATUS_ROOT"] = str(status_root)
@@ -407,39 +419,118 @@ class ClaudeAuthTests(unittest.TestCase):
 
 
 class RecentTaskActivityTests(unittest.TestCase):
-    def test_recent_task_activity_reads_from_tail_without_full_log_scan(self) -> None:
+    def test_recent_task_activity_returns_latest_rows_from_validated_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             activity_log = root / "ai-activity-log.jsonl"
-            lines = []
-            for idx in range(40):
-                lines.append(json.dumps({"task_id": f"OTHER-{idx}", "message": f"other-{idx}"}))
-            for idx in range(8):
-                lines.append(json.dumps({"task_id": "TASK-1", "message": f"match-{idx}"}))
-            activity_log.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-            result = common._recent_task_activity({"paths": {"activity_log": str(activity_log)}}, "TASK-1", limit=3)
-
-        self.assertEqual([entry["message"] for entry in result], ["match-5", "match-6", "match-7"])
-
-    def test_recent_task_activity_ignores_partial_tail_line(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            activity_log = root / "ai-activity-log.jsonl"
+            archive_dir = root / "archive" / "logs"
+            archive_dir.mkdir(parents=True)
+            archive = (
+                archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+            )
+            archived = [
+                {
+                    "event_id": f"archived-{idx}",
+                    "task_id": "TASK-1",
+                    "message": f"match-{idx}",
+                }
+                for idx in range(5)
+            ]
+            with gzip.open(archive, "wt", encoding="utf-8") as handle:
+                handle.write("".join(json.dumps(row) + "\n" for row in archived))
+            active = [
+                {
+                    "event_id": f"active-{idx}",
+                    "task_id": "TASK-1",
+                    "message": f"match-{idx + 5}",
+                }
+                for idx in range(3)
+            ]
             activity_log.write_text(
-                "\n".join(
-                    [
-                        json.dumps({"task_id": "TASK-1", "message": "older"}),
-                        json.dumps({"task_id": "TASK-1", "message": "newer"}),
-                    ]
-                )
-                + '\n{"task_id": "TASK-1", "message": "partial"',
+                "".join(json.dumps(row) + "\n" for row in active),
                 encoding="utf-8",
             )
 
             result = common._recent_task_activity({"paths": {"activity_log": str(activity_log)}}, "TASK-1", limit=3)
 
-        self.assertEqual([entry["message"] for entry in result], ["older", "newer"])
+        self.assertEqual([entry["message"] for entry in result], ["match-5", "match-6", "match-7"])
+
+    def test_recent_task_activity_rejects_late_invalid_row_before_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            activity_log = root / "ai-activity-log.jsonl"
+            activity_log.write_text(
+                json.dumps(
+                    {
+                        "event_id": "valid-first",
+                        "task_id": "TASK-1",
+                        "message": "must-not-return",
+                    }
+                )
+                + "\n{bad late json}\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "Bad JSON"):
+                common._recent_task_activity(
+                    {"paths": {"activity_log": str(activity_log)}},
+                    "TASK-1",
+                    limit=3,
+                )
+
+    def test_recent_task_activity_rejects_duplicate_keys_in_active_and_gzip(self) -> None:
+        ambiguous = (
+            '{"event_id":"ambiguous","task_id":"OTHER",'
+            '"task_id":"TASK-1","metadata":{"role":"a","role":"b"}}\n'
+        )
+        for source_kind in ("active", "gzip"):
+            with self.subTest(source=source_kind), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                activity_log = root / "ai-activity-log.jsonl"
+                if source_kind == "active":
+                    activity_log.write_text(ambiguous, encoding="utf-8")
+                else:
+                    archive_dir = root / "archive" / "logs"
+                    archive_dir.mkdir(parents=True)
+                    archive = (
+                        archive_dir
+                        / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+                    )
+                    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+                        handle.write(ambiguous)
+
+                with self.assertRaisesRegex(RuntimeError, "duplicate JSON key"):
+                    common._recent_task_activity(
+                        {"paths": {"activity_log": str(activity_log)}},
+                        "TASK-1",
+                        limit=3,
+                    )
+
+    def test_recent_task_activity_fails_closed_on_partial_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            activity_log = root / "ai-activity-log.jsonl"
+            activity_log.write_text(
+                json.dumps(
+                    {
+                        "event_id": "complete",
+                        "task_id": "TASK-1",
+                        "message": "older",
+                    }
+                )
+                + '\n{"task_id":"TASK-1","message":"partial"',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "interrupted trailing row",
+            ):
+                common._recent_task_activity(
+                    {"paths": {"activity_log": str(activity_log)}},
+                    "TASK-1",
+                    limit=3,
+                )
 
 
 class StableCanonicalLockPathTests(unittest.TestCase):
@@ -1078,6 +1169,78 @@ class LogicalActivityReaderTests(unittest.TestCase):
         logical_ids = [entry["event_id"] for entry, _, _ in common.stream_logical_activity(self.log_path)]
         self.assertEqual(logical_ids, [entry["event_id"] for entry in creation_entries])
 
+    def test_archive_metrics_bind_raw_and_payload_to_one_stream(self):
+        first_payload = b'{"event_id":"coherent-first"}\n'
+        replacement_payload = b'{"event_id":"coherent-later"}\n'
+        self.assertEqual(len(first_payload), len(replacement_payload))
+        first_bytes = gzip.compress(first_payload, compresslevel=0, mtime=1)
+        replacement_bytes = gzip.compress(
+            replacement_payload,
+            compresslevel=0,
+            mtime=2,
+        )
+        self.assertEqual(len(first_bytes), len(replacement_bytes))
+        self.assertNotEqual(first_bytes, replacement_bytes)
+
+        archive = self.archive_dir / "coherent-pass.gz"
+        archive.write_bytes(first_bytes)
+        original_stat = archive.stat()
+        real_gzip_file = gzip.GzipFile
+
+        def replace_before_decompression(*args, **kwargs):
+            with archive.open("r+b") as handle:
+                handle.write(replacement_bytes)
+                handle.truncate()
+            os.utime(
+                archive,
+                ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+            )
+            return real_gzip_file(*args, **kwargs)
+
+        with mock.patch.object(
+            common.gzip,
+            "GzipFile",
+            side_effect=replace_before_decompression,
+        ):
+            metrics = common._stream_activity_archive_metrics(archive)
+
+        self.assertEqual(
+            metrics.gzip_sha256,
+            hashlib.sha256(replacement_bytes).hexdigest(),
+        )
+        self.assertEqual(metrics.gzip_byte_count, len(replacement_bytes))
+        self.assertEqual(
+            metrics.payload_sha256,
+            hashlib.sha256(replacement_payload).hexdigest(),
+        )
+        self.assertEqual(metrics.payload_byte_count, len(replacement_payload))
+        self.assertEqual(metrics.payload_line_count, 1)
+
+    def test_archive_metrics_close_descriptor_when_fdopen_fails(self):
+        archive = self.archive_dir / "fdopen-failure.gz"
+        archive.write_bytes(gzip.compress(b'{"event_id":"fdopen"}\n'))
+        real_open = os.open
+        opened_descriptors: list[int] = []
+
+        def tracking_open(*args, **kwargs):
+            descriptor = real_open(*args, **kwargs)
+            opened_descriptors.append(descriptor)
+            return descriptor
+
+        with (
+            mock.patch.object(common.os, "open", side_effect=tracking_open),
+            mock.patch.object(common.os, "fdopen", side_effect=OSError("injected")),
+            self.assertRaisesRegex(
+                RuntimeError,
+                "activity rotation archive is unreadable",
+            ),
+        ):
+            common._stream_activity_archive_metrics(archive)
+
+        self.assertEqual(len(opened_descriptors), 1)
+        with self.assertRaises(OSError):
+            os.fstat(opened_descriptors[0])
+
     def test_lineage_tamper_and_rollback_fail_closed(self):
         for keep_lines in (0, 2):
             with self.subTest(keep_lines=keep_lines):
@@ -1432,55 +1595,346 @@ class LogicalActivityReaderTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Source is a symlink or changed|Source is not a regular file|activity audit source leaf cannot be a symlink"):
             list(common.stream_logical_activity(self.log_path))
 
+    def test_active_log_symlink_is_rejected_before_leaf_resolution(self):
+        target = self.root / "external-activity.jsonl"
+        target.write_text(
+            json.dumps({"event_id": "must-not-follow"}) + "\n",
+            encoding="utf-8",
+        )
+        self.log_path.symlink_to(target)
+
+        stream = common.stream_logical_activity(self.log_path)
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "activity audit source leaf cannot be a symlink",
+        ):
+            next(stream)
+
+    def test_active_log_symlink_swap_during_leaf_guard_is_rejected(self):
+        self._write_active([{"event_id": "original"}])
+        target = self.root / "external-activity.jsonl"
+        target.write_text(
+            json.dumps({"event_id": "redirected"}) + "\n",
+            encoding="utf-8",
+        )
+        real_is_symlink = Path.is_symlink
+        swapped = False
+
+        def swap_after_leaf_check(path: Path) -> bool:
+            nonlocal swapped
+            result = real_is_symlink(path)
+            if path == self.log_path and not swapped:
+                swapped = True
+                self.log_path.unlink()
+                self.log_path.symlink_to(target)
+            return result
+
+        with mock.patch.object(
+            Path,
+            "is_symlink",
+            autospec=True,
+            side_effect=swap_after_leaf_check,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "(?:activity audit source leaf|canonical activity-audit data file) "
+                "cannot be a symlink",
+            ):
+                list(common.stream_logical_activity(self.log_path))
+        self.assertTrue(swapped)
+
     def test_source_replacement_and_mutation_during_read(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         entries = self._make_entries(0, 100)
         self._write_gz(f1, entries)
 
-        gen = common.stream_logical_activity(self.log_path)
-        next(gen)
-        f1.write_bytes(b"some new mutated bytes that change size and contents")
-        with self.assertRaisesRegex(RuntimeError, "Source mutated or truncated during read|Truncated or corrupt gzip"):
-            list(gen)
+        real_final_validation = common._assert_activity_sources_stable_unlocked
+
+        def mutate_before_final_validation(log_path, sources, snapshots):
+            f1.write_bytes(b"some new mutated bytes that change size and contents")
+            return real_final_validation(log_path, sources, snapshots)
+
+        with mock.patch.object(
+            common,
+            "_assert_activity_sources_stable_unlocked",
+            mutate_before_final_validation,
+        ):
+            gen = common.stream_logical_activity(self.log_path)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Source mutated or truncated during validation",
+            ):
+                next(gen)
 
     def test_os_replace_to_different_inode_during_read(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         entries = self._make_entries(0, 1500)
         self._write_gz(f1, entries)
 
-        gen = common.stream_logical_activity(self.log_path)
-        for _ in range(500):
-            next(gen)
-
-        # Replace the file on disk with a new file of identical size/contents but different inode
         f_temp = self.root / "temp-replace.gz"
         self._write_gz(f_temp, entries)
-        os.replace(f_temp, f1)
+        real_final_validation = common._assert_activity_sources_stable_unlocked
 
-        with self.assertRaisesRegex(RuntimeError, "Source replaced during read"):
-            list(gen)
+        def replace_before_final_validation(log_path, sources, snapshots):
+            os.replace(f_temp, f1)
+            return real_final_validation(log_path, sources, snapshots)
+
+        with mock.patch.object(
+            common,
+            "_assert_activity_sources_stable_unlocked",
+            replace_before_final_validation,
+        ):
+            gen = common.stream_logical_activity(self.log_path)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Source replaced during validation",
+            ):
+                next(gen)
 
     def test_same_inode_same_size_mtime_mutation_during_read(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         entries = self._make_entries(0, 1500)
         self._write_gz(f1, entries)
 
-        gen = common.stream_logical_activity(self.log_path)
-        for _ in range(500):
-            next(gen)
+        real_final_validation = common._assert_activity_sources_stable_unlocked
 
-        # Mutate the file content in-place but keep exact same size on disk, and update mtime
-        raw = f1.read_bytes()
-        mutated_raw = raw[:-10] + b"MUTATED!!!"
-        self.assertEqual(len(raw), len(mutated_raw))
-        f1.write_bytes(mutated_raw)
+        def mutate_before_final_validation(log_path, sources, snapshots):
+            stat_before = f1.stat()
+            mutated_raw = bytearray(f1.read_bytes())
+            mutated_raw[-10] ^= 1
+            f1.write_bytes(bytes(mutated_raw))
+            os.utime(
+                f1,
+                ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns),
+            )
+            return real_final_validation(log_path, sources, snapshots)
 
-        # Touch mtime_ns
-        stat_info = f1.stat()
-        os.utime(f1, ns=(stat_info.st_atime_ns, stat_info.st_mtime_ns + 1000000000))
+        with mock.patch.object(
+            common,
+            "_assert_activity_sources_stable_unlocked",
+            mutate_before_final_validation,
+        ):
+            gen = common.stream_logical_activity(self.log_path)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Source content changed during validation",
+            ):
+                next(gen)
 
-        with self.assertRaisesRegex(RuntimeError, "Source mutated or truncated during read"):
-            list(gen)
+    def test_aba_mutation_cannot_change_bytes_parsed_into_snapshot(self):
+        original = b'{"event_id":"original"}\n'
+        attacker = b'{"event_id":"attacker"}\n'
+        self.assertEqual(len(original), len(attacker))
+        self.log_path.write_bytes(original)
+        stat_before = self.log_path.stat()
+        real_hash = common._sha256_file_descriptor
+        hash_calls = 0
+
+        def mutate_after_first_hash(descriptor: int) -> str:
+            nonlocal hash_calls
+            hash_calls += 1
+            if hash_calls == 1:
+                digest = real_hash(descriptor)
+                self.log_path.write_bytes(attacker)
+                os.utime(
+                    self.log_path,
+                    ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns),
+                )
+                return digest
+            if hash_calls == 2:
+                self.log_path.write_bytes(original)
+                os.utime(
+                    self.log_path,
+                    ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns),
+                )
+            return real_hash(descriptor)
+
+        with mock.patch.object(
+            common,
+            "_sha256_file_descriptor",
+            side_effect=mutate_after_first_hash,
+        ):
+            entries = list(common.stream_logical_activity(self.log_path))
+
+        self.assertGreaterEqual(hash_calls, 2)
+        self.assertEqual([entry[0]["event_id"] for entry in entries], ["original"])
+        self.assertEqual(self.log_path.read_bytes(), original)
+
+    def test_late_validation_failure_precedes_first_row_and_collapse_callback(self):
+        entries = self._make_entries(0, 1500)
+        successor_entries = self._make_entries(500, 1001)
+        predecessor = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        )
+        successor = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        )
+        self._write_gz(predecessor, entries)
+        with gzip.open(successor, "wt", encoding="utf-8") as handle:
+            for entry in successor_entries:
+                handle.write(json.dumps(entry) + "\n")
+            handle.write("{bad late json}\n")
+        callbacks = []
+        stream = common.stream_logical_activity(
+            self.log_path,
+            on_collapse=lambda *args: callbacks.append(args),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Bad JSON"):
+            next(stream)
+        self.assertEqual(callbacks, [])
+
+    def test_islice_cannot_hide_late_validation_failure(self):
+        self.log_path.write_text(
+            json.dumps({"event_id": "first", "message": "must-not-return"})
+            + "\n{bad late json}\n",
+            encoding="utf-8",
+        )
+
+        stream = common.stream_logical_activity(self.log_path)
+        with self.assertRaisesRegex(RuntimeError, "Bad JSON"):
+            list(islice(stream, 1))
+
+    def test_duplicate_json_keys_rejected_before_first_row_in_active_and_gzip(self):
+        ambiguous_rows = {
+            "top-level": (
+                '{"event_id":"first","event_id":"second",'
+                '"message":"ambiguous"}\n'
+            ),
+            "nested": (
+                '{"event_id":"nested","metadata":{"role":"a",'
+                '"role":"b"}}\n'
+            ),
+        }
+        for source_kind in ("active", "gzip"):
+            for shape, ambiguous in ambiguous_rows.items():
+                with self.subTest(source=source_kind, shape=shape):
+                    self.log_path.unlink(missing_ok=True)
+                    for archive in self.archive_dir.glob("*.gz"):
+                        archive.unlink()
+                    if source_kind == "active":
+                        source = self.log_path
+                        source.write_text(ambiguous, encoding="utf-8")
+                    else:
+                        source = (
+                            self.archive_dir
+                            / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+                        )
+                        with gzip.open(source, "wt", encoding="utf-8") as handle:
+                            handle.write(ambiguous)
+                    before = source.read_bytes()
+                    stream = common.stream_logical_activity(self.log_path)
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "duplicate JSON key.*" + re.escape(str(source)) + ":1",
+                    ):
+                        next(stream)
+                    self.assertEqual(source.read_bytes(), before)
+
+    def test_activity_control_records_reject_duplicate_json_keys(self):
+        self.log_path.write_text(
+            '{"record_type":"activity_rotation_head",'
+            '"record_type":"activity_rotation_head"}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "duplicate JSON key"):
+            list(common.stream_logical_activity(self.log_path))
+        self.log_path.unlink()
+
+        intent_path = common.activity_rotation_intent_path(self.log_path)
+        common.ensure_parent(intent_path)
+        intent_path.write_text(
+            '{"schema_version":2,"schema_version":2}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "intent is unreadable"):
+            common._load_activity_rotation_intent(self.log_path)
+        intent_path.unlink()
+
+        lineage_path = common.activity_rotation_lineage_path(self.log_path)
+        common.ensure_parent(lineage_path)
+        lineage_path.write_text(
+            '{"sequence":1,"sequence":1}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "lineage row is unreadable"):
+            common._load_activity_rotation_lineage_unlocked(self.log_path)
+        lineage_path.unlink()
+
+        resolutions_path = common.activity_rotation_resolutions_path(
+            self.log_path
+        )
+        common.ensure_parent(resolutions_path)
+        resolutions_path.write_text(
+            '{"sequence":1,"sequence":1}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "resolution row is unreadable"):
+            common._load_activity_rotation_resolutions_unlocked(self.log_path)
+
+    def test_validation_snapshot_memory_is_bounded_by_window_not_history(self):
+        row_count = 12000
+        payload = "x" * 2048
+        with self.log_path.open("w", encoding="utf-8") as handle:
+            for index in range(row_count):
+                handle.write(
+                    json.dumps(
+                        {
+                            "event_id": f"bounded-{index:05d}",
+                            "payload": payload,
+                        },
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                )
+
+        tracemalloc.start()
+        try:
+            observed = sum(
+                1 for _entry in common.stream_logical_activity(self.log_path)
+            )
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(observed, row_count)
+        self.assertLess(peak, 12 * 1024 * 1024)
+
+    def test_content_addressed_validation_memory_is_bounded_by_window(self):
+        row_count = 12000
+        payload = "x" * 2048
+        with self.log_path.open("w", encoding="utf-8") as handle:
+            for index in range(row_count):
+                handle.write(
+                    json.dumps(
+                        {
+                            "event_id": f"content-bounded-{index:05d}",
+                            "payload": payload,
+                        },
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                )
+        with common.activity_audit_lock_file(self.log_path, shared=False):
+            archive = common.rotate_activity_log_unlocked(
+                self.log_path,
+                max_bytes=1,
+                keep_lines=0,
+            )
+        self.assertIsNotNone(archive)
+
+        import gc
+
+        gc.collect()
+        tracemalloc.start()
+        try:
+            observed = sum(
+                1 for _entry in common.stream_logical_activity(self.log_path)
+            )
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(observed, row_count)
+        self.assertLess(peak, 12 * 1024 * 1024)
 
     def test_simultaneous_and_reentrant_readers(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
@@ -1874,71 +2328,167 @@ class LogicalActivityReaderTests(unittest.TestCase):
             if old_log_file is not None:
                 ai_status.LOG_FILE = old_log_file
 
-    def test_sqlite_db_removed_on_lifecycle_events(self):
+    def test_sqlite_snapshot_is_unlinked_during_all_lifecycle_events(self):
         # Prepare a valid file
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
 
-        import glob
-        import tempfile
-        temp_dir = tempfile.gettempdir()
+        created_paths: list[str] = []
+        connections: list[sqlite3.Connection] = []
+        original_tempfile = common.tempfile.NamedTemporaryFile
+        original_open_snapshot = common._open_ephemeral_activity_snapshot_database
 
-        def get_db_files():
-            return set(glob.glob(os.path.join(temp_dir, "*.db")))
+        def tracking_tempfile(*args, **kwargs):
+            handle = original_tempfile(*args, **kwargs)
+            if str(kwargs.get("prefix") or "").startswith(
+                "pantheon-activity-snapshot-"
+            ):
+                created_paths.append(handle.name)
+            return handle
 
-        # Case 1: Success path
-        db_before = get_db_files()
+        def tracking_open_snapshot() -> sqlite3.Connection:
+            connection = original_open_snapshot()
+            connections.append(connection)
+            return connection
 
-        # Start generator
-        gen = common.stream_logical_activity(self.log_path)
+        def assert_all_snapshots_unlinked() -> None:
+            self.assertTrue(created_paths)
+            self.assertTrue(all(not os.path.exists(path) for path in created_paths))
 
-        # During iteration, the temp DB file should exist
-        first_item = next(gen)
-        db_during = get_db_files() - db_before
-        self.assertEqual(len(db_during), 1)
-        db_path = list(db_during)[0]
-        self.assertTrue(os.path.exists(db_path))
+        def assert_connection_closed(connection: sqlite3.Connection) -> None:
+            with self.assertRaises(sqlite3.ProgrammingError):
+                connection.execute("SELECT 1")
 
-        # Consume the rest
-        list(gen)
-
-        # After success, DB file must be removed
-        self.assertFalse(os.path.exists(db_path))
-
-        # Case 2: Validation failure path
-        # Re-write f1 to have validation failure (e.g. duplicate event_id)
-        self._write_gz(f1, [{"event_id": "ev1", "message": "msg"}, {"event_id": "ev1", "message": "msg"}])
-
-        db_before = get_db_files()
-        gen = common.stream_logical_activity(self.log_path)
-        try:
+        with (
+            mock.patch.object(
+                common.tempfile,
+                "NamedTemporaryFile",
+                side_effect=tracking_tempfile,
+            ),
+            mock.patch.object(
+                common,
+                "_open_ephemeral_activity_snapshot_database",
+                side_effect=tracking_open_snapshot,
+            ),
+        ):
+            # Case 1: success. The live SQLite connection retains the disk
+            # allocation, but its pathname is already gone before first yield.
+            gen = common.stream_logical_activity(self.log_path)
             next(gen)
-            db_during = get_db_files() - db_before
-            self.assertEqual(len(db_during), 1)
-            db_path = list(db_during)[0]
-            self.assertTrue(os.path.exists(db_path))
-            list(gen) # Should raise RuntimeError
-        except RuntimeError:
-            pass
+            assert_all_snapshots_unlinked()
+            self.assertEqual(connections[-1].execute("SELECT 1").fetchone(), (1,))
+            success_connection = connections[-1]
+            list(gen)
+            assert_all_snapshots_unlinked()
+            assert_connection_closed(success_connection)
 
-        # After failure, DB file must be removed
-        self.assertFalse(os.path.exists(db_path))
+            # Case 2: validation failure.
+            self._write_gz(
+                f1,
+                [
+                    {"event_id": "ev1", "message": "msg"},
+                    {"event_id": "ev1", "message": "msg"},
+                ],
+            )
+            gen = common.stream_logical_activity(self.log_path)
+            with self.assertRaisesRegex(RuntimeError, "duplicate activity event_id"):
+                next(gen)
+            assert_all_snapshots_unlinked()
+            assert_connection_closed(connections[-1])
 
-        # Case 3: Explicit generator close
-        self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
-        db_before = get_db_files()
-        gen = common.stream_logical_activity(self.log_path)
-        next(gen)
-        db_during = get_db_files() - db_before
-        self.assertEqual(len(db_during), 1)
-        db_path = list(db_during)[0]
-        self.assertTrue(os.path.exists(db_path))
+            # Case 3: explicit generator close.
+            self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
+            gen = common.stream_logical_activity(self.log_path)
+            next(gen)
+            assert_all_snapshots_unlinked()
+            explicit_close_connection = connections[-1]
+            gen.close()
+            assert_all_snapshots_unlinked()
+            assert_connection_closed(explicit_close_connection)
 
-        # Explicit close
-        gen.close()
+            # Case 4: a consumer exception followed by explicit close.
+            gen = common.stream_logical_activity(self.log_path)
+            consumer_exception_connection: sqlite3.Connection | None = None
+            with self.assertRaisesRegex(RuntimeError, "consumer failed"):
+                try:
+                    next(gen)
+                    consumer_exception_connection = connections[-1]
+                    raise RuntimeError("consumer failed")
+                finally:
+                    gen.close()
+            assert_all_snapshots_unlinked()
+            self.assertIsNotNone(consumer_exception_connection)
+            assert_connection_closed(consumer_exception_connection)
 
-        # After close, DB file must be removed
-        self.assertFalse(os.path.exists(db_path))
+    def test_deliberate_break_occurs_after_full_validation_and_explicit_close(self):
+        self._write_active(self._make_entries(0, 3))
+        real_final_validation = common._assert_activity_sources_stable_unlocked
+
+        with mock.patch.object(
+            common,
+            "_assert_activity_sources_stable_unlocked",
+            wraps=real_final_validation,
+        ) as final_validation:
+            stream = common.stream_logical_activity(self.log_path)
+            observed = []
+            for entry, _source, _line_number in stream:
+                observed.append(entry["event_id"])
+                break
+
+            self.assertEqual(observed, ["event-0"])
+            final_validation.assert_called_once()
+            stream.close()
+
+    def test_validation_complete_event_lookup_omits_unrequested_payloads(self):
+        entries = [
+            {"event_id": "index-one", "message": "one"},
+            {"event_id": "index-two", "message": "two"},
+            {"message": "no event id"},
+        ]
+        self._write_active(entries)
+
+        with (
+            common.activity_audit_lock_file(self.log_path, shared=True),
+            mock.patch.object(
+                common,
+                "_build_logical_activity_snapshot_unlocked",
+                wraps=common._build_logical_activity_snapshot_unlocked,
+            ) as build_snapshot,
+        ):
+            event_index = common.validated_activity_event_digests_unlocked(
+                self.log_path,
+                {"index-two", "missing"},
+            )
+
+        self.assertEqual(
+            {
+                "index-two": common._canonical_json_sha256(entries[1]),
+            },
+            event_index,
+        )
+        build_snapshot.assert_called_once_with(
+            self.log_path,
+            capture_logical_entries=False,
+        )
+
+    def test_validation_complete_event_lookup_rejects_noncanonical_request(self):
+        for event_id in (" index-two", "index-two ", " index-two ", 2):
+            with (
+                self.subTest(event_id=event_id),
+                mock.patch.object(
+                    common,
+                    "_build_logical_activity_snapshot_unlocked",
+                ) as build_snapshot,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "requested activity event_id is not canonical",
+                ):
+                    common.validated_activity_event_digests_unlocked(
+                        self.log_path,
+                        [event_id],
+                    )
+                build_snapshot.assert_not_called()
 
 
 if __name__ == "__main__":
