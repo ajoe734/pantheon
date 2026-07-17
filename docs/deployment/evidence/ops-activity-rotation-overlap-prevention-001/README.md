@@ -8,6 +8,7 @@ Owned implementation:
 
 - `.orchestrator/common.py`
 - `.orchestrator/test_common.py`
+- `scripts/ai_status.py`
 - `scripts/test_ai_status.py`
 - `.orchestrator/task-briefs/ops_activity_rotation_overlap_prevention_001.md`
 
@@ -44,6 +45,19 @@ Not changed:
 - Generalized activity source classification to the configured `.jsonl` log
   basename so supervisor/common writers using non-default isolated test log
   names share the same content-addressed lineage contract.
+- Added a bounded structured fail-closed diagnostic for the 2026-07-17
+  non-adjacent-tail addendum. The reader now raises
+  `ActivityAuditInvariantError` with `activity_non_adjacent_tail`,
+  evidence digest, matched source, immediate predecessor, current source, and
+  prefix/suffix digest. Read-only `ai-status show/prompt` converts that into a
+  JSON fail-closed diagnostic instead of an unstructured traceback.
+- Added the exact non-adjacent-tail fixture with a lineage-registered
+  content-addressed archive named
+  `ai-activity-log.jsonl-b320711ea85d1a0bfd537f39a0c934b4b865ce0805ff389df0405a3a89d5d004.gz`
+  and a bounded deadline assertion.
+- Tightened task archive idempotency discovered during full status validation:
+  an existing archive snapshot may be reused only when task identity,
+  terminal outcome, handoffs, and blockers match the active terminal task.
 
 ## Central Read-Only Preconditions
 
@@ -57,6 +71,11 @@ find /home/lupin/code/pantheon/.orchestrator/logs/activity-rotation -maxdepth 1 
 Result: both commands returned no paths. The central root still had no
 content-addressed activity archive and no activity lineage file at pre-review
 time. No central activity payload bytes were copied into this evidence.
+
+Continuation note: after composing the 2026-07-17 non-adjacent-tail addendum,
+this implementation continuation did not open or lock the central
+activity/status root. All new fixtures and validation ran against repo-external
+or test-local roots.
 
 ## Validation
 
@@ -77,10 +96,10 @@ git diff --check
 Results:
 
 - `py_compile`: passed.
-- `.orchestrator/test_common.py`: 61 tests passed.
+- `.orchestrator/test_common.py`: 65 tests passed.
 - `scripts.test_activity_audit_logical_inventory`: 19 tests passed.
-- isolated `scripts.test_ai_status`: 74 tests passed.
-- `.orchestrator/test_supervisor_watchdog.py`: 28 tests passed.
+- isolated `scripts.test_ai_status`: 75 tests passed.
+- `.orchestrator/test_supervisor_watchdog.py`: 33 tests passed.
 - `.orchestrator/test_worker_runner_heartbeat.py`: 13 tests passed.
 - `.orchestrator/test_runtime_state.py`: passed.
 - isolated `.orchestrator/test_supervisor.py`: 277 tests passed.

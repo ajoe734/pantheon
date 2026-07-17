@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -860,6 +861,69 @@ class LogicalActivityReaderTests(unittest.TestCase):
             "".join(json.dumps(entry) + "\n" for entry in entries),
             encoding="utf-8",
         )
+
+    def _write_registered_content_archive(
+        self,
+        archive_name: str,
+        entries: list[dict],
+        *,
+        tail_entries: list[dict] | None = None,
+    ) -> Path:
+        archive_path = self.archive_dir / archive_name
+        self._write_gz(archive_path, entries)
+        archive_payload = b"".join(
+            (json.dumps(entry) + "\n").encode("utf-8") for entry in entries
+        )
+        tail_payload = b"".join(
+            (json.dumps(entry) + "\n").encode("utf-8")
+            for entry in (tail_entries or [])
+        )
+        transaction_id = "activity-rotation-test-nonadjacent-tail"
+        row = {
+            "record_type": common.ACTIVITY_ROTATION_LINEAGE_RECORD_TYPE,
+            "schema_version": common.ACTIVITY_LOG_ROTATION_SCHEMA_VERSION,
+            "log_name": self.log_path.name,
+            "sequence": 1,
+            "transaction_id": transaction_id,
+            "archive_relative_path": str(archive_path.relative_to(self.root)),
+            "archive_payload_sha256": hashlib.sha256(archive_payload).hexdigest(),
+            "archive_gzip_sha256": hashlib.sha256(
+                archive_path.read_bytes()
+            ).hexdigest(),
+            "archive_byte_count": len(archive_payload),
+            "archive_line_count": len(entries),
+            "source_sha256": hashlib.sha256(archive_payload).hexdigest(),
+            "source_payload_sha256": hashlib.sha256(archive_payload).hexdigest(),
+            "source_byte_count": len(archive_payload),
+            "source_line_count": len(entries),
+            "tail_sha256": hashlib.sha256(tail_payload).hexdigest(),
+            "tail_byte_count": len(tail_payload),
+            "tail_line_count": len(tail_payload.splitlines()) if tail_payload else 0,
+            "previous_sequence": 0,
+            "previous_transaction_id": None,
+            "previous_lineage_sha256": hashlib.sha256(b"").hexdigest(),
+            "boundary_normalization": None,
+        }
+        lineage_bytes = common._canonical_json_line(row)
+        lineage_path = common.activity_rotation_lineage_path(self.log_path)
+        lineage_path.parent.mkdir(parents=True, exist_ok=True)
+        lineage_path.write_bytes(lineage_bytes)
+        control = {
+            "record_type": common.ACTIVITY_ROTATION_HEAD_RECORD_TYPE,
+            "schema_version": common.ACTIVITY_LOG_ROTATION_SCHEMA_VERSION,
+            "log_name": self.log_path.name,
+            "sequence": row["sequence"],
+            "transaction_id": transaction_id,
+            "archive_payload_sha256": row["archive_payload_sha256"],
+            "archive_gzip_sha256": row["archive_gzip_sha256"],
+            "lineage_sha256": hashlib.sha256(lineage_bytes).hexdigest(),
+            "lineage_row_sha256": common._canonical_json_sha256(row),
+            "tail_sha256": row["tail_sha256"],
+            "tail_byte_count": row["tail_byte_count"],
+            "tail_line_count": row["tail_line_count"],
+        }
+        self.log_path.write_bytes(common._canonical_json_line(control) + tail_payload)
+        return archive_path
 
     def _append_active(self, entries: list[dict]) -> None:
         with self.log_path.open("ab") as handle:
@@ -1767,6 +1831,53 @@ class LogicalActivityReaderTests(unittest.TestCase):
         f_1609.unlink()
         if self.log_path.exists():
             self.log_path.unlink()
+
+    def test_content_archive_non_adjacent_tail_diagnostic_is_structured_and_bounded(
+        self,
+    ):
+        f_1609 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1609Z.gz"
+        f_2337 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T2337Z.gz"
+        content_name = (
+            "ai-activity-log.jsonl-"
+            "b320711ea85d1a0bfd537f39a0c934b4b865ce0805ff389df0405a3a89d5d004.gz"
+        )
+
+        older_tail = [{"message": f"older-tail-{index}"} for index in range(1000)]
+        self._write_gz(
+            f_1609,
+            [{"message": f"older-prefix-{index}"} for index in range(50)]
+            + older_tail,
+        )
+        self._write_gz(
+            f_2337,
+            [{"message": f"newer-unrelated-{index}"} for index in range(1200)],
+        )
+        content_archive = self._write_registered_content_archive(
+            content_name,
+            older_tail + [{"message": "content-tail"}],
+        )
+
+        started = time.monotonic()
+        with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
+            list(common.stream_logical_activity(self.log_path))
+        elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 2.0)
+        diagnostic = ctx.exception.diagnostic
+        self.assertEqual(
+            diagnostic["record_type"],
+            "pantheon.activity.fail_closed.v1",
+        )
+        self.assertEqual(diagnostic["invariant"], "activity_non_adjacent_tail")
+        self.assertEqual(len(diagnostic["evidence_sha256"]), 64)
+        evidence = diagnostic["evidence"]
+        self.assertEqual(evidence["matched_source"], str(f_1609))
+        self.assertEqual(evidence["current_source"], str(content_archive))
+        self.assertEqual(evidence["immediate_predecessor"], str(f_2337))
+        self.assertEqual(
+            evidence["prefix_1000_sha256"],
+            evidence["matched_suffix_1000_sha256"],
+        )
 
     def test_recover_status_activity_outbox_integration(self):
         import sys

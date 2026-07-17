@@ -1037,6 +1037,40 @@ def _canonical_json_line(payload: Any) -> bytes:
     ).encode("utf-8")
 
 
+class ActivityAuditInvariantError(RuntimeError):
+    """Fail-closed activity reader error with machine-readable evidence."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        invariant: str,
+        evidence: Mapping[str, Any],
+    ) -> None:
+        evidence_payload = {
+            "invariant": invariant,
+            "evidence": dict(evidence),
+        }
+        evidence_sha256 = _canonical_json_sha256(evidence_payload)
+        self.invariant = invariant
+        self.evidence_sha256 = evidence_sha256
+        self.diagnostic = {
+            "record_type": "pantheon.activity.fail_closed.v1",
+            "schema_version": 1,
+            "invariant": invariant,
+            "message": message,
+            "evidence_sha256": evidence_sha256,
+            "evidence": dict(evidence),
+        }
+        encoded = json.dumps(
+            self.diagnostic,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        super().__init__(f"{message}; diagnostic={encoded}")
+
+
 def _jsonl_line_count(payload: bytes) -> int:
     return len(payload.splitlines()) if payload else 0
 
@@ -2613,9 +2647,27 @@ def _stream_logical_activity_unlocked(
                             if not row:
                                 break
                             matched_path = Path(row[0])
-                            if prev_source is not None and (matched_path == prev_source or matched_path.resolve() == prev_source.resolve()):
+                            if prev_source is not None and (
+                                matched_path == prev_source
+                                or matched_path.resolve() == prev_source.resolve()
+                            ):
                                 continue
-                            raise RuntimeError(f"Matching non-adjacent older tail detected: {row[0]} -> {source}")
+                            raise ActivityAuditInvariantError(
+                                "Matching non-adjacent older tail detected: "
+                                f"{row[0]} -> {source}",
+                                invariant="activity_non_adjacent_tail",
+                                evidence={
+                                    "matched_source": str(matched_path),
+                                    "current_source": str(source),
+                                    "immediate_predecessor": str(prev_source)
+                                    if prev_source is not None
+                                    else None,
+                                    "source_index": s_idx,
+                                    "source_class": s_class,
+                                    "prefix_1000_sha256": prefix_1000_digest,
+                                    "matched_suffix_1000_sha256": prefix_1000_digest,
+                                },
+                            )
 
                     # Setup helper to validate a row and check for duplicates using SQLite
                     def process_line(raw_line: bytes, l_num: int, is_collapsed_prefix: bool):

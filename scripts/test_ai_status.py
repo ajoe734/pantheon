@@ -1064,6 +1064,53 @@ class ArchiveWorkflowTests(unittest.TestCase):
         self.assertIn('"task_id": "REG-100"', rendered)
         self.assertIn("ai-task-archive/tasks", rendered)
 
+    def test_read_only_main_returns_structured_activity_diagnostic(self) -> None:
+        class NullLock:
+            def __enter__(self):
+                return None
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        error = ai_status.ActivityAuditInvariantError(
+            "Matching non-adjacent older tail detected: old -> current",
+            invariant="activity_non_adjacent_tail",
+            evidence={
+                "matched_source": "old",
+                "current_source": "current",
+                "prefix_1000_sha256": "a" * 64,
+            },
+        )
+
+        with (
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(
+                ai_status,
+                "canonical_task_state_lock",
+                return_value=NullLock(),
+            ),
+            mock.patch.object(ai_status, "load_state", return_value={}),
+            mock.patch.object(ai_status, "recover_status_archive_outbox", return_value=False),
+            mock.patch.object(
+                ai_status,
+                "recover_status_activity_outbox",
+                side_effect=error,
+            ),
+            mock.patch("sys.stderr", new_callable=io.StringIO) as stderr,
+        ):
+            rc = ai_status.main(["ai_status.py", "show", "REG-100"])
+
+        self.assertEqual(rc, 2)
+        rendered = json.loads(stderr.getvalue())
+        self.assertEqual(rendered["status"], "fail_closed")
+        diagnostic = rendered["diagnostic"]
+        self.assertEqual(
+            diagnostic["record_type"],
+            "pantheon.activity.fail_closed.v1",
+        )
+        self.assertEqual(diagnostic["invariant"], "activity_non_adjacent_tail")
+        self.assertEqual(len(diagnostic["evidence_sha256"]), 64)
+
 
 class SidecarTaskTests(unittest.TestCase):
     def setUp(self) -> None:

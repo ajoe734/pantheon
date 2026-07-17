@@ -79,6 +79,7 @@ from runtime_state import (
     load_runtime_state_snapshot,
 )
 from common import (
+    ActivityAuditInvariantError,
     activity_audit_lock_path,
     activity_audit_source_paths_unlocked,
     append_activity_log_entries_unlocked,
@@ -1208,19 +1209,50 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
     task_id = str(task.get("id") or "").strip()
     if not task_id:
         raise SystemExit("Cannot archive a task without an id")
+    related_handoffs = [
+        deepcopy(handoff)
+        for handoff in state.get("handoffs", [])
+        if handoff.get("task_id") == task_id
+    ]
+    related_blockers = [
+        deepcopy(blocker)
+        for blocker in state.get("blockers", [])
+        if blocker.get("task_id") == task_id
+    ]
+    terminal_outcome = terminal_outcome_for(task) or "completed"
     existing = archived_task_snapshot(task_id)
     if existing is not None:
         _validate_status_archive_snapshot(existing)
         snapshot = deepcopy(existing)
+        expected_identity = {
+            "task_id": task_id,
+            "terminal_status": "done",
+            "terminal_outcome": terminal_outcome,
+            "task": deepcopy(task),
+            "handoffs": related_handoffs,
+            "blockers": related_blockers,
+        }
+        actual_identity = {
+            "task_id": snapshot.get("task_id"),
+            "terminal_status": snapshot.get("terminal_status"),
+            "terminal_outcome": snapshot.get("terminal_outcome"),
+            "task": snapshot.get("task"),
+            "handoffs": snapshot.get("handoffs"),
+            "blockers": snapshot.get("blockers"),
+        }
+        if _canonical_json_sha256(actual_identity) != _canonical_json_sha256(
+            expected_identity
+        ):
+            raise RuntimeError(
+                f"existing task archive conflicts with active task: {task_id}"
+            )
     else:
-        related_handoffs = [deepcopy(handoff) for handoff in state.get("handoffs", []) if handoff.get("task_id") == task_id]
-        related_blockers = [deepcopy(blocker) for blocker in state.get("blockers", []) if blocker.get("task_id") == task_id]
         snapshot = {
             "version": 1,
             "task_id": task_id,
             "archived_at": archived_at or iso_now(),
             "terminal_status": "done",
-            "terminal_outcome": terminal_outcome_for(task) or "completed",
+            "terminal_outcome": terminal_outcome,
             "task": deepcopy(task),
             "handoffs": related_handoffs,
             "blockers": related_blockers,
@@ -4844,13 +4876,28 @@ def main(argv: list[str]) -> int:
         # A killed terminal transition may leave durable archive/activity
         # outboxes. Complete those writer transactions under EX before taking
         # the normal shared read snapshot.
-        with canonical_task_state_lock(shared=False):
-            recovery_state = load_state()
-            recover_status_archive_outbox(recovery_state)
-            recover_status_activity_outbox(recovery_state)
-        with canonical_task_state_lock(shared=True):
-            state = load_state()
-            read_only_commands[command](state, args)
+        try:
+            with canonical_task_state_lock(shared=False):
+                recovery_state = load_state()
+                recover_status_archive_outbox(recovery_state)
+                recover_status_activity_outbox(recovery_state)
+            with canonical_task_state_lock(shared=True):
+                state = load_state()
+                read_only_commands[command](state, args)
+        except ActivityAuditInvariantError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "fail_closed",
+                        "diagnostic": exc.diagnostic,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+            )
+            return 2
         return 0
 
     if command not in commands:
