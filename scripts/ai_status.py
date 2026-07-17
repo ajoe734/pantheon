@@ -191,6 +191,8 @@ def _worker_workspace_root() -> Path | None:
 
 
 def _first_symlink_component(path: Path) -> Path | None:
+    if ".." in path.parts:
+        raise RuntimeError(f"Path contains parent directory references (..): {path}")
     current = Path(path.anchor)
     parts = path.parts[1:] if path.is_absolute() else path.parts
     for part in parts:
@@ -198,17 +200,23 @@ def _first_symlink_component(path: Path) -> Path | None:
         try:
             if current.is_symlink():
                 return current
-            if not current.exists():
+            if not current.exists() and not current.is_symlink():
                 return None
         except OSError:
             return current
     return None
 
 
+
 def _status_root_from_runtime_path(raw: str, *, label: str) -> Path:
     path = Path(os.path.expanduser(raw))
     if not path.is_absolute():
         raise RuntimeError(f"{label} must be absolute when set")
+    symlink_comp = _first_symlink_component(path)
+    if symlink_comp is not None:
+        raise RuntimeError(f"{label} path contains a symlink component: {symlink_comp}")
+    if path.is_symlink():
+        raise RuntimeError(f"{label} cannot be a symlink: {path}")
     resolved = path.resolve()
     parent = resolved.parent
     if (
@@ -629,6 +637,22 @@ def _existing_path_is_symlink(path: Path) -> bool:
         return True
 
 
+def _validate_directory_no_symlinks_recursive(directory: Path, label: str) -> None:
+    if directory.is_symlink():
+        raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} directory cannot be a symlink: {directory}")
+    if not directory.exists() or not directory.is_dir():
+        return
+    for dirpath, dirnames, filenames in os.walk(directory):
+        for dirname in dirnames:
+            p = Path(dirpath) / dirname
+            if p.is_symlink():
+                raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} component cannot be a symlink: {p}")
+        for filename in filenames:
+            p = Path(dirpath) / filename
+            if p.is_symlink():
+                raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} leaf cannot be a symlink: {p}")
+
+
 def validate_status_root_binding() -> None:
     """Fail closed before any governed status command can hit a stale worktree."""
 
@@ -697,15 +721,34 @@ def validate_status_root_binding() -> None:
         "archive_index": task_archive_module.ARCHIVE_INDEX_FILE,
         "task_state_lock": canonical_task_state_lock_path(STATUS_FILE),
         "activity_audit_lock": activity_audit_lock_path(LOG_FILE),
+        "docs_site_ai_status": DOCS_SITE_DIR / "ai-status.json",
+        "docs_site_current_work": DOCS_SITE_DIR / "current-work.md",
+        "docs_site_dashboard_bundle": DOCS_SITE_DIR / "dashboard-bundle.json",
+        "docs_site_orchestrator_state": DOCS_SITE_DIR / "orchestrator-state.json",
+        "docs_site_approval_queue": DOCS_SITE_DIR / "approval-queue.json",
+        "docs_site_planning_state": DOCS_SITE_DIR / "planning-state.json",
+        "docs_site_ai_activity_log": DOCS_SITE_DIR / "ai-activity-log.jsonl",
     }.items():
         if not _path_parent_under_root(Path(path), root):
             raise RuntimeError(
                 f"PANTHEON_STATUS_ROOT path binding for {label} escapes root: {path}"
             )
-        if Path(path).exists() and _existing_path_is_symlink(Path(path)):
+        if _existing_path_is_symlink(Path(path)):
             raise RuntimeError(
                 f"PANTHEON_STATUS_ROOT path binding for {label} cannot be a symlink: {path}"
             )
+
+    for path, label in (
+        (root / "ai-task-archive", "task archive"),
+        (root / "archive" / "logs", "activity rotation archive"),
+        (root / ".orchestrator" / "logs" / "activity-log-archive", "legacy activity archive"),
+        (root / ".orchestrator" / "logs" / "activity-rotation", "activity rotation"),
+        (root / ".orchestrator" / "worker-runtime", "worker runtime"),
+    ):
+        symlink_comp = _first_symlink_component(path)
+        if symlink_comp is not None:
+            raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} component cannot be a symlink: {symlink_comp}")
+        _validate_directory_no_symlinks_recursive(path, label)
 
     assert_task_archive_root_binding()
 
@@ -1649,10 +1692,11 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
     _validate_status_archive_snapshot(snapshot)
     if existing is not None:
         _validate_status_archive_snapshot(existing)
-        if _canonical_json_sha256(existing) != _canonical_json_sha256(snapshot):
-            raise RuntimeError(
-                f"existing archive snapshot conflicts with terminal task: {task_id}"
-            )
+        if is_terminal_task(task):
+            if _canonical_json_sha256(existing) != _canonical_json_sha256(snapshot):
+                raise RuntimeError(
+                    f"existing archive snapshot conflicts with terminal task: {task_id}"
+                )
         snapshot = deepcopy(existing)
 
     pending = state.get(STATUS_ARCHIVE_OUTBOX_KEY)
@@ -5272,16 +5316,84 @@ def main(argv: list[str]) -> int:
     }
 
     if command in read_only_commands:
-        # A killed terminal transition may leave durable archive/activity
-        # outboxes. Complete those writer transactions under EX before taking
-        # the normal shared read snapshot.
-        with canonical_task_state_lock(shared=False):
-            recovery_state = load_state()
-            recover_status_archive_outbox(recovery_state)
-            recover_status_activity_outbox(recovery_state)
-        with canonical_task_state_lock(shared=True):
+        import time
+        pending_outbox = False
+        
+        # Bounded shared lock acquisition to check for pending outbox
+        acquired_sh = False
+        start_time = time.monotonic()
+        while time.monotonic() - start_time < 5.0:
+            lock_sh = canonical_task_state_lock(shared=True, nonblocking=True)
+            try:
+                lock_sh.__enter__()
+                acquired_sh = True
+                break
+            except BlockingIOError:
+                time.sleep(0.1)
+                
+        if not acquired_sh:
+            raise RuntimeError(
+                "Task-state shared lock could not be acquired within 5 seconds to check pending outbox"
+            )
+            
+        try:
+            state_data = load_state()
+            if (
+                state_data.get("status_archive_outbox") not in (None, {}, [])
+                or state_data.get("status_activity_outbox") not in (None, {}, [])
+            ):
+                pending_outbox = True
+        except Exception:
+            pass
+        finally:
+            lock_sh.__exit__(None, None, None)
+
+        if pending_outbox:
+            acquired = False
+            start_time = time.monotonic()
+            while time.monotonic() - start_time < 5.0:
+                lock = canonical_task_state_lock(shared=False, nonblocking=True)
+                try:
+                    lock.__enter__()
+                    acquired = True
+                    break
+                except BlockingIOError:
+                    time.sleep(0.1)
+
+            if acquired:
+                try:
+                    recovery_state = load_state()
+                    recover_status_archive_outbox(recovery_state)
+                    recover_status_activity_outbox(recovery_state)
+                finally:
+                    lock.__exit__(None, None, None)
+            else:
+                raise RuntimeError(
+                    "Pending outbox recovery is required but task-state EX lock could not be acquired"
+                )
+
+        # Bounded shared lock acquisition to execute the read-only command
+        acquired_sh2 = False
+        start_time = time.monotonic()
+        while time.monotonic() - start_time < 5.0:
+            lock_sh2 = canonical_task_state_lock(shared=True, nonblocking=True)
+            try:
+                lock_sh2.__enter__()
+                acquired_sh2 = True
+                break
+            except BlockingIOError:
+                time.sleep(0.1)
+
+        if not acquired_sh2:
+            raise RuntimeError(
+                "Task-state shared lock could not be acquired within 5 seconds to run command"
+            )
+
+        try:
             state = load_state()
             read_only_commands[command](state, args)
+        finally:
+            lock_sh2.__exit__(None, None, None)
         return 0
 
     if command not in commands:
