@@ -7,7 +7,6 @@ from collections import Counter
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
-import gzip
 import hashlib
 import importlib.util
 import json
@@ -27,10 +26,10 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 from common import (
-    activity_audit_source_paths_unlocked,
     append_activity_log_entries_unlocked,
     assert_activity_audit_stable_unlocked,
     prepare_activity_audit_unlocked,
+    stream_logical_activity,
 )
 
 DEFAULT_CATALOG_PATH = (
@@ -2243,84 +2242,55 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             temp_path.unlink()
 
 
-def activity_log_sources(*, since: datetime | None = None) -> list[Path]:
-    """Return disjoint rotated history followed by the active audit log."""
+def validated_logical_activity_entries(
+    *,
+    since: datetime | None = None,
+) -> Iterator[tuple[dict[str, Any], Path, int]]:
+    """Yield the shared logical history with dispatcher event bindings checked."""
 
-    # Correctness cannot depend on archive mtimes: rotation, restore, or an
-    # operator copy can preserve an old mtime while containing a pending event.
-    # Scan every source while the audit sidecar is held so global event-ID
-    # uniqueness remains exact across active and rotated history.
+    # Event-ID uniqueness requires the complete logical history. The caller
+    # already holds the activity sidecar through shared_dispatch_locks(); the
+    # canonical stable lock is re-entrant for this public, full-drain reader.
     _ = since
-    return activity_audit_source_paths_unlocked(LOG_PATH)
-
-
-def _read_activity_source(path: Path) -> str:
     try:
-        if path.suffix == ".gz":
-            with gzip.open(path, "rt", encoding="utf-8", errors="strict") as handle:
-                return handle.read()
-        return path.read_text(encoding="utf-8", errors="strict")
-    except (OSError, UnicodeError) as exc:
-        raise DispatchError(
-            f"activity audit source is unreadable: {path}: {type(exc).__name__}"
-        ) from exc
+        for entry, path, line_number in stream_logical_activity(LOG_PATH):
+            if "event_id" in entry:
+                event_id = entry.get("event_id")
+                if not isinstance(event_id, str) or not event_id.strip():
+                    raise DispatchError(
+                        f"activity audit event_id is invalid in {path}:{line_number}"
+                    )
+                if event_id.startswith("loop-product-event-"):
+                    event_payload = {
+                        key: deepcopy(value)
+                        for key, value in entry.items()
+                        if key != "event_id"
+                    }
+                    expected_event_id = (
+                        "loop-product-event-" + canonical_json_sha256(event_payload)
+                    )
+                    if event_id != expected_event_id:
+                        raise DispatchError(
+                            "activity audit event_id payload binding mismatch in "
+                            f"{path}:{line_number}"
+                        )
+            yield entry, path, line_number
+    except DispatchError:
+        raise
+    except (OSError, RuntimeError, UnicodeError) as exc:
+        raise DispatchError(f"activity audit logical reader rejected history: {exc}") from exc
 
 
 def activity_event_index(*, since: datetime | None = None) -> dict[str, str]:
     """Index content-addressed audit events by ID and canonical payload digest."""
 
     event_payloads: dict[str, str] = {}
-    for path in activity_log_sources(since=since):
-        source_ids: set[str] = set()
-        for line_number, line in enumerate(_read_activity_source(path).splitlines(), 1):
-            if not line.strip():
-                continue
-            entry = strict_json_loads(
-                line,
-                source=f"activity audit {path}:{line_number}",
-            )
-            if not isinstance(entry, dict):
-                raise DispatchError(
-                    f"activity audit entry must be an object in {path}:{line_number}"
-                )
-            if "event_id" not in entry:
-                continue
-            event_id = entry.get("event_id")
-            if not isinstance(event_id, str) or not event_id.strip():
-                raise DispatchError(
-                    f"activity audit event_id is invalid in {path}:{line_number}"
-                )
-            if event_id.startswith("loop-product-event-"):
-                event_payload = {
-                    key: deepcopy(value)
-                    for key, value in entry.items()
-                    if key != "event_id"
-                }
-                expected_event_id = (
-                    "loop-product-event-" + canonical_json_sha256(event_payload)
-                )
-                if event_id != expected_event_id:
-                    raise DispatchError(
-                        "activity audit event_id payload binding mismatch in "
-                        f"{path}:{line_number}"
-                    )
-            if event_id in source_ids:
-                raise DispatchError(
-                    f"duplicate activity audit event_id {event_id} in {path}"
-                )
-            source_ids.add(event_id)
-            payload_digest = canonical_json_sha256(entry)
-            previous_digest = event_payloads.get(event_id)
-            if previous_digest is not None:
-                detail = (
-                    "conflicting"
-                    if previous_digest != payload_digest
-                    else "duplicate"
-                )
-                raise DispatchError(
-                    f"{detail} activity audit event_id {event_id} across rotated logs"
-                )
-            event_payloads[event_id] = payload_digest
+    for entry, _path, _line_number in validated_logical_activity_entries(
+        since=since,
+    ):
+        event_id = entry.get("event_id")
+        if isinstance(event_id, str) and event_id.strip():
+            event_payloads[event_id] = canonical_json_sha256(entry)
     return event_payloads
 
 
@@ -3797,8 +3767,6 @@ def program_activity_records(
 ) -> list[dict[str, Any]]:
     """Return unique persisted-or-pending program evidence under the audit lock."""
 
-    # No-op reruns must still reject duplicate or payload-divergent event IDs.
-    activity_event_index()
     records: list[dict[str, Any]] = []
     by_event_id: dict[str, dict[str, Any]] = {}
 
@@ -3822,21 +3790,9 @@ def program_activity_records(
             by_event_id[event_id] = entry
         records.append(entry)
 
-    for path in activity_log_sources():
-        for line_number, line in enumerate(
-            _read_activity_source(path).splitlines(),
-            start=1,
-        ):
-            if not line.strip():
-                continue
-            entry = strict_json_loads(
-                line,
-                source=f"{path}:{line_number}",
-            )
-            if not isinstance(entry, dict):
-                raise DispatchError("activity audit row must be an object")
-            if entry.get("program_id") == program_id:
-                add_record(entry, source=f"{path}:{line_number}")
+    for entry, path, line_number in validated_logical_activity_entries():
+        if entry.get("program_id") == program_id:
+            add_record(entry, source=f"{path}:{line_number}")
 
     pending = state.get("program_activity_outbox")
     if isinstance(pending, dict) and pending.get("program_id") == program_id:

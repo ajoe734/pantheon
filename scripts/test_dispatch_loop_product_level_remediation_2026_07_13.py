@@ -54,6 +54,8 @@ import json
 import os
 from pathlib import Path
 
+from common import activity_audit_lock_file as shared_activity_audit_lock_file
+
 
 RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_VERSION = 1
 RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID = "pantheon-runtime-task-audit-lock-v1"
@@ -271,14 +273,17 @@ def canonical_task_state_lock_file(path, *, shared: bool, nonblocking: bool):
 
 @contextmanager
 def activity_audit_lock_file(path, *, shared: bool, nonblocking: bool):
-    lock_path = Path(path).parent / ".orchestrator" / "activity-audit.lock"
-    with _lock(
-        lock_path,
+    _trace("request:activity_audit")
+    with shared_activity_audit_lock_file(
+        path,
         shared=shared,
         nonblocking=nonblocking,
-        label="activity_audit",
     ):
-        yield
+        _trace("acquire:activity_audit")
+        try:
+            yield
+        finally:
+            _trace("release:activity_audit")
 '''
 
 
@@ -554,6 +559,47 @@ def canonical_sha256(value: object) -> str:
             sort_keys=True,
         ).encode("utf-8")
     ).hexdigest()
+
+
+def write_legacy_activity_fold(
+    root: Path,
+    *,
+    conflicting_tail: bool = False,
+) -> None:
+    predecessor_rows = [
+        {
+            "event_id": f"synthetic-legacy-event-{index:04d}",
+            "type": "synthetic_legacy_activity",
+            "message": f"synthetic legacy activity {index}",
+        }
+        for index in range(1001)
+    ]
+    successor_rows = deepcopy(predecessor_rows[-1000:])
+    if conflicting_tail:
+        successor_rows.append(
+            {
+                **predecessor_rows[0],
+                "message": "synthetic legacy activity conflicting payload",
+            }
+        )
+    else:
+        successor_rows.append(
+            {
+                "event_id": "synthetic-legacy-event-successor",
+                "type": "synthetic_legacy_activity",
+                "message": "synthetic legacy activity successor",
+            }
+        )
+
+    archive_root = root / "archive" / "logs"
+    archive_root.mkdir(parents=True, exist_ok=True)
+    for name, rows in (
+        ("ai-activity-log.jsonl-2026-07-13T0000Z.gz", predecessor_rows),
+        ("ai-activity-log.jsonl-2026-07-13T0001Z.gz", successor_rows),
+    ):
+        with gzip.open(archive_root / name, "wt", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def refresh_route_derived(payload: dict) -> dict:
@@ -1043,7 +1089,12 @@ def test_activity_outbox_deduplicates_events_in_old_mtime_archive() -> None:
         assert interrupted.returncode == 2
         active_log = root / "ai-activity-log.jsonl"
         exact_log = active_log.read_text(encoding="utf-8")
-        archive = root / "archive" / "logs" / "ai-activity-log.jsonl-2000.gz"
+        archive = (
+            root
+            / "archive"
+            / "logs"
+            / "ai-activity-log.jsonl-2000-01-01T0000Z.gz"
+        )
         archive.parent.mkdir(parents=True, exist_ok=True)
         with gzip.open(archive, "wt", encoding="utf-8") as handle:
             handle.write(exact_log)
@@ -1299,10 +1350,79 @@ def test_activity_outbox_rejects_exact_duplicates_across_rotated_history() -> No
         recovered = run_dispatch(root)
 
         assert recovered.returncode == 2
-        assert "duplicate activity audit event_id" in recovered.stderr
+        assert "activity event_id duplicate across sources" in recovered.stderr
         after = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
         assert after["program_activity_outbox"] is not None
         assert (root / "ai-activity-log.jsonl").read_text(encoding="utf-8") == body
+
+
+def test_dispatch_accepts_shared_legacy_fold_and_remains_idempotent() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        write_legacy_activity_fold(root)
+
+        first = run_dispatch(root)
+
+        assert first.returncode == 0, first.stderr
+        state = json.loads((root / "ai-status.json").read_text(encoding="utf-8"))
+        assert [task["id"] for task in program_tasks(state)] == [
+            task["id"] for task in load_catalog()["tasks"]
+        ]
+        status_after_first = (root / "ai-status.json").read_bytes()
+        log_after_first = (root / "ai-activity-log.jsonl").read_bytes()
+
+        second = run_dispatch(root)
+
+        assert second.returncode == 0, second.stderr
+        assert "No state changes required." in second.stdout
+        assert (root / "ai-status.json").read_bytes() == status_after_first
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_after_first
+
+
+def test_dispatch_rejects_payload_mismatch_after_shared_legacy_fold() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        write_legacy_activity_fold(root, conflicting_tail=True)
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+
+        result = run_dispatch(root)
+
+        assert result.returncode == 2
+        assert "activity event_id payload mismatch" in result.stderr
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+
+
+def test_activity_event_index_fully_drains_shared_reader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    function_globals = DISPATCH["activity_event_index"].__globals__
+
+    def mutating_stream(_path: Path):
+        yield (
+            {
+                "event_id": "synthetic-logical-event",
+                "type": "synthetic_activity",
+            },
+            Path("synthetic-source.jsonl"),
+            1,
+        )
+        raise RuntimeError("Source mutated or truncated during read")
+
+    monkeypatch.setitem(
+        function_globals,
+        "stream_logical_activity",
+        mutating_stream,
+    )
+
+    with pytest.raises(
+        DISPATCH["DispatchError"],
+        match="Source mutated or truncated during read",
+    ):
+        DISPATCH["activity_event_index"]()
 
 
 @pytest.mark.parametrize("source", ["active", "archive"])
@@ -1753,7 +1873,7 @@ def test_graph_binding_requires_one_unique_install_audit_event(mutation: str) ->
         if mutation == "missing":
             assert "exactly one durable install audit event" in result.stderr
         else:
-            assert "duplicate activity audit event_id" in result.stderr
+            assert "duplicate activity event_id in" in result.stderr
         assert (root / "ai-status.json").read_bytes() == status_before
         assert log_path.read_bytes() == log_before
 
@@ -3250,4 +3370,3 @@ def test_g2_evidence_validation() -> None:
             timestamp="2026-07-16T12:00:00Z"
         )
         assert "LOOP-PROD-AUTH-001" in created
-
