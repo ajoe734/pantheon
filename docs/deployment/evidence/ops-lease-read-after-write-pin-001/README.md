@@ -156,3 +156,22 @@ entry), consistent with how other `OPS-*` corrective tasks in this fleet run
 as task-brief plus evidence-directory records outside the tracked task
 board. The approval above is the durable governed record until the status
 tool is healthy and/or a human reconciles this task into `ai-status.json`.
+
+Rewake note (2026-07-17): the evidence-record PR (`ajoe734/pantheon#3784`)
+was open with no new commits and `mergeStateStatus: BEHIND` (16 commits),
+so this branch was resynced with `git merge origin/dev` (merge commit
+`59f347c6f581f51d1df18b3c60cf364a53636e88`) and pushed non-force to unblock
+the merge. No task-owned files changed in that merge; it only picked up
+unrelated `dev` churn, including the now-merged
+`OPS-ACTIVITY-ROTATION-PENDING-INTENT-RECOVERY-001` fix. `scripts/ai_status.py
+show` was retried post-merge and still hangs indefinitely (no output after
+90s) rather than raising the earlier rotation-recovery error; `fuser`/`ps`
+against the canonical store (`/home/lupin/code/pantheon/.orchestrator/`)
+showed a live `ai_status.py show OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002`
+process (pid 525380) holding `task-state.lock` and `activity-audit.lock`
+exclusively for 200+ seconds while several other `ai_status.py` invocations
+queued behind it - a fleet-wide lock-contention outage tied to another
+task's invocation, not something to fix from this task. This is a new
+symptom of the ongoing status-tool outage; left unfixed here per the same
+"don't fix fleet-infra bugs from an unrelated task" guidance as the prior
+entry.
