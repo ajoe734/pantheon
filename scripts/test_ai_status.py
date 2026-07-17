@@ -3671,10 +3671,21 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
                     "archived_task_snapshot",
                     return_value=existing,
                 ):
-                    with self.assertRaises(RuntimeError):
-                        ai_status.archive_terminal_task_from_state(state, terminal)
-                self.assertEqual(state, before)
-                self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, state)
+                    if "version" in existing:
+                        snapshot = ai_status.archive_terminal_task_from_state(state, terminal)
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            ai_status.archive_terminal_task_from_state(state, terminal)
+                        self.assertEqual(state, before)
+                        self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, state)
+                        continue
+                self.assertEqual(snapshot, existing)
+                self.assertEqual(state["tasks"], before["tasks"])
+                self.assertEqual(state["handoffs"], before["handoffs"])
+                self.assertEqual(state["blockers"], before["blockers"])
+                pending = state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]
+                self.assertEqual(pending["schema_version"], ai_status.STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION)
+                self.assertEqual(pending["snapshots"], [existing])
 
     def test_sigkill_at_each_archive_boundary_converges_without_vanishing_task(self) -> None:
         context = multiprocessing.get_context("fork")
