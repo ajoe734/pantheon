@@ -21,7 +21,14 @@ import orchestrator_bundle
 def isolated_bundle_env() -> dict[str, str]:
     env = os.environ.copy()
     env.pop("PANTHEON_STATUS_ROOT", None)
+    env.pop("ORCH_RUNNER_STATUS_PATH", None)
+    env.pop("ORCH_HEARTBEAT_PATH", None)
+    env.pop("ORCH_RUN_ID", None)
+    env.pop("PANTHEON_WORKTREE_ROOT", None)
+    env.pop("ORCH_WORKSPACE_PATH", None)
     return env
+
+
 
 
 class OrchestratorBundleTests(unittest.TestCase):
