@@ -78,6 +78,7 @@ def create_agora_router(
     utc_now: Callable[[], str],
     get_read_store: Callable[[], Any],
     sync_servant_agent: Callable[[Dict[str, Any]], Dict[str, Any]],
+    canonical_context_ref_resolver: Optional[Callable[..., Any]] = None,
 ) -> APIRouter:
     """Return the Agora top-level APIRouter.
 
@@ -203,6 +204,7 @@ def create_agora_router(
         get_read_store=get_read_store,
         workshop_store=workshop_store,
         proposal_store=proposal_store,
+        canonical_context_ref_resolver=canonical_context_ref_resolver,
     ))
     router.include_router(create_governance_router(
         **_kw,

@@ -28,3 +28,15 @@ def test_root_failure_diagnostics_keep_scheduler_logs_separate() -> None:
 
     assert 'info "source-ingest-scheduler logs after failure"' in diagnostics
     assert "logs --no-color --tail=120 source-ingest-scheduler" in diagnostics
+
+
+def test_root_failure_diagnostics_capture_search_service_and_state_without_env() -> None:
+    diagnostics = _failure_diagnostics_function()
+
+    assert 'info "search-svc service logs after failure"' in diagnostics
+    assert "logs --no-color --tail=240 search-svc" in diagnostics
+    assert "ps -a -q search-svc" in diagnostics
+    assert 'info "search-svc container restart and health state after failure"' in diagnostics
+    assert "restart_count={{.RestartCount}}" in diagnostics
+    assert "health={{if .State.Health}}{{.State.Health.Status}}" in diagnostics
+    assert ".Config.Env" not in diagnostics

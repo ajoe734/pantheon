@@ -6,11 +6,15 @@ Uses fakes instead of a real DB so the tests run without psycopg installed.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+
+import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +84,122 @@ def _fake_snapshot_psycopg():
 def _fake_evidence_psycopg():
     conn = _FakeEvidenceConnection()
     return SimpleNamespace(connect=lambda dsn: conn), conn
+
+
+def _stable_knowledge_object_rows():
+    from services.knowledge.evidence import (
+        EvidenceBundleBuilder,
+        EvidenceItem,
+        InMemoryEvidenceRepository,
+    )
+    from services.source_ingestion.connectors.base import SourceRecord
+
+    repo = InMemoryEvidenceRepository()
+    source = SourceRecord(
+        source_id="src-stable",
+        connector_id="conn-stable",
+        source_type="paper",
+        title="Stable source",
+        content_ref="ref://stable",
+    )
+    item = EvidenceItem(
+        evidence_item_id="evi-stable",
+        source_id=source.source_id,
+        item_type="text_chunk",
+        content_ref="ref://stable#chunk-1",
+        citation_label="stable#chunk-1",
+        body="Stable evidence receives a new run-scoped bundle.",
+    )
+    builder = EvidenceBundleBuilder(repo)
+    first_bundle = builder.build_bundle(
+        source_records=[source],
+        evidence_items=[item],
+        summary="First bundle",
+        created_by="source-ingest",
+        evidence_bundle_id="evbundle-first",
+    )
+    builder.build_knowledge_object(
+        knowledge_object_id="ko-stable",
+        source_record=source,
+        evidence_item=item,
+        evidence_bundle=first_bundle,
+        title=source.title,
+        text=item.body,
+    )
+    later_bundle = builder.build_bundle(
+        source_records=[source],
+        evidence_items=[item],
+        summary="Later bundle",
+        created_by="source-ingest",
+        evidence_bundle_id="evbundle-later",
+    )
+    final_object = builder.build_knowledge_object(
+        knowledge_object_id="ko-stable",
+        source_record=source,
+        evidence_item=item,
+        evidence_bundle=later_bundle,
+        title=source.title,
+        text=item.body,
+    )
+    return [
+        ("source_record", source.to_dict()),
+        ("evidence_item", item.to_dict()),
+        ("evidence_bundle", first_bundle.to_dict()),
+        ("knowledge_object", final_object.to_dict()),
+        ("evidence_bundle", later_bundle.to_dict()),
+    ]
+
+
+def _write_stable_knowledge_object_across_bundles(repo):
+    from services.knowledge.evidence import EvidenceBundleBuilder, EvidenceItem
+    from services.source_ingestion.connectors.base import SourceRecord
+
+    source = SourceRecord(
+        source_id="src-stable",
+        connector_id="conn-stable",
+        source_type="paper",
+        title="Stable source",
+        content_ref="ref://stable",
+    )
+    item = EvidenceItem(
+        evidence_item_id="evi-stable",
+        source_id=source.source_id,
+        item_type="text_chunk",
+        content_ref="ref://stable#chunk-1",
+        citation_label="stable#chunk-1",
+        body="Stable evidence receives a new run-scoped bundle.",
+    )
+    builder = EvidenceBundleBuilder(repo)
+    first_bundle = builder.build_bundle(
+        source_records=[source],
+        evidence_items=[item],
+        summary="First bundle",
+        created_by="source-ingest",
+        evidence_bundle_id="evbundle-first",
+    )
+    builder.build_knowledge_object(
+        knowledge_object_id="ko-stable",
+        source_record=source,
+        evidence_item=item,
+        evidence_bundle=first_bundle,
+        title=source.title,
+        text=item.body,
+    )
+    later_bundle = builder.build_bundle(
+        source_records=[source],
+        evidence_items=[item],
+        summary="Later bundle",
+        created_by="source-ingest",
+        evidence_bundle_id="evbundle-later",
+    )
+    builder.build_knowledge_object(
+        knowledge_object_id="ko-stable",
+        source_record=source,
+        evidence_item=item,
+        evidence_bundle=later_bundle,
+        title=source.title,
+        text=item.body,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -265,12 +385,54 @@ def test_postgres_read_only_evidence_repository_enforces_write_boundary():
             repo.add_source_record(source)
 
 
+def test_postgres_read_only_reload_uses_dependency_topology_for_stable_object():
+    """Search accepts a stable KO updated to reference a later bundle row."""
+    from services.search.pg_store import PostgresReadOnlyEvidenceRepository
+
+    _FakeEvidenceConnection.evidence_rows = _stable_knowledge_object_rows()
+    _FakeEvidenceConnection.statements = []
+    fake_psycopg, _conn = _fake_evidence_psycopg()
+
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        repo = PostgresReadOnlyEvidenceRepository(
+            dsn="postgresql://search-reader@example/db"
+        )
+
+    assert repo.get_knowledge_object("ko-stable").evidence_bundle_id == "evbundle-later"
+
+
+def test_real_postgres_read_only_reload_uses_dependency_topology_for_stable_object():
+    dsn = os.getenv("SOURCE_INGEST_TEST_POSTGRES_DSN") or os.getenv("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("SOURCE_INGEST_TEST_POSTGRES_DSN or TEST_DATABASE_URL is not configured")
+    psycopg = pytest.importorskip("psycopg")
+    from services.search.pg_store import PostgresReadOnlyEvidenceRepository
+    from services.source_ingestion.pg_store import PostgresSourceEvidenceRepository
+
+    schema = f"search_reload_{uuid.uuid4().hex[:16]}"
+    table = f"{schema}.source_evidence"
+    try:
+        owner_repo = PostgresSourceEvidenceRepository(dsn=dsn, table=table, bootstrap=True)
+        _write_stable_knowledge_object_across_bundles(owner_repo)
+        with owner_repo._connect() as conn:
+            rows = conn.execute(
+                f"SELECT record_type,record_id FROM {owner_repo.table} ORDER BY append_id"
+            ).fetchall()
+        assert rows.index(("knowledge_object", "ko-stable")) < rows.index(
+            ("evidence_bundle", "evbundle-later")
+        )
+
+        search_repo = PostgresReadOnlyEvidenceRepository(dsn=dsn, table=table)
+        assert search_repo.get_knowledge_object("ko-stable").evidence_bundle_id == "evbundle-later"
+    finally:
+        with psycopg.connect(dsn) as conn:
+            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
 def test_postgres_read_only_evidence_repository_reload_preserves_reference_validation():
     """Search read-only reload still enforces source evidence invariants."""
     from services.knowledge.evidence.models import EvidenceValidationError
     from services.search.pg_store import PostgresReadOnlyEvidenceRepository
-    import pytest
-
     _FakeEvidenceConnection.evidence_rows = [
         (
             "evidence_item",
