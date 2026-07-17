@@ -12,6 +12,8 @@ Owner: `Codex2`. Reviewer: `Claude`. Target: `pantheon/dev`. Auto-merge: off.
 
 - Read the activity follow-up plan dated 2026-07-16, the original recovery
   brief/addendum, PR #3773, and its postmerge inventory.
+- Read the additive non-adjacent-tail incident plan dated 2026-07-17:
+  `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/OPS_ACTIVITY_NONADJACENT_TAIL_INCIDENT_PLAN_2026-07-17.md`.
 - Current approved baseline is merge
   `64844eef7e87c63c955c98fa95579992aa3af5e2`.
 - The postmerge snapshot has no content-addressed archive. If that changes
@@ -53,12 +55,17 @@ legacy archive bytes, central status files, or unrelated runtime policy.
    symlinks, and unstable sources.
 9. Keep content-addressed overlap rejection unchanged.
 10. Ensure ai-status and supervisor writer paths share the same contract for
-   their different thresholds/tail sizes.
+    their different thresholds/tail sizes.
+11. Reproduce and close the non-adjacent older-tail incident from the
+    2026-07-17 addendum. A read-only caller must return a bounded structured
+    fail-closed diagnostic (or a uniquely proven approved recovery result),
+    never hang or infer source order from filenames.
 
 ## Tests and evidence
 
-Implement every P0 verification row in the plan, including a three-archive
-hash-order counterexample, newest-row rollback for keep-lines 1000 and 0, and
+Implement every P0 verification row in the plan, including the exact
+non-adjacent-tail fixture and bounded-show deadline, a three-archive hash-order
+counterexample, newest-row rollback for keep-lines 1000 and 0, and
 the complete crash/tamper matrices. Run the full activity/status/control-plane
 suites from repo-external roots. Publish
 redacted fixtures, commands, counts, hashes, and fault-point results; never
@@ -77,6 +84,12 @@ copy central raw activity payloads.
   accepts its writer coverage, monitoring, abort, restoration, and readback
   evidence.
 - Postmerge install and smoke require planner approval and exact merge SHA.
+
+## Coordination Root
+
+- Auto workers inherit `PANTHEON_STATUS_ROOT` from the supervisor.
+- Run `./scripts/ai-status.sh` normally from this worktree; governed status,
+  activity, archive and lock writes are routed to the validated central root.
 
 ## Done
 
