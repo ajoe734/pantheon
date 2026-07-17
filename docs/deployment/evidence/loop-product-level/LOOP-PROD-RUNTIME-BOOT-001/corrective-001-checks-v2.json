@@ -71,7 +71,7 @@
     },
     "corrective_pr_5_evidence_final_rebind": {
       "repo": "ajoe734/pantheon",
-      "number": null,
+      "number": 3813,
       "title": "LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001: correct evidence file_count and bind PR #3812",
       "state": "OPEN",
       "note": "This is the follow-up PR that corrects the file_count mismatch in checks-v2 and binds PR #3812's merged state. Claude must resolve this PR's actual number/head/merge SHA from GitHub once opened, verify it is an ancestor of origin/dev, and confirm this file's recorded base_commit matches this file's own first parent before treating any of the bindings below as accepted."
