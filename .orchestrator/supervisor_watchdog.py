@@ -395,7 +395,7 @@ def append_watchdog_contention_metric(config: dict[str, Any], payload: dict[str,
         try:
             fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except (BlockingIOError, OSError) as exc:
-            if isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK):
+            if getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK):
                 sys.stderr.write("watchdog contention metric write dropped due to lock contention\n")
                 sys.stderr.flush()
                 return

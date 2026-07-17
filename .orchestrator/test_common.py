@@ -658,11 +658,18 @@ class StableCanonicalLockPathTests(unittest.TestCase):
             root = Path(tmpdir)
             lock_path = root / "task-state.lock"
 
+            call_count = 0
             def fake_assert(*args, **kwargs):
-                raise OSError(errno.EAGAIN, "EAGAIN during validation")
+                nonlocal call_count
+                call_count += 1
+                if call_count > 1:
+                    raise OSError(errno.EAGAIN, "EAGAIN during validation")
+
+            mock_flock = mock.Mock(side_effect=common.fcntl.flock)
 
             with (
                 mock.patch("common._assert_stable_lock_identity", fake_assert),
+                mock.patch.object(common.fcntl, "flock", mock_flock),
                 self.assertRaises(OSError) as ctx,
             ):
                 with common.stable_sidecar_lock(
@@ -674,6 +681,7 @@ class StableCanonicalLockPathTests(unittest.TestCase):
                     self.fail("should not reach here")
             self.assertEqual(ctx.exception.errno, errno.EAGAIN)
             self.assertNotIsInstance(ctx.exception, common.LockContentionError)
+            mock_flock.assert_called()
 
     def test_pid_change_resets_inherited_thread_local_state(self) -> None:
         fake_handle = mock.Mock()
