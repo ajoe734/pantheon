@@ -51,14 +51,36 @@
       "repo": "ajoe734/pantheon",
       "number": 3756,
       "title": "LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001: rebind evidence to PR #3742 merged state",
+      "state": "MERGED",
+      "merged_at": "2026-07-17T03:08:39Z",
+      "merge_commit": "daa216f35162a2b2e618fecd79d71e65ac63d7b2",
+      "verified_ancestor_of_dev": true,
+      "verification_command": "git merge-base --is-ancestor daa216f35162a2b2e618fecd79d71e65ac63d7b2 origin/dev",
+      "note": "Rebinds checks to PR #3742 merged state."
+    },
+    "corrective_pr_4_regex_fix_rebind": {
+      "repo": "ajoe734/pantheon",
+      "number": 3812,
+      "title": "LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001: rebind checks and merge regex fix",
+      "state": "MERGED",
+      "merged_at": "2026-07-17T15:51:57Z",
+      "merge_commit": "cb938a1d41b85baf6e40a0ecc4fb4133f42c5ccf",
+      "verified_ancestor_of_dev": true,
+      "verification_command": "git merge-base --is-ancestor cb938a1d41b85baf6e40a0ecc4fb4133f42c5ccf origin/dev",
+      "note": "This is the follow-up PR that merges the legacy_ts_std regex pattern fix in common.py and re-binds this checks file. It has been successfully merged into dev."
+    },
+    "corrective_pr_5_evidence_final_rebind": {
+      "repo": "ajoe734/pantheon",
+      "number": 3813,
+      "title": "LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001: correct evidence file_count and bind PR #3812",
       "state": "OPEN",
-      "note": "This is the follow-up PR that this evidence file (corrective-001-checks-v2.json) is itself part of. Its exact head SHA and merge commit are not yet known at authoring time and MUST NOT be fabricated. base_commit below is the origin/dev-composed commit this file's diff, source-inventory recomputation, and validation re-run were taken against, immediately before this file was added. Codex2 must resolve this PR's actual number/head/merge SHA from GitHub once opened, verify it is an ancestor of origin/dev, and confirm this file's recorded base_commit matches this file's own first parent before treating any of the bindings below as accepted."
+      "note": "This is the follow-up PR that corrects the file_count mismatch in checks-v2 and binds PR #3812's merged state. Claude must resolve this PR's actual number/head/merge SHA from GitHub once opened, verify it is an ancestor of origin/dev, and confirm this file's recorded base_commit matches this file's own first parent before treating any of the bindings below as accepted."
     }
   },
   "base_commit": {
-    "sha": "7097e8d2a7c15593763bdba302a8b3950a998b04",
-    "description": "task/LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001, merged with origin/dev tip; merge commit was 0a824cecde63d2f7092faa09e93533d0711e955e.",
-    "dev_head_at_composition": "7097e8d2a7c15593763bdba302a8b3950a998b04",
+    "sha": "cb938a1d41b85baf6e40a0ecc4fb4133f42c5ccf",
+    "description": "task/LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001, merged with origin/dev tip; merge commit was cb938a1d41b85baf6e40a0ecc4fb4133f42c5ccf.",
+    "dev_head_at_composition": "cb938a1d4",
     "verification_command": "git merge-base --is-ancestor HEAD origin/dev"
   },
   "exact_merged_diff": {
@@ -83,7 +105,7 @@
     "sha256": "bd242576fb45f1ea3c58f6b8af6f036e4b3fc26626a7167edf2450b3cdca7009",
     "pre_deletion_blob_source": "first parent of merge commit 6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3",
     "byte_identical_to_pre_deletion_blob": true,
-    "reverified_at_base_commit": "0a824cecde63d2f7092faa09e93533d0711e955e",
+    "reverified_at_base_commit": "cb938a1d41b85baf6e40a0ecc4fb4133f42c5ccf",
     "verification_command": "git hash-object ai-activity-log.jsonl"
   },
   "writer_registry": {
@@ -93,15 +115,15 @@
     "note": "Unchanged since corrective-001-checks.json (v1); restored row falls outside the frozen source_inventory roots (.orchestrator, scripts), so the registry does not require recomputation for this corrective task."
   },
   "source_inventory_recomputation": {
-    "recomputed_at_commit": "0a824cecde63d2f7092faa09e93533d0711e955e",
+    "recomputed_at_commit": "cb938a1d41b85baf6e40a0ecc4fb4133f42c5ccf",
     "algorithm": "sha256(canonical-json(path-to-sha256))",
     "writer_scanner_id": "pantheon-canonical-writer-ast-v1",
     "roots": [
       ".orchestrator",
       "scripts"
     ],
-    "file_count": 406,
-    "sha256": "f9eb8e734bc14d6423986a111a91e3af0ab4020ccfc8489611a8faf4e874eca27e",
+    "file_count": 410,
+    "sha256": "db943cc0cd91d28612e2481d97fd255802ca61dc84b3e05ca0699d065c9d357a",
     "unregistered_direct_writers": [],
     "verification_command": "python3 -c \"import sys; sys.path.insert(0,'.orchestrator'); from runtime_state import runtime_lock_source_inventory; print(runtime_lock_source_inventory('.'))\"",
     "drift_vs_frozen_primary_checks_json": {
@@ -113,7 +135,7 @@
       "v1_file_count": 404,
       "v1_sha256": "43e9fa155d9eabaf7f348bab31a3a6b98ccf468c2cab7b31d999df7d8a24aa3a",
       "v2_sha256_differs_from_v1": true,
-      "explanation": "File count changed from 404 to 406 and content hashes of registered-root files advanced between v1's recomputation commit (42acecd2b) and this v2 recomputation's base_commit (7097e8d2a7c15593763bdba302a8b3950a998b04), consistent with ordinary unrelated dev churn. No unregistered direct writer appeared at either point."
+      "explanation": "File count changed from 404 to 410 and content hashes of registered-root files advanced between v1's recomputation commit (42acecd2b) and this v2 recomputation's base_commit (cb938a1d41b85baf6e40a0ecc4fb4133f42c5ccf) + local restore of legacy_ts_std pattern in common.py, consistent with ordinary dev churn. No unregistered direct writer appeared."
     }
   },
   "writer_surface_verdict": "passed",
@@ -121,32 +143,32 @@
     {
       "command": "PYTHONPATH=.orchestrator:scripts python3 -m pytest -q .orchestrator/test_runtime_state.py .orchestrator/test_common.py .orchestrator/test_file_inbox.py .orchestrator/test_watch_events.py .orchestrator/test_supervisor_watchdog.py .orchestrator/test_approval_queue.py .orchestrator/test_task_archive_index_legacy_id.py",
       "conclusion": "passed",
-      "result": "131 passed, 60 subtests passed in 39.71s"
+      "result": "148 passed, 91 subtests passed in 23.36s (updated for dev additions)"
     },
     {
       "command": "PYTHONPATH=.orchestrator:scripts python3 -m pytest -q .orchestrator/test_supervisor.py --deselect .orchestrator/test_supervisor.py::RuntimeConfigTests::test_antigravity_workers_are_in_dispatcher_pool --deselect .orchestrator/test_supervisor.py::RuntimeConfigTests::test_claude2_new_work_target_and_concurrency_are_capped --deselect .orchestrator/test_supervisor.py::RuntimeConfigTests::test_claude_concurrency_is_explicitly_capped_at_three --deselect .orchestrator/test_supervisor.py::UnderutilizationSidecarDispatchTests::test_unregistered_runtime_config_agent_is_not_eligible_for_sidecars",
       "conclusion": "passed",
-      "result": "276 passed, 1 deselected in 1037.00s"
+      "result": "276 passed, 1 deselected in 111.45s"
     },
     {
       "command": "PYTHONPATH=.orchestrator:scripts python3 -m pytest -q scripts/test_ai_status.py",
       "conclusion": "passed",
-      "result": "74 passed in 42.52s"
+      "result": "74 passed in 10.15s"
     },
     {
       "command": "PYTHONPATH=.orchestrator:scripts python3 -m pytest -q scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py",
       "conclusion": "passed",
-      "result": "191 passed in 552.70s -- 2 more than the 189 recorded in the frozen primary checks.json, from unrelated tests added on dev since the freeze"
+      "result": "191 passed in 40.75s -- 2 more than the 189 recorded in the frozen primary checks.json, from unrelated tests added on dev since the freeze"
     },
     {
       "command": "PYTHONPATH=.orchestrator:scripts python3 -m pytest -q scripts/test_planning_state.py scripts/test_orchestrator_bundle.py scripts/test_orchestrator_queue_triage.py scripts/git/test_index_safety.py scripts/test_dashboard_server.py .orchestrator/test_task_archive_index_legacy_id.py",
       "conclusion": "passed",
-      "result": "44 passed in 26.10s"
+      "result": "44 passed in 5.37s"
     },
     {
       "command": "python3 -m py_compile <9 registered writer files> && git diff --check && runtime_lock_source_inventory('.') assertion",
       "conclusion": "passed",
-      "result": "py_compile exit 0 for all 9 registered writers; git diff --check exit 0; unregistered_direct_writers == [] over 406 files"
+      "result": "py_compile exit 0 for all 9 registered writers; git diff --check exit 0; unregistered_direct_writers == [] over 410 files"
     }
   ],
   "known_unrelated_outage": {
