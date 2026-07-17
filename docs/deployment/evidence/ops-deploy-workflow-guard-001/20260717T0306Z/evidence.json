@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "task_id": "OPS-DEPLOY-WORKFLOW-GUARD-001",
+  "captured_at": "2026-07-17T03:06:00Z",
+  "context": "STOP-gate recheck; no proof dispatched",
+  "workflow_states": {
+    "ajoe734/pantheon#269991390": "active",
+    "ajoe734/execute-plans#292028803": "active"
+  },
+  "live_guard_process_found": false,
+  "corrective_1_reconciliation_json_store_integrity": {
+    "pr": 3758,
+    "state": "MERGED",
+    "merged_at": "2026-07-16T21:18:23Z",
+    "merged_by": "ajoe734",
+    "merge_commit": "aed6ec306da73bce7d19cc0bad2c1559ea3e6ae6",
+    "head_sha": "e0af5510000f346877ea9d508f6d84554d38407e",
+    "formal_reviewer_approval_recorded": false,
+    "gap": "task brief requires Antigravity to inspect exact post-compose head and record governed approval before merge; no gh review or evidence-file review section found"
+  },
+  "corrective_2_lease_read_after_write_pin": {
+    "prs": [3757, 3760],
+    "runtime_code_state": "merged into dev",
+    "independent_review": {
+      "reviewer": "Claude",
+      "verdict": "APPROVED",
+      "evidence_pr": 3784,
+      "evidence_pr_state": "OPEN",
+      "evidence_pr_mergeable": "MERGEABLE"
+    }
+  },
+  "related_pr_3780_expand_diagnostics": {
+    "merged_at": "2026-07-16T21:53:06Z",
+    "llm_agent": "Antigravity",
+    "reviewer": "Codex",
+    "change": "scripts/deploy_nonprod_vm.sh now captures projector and ingest scheduler logs"
+  },
+  "ai_status_py_outage": {
+    "signature": "RuntimeError: Matching non-adjacent older tail detected",
+    "distinct_from_prior_signatures": [
+      "duplicate event_id across sources (resolved ~2026-07-16T16:03Z)",
+      "activity log changed during rotation recovery (2026-07-16T23:42Z)"
+    ],
+    "status_recorded_via": "task-scoped commit + this evidence file, canonical status tooling unavailable"
+  },
+  "action_taken": "none (no dispatch, no workflow mutation, no cancel)",
+  "recommendation": "human/Antigravity resolve corrective_1's missing review artifact, then a human dispatches the Pantheon-only proof (execute-plans side already has a clean prior success and does not need rerun)"
+}
