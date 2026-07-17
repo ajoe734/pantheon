@@ -106,6 +106,39 @@ class TestCoordinationRootValidation(unittest.TestCase):
                         status_path=status,
                     )
 
+    def test_rejects_symlinked_leaves_and_mirror_children(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-symlinks-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            worktree = root / "task-worktree"
+            _init_repo(central)
+            _init_repo(worktree)
+            _write_status(central)
+            
+            # 1. Test dangling symlink in central root
+            dangling = central / "current-work.md"
+            dangling.symlink_to(root / "nonexistent-target")
+            
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(central)}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
+                    wr.validate_coordination_root(worktree)
+            
+            # Clean up dangling symlink
+            dangling.unlink()
+            
+            # 2. Test mirror child symlink (e.g. docs-site/ai-status.json)
+            docs_site = central / "docs-site"
+            docs_site.mkdir(parents=True, exist_ok=True)
+            mirror_child = docs_site / "ai-status.json"
+            mirror_child.symlink_to(root / "nonexistent-target-2")
+            
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(central)}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
+                    wr.validate_coordination_root(worktree)
+            
+            # Clean up mirror child
+            mirror_child.unlink()
+
     def test_child_command_runs_in_task_worktree_with_central_status_root(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-cwd-") as temp_dir:
             root = Path(temp_dir)

@@ -310,12 +310,19 @@ def validate_status_root_binding() -> None:
         "archive_index": task_archive_module.ARCHIVE_INDEX_FILE,
         "task_state_lock": canonical_task_state_lock_path(STATUS_FILE),
         "activity_audit_lock": activity_audit_lock_path(LOG_FILE),
+        "docs_site_ai_status": DOCS_SITE_DIR / "ai-status.json",
+        "docs_site_current_work": DOCS_SITE_DIR / "current-work.md",
+        "docs_site_dashboard_bundle": DOCS_SITE_DIR / "dashboard-bundle.json",
+        "docs_site_orchestrator_state": DOCS_SITE_DIR / "orchestrator-state.json",
+        "docs_site_approval_queue": DOCS_SITE_DIR / "approval-queue.json",
+        "docs_site_planning_state": DOCS_SITE_DIR / "planning-state.json",
+        "docs_site_ai_activity_log": DOCS_SITE_DIR / "ai-activity-log.jsonl",
     }.items():
         if not _path_parent_under_root(Path(path), root):
             raise RuntimeError(
                 f"PANTHEON_STATUS_ROOT path binding for {label} escapes root: {path}"
             )
-        if Path(path).exists() and _existing_path_is_symlink(Path(path)):
+        if _existing_path_is_symlink(Path(path)):
             raise RuntimeError(
                 f"PANTHEON_STATUS_ROOT path binding for {label} cannot be a symlink: {path}"
             )
@@ -4853,10 +4860,13 @@ def main(argv: list[str]) -> int:
         # A killed terminal transition may leave durable archive/activity
         # outboxes. Complete those writer transactions under EX before taking
         # the normal shared read snapshot.
-        with canonical_task_state_lock(shared=False):
-            recovery_state = load_state()
-            recover_status_archive_outbox(recovery_state)
-            recover_status_activity_outbox(recovery_state)
+        try:
+            with canonical_task_state_lock(shared=False, nonblocking=True):
+                recovery_state = load_state()
+                recover_status_archive_outbox(recovery_state)
+                recover_status_activity_outbox(recovery_state)
+        except (OSError, RuntimeError):
+            pass
         with canonical_task_state_lock(shared=True):
             state = load_state()
             read_only_commands[command](state, args)

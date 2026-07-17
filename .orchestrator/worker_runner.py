@@ -156,12 +156,21 @@ def validate_coordination_root(
 
     for path in (
         root / "ai-activity-log.jsonl",
+        root / "current-work.md",
+        root / "docs-site",
+        root / "docs-site" / "ai-status.json",
+        root / "docs-site" / "current-work.md",
+        root / "docs-site" / "dashboard-bundle.json",
+        root / "docs-site" / "orchestrator-state.json",
+        root / "docs-site" / "approval-queue.json",
+        root / "docs-site" / "planning-state.json",
+        root / "docs-site" / "ai-activity-log.jsonl",
         root / "ai-task-archive",
         root / "ai-task-archive" / "tasks",
         root / ".orchestrator" / "task-state.lock",
         root / ".orchestrator" / "activity-audit.lock",
     ):
-        if path.exists() and path.is_symlink():
+        if path.is_symlink():
             raise RuntimeError(f"coordination path cannot be a symlink: {path}")
 
     os.environ["PANTHEON_STATUS_ROOT"] = str(root)
