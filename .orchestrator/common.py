@@ -2147,6 +2147,10 @@ def assert_activity_audit_stable_unlocked(log_path: Path) -> None:
     intent_path = activity_rotation_intent_path(log_path)
     if intent_path.exists() or intent_path.is_symlink():
         raise RuntimeError("activity rotation recovery is pending")
+    if log_path.is_symlink():
+        raise RuntimeError(
+            f"activity audit source leaf cannot be a symlink: {log_path}"
+        )
     if not log_path.is_file():
         return
     descriptor = os.open(
@@ -3258,7 +3262,12 @@ def stream_logical_activity(
     turn incomplete source validation into apparent success.
     """
 
-    log_path = log_path.expanduser().resolve()
+    requested_log_path = log_path.expanduser()
+    if requested_log_path.is_symlink():
+        raise RuntimeError(
+            f"activity audit source leaf cannot be a symlink: {requested_log_path}"
+        )
+    log_path = requested_log_path.resolve()
     snapshot_path: Path | None = None
     try:
         with activity_audit_lock_file(log_path, shared=True):

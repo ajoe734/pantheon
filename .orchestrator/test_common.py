@@ -1434,6 +1434,21 @@ class LogicalActivityReaderTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Source is a symlink or changed|Source is not a regular file|activity audit source leaf cannot be a symlink"):
             list(common.stream_logical_activity(self.log_path))
 
+    def test_active_log_symlink_is_rejected_before_leaf_resolution(self):
+        target = self.root / "external-activity.jsonl"
+        target.write_text(
+            json.dumps({"event_id": "must-not-follow"}) + "\n",
+            encoding="utf-8",
+        )
+        self.log_path.symlink_to(target)
+
+        stream = common.stream_logical_activity(self.log_path)
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "activity audit source leaf cannot be a symlink",
+        ):
+            next(stream)
+
     def test_source_replacement_and_mutation_during_read(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         entries = self._make_entries(0, 100)
