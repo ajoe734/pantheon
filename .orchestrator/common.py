@@ -154,6 +154,12 @@ def _trace_stable_lock(action: str, plane: str, path: Path) -> None:
         os.close(descriptor)
 
 
+import errno
+
+class LockContentionError(BlockingIOError):
+    """Raised when a non-blocking lock request fails due to contention."""
+    pass
+
 @contextmanager
 def stable_sidecar_lock(
     path: str | Path,
@@ -228,6 +234,15 @@ def stable_sidecar_lock(
         # this process holding an orphaned inode while the next contender opens
         # the replacement.  Verify the pathname still names our locked FD.
         _assert_stable_lock_identity(lock_path, handle.fileno())
+    except (BlockingIOError, OSError) as exc:
+        handle.close()
+        if nonblocking and (isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK)):
+            raise LockContentionError(
+                errno.EAGAIN,
+                f"lock contention on {lock_path}: {exc}",
+                str(lock_path),
+            ) from exc
+        raise
     except BaseException:
         handle.close()
         raise
