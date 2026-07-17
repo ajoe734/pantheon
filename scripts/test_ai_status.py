@@ -3419,6 +3419,15 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
         self.status_file = self.root / "ai-status.json"
         self.log_file = self.root / "ai-activity-log.jsonl"
 
+        import subprocess
+        subprocess.run(["git", "init", "-q"], cwd=str(self.root), check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=str(self.root), check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(self.root), check=True)
+        dummy_file = self.root / "dummy.txt"
+        dummy_file.write_text("dummy", encoding="utf-8")
+        subprocess.run(["git", "add", "dummy.txt"], cwd=str(self.root), check=True)
+        subprocess.run(["git", "commit", "-m", "initial commit", "-q"], cwd=str(self.root), check=True)
+
     def _fixture_state(self) -> dict[str, object]:
         state = ai_status.default_state()
         state["tasks"] = [
