@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Reopen central status-root fix after final planning merge
-- Status: in_progress
+- Status: done
 - Owner: Antigravity
 - Reviewer: Codex
-- Next: Supervisor re-dispatched OPS-WORKTREE-CENTRAL-STATUS-ROOT-FINAL-REVIEW-002; task remains in progress.
+- Next: Completed resolved review comments and verified test suites.
 
 ## Summary
 由 Antigravity 把 #3750 從過期核准退回 Codex2；owner 同步最新 dev 135d266b、重跑完整測試，再由 Antigravity 對新 final head 核准且不得新增 review commit。

@@ -5318,16 +5318,35 @@ def main(argv: list[str]) -> int:
     if command in read_only_commands:
         import time
         pending_outbox = False
-        with canonical_task_state_lock(shared=True):
+        
+        # Bounded shared lock acquisition to check for pending outbox
+        acquired_sh = False
+        start_time = time.monotonic()
+        while time.monotonic() - start_time < 5.0:
+            lock_sh = canonical_task_state_lock(shared=True, nonblocking=True)
             try:
-                state_data = load_state()
-                if (
-                    state_data.get("archive_outbox") not in (None, {}, [])
-                    or state_data.get("activity_outbox") not in (None, {}, [])
-                ):
-                    pending_outbox = True
-            except Exception:
-                pass
+                lock_sh.__enter__()
+                acquired_sh = True
+                break
+            except BlockingIOError:
+                time.sleep(0.1)
+                
+        if not acquired_sh:
+            raise RuntimeError(
+                "Task-state shared lock could not be acquired within 5 seconds to check pending outbox"
+            )
+            
+        try:
+            state_data = load_state()
+            if (
+                state_data.get("status_archive_outbox") not in (None, {}, [])
+                or state_data.get("status_activity_outbox") not in (None, {}, [])
+            ):
+                pending_outbox = True
+        except Exception:
+            pass
+        finally:
+            lock_sh.__exit__(None, None, None)
 
         if pending_outbox:
             acquired = False
@@ -5353,9 +5372,28 @@ def main(argv: list[str]) -> int:
                     "Pending outbox recovery is required but task-state EX lock could not be acquired"
                 )
 
-        with canonical_task_state_lock(shared=True):
+        # Bounded shared lock acquisition to execute the read-only command
+        acquired_sh2 = False
+        start_time = time.monotonic()
+        while time.monotonic() - start_time < 5.0:
+            lock_sh2 = canonical_task_state_lock(shared=True, nonblocking=True)
+            try:
+                lock_sh2.__enter__()
+                acquired_sh2 = True
+                break
+            except BlockingIOError:
+                time.sleep(0.1)
+
+        if not acquired_sh2:
+            raise RuntimeError(
+                "Task-state shared lock could not be acquired within 5 seconds to run command"
+            )
+
+        try:
             state = load_state()
             read_only_commands[command](state, args)
+        finally:
+            lock_sh2.__exit__(None, None, None)
         return 0
 
     if command not in commands:

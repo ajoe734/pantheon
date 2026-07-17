@@ -223,6 +223,17 @@ def validate_coordination_root(
     if status_file.is_symlink():
         raise RuntimeError(f"ai-status.json cannot be a symlink: {status_file}")
 
+    # Enforce supervisor marker paths exist
+    for marker_path in (
+        root / ".orchestrator" / "state.json",
+        root / ".orchestrator" / "approval-queue.json",
+        root / ".orchestrator" / "config.json",
+    ):
+        if not marker_path.exists() or not marker_path.is_file():
+            raise RuntimeError(
+                f"PANTHEON_STATUS_ROOT is missing required supervisor marker: {marker_path}"
+            )
+
     for path in (
         root / "ai-activity-log.jsonl",
         root / "current-work.md",
@@ -311,6 +322,29 @@ def validate_status_command_runtime() -> dict[str, str]:
         raise RuntimeError(
             f"{STATUS_COMMAND_ROOT_ENV} source SHA {source_sha} is not merged into {base_ref}{suffix}"
         )
+    res_status = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain", "-uall"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res_status.returncode != 0:
+        raise RuntimeError(f"Failed to check git status on command root: {res_status.stderr}")
+
+    for line in res_status.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(maxsplit=1)
+        if len(parts) < 2:
+            continue
+        status_code, filepath = parts[0], parts[1]
+        filepath = filepath.strip('"\'')
+        if filepath.endswith((".py", ".sh", ".pyc", ".so", ".pl", ".rb")):
+            raise RuntimeError(
+                f"PANTHEON_COMMAND_ROOT contains dirty executable/import file: {filepath} (status: {status_code})"
+            )
+
     return {
         "command_root": str(root),
         "source_sha": source_sha,
@@ -368,7 +402,16 @@ def main(argv: list[str] | None = None) -> int:
         if expanded.is_symlink():
             raise RuntimeError(f"{label} cannot be a symlink: {expanded}")
 
-    workspace_path = os.environ.get("PANTHEON_WORKTREE_ROOT") or os.environ.get("ORCH_WORKSPACE_PATH")
+    pw = os.environ.get("PANTHEON_WORKTREE_ROOT")
+    ow = os.environ.get("ORCH_WORKSPACE_PATH")
+    if pw and ow:
+        pw_resolved = Path(os.path.expanduser(pw)).resolve()
+        ow_resolved = Path(os.path.expanduser(ow)).resolve()
+        if pw_resolved != ow_resolved:
+            raise RuntimeError(
+                f"Conflicting workspace roots: PANTHEON_WORKTREE_ROOT={pw_resolved} != ORCH_WORKSPACE_PATH={ow_resolved}"
+            )
+    workspace_path = pw or ow
     if workspace_path:
         workspace_path = Path(os.path.expanduser(workspace_path)).resolve()
     validate_coordination_root(
@@ -494,10 +537,10 @@ def main(argv: list[str] | None = None) -> int:
                     pass
 
                 if not group_alive:
+                    exit_code = 128 + terminating_signal
+                    status["exit_code"] = exit_code
+                    status["finished_at"] = utc_now()
                     publish("failed")
-                    exit_code = direct_exit_code if direct_exit_code is not None else -terminating_signal
-                    if exit_code < 0:
-                        return 128 + abs(exit_code)
                     return exit_code
 
                 # Group is still alive, check 5-second deadline
@@ -513,12 +556,10 @@ def main(argv: list[str] | None = None) -> int:
                         except subprocess.TimeoutExpired:
                             pass
                         direct_exit_code = child.poll()
-                    status["exit_code"] = direct_exit_code if direct_exit_code is not None else -signal.SIGKILL
+                    exit_code = 128 + terminating_signal
+                    status["exit_code"] = exit_code
                     status["finished_at"] = utc_now()
                     publish("failed")
-                    exit_code = status["exit_code"]
-                    if exit_code < 0:
-                        return 128 + abs(exit_code)
                     return exit_code
 
             if time.monotonic() >= next_heartbeat:

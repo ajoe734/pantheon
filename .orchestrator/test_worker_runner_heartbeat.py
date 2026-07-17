@@ -35,6 +35,10 @@ def _write_status(path: Path) -> None:
         json.dumps({"tasks": [], "agents": [], "handoffs": [], "blockers": []}) + "\n",
         encoding="utf-8",
     )
+    (path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+    (path / ".orchestrator" / "state.json").write_text("{}", encoding="utf-8")
+    (path / ".orchestrator" / "approval-queue.json").write_text("[]", encoding="utf-8")
+    (path / ".orchestrator" / "config.json").write_text("{}", encoding="utf-8")
 
 
 class TestDeriveAgent(unittest.TestCase):
@@ -203,6 +207,9 @@ class TestCoordinationRootValidation(unittest.TestCase):
             heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
             status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
             env = os.environ.copy()
+            for key in list(env.keys()):
+                if key.startswith("PANTHEON_COMMAND_"):
+                    env.pop(key)
             env.update(
                 {
                     "PANTHEON_STATUS_ROOT": str(central),
@@ -255,6 +262,9 @@ class TestCoordinationRootValidation(unittest.TestCase):
             heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
             status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
             env = os.environ.copy()
+            for key in list(env.keys()):
+                if key.startswith("PANTHEON_COMMAND_"):
+                    env.pop(key)
             env.update(
                 {
                     "PANTHEON_STATUS_ROOT": str(central),
@@ -262,6 +272,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
                     "ORCH_WORKSPACE_PATH": str(worktree),
                 }
             )
+            env.update(_command_runtime_env(central))
             # Run a failing command (exit code 1)
             proc = subprocess.run(
                 [
@@ -387,7 +398,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
                                             mock_sleep.side_effect = side_effect_sleep
 
                                             exit_code = wr.main()
-                                        self.assertEqual(exit_code, 128 + 9) # 128 + SIGKILL
+                                        self.assertEqual(exit_code, 128 + 15) # 128 + SIGTERM
                                         mock_killpg.assert_any_call(88888, 9) # SIGKILL
             finally:
                 os.chdir(orig_cwd)
@@ -480,6 +491,76 @@ class TestCoordinationRootValidation(unittest.TestCase):
                         heartbeat_path=heartbeat,
                         status_path=status,
                     )
+
+    def test_coordination_root_requires_supervisor_marker_files(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-markers-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            worktree = root / "task-worktree"
+            _init_repo(central)
+            _init_repo(worktree)
+            # Only write status, do not write the other supervisor markers
+            (central / "ai-status.json").write_text(
+                json.dumps({"tasks": [], "agents": [], "handoffs": [], "blockers": []}) + "\n",
+                encoding="utf-8",
+            )
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(central)}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "missing required supervisor marker"):
+                    wr.validate_coordination_root(worktree)
+
+    def test_conflicting_worktree_roots_rejected(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-conflict-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            worktree1 = root / "worktree-1"
+            worktree2 = root / "worktree-2"
+            _init_repo(central)
+            _init_repo(worktree1)
+            _init_repo(worktree2)
+            _write_status(central)
+
+            env = {
+                "PANTHEON_STATUS_ROOT": str(central),
+                "PANTHEON_WORKTREE_ROOT": str(worktree1),
+                "ORCH_WORKSPACE_PATH": str(worktree2),
+            }
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+            test_args = [
+                "worker_runner.py",
+                "--run-id", "test-run",
+                "--heartbeat-path", str(heartbeat),
+                "--status-path", str(status),
+                "--", "python", "-c", "pass"
+            ]
+            with mock.patch.object(wr, "_git_toplevel", return_value=central):
+                with mock.patch.object(wr, "validate_status_command_runtime", return_value={"command_root": str(central)}):
+                    with mock.patch("sys.argv", test_args):
+                        with mock.patch.dict(os.environ, env, clear=True):
+                            with self.assertRaisesRegex(RuntimeError, "Conflicting workspace roots"):
+                                wr.main()
+
+    def test_command_runtime_rejects_dirty_executable_import_files(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-dirty-") as temp_dir:
+            root = Path(temp_dir)
+            _init_repo(root)
+            _write_status(root)
+            
+            # Create a dirty script file in the repo
+            dirty_file = root / "scripts" / "malicious.py"
+            dirty_file.parent.mkdir(parents=True, exist_ok=True)
+            dirty_file.write_text("print('malicious')", encoding="utf-8")
+            
+            sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+            env = {
+                "PANTHEON_COMMAND_ROOT": str(root),
+                "PANTHEON_COMMAND_RUNTIME_SHA": sha,
+                "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+            }
+            with mock.patch.dict(os.environ, env, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "contains dirty executable/import file"):
+                    wr.validate_status_command_runtime()
 
 
 if __name__ == "__main__":

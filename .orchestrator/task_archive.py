@@ -301,6 +301,66 @@ def is_valid_modern_contract(snapshot: Any) -> bool:
     return True
 
 
+def _canonical_json_sha256(value: Any) -> str:
+    import hashlib
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _is_status_archive_snapshot_valid(snapshot: Any) -> bool:
+    if not isinstance(snapshot, dict) or set(snapshot) != {
+        "version",
+        "task_id",
+        "archived_at",
+        "terminal_status",
+        "terminal_outcome",
+        "task",
+        "handoffs",
+        "blockers",
+    }:
+        return False
+    task = snapshot.get("task")
+    return bool(
+        snapshot.get("version") == 1
+        and snapshot.get("terminal_status") == "done"
+        and str(snapshot.get("task_id") or "").strip()
+        and str(snapshot.get("archived_at") or "").strip()
+        and isinstance(task, dict)
+        and task.get("id") == snapshot.get("task_id")
+        and task.get("status") == "done"
+        and snapshot.get("terminal_outcome") in {"completed", "superseded"}
+        and isinstance(snapshot.get("handoffs"), list)
+        and isinstance(snapshot.get("blockers"), list)
+    )
+
+
+def validate_status_archive_outbox(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version",
+        "transaction_id",
+        "snapshots",
+    }:
+        raise RuntimeError("status archive outbox schema is not exact")
+    snapshots = value.get("snapshots")
+    if (
+        value.get("schema_version") != 1
+        or not isinstance(snapshots, list)
+        or not snapshots
+        or any(not _is_status_archive_snapshot_valid(snapshot) for snapshot in snapshots)
+        or len({str(snapshot["task_id"]) for snapshot in snapshots}) != len(snapshots)
+    ):
+        raise RuntimeError("status archive outbox contract is invalid")
+    expected_id = "ai-status-archive-tx-" + _canonical_json_sha256(snapshots)
+    if value.get("transaction_id") != expected_id:
+        raise RuntimeError("status archive outbox digest mismatch")
+    return value
+
+
 def _rebuild_archive_index_locked(
     *,
     recent_limit: int = DEFAULT_RECENT_LIMIT,
@@ -319,17 +379,17 @@ def _rebuild_archive_index_locked(
         existing_total = int(existing_index.get("counts", {}).get("total") or 0)
 
     is_git = False
-    try:
-        res_git = subprocess.run(
-            ["git", "-C", str(STATUS_ROOT), "rev-parse", "--is-inside-work-tree"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if res_git.returncode == 0 and res_git.stdout.strip() == "true":
-            is_git = True
-    except Exception:
-        pass
+    git_dir_exists = (STATUS_ROOT / ".git").exists() or any((p / ".git").exists() for p in STATUS_ROOT.parents)
+    res_git = subprocess.run(
+        ["git", "-C", str(STATUS_ROOT), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res_git.returncode == 0 and res_git.stdout.strip() == "true":
+        is_git = True
+    elif git_dir_exists:
+        raise RuntimeError(f"Git probe failed inside git repository context: {res_git.stderr.strip()}")
 
     if is_git:
         # Verify pinned_commit is a valid git ref/commit
@@ -430,19 +490,18 @@ def _rebuild_archive_index_locked(
                 })
 
     # Load archive outbox task IDs for provenance verification
-    outbox_task_ids = set()
-    try:
-        if STATUS_FILE.exists():
-            status_data = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
-            if isinstance(status_data, dict):
-                outbox = status_data.get("archive_outbox")
-                if isinstance(outbox, dict) and isinstance(outbox.get("snapshots"), list):
-                    for item in outbox["snapshots"]:
-                        t_id = normalize_task_id(item.get("task_id"))
-                        if t_id:
-                            outbox_task_ids.add(t_id)
-    except Exception:
-        pass
+    outbox_snapshots = {}
+    if STATUS_FILE.exists():
+        status_data = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+        if isinstance(status_data, dict):
+            outbox = status_data.get("status_archive_outbox")
+            if outbox not in (None, {}, []):
+                # Validate the canonical outbox schema/digest/payload exactly
+                validated_outbox = validate_status_archive_outbox(outbox)
+                for item in validated_outbox["snapshots"]:
+                    t_id = normalize_task_id(item.get("task_id"))
+                    if t_id:
+                        outbox_snapshots[t_id] = item
 
     # Process newly created / uncommitted local snapshots
     if allow_uncommitted and ARCHIVE_TASKS_DIR.exists():
@@ -475,10 +534,16 @@ def _rebuild_archive_index_locked(
                     )
 
                     if not valid_contract:
-                        if not task_id or task_id not in outbox_task_ids:
+                        if not task_id or task_id not in outbox_snapshots:
                             raise RuntimeError(
                                 f"uncommitted snapshot at {path} does not satisfy the complete modern contract "
                                 f"and lacks proven durable outbox provenance"
+                            )
+                        # Validate the snapshot content itself matches the outbox snapshot exactly
+                        outbox_snap = outbox_snapshots[task_id]
+                        if _canonical_json_sha256(snapshot) != _canonical_json_sha256(outbox_snap):
+                            raise RuntimeError(
+                                f"uncommitted snapshot at {path} content does not match the outbox snapshot exactly"
                             )
 
                     # STRICT SNAPSHOT VALIDATION

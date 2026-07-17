@@ -1,13 +1,13 @@
 {
   "version": 1,
   "task_id": "OPS-WORKTREE-CENTRAL-STATUS-ROOT-CORRECTIVE-001",
-  "archived_at": "2026-07-16T15:56:59Z",
+  "archived_at": "2026-07-16T15:37:21Z",
   "terminal_status": "done",
   "terminal_outcome": "completed",
   "task": {
     "id": "OPS-WORKTREE-CENTRAL-STATUS-ROOT-CORRECTIVE-001",
     "title": "Bind worktree workers to one central coordination root",
-    "summary_zh": "讓孤立工作目錄的 auto worker 把 status / activity / archive / lock 讀寫都導向 supervisor 指定 of 單一中央 status 根目錄，並在路徑缺失、衝突或包含 symlink 時 fail-closed。",
+    "summary_zh": "讓孤立工作目錄的 auto worker 把 status / activity / archive / lock 讀寫都導向 supervisor 指定的單一中央 status 根目錄，並在路徑缺失、衝突或包含 symlink 時 fail-closed。",
     "phase": "Wave -1 central status-root final-head coordination",
     "owner": "Codex2",
     "reviewer": "Antigravity",
@@ -29,19 +29,17 @@
       "preserves concurrent writer locking and outbox recovery behavior"
     ],
     "next": "PR #3750 merged. The corrective fix is active.",
-    "last_update": "2026-07-16T15:56:59Z",
+    "last_update": "2026-07-16T15:37:21Z",
     "terminal_outcome": "completed",
     "delivery": {
-      "recorded_at": "2026-07-16T15:56:59Z",
+      "recorded_at": "2026-07-16T15:37:21Z",
       "repository_id": "pantheon",
       "repository_slug": "ajoe734/pantheon",
       "branch": "task/OPS-WORKTREE-CENTRAL-STATUS-ROOT-CORRECTIVE-001",
       "head_commit": "22a513d5a03cf449f165ea4e4ca68d8efc1a6b55",
-      "dirty_count": 494,
-      "dirty_entry_count": 494,
-      "git_clean": false,
-      "remote_status": "none",
-      "push_status": "no_upstream",
+      "dirty_count": 0,
+      "remote_status": "synced",
+      "push_status": "pushed",
       "implementation_pr": "https://github.com/ajoe734/pantheon/pull/3750",
       "merge_commit": "d4d0f693ec40e2196c47f2601380e1e0fc8b2fb9"
     }
