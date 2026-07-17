@@ -76,6 +76,22 @@ class CandidateDecisionStore:
         self._idempotency_table = f'{q}."persona_candidate_idempotency"'
         self._bootstrap()
 
+    @classmethod
+    def from_governance_store(cls, governance_store: Any) -> "CandidateDecisionStore":
+        if getattr(governance_store, "backend", "memory") == "postgres":
+            return cls(
+                backend="postgres",
+                dsn=str(getattr(governance_store, "dsn", "")),
+                schema=str(getattr(governance_store, "schema", DEFAULT_SCHEMA)),
+            )
+        environment = os.getenv("PANTHEON_ENV", "").strip().lower()
+        if environment in {"staging", "staging-live", "prod", "production"}:
+            raise RuntimeError(
+                "Postgres Agora governance storage is required for candidate decisions "
+                f"when PANTHEON_ENV={environment}"
+            )
+        return cls(backend="memory")
+
     def _connect(self) -> Any:
         try:
             import psycopg  # type: ignore[import]
@@ -437,9 +453,16 @@ class CandidateDecisionStore:
             replay = self._pg_replay(conn, self._idempotency_table, compound, fingerprint)
             if replay:
                 return replay
+            # Lock the stable aggregate identity, not the revision that was
+            # latest before a contender began waiting. Under READ COMMITTED a
+            # fresh SELECT after this lock observes the winner's revision.
+            conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+                (current["proposal_id"],),
+            )
             latest = conn.execute(
                 f"SELECT revision,tenant_id,owner_user_id,etag FROM {self._candidate_table} "
-                "WHERE proposal_id=%s ORDER BY revision DESC LIMIT 1 FOR UPDATE",
+                "WHERE proposal_id=%s ORDER BY revision DESC LIMIT 1",
                 (current["proposal_id"],),
             ).fetchone()
             # A concurrent identical request can observe no idempotency row,
@@ -523,6 +546,21 @@ class CandidateDecisionStore:
                     raise CandidateDecisionConflict("candidate ETag is stale")
                 if rows[-1]["tenant_id"] != tenant_id or rows[-1]["owner_user_id"] != owner_user_id:
                     raise CandidateDecisionConflict("candidate scope is invalid")
+                existing_receipt = next((
+                    row
+                    for receipts in memory_bucket.values()
+                    for row in receipts
+                    if row.get(id_field) == receipt.get(id_field)
+                ), None)
+                if existing_receipt is not None:
+                    if existing_receipt != receipt:
+                        raise CandidateDecisionConflict(
+                            f"canonical {kind} receipt identity reused with different bytes"
+                        )
+                    self._idempotency[compound] = (
+                        fingerprint, copy.deepcopy(existing_receipt)
+                    )
+                    return StoredMutation(copy.deepcopy(existing_receipt), True)
                 memory_bucket.setdefault(current["proposal_id"], []).append(copy.deepcopy(receipt))
                 self._idempotency[compound] = (fingerprint, copy.deepcopy(receipt))
                 return StoredMutation(copy.deepcopy(receipt), False)
@@ -531,9 +569,13 @@ class CandidateDecisionStore:
             replay = self._pg_replay(conn, self._idempotency_table, compound, fingerprint)
             if replay:
                 return replay
+            conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+                (current["proposal_id"],),
+            )
             latest = conn.execute(
                 f"SELECT tenant_id,owner_user_id,etag FROM {self._candidate_table} "
-                "WHERE proposal_id=%s ORDER BY revision DESC LIMIT 1 FOR UPDATE",
+                "WHERE proposal_id=%s ORDER BY revision DESC LIMIT 1",
                 (current["proposal_id"],),
             ).fetchone()
             replay = self._pg_replay(conn, self._idempotency_table, compound, fingerprint)
@@ -543,22 +585,41 @@ class CandidateDecisionStore:
                 raise CandidateDecisionConflict("candidate scope is invalid")
             if latest[2] != expected_etag:
                 raise CandidateDecisionConflict("candidate ETag is stale")
-            conn.execute(
+            inserted = conn.execute(
                 f"INSERT INTO {table} "
                 f"({id_field},proposal_id,revision,proposal_digest,tenant_id,owner_user_id,record_json) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb)",
+                f"VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb) ON CONFLICT ({id_field}) DO NOTHING "
+                f"RETURNING {id_field}",
                 (
                     receipt[id_field], receipt["proposal_id"], receipt["revision"],
                     receipt["proposal_digest"], tenant_id, owner_user_id,
                     json.dumps(receipt, default=str),
                 ),
-            )
+            ).fetchone()
+            if inserted is None:
+                existing = conn.execute(
+                    f"SELECT proposal_id,revision,proposal_digest,tenant_id,owner_user_id,record_json "
+                    f"FROM {table} WHERE {id_field}=%s",
+                    (receipt[id_field],),
+                ).fetchone()
+                if (
+                    existing is None
+                    or existing[0] != receipt["proposal_id"]
+                    or existing[1] != receipt["revision"]
+                    or existing[2] != receipt["proposal_digest"]
+                    or existing[3] != tenant_id
+                    or existing[4] != owner_user_id
+                    or _decode(existing[5]) != receipt
+                ):
+                    raise CandidateDecisionConflict(
+                        f"canonical {kind} receipt identity reused with different bytes"
+                    )
             conn.execute(
                 f"INSERT INTO {self._idempotency_table} (scope_key,fingerprint,response_json) "
                 "VALUES (%s,%s,%s::jsonb)",
                 (compound, fingerprint, json.dumps(receipt, default=str)),
             )
-        return StoredMutation(copy.deepcopy(receipt), False)
+        return StoredMutation(copy.deepcopy(receipt), inserted is None if self.backend == "postgres" else False)
 
     def record_validation(self, **kwargs: Any) -> StoredMutation:
         return self._record_receipt(kind="validation", **kwargs)

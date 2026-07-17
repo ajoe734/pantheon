@@ -283,6 +283,9 @@ def build_provider_prompt(
         "Do not call tools or read/write memory. Do not submit orders, call brokers, change capital, "
         "bind runtime, promote lifecycle, mutate policy, or claim execution. "
         f"Required output shape: {json.dumps(schema, separators=(',', ':'))}\n"
+        "For each recommended measure set validation_plan.validator to "
+        "pantheon_candidate_validation_v1 and choose required_checks only from "
+        "source_binding,evidence_freshness,target_version,authority_boundary,rollback_plan.\n"
         f"IMMUTABLE_TYPED_CONTEXT={exact_context}"
     )
     return prompt, context_pack

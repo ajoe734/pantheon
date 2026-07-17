@@ -75,6 +75,20 @@ class AuthoritativeValidationRequest(BaseModel):
     validation_plan_ref: str = Field(min_length=1)
 
 
+class CandidateValidationCommand(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    expected_revision: int = Field(ge=1)
+    expected_proposal_digest: str = Field(pattern=SHA256_PATTERN)
+
+
+class FormalApprovalLinkCommand(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    expected_revision: int = Field(ge=1)
+    expected_proposal_digest: str = Field(pattern=SHA256_PATTERN)
+
+
 class AuthoritativeValidationReceipt(BaseModel):
     model_config = {"extra": "forbid"}
 

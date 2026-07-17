@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from agora.candidate_decisions.models import (
@@ -14,6 +16,12 @@ from agora.candidate_decisions.models import (
 )
 from agora.candidate_decisions.service import CandidateDecisionService
 from agora.candidate_decisions.store import CandidateDecisionConflict, CandidateDecisionStore
+from agora.candidate_decisions.adapters import (
+    CANONICAL_VALIDATOR_ID,
+    CandidateBindingValidationAdapter,
+    ReadStoreApprovalAdapter,
+)
+from agora.candidate_decisions.router import create_candidate_decision_router
 from agora.interaction.provider import RecommendedMeasure, authority_boundary
 from agora.interaction.provider import recommended_measure_sha256
 from agora.interaction.store import InteractionLifecycleStore
@@ -51,8 +59,8 @@ def _measure(*, proposed_value: Any = 0.08) -> dict[str, Any]:
         ],
         "environment_ceiling": "paper",
         "validation_plan": {
-            "validator": "paper-risk-validator",
-            "required_checks": ["drawdown", "turnover"],
+            "validator": CANONICAL_VALIDATOR_ID,
+            "required_checks": ["source_binding", "evidence_freshness", "target_version"],
         },
         "rollback_trigger": "Paper drawdown is not improved.",
         "rollback_action": "Retain the current strategy revision.",
@@ -109,12 +117,13 @@ def _command(interaction: dict[str, Any] | None = None) -> CandidateFromMeasureC
     )
 
 
-def _service() -> CandidateDecisionService:
+def _service(validation_adapter=None, approval_store=None) -> CandidateDecisionService:
     interactions = InteractionLifecycleStore(backend="memory")
     return CandidateDecisionService(
         CandidateDecisionStore(backend="off"),
         interaction_store=interactions,
-        trusted_validation_adapter_ids={"validator-prod"},
+        validation_adapter=validation_adapter or _ValidationAdapter(),
+        approval_store=approval_store or _ApprovalStore(None),
         clock=lambda: NOW,
     )
 
@@ -377,7 +386,13 @@ class _ValidationAdapter:
         self.request = None
         self.plan = None
 
-    def validate(self, request, *, validation_plan):
+    def readiness(self, *, candidate):
+        return {
+            "ready": self.adapter_id == "validator-prod",
+            "reason": None if self.adapter_id == "validator-prod" else "adapter_not_registered",
+        }
+
+    def validate(self, request, *, validation_plan, candidate):
         self.request = request
         self.plan = validation_plan
         payload = {
@@ -405,11 +420,12 @@ def _accepted(service: CandidateDecisionService) -> dict[str, Any]:
 
 
 def _validate(service, candidate, adapter=None, *, key="validate-1", etag=None):
+    if adapter is not None:
+        service.validation_adapter = adapter
     return service.run_authoritative_validation(
         proposal_id=candidate["proposal_id"], tenant_id="tenant-a", owner_user_id="user-a",
         expected_revision=candidate["revision"], expected_proposal_digest=candidate["proposal_digest"],
         expected_etag=etag or service.store.etag(candidate), idempotency_key=key,
-        adapter=adapter or _ValidationAdapter(),
     )
 
 
@@ -435,7 +451,7 @@ def test_validation_rejects_untrusted_adapter_state_and_bad_receipts() -> None:
     accepted = _decide(service, draft, action="accept_for_review", key="accept-2").resource["candidate"]
     untrusted = _ValidationAdapter()
     untrusted.adapter_id = "browser-validator"
-    with pytest.raises(CandidateDecisionConflict, match="not trusted"):
+    with pytest.raises(CandidateDecisionConflict, match="not ready"):
         _validate(service, accepted, untrusted, key="untrusted")
     for mutate, message in [
         (lambda value: value.update(tenant_id="tenant-other"), "tenant"),
@@ -457,6 +473,12 @@ class _ApprovalStore:
         if self.record and self.record["approval_decision_id"] == approval_decision_id:
             return self.record
         return None
+
+    def readiness(self):
+        return {
+            "ready": not self.fail,
+            "reason": "approval_store_unavailable" if self.fail else None,
+        }
 
 
 def _approval(candidate, validation, **changes):
@@ -483,12 +505,12 @@ def _approval(candidate, validation, **changes):
 
 
 def _link(service, candidate, approval, *, key="approval-link-1", etag=None):
+    service.approval_store = _ApprovalStore(approval)
     return service.link_formal_approval(
         proposal_id=candidate["proposal_id"], approval_decision_id=approval["approval_decision_id"],
         tenant_id="tenant-a", owner_user_id="user-a", expected_revision=candidate["revision"],
         expected_proposal_digest=candidate["proposal_digest"],
         expected_etag=etag or service.store.etag(candidate), idempotency_key=key,
-        approval_store=_ApprovalStore(approval),
     )
 
 
@@ -553,7 +575,6 @@ def test_formal_approval_requires_current_validation_canonical_store_etag_and_id
             tenant_id="tenant-a", owner_user_id="user-a", expected_revision=candidate["revision"],
             expected_proposal_digest=candidate["proposal_digest"],
             expected_etag=service.store.etag(candidate), idempotency_key="missing",
-            approval_store=_ApprovalStore(None),
         )
 
 
@@ -575,3 +596,93 @@ def test_formal_approval_rejects_revoked_or_stale_after_candidate_revision() -> 
     stale_approval = _approval(revised, validation)
     with pytest.raises(CandidateDecisionConflict, match="current authoritative passed validation"):
         _link(service, revised, stale_approval, key="approval-stale-validation")
+
+
+def test_server_owned_binding_validator_passes_only_exact_current_candidate() -> None:
+    adapter = CandidateBindingValidationAdapter(clock=lambda: NOW)
+    service = _service(validation_adapter=adapter)
+    candidate = _accepted(service)
+    receipt = _validate(service, candidate).resource
+    assert receipt["outcome"] == "passed"
+    assert receipt["authority"] == "canonical_validation_service"
+    assert receipt["proposal_digest"] == candidate["proposal_digest"]
+
+
+class _CanonicalApprovalReadStore:
+    def __init__(self, *, available: bool, record: dict[str, Any] | None) -> None:
+        self.available = available
+        self.record = record
+        self.local_fixture = {"approval-1": {"outcome": "approved"}}
+
+    def get_canonical_approval_decision_readback(self, decision_id: str):
+        return {
+            "available": self.available,
+            "record": self.record if decision_id != "__candidate_readiness_probe__" else None,
+            "source": "canonical.approval_decision",
+        }
+
+
+def test_approval_adapter_rejects_local_fallback_and_preserves_exact_canonical_receipt() -> None:
+    unavailable = ReadStoreApprovalAdapter(
+        lambda: _CanonicalApprovalReadStore(available=False, record=None)
+    )
+    assert unavailable.readiness()["ready"] is False
+    with pytest.raises(RuntimeError, match="unavailable"):
+        unavailable.get_formal_approval("approval-1")
+
+    exact = {"approval_decision_id": "approval-1", "receipt_sha256": "a" * 64}
+    available = ReadStoreApprovalAdapter(
+        lambda: _CanonicalApprovalReadStore(available=True, record=exact)
+    )
+    assert available.readiness()["ready"] is True
+    assert available.get_formal_approval("approval-1") == exact
+
+
+def test_candidate_routes_return_reload_arrays_and_rotate_full_record_etag(monkeypatch) -> None:
+    from models import OperatorIdentity
+
+    service = _service()
+    candidate = _create(service)
+    identity = OperatorIdentity(
+        operator_id="operator-a",
+        roles=["operator"],
+        claims={"tenant_id": "tenant-a", "sub": "user-a"},
+    )
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-a")
+    app = FastAPI()
+    app.include_router(create_candidate_decision_router(
+        service=service,
+        extract_identity=lambda _auth: identity,
+        require_read_role=lambda _identity: None,
+        require_write_role=lambda _identity: None,
+        bff_error=lambda *args, **kwargs: HTTPException(args[0], detail=str(args[2])),
+        utc_now=lambda: NOW.isoformat(),
+    ))
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer test", "X-Tenant-Id": "tenant-a"}
+    detail = client.get(
+        f"/bff/agora/proposals/{candidate['proposal_id']}/candidate", headers=headers
+    )
+    assert detail.status_code == 200, detail.text
+    assert detail.headers["etag"] == service.store.etag(candidate)
+    assert detail.json()["data"]["decisions"] == []
+    assert isinstance(detail.json()["data"]["revisions"], list)
+    mutation = client.post(
+        f"/bff/agora/proposals/{candidate['proposal_id']}/candidate-decisions",
+        headers={
+            **headers,
+            "If-Match": detail.headers["etag"],
+            "Idempotency-Key": "route-modify-1",
+        },
+        json={
+            "action": "modify",
+            "reason": "Daily review",
+            "expected_revision": 1,
+            "expected_proposal_digest": candidate["proposal_digest"],
+            "proposed_value": 0.05,
+        },
+    )
+    assert mutation.status_code == 200, mutation.text
+    assert mutation.headers["etag"] != detail.headers["etag"]
+    assert len(mutation.json()["data"]["decisions"]) == 1
+    assert mutation.json()["data"]["execution_authority"] == "none"

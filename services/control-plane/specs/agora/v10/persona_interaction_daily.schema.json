@@ -455,12 +455,23 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["proposal_id", "revision", "proposal_digest", "measure_id"],
+            "required": [
+              "proposal_id", "interaction_id", "opinion_id", "opinion_sha256",
+              "measure_id", "measure_sha256", "revision", "proposal_digest",
+              "state", "created_at", "execution_authority"
+            ],
             "properties": {
               "proposal_id": {"type": "string", "minLength": 1},
+              "interaction_id": {"type": "string", "minLength": 1},
+              "opinion_id": {"type": "string", "minLength": 1},
+              "opinion_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
               "revision": {"type": "integer", "minimum": 1},
               "proposal_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-              "measure_id": {"type": "string", "minLength": 1}
+              "measure_id": {"type": "string", "minLength": 1},
+              "measure_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "state": {"enum": ["draft", "review_requested", "rejected", "deferred", "cancelled", "approved"]},
+              "created_at": {"type": "string", "format": "date-time"},
+              "execution_authority": {"const": "none"}
             },
             "additionalProperties": false
           }
@@ -507,7 +518,10 @@
         "decision_id",
         "proposal_id",
         "interaction_id",
+        "opinion_id",
+        "opinion_sha256",
         "measure_id",
+        "measure_sha256",
         "action",
         "actor_id",
         "reason",
@@ -522,7 +536,10 @@
         "decision_id": {"type": "string", "minLength": 1},
         "proposal_id": {"type": "string", "minLength": 1},
         "interaction_id": {"type": "string", "minLength": 1},
+        "opinion_id": {"type": "string", "minLength": 1},
+        "opinion_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
         "measure_id": {"type": "string", "minLength": 1},
+        "measure_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
         "action": {"enum": ["modified", "accepted_for_review", "rejected", "deferred", "cancelled"]},
         "actor_id": {"type": "string", "minLength": 1},
         "reason": {"type": "string", "minLength": 1},
@@ -547,12 +564,10 @@
     },
     "AuthoritativeValidationRequest": {
       "type": "object",
-      "required": ["proposal_id", "revision", "proposal_digest", "validation_plan_ref"],
+      "required": ["expected_revision", "expected_proposal_digest"],
       "properties": {
-        "proposal_id": {"type": "string", "minLength": 1},
-        "revision": {"type": "integer", "minimum": 1},
-        "proposal_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-        "validation_plan_ref": {"type": "string", "minLength": 1}
+        "expected_revision": {"type": "integer", "minimum": 1},
+        "expected_proposal_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
       },
       "additionalProperties": false
     },
