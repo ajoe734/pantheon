@@ -1,6 +1,7 @@
 # Post-Merge Evidence: OPS-WATCHDOG-LOCK-QUEUE-POSTMERGE-001
 
 Generated: 2026-07-17T06:18Z
+Updated: 2026-07-17T06:57Z
 
 ## Disposition
 
@@ -19,7 +20,9 @@ runtime config, canonical task state, or activity archives.
   `3705570e4e2a2cb26ba282603a9ca36f0da3c228`.
 - Isolated task worktree:
   `/tmp/pantheon-worker-worktrees/pantheon/ops-watchdog-lock-queue-postmerge-001`.
-- Task worktree HEAD and `origin/dev`:
+- Task worktree HEAD:
+  `d38c25bcea4513a5e27095fe59582169b3845760`.
+- `origin/dev`:
   `1c9d32dddc89a1ac8513f536c0b36fd33f3f5811`.
 - `git merge-base --is-ancestor 3705570e4e2a2cb26ba282603a9ca36f0da3c228 HEAD`
   exited `0`.
@@ -51,12 +54,13 @@ Result:
 ```text
 .................................
 ----------------------------------------------------------------------
-Ran 33 tests in 1.177s
+Ran 33 tests in 1.061s
 
 OK
 ```
 
-This corrects the earlier merged evidence defect that recorded 32 tests.
+This 2026-07-17T06:53Z rerun corrects the earlier merged evidence defect that
+recorded 32 tests.
 
 ## Isolated Contention Fixture
 
@@ -119,6 +123,26 @@ Sample secondary-lock stderr:
 ```text
 watchdog contention metric write dropped due to lock contention
 ```
+
+Fresh rerun at `2026-07-17T06:53:59Z` also passed:
+
+| Check | Result |
+|---|---|
+| Fixture root | `/tmp/pantheon-watchdog-postmerge-sliyoh7s` |
+| Repo head | `d38c25bcea4513a5e27095fe59582169b3845760` |
+| Primary held `runtime-admission.lock` probes | 12/12 exit code 0 |
+| Primary elapsed wall time | 1.020193s |
+| Primary decisions | `{"skip": 12}` |
+| Primary reasons | `{"lock_contention": 12}` |
+| Primary contention metrics | 11 written + 1 explicit stderr drop = 12 |
+| Secondary held contention-metric lock probes | 12/12 exit code 0 |
+| Secondary elapsed wall time | 0.451967s |
+| Secondary contention metric behavior | 0 written + 12 explicit stderr drops |
+| Post-release probe | exit code 0, `observe_only/supervisor_healthy` |
+| Post-release health | exit code 0, `healthy: true` |
+| Post-release watchdog state SHA-256 | `e48664f05d45c93d66688697023ce9830eda16be63c73c146f02eb5cc082f426` |
+| Post-release normal metric SHA-256 | `e0534b88a37003c7a84e386ec24809b88505915ece344a2bb5c5fe8d858e25b5` |
+| Post-release activity log SHA-256 | `9b65fb1645b3c44ea7152da3222f91dd8f256f5be6abf18b55d8af4592c25134` |
 
 ## Live Dev-Root Readback
 
@@ -207,14 +231,63 @@ the real scheduler did not sustain the required three consecutive healthy
 cycles with per-cycle health readback. The task remains blocked at product
 acceptance.
 
+Fresh owner re-dispatch readback at `2026-07-17T06:53Z-06:57Z` confirmed the
+same product gate failure without live repair:
+
+Read-only commands used:
+
+```bash
+python3 /home/lupin/pantheon-ci-deploy/dev-root/scripts/supervisor_runtime_health.py \
+  --repo /home/lupin/pantheon-ci-deploy/dev-root \
+  --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \
+  --require-watchdog --json
+tail -n 1 /home/lupin/code/pantheon/.orchestrator/logs/supervisor-watchdog-cron.log
+tail -n 1 /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/metrics/supervisor-watchdog.jsonl
+tail -n 1 /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/metrics/supervisor-watchdog-contention.jsonl
+fuser -v /home/lupin/code/pantheon/.orchestrator/runtime-admission.lock \
+  /home/lupin/code/pantheon/.orchestrator/supervisor.lock
+```
+
+Current live identity:
+
+- Dev-root HEAD: `1c9d32dddc89a1ac8513f536c0b36fd33f3f5811`.
+- Implementation merge ancestor check exited `0`.
+- Dev-root watchdog source files had no diff in
+  `.orchestrator/supervisor_watchdog.py`,
+  `scripts/run-supervisor-watchdog.sh`,
+  `scripts/supervisor_runtime_health.py`, or
+  `docs/operations/supervisor-watchdog-persistence.md`.
+- Runtime and supervisor locks are held by PID `1802483`.
+
+Fresh three-cycle passive observation:
+
+| Read time | Health | Watchdog state | Cron / metric result |
+|---|---|---|---|
+| `2026-07-17T06:55:01Z` | `healthy: false` | updated `2026-07-17T06:49:01Z`, age `360.345425s` | cron `skip/lock_contention`; normal metric still `06:49:01Z`; contention metric latest `06:54:02Z` |
+| `2026-07-17T06:56:06Z` | `healthy: false` | updated `2026-07-17T06:49:01Z`, age `425.517135s` | cron `skip/lock_contention`; contention metric latest `06:56:01Z` |
+| `2026-07-17T06:57:11Z` | `healthy: false` | updated `2026-07-17T06:49:01Z`, age `490.691351s` | cron `skip/lock_contention`; contention metric latest `06:57:01Z` |
+
+The last normal watchdog metric remained:
+
+```json
+{"at":"2026-07-17T06:49:01Z","decision":"observe_only","reason":"supervisor_healthy","pid":1802483,"heartbeat_age_seconds":20.0,"lock_held":true}
+```
+
+The latest contention metric at the end of the readback was:
+
+```json
+{"at":"2026-07-17T06:57:01Z","decision":"skip","reason":"lock_contention","pid":1802483,"heartbeat_age_seconds":245.0,"lock_held":true}
+```
+
 ## Blocker
 
 The task cannot claim product-level acceptance because the required three
 consecutive real scheduler/watchdog cycles did not produce fresh healthy
 readbacks. The installed implementation behaves correctly under isolated
 contention, and the live cron no longer accumulates watchdog waiters, but the
-current live supervisor-held runtime lock keeps every real watchdog cycle on the
-bounded skip path. Per the post-merge plan, stale watchdog samples fail closed.
+current live supervisor-held runtime lock keeps real watchdog cycles on the
+bounded skip path often enough that the watchdog sample becomes stale. Per the
+post-merge plan, stale watchdog samples fail closed.
 
 No live repair was attempted: no processes were killed, no lock files were
 removed, no runtime state was edited, and `scripts/sync-dev-root.sh` was not
