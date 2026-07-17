@@ -21,8 +21,43 @@ stat -c '%s %Y %i %n' /home/lupin/code/pantheon/ai-activity-log.jsonl
 ## 1. Stop all writers (the enforceable all-writer guard)
 
 ```bash
-# 1a. Pause respawners (keep a byte-exact restore copy first).
-crontab -l | sed 's|^\([^#].*run-supervisor\.sh.*\)$|#GUARD-OPARPIR-001 \1|' | crontab -
+# 1a. Pause the supervisor respawner. Derive the guarded crontab from the
+#     byte-exact backup taken in step 0 — never from a fresh `crontab -l`
+#     read — and fail closed on every count/readback mismatch. The live
+#     respawner is the single active cron line invoking
+#     `scripts/run-supervisor-watchdog.sh ... --restart` and ending with the
+#     `# pantheon-supervisor-watchdog` marker.
+GUARD_DIR=/tmp/oparpir-001/guard
+WATCHDOG_RE='scripts/run-supervisor-watchdog\.sh .*# pantheon-supervisor-watchdog$'
+
+# Exactly one ACTIVE (non-comment) supervisor-watchdog line must exist
+# before any mutation; otherwise abort with no change.
+ACTIVE_BEFORE=$(grep -cE "^[^#].*${WATCHDOG_RE}" "$GUARD_DIR/crontab-before.txt")
+[ "$ACTIVE_BEFORE" -eq 1 ] || { echo "ABORT: expected exactly 1 active supervisor-watchdog cron line, found ${ACTIVE_BEFORE}; no mutation performed"; exit 1; }
+
+# Comment exactly that one line with the guard marker.
+sed -E "s|^([^#].*scripts/run-supervisor-watchdog\.sh .*# pantheon-supervisor-watchdog)$|#GUARD-OPARPIR-001 \1|" \
+  "$GUARD_DIR/crontab-before.txt" > "$GUARD_DIR/crontab-guarded.txt"
+
+# Verify the generated guarded crontab differs exactly as expected:
+# not a no-op, exactly one guard marker, zero remaining active watchdog
+# lines, and a one-line-only difference from the backup.
+cmp -s "$GUARD_DIR/crontab-before.txt" "$GUARD_DIR/crontab-guarded.txt" \
+  && { echo "ABORT: guard would be a no-op; no mutation performed"; exit 1; }
+[ "$(grep -c '^#GUARD-OPARPIR-001 ' "$GUARD_DIR/crontab-guarded.txt")" -eq 1 ] \
+  || { echo "ABORT: guarded crontab does not contain exactly one guard marker; no mutation performed"; exit 1; }
+[ "$(grep -cE "^[^#].*${WATCHDOG_RE}" "$GUARD_DIR/crontab-guarded.txt")" -eq 0 ] \
+  || { echo "ABORT: an active supervisor-watchdog line survived guarding; no mutation performed"; exit 1; }
+[ "$(diff "$GUARD_DIR/crontab-before.txt" "$GUARD_DIR/crontab-guarded.txt" | grep -c '^[<>]')" -eq 2 ] \
+  || { echo "ABORT: guarded crontab differs by more than the one expected line; no mutation performed"; exit 1; }
+
+# Install the guarded crontab, then immediately byte-compare the live
+# readback against the generated file. On mismatch, restore the byte-exact
+# backup and abort.
+crontab "$GUARD_DIR/crontab-guarded.txt"
+crontab -l > "$GUARD_DIR/crontab-guard-readback.txt"
+cmp "$GUARD_DIR/crontab-guarded.txt" "$GUARD_DIR/crontab-guard-readback.txt" \
+  || { crontab "$GUARD_DIR/crontab-before.txt"; echo "ABORT: cron readback mismatch; byte-exact backup restored"; exit 1; }
 
 # 1b. Belt-and-suspenders: current-code writers refuse rotation/recovery.
 #     (Set in the supervisor launch environment for the restart window.)
