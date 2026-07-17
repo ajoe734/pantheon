@@ -6,9 +6,11 @@ import hashlib
 import json
 import multiprocessing
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import tracemalloc
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -1437,50 +1439,165 @@ class LogicalActivityReaderTests(unittest.TestCase):
         entries = self._make_entries(0, 100)
         self._write_gz(f1, entries)
 
-        gen = common.stream_logical_activity(self.log_path)
-        next(gen)
-        f1.write_bytes(b"some new mutated bytes that change size and contents")
-        with self.assertRaisesRegex(RuntimeError, "Source mutated or truncated during read|Truncated or corrupt gzip"):
-            list(gen)
+        real_final_validation = common._assert_activity_sources_stable_unlocked
+
+        def mutate_before_final_validation(log_path, sources, snapshots):
+            f1.write_bytes(b"some new mutated bytes that change size and contents")
+            return real_final_validation(log_path, sources, snapshots)
+
+        with mock.patch.object(
+            common,
+            "_assert_activity_sources_stable_unlocked",
+            mutate_before_final_validation,
+        ):
+            gen = common.stream_logical_activity(self.log_path)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Source mutated or truncated during validation",
+            ):
+                next(gen)
 
     def test_os_replace_to_different_inode_during_read(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         entries = self._make_entries(0, 1500)
         self._write_gz(f1, entries)
 
-        gen = common.stream_logical_activity(self.log_path)
-        for _ in range(500):
-            next(gen)
-
-        # Replace the file on disk with a new file of identical size/contents but different inode
         f_temp = self.root / "temp-replace.gz"
         self._write_gz(f_temp, entries)
-        os.replace(f_temp, f1)
+        real_final_validation = common._assert_activity_sources_stable_unlocked
 
-        with self.assertRaisesRegex(RuntimeError, "Source replaced during read"):
-            list(gen)
+        def replace_before_final_validation(log_path, sources, snapshots):
+            os.replace(f_temp, f1)
+            return real_final_validation(log_path, sources, snapshots)
+
+        with mock.patch.object(
+            common,
+            "_assert_activity_sources_stable_unlocked",
+            replace_before_final_validation,
+        ):
+            gen = common.stream_logical_activity(self.log_path)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Source replaced during validation",
+            ):
+                next(gen)
 
     def test_same_inode_same_size_mtime_mutation_during_read(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         entries = self._make_entries(0, 1500)
         self._write_gz(f1, entries)
 
-        gen = common.stream_logical_activity(self.log_path)
-        for _ in range(500):
-            next(gen)
+        real_final_validation = common._assert_activity_sources_stable_unlocked
 
-        # Mutate the file content in-place but keep exact same size on disk, and update mtime
-        raw = f1.read_bytes()
-        mutated_raw = raw[:-10] + b"MUTATED!!!"
-        self.assertEqual(len(raw), len(mutated_raw))
-        f1.write_bytes(mutated_raw)
+        def mutate_before_final_validation(log_path, sources, snapshots):
+            stat_before = f1.stat()
+            mutated_raw = bytearray(f1.read_bytes())
+            mutated_raw[-10] ^= 1
+            f1.write_bytes(bytes(mutated_raw))
+            os.utime(
+                f1,
+                ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns),
+            )
+            return real_final_validation(log_path, sources, snapshots)
 
-        # Touch mtime_ns
-        stat_info = f1.stat()
-        os.utime(f1, ns=(stat_info.st_atime_ns, stat_info.st_mtime_ns + 1000000000))
+        with mock.patch.object(
+            common,
+            "_assert_activity_sources_stable_unlocked",
+            mutate_before_final_validation,
+        ):
+            gen = common.stream_logical_activity(self.log_path)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Source content changed during validation",
+            ):
+                next(gen)
 
-        with self.assertRaisesRegex(RuntimeError, "Source mutated or truncated during read"):
-            list(gen)
+    def test_late_validation_failure_precedes_first_row_and_collapse_callback(self):
+        entries = self._make_entries(0, 1500)
+        successor_entries = self._make_entries(500, 1001)
+        predecessor = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        )
+        successor = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        )
+        self._write_gz(predecessor, entries)
+        with gzip.open(successor, "wt", encoding="utf-8") as handle:
+            for entry in successor_entries:
+                handle.write(json.dumps(entry) + "\n")
+            handle.write("{bad late json}\n")
+        callbacks = []
+        stream = common.stream_logical_activity(
+            self.log_path,
+            on_collapse=lambda *args: callbacks.append(args),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Bad JSON"):
+            next(stream)
+        self.assertEqual(callbacks, [])
+
+    def test_duplicate_json_keys_rejected_before_first_row_in_active_and_gzip(self):
+        ambiguous_rows = {
+            "top-level": (
+                '{"event_id":"first","event_id":"second",'
+                '"message":"ambiguous"}\n'
+            ),
+            "nested": (
+                '{"event_id":"nested","metadata":{"role":"a",'
+                '"role":"b"}}\n'
+            ),
+        }
+        for source_kind in ("active", "gzip"):
+            for shape, ambiguous in ambiguous_rows.items():
+                with self.subTest(source=source_kind, shape=shape):
+                    self.log_path.unlink(missing_ok=True)
+                    for archive in self.archive_dir.glob("*.gz"):
+                        archive.unlink()
+                    if source_kind == "active":
+                        source = self.log_path
+                        source.write_text(ambiguous, encoding="utf-8")
+                    else:
+                        source = (
+                            self.archive_dir
+                            / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+                        )
+                        with gzip.open(source, "wt", encoding="utf-8") as handle:
+                            handle.write(ambiguous)
+                    before = source.read_bytes()
+                    stream = common.stream_logical_activity(self.log_path)
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "duplicate JSON key.*" + re.escape(str(source)) + ":1",
+                    ):
+                        next(stream)
+                    self.assertEqual(source.read_bytes(), before)
+
+    def test_validation_snapshot_memory_is_bounded_by_window_not_history(self):
+        row_count = 12000
+        payload = "x" * 2048
+        with self.log_path.open("w", encoding="utf-8") as handle:
+            for index in range(row_count):
+                handle.write(
+                    json.dumps(
+                        {
+                            "event_id": f"bounded-{index:05d}",
+                            "payload": payload,
+                        },
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                )
+
+        tracemalloc.start()
+        try:
+            observed = sum(
+                1 for _entry in common.stream_logical_activity(self.log_path)
+            )
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(observed, row_count)
+        self.assertLess(peak, 12 * 1024 * 1024)
 
     def test_simultaneous_and_reentrant_readers(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
@@ -1911,18 +2028,9 @@ class LogicalActivityReaderTests(unittest.TestCase):
 
         db_before = get_db_files()
         gen = common.stream_logical_activity(self.log_path)
-        try:
+        with self.assertRaisesRegex(RuntimeError, "duplicate activity event_id"):
             next(gen)
-            db_during = get_db_files() - db_before
-            self.assertEqual(len(db_during), 1)
-            db_path = list(db_during)[0]
-            self.assertTrue(os.path.exists(db_path))
-            list(gen) # Should raise RuntimeError
-        except RuntimeError:
-            pass
-
-        # After failure, DB file must be removed
-        self.assertFalse(os.path.exists(db_path))
+        self.assertEqual(get_db_files(), db_before)
 
         # Case 3: Explicit generator close
         self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
@@ -1939,6 +2047,18 @@ class LogicalActivityReaderTests(unittest.TestCase):
 
         # After close, DB file must be removed
         self.assertFalse(os.path.exists(db_path))
+
+        # Case 4: A consumer exception followed by explicit close releases
+        # only the validated replay resource; source validation already passed.
+        db_before = get_db_files()
+        gen = common.stream_logical_activity(self.log_path)
+        with self.assertRaisesRegex(RuntimeError, "consumer failed"):
+            try:
+                next(gen)
+                raise RuntimeError("consumer failed")
+            finally:
+                gen.close()
+        self.assertEqual(get_db_files(), db_before)
 
 
 if __name__ == "__main__":
