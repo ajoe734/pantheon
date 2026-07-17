@@ -1,0 +1,38 @@
+{
+  "captured_at": "2026-07-17T18:19:00Z",
+  "capture_context": "owned_in_progress_dispatch rewake; corrective_2 flipped to genuinely accepted since the 20260717T1414Z capture",
+  "shared_workflows": {
+    "ajoe734/pantheon#269991390": "active",
+    "ajoe734/execute-plans#292028803": "active"
+  },
+  "rogue_guard_process_check": "none found (ps aux grep for workflow disable / gh run cancel / allow_deploy / pint_deploy_guard)",
+  "corrective_1_reconciliation_json_store": {
+    "task_id": "OPS-RECONCILIATION-JSON-STORE-INTEGRITY-001",
+    "pr": 3778,
+    "pr_state": "OPEN",
+    "pr_head_sha": "7efbd1e16bfd41706476d9bac6ef4ad84e2f627c",
+    "pr_merge_state_status": "UNKNOWN",
+    "gh_pr_reviews_count": 0,
+    "ai_status_status": "review_approved",
+    "ai_status_last_update": "2026-07-17T18:18:01Z",
+    "review_document": "docs/conventions/reviews/ops-reconciliation-json-store-integrity-001-review.md",
+    "review_document_approved_head_sha": "249e1d0d3984c41a801695b59550df65817ed742",
+    "review_document_dated": "2026-07-16T22:45:00Z",
+    "gate_satisfied": false,
+    "gap": "unchanged from the 20260717T1414Z/T1552Z/T1620Z/T1805Z checks (see project memory): head advanced past the reviewed SHA to 7efbd1e16 via evidence-only recomposes, GitHub reviews still empty, and the ai_status.json review_approved flip is a dispatch-driven status-field artifact, not a fresh exact-head review. A PR comment covering this exact state already exists (posted ~14:52Z). Not accepted."
+  },
+  "corrective_2_lease_read_after_write_pin": {
+    "task_id": "OPS-LEASE-READ-AFTER-WRITE-PIN-001",
+    "pr": 3784,
+    "pr_state": "MERGED",
+    "pr_head_sha": "94ee23052c2f52d274dd1272a8d5f5edafea268a",
+    "merge_commit": "2fbb9a91ebc32ea879d19ff068c60dfea4cef4fb",
+    "ai_status_status": "done",
+    "ai_status_terminal_outcome": "completed",
+    "ai_status_archived_at": "2026-07-17T17:03:47Z",
+    "gate_satisfied": true,
+    "note": "CHANGED since the 20260717T1414Z capture: PR #3784 merged and OPS-LEASE-READ-AFTER-WRITE-PIN-001 archived done. Claude's independently-recorded APPROVED verdict (see project memory project_ops_lease_read_after_write_pin_001_review_approved) is now backed by a completed, merged task record. Treat corrective_2 as genuinely accepted."
+  },
+  "action_taken": "none (no dispatch, no workflow mutation, no cancel, no merge, no touch to either corrective PR's branch)",
+  "recommendation": "corrective_2 is now accepted; corrective_1 remains the sole blocker. A human either records a genuinely fresh Antigravity review on PR #3778's current head 7efbd1e16, or explicitly accepts the existing head-249e1d0d approval as sufficient and merges PR #3778 as-is. Only after that should a human dispatch the Pantheon-only proof; this task's own worker must not dispatch nonprod-deploy.yml itself (classifier-blocked shared-resource action)."
+}
