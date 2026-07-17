@@ -320,15 +320,16 @@ class TestCoordinationRootValidation(unittest.TestCase):
             orig_cwd = os.getcwd()
             try:
                 with mock.patch.object(wr, "_git_toplevel", return_value=central):
-                    with mock.patch("subprocess.Popen", return_value=mock_child):
-                        with mock.patch("sys.argv", test_args):
-                            with mock.patch.dict(os.environ, {
-                                "PANTHEON_STATUS_ROOT": str(central),
-                                "PANTHEON_WORKTREE_ROOT": str(worktree),
-                                "ORCH_WORKSPACE_PATH": str(worktree),
-                            }, clear=True):
-                                with self.assertRaises(KeyboardInterrupt):
-                                    wr.main()
+                    with mock.patch.object(wr, "validate_status_command_runtime", return_value={"command_root": str(central)}):
+                        with mock.patch("subprocess.Popen", return_value=mock_child):
+                            with mock.patch("sys.argv", test_args):
+                                with mock.patch.dict(os.environ, {
+                                    "PANTHEON_STATUS_ROOT": str(central),
+                                    "PANTHEON_WORKTREE_ROOT": str(worktree),
+                                    "ORCH_WORKSPACE_PATH": str(worktree),
+                                }, clear=True):
+                                    with self.assertRaises(KeyboardInterrupt):
+                                        wr.main()
 
                 mock_child.terminate.assert_called_once()
             finally:
@@ -363,28 +364,29 @@ class TestCoordinationRootValidation(unittest.TestCase):
             orig_cwd = os.getcwd()
             try:
                 with mock.patch.object(wr, "_git_toplevel", return_value=central):
-                    with mock.patch("subprocess.Popen", return_value=mock_child):
-                        with mock.patch("sys.argv", test_args):
-                            with mock.patch.dict(os.environ, {
-                                "PANTHEON_STATUS_ROOT": str(central),
-                                "PANTHEON_WORKTREE_ROOT": str(worktree),
-                                "ORCH_WORKSPACE_PATH": str(worktree),
-                            }, clear=True):
-                                current_time = [100.0]
-                                def mock_monotonic():
-                                    t = current_time[0]
-                                    current_time[0] += 0.1
-                                    return t
+                    with mock.patch.object(wr, "validate_status_command_runtime", return_value={"command_root": str(central)}):
+                        with mock.patch("subprocess.Popen", return_value=mock_child):
+                            with mock.patch("sys.argv", test_args):
+                                with mock.patch.dict(os.environ, {
+                                    "PANTHEON_STATUS_ROOT": str(central),
+                                    "PANTHEON_WORKTREE_ROOT": str(worktree),
+                                    "ORCH_WORKSPACE_PATH": str(worktree),
+                                }, clear=True):
+                                    current_time = [100.0]
+                                    def mock_monotonic():
+                                        t = current_time[0]
+                                        current_time[0] += 0.1
+                                        return t
 
-                                with mock.patch("time.monotonic", side_effect=mock_monotonic):
-                                    with mock.patch("os.killpg") as mock_killpg:
-                                        def side_effect_sleep(*args, **kwargs):
-                                            import signal
-                                            os.kill(os.getpid(), signal.SIGTERM)
-                                            current_time[0] += 6.0
-                                        mock_sleep.side_effect = side_effect_sleep
+                                    with mock.patch("time.monotonic", side_effect=mock_monotonic):
+                                        with mock.patch("os.killpg") as mock_killpg:
+                                            def side_effect_sleep(*args, **kwargs):
+                                                import signal
+                                                os.kill(os.getpid(), signal.SIGTERM)
+                                                current_time[0] += 6.0
+                                            mock_sleep.side_effect = side_effect_sleep
 
-                                        exit_code = wr.main()
+                                            exit_code = wr.main()
                                         self.assertEqual(exit_code, 128 + 9) # 128 + SIGKILL
                                         mock_killpg.assert_any_call(88888, 9) # SIGKILL
             finally:
@@ -419,40 +421,41 @@ class TestCoordinationRootValidation(unittest.TestCase):
             orig_cwd = os.getcwd()
             try:
                 with mock.patch.object(wr, "_git_toplevel", return_value=central):
-                    with mock.patch("subprocess.Popen", return_value=mock_child):
-                        with mock.patch("sys.argv", test_args):
-                            with mock.patch.dict(os.environ, {
-                                "PANTHEON_STATUS_ROOT": str(central),
-                                "PANTHEON_WORKTREE_ROOT": str(worktree),
-                                "ORCH_WORKSPACE_PATH": str(worktree),
-                            }, clear=True):
-                                current_time = [100.0]
-                                def mock_monotonic():
-                                    t = current_time[0]
-                                    current_time[0] += 0.1
-                                    return t
+                    with mock.patch.object(wr, "validate_status_command_runtime", return_value={"command_root": str(central)}):
+                        with mock.patch("subprocess.Popen", return_value=mock_child):
+                            with mock.patch("sys.argv", test_args):
+                                with mock.patch.dict(os.environ, {
+                                    "PANTHEON_STATUS_ROOT": str(central),
+                                    "PANTHEON_WORKTREE_ROOT": str(worktree),
+                                    "ORCH_WORKSPACE_PATH": str(worktree),
+                                }, clear=True):
+                                    current_time = [100.0]
+                                    def mock_monotonic():
+                                        t = current_time[0]
+                                        current_time[0] += 0.1
+                                        return t
 
-                                with mock.patch("time.monotonic", side_effect=mock_monotonic):
-                                    with mock.patch("os.killpg") as mock_killpg:
-                                        killpg_calls = []
-                                        def side_effect_killpg(pgid, sig):
-                                            killpg_calls.append((pgid, sig))
-                                            if sig == 0:
-                                                if not any(c[1] == 9 for c in killpg_calls):
-                                                    return None
-                                                raise OSError("No such process")
-                                            return None
-                                        mock_killpg.side_effect = side_effect_killpg
+                                    with mock.patch("time.monotonic", side_effect=mock_monotonic):
+                                        with mock.patch("os.killpg") as mock_killpg:
+                                            killpg_calls = []
+                                            def side_effect_killpg(pgid, sig):
+                                                killpg_calls.append((pgid, sig))
+                                                if sig == 0:
+                                                    if not any(c[1] == 9 for c in killpg_calls):
+                                                        return None
+                                                    raise OSError("No such process")
+                                                return None
+                                            mock_killpg.side_effect = side_effect_killpg
 
-                                        def side_effect_sleep(*args, **kwargs):
-                                            import signal
-                                            handler = signal.getsignal(signal.SIGTERM)
-                                            if callable(handler):
-                                                handler(signal.SIGTERM, None)
-                                            current_time[0] += 6.0
-                                        mock_sleep.side_effect = side_effect_sleep
+                                            def side_effect_sleep(*args, **kwargs):
+                                                import signal
+                                                handler = signal.getsignal(signal.SIGTERM)
+                                                if callable(handler):
+                                                    handler(signal.SIGTERM, None)
+                                                current_time[0] += 6.0
+                                            mock_sleep.side_effect = side_effect_sleep
 
-                                        exit_code = wr.main()
+                                            exit_code = wr.main()
                                         self.assertEqual(exit_code, 128 + 15)
                                         mock_killpg.assert_any_call(99999, 9)
             finally:

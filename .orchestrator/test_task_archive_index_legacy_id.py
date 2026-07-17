@@ -60,7 +60,20 @@ def test_rebuild_indexes_legacy_top_level_id(tmp_path, monkeypatch) -> None:
     _write(
         tasks_dir,
         "NEW-001.json",
-        {"task_id": "NEW-001", "terminal_outcome": "completed", "archived_at": "2026-06-14T02:00:00Z"},
+        {
+            "version": 1,
+            "task_id": "NEW-001",
+            "archived_at": "2026-06-14T02:00:00Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": {
+                "id": "NEW-001",
+                "status": "done",
+                "terminal_outcome": "completed",
+            },
+            "handoffs": [],
+            "blockers": [],
+        },
     )
 
     index = task_archive.rebuild_archive_index(recent_limit=10)
