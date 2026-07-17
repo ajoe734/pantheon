@@ -111,6 +111,8 @@ class StatusRootRoutingTests(unittest.TestCase):
         (path / ".gitkeep").write_text("fixture\n", encoding="utf-8")
         subprocess.run(["git", "add", ".gitkeep"], cwd=path, check=True)
         subprocess.run(["git", "commit", "-q", "-m", "fixture"], cwd=path, check=True)
+        subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=path, check=True)
+        subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=path, check=True)
 
     def _write_status_state(self, root: Path, *, owner: str, next_value: str) -> None:
         state = ai_status.default_state()
@@ -150,6 +152,12 @@ class StatusRootRoutingTests(unittest.TestCase):
             target = destination / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+
+    def _commit_all(self, repo: Path, message: str = "install status tooling") -> str:
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", message], cwd=repo, check=True)
+        subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=repo, check=True)
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
 
     def test_load_local_coordination_payload_tolerates_missing_yaml(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ai-status-no-yaml-") as temp_dir:
@@ -210,8 +218,14 @@ class StatusRootRoutingTests(unittest.TestCase):
             central = root / "central"
             worktree = root / "task-worktree"
             self._init_repo(central)
+            self._copy_status_tooling(central)
             self._init_repo(worktree)
             self._copy_status_tooling(worktree)
+            stale_local_ai_status = worktree / "scripts" / "ai_status.py"
+            stale_local_ai_status.write_text(
+                "raise SystemExit('stale worktree-local ai_status.py executed')\n",
+                encoding="utf-8",
+            )
             self._write_status_state(
                 central,
                 owner="Codex2",
@@ -228,6 +242,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                 json.dumps({"event_id": "central-seed", "type": "seed"}) + "\n",
                 encoding="utf-8",
             )
+            command_sha = self._commit_all(central)
             worktree_log.write_text(
                 json.dumps({"event_id": "stale-seed", "type": "stale"}) + "\n",
                 encoding="utf-8",
@@ -268,6 +283,62 @@ class StatusRootRoutingTests(unittest.TestCase):
             }
             central_runner_status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
             central_heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            issued_runtime = {
+                "command_root": str(central),
+                "source_sha": command_sha,
+                "remote": "ajoe734/pantheon",
+                "base_ref": "origin/dev",
+            }
+            central_state_path = central / ".orchestrator" / "state.json"
+            central_state_path.parent.mkdir(parents=True, exist_ok=True)
+            central_state_path.write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "workers": {
+                            "codex-test-run": {
+                                "run_id": "codex-test-run",
+                                "provider": "codex",
+                                "agent_id": "codex2",
+                                "task_id": "CENTRAL-ROOT-001",
+                                "status": "running",
+                                "lease_acquired_at": "2026-07-17T00:00:00Z",
+                                "lease_expires_at": "2999-01-01T00:00:00Z",
+                                "queue_event_id": "evt-codex-test-run",
+                                "workspace_path": str(worktree),
+                                "status_root": str(central),
+                                "status_command_runtime": issued_runtime,
+                                "request_snapshot": {
+                                    "metadata": {
+                                        "workspace_task_id": "CENTRAL-ROOT-001",
+                                        "workspace_path": str(worktree),
+                                        "status_root": str(central),
+                                        "status_command_runtime": issued_runtime,
+                                    }
+                                },
+                            }
+                        },
+                        "worker_worktrees": {
+                            "leases": {
+                                "CENTRAL-ROOT-001": {
+                                    "task_id": "CENTRAL-ROOT-001",
+                                    "workspace_task_id": "CENTRAL-ROOT-001",
+                                    "branch": "task/CENTRAL-ROOT-001",
+                                    "path": str(worktree),
+                                    "status_root": str(central),
+                                    "last_queue_event_id": "evt-codex-test-run",
+                                    "last_target_agent": "Codex2",
+                                    "last_used_at": "2026-07-17T00:00:00Z",
+                                }
+                            }
+                        },
+                        "queue": {"events": {}},
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
 
             env = os.environ.copy()
             env.update(
@@ -280,6 +351,10 @@ class StatusRootRoutingTests(unittest.TestCase):
                     "ORCH_TASK_ID": "CENTRAL-ROOT-001",
                     "ORCH_RUNNER_STATUS_PATH": str(central_runner_status),
                     "ORCH_HEARTBEAT_PATH": str(central_heartbeat),
+                    "PANTHEON_COMMAND_ROOT": str(central),
+                    "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
+                    "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                    "PANTHEON_COMMAND_BASE_REF": "origin/dev",
                 }
             )
 
@@ -366,6 +441,25 @@ class StatusRootRoutingTests(unittest.TestCase):
                     {event.get("type") for event in central_events}
                 )
             )
+            mutating_events = [
+                event
+                for event in central_events
+                if event.get("type") in {"progress", "done"}
+            ]
+            self.assertTrue(mutating_events)
+            for event in mutating_events:
+                self.assertEqual(event["status_command"]["command_root"], str(central.resolve()))
+                self.assertEqual(event["status_command"]["source_sha"], command_sha)
+                self.assertEqual(event["status_command"]["status_root"], str(central.resolve()))
+                self.assertEqual(event["status_command"]["delivery_root"], str(worktree.resolve()))
+            self.assertEqual(
+                archived["task"]["delivery"]["repository_path"],
+                str(worktree.resolve()),
+            )
+            self.assertEqual(
+                archived["task"]["delivery"]["status_command_runtime"]["command_root"],
+                str(central.resolve()),
+            )
             self.assertTrue((central / ".orchestrator" / "task-state.lock").exists())
             self.assertTrue((central / ".orchestrator" / "activity-audit.lock").exists())
             self.assertTrue((central / "current-work.md").exists())
@@ -391,6 +485,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                 owner="Gemini",
                 next_value="stale task worktree root",
             )
+            command_sha = self._commit_all(code_root)
             valid = root / "central"
             self._init_repo(valid)
             self._write_status_state(valid, owner="Codex2", next_value="valid")
@@ -419,6 +514,10 @@ class StatusRootRoutingTests(unittest.TestCase):
                     "ORCH_RUN_ID": "codex-test-run",
                     "ORCH_RUNNER_STATUS_PATH": str(runner_status),
                     "ORCH_HEARTBEAT_PATH": str(heartbeat),
+                    "PANTHEON_COMMAND_ROOT": str(code_root),
+                    "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
+                    "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                    "PANTHEON_COMMAND_BASE_REF": "origin/dev",
                 }
             )
             cases = [
@@ -429,6 +528,13 @@ class StatusRootRoutingTests(unittest.TestCase):
                 ({"PANTHEON_STATUS_ROOT": str(component_symlink_root)}, "symlink component"),
                 ({"PANTHEON_STATUS_ROOT": str(code_root)}, "not the isolated task worktree"),
                 ({"PANTHEON_STATUS_ROOT": str(other_valid)}, "does not match"),
+                (
+                    {
+                        "PANTHEON_STATUS_ROOT": str(valid),
+                        "ORCH_WORKSPACE_PATH": str(other_valid),
+                    },
+                    "disagree on delivery worktree root",
+                ),
                 (
                     {
                         "PANTHEON_STATUS_ROOT": str(root),
@@ -3565,10 +3671,21 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
                     "archived_task_snapshot",
                     return_value=existing,
                 ):
-                    with self.assertRaises(RuntimeError):
-                        ai_status.archive_terminal_task_from_state(state, terminal)
-                self.assertEqual(state, before)
-                self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, state)
+                    if "version" in existing:
+                        snapshot = ai_status.archive_terminal_task_from_state(state, terminal)
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            ai_status.archive_terminal_task_from_state(state, terminal)
+                        self.assertEqual(state, before)
+                        self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, state)
+                        continue
+                self.assertEqual(snapshot, existing)
+                self.assertEqual(state["tasks"], before["tasks"])
+                self.assertEqual(state["handoffs"], before["handoffs"])
+                self.assertEqual(state["blockers"], before["blockers"])
+                pending = state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]
+                self.assertEqual(pending["schema_version"], ai_status.STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION)
+                self.assertEqual(pending["snapshots"], [existing])
 
     def test_sigkill_at_each_archive_boundary_converges_without_vanishing_task(self) -> None:
         context = multiprocessing.get_context("fork")
