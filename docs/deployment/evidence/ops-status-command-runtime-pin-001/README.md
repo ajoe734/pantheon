@@ -12,8 +12,10 @@ that postmerge stale-worktree proof has completed.
 ## Candidate
 
 - Candidate branch: `task/OPS-STATUS-COMMAND-RUNTIME-PIN-001`
-- Candidate SHA before this follow-up commit:
+- Candidate SHA before lease follow-up:
   `4a07c572b8805f4d2b4b77c8d49d9ac221628126`
+- Composed branch SHA before CI evidence refresh:
+  `d77973e48d38db0021757ca1fbd25186b3ba2e47`
 - PR: `https://github.com/ajoe734/pantheon/pull/3783`
 - Merge target: `dev`
 - Reviewer required by corrected brief: `Claude`
@@ -42,7 +44,8 @@ that postmerge stale-worktree proof has completed.
 
 ## Synthetic Regression Evidence
 
-Commands run on 2026-07-17 UTC from the task worktree:
+Commands run on 2026-07-17 UTC from a clean composed worktree after merging
+current `origin/dev`:
 
 ```text
 python3 scripts/test_status_command_runtime_pin.py
@@ -52,7 +55,7 @@ python3 scripts/test_ai_status.py
 exit 0, 74 tests OK
 
 python3 .orchestrator/test_common.py
-exit 0, 52 tests OK
+exit 0, 64 tests OK
 
 python3 .orchestrator/test_worker_runner_heartbeat.py
 exit 0, 13 tests OK
@@ -84,6 +87,18 @@ Focused coverage added in `scripts/test_status_command_runtime_pin.py` proves:
   writes;
 - two concurrent worktree writers produce distinct activity event IDs and the
   final task state remains `review` after handoff, not an older active postimage.
+
+## CI Range Note
+
+Push workflow run `29555909139` on SHA
+`d77973e48d38db0021757ca1fbd25186b3ba2e47` failed only because the push range
+was `4a07c572b8805f4d2b4b77c8d49d9ac221628126..d77973e48d38db0021757ca1fbd25186b3ba2e47`
+and therefore included upstream `origin/dev` commit
+`e2f362846d7477e188b59c7814e93c8835a900bc`, whose subject exceeds the trailer
+gate's length limit. The corresponding pull-request workflow run
+`29555910612` passed `Commit trailers`, `Runtime mirror guard`, and
+`Smoke acceptance` on the same SHA. This evidence refresh keeps the next push
+range scoped to this task branch's own compliant commit.
 
 ## Pre-Pin Runtime Inventory
 
