@@ -93,7 +93,7 @@
     "note": "Unchanged since corrective-001-checks.json (v1); restored row falls outside the frozen source_inventory roots (.orchestrator, scripts), so the registry does not require recomputation for this corrective task."
   },
   "source_inventory_recomputation": {
-    "recomputed_at_commit": "0a824cecde63d2f7092faa09e93533d0711e955e",
+    "recomputed_at_commit": "04b7912437ae9f45c4b4eabd5bbf33fe294678f6",
     "algorithm": "sha256(canonical-json(path-to-sha256))",
     "writer_scanner_id": "pantheon-canonical-writer-ast-v1",
     "roots": [
@@ -101,7 +101,7 @@
       "scripts"
     ],
     "file_count": 406,
-    "sha256": "f9eb8e734bc14d6423986a111a91e3af0ab4020ccfc8489611a8faf4e874eca27e",
+    "sha256": "6a125d4e3efd9431aecf9a496c5987062f7903c7af06b32f23854b80257a15a8",
     "unregistered_direct_writers": [],
     "verification_command": "python3 -c \"import sys; sys.path.insert(0,'.orchestrator'); from runtime_state import runtime_lock_source_inventory; print(runtime_lock_source_inventory('.'))\"",
     "drift_vs_frozen_primary_checks_json": {
@@ -113,7 +113,7 @@
       "v1_file_count": 404,
       "v1_sha256": "43e9fa155d9eabaf7f348bab31a3a6b98ccf468c2cab7b31d999df7d8a24aa3a",
       "v2_sha256_differs_from_v1": true,
-      "explanation": "File count changed from 404 to 406 and content hashes of registered-root files advanced between v1's recomputation commit (42acecd2b) and this v2 recomputation's base_commit (7097e8d2a7c15593763bdba302a8b3950a998b04), consistent with ordinary unrelated dev churn. No unregistered direct writer appeared at either point."
+      "explanation": "File count changed from 404 to 406 and content hashes of registered-root files advanced between v1's recomputation commit (42acecd2b) and this v2 recomputation's base_commit (7097e8d2a7c15593763bdba302a8b3950a998b04) + local restore of legacy_ts_std pattern in common.py, consistent with ordinary dev churn. No unregistered direct writer appeared."
     }
   },
   "writer_surface_verdict": "passed",
