@@ -250,8 +250,41 @@ def test_auth_gate_checks_hosted_posture_and_fixed_bearer_negative() -> None:
     assert 'assert auth_mode == "strict"' in script
     assert "posture = payload" in script
     assert "/bff/auth/dev-login" in script
+    assert "/bff/auth/readiness" in script
+    assert 'assert data.get("authReady") is True' in script
+    assert 'assert data.get("providerReady") is True' in script
+    assert 'assert data.get("ready") is True' in script
+    assert 'assert data.get("sourceCommitSha") == expected_sha' in script
     assert "Bearer op-fixed:operator:mfa" in script
     assert "accepted a fixed/arbitrary bearer token" in script
+
+
+def test_dev_deploy_plumbs_product_oidc_and_fail_closed_role_mapping() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    for name in (
+        "DEV_BFF_JWT_ISSUER",
+        "DEV_BFF_JWT_AUDIENCE",
+        "DEV_BFF_JWKS_URI",
+        "DEV_BFF_OIDC_DISCOVERY_URL",
+        "DEV_BFF_OIDC_ISSUER",
+        "DEV_BFF_OIDC_AUDIENCE",
+        "DEV_BFF_ROLE_CLAIMS",
+        "DEV_BFF_ROLE_MAP",
+        "DEV_BFF_ROLE_MAP_MODE",
+        "DEV_BFF_DEFAULT_ROLE",
+    ):
+        assert name in script
+        assert name in workflow
+
+    assert 'DEV_BFF_DEFAULT_ROLE="${DEV_BFF_DEFAULT_ROLE:-viewer}"' in script
+    assert "app_metadata.roles,roles" in workflow
+    assert "pantheon-operator=operator" in workflow
+    assert "DEV_BFF_ROLE_MAP_MODE || 'strict'" in workflow
+    assert "DEV_BFF_DEFAULT_ROLE || 'viewer'" in workflow
+    assert "kwjtcynauaulrxngyetk.supabase.co/auth/v1/.well-known/openid-configuration" in workflow
+    assert "user_metadata.roles" not in workflow
 
 
 def test_auth_gate_posture_assertion_is_valid_python() -> None:
