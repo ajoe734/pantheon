@@ -1,7 +1,7 @@
 # OPS-ACTIVITY-ROTATION-OVERLAP-PREVENTION-001 Evidence
 
 Status: exact-head owner evidence after composing current `origin/dev`
-`7be97fa5cffe99e704e672b5aa56abe1515da5d9`. Auto-merge remains disabled;
+`4d7388c37f0145a3ab0f35dedfa5a5a5612ccb7d`. Auto-merge remains disabled;
 independent exact-head review is still required.
 
 ## Scope
