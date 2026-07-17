@@ -272,6 +272,36 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(events[0]["item"]["text"], reply)
         self.assertEqual(result.output["transport"], "cli")
 
+    def test_invoke_selects_validated_per_request_agent_and_reports_it(self) -> None:
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, **_kw):
+            captured.append(list(cmd))
+            class R:
+                returncode = 0
+                stdout = TestAssistantOpenClawProviderUnit._agent_json("persona result")
+                stderr = ""
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        result = provider.invoke(
+            "Return opinion JSON",
+            agent_id="persona-opinion-0123456789abcdef01234567",
+            session_id="fresh-persona-session-1",
+            operator_id="op-1",
+        )
+
+        cmd = captured[0]
+        self.assertEqual(
+            cmd[cmd.index("--agent") + 1],
+            "persona-opinion-0123456789abcdef01234567",
+        )
+        self.assertEqual(cmd[cmd.index("--session-id") + 1], "fresh-persona-session-1")
+        self.assertEqual(
+            result.output["agent_id"],
+            "persona-opinion-0123456789abcdef01234567",
+        )
+
     def test_invoke_cli_args_and_env(self) -> None:
         """CLI gets `agent --agent --message <prompt> --json` (no --url/--token);
         the prompt travels as the argv `--message` VALUE (the CLI has no stdin

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -51,6 +52,7 @@ CODEX_DELEGATED_KERNEL_MODES = frozenset({"kernel_debug", "kernel_repair"})
 _MAX_ARGV_PROMPT_BYTES = 96 * 1024
 # Canonical docker-compose service name — used when no URL is configured.
 _DEFAULT_GATEWAY_WS_URL = "ws://openclaw-gateway:18789"
+_AGENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 def delegates_kernel_mode_to_codex(mode: str) -> bool:
@@ -203,6 +205,8 @@ class AssistantOpenClawProvider:
         self,
         prompt: str,
         *,
+        agent_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         mode: str = "user",
         context_pack: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -216,6 +220,14 @@ class AssistantOpenClawProvider:
                 status_code=409,
                 error_code="OPENCLAW_KERNEL_DELEGATION_REQUIRED",
             )
+        selected_agent_id = str(agent_id or self._agent_id).strip()
+        if not _AGENT_ID_PATTERN.fullmatch(selected_agent_id):
+            raise OpenClawProviderError(
+                "OpenClaw agent_id contains unsupported characters.",
+                status_code=422,
+                error_code="OPENCLAW_AGENT_ID_INVALID",
+            )
+
         # When no URL was explicitly configured, fall back to the canonical
         # docker-compose service name so the adapter works out of the box.
         effective_url = self._gateway_url or _DEFAULT_GATEWAY_WS_URL
@@ -264,7 +276,8 @@ class AssistantOpenClawProvider:
         cmd = [
             binary,
             "agent",
-            "--agent", self._agent_id,
+            "--agent", selected_agent_id,
+            *(["--session-id", session_id] if session_id else []),
             "--message", prompt,
             "--json",
             "--timeout", str(self._timeout),
@@ -323,6 +336,7 @@ class AssistantOpenClawProvider:
             request_id=request_id,
             elapsed_ms=elapsed_ms,
             stderr=proc.stderr or "",
+            agent_id=selected_agent_id,
         )
 
         return OpenClawProviderResult(
@@ -638,6 +652,7 @@ class AssistantOpenClawProvider:
         request_id: str,
         elapsed_ms: int,
         stderr: str,
+        agent_id: str = DEFAULT_AGENT_ID,
     ) -> Dict[str, Any]:
         json_events: List[Dict[str, Any]] = [
             {
@@ -651,7 +666,7 @@ class AssistantOpenClawProvider:
         ]
         out: Dict[str, Any] = {
             "json_events": json_events,
-            "agent_id": DEFAULT_AGENT_ID,
+            "agent_id": agent_id,
             "request_id": request_id,
             "duration_ms": elapsed_ms,
             "transport": "cli",
