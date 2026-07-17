@@ -13,6 +13,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+STATUS_COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
+STATUS_COMMAND_SHA_ENV = "PANTHEON_COMMAND_RUNTIME_SHA"
+STATUS_COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
+STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
+LEGACY_STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
+LEGACY_STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
+LEGACY_STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
+LEGACY_STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_STATUS_COMMAND_BASE_REF"
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -46,6 +55,39 @@ def _git_toplevel(path: Path) -> Path | None:
         return None
     top = proc.stdout.strip()
     return Path(top).resolve() if top else None
+
+
+def _git_stdout(path: Path, args: list[str]) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(path), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "git command failed").strip()
+        raise RuntimeError(detail)
+    return proc.stdout.strip()
+
+
+def _normalize_github_slug(value: str | None) -> str:
+    candidate = str(value or "").strip()
+    if candidate.endswith(".git"):
+        candidate = candidate[:-4]
+    for prefix in (
+        "git@github.com:",
+        "ssh://git@github.com/",
+        "https://github.com/",
+        "http://github.com/",
+    ):
+        if candidate.startswith(prefix):
+            candidate = candidate[len(prefix) :]
+            break
+    return candidate.strip("/")
+
+
+def _command_env(primary: str, legacy: str, default: str = "") -> str:
+    return str(os.environ.get(primary) or os.environ.get(legacy) or default).strip()
 
 
 def _first_symlink_component(path: Path) -> Path | None:
@@ -216,6 +258,67 @@ def validate_coordination_root(
     return root
 
 
+def validate_status_command_runtime() -> dict[str, str]:
+    raw = _command_env(STATUS_COMMAND_ROOT_ENV, LEGACY_STATUS_COMMAND_ROOT_ENV)
+    if not raw:
+        raise RuntimeError(
+            "PANTHEON_COMMAND_ROOT is required when worker_runner launches an auto worker"
+        )
+    expanded = Path(os.path.expanduser(raw))
+    if not expanded.is_absolute():
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be an absolute path")
+    symlink_component = _first_symlink_component(expanded)
+    if symlink_component is not None:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} cannot include a symlink component: {symlink_component}"
+        )
+    root = expanded.resolve()
+    if not root.exists() or not root.is_dir():
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} does not exist or is not a directory: {root}")
+    if _git_toplevel(root) != root:
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be a git repository root: {root}")
+
+    source_sha = _git_stdout(root, ["rev-parse", "HEAD"])
+    expected_sha = _command_env(STATUS_COMMAND_SHA_ENV, LEGACY_STATUS_COMMAND_SHA_ENV)
+    if not expected_sha:
+        raise RuntimeError("PANTHEON_COMMAND_RUNTIME_SHA is required when worker_runner launches an auto worker")
+    if source_sha != expected_sha:
+        raise RuntimeError(
+            f"PANTHEON_COMMAND_RUNTIME_SHA mismatch: command root is {source_sha}, expected {expected_sha}"
+        )
+
+    expected_remote = _normalize_github_slug(
+        _command_env(STATUS_COMMAND_REMOTE_ENV, LEGACY_STATUS_COMMAND_REMOTE_ENV, "ajoe734/pantheon")
+    )
+    remote_url = _git_stdout(root, ["remote", "get-url", "origin"])
+    actual_remote = _normalize_github_slug(remote_url)
+    if expected_remote and actual_remote != expected_remote:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} remote mismatch: {actual_remote or remote_url} != {expected_remote}"
+        )
+
+    base_ref = _command_env(STATUS_COMMAND_BASE_REF_ENV, LEGACY_STATUS_COMMAND_BASE_REF_ENV, "origin/dev") or "origin/dev"
+    _git_stdout(root, ["rev-parse", "--verify", base_ref])
+    proc = subprocess.run(
+        ["git", "-C", str(root), "merge-base", "--is-ancestor", source_sha, base_ref],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} source SHA {source_sha} is not merged into {base_ref}{suffix}"
+        )
+    return {
+        "command_root": str(root),
+        "source_sha": source_sha,
+        "remote": expected_remote or actual_remote,
+        "base_ref": base_ref,
+    }
+
+
 import re as _re
 
 
@@ -275,6 +378,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     heartbeat_path = raw_heartbeat_path.resolve()
     status_path = raw_status_path.resolve()
+    command_runtime = validate_status_command_runtime()
     if workspace_path:
         try:
             os.chdir(workspace_path)
@@ -300,6 +404,7 @@ def main(argv: list[str] | None = None) -> int:
         "finished_at": None,
         "exit_code": None,
         "signal": None,
+        "status_command_runtime": command_runtime,
     }
 
     def publish(next_status: str) -> None:
@@ -314,6 +419,7 @@ def main(argv: list[str] | None = None) -> int:
             "pid": os.getpid(),
             "child_pid": status.get("child_pid"),
             "updated_at": now,
+            "status_command_runtime": command_runtime,
         })
         write_json(status_path, status)
 
@@ -358,6 +464,21 @@ def main(argv: list[str] | None = None) -> int:
 
             # Normal path: child exited and we aren't terminating
             if direct_exit_code is not None and terminating_signal is None:
+                try:
+                    os.killpg(child.pid, signal.SIGTERM)
+                    start_wait = time.monotonic()
+                    group_dead = False
+                    while time.monotonic() - start_wait < 2.0:
+                        try:
+                            os.killpg(child.pid, 0)
+                            time.sleep(0.05)
+                        except OSError:
+                            group_dead = True
+                            break
+                    if not group_dead:
+                        os.killpg(child.pid, signal.SIGKILL)
+                except OSError:
+                    pass
                 publish("completed" if direct_exit_code == 0 else "failed")
                 if direct_exit_code < 0:
                     return 128 + abs(direct_exit_code)
@@ -410,14 +531,20 @@ def main(argv: list[str] | None = None) -> int:
         status["error"] = f"{type(exc).__name__}: {exc}"
         if terminating_signal is not None:
             status["signal"] = terminating_signal
-        if child is not None and child.poll() is None:
+        if child is not None:
             try:
                 os.killpg(child.pid, signal.SIGTERM)
-                try:
-                    child.wait(timeout=2.0)
-                except subprocess.TimeoutExpired:
+                start_wait = time.monotonic()
+                group_dead = False
+                while time.monotonic() - start_wait < 2.0:
+                    try:
+                        os.killpg(child.pid, 0)
+                        time.sleep(0.05)
+                    except OSError:
+                        group_dead = True
+                        break
+                if not group_dead:
                     os.killpg(child.pid, signal.SIGKILL)
-                    child.wait()
             except OSError:
                 try:
                     child.terminate()
@@ -428,6 +555,15 @@ def main(argv: list[str] | None = None) -> int:
                         child.wait()
                 except OSError:
                     pass
+            if child.poll() is None:
+                try:
+                    child.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    try:
+                        child.kill()
+                        child.wait(timeout=1.0)
+                    except OSError:
+                        pass
         try:
             write_json(status_path, status)
         except OSError:

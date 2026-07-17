@@ -447,7 +447,13 @@ def load_runtime_state_file(config: dict[str, Any]) -> tuple[dict[str, Any], str
     return raw, None
 
 
-def resource_snapshot(config: dict[str, Any], runtime_state: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+def resource_snapshot(
+    config: dict[str, Any],
+    runtime_state: dict[str, Any],
+    settings: dict[str, Any],
+    *,
+    skip_proc_scan: bool = False,
+) -> dict[str, Any]:
     state_path = config_path(config, "state_file")
     usage = os.statvfs(str(ROOT))
     disk_free_gb = (usage.f_bavail * usage.f_frsize) / (1024 ** 3)
@@ -465,7 +471,13 @@ def resource_snapshot(config: dict[str, Any], runtime_state: dict[str, Any], set
         load_1m = float(os.getloadavg()[0])
     except OSError:
         load_1m = 0.0
-    live_worker_identities, worker_scan_error = scan_live_worker_runner_identities()
+
+    if skip_proc_scan:
+        live_worker_identities = set()
+        worker_scan_error = "skipped_during_lock_contention"
+    else:
+        live_worker_identities, worker_scan_error = scan_live_worker_runner_identities()
+
     recorded_worker_count = active_worker_count(runtime_state)
     if worker_scan_error:
         # The explicit scan error below suppresses restart.  Keep the larger
@@ -692,13 +704,15 @@ def summarize_decision(
 
 
 def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:
+    lock_manager = runtime_state_lock(
+        config,
+        shared=False,
+        nonblocking=True,
+    )
+    lock_acquired = False
     try:
-        with runtime_state_lock(
-            config,
-            shared=False,
-            nonblocking=True,
-        ):
-            return _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
+        lock_manager.__enter__()
+        lock_acquired = True
     except (BlockingIOError, OSError) as exc:
         if not (isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK)):
             raise
@@ -709,7 +723,7 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
         runtime_state, state_error = load_runtime_state_file(config)
         heartbeat_age = heartbeat_age_seconds(runtime_state, now)
         settings = watchdog_settings(config)
-        resource = resource_snapshot(config, runtime_state, settings)
+        resource = resource_snapshot(config, runtime_state, settings, skip_proc_scan=True)
         lock_held = supervisor_lock_held(config)
 
         result = {
@@ -731,6 +745,14 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
             pass
 
         return result
+
+    try:
+        return _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
+    except BaseException:
+        lock_manager.__exit__(*sys.exc_info())
+        raise
+    else:
+        lock_manager.__exit__(None, None, None)
 
 
 def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:

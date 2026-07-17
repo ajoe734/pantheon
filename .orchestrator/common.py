@@ -416,6 +416,21 @@ def resolve_path(value: str | Path | None) -> Path | None:
     return path
 
 
+def _first_symlink_component(path: Path) -> Path | None:
+    current = Path(path.anchor)
+    parts = path.parts[1:] if path.is_absolute() else path.parts
+    for part in parts:
+        current = current / part
+        try:
+            if current.is_symlink():
+                return current
+            if not current.exists():
+                return None
+        except OSError:
+            return current
+    return None
+
+
 def relpath(path: Path) -> str:
     try:
         return str(path.relative_to(ROOT))
@@ -476,14 +491,199 @@ def delivery_status_root(config: dict[str, Any], metadata: dict[str, Any] | None
     return repo_root
 
 
+STATUS_COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
+STATUS_COMMAND_SHA_ENV = "PANTHEON_COMMAND_RUNTIME_SHA"
+STATUS_COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
+STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
+LEGACY_STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
+LEGACY_STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
+LEGACY_STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
+LEGACY_STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_STATUS_COMMAND_BASE_REF"
+
+
+def _git_stdout(cwd: Path, args: list[str]) -> str:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "git command failed").strip()
+        raise RuntimeError(detail)
+    return proc.stdout.strip()
+
+
+def normalize_github_repo_slug(value: str | None) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    candidate = candidate.removesuffix(".git")
+    if candidate.startswith("git@github.com:"):
+        candidate = candidate[len("git@github.com:") :]
+    elif candidate.startswith("ssh://git@github.com/"):
+        candidate = candidate[len("ssh://git@github.com/") :]
+    elif candidate.startswith("https://github.com/"):
+        candidate = candidate[len("https://github.com/") :]
+    elif candidate.startswith("http://github.com/"):
+        candidate = candidate[len("http://github.com/") :]
+    return candidate.strip("/")
+
+
+def status_command_expected_remote(config: dict[str, Any]) -> str:
+    configured = str(((config.get("github_bus") or {}).get("repo")) or "").strip()
+    return configured or "ajoe734/pantheon"
+
+
+def status_command_base_ref(config: dict[str, Any]) -> str:
+    branch = str(((config.get("branch_workflow") or {}).get("dev_branch")) or "dev").strip() or "dev"
+    return f"origin/{branch}"
+
+
+def validate_status_command_runtime(
+    root: Path,
+    *,
+    expected_sha: str | None = None,
+    expected_remote: str | None = None,
+    base_ref: str | None = None,
+    require_merged: bool = True,
+) -> dict[str, str]:
+    """Validate the installed status command checkout without reading task state."""
+
+    if not root.is_absolute():
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be an absolute path")
+    symlink_component = _first_symlink_component(root)
+    if symlink_component is not None:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} cannot include a symlink component: {symlink_component}"
+        )
+    resolved = root.resolve()
+    if not resolved.exists() or not resolved.is_dir():
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} does not exist or is not a directory: {resolved}")
+    git_root = _git_stdout(resolved, ["rev-parse", "--show-toplevel"])
+    if Path(git_root).resolve() != resolved:
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be a git repository root: {resolved}")
+
+    source_sha = _git_stdout(resolved, ["rev-parse", "HEAD"])
+    if expected_sha and source_sha != expected_sha:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_SHA_ENV} mismatch: command root is {source_sha}, expected {expected_sha}"
+        )
+
+    expected_slug = normalize_github_repo_slug(expected_remote)
+    remote_url = _git_stdout(resolved, ["remote", "get-url", "origin"])
+    actual_slug = normalize_github_repo_slug(remote_url)
+    if expected_slug and actual_slug != expected_slug:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} remote mismatch: {actual_slug or remote_url} != {expected_slug}"
+        )
+
+    if require_merged:
+        target_ref = str(base_ref or "origin/dev").strip() or "origin/dev"
+        _git_stdout(resolved, ["rev-parse", "--verify", target_ref])
+        proc = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", source_sha, target_ref],
+            cwd=resolved,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            suffix = f": {detail}" if detail else ""
+            raise RuntimeError(
+                f"{STATUS_COMMAND_ROOT_ENV} source SHA {source_sha} is not merged into {target_ref}{suffix}"
+            )
+    else:
+        target_ref = str(base_ref or "").strip()
+
+    return {
+        "root": str(resolved),
+        "source_sha": source_sha,
+        "remote": expected_slug or actual_slug,
+        "base_ref": target_ref,
+    }
+
+
+def status_command_runtime_record_from_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Return the supervisor-issued command runtime fields safe for state files."""
+
+    return {
+        "command_root": str(env.get(STATUS_COMMAND_ROOT_ENV) or ""),
+        "source_sha": str(env.get(STATUS_COMMAND_SHA_ENV) or ""),
+        "remote": str(env.get(STATUS_COMMAND_REMOTE_ENV) or ""),
+        "base_ref": str(env.get(STATUS_COMMAND_BASE_REF_ENV) or ""),
+    }
+
+
+def _status_command_runtime_env_from_record(record: Mapping[str, Any]) -> dict[str, str] | None:
+    raw_root = str(record.get("command_root") or record.get("root") or "").strip()
+    raw_sha = str(record.get("source_sha") or record.get("runtime_sha") or "").strip()
+    if not raw_root or not raw_sha:
+        return None
+    remote = str(record.get("remote") or "").strip()
+    base_ref = str(record.get("base_ref") or "").strip() or "origin/dev"
+    metadata = validate_status_command_runtime(
+        Path(raw_root).expanduser(),
+        expected_sha=raw_sha,
+        expected_remote=remote or None,
+        base_ref=base_ref,
+        require_merged=False,
+    )
+    return {
+        STATUS_COMMAND_ROOT_ENV: metadata["root"],
+        STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
+        STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
+        STATUS_COMMAND_BASE_REF_ENV: base_ref,
+        LEGACY_STATUS_COMMAND_ROOT_ENV: metadata["root"],
+        LEGACY_STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
+        LEGACY_STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
+        LEGACY_STATUS_COMMAND_BASE_REF_ENV: base_ref,
+    }
+
+
+def status_command_runtime_env(
+    config: dict[str, Any],
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
+    if isinstance(metadata, Mapping):
+        issued = metadata.get("status_command_runtime")
+        if isinstance(issued, Mapping):
+            issued_env = _status_command_runtime_env_from_record(issued)
+            if issued_env is not None:
+                return issued_env
+
+    expected_remote = status_command_expected_remote(config)
+    base_ref = status_command_base_ref(config)
+    metadata = validate_status_command_runtime(
+        ROOT.resolve(),
+        expected_remote=expected_remote,
+        base_ref=base_ref,
+        require_merged=False,
+    )
+    return {
+        STATUS_COMMAND_ROOT_ENV: metadata["root"],
+        STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
+        STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
+        STATUS_COMMAND_BASE_REF_ENV: base_ref,
+        LEGACY_STATUS_COMMAND_ROOT_ENV: metadata["root"],
+        LEGACY_STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
+        LEGACY_STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
+        LEGACY_STATUS_COMMAND_BASE_REF_ENV: base_ref,
+    }
+
+
 def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> dict[str, str]:
     workspace_root = delivery_workspace_root(config, metadata)
     status_root = delivery_status_root(config, metadata)
-    return {
+    env = {
         "PANTHEON_WORKTREE_ROOT": str(workspace_root),
         "PANTHEON_STATUS_ROOT": str(status_root),
         "ORCH_WORKSPACE_PATH": str(workspace_root),
     }
+    env.update(status_command_runtime_env(config, metadata))
+    return env
 
 
 def github_cli_config_dir(env: Mapping[str, str] | None = None) -> Path:

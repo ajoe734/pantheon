@@ -807,6 +807,103 @@ class SupervisorWatchdogTests(unittest.TestCase):
         health_report = json.loads(stdout.decode())
         self.assertTrue(health_report["healthy"])
 
+    def test_contention_metric_dropped_on_eagain(self) -> None:
+        """Verify that when the contention metrics file lock raises EAGAIN, the metric write is dropped and warning is printed to stderr."""
+        import io
+        import errno
+
+        orig_stderr = sys.stderr
+        sys.stderr = io.StringIO()
+        try:
+            # Mock flock on the contention metrics lock descriptor to raise EAGAIN
+            real_flock = fcntl.flock
+            def fake_flock(fd, op):
+                # When attempting LOCK_EX | LOCK_NB on the metrics-contention lock
+                if op & fcntl.LOCK_NB:
+                    raise OSError(errno.EAGAIN, "Resource temporarily unavailable")
+                return real_flock(fd, op)
+
+            with mock.patch("fcntl.flock", fake_flock):
+                # Call append_watchdog_contention_metric
+                supervisor_watchdog.append_watchdog_contention_metric(
+                    self.config,
+                    {"decision": "skip", "reason": "lock_contention"},
+                    self.config["watchdog"],
+                )
+            
+            output = sys.stderr.getvalue()
+            self.assertIn("watchdog contention metric write dropped due to lock contention", output)
+        finally:
+            sys.stderr = orig_stderr
+
+    def test_contention_metric_raises_on_other_oserror(self) -> None:
+        """Verify that when the contention metrics lock raises a non-EAGAIN OSError, it propagates."""
+        import errno
+
+        def fake_flock(fd, op):
+            raise OSError(errno.EACCES, "Permission denied")
+
+        with mock.patch("fcntl.flock", fake_flock):
+            with self.assertRaises(OSError) as ctx:
+                supervisor_watchdog.append_watchdog_contention_metric(
+                    self.config,
+                    {"decision": "skip", "reason": "lock_contention"},
+                    self.config["watchdog"],
+                )
+            self.assertEqual(ctx.exception.errno, errno.EACCES)
+
+    def test_watchdog_dry_run(self) -> None:
+        """Verify that when dry_run=True is set, the decision is to restart but Popen is not called."""
+        self.write_pid(123)
+        self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}})
+        
+        with (
+            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+            mock.patch.object(supervisor_watchdog.subprocess, "Popen") as mock_popen,
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True, dry_run=True)
+            
+        self.assertEqual(result["decision"], "restart_supervisor")
+        self.assertIn("dry_run", result["reason"])
+        mock_popen.assert_not_called()
+
+    def test_watchdog_owner_crash_releases_lock(self) -> None:
+        """Verify that when the watchdog logic raises an unexpected exception (crash), the lock is released exactly once."""
+        self.write_pid(123)
+        self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}})
+
+        # We will mock _run_watchdog_locked to raise an unexpected Exception
+        def crashing_run(*args, **kwargs):
+            raise ValueError("Unexpected owner crash")
+
+        # Let's count how many times lock_manager.__exit__ is called
+        exit_calls = 0
+        real_lock = supervisor_watchdog.runtime_state_lock
+        
+        # We wrapper the context manager to intercept exit
+        class LockManagerWrapper:
+            def __init__(self, target):
+                self.target = target
+            def __enter__(self):
+                return self.target.__enter__()
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                nonlocal exit_calls
+                exit_calls += 1
+                return self.target.__exit__(exc_type, exc_val, exc_tb)
+
+        def fake_lock_manager(*args, **kwargs):
+            return LockManagerWrapper(real_lock(*args, **kwargs))
+
+        with (
+            mock.patch.object(supervisor_watchdog, "runtime_state_lock", fake_lock_manager),
+            mock.patch.object(supervisor_watchdog, "_run_watchdog_locked", crashing_run),
+        ):
+            with self.assertRaisesRegex(ValueError, "Unexpected owner crash"):
+                supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(exit_calls, 1, "Lock manager exit should have been called exactly once to clean up lock.")
+
 
 class ActiveWorkerCountDedupeTests(unittest.TestCase):
     """Watchdog restart pressure must use live wrapper identities, not stale state."""

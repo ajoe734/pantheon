@@ -11,6 +11,23 @@ wr = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(wr)
 def _init_repo(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=path, check=True)
+    (path / ".gitkeep").write_text("fixture\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".gitkeep"], cwd=path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "fixture"], cwd=path, check=True)
+    subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=path, check=True)
+
+
+def _command_runtime_env(root: Path) -> dict[str, str]:
+    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    return {
+        "PANTHEON_COMMAND_ROOT": str(root),
+        "PANTHEON_COMMAND_RUNTIME_SHA": sha,
+        "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+        "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+    }
 
 
 def _write_status(path: Path) -> None:
@@ -193,6 +210,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
                     "ORCH_WORKSPACE_PATH": str(worktree),
                 }
             )
+            env.update(_command_runtime_env(central))
             proc = subprocess.run(
                 [
                     sys.executable,
@@ -222,6 +240,9 @@ class TestCoordinationRootValidation(unittest.TestCase):
             self.assertIn(str(worktree), proc.stdout)
             runner_status = json.loads(status.read_text(encoding="utf-8"))
             self.assertEqual(runner_status["status"], "completed")
+            self.assertEqual(runner_status["status_command_runtime"]["command_root"], str(central.resolve()))
+            heartbeat_payload = json.loads(heartbeat.read_text(encoding="utf-8"))
+            self.assertEqual(heartbeat_payload["status_command_runtime"]["command_root"], str(central.resolve()))
 
     def test_child_command_failure_writes_failed_status(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-failure-") as temp_dir:
