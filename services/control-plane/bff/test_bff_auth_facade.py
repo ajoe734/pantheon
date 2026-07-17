@@ -761,6 +761,53 @@ class TestExtractIdentityJwks:
         assert identity.roles == ["admin"]
         assert identity.mfa_verified is True
 
+    def test_supabase_app_metadata_role_maps_to_operator(self):
+        """Only the admin-owned nested role claim grants operator authority."""
+        token = _make_rs256_jwt(
+            sub="supabase-operator",
+            roles=None,
+            audience="authenticated",
+            issuer="https://supabase.example/auth/v1",
+            extra={
+                "role": "authenticated",
+                "app_metadata": {"roles": ["pantheon-operator"]},
+            },
+        )
+        identity = self._call(
+            f"Bearer {token}",
+            env_overrides={
+                "PANTHEON_BFF_OIDC_ISSUER": "https://supabase.example/auth/v1",
+                "PANTHEON_BFF_OIDC_AUDIENCE": "authenticated",
+                "PANTHEON_BFF_ROLE_CLAIMS": "app_metadata.roles,roles",
+                "PANTHEON_BFF_ROLE_MAP": "pantheon-operator=operator;pantheon-viewer=viewer",
+                "PANTHEON_BFF_ROLE_MAP_MODE": "strict",
+                "PANTHEON_BFF_DEFAULT_ROLE": "viewer",
+            },
+        )
+        assert identity.roles == ["operator"]
+
+    def test_supabase_authenticated_role_does_not_become_operator(self):
+        """A normal Supabase login without admin metadata fails closed to viewer."""
+        token = _make_rs256_jwt(
+            sub="supabase-unassigned",
+            roles=None,
+            audience="authenticated",
+            issuer="https://supabase.example/auth/v1",
+            extra={"role": "authenticated"},
+        )
+        identity = self._call(
+            f"Bearer {token}",
+            env_overrides={
+                "PANTHEON_BFF_OIDC_ISSUER": "https://supabase.example/auth/v1",
+                "PANTHEON_BFF_OIDC_AUDIENCE": "authenticated",
+                "PANTHEON_BFF_ROLE_CLAIMS": "app_metadata.roles,roles",
+                "PANTHEON_BFF_ROLE_MAP": "pantheon-operator=operator;pantheon-viewer=viewer",
+                "PANTHEON_BFF_ROLE_MAP_MODE": "strict",
+                "PANTHEON_BFF_DEFAULT_ROLE": "viewer",
+            },
+        )
+        assert identity.roles == ["viewer"]
+
     def test_mfa_required_rejects_unaccepted_idp_mfa_claim(self):
         """MFA_REQUIRED=true must not accept an IdP claim outside the configured values."""
         from fastapi import HTTPException

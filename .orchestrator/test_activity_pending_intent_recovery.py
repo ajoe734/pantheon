@@ -791,16 +791,34 @@ class ResolutionReaderContractTests(PendingIntentIncidentFixture):
                     common.activity_audit_source_paths_unlocked(self.log_path)
                 path.write_bytes(payload)
 
-    def test_superseded_archive_removal_or_tamper_fails_closed(self):
+    def test_exact_superseded_archive_backup_is_accepted(self):
         facts = self._resolve()
         archive = self.root / facts["archive_relative"]
-        original = archive.read_bytes()
+        backup = archive.with_name(f"{archive.name}.bak")
+        archive.replace(backup)
+
+        sources = common.activity_audit_source_paths_unlocked(self.log_path)
+        self.assertNotIn(backup.resolve(), [source.resolve() for source in sources])
+
+        common._durable_write_gzip(backup, b'{"event_id": "swap"}\n')
+        with self.assertRaisesRegex(RuntimeError, "gzip digest mismatch"):
+            common.activity_audit_source_paths_unlocked(self.log_path)
+
+    def test_missing_superseded_archive_and_backup_fails_closed(self):
+        facts = self._resolve()
+        archive = self.root / facts["archive_relative"]
         archive.unlink()
         with self.assertRaisesRegex(RuntimeError, "superseded archive is missing"):
             common.activity_audit_source_paths_unlocked(self.log_path)
-        archive.write_bytes(original)
-        common._durable_write_gzip(archive, b'{"event_id": "swap"}\n')
-        with self.assertRaisesRegex(RuntimeError, "gzip digest mismatch"):
+
+    def test_symlinked_superseded_archive_backup_fails_closed(self):
+        facts = self._resolve()
+        archive = self.root / facts["archive_relative"]
+        shadow = archive.with_name(f"{archive.name}.shadow")
+        backup = archive.with_name(f"{archive.name}.bak")
+        archive.replace(shadow)
+        backup.symlink_to(shadow)
+        with self.assertRaisesRegex(RuntimeError, "regular file"):
             common.activity_audit_source_paths_unlocked(self.log_path)
 
     def test_superseding_archive_tamper_fails_closed(self):
