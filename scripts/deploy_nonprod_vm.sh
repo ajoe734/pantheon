@@ -1142,8 +1142,33 @@ REMOTE_DB
 }
 
 dump_dev_root_failure_diagnostics() {
+  local source_ingest_container_id=""
+  local search_container_id=""
+
   info "dev root compose ps after failure"
   docker compose -p pantheon -f docker-compose.yml ps || true
+  info "source-ingest service logs after failure"
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 source-ingest || true
+  source_ingest_container_id="$(
+    docker compose -p pantheon -f docker-compose.yml ps -a -q source-ingest 2>/dev/null || true
+  )"
+  if [[ -n "$source_ingest_container_id" ]]; then
+    info "source-ingest container restart and health state after failure"
+    docker inspect --format \
+      'status={{.State.Status}} restart_count={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{json .State.Error}}' \
+      "$source_ingest_container_id" || true
+  fi
+  info "search-svc service logs after failure"
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 search-svc || true
+  search_container_id="$(
+    docker compose -p pantheon -f docker-compose.yml ps -a -q search-svc 2>/dev/null || true
+  )"
+  if [[ -n "$search_container_id" ]]; then
+    info "search-svc container restart and health state after failure"
+    docker inspect --format \
+      'status={{.State.Status}} restart_count={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{json .State.Error}}' \
+      "$search_container_id" || true
+  fi
   info "evolution daily sweep scheduler logs after failure"
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 evolution-daily-sweep-scheduler || true
   info "operator-bff logs after failure"

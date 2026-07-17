@@ -1505,7 +1505,9 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             )
 
         self.assertIn("PANTHEON_STATUS_ROOT", brief)
-        self.assertIn("./scripts/ai-status.sh", brief)
+        self.assertIn("PANTHEON_COMMAND_ROOT", brief)
+        self.assertIn("$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh", brief)
+        self.assertNotIn("./scripts/ai-status.sh", brief)
 
     def test_prepare_worker_workspace_allocates_chair_review_worktree_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
