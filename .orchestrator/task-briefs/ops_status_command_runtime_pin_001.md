@@ -1,71 +1,181 @@
 # OPS-STATUS-COMMAND-RUNTIME-PIN-001
 
-## 目的
+## Authority and objective
 
-禁止舊 task worktree 使用自己的舊版 `scripts/ai_status.py` 寫入中央狀態。所有 auto worker 的 governed status mutation 必須執行一份已安裝、可辨識 exact source SHA 的 command runtime；git、測試與 delivery evidence 仍留在各自 task worktree。
+This is the dedicated execution brief for the task materialized from
+`.orchestrator/task-briefs/ops_worktree_delivery_context_corrective_001.md`
+at Pantheon PR #3766 merge `728954a2148ccd76e36925e96c7de90cb06f399c`.
+It supersedes the older runtime-pin draft and any generic worker-workspace
+brief generated from central task metadata.
 
-這是後續預防任務，不是 legacy overlap 的緊急資料修復。
+Pin every governed fleet status mutation to a supervisor-issued absolute
+installed command root and exact runtime SHA. Preserve each task worktree as
+the working directory and future delivery-evidence source, while all canonical
+status, activity, archive, derived-file, outbox, and lock mutations remain
+under `PANTHEON_STATUS_ROOT`.
 
-## 依賴
+Owner: `Codex2`. Reviewer: `Claude`. Priority: `P0`. Target: `pantheon/dev`.
+Auto-merge is off.
 
-必須等下列兩項合併並完成 postmerge proof：
+## Confirmed incident and dependency
 
-- `OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001`
-- `OPS-WORKTREE-DELIVERY-CONTEXT-CORRECTIVE-001`
+- On 2026-07-16, `LOOP-PROD-SEQ-RECONCILE-001` wrote governed handoff events
+  at `21:48:15Z` and `21:52:04Z` for PR #3779 head
+  `8c0c00f5f3d4a678d6550d72770feb6f916a8a6c`.
+- The events remained in the central activity log, while the canonical task
+  later showed the older `in_progress` postimage from `20:02:39Z`. Treat this
+  as observed event/status divergence; this task must not claim an unproved
+  single cause.
+- Existing worker prompts allowed relative `scripts/ai-status.sh`, so fixing
+  only `PANTHEON_STATUS_ROOT` did not fix which checkout supplied executable
+  semantics.
+- The sole task dependency is the completed and archived
+  `OPS-WORKTREE-CENTRAL-STATUS-ROOT-CORRECTIVE-001`.
+- `OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002` and PR #3763 must remain
+  unapproved until this task is merged, installed, and their proof is rerun
+  with a new pinned lease.
 
-第一項恢復 activity/outbox；第二項把 canonical mutation root 與 delivery evidence worktree 正確分離。本 task 不得重新發明或放寬兩者的驗證。
+## Owned scope
 
-## Fleet 分工
+- `.orchestrator/common.py`
+- `.orchestrator/supervisor.py`
+- `.orchestrator/templates/wakeup.txt`
+- `.orchestrator/test_common.py`
+- `.orchestrator/test_supervisor.py`
+- `scripts/ai-status.sh`
+- `scripts/ai_status.py`
+- `scripts/sync-dev-root.sh`
+- `scripts/test_status_command_runtime_pin.py`, or equivalent focused tests
+- `docs/deployment/evidence/ops-status-command-runtime-pin-001/`
 
-- Owner：`Codex2`。
-- Reviewer：`Antigravity`。
-- owner 與 reviewer 必須不同；auto-merge 關閉。
+Do not modify product trading behavior, frontend, BFF product routes, broker
+behavior, historical activity/archive bytes, or arbitrary stale worktrees.
+Do not absorb delivery-worktree selection; that belongs to
+`OPS-WORKTREE-DELIVERY-CONTEXT-CORRECTIVE-001`.
 
-## 問題模型
+## Command and lease contract
 
-- 中央 `PANTHEON_STATUS_ROOT` 只決定資料寫到哪裡，沒有保證「哪一版程式」在寫。
-- 長時間存在的 task worktree 可能從舊 `dev` 建立；它的 worktree-local wrapper 仍可拿中央 root 寫入。
-- legacy timestamp rotation 在 2026-07-16 仍產生 1,000-line overlap，證明舊 worktree executable 能持續影響新中央狀態。
-- delivery closeout 又必須讀取 task worktree 的 branch、HEAD、clean state 與 PR 證據，所以不能簡單把所有 cwd 改成中央 checkout。
+1. The supervisor must issue every new worker lease both an absolute
+   `PANTHEON_COMMAND_ROOT` and exact `PANTHEON_COMMAND_RUNTIME_SHA` from the
+   installed supervisor checkout.
+2. The command root must be an existing non-symlink Git repository root for
+   `ajoe734/pantheon`. Its `HEAD` must equal the issued SHA and be an ancestor
+   of configured `origin/dev`. Caller-provided paths are not authority.
+3. Generated wakeup prompts must invoke
+   `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh`. They must not recommend a
+   relative worktree-local status command. Git work, tests, and product edits
+   continue in `PANTHEON_WORKTREE_ROOT` / `ORCH_WORKSPACE_PATH`.
+4. Before any governed canonical mutation, the installed wrapper and Python
+   command must validate command root, issued SHA, active `ORCH_RUN_ID` lease,
+   task identity, status root, and workspace root. Missing, expired, stale,
+   symlinked, uninstalled, wrong-repository, wrong-SHA, or conflicting
+   bindings fail before all canonical writes.
+5. Controlled manual and postmerge commands without `ORCH_RUN_ID` must call
+   the installed absolute executable and explicitly provide the same command
+   root and SHA. Ordinary local read-only development may use local code but
+   cannot claim governed central mutation evidence.
+6. The command process must preserve the task worktree as its cwd. It must not
+   silently change delivery evidence to the installed checkout. This task
+   validates the boundary; the dependent delivery-context task implements
+   full delivery-root selection for `done`.
+7. Command evidence may record redacted root, runtime SHA, status root,
+   workspace root, task id, run id, and lease id. It must never record tokens,
+   secrets, complete process environments, or raw provider errors.
 
-## 必要行為
+## Operational cutover
 
-1. supervisor 必須給 auto worker 一個經驗證的 `PANTHEON_STATUS_COMMAND_ROOT`（名稱可調整），指向目前已安裝的 Pantheon control-plane command runtime。
-2. command root 必須驗證：絕對路徑、無 symlink component、存在、git repo root、remote slug 正確、source SHA 已合併到 configured `dev`，且與 supervisor 啟動時記錄的 installed SHA 一致。
-3. auto worker 呼叫 `scripts/ai-status.sh` 時，worktree wrapper 必須 `exec` command root 的實作；不得 import 或執行 stale worktree-local `ai_status.py`。
-4. 執行 command 的 process cwd 可以是 command root，但必須保留並驗證：
-   - `PANTHEON_STATUS_ROOT`：中央 canonical mutation root；
-   - `PANTHEON_WORKTREE_ROOT`／`ORCH_WORKSPACE_PATH`：真實 task worktree delivery evidence root；
-   - task/repo/merge-target identity。
-5. `done` 的 branch、commit、clean、push、PR 與 merge evidence 必須來自 delivery worktree；status/archive/activity/locks 必須只改中央 root。
-6. auto-worker marker 存在但 command root 缺失、不一致、落後、未合併、remote 錯誤或 path 驗證失敗時，必須在任何讀寫前 fail closed。
-7. 人工、非 auto-worker 的中央命令保留明確 fallback；不得猜測最近 worktree或偷偷改用另一 repo。
-8. supervisor/dev-root 更新必須先安裝 merged command runtime，再啟動使用它的 workers；證據需記錄 installed SHA 與每次 command metadata。
-9. command metadata 必須可看到 command root/source SHA、status root、delivery root/source env；不得記錄 secrets。
+The pin is not complete through code and unit tests alone.
 
-## 必要測試
+1. Stop new dispatch before install.
+2. Wait for every queued status command to exit. Inventory all pre-pin worker
+   PIDs, run IDs, workspaces, command paths, and leases.
+3. Let active workers reach a safe handoff boundary, then terminate only the
+   remaining pre-pin runs. Do not edit their historical worktrees.
+4. Install only the exact reviewed merge SHA into the configured dev command
+   root, verify remote and ancestry, and restart the supervisor/watchdog.
+5. Issue new leases and redispatch from the new runtime. No live worker,
+   prompt, lease, or queued command may reference a pre-pin executable.
+6. If drain or inventory cannot prove a single command epoch, keep canonical
+   mutations frozen and roll back the installed runtime. Never permit old and
+   new command epochs to write concurrently.
+7. Record old/new PIDs, run IDs, paths, SHAs, lease identities, install result,
+   restart result, rollback decision, and readback in redacted evidence.
 
-- stale worktree wrapper 實際執行 pinned current command，並以不同的可觀察版本 marker 證明沒有載入 local module。
-- 中央 status/activity/archive 變更一次；worktree sentinel bytes 不變；delivery metadata 指向 worktree。
-- command root relative、symlink、nested repo、wrong remote、unmerged SHA、behind installed SHA、缺 env 全部拒絕且零 mutation。
-- `PANTHEON_WORKTREE_ROOT` 與 `ORCH_WORKSPACE_PATH` 不一致仍依 delivery-context contract 拒絕。
-- current command 的 `show`、`note`、`handoff`、`approve`、`done` 全路徑測試。
-- supervisor restart/worker environment、watchdog、worker-runner、完整 `scripts/test_ai_status.py` 回歸。
-- 模擬 command runtime 更新期間，不可出現一半 workers 用舊版、一半用新版同時寫中央狀態的窗口。
+## Required regressions
 
-## PR 與驗收
+At minimum, tests must prove all of the following:
 
-- final candidate compose 最新 `origin/dev`，PR target `dev`，auto-merge 關閉。
-- Antigravity 在 final exact head 獨立測試並核准。
-- postmerge 安裝 exact merge 後，從至少一個故意落後的 disposable worktree 執行完整 governed lifecycle；證明 command SHA 是新安裝版、delivery SHA 是該 worktree、中央 mutation 正確且 local bytes 不變。
-- 再從 wrong-repo 與 symlink worktree 跑負面案例，必須在 mutation 前拒絕。
+- a stale disposable task worktree cannot use its relative wrapper as
+  governed evidence, while the lease-issued installed absolute command works;
+- missing command root/SHA, relative root, any symlink component, repo
+  subdirectory, nested repo, independent clone, wrong remote, unmerged SHA,
+  mismatched installed SHA, expired/replaced lease, wrong task, wrong run id,
+  and conflicting workspace roots fail with zero canonical mutation;
+- the task worktree cwd and tracked sentinels remain byte-identical while the
+  canonical mutation occurs exactly once under `PANTHEON_STATUS_ROOT`;
+- `show` remains read-only and governed `assign`, `note`, `handoff`, `approve`,
+  and `done` use the same command binding before their mutation boundaries;
+- two worktrees and queued concurrent writers reproduce the 2026-07-16
+  incident shape, then prove a committed handoff event cannot coexist with an
+  older active-task postimage;
+- queue reordering, process crash, stale lease, supervisor restart, install
+  failure, and rollback converge without lost updates or dual command epochs;
+- assertions cover exact final task state and activity event IDs, not only
+  process exit codes;
+- existing status-root, activity-audit, archive, outbox, lock-order,
+  supervisor, watchdog, and worker-runner behavior does not regress.
 
-## 不在範圍
+Run at least:
 
-- 不修改產品交易、BFF、frontend、broker 或部署工作流業務行為。
-- 不刪除 legacy activity archives。
-- 不放寬 delivery、review、clean、push、merge、ancestry 或 audit integrity gate。
+```bash
+python3 scripts/test_status_command_runtime_pin.py
+python3 .orchestrator/test_common.py
+python3 .orchestrator/test_supervisor.py
+python3 scripts/test_ai_status.py
+bash -n scripts/ai-status.sh scripts/sync-dev-root.sh
+python3 -m py_compile scripts/ai_status.py .orchestrator/common.py \
+  .orchestrator/supervisor.py scripts/test_status_command_runtime_pin.py
+```
 
-## 完成定義
+If focused coverage is placed in an existing standard module, retain its
+module name in evidence and preserve every command-root, lease, drain,
+concurrency, rollback, and postmerge case above.
 
-只有在 exact merge 已安裝、所有新 auto worker 都由 pinned command runtime 執行、stale worktree 正負案例與真實 `done` closeout 通過，而且沒有中央／worktree split-brain mutation，才可完成。
+## Evidence and delivery gates
+
+- Evidence must state exact commands, exit codes, test counts, candidate SHA,
+  reviewed SHA, merged SHA, installed SHA, and pre/post worker inventory.
+- Fixtures must be synthetic and redacted. Do not copy central activity
+  payloads, credentials, or full environments into the repository.
+- Compose current `origin/dev` before final review.
+- Commit only scoped implementation, tests, runbook, and evidence with
+  `LLM-Agent: Codex2`, this task ID, and `Reviewer: Claude` trailers.
+- Claude independently reviews and reruns the exact final head. Owner output
+  is not reviewer evidence.
+- Keep auto-merge disabled. Do not install an unmerged candidate.
+- After merge, install the exact merge, execute the cutover, and run the stale
+  worktree positive/negative proof under new leases.
+- Re-run `OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002` / PR #3763 proof
+  after the pin. Evidence produced before the cutover is not sufficient.
+
+## Acceptance checklist
+
+- [ ] Supervisor lease issues one absolute installed command path and exact
+      runtime SHA.
+- [ ] New worker prompts contain no relative governed status command guidance.
+- [ ] Every pre-pin worker and queued status command is drained before cutover.
+- [ ] Missing, mismatched, symlinked, uninstalled, and worktree-local command
+      roots are rejected before mutation.
+- [ ] Task worktree cwd is preserved and canonical writes stay under
+      `PANTHEON_STATUS_ROOT`.
+- [ ] Concurrent-writer regression reproduces the incident shape and proves
+      zero lost updates.
+- [ ] Only an exact merged dev SHA is installed; restarted workers use new
+      leases with no dual epoch.
+- [ ] Claude approves the final exact head with auto-merge disabled.
+- [ ] Exact postmerge install, rollback/readback, and stale-worktree evidence
+      is archived and independently reviewed.
+
+Completion requires all checklist items, merged code, exact installed runtime,
+new worker leases, and postmerge proof. A local patch, passing unit tests, a
+running process, or a queued wake-up is not completion.
