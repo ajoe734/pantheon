@@ -224,3 +224,20 @@ above (final audited head `be2d61636`, unchanged); if `ai_status.py` still
 shows `status: "review"` on a future rewake, re-running `scripts/ai_status.py
 approve` is safe and expected (it only hard-errors when status is already
 `review_approved`).
+
+Rewake note (2026-07-17, fourth cycle): `ai_status.py show` again reported
+`status: "review"` with `last_update: "2026-07-17T14:48:01Z"` - the same
+stale timestamp as the third-cycle note above, confirming the second
+`approve` call from that cycle was also not durably persisted (same
+activity-log rotation/lock instability, not a defect in this task). PR
+#3784 had drifted `mergeStateStatus: BEHIND` again (6 new `dev` commits,
+including `LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001`, `PINT-013`,
+`SEARCH-RELOAD-001`, and an `.orchestrator/common.py` /
+`corrective-001-checks-v2.json` change; none touch the lease controller,
+workflow, or evidence files). Resynced with `git merge origin/dev` (clean,
+no conflicts), pushed non-force (head now `f1babddcf`). Reran the full
+mandatory validation set: 35 passed, 19 subtests passed; `py_compile`,
+YAML parse, `check_shared_deploy_workflow_disabled`, `git diff --check`
+all clean. The durable governed verdict remains `Verdict: **APPROVED**`
+(final audited head `be2d61636`, unchanged) - re-running
+`scripts/ai_status.py approve` is expected to be safe again on this cycle.
