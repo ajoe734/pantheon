@@ -11,6 +11,7 @@ inventory digest, and the attestation text approved by the planner.
 ## 0. Record state (read-only)
 
 ```bash
+mkdir -p /tmp/oparpir-001/guard
 crontab -l > /tmp/oparpir-001/guard/crontab-before.txt
 ps -eo pid,ppid,lstart,cmd | grep -E "supervisor.py|worker_runner.py" | grep -v grep \
   > /tmp/oparpir-001/guard/writers-before.txt
