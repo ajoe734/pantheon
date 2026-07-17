@@ -45,6 +45,7 @@ def _strict_auth_env(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", JWT_ISSUER)
     monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", JWT_AUDIENCE)
     monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+    monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://frontend.test")
 
 
 @pytest.fixture(autouse=True)
@@ -250,7 +251,7 @@ def test_bff_auth_refresh_accepts_cookie_session_in_strict_mode(monkeypatch) -> 
     response = client.post(
         "/bff/auth/refresh",
         json={},
-        headers={"Idempotency-Key": "refresh-cookie-op"},
+        headers={"Idempotency-Key": "refresh-cookie-op", "Origin": "https://frontend.test"},
     )
 
     assert response.status_code == 200, response.text
@@ -363,7 +364,7 @@ def test_bff_logout_accepts_cookie_session_in_strict_mode(monkeypatch) -> None:
     response = client.post(
         "/bff/logout",
         json={},
-        headers={"Idempotency-Key": "logout-cookie-op"},
+        headers={"Idempotency-Key": "logout-cookie-op", "Origin": "https://frontend.test"},
     )
 
     assert response.status_code == 200, response.text
@@ -406,6 +407,20 @@ def test_bff_dev_login_issues_short_lived_jwt_for_me(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS", "600")
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
+    # Product OIDC and server-side dev-login coexist: the HS256 dev-login JWT
+    # must keep using the BFF verifier even when browser ES256/JWKS discovery is
+    # configured, and external strict role mapping must not erase its internal
+    # server-bound operator role.
+    monkeypatch.setenv(
+        "PANTHEON_BFF_OIDC_DISCOVERY_URL",
+        "https://identity.example.test/.well-known/openid-configuration",
+    )
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_ISSUER", "https://identity.example.test")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_AUDIENCE", "authenticated")
+    monkeypatch.setenv("PANTHEON_BFF_ROLE_CLAIMS", "app_metadata.roles,roles")
+    monkeypatch.setenv("PANTHEON_BFF_ROLE_MAP", "pantheon-operator=operator")
+    monkeypatch.setenv("PANTHEON_BFF_ROLE_MAP_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_DEFAULT_ROLE", "viewer")
 
     client = TestClient(bff_main.app)
     login = client.post(

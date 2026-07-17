@@ -1,0 +1,46 @@
+{
+  "captured_at": "2026-07-17T14:14:47Z",
+  "capture_context": "owned_in_progress_dispatch rewake; re-verified STOP gate after both correctives were re-checked at 12:39Z",
+  "shared_workflows": {
+    "ajoe734/pantheon#269991390": "active",
+    "ajoe734/execute-plans#292028803": "active"
+  },
+  "rogue_guard_process_check": "none found (ps aux grep for workflow disable / gh run cancel / allow_deploy / pint_deploy_guard)",
+  "recent_deploy_run": {
+    "run_id": 29586718873,
+    "branch": "dev",
+    "conclusion": "success",
+    "created_at": "2026-07-17T14:08:00Z",
+    "note": "shared workflow continued dispatching and completing normal dev deploys; no fleet freeze observed"
+  },
+  "corrective_1_reconciliation_json_store": {
+    "task_id": "OPS-RECONCILIATION-JSON-STORE-INTEGRITY-001",
+    "pr": 3778,
+    "pr_head_sha": "f06027d02afa784e769ebc23bd5b2f76798c5858",
+    "pr_merge_state_status": "BEHIND",
+    "gh_pr_reviews_count": 0,
+    "ai_status_status": "review_approved",
+    "ai_status_last_update": "2026-07-17T14:14:47Z",
+    "ai_status_next_note": "Supervisor resumed OPS-RECONCILIATION-JSON-STORE-INTEGRITY-001 for finalize after successful dispatch.",
+    "review_document": "docs/conventions/reviews/ops-reconciliation-json-store-integrity-001-review.md (on task/OPS-RECONCILIATION-JSON-STORE-INTEGRITY-001 branch, not merged into dev)",
+    "review_document_approved_head_sha": "249e1d0d3984c41a801695b59550df65817ed742",
+    "review_document_dated": "2026-07-16T22:45:00Z",
+    "gate_satisfied": false,
+    "gap": "ai_status.json status was flipped back to review_approved at 14:14:47Z, but the underlying review document is unchanged and still cites the stale head 249e1d0d, which is not the PR's current head f06027d0. No fresh exact-head review was recorded and the PR still has zero GitHub-native reviews. This is the same stale-approval gap already flagged in the 20260717T0306Z and 20260717T1239Z evidence packets, recurring after a status-field flip rather than a genuine fresh review."
+  },
+  "corrective_2_lease_read_after_write_pin": {
+    "task_id": "OPS-LEASE-READ-AFTER-WRITE-PIN-001",
+    "pr": 3784,
+    "pr_head_sha": "c7fd7352ab21e352e2fd2de03b8649f38156b509",
+    "pr_merge_state_status": "BEHIND",
+    "gh_pr_reviews_count": 0,
+    "ai_status_status": "review",
+    "ai_status_owner": "Antigravity",
+    "ai_status_reviewer": "Codex2",
+    "ai_status_last_update": "2026-07-17T10:24:09Z",
+    "gate_satisfied": false,
+    "gap": "unchanged since the 20260717T1239Z capture; evidence PR still open/unmerged, status still plain review, not re-escalated to review_approved"
+  },
+  "action_taken": "none (no dispatch, no workflow mutation, no cancel, no merge)",
+  "recommendation": "a human resolves corrective_1's stale-head review gap directly (either Antigravity records a fresh exact-head review at f06027d0, or a human explicitly accepts the existing head-249e1d0d approval as sufficient and merges PR 3778) and a human merges PR 3784 to close corrective_2's review record; only then does a human dispatch the Pantheon-only proof. Neither corrective PR was touched by this rewake to avoid invalidating any in-progress exact-head review."
+}
