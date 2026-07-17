@@ -267,3 +267,41 @@ flows: the supervisor's own worktree-lease anchor commits (for example
 real `ai-activity-log.jsonl` changes when necessary to preserve work. No
 change was made to `check_staged_generated_files.py`, the pre-commit hook,
 or any other runtime code as part of this task.
+
+## Follow-up evidence candidate v2: `corrective-001-checks-v2.json`
+
+`corrective-001-checks.json` (v1, above) recorded PR #3742 as `OPEN`,
+bound to its head commit `42acecd2b`, because that was accurate when it
+was written. PR #3742 has since merged
+(`6a24a3ebb36259a4259ccd2dcdc053826eb4e1d5`, at head
+`5ba2c88089234d16bb82806f7dee19f44ce5e790`), which makes v1 a stale
+draft: v1 is left unmodified as the historical record it documents
+itself to be, and is not rewritten.
+
+`corrective-001-checks-v2.json` re-binds the same evidence categories
+after composing this branch to current `origin/dev`
+(`33afc82e54469a70a77f7dc1df2c8178d3f339d2` at the time of composition,
+a clean fast-forward, no merge-resolution commit needed): PR #3742's
+actual `MERGED` state and verified ancestry into `origin/dev`; the
+restored audit row and its `ai-activity-log.jsonl` blob hash, reverified
+byte-identical; the (still unmodified) writer registry digest; a fresh
+`runtime_lock_source_inventory('.')` recomputation against the composed
+branch, again showing zero unregistered direct writers, with drift
+explained against both the frozen primary `checks.json` and against v1;
+and a full re-run of every named validation command, all passing
+(one suite gained two additional passing tests from unrelated dev
+churn since the primary freeze).
+
+It also names its own follow-up PR (`corrective_pr_3_evidence_rebind`)
+as `PENDING` rather than fabricating a head or merge SHA for a PR that
+does not exist yet at authoring time -- Codex2 must resolve that PR's
+real identity from GitHub once opened and confirm it descends from the
+recorded `base_commit` before accepting any binding in the file.
+
+This file is evidence binding, not completion, and does not change the
+task contract: GitHub green checks, this file, a README correction, a
+placeholder signature, or an owner signature are still not completion.
+Only the assigned distinct reviewer `Codex2` may independently verify
+this evidence and either create the real signed `completion.json` (plus
+ledger/policy/revocation binding) or leave the task open with the exact
+unavailable signing authority.
