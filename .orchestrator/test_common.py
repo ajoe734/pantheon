@@ -1080,6 +1080,78 @@ class LogicalActivityReaderTests(unittest.TestCase):
         logical_ids = [entry["event_id"] for entry, _, _ in common.stream_logical_activity(self.log_path)]
         self.assertEqual(logical_ids, [entry["event_id"] for entry in creation_entries])
 
+    def test_archive_metrics_bind_raw_and_payload_to_one_stream(self):
+        first_payload = b'{"event_id":"coherent-first"}\n'
+        replacement_payload = b'{"event_id":"coherent-later"}\n'
+        self.assertEqual(len(first_payload), len(replacement_payload))
+        first_bytes = gzip.compress(first_payload, compresslevel=0, mtime=1)
+        replacement_bytes = gzip.compress(
+            replacement_payload,
+            compresslevel=0,
+            mtime=2,
+        )
+        self.assertEqual(len(first_bytes), len(replacement_bytes))
+        self.assertNotEqual(first_bytes, replacement_bytes)
+
+        archive = self.archive_dir / "coherent-pass.gz"
+        archive.write_bytes(first_bytes)
+        original_stat = archive.stat()
+        real_gzip_file = gzip.GzipFile
+
+        def replace_before_decompression(*args, **kwargs):
+            with archive.open("r+b") as handle:
+                handle.write(replacement_bytes)
+                handle.truncate()
+            os.utime(
+                archive,
+                ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+            )
+            return real_gzip_file(*args, **kwargs)
+
+        with mock.patch.object(
+            common.gzip,
+            "GzipFile",
+            side_effect=replace_before_decompression,
+        ):
+            metrics = common._stream_activity_archive_metrics(archive)
+
+        self.assertEqual(
+            metrics.gzip_sha256,
+            hashlib.sha256(replacement_bytes).hexdigest(),
+        )
+        self.assertEqual(metrics.gzip_byte_count, len(replacement_bytes))
+        self.assertEqual(
+            metrics.payload_sha256,
+            hashlib.sha256(replacement_payload).hexdigest(),
+        )
+        self.assertEqual(metrics.payload_byte_count, len(replacement_payload))
+        self.assertEqual(metrics.payload_line_count, 1)
+
+    def test_archive_metrics_close_descriptor_when_fdopen_fails(self):
+        archive = self.archive_dir / "fdopen-failure.gz"
+        archive.write_bytes(gzip.compress(b'{"event_id":"fdopen"}\n'))
+        real_open = os.open
+        opened_descriptors: list[int] = []
+
+        def tracking_open(*args, **kwargs):
+            descriptor = real_open(*args, **kwargs)
+            opened_descriptors.append(descriptor)
+            return descriptor
+
+        with (
+            mock.patch.object(common.os, "open", side_effect=tracking_open),
+            mock.patch.object(common.os, "fdopen", side_effect=OSError("injected")),
+            self.assertRaisesRegex(
+                RuntimeError,
+                "activity rotation archive is unreadable",
+            ),
+        ):
+            common._stream_activity_archive_metrics(archive)
+
+        self.assertEqual(len(opened_descriptors), 1)
+        with self.assertRaises(OSError):
+            os.fstat(opened_descriptors[0])
+
     def test_lineage_tamper_and_rollback_fail_closed(self):
         for keep_lines in (0, 2):
             with self.subTest(keep_lines=keep_lines):
@@ -2139,6 +2211,25 @@ class LogicalActivityReaderTests(unittest.TestCase):
             self.log_path,
             capture_logical_entries=False,
         )
+
+    def test_validation_complete_event_lookup_rejects_noncanonical_request(self):
+        for event_id in (" index-two", "index-two ", " index-two ", 2):
+            with (
+                self.subTest(event_id=event_id),
+                mock.patch.object(
+                    common,
+                    "_build_logical_activity_snapshot_unlocked",
+                ) as build_snapshot,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "requested activity event_id is not canonical",
+                ):
+                    common.validated_activity_event_digests_unlocked(
+                        self.log_path,
+                        [event_id],
+                    )
+                build_snapshot.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -1505,7 +1505,9 @@ def _validate_status_activity_outbox(value: Any) -> dict[str, Any]:
         or not events
         or any(
             not isinstance(event, dict)
-            or not str(event.get("event_id") or "").strip()
+            or not isinstance(event.get("event_id"), str)
+            or not event["event_id"]
+            or event["event_id"] != event["event_id"].strip()
             for event in events
         )
         or len({str(event["event_id"]) for event in events}) != len(events)

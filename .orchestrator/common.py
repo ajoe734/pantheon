@@ -1416,6 +1416,24 @@ class _ActivityArchiveMetrics:
     payload_line_count: int
 
 
+class _HashingActivityArchiveReader:
+    """Record the exact compressed bytes consumed by ``gzip.GzipFile``."""
+
+    def __init__(self, file_obj: Any) -> None:
+        self._file_obj = file_obj
+        self._hasher = hashlib.sha256()
+        self.byte_count = 0
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = self._file_obj.read(size)
+        self._hasher.update(chunk)
+        self.byte_count += len(chunk)
+        return chunk
+
+    def hexdigest(self) -> str:
+        return self._hasher.hexdigest()
+
+
 def _stream_activity_archive_metrics(path: Path) -> _ActivityArchiveMetrics:
     """Hash and count a gzip archive without retaining either full byte stream."""
 
@@ -1439,21 +1457,14 @@ def _stream_activity_archive_metrics(path: Path) -> _ActivityArchiveMetrics:
         ):
             raise RuntimeError(f"activity rotation archive changed: {path}")
 
-        gzip_hasher = hashlib.sha256()
-        while True:
-            chunk = os.read(descriptor, 1024 * 1024)
-            if not chunk:
-                break
-            gzip_hasher.update(chunk)
-        os.lseek(descriptor, 0, os.SEEK_SET)
-
         payload_hasher = hashlib.sha256()
         payload_byte_count = 0
         payload_newline_count = 0
         payload_last_byte = b""
-        with os.fdopen(os.dup(descriptor), "rb") as file_obj:
-            try:
-                with gzip.GzipFile(fileobj=file_obj, mode="rb") as handle:
+        try:
+            with os.fdopen(descriptor, "rb", closefd=False) as file_obj:
+                compressed_reader = _HashingActivityArchiveReader(file_obj)
+                with gzip.GzipFile(fileobj=compressed_reader, mode="rb") as handle:
                     while True:
                         chunk = handle.read(1024 * 1024)
                         if not chunk:
@@ -1462,10 +1473,15 @@ def _stream_activity_archive_metrics(path: Path) -> _ActivityArchiveMetrics:
                         payload_byte_count += len(chunk)
                         payload_newline_count += chunk.count(b"\n")
                         payload_last_byte = chunk[-1:]
-            except (EOFError, gzip.BadGzipFile, OSError) as exc:
-                raise RuntimeError(
-                    f"activity rotation archive is unreadable: {path}"
-                ) from exc
+        except (EOFError, gzip.BadGzipFile, OSError) as exc:
+            raise RuntimeError(
+                f"activity rotation archive is unreadable: {path}"
+            ) from exc
+
+        if compressed_reader.byte_count != descriptor_stat.st_size:
+            raise RuntimeError(
+                f"activity rotation archive changed during validation: {path}"
+            )
 
         path_stat_after = path.lstat()
         if (
@@ -1482,8 +1498,8 @@ def _stream_activity_archive_metrics(path: Path) -> _ActivityArchiveMetrics:
             payload_byte_count > 0 and payload_last_byte != b"\n"
         )
         return _ActivityArchiveMetrics(
-            gzip_sha256=gzip_hasher.hexdigest(),
-            gzip_byte_count=descriptor_stat.st_size,
+            gzip_sha256=compressed_reader.hexdigest(),
+            gzip_byte_count=compressed_reader.byte_count,
             payload_sha256=payload_hasher.hexdigest(),
             payload_byte_count=payload_byte_count,
             payload_line_count=payload_line_count,
@@ -3366,7 +3382,15 @@ def validated_activity_event_digests_unlocked(
     omitted, and Python memory is bounded by the small requested ID set.
     """
 
-    requested = {str(event_id).strip() for event_id in event_ids if str(event_id).strip()}
+    requested: set[str] = set()
+    for event_id in event_ids:
+        if (
+            not isinstance(event_id, str)
+            or not event_id
+            or event_id != event_id.strip()
+        ):
+            raise RuntimeError("requested activity event_id is not canonical")
+        requested.add(event_id)
     conn = _build_logical_activity_snapshot_unlocked(
         log_path,
         capture_logical_entries=False,

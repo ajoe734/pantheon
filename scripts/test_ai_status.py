@@ -3399,6 +3399,54 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
         final = json.loads(self.status_file.read_text(encoding="utf-8"))
         self.assertIsNone(final[ai_status.STATUS_ACTIVITY_OUTBOX_KEY])
 
+    def test_outbox_rejects_noncanonical_event_id_before_append(self) -> None:
+        event_id_cases = (
+            [" status-event"],
+            ["status-event "],
+            [" status-event "],
+            ["status-event", " status-event "],
+        )
+        for event_ids in event_id_cases:
+            with self.subTest(event_ids=event_ids):
+                events = [
+                    {
+                        "event_id": event_id,
+                        "ts": "2026-07-14T00:01:00Z",
+                        "agent": "Codex2",
+                        "type": "progress",
+                        "task_id": "LOCK-ONE",
+                        "message": "must not append",
+                    }
+                    for event_id in event_ids
+                ]
+                pending = self._outbox(events)
+                state = self._fixture_state()
+                state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = pending
+                self._write_state(state)
+                status_bytes = self.status_file.read_bytes()
+
+                with (
+                    mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+                    mock.patch.object(ai_status, "LOG_FILE", self.log_file),
+                    mock.patch.object(
+                        ai_status,
+                        "_activity_event_index_unlocked",
+                    ) as event_index,
+                    mock.patch.object(ai_status, "_append_logs_unlocked") as append,
+                    ai_status.canonical_task_state_lock(shared=False),
+                ):
+                    loaded = ai_status.load_state()
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "status activity outbox contract is invalid",
+                    ):
+                        ai_status.recover_status_activity_outbox(loaded)
+
+                event_index.assert_not_called()
+                append.assert_not_called()
+                self.assertFalse(self.log_file.exists())
+                self.assertEqual(self.status_file.read_bytes(), status_bytes)
+
     def test_interrupted_activity_row_is_truncated_then_replayed_once(self) -> None:
         events = [
             {
