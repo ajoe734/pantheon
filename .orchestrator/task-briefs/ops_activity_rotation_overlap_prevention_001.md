@@ -78,6 +78,12 @@ copy central raw activity payloads.
   evidence.
 - Postmerge install and smoke require planner approval and exact merge SHA.
 
+## Coordination Root
+
+- Auto workers inherit `PANTHEON_STATUS_ROOT` from the supervisor.
+- Run `./scripts/ai-status.sh` normally from this worktree; governed status,
+  activity, archive and lock writes are routed to the validated central root.
+
 ## Done
 
 Done requires merged code, exact dev-root install, synthetic boundary and
