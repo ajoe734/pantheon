@@ -306,6 +306,49 @@ the compose base has moved. The resulting pushed PR head needs a fresh
 Antigravity exact-head governed approval and GitHub approval; no earlier
 approval applies to it.
 
+### Fourth dev-tip compose revalidation
+
+Owner closeout found PR #3778 `BEHIND` at head
+`7efbd1e16bfd41706476d9bac6ef4ad84e2f627c`. `origin/dev` had advanced 85
+commits from the prior compose base `69fed03506558851a0098479ad137906c949e0c9`
+to `a124a19bf525f93a8996651189845e5569c89ab4`. None of those commits changed
+`services/reconciliation-drift/`, this evidence directory, or the task review
+artifact. The candidate was composed without conflict, producing pre-evidence
+merge head `f8ca558b109e6b3ef958ebde1e092f75ec830be4`, and was revalidated at
+2026-07-17T18:27:12Z:
+
+```text
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py -q
+22 passed in 4.14s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py -q
+6 passed in 2.17s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py -q
+20 passed in 5.03s
+
+python3 -m pytest services/reconciliation-drift/tests/ -q
+79 passed in 20.83s
+
+python3 -m py_compile services/reconciliation-drift/store.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py
+(no output; passed)
+
+git diff --check origin/dev...HEAD
+(no output; clean)
+
+git show --check --oneline HEAD
+(no whitespace errors)
+
+python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge
+(no output; passed)
+```
+
+This evidence-only update does not alter the revalidated store or test
+content. The resulting pushed PR head must receive a fresh Antigravity
+governed approval naming its full SHA and a GitHub approval review before
+merge. The central `review_approved` state and every earlier approval are
+superseded for exact-head purposes.
+
 ### Push-event trailer check false positive
 
 The `Commit trailers` check's `push` event range (`f06027d02..b506dc93a`)
