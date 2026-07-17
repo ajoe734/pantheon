@@ -1,0 +1,359 @@
+openapi: "3.1.0"
+info:
+  title: Pantheon Agora API v1.9 Contract Extension
+  version: "1.9.0"
+  description: |
+    Contract-first additive extension over the frozen Agora v1.8 bundle for the
+    daily strict-operator Persona product. It defines durable lifecycle and
+    readback, independent selected-Persona OpenClaw invocations, typed opinions,
+    structured recommended measures, and governed candidate decisions.
+
+    Every route in this extension is contract_only until PINT-012 through
+    PINT-014 implement it. In particular, the existing interaction simulator is
+    not conformant: production opinions cannot be canned, fixture-backed,
+    keyword-driven, or triggered by magic topic text. Provider failure must be
+    represented as failed/degraded invocation state without a forged opinion.
+
+    accept_for_review is an operator candidate decision only. It is not a
+    formal ApprovalDecision and has no execution side effect. Formal approval
+    remains owned by the canonical approval service and must bind exact tenant,
+    proposal revision/digest, authoritative validation receipt, distinct
+    reviewer, decision time, and expiry.
+  x-extends-contract: "services/control-plane/specs/agora/bundle_index.v1_8.json"
+  x-capability-manifest: "services/control-plane/specs/agora/v10/capability_manifest_v1_9.json"
+  x-implementation-status: contract_only
+servers:
+  - url: "{bff_base}"
+    variables:
+      bff_base:
+        default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+security:
+  - BearerAuth: []
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+    CookieSession:
+      type: apiKey
+      in: cookie
+      name: pantheon_session
+  parameters:
+    InteractionId:
+      name: interaction_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    MeasureId:
+      name: measure_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    ProposalId:
+      name: proposal_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    ValidationReceiptId:
+      name: validation_receipt_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+    XTenantId:
+      name: X-Tenant-Id
+      in: header
+      required: false
+      schema: {type: string, minLength: 1}
+    PageToken:
+      name: page_token
+      in: query
+      schema: {type: string, minLength: 1}
+    PageSize:
+      name: page_size
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 200, default: 20}
+  schemas:
+    InteractionSubmitRequestV2:
+      $ref: "../specs/agora/v10/persona_interaction_daily.schema.json#/definitions/InteractionSubmitRequestV2"
+    InteractionResource:
+      $ref: "../specs/agora/v10/persona_interaction_daily.schema.json#/definitions/InteractionResource"
+    CandidateFromMeasureRequest:
+      $ref: "../specs/agora/v10/persona_interaction_daily.schema.json#/definitions/CandidateFromMeasureRequest"
+    CandidateDecisionRequest:
+      $ref: "../specs/agora/v10/persona_interaction_daily.schema.json#/definitions/CandidateDecisionRequest"
+    CandidateDecisionRecord:
+      $ref: "../specs/agora/v10/persona_interaction_daily.schema.json#/definitions/CandidateDecisionRecord"
+    AuthoritativeValidationRequest:
+      $ref: "../specs/agora/v10/persona_interaction_daily.schema.json#/definitions/AuthoritativeValidationRequest"
+    AuthoritativeValidationReceipt:
+      $ref: "../specs/agora/v10/persona_interaction_daily.schema.json#/definitions/AuthoritativeValidationReceipt"
+    FormalApprovalReceipt:
+      $ref: "../specs/agora/v10/persona_interaction_daily.schema.json#/definitions/FormalApprovalReceipt"
+    InteractionEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: {$ref: "#/components/schemas/InteractionResource"}
+        meta:
+          type: object
+          required: [capability, audience, snapshot_at, authoritative_store]
+          properties:
+            capability: {const: "agora.persona.interaction.daily.v1"}
+            audience: {type: string, pattern: "^tenant:.+:user:.+$"}
+            snapshot_at: {type: string, format: date-time}
+            authoritative_store: {const: "agora_interaction_postgres"}
+            next_page_token: {type: [string, "null"]}
+          additionalProperties: true
+      additionalProperties: false
+    InteractionListEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/InteractionResource"}
+        meta:
+          type: object
+          required: [capability, audience, snapshot_at, authoritative_store]
+          properties:
+            capability: {const: "agora.persona.interaction.daily.v1"}
+            audience: {type: string, pattern: "^tenant:.+:user:.+$"}
+            snapshot_at: {type: string, format: date-time}
+            authoritative_store: {const: "agora_interaction_postgres"}
+            next_page_token: {type: [string, "null"]}
+          additionalProperties: true
+      additionalProperties: false
+    CandidateDecisionEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: {$ref: "#/components/schemas/CandidateDecisionRecord"}
+        meta: {type: object, additionalProperties: true}
+      additionalProperties: false
+    CandidateDecisionListEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/CandidateDecisionRecord"}
+        meta: {type: object, additionalProperties: true}
+      additionalProperties: false
+    ValidationEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: {$ref: "#/components/schemas/AuthoritativeValidationReceipt"}
+        meta: {type: object, additionalProperties: true}
+      additionalProperties: false
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            details: {type: object, additionalProperties: true}
+      additionalProperties: false
+  responses:
+    Unauthorized:
+      description: No valid strict BFF session
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    Forbidden:
+      description: Tenant, role, capability, or actor separation denied
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    NotFound:
+      description: Resource not found in the authoritative tenant store
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    Conflict:
+      description: ETag, idempotency, revision, digest, expiry, or actor conflict
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+paths:
+  /bff/agora/interactions:
+    get:
+      operationId: listDailyPersonaInteractions
+      summary: List durable Persona interactions for the authenticated operator scope
+      x-implementation-status: contract_only
+      parameters:
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/PageToken"}
+        - {$ref: "#/components/parameters/PageSize"}
+      responses:
+        "200":
+          description: Authoritative durable interaction readback
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/InteractionListEnvelope"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    post:
+      operationId: submitDailyPersonaInteraction
+      summary: Queue independent provider-backed Persona invocations
+      description: No canned, magic-topic, simulator, or fixture-backed opinion can satisfy this route contract.
+      x-implementation-status: contract_only
+      parameters:
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/InteractionSubmitRequestV2"}
+      responses:
+        "202":
+          description: Interaction durably queued before provider dispatch
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/InteractionEnvelope"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /bff/agora/interactions/{interaction_id}:
+    get:
+      operationId: getDailyPersonaInteraction
+      summary: Read immutable request, invocations, independent opinions, synthesis, and failures
+      x-implementation-status: contract_only
+      parameters:
+        - {$ref: "#/components/parameters/InteractionId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+      responses:
+        "200":
+          description: Durable interaction detail
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/InteractionEnvelope"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /bff/agora/interactions/{interaction_id}/recommended-measures/{measure_id}/candidates:
+    post:
+      operationId: createCandidateFromPersonaRecommendedMeasure
+      summary: Create a governed candidate from an exact provider-authored measure
+      x-implementation-status: contract_only
+      parameters:
+        - {$ref: "#/components/parameters/InteractionId"}
+        - {$ref: "#/components/parameters/MeasureId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CandidateFromMeasureRequest"}
+      responses:
+        "201":
+          description: Governed proposal created from exact recommendation provenance
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /bff/agora/proposals/{proposal_id}/candidate-decisions:
+    get:
+      operationId: listCandidateDecisions
+      summary: Read durable operator candidate decisions
+      x-implementation-status: contract_only
+      parameters:
+        - {$ref: "#/components/parameters/ProposalId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+      responses:
+        "200":
+          description: Candidate decision history
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CandidateDecisionListEnvelope"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    post:
+      operationId: decidePersonaRecommendedCandidate
+      summary: Modify, accept for governed review, reject, defer, or cancel a candidate
+      description: accept_for_review is not formal approval and never executes the candidate.
+      x-implementation-status: contract_only
+      parameters:
+        - {$ref: "#/components/parameters/ProposalId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IfMatch"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CandidateDecisionRequest"}
+      responses:
+        "200":
+          description: Candidate decision appended; accepted_for_review remains non-approval
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CandidateDecisionEnvelope"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /bff/agora/proposals/{proposal_id}/validations:
+    post:
+      operationId: requestAuthoritativeCandidateValidation
+      summary: Ask the canonical validator to validate an exact revision and digest
+      description: Browser-supplied validation results are forbidden; this request contains only immutable references.
+      x-implementation-status: contract_only
+      parameters:
+        - {$ref: "#/components/parameters/ProposalId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IfMatch"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AuthoritativeValidationRequest"}
+      responses:
+        "202":
+          description: Validation accepted by the canonical validation authority
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ValidationEnvelope"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /bff/agora/proposals/{proposal_id}/validations/{validation_receipt_id}:
+    get:
+      operationId: getAuthoritativeCandidateValidation
+      summary: Read a canonical validation receipt bound to exact proposal bytes
+      x-implementation-status: contract_only
+      parameters:
+        - {$ref: "#/components/parameters/ProposalId"}
+        - {$ref: "#/components/parameters/ValidationReceiptId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+      responses:
+        "200":
+          description: Authoritative validation receipt
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ValidationEnvelope"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
