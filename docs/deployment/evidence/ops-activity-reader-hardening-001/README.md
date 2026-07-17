@@ -11,6 +11,8 @@ the exact-head review and merge of prerequisite PR #3797.
   cleanup, source-leaf, and bounded-memory regressions
 - `scripts/ai_status.py`: validation-complete requested event lookup without
   copying or replaying every logical payload into the control-plane process
+- `scripts/status_file_guard.py`: mirrored fail-closed validation for
+  canonical event IDs in a restored status outbox
 - `scripts/activity_audit_logical_inventory.py` and its direct test: shared
   strict parsing plus hermetic/optional pinned-pair coverage
 - the task brief and this redacted evidence note
@@ -41,7 +43,11 @@ close, SIGTERM, or SIGKILL releases the allocation without leaving an orphaned
 file. Temporary journaling is in-memory and non-durable because the snapshot
 is an ephemeral cache, never an authority. Content-addressed lineage and
 resolution archives are hashed and counted in chunks rather than retaining
-both complete compressed and decompressed payloads.
+both complete compressed and decompressed payloads. The compressed SHA/count
+and decompressed payload metrics now come from the same byte stream, so an
+in-place A/B replacement cannot bind one compressed representation to another
+payload. The original descriptor has a single outer cleanup owner, including
+`fdopen()` failure.
 
 As a result, `next()`, early `break`, `islice`, or a consumer exception cannot
 turn an unread late row, replaced source, or unverified later source into an
@@ -52,6 +58,11 @@ duplicate keys at every object depth. It is used for active/gzip payload rows,
 the active lineage-head probe, rotation intents, lineage rows, resolution rows,
 and the inventory physical pass. Errors retain `duplicate JSON key` and the
 payload source/line where applicable.
+
+Status outbox recovery and the restore guard require every requested
+`event_id` to be a non-empty canonical string with no surrounding whitespace.
+Alias pairs such as `id` and ` id ` are rejected before history lookup or
+append; they can no longer collapse to one reader key after a durable write.
 
 ## Closed Historical Exception
 
@@ -85,19 +96,24 @@ worktree is named explicitly.
 ```bash
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 .orchestrator/test_common.py
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 -m pytest -q -p no:cacheprovider scripts/test_activity_audit_logical_inventory.py
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 -m pytest -q -p no:cacheprovider scripts/test_ai_status.py::CanonicalTaskStateAndActivityRecoveryTests -k 'not existing_archive_conflict_or_legacy_shape_preserves_active_task'
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 -m pytest -q -p no:cacheprovider scripts/test_status_file_guard.py
 PANTHEON_RUN_CENTRAL_ACTIVITY_INTEGRATION=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 -m pytest -q -p no:cacheprovider scripts/test_activity_audit_logical_inventory.py::TestActivityAuditLogicalInventory::test_optional_central_pinned_pair_read_only_integration
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 -m pytest -q -p no:cacheprovider .orchestrator/test_activity_pending_intent_recovery.py
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 .orchestrator/test_runtime_state.py
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 .orchestrator/test_supervisor_watchdog.py
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.orchestrator:. python3 .orchestrator/test_worker_runner_heartbeat.py
-python3 -m py_compile .orchestrator/common.py .orchestrator/test_common.py scripts/activity_audit_logical_inventory.py scripts/test_activity_audit_logical_inventory.py
+python3 -m py_compile .orchestrator/common.py .orchestrator/test_common.py scripts/ai_status.py scripts/test_ai_status.py scripts/status_file_guard.py scripts/test_status_file_guard.py scripts/activity_audit_logical_inventory.py scripts/test_activity_audit_logical_inventory.py
 git diff --check
 ```
 
 Results:
 
-- common: 70 tests passed at draft head `5125f3338`
+- common: 73 tests passed at draft head `7bc885fd5`
 - inventory: 21 passed, one explicit opt-in skip, two subtests passed
+- isolated status recovery: 8 passed, one dependency-owned test deselected,
+  ten subtests passed
+- status restore guard: 16 passed
 - opt-in production pinned pair: 1 passed in 3.02 seconds
 - pending intent: 32 passed, 49 subtests passed
 - runtime state: passed
@@ -141,7 +157,7 @@ archive conflict fix.
 ### Disposable prerequisite composition
 
 While the dependency remains open, a disposable worktree merged its exact head
-into draft head `5125f3338f832c147b1e192d12f212e3381927f9`. The two textual conflicts were
+into draft head `7bc885fd52181e6533bd5f9273403cb0576b43f7`. The two textual conflicts were
 resolved as a semantic union: both strict duplicate-key/registry definitions
 and `ActivityAuditInvariantError` are retained; the validation-snapshot
 non-adjacent-tail path raises the structured error using the rewritten loop's
@@ -151,9 +167,10 @@ relax the merge-order gate.
 
 Results on that exact composition:
 
-- common: 71 passed
-- `scripts.test_ai_status`: 75 passed, including the dependency's archive
-  conflict regression
+- common: 74 passed
+- isolated `CanonicalTaskStateAndActivityRecoveryTests`: 9 passed and 12
+  subtests passed, including the dependency's archive conflict regression
+- status restore guard: 16 passed
 - supervisor: 277 passed
 - inventory: 21 passed, one explicit opt-in skip, two subtests passed
 - pending intent: 32 passed, 49 subtests passed
@@ -167,11 +184,15 @@ old reader used `s_idx`/`s_class`, while the snapshot builder uses
 `source_idx`/`source_class`. The final merge must use the latter names and rerun
 the same matrix after the dependency is present on `origin/dev`.
 
-An isolated `scripts.test_ai_status` run on current `dev` produced 73 passes
-and one failure: `test_existing_archive_conflict_or_legacy_shape_preserves_active_task`.
-That is the exact behavior changed by PR #3797 and is recorded as dependency
-evidence, not absorbed into this task. After #3797 merges, this branch must be
-rebased with semantic conflict resolution and the full isolated matrix rerun.
+At the draft head, the dependency-owned
+`test_existing_archive_conflict_or_legacy_shape_preserves_active_task` remains
+the one deselected recovery test; it passes in the exact composition above. A
+whole-file `scripts/test_ai_status.py` run is not treated as hermetic evidence:
+67 tests and 19 subtests passed, while eight older command tests reached this
+worktree's activity root and correctly failed closed on the existing missing
+superseded resolution archive, and the dependency-owned subtest failed on the
+uncomposed head. No activity append occurred. After #3797 merges, this branch
+must be rebased with semantic conflict resolution and the isolated matrix rerun.
 
 ## Governed Central Status Observation
 
