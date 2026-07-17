@@ -30,16 +30,19 @@ class FakeReadStore:
 
 
 class FakeProvider:
-    def __init__(self, conclusions=None, *, unavailable=False):
+    def __init__(self, conclusions=None, *, unavailable=False, fail_personas=None):
         self.conclusions = conclusions or {"ready": "support", "risk": "oppose"}
         self.unavailable = unavailable
+        self.fail_personas = set(fail_personas or [])
+        self.calls = []
 
     def ensure_persona_opinion_agent(self, admission, *, persona_profile):
         return {"agent": {"agent_id": admission["agent_id"]}, "execution_authority": "none"}
 
     def invoke_assistant_provider(self, **kwargs):
         persona_id = kwargs["context_pack"]["participant"]["persona_id"]
-        if self.unavailable:
+        self.calls.append(persona_id)
+        if self.unavailable or persona_id in self.fail_personas:
             raise OpenClawOpsClientError(
                 "provider unavailable", status_code=503, error_code="OPENCLAW_UNAVAILABLE"
             )
@@ -59,6 +62,116 @@ class FakeProvider:
             "request_id": f"response-{persona_id}",
             "json_events": [{"type": "item.completed", "item": {"text": text}}],
         }}}
+
+
+def test_partial_retry_only_calls_latest_retryable_persona_and_reuses_persisted_opinion(monkeypatch):
+    provider = FakeProvider(fail_personas={"risk"})
+    c = client(monkeypatch, provider)
+    resolved = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": f"partial-context-{uuid.uuid4().hex}"},
+        json=context_payload(),
+    ).json()["data"]
+    submitted = c.post(
+        "/bff/agora/interactions",
+        headers={**AUTH, "Idempotency-Key": f"partial-submit-{uuid.uuid4().hex}"},
+        json={
+            "workshop_id": resolved["workshop_id"],
+            "mode": "consult",
+            "environment": "paper",
+            "topic": "Compare independent Persona conclusions",
+            "participant_persona_ids": ["ready", "risk"],
+            "context_refs": context_payload()["context_refs"],
+        },
+    )
+    assert submitted.status_code == 202, submitted.text
+    first = submitted.json()["data"]
+    assert first["status"] == "degraded"
+    assert provider.calls == ["ready", "risk"]
+    ready_opinion_id = first["opinions"][0]["opinion_id"]
+
+    provider.fail_personas.clear()
+    retried = c.post(
+        f"/bff/agora/interactions/{first['interaction_id']}:retry",
+        headers={**AUTH, "Idempotency-Key": f"partial-retry-{uuid.uuid4().hex}"},
+        json={"reason": "Risk Persona provider recovered"},
+    )
+    assert retried.status_code == 202, retried.text
+    result = retried.json()["data"]
+    assert result["status"] == "completed"
+    assert provider.calls == ["ready", "risk", "risk"]
+    assert len([item for item in result["provider_invocations"]
+                if item["participant"]["persona_id"] == "ready"]) == 1
+    assert len([item for item in result["provider_invocations"]
+                if item["participant"]["persona_id"] == "risk"]) == 2
+    assert ready_opinion_id in result["synthesis"]["opinion_ids"]
+    assert set(result["synthesis"]["opinion_ids"]) == {
+        item["opinion_id"] for item in result["opinions"]
+    }
+
+
+@pytest.mark.parametrize("degraded_reason", [
+    "OPENCLAW_UNAVAILABLE",
+    "OPENCLAW_GATEWAY_TIMEOUT",
+    "OPENCLAW_GATEWAY_INVOCATION_FAILED",
+])
+def test_adapter_shaped_transient_degraded_reason_remains_retryable(monkeypatch, degraded_reason):
+    class AdapterDegradedProvider(FakeProvider):
+        degraded = True
+
+        def invoke_assistant_provider(self, **kwargs):
+            if self.degraded:
+                persona_id = kwargs["context_pack"]["participant"]["persona_id"]
+                self.calls.append(persona_id)
+                return {
+                    "status": "ok",
+                    "data": {
+                        "provider": "openclaw",
+                        "status": "degraded",
+                        "output": {
+                            "json_events": [],
+                            "reason": degraded_reason,
+                            "message": "gateway temporarily unavailable",
+                        },
+                    },
+                }
+            return super().invoke_assistant_provider(**kwargs)
+
+    provider = AdapterDegradedProvider()
+    c = client(monkeypatch, provider)
+    resolved = c.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={**AUTH, "Idempotency-Key": f"degraded-context-{uuid.uuid4().hex}"},
+        json=context_payload(),
+    ).json()["data"]
+    submitted = c.post(
+        "/bff/agora/interactions",
+        headers={**AUTH, "Idempotency-Key": f"degraded-submit-{uuid.uuid4().hex}"},
+        json={
+            "workshop_id": resolved["workshop_id"], "mode": "consult",
+            "environment": "paper", "topic": "Retry transient adapter outage",
+            "participant_persona_ids": ["ready"],
+            "context_refs": context_payload()["context_refs"],
+        },
+    )
+    assert submitted.status_code == 202, submitted.text
+    first = submitted.json()["data"]
+    assert first["status"] == "failed"
+    assert first["provider_invocations"][0]["error"] == {
+        "code": degraded_reason,
+        "message": "gateway temporarily unavailable",
+        "retryable": True,
+    }
+
+    provider.degraded = False
+    retried = c.post(
+        f"/bff/agora/interactions/{first['interaction_id']}:retry",
+        headers={**AUTH, "Idempotency-Key": f"degraded-retry-{uuid.uuid4().hex}"},
+        json={"reason": "OpenClaw gateway recovered"},
+    )
+    assert retried.status_code == 202, retried.text
+    assert retried.json()["data"]["status"] == "completed"
+    assert provider.calls == ["ready", "ready"]
 
 
 def client(monkeypatch, provider=None):
