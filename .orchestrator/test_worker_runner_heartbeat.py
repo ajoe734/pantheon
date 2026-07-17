@@ -139,6 +139,30 @@ class TestCoordinationRootValidation(unittest.TestCase):
             # Clean up mirror child
             mirror_child.unlink()
 
+            # 3. Test symlink in ai-task-archive/tasks
+            tasks_dir = central / "ai-task-archive" / "tasks"
+            tasks_dir.mkdir(parents=True, exist_ok=True)
+            archive_leaf = tasks_dir / "bad-leaf.json"
+            archive_leaf.symlink_to(root / "nonexistent-target-3")
+
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(central)}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
+                    wr.validate_coordination_root(worktree)
+
+            archive_leaf.unlink()
+
+            # 4. Test symlink in archive/logs
+            logs_dir = central / "archive" / "logs"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            log_archive_leaf = logs_dir / "bad-log.gz"
+            log_archive_leaf.symlink_to(root / "nonexistent-target-4")
+
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(central)}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
+                    wr.validate_coordination_root(worktree)
+
+            log_archive_leaf.unlink()
+
     def test_child_command_runs_in_task_worktree_with_central_status_root(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-cwd-") as temp_dir:
             root = Path(temp_dir)
@@ -186,6 +210,51 @@ class TestCoordinationRootValidation(unittest.TestCase):
             self.assertIn(str(worktree), proc.stdout)
             runner_status = json.loads(status.read_text(encoding="utf-8"))
             self.assertEqual(runner_status["status"], "completed")
+
+    def test_child_command_failure_writes_failed_status(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-failure-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            worktree = root / "task-worktree"
+            _init_repo(central)
+            _init_repo(worktree)
+            _write_status(central)
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PANTHEON_STATUS_ROOT": str(central),
+                    "PANTHEON_WORKTREE_ROOT": str(worktree),
+                    "ORCH_WORKSPACE_PATH": str(worktree),
+                }
+            )
+            # Run a failing command (exit code 1)
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    _P,
+                    "--run-id",
+                    "codex-20260716T000000Z-test",
+                    "--heartbeat-path",
+                    str(heartbeat),
+                    "--status-path",
+                    str(status),
+                    "--",
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.exit(1)",
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 1)
+            runner_status = json.loads(status.read_text(encoding="utf-8"))
+            self.assertEqual(runner_status["status"], "failed")
+            self.assertEqual(runner_status["exit_code"], 1)
 
 
 if __name__ == "__main__":

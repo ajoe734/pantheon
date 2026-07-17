@@ -100,6 +100,20 @@ def _expected_coordination_root(
     return roots[0] if roots else None
 
 
+def _validate_directory_no_symlinks_recursive(directory: Path, label: str) -> None:
+    if not directory.exists() or not directory.is_dir():
+        return
+    for dirpath, dirnames, filenames in os.walk(directory):
+        for dirname in dirnames:
+            p = Path(dirpath) / dirname
+            if p.is_symlink():
+                raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} component cannot be a symlink: {p}")
+        for filename in filenames:
+            p = Path(dirpath) / filename
+            if p.is_symlink():
+                raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} leaf cannot be a symlink: {p}")
+
+
 def validate_coordination_root(
     workspace_path: Path | None,
     *,
@@ -172,6 +186,9 @@ def validate_coordination_root(
     ):
         if path.is_symlink():
             raise RuntimeError(f"coordination path cannot be a symlink: {path}")
+
+    _validate_directory_no_symlinks_recursive(root / "ai-task-archive", "task archive")
+    _validate_directory_no_symlinks_recursive(root / "archive" / "logs", "activity rotation archive")
 
     os.environ["PANTHEON_STATUS_ROOT"] = str(root)
     return root

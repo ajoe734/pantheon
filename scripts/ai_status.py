@@ -242,6 +242,20 @@ def _existing_path_is_symlink(path: Path) -> bool:
         return True
 
 
+def _validate_directory_no_symlinks_recursive(directory: Path, label: str) -> None:
+    if not directory.exists() or not directory.is_dir():
+        return
+    for dirpath, dirnames, filenames in os.walk(directory):
+        for dirname in dirnames:
+            p = Path(dirpath) / dirname
+            if p.is_symlink():
+                raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} component cannot be a symlink: {p}")
+        for filename in filenames:
+            p = Path(dirpath) / filename
+            if p.is_symlink():
+                raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} leaf cannot be a symlink: {p}")
+
+
 def validate_status_root_binding() -> None:
     """Fail closed before any governed status command can hit a stale worktree."""
 
@@ -326,6 +340,9 @@ def validate_status_root_binding() -> None:
             raise RuntimeError(
                 f"PANTHEON_STATUS_ROOT path binding for {label} cannot be a symlink: {path}"
             )
+
+    _validate_directory_no_symlinks_recursive(root / "ai-task-archive", "task archive")
+    _validate_directory_no_symlinks_recursive(root / "archive" / "logs", "activity rotation archive")
 
     assert_task_archive_root_binding()
 
@@ -4865,7 +4882,7 @@ def main(argv: list[str]) -> int:
                 recovery_state = load_state()
                 recover_status_archive_outbox(recovery_state)
                 recover_status_activity_outbox(recovery_state)
-        except (OSError, RuntimeError):
+        except BlockingIOError:
             pass
         with canonical_task_state_lock(shared=True):
             state = load_state()
