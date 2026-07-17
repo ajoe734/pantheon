@@ -265,6 +265,47 @@ The resulting pushed PR head needs a fresh Antigravity governed approval and
 GitHub approval; no earlier approval (including the empty-review state on
 `3ea0bf073...`) applies to it.
 
+### Third dev-tip compose revalidation
+
+PR #3778's head `3ea0bf073700bf06082cda902d24da5a89760f31` still sat with
+`reviews: []` while `origin/dev` advanced again (4 commits, none touching
+`services/reconciliation-drift/` or this evidence directory) to
+`a2299892573014143fbe5d20de5a775a18589f90`. That compose was recorded as
+`f06027d02afa784e769ebc23bd5b2f76798c5858`, but `origin/dev` advanced a
+further 8 commits (also none touching this service or evidence path) to
+`69fed03506558851a0098479ad137906c949e0c9` before a fresh review request was
+posted. The candidate was composed once more with that `origin/dev` tip. The
+resulting merge commit `6b6be6558229b0964f37b7fb54040e3d97e843ba` was
+revalidated:
+
+```text
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py -q
+48 passed in 14.08s
+
+python3 -m pytest services/reconciliation-drift/tests/ -q
+79 passed in 21.29s
+
+python3 -m py_compile services/reconciliation-drift/store.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py
+(no output; passed)
+
+git diff --check origin/dev...HEAD
+(no output; clean)
+
+git show --check --oneline HEAD
+(no whitespace errors)
+
+python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge
+(no output; passed)
+```
+
+This evidence-only update does not alter the validated store or test content.
+`dev` has not touched `services/reconciliation-drift/` or this evidence
+directory across any of these compose cycles, so the store fix itself has
+not changed since the reviewer's original inspection of `249e1d0d...`; only
+the compose base has moved. The resulting pushed PR head needs a fresh
+Antigravity exact-head governed approval and GitHub approval; no earlier
+approval applies to it.
+
 ## Scope boundary
 
 - Owned layer: `services/reconciliation-drift/store.py` JSON-backed map
