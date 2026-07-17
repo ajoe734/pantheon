@@ -105,6 +105,16 @@ Results:
 - isolated `.orchestrator/test_supervisor.py`: 277 tests passed.
 - `git diff --check`: passed.
 
+## PR Check Readback
+
+PR #3797 was opened with auto-merge off as required by the task brief. The PR
+event check run for head `3e0372ed1` passed Commit trailers, Runtime mirror
+guard, Forward to orchestrator, and Smoke acceptance. A separate push-event
+Commit trailers run failed because it scanned the stale remote-task range from
+`577af8f9c` through already-merged dev commits, including a pre-existing
+subject-length violation outside the PR diff. This evidence refresh commit
+exists to make the final task-branch push range narrow to this task head.
+
 A plain inherited-env `scripts.test_ai_status` run was interrupted after it
 attempted to use the central `PANTHEON_STATUS_ROOT`; the accepted validation is
 the isolated-root command listed above.
