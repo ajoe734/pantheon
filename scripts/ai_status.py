@@ -80,6 +80,8 @@ from runtime_state import (
 )
 from common import (
     ActivityAuditInvariantError,
+    DuplicateActivityJSONKeyError,
+    activity_audit_invariant_error,
     activity_audit_lock_path,
     activity_audit_source_paths_unlocked,
     append_activity_log_entries_unlocked,
@@ -88,7 +90,8 @@ from common import (
     prepare_activity_audit_unlocked,
     read_activity_log_tail_bytes,
     rotate_activity_log_unlocked,
-    stream_logical_activity,
+    strict_activity_json_loads,
+    validated_activity_event_digests_unlocked,
 )
 
 # Derived dashboard rendering intentionally uses an atomic projection-only
@@ -1402,14 +1405,67 @@ def _activity_audit_sources() -> list[Path]:
     return activity_audit_source_paths_unlocked(LOG_FILE)
 
 
-def _activity_event_index_unlocked() -> dict[str, str]:
-    prepare_activity_audit_unlocked(LOG_FILE)
+def _activity_event_index_unlocked(event_ids: set[str]) -> dict[str, str]:
+    try:
+        prepare_activity_audit_unlocked(LOG_FILE)
+        return validated_activity_event_digests_unlocked(LOG_FILE, event_ids)
+    except ActivityAuditInvariantError:
+        raise
+    except RuntimeError as exc:
+        raise activity_audit_invariant_error(
+            exc,
+            log_path=LOG_FILE,
+            operation="status_outbox_recovery",
+        ) from exc
+
+
+def _active_activity_event_digests_unlocked(
+    event_ids: set[str],
+) -> dict[str, str]:
+    """Look for a just-appended outbox transaction in a bounded active tail."""
+
+    payload = read_activity_log_tail_bytes(
+        LOG_FILE,
+        max_lines=max(64, len(event_ids) * 8),
+    )
     result: dict[str, str] = {}
-    for entry, source, line_number in stream_logical_activity(LOG_FILE):
-        event_id = str(entry.get("event_id") or "").strip()
-        if not event_id:
+    for line_number, raw_line in enumerate((payload or b"").splitlines(), start=1):
+        if not raw_line.strip():
+            continue
+        try:
+            entry = strict_activity_json_loads(
+                raw_line.decode("utf-8", errors="strict")
+            )
+        except (
+            UnicodeError,
+            json.JSONDecodeError,
+            DuplicateActivityJSONKeyError,
+        ) as exc:
+            raise ActivityAuditInvariantError(
+                "active activity tail is unreadable",
+                invariant="activity_tail_json",
+                evidence={
+                    "log_path": str(LOG_FILE),
+                    "tail_line_number": line_number,
+                    "error_type": type(exc).__name__,
+                },
+            ) from exc
+        if not isinstance(entry, dict):
+            raise ActivityAuditInvariantError(
+                "active activity tail row is not an object",
+                invariant="activity_tail_json",
+                evidence={
+                    "log_path": str(LOG_FILE),
+                    "tail_line_number": line_number,
+                },
+            )
+        event_id = str(entry.get("event_id") or "")
+        if event_id not in event_ids:
             continue
         digest = _canonical_json_sha256(entry)
+        existing = result.get(event_id)
+        if existing is not None and existing != digest:
+            raise RuntimeError(f"activity outbox payload conflict: {event_id}")
         result[event_id] = digest
     return result
 
@@ -1544,7 +1600,9 @@ def _validate_status_activity_outbox(value: Any) -> dict[str, Any]:
         or not events
         or any(
             not isinstance(event, dict)
-            or not str(event.get("event_id") or "").strip()
+            or not isinstance(event.get("event_id"), str)
+            or not event["event_id"]
+            or event["event_id"] != event["event_id"].strip()
             for event in events
         )
         or len({str(event["event_id"]) for event in events}) != len(events)
@@ -1556,13 +1614,22 @@ def _validate_status_activity_outbox(value: Any) -> dict[str, Any]:
     return value
 
 
-def recover_status_activity_outbox(state: dict[str, Any]) -> bool:
+def recover_status_activity_outbox(
+    state: dict[str, Any],
+    *,
+    known_unappended: bool = False,
+) -> bool:
     pending = state.get(STATUS_ACTIVITY_OUTBOX_KEY)
     if pending in (None, {}, []):
         return False
     pending = _validate_status_activity_outbox(pending)
+    pending_event_ids = {str(event["event_id"]) for event in pending["events"]}
     with activity_audit_lock_file(LOG_FILE, shared=False, nonblocking=False):
-        existing = _activity_event_index_unlocked()
+        existing = (
+            {}
+            if known_unappended
+            else _activity_event_index_unlocked(pending_event_ids)
+        )
         missing: list[dict[str, Any]] = []
         for event in pending["events"]:
             event_id = str(event["event_id"])
@@ -1576,7 +1643,9 @@ def recover_status_activity_outbox(state: dict[str, Any]) -> bool:
             missing.append(event)
             existing[event_id] = digest
         _append_logs_unlocked(missing)
-        final = _activity_event_index_unlocked()
+        final = _active_activity_event_digests_unlocked(pending_event_ids)
+        if set(final) != pending_event_ids:
+            final = _activity_event_index_unlocked(pending_event_ids)
         if any(
             final.get(str(event["event_id"])) != _canonical_json_sha256(event)
             for event in pending["events"]
@@ -1602,7 +1671,7 @@ def commit_state_with_activity_outbox(
         _status_archive_fault("pending_status")
     recover_status_archive_outbox(state)
     if events:
-        recover_status_activity_outbox(state)
+        recover_status_activity_outbox(state, known_unappended=True)
 
 
 def ensure_agent(name: str) -> dict[str, Any]:
@@ -4777,6 +4846,21 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def _emit_fail_closed(error: ActivityAuditInvariantError) -> None:
+    print(
+        json.dumps(
+            {
+                "status": "fail_closed",
+                "diagnostic": error.diagnostic,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ),
+        file=sys.stderr,
+    )
+
+
 def command_wave(state: dict[str, Any], args: list[str]) -> None:
     """wave open <wave-id> | wave close | wave freeze"""
     from wave_guards import (  # lazy: only needed for this command
@@ -4873,30 +4957,41 @@ def main(argv: list[str]) -> int:
     }
 
     if command in read_only_commands:
-        # A killed terminal transition may leave durable archive/activity
-        # outboxes. Complete those writer transactions under EX before taking
-        # the normal shared read snapshot.
+        # Read-only commands must never join the writer convoy or mutate
+        # recovery state. Writers/supervisor own outbox recovery; a reader
+        # reports a bounded fail-closed diagnostic instead.
         try:
-            with canonical_task_state_lock(shared=False):
-                recovery_state = load_state()
-                recover_status_archive_outbox(recovery_state)
-                recover_status_activity_outbox(recovery_state)
-            with canonical_task_state_lock(shared=True):
+            with canonical_task_state_lock(shared=True, nonblocking=True):
                 state = load_state()
+                pending_planes = [
+                    key
+                    for key in (
+                        STATUS_ARCHIVE_OUTBOX_KEY,
+                        STATUS_ACTIVITY_OUTBOX_KEY,
+                    )
+                    if state.get(key) not in (None, {}, [])
+                ]
+                if pending_planes:
+                    raise ActivityAuditInvariantError(
+                        "canonical status recovery is pending",
+                        invariant="status_recovery_pending",
+                        evidence={"pending_planes": pending_planes},
+                    )
                 read_only_commands[command](state, args)
-        except ActivityAuditInvariantError as exc:
-            print(
-                json.dumps(
-                    {
-                        "status": "fail_closed",
-                        "diagnostic": exc.diagnostic,
+        except BlockingIOError as exc:
+            _emit_fail_closed(
+                ActivityAuditInvariantError(
+                    "canonical task-state lock is busy",
+                    invariant="status_task_lock_busy",
+                    evidence={
+                        "command": command,
+                        "lock_path": str(canonical_task_state_lock_path(STATUS_FILE)),
                     },
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    ensure_ascii=False,
-                ),
-                file=sys.stderr,
+                )
             )
+            return 75
+        except ActivityAuditInvariantError as exc:
+            _emit_fail_closed(exc)
             return 2
         return 0
 

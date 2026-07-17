@@ -30,10 +30,12 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 from common import (
+    DuplicateActivityJSONKeyError,
     activity_audit_lock_file,
     activity_audit_source_paths_unlocked,
     stream_logical_activity,
     classify_source,
+    strict_activity_json_loads,
     _canonical_json_sha256,
 )
 
@@ -173,7 +175,11 @@ def scan_physical_sources(sources: list[Path], conn: sqlite3.Connection, status_
                                 continue
 
                             try:
-                                entry = json.loads(stripped)
+                                entry = strict_activity_json_loads(stripped)
+                            except DuplicateActivityJSONKeyError as exc:
+                                raise RuntimeError(
+                                    f"{exc} in {source}:{line_count}"
+                                ) from exc
                             except json.JSONDecodeError as exc:
                                 raise RuntimeError(f"Bad JSON in {source}:{line_count}: {exc}")
 

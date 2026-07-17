@@ -203,7 +203,10 @@ class StatusFileGuardTests(unittest.TestCase):
             board("2026-07-12T21:49:53Z")
         )
 
-        with self.assertRaisesRegex(RuntimeError, "data file cannot be a symlink"):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "data (?:file cannot be|path contains) a symlink",
+        ):
             self._guard()
 
         self.assertEqual(outside.read_bytes(), outside_bytes)
@@ -288,6 +291,28 @@ class StatusFileGuardTests(unittest.TestCase):
             "schema_version": 1,
             "transaction_id": "not-content-bound",
             "events": [{"event_id": "pending-before-restore"}],
+        }
+        (self.root / "docs-site" / "ai-status.json").write_text(
+            json.dumps(source_payload)
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "activity outbox is invalid"):
+            self._guard()
+
+        self.assertEqual(live.read_bytes(), corrupt)
+        self.assertEqual(list(self.root.glob("ai-status.json.corrupt-*")), [])
+
+    def test_noncanonical_source_outbox_fails_before_live_or_evidence_write(self) -> None:
+        live = self.root / "ai-status.json"
+        corrupt = b"{not json"
+        live.write_bytes(corrupt)
+        pending_event = {"event_id": " pending-before-restore "}
+        source_payload = json.loads(board("2026-07-12T21:49:53Z"))
+        source_payload["status_activity_outbox"] = {
+            "schema_version": 1,
+            "transaction_id": "ai-status-tx-"
+            + status_file_guard._canonical_json_sha256([pending_event]),
+            "events": [pending_event],
         }
         (self.root / "docs-site" / "ai-status.json").write_text(
             json.dumps(source_payload)

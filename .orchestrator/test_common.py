@@ -6,10 +6,12 @@ import hashlib
 import json
 import multiprocessing
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import time
+import tracemalloc
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -469,11 +471,11 @@ class StableCanonicalLockPathTests(unittest.TestCase):
                     data_path.symlink_to(target)
                     with self.assertRaisesRegex(
                         RuntimeError,
-                        rf"canonical {plane} data file cannot be a symlink",
+                        rf"canonical {plane} data path contains a symlink",
                     ):
                         lock_path_for(data_path)
 
-    def test_lock_paths_resolve_the_parent_without_rejecting_parent_aliases(self) -> None:
+    def test_lock_paths_reject_parent_aliases(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             real_root = root / "real-status-root"
@@ -481,18 +483,15 @@ class StableCanonicalLockPathTests(unittest.TestCase):
             alias_root = root / "status-root-alias"
             alias_root.symlink_to(real_root, target_is_directory=True)
 
-            self.assertEqual(
-                common.canonical_task_state_lock_path(
-                    alias_root / "ai-status.json"
-                ),
-                real_root / ".orchestrator" / "task-state.lock",
-            )
-            self.assertEqual(
-                common.activity_audit_lock_path(
-                    alias_root / "ai-activity-log.jsonl"
-                ),
-                real_root / ".orchestrator" / "activity-audit.lock",
-            )
+            for lock_path_for, leaf in (
+                (common.canonical_task_state_lock_path, "ai-status.json"),
+                (common.activity_audit_lock_path, "ai-activity-log.jsonl"),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "path contains a symlink",
+                ):
+                    lock_path_for(alias_root / leaf)
 
     def test_stable_sidecar_rejects_a_symlink_leaf(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -658,7 +657,14 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
 
     def test_sigkill_at_each_rotation_boundary_recovers_exactly_once(self) -> None:
         context = multiprocessing.get_context("fork")
-        for point in ("intent", "archive", "tail", "lineage"):
+        for point in (
+            "stage_archive",
+            "stage_tail",
+            "intent",
+            "archive",
+            "tail",
+            "lineage",
+        ):
             with self.subTest(point=point), tempfile.TemporaryDirectory() as tmpdir:
                 log_path = Path(tmpdir) / "ai-activity-log.jsonl"
                 original = [
@@ -748,7 +754,10 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
                 target_path.unlink()
                 target_path.symlink_to(external)
 
-                with self.assertRaisesRegex(RuntimeError, "stable regular file"):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "stable regular file|path contains a symlink",
+                ):
                     common.write_activity_log(
                         {
                             "paths": {
@@ -761,6 +770,54 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
                             "type": "rotation_test",
                         },
                     )
+
+    def test_rotation_guard_rejects_append_behind_pending_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_path.write_text(
+                "".join(
+                    json.dumps(
+                        {
+                            "event_id": f"original-{index}",
+                            "payload": "x" * 256,
+                        }
+                    )
+                    + "\n"
+                    for index in range(3)
+                ),
+                encoding="utf-8",
+            )
+            intent = self._leave_pending_rotation(log_path)
+            intent_path = common.activity_rotation_intent_path(log_path)
+            original_log = log_path.read_bytes()
+            original_intent = intent_path.read_bytes()
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {common.ACTIVITY_ROTATION_WRITER_GUARD_ENV: "1"},
+                ),
+                self.assertRaisesRegex(RuntimeError, "recovery is pending"),
+            ):
+                common.write_activity_log(
+                    {
+                        "paths": {
+                            "activity_log": str(log_path),
+                            "activity_log_rotate_bytes": 1_000_000,
+                        }
+                    },
+                    {
+                        "event_id": "must-not-append",
+                        "type": "rotation_test",
+                    },
+                )
+
+            self.assertEqual(log_path.read_bytes(), original_log)
+            self.assertEqual(intent_path.read_bytes(), original_intent)
+            self.assertEqual(
+                json.loads(intent_path.read_text(encoding="utf-8")),
+                intent,
+            )
 
     def test_interrupted_non_newline_tail_is_repaired_before_append(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -819,7 +876,8 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
             archive_leaf.symlink_to(external)
 
             with self.assertRaisesRegex(
-                RuntimeError, "activity audit source leaf cannot be a symlink"
+                RuntimeError,
+                "path contains a symlink|source leaf cannot be a symlink",
             ):
                 with common.activity_audit_lock_file(
                     log_path, shared=True, nonblocking=False
@@ -864,16 +922,20 @@ class LogicalActivityReaderTests(unittest.TestCase):
 
     def _write_registered_content_archive(
         self,
-        archive_name: str,
+        archive_name: str | None,
         entries: list[dict],
         *,
         tail_entries: list[dict] | None = None,
     ) -> Path:
-        archive_path = self.archive_dir / archive_name
-        self._write_gz(archive_path, entries)
         archive_payload = b"".join(
             (json.dumps(entry) + "\n").encode("utf-8") for entry in entries
         )
+        payload_sha256 = hashlib.sha256(archive_payload).hexdigest()
+        archive_name = archive_name or (
+            f"{self.log_path.name}-{payload_sha256}.gz"
+        )
+        archive_path = self.archive_dir / archive_name
+        self._write_gz(archive_path, entries)
         tail_payload = b"".join(
             (json.dumps(entry) + "\n").encode("utf-8")
             for entry in (tail_entries or [])
@@ -886,14 +948,14 @@ class LogicalActivityReaderTests(unittest.TestCase):
             "sequence": 1,
             "transaction_id": transaction_id,
             "archive_relative_path": str(archive_path.relative_to(self.root)),
-            "archive_payload_sha256": hashlib.sha256(archive_payload).hexdigest(),
+            "archive_payload_sha256": payload_sha256,
             "archive_gzip_sha256": hashlib.sha256(
                 archive_path.read_bytes()
             ).hexdigest(),
             "archive_byte_count": len(archive_payload),
             "archive_line_count": len(entries),
-            "source_sha256": hashlib.sha256(archive_payload).hexdigest(),
-            "source_payload_sha256": hashlib.sha256(archive_payload).hexdigest(),
+            "source_sha256": payload_sha256,
+            "source_payload_sha256": payload_sha256,
             "source_byte_count": len(archive_payload),
             "source_line_count": len(entries),
             "tail_sha256": hashlib.sha256(tail_payload).hexdigest(),
@@ -1073,6 +1135,36 @@ class LogicalActivityReaderTests(unittest.TestCase):
         logical_ids = [entry["event_id"] for entry, _, _ in common.stream_logical_activity(self.log_path)]
         self.assertEqual(logical_ids, [f"event-{idx}" for idx in range(2300)])
 
+    def test_boundary_predecessor_replacement_cannot_hide_excluded_rows(self):
+        legacy_entries = self._make_entries(0, 1500)
+        active_entries = self._make_entries(500, 1800)
+        predecessor = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        self._write_gz(predecessor, legacy_entries)
+        self._write_active(active_entries)
+
+        with common.activity_audit_lock_file(self.log_path, shared=False):
+            common.rotate_activity_log_unlocked(
+                self.log_path,
+                max_bytes=1,
+                keep_lines=1000,
+            )
+
+        # Replace the pinned predecessor with a valid gzip that contains only
+        # its non-overlap prefix. Trusting the manifest without reopening this
+        # source would silently lose the 1000 excluded rows.
+        self._write_gz(predecessor, legacy_entries[:500])
+        with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
+            list(common.stream_logical_activity(self.log_path))
+
+        self.assertEqual(
+            ctx.exception.diagnostic["invariant"],
+            "activity_content_identity",
+        )
+        self.assertIn(
+            "boundary predecessor identity mismatch",
+            ctx.exception.diagnostic["message"],
+        )
+
     def test_first_content_rotation_rejects_bad_boundary_candidates(self):
         predecessor = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
         legacy_entries = self._make_entries(0, 1500)
@@ -1141,6 +1233,97 @@ class LogicalActivityReaderTests(unittest.TestCase):
         self.assertEqual(source_names, lineage_names)
         logical_ids = [entry["event_id"] for entry, _, _ in common.stream_logical_activity(self.log_path)]
         self.assertEqual(logical_ids, [entry["event_id"] for entry in creation_entries])
+
+    def test_content_archive_basename_must_match_payload_digest(self):
+        archive = self._write_registered_content_archive(
+            f"{self.log_path.name}-{'0' * 64}.gz",
+            [{"event_id": "wrong-content-name", "message": "payload"}],
+        )
+
+        with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
+            list(common.stream_logical_activity(self.log_path))
+
+        self.assertEqual(
+            ctx.exception.diagnostic["invariant"],
+            "activity_content_identity",
+        )
+        self.assertEqual(
+            ctx.exception.diagnostic["message"],
+            "activity content-addressed archive basename digest mismatch",
+        )
+        self.assertTrue(archive.exists())
+
+    def test_archive_metrics_bind_raw_and_payload_to_one_stream(self):
+        first_payload = b'{"event_id":"coherent-first"}\n'
+        replacement_payload = b'{"event_id":"coherent-later"}\n'
+        self.assertEqual(len(first_payload), len(replacement_payload))
+        first_bytes = gzip.compress(first_payload, compresslevel=0, mtime=1)
+        replacement_bytes = gzip.compress(
+            replacement_payload,
+            compresslevel=0,
+            mtime=2,
+        )
+        self.assertEqual(len(first_bytes), len(replacement_bytes))
+        self.assertNotEqual(first_bytes, replacement_bytes)
+
+        archive = self.archive_dir / "coherent-pass.gz"
+        archive.write_bytes(first_bytes)
+        original_stat = archive.stat()
+        real_gzip_file = gzip.GzipFile
+
+        def replace_before_decompression(*args, **kwargs):
+            with archive.open("r+b") as handle:
+                handle.write(replacement_bytes)
+                handle.truncate()
+            os.utime(
+                archive,
+                ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+            )
+            return real_gzip_file(*args, **kwargs)
+
+        with mock.patch.object(
+            common.gzip,
+            "GzipFile",
+            side_effect=replace_before_decompression,
+        ):
+            metrics = common._stream_activity_archive_metrics(archive)
+
+        self.assertEqual(
+            metrics.gzip_sha256,
+            hashlib.sha256(replacement_bytes).hexdigest(),
+        )
+        self.assertEqual(metrics.gzip_byte_count, len(replacement_bytes))
+        self.assertEqual(
+            metrics.payload_sha256,
+            hashlib.sha256(replacement_payload).hexdigest(),
+        )
+        self.assertEqual(metrics.payload_byte_count, len(replacement_payload))
+        self.assertEqual(metrics.payload_line_count, 1)
+
+    def test_archive_metrics_close_descriptor_when_fdopen_fails(self):
+        archive = self.archive_dir / "fdopen-failure.gz"
+        archive.write_bytes(gzip.compress(b'{"event_id":"fdopen"}\n'))
+        real_open = os.open
+        opened_descriptors: list[int] = []
+
+        def tracking_open(*args, **kwargs):
+            descriptor = real_open(*args, **kwargs)
+            opened_descriptors.append(descriptor)
+            return descriptor
+
+        with (
+            mock.patch.object(common.os, "open", side_effect=tracking_open),
+            mock.patch.object(common.os, "fdopen", side_effect=OSError("injected")),
+            self.assertRaisesRegex(
+                RuntimeError,
+                "activity rotation archive is unreadable",
+            ),
+        ):
+            common._stream_activity_archive_metrics(archive)
+
+        self.assertEqual(len(opened_descriptors), 1)
+        with self.assertRaises(OSError):
+            os.fstat(opened_descriptors[0])
 
     def test_lineage_tamper_and_rollback_fail_closed(self):
         for keep_lines in (0, 2):
@@ -1493,58 +1676,260 @@ class LogicalActivityReaderTests(unittest.TestCase):
         target = self.root / "some-file"
         target.write_text("{}", encoding="utf-8")
         f1.symlink_to(target)
-        with self.assertRaisesRegex(RuntimeError, "Source is a symlink or changed|Source is not a regular file|activity audit source leaf cannot be a symlink"):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "path contains a symlink|source leaf cannot be a symlink",
+        ):
             list(common.stream_logical_activity(self.log_path))
+
+    def test_active_log_symlink_is_rejected_before_leaf_resolution(self):
+        target = self.root / "external-activity.jsonl"
+        target.write_text(
+            json.dumps({"event_id": "must-not-follow"}) + "\n",
+            encoding="utf-8",
+        )
+        self.log_path.symlink_to(target)
+
+        stream = common.stream_logical_activity(self.log_path)
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "path contains a symlink",
+        ):
+            next(stream)
+
+    def test_dangling_lineage_symlink_fails_closed(self):
+        self._write_active([{"event_id": "active"}])
+        lineage_path = common.activity_rotation_lineage_path(self.log_path)
+        lineage_path.parent.mkdir(parents=True, exist_ok=True)
+        lineage_path.symlink_to(self.root / "missing-lineage.jsonl")
+
+        with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
+            list(common.stream_logical_activity(self.log_path))
+
+        self.assertEqual(
+            ctx.exception.diagnostic["invariant"],
+            "activity_source_path",
+        )
+
+    def test_archive_parent_symlink_fails_closed(self):
+        external_archive_dir = self.root / "external-archives"
+        external_archive_dir.mkdir()
+        self.archive_dir.rmdir()
+        self.archive_dir.symlink_to(external_archive_dir, target_is_directory=True)
+        self._write_gz(
+            self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz",
+            [{"event_id": "external"}],
+        )
+
+        with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
+            list(common.stream_logical_activity(self.log_path))
+
+        self.assertEqual(
+            ctx.exception.diagnostic["invariant"],
+            "activity_source_path",
+        )
 
     def test_source_replacement_and_mutation_during_read(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         entries = self._make_entries(0, 100)
         self._write_gz(f1, entries)
 
-        gen = common.stream_logical_activity(self.log_path)
-        next(gen)
-        f1.write_bytes(b"some new mutated bytes that change size and contents")
-        with self.assertRaisesRegex(RuntimeError, "Source mutated or truncated during read|Truncated or corrupt gzip"):
-            list(gen)
+        real_final_validation = common._assert_activity_sources_stable_unlocked
+
+        def mutate_before_final_validation(log_path, sources, snapshots):
+            f1.write_bytes(b"some new mutated bytes that change size and contents")
+            return real_final_validation(log_path, sources, snapshots)
+
+        with mock.patch.object(
+            common,
+            "_assert_activity_sources_stable_unlocked",
+            mutate_before_final_validation,
+        ):
+            gen = common.stream_logical_activity(self.log_path)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Source mutated or truncated during validation",
+            ):
+                next(gen)
 
     def test_os_replace_to_different_inode_during_read(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         entries = self._make_entries(0, 1500)
         self._write_gz(f1, entries)
 
-        gen = common.stream_logical_activity(self.log_path)
-        for _ in range(500):
-            next(gen)
-
-        # Replace the file on disk with a new file of identical size/contents but different inode
         f_temp = self.root / "temp-replace.gz"
         self._write_gz(f_temp, entries)
-        os.replace(f_temp, f1)
+        real_final_validation = common._assert_activity_sources_stable_unlocked
 
-        with self.assertRaisesRegex(RuntimeError, "Source replaced during read"):
-            list(gen)
+        def replace_before_final_validation(log_path, sources, snapshots):
+            os.replace(f_temp, f1)
+            return real_final_validation(log_path, sources, snapshots)
+
+        with mock.patch.object(
+            common,
+            "_assert_activity_sources_stable_unlocked",
+            replace_before_final_validation,
+        ):
+            gen = common.stream_logical_activity(self.log_path)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Source replaced during validation",
+            ):
+                next(gen)
 
     def test_same_inode_same_size_mtime_mutation_during_read(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         entries = self._make_entries(0, 1500)
         self._write_gz(f1, entries)
 
-        gen = common.stream_logical_activity(self.log_path)
-        for _ in range(500):
-            next(gen)
+        real_final_validation = common._assert_activity_sources_stable_unlocked
 
-        # Mutate the file content in-place but keep exact same size on disk, and update mtime
-        raw = f1.read_bytes()
-        mutated_raw = raw[:-10] + b"MUTATED!!!"
-        self.assertEqual(len(raw), len(mutated_raw))
-        f1.write_bytes(mutated_raw)
+        def mutate_before_final_validation(log_path, sources, snapshots):
+            stat_before = f1.stat()
+            mutated_raw = bytearray(f1.read_bytes())
+            mutated_raw[-10] ^= 1
+            f1.write_bytes(bytes(mutated_raw))
+            os.utime(
+                f1,
+                ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns),
+            )
+            return real_final_validation(log_path, sources, snapshots)
 
-        # Touch mtime_ns
-        stat_info = f1.stat()
-        os.utime(f1, ns=(stat_info.st_atime_ns, stat_info.st_mtime_ns + 1000000000))
+        with mock.patch.object(
+            common,
+            "_assert_activity_sources_stable_unlocked",
+            mutate_before_final_validation,
+        ):
+            gen = common.stream_logical_activity(self.log_path)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Source content changed during validation",
+            ):
+                next(gen)
 
-        with self.assertRaisesRegex(RuntimeError, "Source mutated or truncated during read"):
-            list(gen)
+    def test_late_validation_failure_precedes_first_row_and_collapse_callback(self):
+        entries = self._make_entries(0, 1500)
+        successor_entries = self._make_entries(500, 1001)
+        predecessor = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        )
+        successor = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        )
+        self._write_gz(predecessor, entries)
+        with gzip.open(successor, "wt", encoding="utf-8") as handle:
+            for entry in successor_entries:
+                handle.write(json.dumps(entry) + "\n")
+            handle.write("{bad late json}\n")
+        callbacks = []
+        stream = common.stream_logical_activity(
+            self.log_path,
+            on_collapse=lambda *args: callbacks.append(args),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Bad JSON"):
+            next(stream)
+        self.assertEqual(callbacks, [])
+
+    def test_duplicate_json_keys_rejected_before_first_row_in_active_and_gzip(self):
+        ambiguous_rows = {
+            "top-level": (
+                '{"event_id":"first","event_id":"second",'
+                '"message":"ambiguous"}\n'
+            ),
+            "nested": (
+                '{"event_id":"nested","metadata":{"role":"a",'
+                '"role":"b"}}\n'
+            ),
+        }
+        for source_kind in ("active", "gzip"):
+            for shape, ambiguous in ambiguous_rows.items():
+                with self.subTest(source=source_kind, shape=shape):
+                    self.log_path.unlink(missing_ok=True)
+                    for archive in self.archive_dir.glob("*.gz"):
+                        archive.unlink()
+                    if source_kind == "active":
+                        source = self.log_path
+                        source.write_text(ambiguous, encoding="utf-8")
+                    else:
+                        source = (
+                            self.archive_dir
+                            / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+                        )
+                        with gzip.open(source, "wt", encoding="utf-8") as handle:
+                            handle.write(ambiguous)
+                    before = source.read_bytes()
+                    stream = common.stream_logical_activity(self.log_path)
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "duplicate JSON key.*" + re.escape(str(source)) + ":1",
+                    ):
+                        next(stream)
+                    self.assertEqual(source.read_bytes(), before)
+
+    def test_validation_snapshot_memory_is_bounded_by_window_not_history(self):
+        row_count = 12000
+        payload = "x" * 2048
+        with self.log_path.open("w", encoding="utf-8") as handle:
+            for index in range(row_count):
+                handle.write(
+                    json.dumps(
+                        {
+                            "event_id": f"bounded-{index:05d}",
+                            "payload": payload,
+                        },
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                )
+
+        tracemalloc.start()
+        try:
+            observed = sum(
+                1 for _entry in common.stream_logical_activity(self.log_path)
+            )
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(observed, row_count)
+        self.assertLess(peak, 12 * 1024 * 1024)
+
+    def test_content_addressed_validation_memory_is_bounded_by_window(self):
+        row_count = 12000
+        payload = "x" * 2048
+        with self.log_path.open("w", encoding="utf-8") as handle:
+            for index in range(row_count):
+                handle.write(
+                    json.dumps(
+                        {
+                            "event_id": f"content-bounded-{index:05d}",
+                            "payload": payload,
+                        },
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                )
+        with common.activity_audit_lock_file(self.log_path, shared=False):
+            archive = common.rotate_activity_log_unlocked(
+                self.log_path,
+                max_bytes=1,
+                keep_lines=0,
+            )
+        self.assertIsNotNone(archive)
+
+        import gc
+
+        gc.collect()
+        tracemalloc.start()
+        try:
+            observed = sum(
+                1 for _entry in common.stream_logical_activity(self.log_path)
+            )
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(observed, row_count)
+        self.assertLess(peak, 12 * 1024 * 1024)
 
     def test_simultaneous_and_reentrant_readers(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
@@ -1837,11 +2222,6 @@ class LogicalActivityReaderTests(unittest.TestCase):
     ):
         f_1609 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1609Z.gz"
         f_2337 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T2337Z.gz"
-        content_name = (
-            "ai-activity-log.jsonl-"
-            "b320711ea85d1a0bfd537f39a0c934b4b865ce0805ff389df0405a3a89d5d004.gz"
-        )
-
         older_tail = [{"message": f"older-tail-{index}"} for index in range(1000)]
         self._write_gz(
             f_1609,
@@ -1853,7 +2233,7 @@ class LogicalActivityReaderTests(unittest.TestCase):
             [{"message": f"newer-unrelated-{index}"} for index in range(1200)],
         )
         content_archive = self._write_registered_content_archive(
-            content_name,
+            None,
             older_tail + [{"message": "content-tail"}],
         )
 
@@ -1985,71 +2365,121 @@ class LogicalActivityReaderTests(unittest.TestCase):
             if old_log_file is not None:
                 ai_status.LOG_FILE = old_log_file
 
-    def test_sqlite_db_removed_on_lifecycle_events(self):
+    def test_sqlite_snapshot_is_unlinked_during_all_lifecycle_events(self):
         # Prepare a valid file
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
 
-        import glob
-        import tempfile
-        temp_dir = tempfile.gettempdir()
+        created_paths: list[str] = []
+        original_tempfile = common.tempfile.NamedTemporaryFile
 
-        def get_db_files():
-            return set(glob.glob(os.path.join(temp_dir, "*.db")))
+        def tracking_tempfile(*args, **kwargs):
+            handle = original_tempfile(*args, **kwargs)
+            if str(kwargs.get("prefix") or "").startswith(
+                "pantheon-activity-snapshot-"
+            ):
+                created_paths.append(handle.name)
+            return handle
 
-        # Case 1: Success path
-        db_before = get_db_files()
+        def assert_all_snapshots_unlinked() -> None:
+            self.assertTrue(created_paths)
+            self.assertTrue(all(not os.path.exists(path) for path in created_paths))
 
-        # Start generator
-        gen = common.stream_logical_activity(self.log_path)
-
-        # During iteration, the temp DB file should exist
-        first_item = next(gen)
-        db_during = get_db_files() - db_before
-        self.assertEqual(len(db_during), 1)
-        db_path = list(db_during)[0]
-        self.assertTrue(os.path.exists(db_path))
-
-        # Consume the rest
-        list(gen)
-
-        # After success, DB file must be removed
-        self.assertFalse(os.path.exists(db_path))
-
-        # Case 2: Validation failure path
-        # Re-write f1 to have validation failure (e.g. duplicate event_id)
-        self._write_gz(f1, [{"event_id": "ev1", "message": "msg"}, {"event_id": "ev1", "message": "msg"}])
-
-        db_before = get_db_files()
-        gen = common.stream_logical_activity(self.log_path)
-        try:
+        with mock.patch.object(
+            common.tempfile,
+            "NamedTemporaryFile",
+            side_effect=tracking_tempfile,
+        ):
+            # Case 1: success. The live SQLite connection retains the disk
+            # allocation, but its pathname is already gone before first yield.
+            gen = common.stream_logical_activity(self.log_path)
             next(gen)
-            db_during = get_db_files() - db_before
-            self.assertEqual(len(db_during), 1)
-            db_path = list(db_during)[0]
-            self.assertTrue(os.path.exists(db_path))
-            list(gen) # Should raise RuntimeError
-        except RuntimeError:
-            pass
+            assert_all_snapshots_unlinked()
 
-        # After failure, DB file must be removed
-        self.assertFalse(os.path.exists(db_path))
+            list(gen)
+            assert_all_snapshots_unlinked()
 
-        # Case 3: Explicit generator close
-        self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
-        db_before = get_db_files()
-        gen = common.stream_logical_activity(self.log_path)
-        next(gen)
-        db_during = get_db_files() - db_before
-        self.assertEqual(len(db_during), 1)
-        db_path = list(db_during)[0]
-        self.assertTrue(os.path.exists(db_path))
+            # Case 2: validation failure.
+            self._write_gz(
+                f1,
+                [
+                    {"event_id": "ev1", "message": "msg"},
+                    {"event_id": "ev1", "message": "msg"},
+                ],
+            )
+            gen = common.stream_logical_activity(self.log_path)
+            with self.assertRaisesRegex(RuntimeError, "duplicate activity event_id"):
+                next(gen)
+            assert_all_snapshots_unlinked()
 
-        # Explicit close
-        gen.close()
+            # Case 3: explicit generator close.
+            self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
+            gen = common.stream_logical_activity(self.log_path)
+            next(gen)
+            assert_all_snapshots_unlinked()
+            gen.close()
+            assert_all_snapshots_unlinked()
 
-        # After close, DB file must be removed
-        self.assertFalse(os.path.exists(db_path))
+            # Case 4: a consumer exception followed by explicit close.
+            gen = common.stream_logical_activity(self.log_path)
+            with self.assertRaisesRegex(RuntimeError, "consumer failed"):
+                try:
+                    next(gen)
+                    raise RuntimeError("consumer failed")
+                finally:
+                    gen.close()
+            assert_all_snapshots_unlinked()
+
+    def test_validation_complete_event_lookup_omits_unrequested_payloads(self):
+        entries = [
+            {"event_id": "index-one", "message": "one"},
+            {"event_id": "index-two", "message": "two"},
+            {"message": "no event id"},
+        ]
+        self._write_active(entries)
+
+        with (
+            common.activity_audit_lock_file(self.log_path, shared=True),
+            mock.patch.object(
+                common,
+                "_build_logical_activity_snapshot_unlocked",
+                wraps=common._build_logical_activity_snapshot_unlocked,
+            ) as build_snapshot,
+        ):
+            event_index = common.validated_activity_event_digests_unlocked(
+                self.log_path,
+                {"index-two", "missing"},
+            )
+
+        self.assertEqual(
+            {
+                "index-two": common._canonical_json_sha256(entries[1]),
+            },
+            event_index,
+        )
+        build_snapshot.assert_called_once_with(
+            self.log_path,
+            capture_logical_entries=False,
+        )
+
+    def test_validation_complete_event_lookup_rejects_noncanonical_request(self):
+        for event_id in (" index-two", "index-two ", " index-two ", 2):
+            with (
+                self.subTest(event_id=event_id),
+                mock.patch.object(
+                    common,
+                    "_build_logical_activity_snapshot_unlocked",
+                ) as build_snapshot,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "requested activity event_id is not canonical",
+                ):
+                    common.validated_activity_event_digests_unlocked(
+                        self.log_path,
+                        [event_id],
+                    )
+                build_snapshot.assert_not_called()
 
 
 if __name__ == "__main__":
