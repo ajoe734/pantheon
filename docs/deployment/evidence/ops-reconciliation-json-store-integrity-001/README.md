@@ -349,6 +349,46 @@ governed approval naming its full SHA and a GitHub approval review before
 merge. The central `review_approved` state and every earlier approval are
 superseded for exact-head purposes.
 
+### Final pre-handoff dev-tip compose revalidation
+
+Before the fourth-compose evidence commit was pushed, `origin/dev` advanced
+two more commits to `d719d262eef5d6095628785b3dee75e7a8e693b9` through PR
+#3818. Neither commit changed the task's service, tests, evidence, or review
+artifact. The candidate was composed again without conflict, producing
+pre-evidence merge head `b4725aa4ebc70e0141dad706e65c2db5a52d8e60`, and was
+revalidated at 2026-07-17T18:31:41Z:
+
+```text
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py -q
+22 passed in 4.28s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py -q
+6 passed in 2.37s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py -q
+20 passed in 5.69s
+
+python3 -m pytest services/reconciliation-drift/tests/ -q
+79 passed in 20.82s
+
+python3 -m py_compile services/reconciliation-drift/store.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py
+(no output; passed)
+
+git diff --check origin/dev...HEAD
+(no output; clean)
+
+git show --check --oneline HEAD
+(no whitespace errors)
+
+python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge
+(no output; passed)
+```
+
+The evidence commit that records these results does not alter the validated
+store or test content. Its resulting full SHA is the only candidate eligible
+for the next Antigravity exact-head review; it must not be merged from the
+owner's `review_approved` dispatch alone.
+
 ### Push-event trailer check false positive
 
 The `Commit trailers` check's `push` event range (`f06027d02..b506dc93a`)
