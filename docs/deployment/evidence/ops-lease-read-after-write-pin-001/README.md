@@ -175,3 +175,18 @@ task's invocation, not something to fix from this task. This is a new
 symptom of the ongoing status-tool outage; left unfixed here per the same
 "don't fix fleet-infra bugs from an unrelated task" guidance as the prior
 entry.
+
+Rewake note (2026-07-17, second cycle): PR #3784 drifted `mergeStateStatus:
+BEHIND` again (2 new `dev` commits, `OPS-WATCHDOG-LOCK-QUEUE-001` merge
+`7097e8d2a`), so this branch was resynced with `git merge origin/dev` and
+pushed non-force again (merge commit pushed as `c7fd7352a`). No task-owned
+files changed; only an unrelated task-brief and plan-archive doc were
+picked up from `dev`. Post-push `mergeStateStatus` moved to `BLOCKED`
+because the fresh push re-triggered `Branch CI Gate` checks (`Commit
+trailers`, `Runtime mirror guard`) that were still `IN_PROGRESS`, not
+because of any new defect. `scripts/ai_status.py show` still hangs
+indefinitely (no output after 20s) - the fleet-wide lock outage noted above
+has not resolved. This confirms the resync-on-BEHIND pattern is the
+correct, low-risk action for this task while the merge itself remains a
+human/governance-gated action (self-merge of an evidence/approval PR is not
+permitted regardless of CI state).
