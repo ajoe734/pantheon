@@ -43,3 +43,13 @@ exact-head review by shifting the head SHA.
 - Corrective 2: a human merges PR #3784 to close the review record.
 - Only after both are genuinely accepted at their current heads should a
   human dispatch the Pantheon-only proof.
+
+## CI note
+
+PR #3808's first push tripped the push-event "Commit trailers" check on an
+already-merged ancestor commit (`0eac3c4e2`, the PR #3805 squash-merge,
+subject 76 chars) that fell inside that push's before/after range. The
+pull_request-event run of the same check passed cleanly. This follow-up
+commit shifts the push's before-ref forward past that ancestor so the
+push-event scan only covers new commits, per the documented fix (push one
+fresh commit on top, not a force-push).
