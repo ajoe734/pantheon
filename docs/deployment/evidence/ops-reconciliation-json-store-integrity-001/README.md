@@ -389,6 +389,54 @@ store or test content. Its resulting full SHA is the only candidate eligible
 for the next Antigravity exact-head review; it must not be merged from the
 owner's `review_approved` dispatch alone.
 
+### Owner finalization compose revalidation
+
+The owner-finalization dispatch found an unpushed supervisor recovery commit
+`d1d1cf912dc9e667de863de82ed21da2c53e920c` above the PR head. That commit
+contained only unrelated planning-session timestamps. It was preserved on a
+local recovery branch and excluded from the task branch before publication;
+the task branch was rebuilt from pushed head
+`f6b2162b03efae6ebf01430805f94eed80f0e885` without rewriting the remote.
+
+`origin/dev` had advanced two commits to
+`98aa5611ac57fb195d4ea36bfd12f157a2139dd0`. Those commits changed only the
+watchdog post-merge evidence and did not touch this task's store, tests,
+review, or evidence paths. The task branch composed that dev tip without
+conflict, producing pre-evidence merge head
+`f1ff62dcc73fa78c03e2e2c572cbc4d31b6439f2`, and was revalidated at
+2026-07-17T20:30:29Z:
+
+```text
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py -q
+22 passed in 4.71s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py -q
+6 passed in 2.59s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py -q
+20 passed in 5.80s
+
+python3 -m pytest services/reconciliation-drift/tests/ -q
+79 passed in 23.19s
+
+python3 -m py_compile services/reconciliation-drift/store.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py
+(no output; passed)
+
+git diff --check origin/dev...HEAD
+(no output; clean)
+
+git show --check --oneline HEAD
+(no whitespace errors)
+
+python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge
+(no output; passed)
+```
+
+This evidence-only owner closeout does not alter store or test behavior. Its
+resulting pushed PR head supersedes every earlier exact-head approval and must
+receive fresh Antigravity governed approval plus a GitHub approval review
+before the PR is merged. Auto-merge remains disabled.
+
 ### Push-event trailer check false positive
 
 The `Commit trailers` check's `push` event range (`f06027d02..b506dc93a`)
