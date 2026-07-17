@@ -711,9 +711,10 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
         shared=False,
         nonblocking=True,
     )
+    acquired = False
     try:
-        with lock_manager:
-            return _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
+        lock_manager.__enter__()
+        acquired = True
     except LockContentionError:
         # We hit lock contention.
         # Construct a skip/contention result without writing to the locked state files.
@@ -745,6 +746,15 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
             sys.stderr.flush()
 
         return result
+
+    try:
+        result = _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
+    except BaseException:
+        lock_manager.__exit__(*sys.exc_info())
+        raise
+    else:
+        lock_manager.__exit__(None, None, None)
+    return result
 
 
 def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:

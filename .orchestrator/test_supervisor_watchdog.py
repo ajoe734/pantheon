@@ -1011,6 +1011,25 @@ class SupervisorWatchdogTests(unittest.TestCase):
 
         self.assertEqual(exit_calls, 1, "Lock manager exit should have been called exactly once to clean up lock.")
 
+    def test_watchdog_locked_body_contention_propagates(self) -> None:
+        """Verify that a LockContentionError raised inside the locked body (e.g. from a nested lock attempt)
+        is propagated and NOT caught or converted to a benign skip by run_watchdog."""
+        import errno
+        self.write_pid(123)
+        self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}})
+
+        def nested_contention_run(*args, **kwargs):
+            from common import LockContentionError
+            import errno
+            raise LockContentionError(errno.EAGAIN, "Nested lock contention", "dummy.lock")
+
+        with mock.patch.object(supervisor_watchdog, "_run_watchdog_locked", nested_contention_run):
+            from common import LockContentionError
+            with self.assertRaises(LockContentionError) as ctx:
+                supervisor_watchdog.run_watchdog(self.config, restart=True)
+            self.assertEqual(ctx.exception.errno, errno.EAGAIN)
+            self.assertIn("Nested lock contention", str(ctx.exception))
+
     def test_contention_metric_open_eacces_propagates(self) -> None:
         """Verify that when the metrics-lock os.open raises EACCES, the original OSError is propagated without UnboundLocalError."""
         import errno
