@@ -2417,6 +2417,8 @@ def classify_source(path: Path) -> str:
         return "active"
     if re.match(r"^.+\.jsonl-\d{4}-\d{2}-\d{2}T\d{4}Z\.gz$", name):
         return "legacy_ts_std"
+    if re.match(r"^.+\.jsonl-\d{4}\.gz$", name):
+        return "legacy_ts_std"
     if re.match(r"^.+-\d{8}T\d{6}Z\.jsonl\.gz$", name):
         return "legacy_ts_old"
     if re.match(r"^.+\.jsonl-[a-f0-9]{64}\.gz$", name):
