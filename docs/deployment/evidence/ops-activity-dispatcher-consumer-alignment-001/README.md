@@ -34,6 +34,45 @@ remain owned by their prerequisite tasks.
 - `python3 -m py_compile` for the dispatcher and its direct test: passed.
 - `git diff --check origin/dev...HEAD`: passed.
 
+Exact commands:
+
+```bash
+PYTHONPATH=.orchestrator:scripts PYTHONDONTWRITEBYTECODE=1 \
+  python3 -m pytest -q -p no:cacheprovider \
+  scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py::test_dispatch_accepts_shared_legacy_fold_and_remains_idempotent \
+  scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py::test_dispatch_rejects_payload_mismatch_after_shared_legacy_fold \
+  scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py::test_activity_event_index_fully_drains_shared_reader \
+  scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py::test_activity_event_index_normalizes_shared_reader_database_failure \
+  scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py::test_dispatch_rejects_duplicate_activity_json_keys_without_writes
+
+PYTHONPATH=.orchestrator:scripts PYTHONDONTWRITEBYTECODE=1 \
+  python3 -m pytest -q -p no:cacheprovider \
+  scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py
+
+PYTHONDONTWRITEBYTECODE=1 python3 .orchestrator/test_common.py
+
+env -u ORCH_RUN_ID -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH \
+  -u ORCH_RUNNER_STATUS_PATH -u ORCH_HEARTBEAT_PATH \
+  PANTHEON_STATUS_ROOT=/tmp/pantheon-ops-activity-dispatcher-consumer-alignment-validation \
+  PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.test_ai_status
+
+PYTHONPYCACHEPREFIX=/tmp/pantheon-ops-activity-dispatcher-consumer-alignment-pycache \
+  PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  scripts/dispatch_loop_product_level_remediation_2026-07-13.py \
+  scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py
+
+git diff --check origin/dev...HEAD
+
+AI_NAME=Codex PYTHONDONTWRITEBYTECODE=1 \
+  python3 scripts/dispatch_loop_product_level_remediation_2026-07-13.py \
+  --validate-only
+
+AI_NAME=Codex PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon \
+  PYTHONDONTWRITEBYTECODE=1 \
+  python3 scripts/dispatch_loop_product_level_remediation_2026-07-13.py \
+  --dry-run
+```
+
 The focused matrix covered:
 
 - legitimate synthetic legacy fold acceptance and idempotency;
@@ -75,3 +114,12 @@ authoritative writer and before the optional central-history proof can run.
    checks.
 4. Obtain independent exact-head review before making this PR ready or
    merging it.
+
+## Reviewer assignment note
+
+The static task brief predates a supervisor reassignment and names Codex2.
+The canonical central task state and the current `owned_ready_dispatch` name
+Claude as reviewer, so the current anchors use `Reviewer: Claude`. Re-read the
+central task entry before final handoff and closeout; if the assignment changes
+again, the final task commit and review request must follow that canonical
+assignment rather than this historical note.
