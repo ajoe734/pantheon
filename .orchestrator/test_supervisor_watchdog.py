@@ -1011,6 +1011,47 @@ class SupervisorWatchdogTests(unittest.TestCase):
 
         self.assertEqual(exit_calls, 1, "Lock manager exit should have been called exactly once to clean up lock.")
 
+    def test_contention_metric_open_eacces_propagates(self) -> None:
+        """Verify that when the metrics-lock os.open raises EACCES, the original OSError is propagated without UnboundLocalError."""
+        import errno
+
+        def fake_open(path, flags, mode=0o777):
+            if str(path).endswith(".lock"):
+                raise OSError(errno.EACCES, "Permission denied")
+            return os_open(path, flags, mode)
+
+        os_open = os.open
+        with mock.patch("os.open", fake_open):
+            with self.assertRaises(OSError) as ctx:
+                supervisor_watchdog.append_watchdog_contention_metric(
+                    self.config,
+                    {"decision": "skip", "reason": "lock_contention"},
+                    self.config["watchdog"],
+                )
+            self.assertEqual(ctx.exception.errno, errno.EACCES)
+            self.assertNotIsInstance(ctx.exception, UnboundLocalError)
+
+    def test_watchdog_overlap_contention_coverage(self) -> None:
+        """Verify that overlapping lock attempts classify contention correctly without out-of-order fcntl.flock wrapper corruption."""
+        from common import LockContentionError, canonical_task_state_lock_file
+        
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+        raw_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(raw_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(raw_handle.close)
+
+        lm = supervisor_watchdog.runtime_state_lock(self.config, shared=False, nonblocking=True)
+        status_file = self.root / "state.json"
+
+        with self.assertRaises(LockContentionError):
+            with lm:
+                self.fail("lm shouldn't be acquired under contention")
+        
+        with canonical_task_state_lock_file(status_file, shared=False, nonblocking=True):
+            pass
+
 
 class ActiveWorkerCountDedupeTests(unittest.TestCase):
     """Watchdog restart pressure must use live wrapper identities, not stale state."""
