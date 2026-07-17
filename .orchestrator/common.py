@@ -732,7 +732,32 @@ ACTIVITY_LOG_LEGACY_ARCHIVE_SUBDIR = (
     Path(".orchestrator") / "logs" / "activity-log-archive"
 )
 ACTIVITY_LOG_ROTATION_SUBDIR = Path(".orchestrator") / "logs" / "activity-rotation"
-ACTIVITY_LOG_ROTATION_SCHEMA_VERSION = 1
+ACTIVITY_LOG_ROTATION_SCHEMA_VERSION = 2
+ACTIVITY_ROTATION_LINEAGE_RECORD_TYPE = "pantheon.activity.rotation_lineage.v1"
+ACTIVITY_ROTATION_HEAD_RECORD_TYPE = "pantheon.activity.lineage_head.v1"
+ACTIVITY_ROTATION_RESOLUTION_RECORD_TYPE = "pantheon.activity.rotation_resolution.v1"
+ACTIVITY_ROTATION_RESOLUTION_TYPE_SUPERSEDED = "superseded-by-legacy-rotation"
+ACTIVITY_ROTATION_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+ACTIVITY_ROTATION_WRITER_GUARD_ENV = "PANTHEON_ACTIVITY_ROTATION_PAUSE"
+ACTIVITY_LOG_STRANDED_V1_INTENT_ERROR = (
+    "stranded schema-v1 activity rotation intent requires the reviewed "
+    "pending-intent recovery transaction "
+    "(OPS-ACTIVITY-ROTATION-PENDING-INTENT-RECOVERY-001)"
+)
+
+
+def activity_rotation_writer_guard_active() -> bool:
+    """All-writer rotation guard: pauses new rotations and intent recovery.
+
+    Every current-code writer (scripts/ai_status.py append/rotate and the
+    supervisor/watchdog/common writer path) funnels rotation through
+    rotate_activity_log_unlocked/prepare_activity_audit_unlocked, so one
+    environment switch pauses both mechanisms. Old-vintage checkouts do not
+    read this switch; the transition runbook must also stop those processes
+    and read back their absence before relying on the guard.
+    """
+
+    return str(os.environ.get(ACTIVITY_ROTATION_WRITER_GUARD_ENV) or "").strip() == "1"
 
 
 def _activity_log_rotate_threshold(config: dict[str, Any]) -> int:
@@ -849,7 +874,12 @@ def read_regular_file_snapshot(
         | getattr(os, "O_NONBLOCK", 0)
         | getattr(os, "O_NOFOLLOW", 0)
     )
-    descriptor = os.open(path, flags)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        if path.is_symlink():
+            raise RuntimeError(f"{source} must be a stable regular file: {path}") from exc
+        raise
     try:
         descriptor_stat = os.fstat(descriptor)
         path_stat = path.lstat()
@@ -969,6 +999,18 @@ def activity_rotation_intent_path(log_path: Path) -> Path:
     return _activity_rotation_dir(log_path) / f"{log_path.name}.intent.json"
 
 
+def activity_rotation_lineage_path(log_path: Path) -> Path:
+    return _activity_rotation_dir(log_path) / f"{log_path.name}.lineage.jsonl"
+
+
+def activity_rotation_resolutions_path(log_path: Path) -> Path:
+    return _activity_rotation_dir(log_path) / f"{log_path.name}.resolutions.jsonl"
+
+
+def activity_rotation_preserved_dir(log_path: Path, transaction_id: str) -> Path:
+    return _activity_rotation_dir(log_path) / "resolved" / transaction_id
+
+
 def _canonical_json_sha256(payload: Any) -> str:
     encoded = json.dumps(
         payload,
@@ -977,6 +1019,61 @@ def _canonical_json_sha256(payload: Any) -> str:
         ensure_ascii=False,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _canonical_json_line(payload: Any) -> bytes:
+    return (
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _jsonl_line_count(payload: bytes) -> int:
+    return len(payload.splitlines()) if payload else 0
+
+
+def _activity_lineage_head_bytes(record: dict[str, Any]) -> bytes:
+    return _canonical_json_line(record)
+
+
+def _split_activity_lineage_head(
+    payload: bytes,
+) -> tuple[dict[str, Any] | None, bytes, bytes]:
+    if not payload:
+        return None, b"", payload
+    newline_at = payload.find(b"\n")
+    if newline_at < 0:
+        first_line = payload
+        rest = b""
+    else:
+        first_line = payload[: newline_at + 1]
+        rest = payload[newline_at + 1 :]
+    try:
+        parsed = json.loads(first_line.decode("utf-8").strip())
+    except (UnicodeError, json.JSONDecodeError):
+        return None, b"", payload
+    if (
+        isinstance(parsed, dict)
+        and parsed.get("record_type") == ACTIVITY_ROTATION_HEAD_RECORD_TYPE
+    ):
+        return parsed, first_line, rest
+    return None, b"", payload
+
+
+def _is_activity_lineage_head(entry: Any) -> bool:
+    return (
+        isinstance(entry, dict)
+        and entry.get("record_type") == ACTIVITY_ROTATION_HEAD_RECORD_TYPE
+    )
 
 
 def _activity_rotation_fault(point: str) -> None:
@@ -998,13 +1095,45 @@ def _validated_activity_rotation_intent(
         "transaction_id",
         "log_name",
         "source_sha256",
-        "archive_sha256",
+        "source_payload_sha256",
+        "archive_payload_sha256",
+        "archive_gzip_sha256",
         "tail_sha256",
+        "tail_byte_count",
+        "tail_line_count",
         "archive_relative_path",
+        "lineage_relative_path",
+        "lineage_previous_sha256",
+        "lineage_sha256",
+        "lineage_row_sha256",
+        "lineage_row",
+        "active_control",
+        "active_sha256",
     }
     if not isinstance(payload, dict) or set(payload) != required:
         raise RuntimeError("activity rotation intent schema is not exact")
-    seed = {key: payload[key] for key in sorted(required - {"transaction_id"})}
+    row = payload.get("lineage_row")
+    control = payload.get("active_control")
+    if not isinstance(row, dict) or not isinstance(control, dict):
+        raise RuntimeError("activity rotation intent contract is invalid")
+    seed_row = dict(row)
+    seed_row["transaction_id"] = ""
+    seed_row["archive_gzip_sha256"] = ""
+    seed_keys = {
+        "schema_version",
+        "log_name",
+        "source_sha256",
+        "source_payload_sha256",
+        "archive_payload_sha256",
+        "tail_sha256",
+        "tail_byte_count",
+        "tail_line_count",
+        "archive_relative_path",
+        "lineage_relative_path",
+        "lineage_previous_sha256",
+    }
+    seed = {key: payload[key] for key in sorted(seed_keys)}
+    seed["lineage_row"] = seed_row
     expected_id = "activity-rotation-" + _canonical_json_sha256(seed)
     if (
         payload.get("schema_version") != ACTIVITY_LOG_ROTATION_SCHEMA_VERSION
@@ -1013,10 +1142,24 @@ def _validated_activity_rotation_intent(
         or any(
             not isinstance(payload.get(key), str)
             or len(str(payload[key])) != 64
-            for key in ("source_sha256", "archive_sha256", "tail_sha256")
+            for key in (
+                "source_sha256",
+                "source_payload_sha256",
+                "archive_payload_sha256",
+                "archive_gzip_sha256",
+                "tail_sha256",
+                "lineage_previous_sha256",
+                "lineage_sha256",
+                "lineage_row_sha256",
+                "active_sha256",
+            )
         )
+        or payload.get("lineage_row_sha256") != _canonical_json_sha256(row)
     ):
         raise RuntimeError("activity rotation intent contract is invalid")
+    for key in ("tail_byte_count", "tail_line_count"):
+        if not isinstance(payload.get(key), int) or int(payload[key]) < 0:
+            raise RuntimeError("activity rotation intent contract is invalid")
     relative = Path(str(payload.get("archive_relative_path") or ""))
     if not relative.parts or relative.is_absolute() or ".." in relative.parts:
         raise RuntimeError("activity rotation archive path is invalid")
@@ -1025,18 +1168,672 @@ def _validated_activity_rotation_intent(
         archive_path.relative_to(log_path.parent.resolve())
     except ValueError as exc:
         raise RuntimeError("activity rotation archive escapes status root") from exc
+    lineage_relative = Path(str(payload.get("lineage_relative_path") or ""))
+    if (
+        not lineage_relative.parts
+        or lineage_relative.is_absolute()
+        or ".." in lineage_relative.parts
+    ):
+        raise RuntimeError("activity rotation lineage path is invalid")
+    lineage_path = (log_path.parent / lineage_relative).resolve()
+    try:
+        lineage_path.relative_to(log_path.parent.resolve())
+    except ValueError as exc:
+        raise RuntimeError("activity rotation lineage escapes status root") from exc
+    if lineage_path != activity_rotation_lineage_path(log_path).resolve():
+        raise RuntimeError("activity rotation lineage path is invalid")
+    if row.get("transaction_id") != payload.get("transaction_id"):
+        raise RuntimeError("activity rotation intent row transaction mismatch")
+    if control.get("transaction_id") != payload.get("transaction_id"):
+        raise RuntimeError("activity rotation intent control transaction mismatch")
     return payload
+
+
+SCHEMA_V1_ROTATION_INTENT_KEYS = frozenset(
+    {
+        "schema_version",
+        "transaction_id",
+        "log_name",
+        "source_sha256",
+        "archive_sha256",
+        "tail_sha256",
+        "archive_relative_path",
+    }
+)
+
+
+def validated_schema_v1_rotation_intent(
+    log_path: Path,
+    payload: Any,
+) -> dict[str, Any]:
+    """Validate the exact retired schema-v1 rotation intent contract.
+
+    This is not a compatibility acceptance path for normal readers/writers:
+    only the reviewed pending-intent recovery transaction may consume a
+    schema-v1 intent, and only after proving every byte relationship
+    required by the 2026-07-16 incident plan.
+    """
+
+    if not isinstance(payload, dict) or set(payload) != SCHEMA_V1_ROTATION_INTENT_KEYS:
+        raise RuntimeError("schema-v1 activity rotation intent schema is not exact")
+    seed = {
+        key: payload[key]
+        for key in sorted(SCHEMA_V1_ROTATION_INTENT_KEYS - {"transaction_id"})
+    }
+    expected_id = "activity-rotation-" + _canonical_json_sha256(seed)
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("transaction_id") != expected_id
+        or payload.get("log_name") != log_path.name
+        or any(
+            not isinstance(payload.get(key), str)
+            or len(str(payload[key])) != 64
+            for key in ("source_sha256", "archive_sha256", "tail_sha256")
+        )
+    ):
+        raise RuntimeError("schema-v1 activity rotation intent contract is invalid")
+    relative = Path(str(payload.get("archive_relative_path") or ""))
+    if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+        raise RuntimeError("schema-v1 activity rotation archive path is invalid")
+    archive_path = (log_path.parent / relative).resolve()
+    try:
+        archive_path.relative_to(log_path.parent.resolve())
+    except ValueError as exc:
+        raise RuntimeError(
+            "schema-v1 activity rotation archive escapes status root"
+        ) from exc
+    return payload
+
+
+def _is_schema_v1_rotation_intent_shape(payload: Any) -> bool:
+    return (
+        isinstance(payload, dict)
+        and set(payload) == SCHEMA_V1_ROTATION_INTENT_KEYS
+        and payload.get("schema_version") == 1
+    )
 
 
 def _load_activity_rotation_intent(log_path: Path) -> dict[str, Any] | None:
     path = activity_rotation_intent_path(log_path)
-    if not path.exists():
+    if not path.exists() and not path.is_symlink():
         return None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        intent_bytes = read_regular_file_bytes(
+            path,
+            source="activity rotation intent",
+        )
+        payload = json.loads(intent_bytes.decode("utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("activity rotation intent is unreadable") from exc
+    if _is_schema_v1_rotation_intent_shape(payload):
+        # Never silently accept or auto-recover a schema-v1 intent in
+        # schema-v2 code: fail closed with an explicit incident-class error.
+        raise RuntimeError(ACTIVITY_LOG_STRANDED_V1_INTENT_ERROR)
     return _validated_activity_rotation_intent(log_path, payload)
+
+
+def _activity_rotation_relative_path(log_path: Path, path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(log_path.parent.resolve()))
+    except ValueError as exc:
+        raise RuntimeError("activity rotation path escapes status root") from exc
+
+
+def _activity_archive_payload(path: Path) -> tuple[bytes, bytes]:
+    compressed = read_regular_file_bytes(path, source="activity rotation archive")
+    try:
+        payload = gzip.decompress(compressed)
+    except (OSError, EOFError, gzip.BadGzipFile) as exc:
+        raise RuntimeError(f"activity rotation archive is unreadable: {path}") from exc
+    return compressed, payload
+
+
+def _normalize_activity_lineage_archive_path(log_path: Path, value: Any) -> Path:
+    relative = Path(str(value or ""))
+    if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+        raise RuntimeError("activity lineage archive path is invalid")
+    archive_path = (log_path.parent / relative).resolve()
+    try:
+        archive_path.relative_to(log_path.parent.resolve())
+    except ValueError as exc:
+        raise RuntimeError("activity lineage archive escapes status root") from exc
+    if classify_source(archive_path) != "content_addressed":
+        raise RuntimeError("activity lineage archive path is not content-addressed")
+    return archive_path
+
+
+def _validate_activity_rotation_lineage_row(
+    log_path: Path,
+    row: Any,
+    *,
+    expected_sequence: int,
+    previous_row: dict[str, Any] | None,
+    previous_lineage_bytes: bytes,
+    validate_archive: bool,
+) -> Path:
+    required = {
+        "record_type",
+        "schema_version",
+        "log_name",
+        "sequence",
+        "transaction_id",
+        "archive_relative_path",
+        "archive_payload_sha256",
+        "archive_gzip_sha256",
+        "archive_byte_count",
+        "archive_line_count",
+        "source_sha256",
+        "source_payload_sha256",
+        "source_byte_count",
+        "source_line_count",
+        "tail_sha256",
+        "tail_byte_count",
+        "tail_line_count",
+        "previous_sequence",
+        "previous_transaction_id",
+        "previous_lineage_sha256",
+        "boundary_normalization",
+    }
+    if not isinstance(row, dict) or set(row) != required:
+        raise RuntimeError("activity lineage row schema is not exact")
+    if (
+        row.get("record_type") != ACTIVITY_ROTATION_LINEAGE_RECORD_TYPE
+        or row.get("schema_version") != ACTIVITY_LOG_ROTATION_SCHEMA_VERSION
+        or row.get("log_name") != log_path.name
+        or row.get("sequence") != expected_sequence
+    ):
+        raise RuntimeError("activity lineage row identity is invalid")
+    for key in (
+        "archive_payload_sha256",
+        "archive_gzip_sha256",
+        "source_sha256",
+        "source_payload_sha256",
+        "tail_sha256",
+        "previous_lineage_sha256",
+    ):
+        if not isinstance(row.get(key), str) or len(str(row[key])) != 64:
+            raise RuntimeError("activity lineage digest is invalid")
+    for key in (
+        "archive_byte_count",
+        "archive_line_count",
+        "source_byte_count",
+        "source_line_count",
+        "tail_byte_count",
+        "tail_line_count",
+        "previous_sequence",
+    ):
+        if not isinstance(row.get(key), int) or int(row[key]) < 0:
+            raise RuntimeError("activity lineage count is invalid")
+    expected_previous_sha = _sha256_bytes(previous_lineage_bytes)
+    if row.get("previous_lineage_sha256") != expected_previous_sha:
+        raise RuntimeError("activity lineage previous digest mismatch")
+    if previous_row is None:
+        if row.get("previous_sequence") != 0 or row.get("previous_transaction_id") is not None:
+            raise RuntimeError("activity lineage first row has a predecessor")
+    else:
+        if (
+            row.get("previous_sequence") != previous_row.get("sequence")
+            or row.get("previous_transaction_id")
+            != previous_row.get("transaction_id")
+        ):
+            raise RuntimeError("activity lineage predecessor fork")
+    if row.get("boundary_normalization") is not None:
+        boundary = row.get("boundary_normalization")
+        if expected_sequence != 1 or not isinstance(boundary, dict):
+            raise RuntimeError("activity lineage has invalid boundary normalization")
+        boundary_required = {
+            "type",
+            "predecessor_relative_path",
+            "predecessor_sha256",
+            "predecessor_byte_count",
+            "predecessor_line_count",
+            "excluded_prefix_sha256",
+            "excluded_prefix_byte_count",
+            "excluded_prefix_line_count",
+            "active_source_sha256",
+        }
+        if set(boundary) != boundary_required:
+            raise RuntimeError("activity boundary normalization schema is invalid")
+        if (
+            boundary.get("type") != "legacy-active-prefix-1000"
+            or boundary.get("excluded_prefix_line_count") != 1000
+            or boundary.get("active_source_sha256") != row.get("source_sha256")
+        ):
+            raise RuntimeError("activity boundary normalization is invalid")
+    archive_path = _normalize_activity_lineage_archive_path(
+        log_path,
+        row.get("archive_relative_path"),
+    )
+    if validate_archive:
+        if not archive_path.exists():
+            raise RuntimeError("activity lineage archive is missing")
+        compressed, payload = _activity_archive_payload(archive_path)
+        if _sha256_bytes(compressed) != row.get("archive_gzip_sha256"):
+            raise RuntimeError("activity lineage archive gzip digest mismatch")
+        if _sha256_bytes(payload) != row.get("archive_payload_sha256"):
+            raise RuntimeError("activity lineage archive payload digest mismatch")
+        if len(payload) != row.get("archive_byte_count"):
+            raise RuntimeError("activity lineage archive byte count mismatch")
+        if _jsonl_line_count(payload) != row.get("archive_line_count"):
+            raise RuntimeError("activity lineage archive line count mismatch")
+    return archive_path
+
+
+def _load_activity_rotation_lineage_unlocked(
+    log_path: Path,
+    *,
+    validate_archives: bool = True,
+) -> tuple[bytes, list[dict[str, Any]], list[Path]]:
+    lineage_path = activity_rotation_lineage_path(log_path)
+    if not lineage_path.exists():
+        return b"", [], []
+    lineage_bytes = read_regular_file_bytes(
+        lineage_path,
+        source="activity rotation lineage",
+    )
+    if not lineage_bytes:
+        raise RuntimeError("activity lineage file is empty")
+    if not lineage_bytes.endswith(b"\n"):
+        raise RuntimeError("activity lineage file is truncated")
+    rows: list[dict[str, Any]] = []
+    archive_paths: list[Path] = []
+    previous_bytes = b""
+    previous_row: dict[str, Any] | None = None
+    offset = 0
+    seen_sequences: set[int] = set()
+    seen_transactions: set[str] = set()
+    seen_archives: set[Path] = set()
+    boundary_count = 0
+    for expected_sequence, raw_line in enumerate(
+        lineage_bytes.splitlines(keepends=True),
+        start=1,
+    ):
+        if not raw_line.strip():
+            raise RuntimeError("activity lineage contains a blank row")
+        try:
+            row = json.loads(raw_line.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("activity lineage row is unreadable") from exc
+        archive_path = _validate_activity_rotation_lineage_row(
+            log_path,
+            row,
+            expected_sequence=expected_sequence,
+            previous_row=previous_row,
+            previous_lineage_bytes=previous_bytes,
+            validate_archive=validate_archives,
+        )
+        sequence = int(row["sequence"])
+        transaction_id = str(row["transaction_id"])
+        if sequence in seen_sequences:
+            raise RuntimeError("activity lineage duplicate sequence")
+        if transaction_id in seen_transactions:
+            raise RuntimeError("activity lineage duplicate transaction")
+        if archive_path in seen_archives:
+            raise RuntimeError("activity lineage duplicate archive")
+        if row.get("boundary_normalization") is not None:
+            boundary_count += 1
+            if boundary_count > 1:
+                raise RuntimeError("activity lineage has a second boundary exception")
+        seen_sequences.add(sequence)
+        seen_transactions.add(transaction_id)
+        seen_archives.add(archive_path)
+        rows.append(row)
+        archive_paths.append(archive_path)
+        offset += len(raw_line)
+        previous_bytes = lineage_bytes[:offset]
+        previous_row = row
+    return lineage_bytes, rows, archive_paths
+
+
+ACTIVITY_ROTATION_RESOLUTION_ROW_KEYS = frozenset(
+    {
+        "record_type",
+        "schema_version",
+        "resolution_type",
+        "log_name",
+        "sequence",
+        "resolution_id",
+        "previous_resolutions_sha256",
+        "resolved_transaction_id",
+        "intent_schema_version",
+        "intent_sha256",
+        "intent_payload",
+        "archive_relative_path",
+        "archive_gzip_sha256",
+        "archive_payload_sha256",
+        "archive_byte_count",
+        "archive_line_count",
+        "stage_tail_sha256",
+        "stage_tail_byte_count",
+        "stage_tail_line_count",
+        "source_sha256",
+        "source_byte_count",
+        "source_line_count",
+        "superseding_relative_path",
+        "superseding_gzip_sha256",
+        "superseding_payload_sha256",
+        "superseding_byte_count",
+        "superseding_line_count",
+        "post_intent_suffix_sha256",
+        "post_intent_suffix_byte_count",
+        "post_intent_suffix_line_count",
+        "active_sha256",
+        "active_byte_count",
+        "active_line_count",
+        "retained_overlap_sha256",
+        "retained_overlap_byte_count",
+        "retained_overlap_line_count",
+        "post_rotation_suffix_sha256",
+        "post_rotation_suffix_byte_count",
+        "post_rotation_suffix_line_count",
+        "inventory_sha256",
+        "writer_guard_attestation",
+        "preserved_relative_dir",
+    }
+)
+
+_ACTIVITY_RESOLUTION_DIGEST_KEYS = (
+    "previous_resolutions_sha256",
+    "intent_sha256",
+    "archive_gzip_sha256",
+    "archive_payload_sha256",
+    "stage_tail_sha256",
+    "source_sha256",
+    "superseding_gzip_sha256",
+    "superseding_payload_sha256",
+    "post_intent_suffix_sha256",
+    "active_sha256",
+    "retained_overlap_sha256",
+    "post_rotation_suffix_sha256",
+    "inventory_sha256",
+)
+
+_ACTIVITY_RESOLUTION_COUNT_KEYS = (
+    "sequence",
+    "archive_byte_count",
+    "archive_line_count",
+    "stage_tail_byte_count",
+    "stage_tail_line_count",
+    "source_byte_count",
+    "source_line_count",
+    "superseding_byte_count",
+    "superseding_line_count",
+    "post_intent_suffix_byte_count",
+    "post_intent_suffix_line_count",
+    "active_byte_count",
+    "active_line_count",
+    "retained_overlap_byte_count",
+    "retained_overlap_line_count",
+    "post_rotation_suffix_byte_count",
+    "post_rotation_suffix_line_count",
+)
+
+
+def activity_rotation_resolution_id(row: dict[str, Any]) -> str:
+    seed = dict(row)
+    seed["resolution_id"] = ""
+    return "activity-intent-resolution-" + _canonical_json_sha256(seed)
+
+
+def _normalize_activity_resolution_superseding_path(
+    log_path: Path,
+    value: Any,
+) -> Path:
+    relative = Path(str(value or ""))
+    if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+        raise RuntimeError("activity resolution superseding path is invalid")
+    superseding_path = (log_path.parent / relative).resolve()
+    try:
+        superseding_path.relative_to(log_path.parent.resolve())
+    except ValueError as exc:
+        raise RuntimeError(
+            "activity resolution superseding path escapes status root"
+        ) from exc
+    if classify_source(superseding_path) not in ("legacy_ts_std", "legacy_ts_old"):
+        raise RuntimeError(
+            "activity resolution superseding path is not a legacy archive"
+        )
+    return superseding_path
+
+
+def _validated_activity_rotation_resolution_row(
+    log_path: Path,
+    row: Any,
+    *,
+    expected_sequence: int,
+    previous_resolutions_bytes: bytes,
+    validate_archives: bool,
+) -> Path:
+    if not isinstance(row, dict) or set(row) != ACTIVITY_ROTATION_RESOLUTION_ROW_KEYS:
+        raise RuntimeError("activity resolution row schema is not exact")
+    if (
+        row.get("record_type") != ACTIVITY_ROTATION_RESOLUTION_RECORD_TYPE
+        or row.get("schema_version") != ACTIVITY_LOG_ROTATION_SCHEMA_VERSION
+        or row.get("resolution_type") != ACTIVITY_ROTATION_RESOLUTION_TYPE_SUPERSEDED
+        or row.get("log_name") != log_path.name
+        or row.get("sequence") != expected_sequence
+        or row.get("intent_schema_version") != 1
+    ):
+        raise RuntimeError("activity resolution row identity is invalid")
+    for key in _ACTIVITY_RESOLUTION_DIGEST_KEYS:
+        if not isinstance(row.get(key), str) or len(str(row[key])) != 64:
+            raise RuntimeError("activity resolution digest is invalid")
+    for key in _ACTIVITY_RESOLUTION_COUNT_KEYS:
+        if not isinstance(row.get(key), int) or int(row[key]) < 0:
+            raise RuntimeError("activity resolution count is invalid")
+    if (
+        not isinstance(row.get("writer_guard_attestation"), str)
+        or not str(row["writer_guard_attestation"]).strip()
+    ):
+        raise RuntimeError("activity resolution guard attestation is missing")
+    if row.get("previous_resolutions_sha256") != _sha256_bytes(
+        previous_resolutions_bytes
+    ):
+        raise RuntimeError("activity resolution previous digest mismatch")
+    if row.get("resolution_id") != activity_rotation_resolution_id(row):
+        raise RuntimeError("activity resolution id mismatch")
+    intent_payload = validated_schema_v1_rotation_intent(
+        log_path,
+        row.get("intent_payload"),
+    )
+    if (
+        intent_payload["transaction_id"] != row.get("resolved_transaction_id")
+        or intent_payload["archive_relative_path"]
+        != row.get("archive_relative_path")
+        or intent_payload["archive_sha256"] != row.get("archive_payload_sha256")
+        or intent_payload["tail_sha256"] != row.get("stage_tail_sha256")
+        or intent_payload["source_sha256"] != row.get("source_sha256")
+    ):
+        raise RuntimeError("activity resolution intent binding mismatch")
+    preserved_relative = Path(str(row.get("preserved_relative_dir") or ""))
+    if (
+        not preserved_relative.parts
+        or preserved_relative.is_absolute()
+        or ".." in preserved_relative.parts
+    ):
+        raise RuntimeError("activity resolution preserved dir is invalid")
+    if (
+        row["source_byte_count"]
+        != row["archive_byte_count"] + row["stage_tail_byte_count"]
+        or row["source_line_count"]
+        != row["archive_line_count"] + row["stage_tail_line_count"]
+        or row["superseding_byte_count"]
+        != row["source_byte_count"] + row["post_intent_suffix_byte_count"]
+        or row["superseding_line_count"]
+        != row["source_line_count"] + row["post_intent_suffix_line_count"]
+        or row["active_byte_count"]
+        != row["retained_overlap_byte_count"]
+        + row["post_rotation_suffix_byte_count"]
+        or row["active_line_count"]
+        != row["retained_overlap_line_count"]
+        + row["post_rotation_suffix_line_count"]
+    ):
+        raise RuntimeError("activity resolution conservation counts are inconsistent")
+    archive_path = _normalize_activity_lineage_archive_path(
+        log_path,
+        row.get("archive_relative_path"),
+    )
+    superseding_path = _normalize_activity_resolution_superseding_path(
+        log_path,
+        row.get("superseding_relative_path"),
+    )
+    if validate_archives:
+        if not archive_path.exists() and not archive_path.is_symlink():
+            raise RuntimeError("activity resolution superseded archive is missing")
+        compressed, payload = _activity_archive_payload(archive_path)
+        if _sha256_bytes(compressed) != row.get("archive_gzip_sha256"):
+            raise RuntimeError(
+                "activity resolution superseded archive gzip digest mismatch"
+            )
+        if _sha256_bytes(payload) != row.get("archive_payload_sha256"):
+            raise RuntimeError(
+                "activity resolution superseded archive payload digest mismatch"
+            )
+        if len(payload) != row.get("archive_byte_count"):
+            raise RuntimeError(
+                "activity resolution superseded archive byte count mismatch"
+            )
+        if _jsonl_line_count(payload) != row.get("archive_line_count"):
+            raise RuntimeError(
+                "activity resolution superseded archive line count mismatch"
+            )
+        if not superseding_path.exists() and not superseding_path.is_symlink():
+            raise RuntimeError("activity resolution superseding archive is missing")
+        superseding_compressed, superseding_payload = _activity_archive_payload(
+            superseding_path
+        )
+        if _sha256_bytes(superseding_compressed) != row.get("superseding_gzip_sha256"):
+            raise RuntimeError(
+                "activity resolution superseding archive gzip digest mismatch"
+            )
+        if _sha256_bytes(superseding_payload) != row.get(
+            "superseding_payload_sha256"
+        ):
+            raise RuntimeError(
+                "activity resolution superseding archive payload digest mismatch"
+            )
+        if len(superseding_payload) != row.get("superseding_byte_count"):
+            raise RuntimeError(
+                "activity resolution superseding archive byte count mismatch"
+            )
+        if _jsonl_line_count(superseding_payload) != row.get(
+            "superseding_line_count"
+        ):
+            raise RuntimeError(
+                "activity resolution superseding archive line count mismatch"
+            )
+    return archive_path
+
+
+def _load_activity_rotation_resolutions_unlocked(
+    log_path: Path,
+    *,
+    validate_archives: bool = True,
+) -> tuple[bytes, list[dict[str, Any]], list[Path]]:
+    resolutions_path = activity_rotation_resolutions_path(log_path)
+    if not resolutions_path.exists() and not resolutions_path.is_symlink():
+        return b"", [], []
+    resolutions_bytes = read_regular_file_bytes(
+        resolutions_path,
+        source="activity rotation resolutions",
+    )
+    if not resolutions_bytes:
+        raise RuntimeError("activity resolutions file is empty")
+    if not resolutions_bytes.endswith(b"\n"):
+        raise RuntimeError("activity resolutions file is truncated")
+    rows: list[dict[str, Any]] = []
+    archive_paths: list[Path] = []
+    previous_bytes = b""
+    offset = 0
+    seen_ids: set[str] = set()
+    seen_transactions: set[str] = set()
+    seen_archives: set[Path] = set()
+    for expected_sequence, raw_line in enumerate(
+        resolutions_bytes.splitlines(keepends=True),
+        start=1,
+    ):
+        if not raw_line.strip():
+            raise RuntimeError("activity resolutions contains a blank row")
+        try:
+            row = json.loads(raw_line.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("activity resolution row is unreadable") from exc
+        archive_path = _validated_activity_rotation_resolution_row(
+            log_path,
+            row,
+            expected_sequence=expected_sequence,
+            previous_resolutions_bytes=previous_bytes,
+            validate_archives=validate_archives,
+        )
+        resolution_id = str(row["resolution_id"])
+        transaction_id = str(row["resolved_transaction_id"])
+        if resolution_id in seen_ids:
+            raise RuntimeError("activity resolutions duplicate resolution id")
+        if transaction_id in seen_transactions:
+            raise RuntimeError("activity resolutions duplicate transaction")
+        if archive_path in seen_archives:
+            raise RuntimeError("activity resolutions duplicate archive")
+        seen_ids.add(resolution_id)
+        seen_transactions.add(transaction_id)
+        seen_archives.add(archive_path)
+        rows.append(row)
+        archive_paths.append(archive_path)
+        offset += len(raw_line)
+        previous_bytes = resolutions_bytes[:offset]
+    return resolutions_bytes, rows, archive_paths
+
+
+def _validate_active_lineage_head_unlocked(
+    log_path: Path,
+    lineage_bytes: bytes,
+    rows: list[dict[str, Any]],
+) -> None:
+    try:
+        active_bytes = log_path.read_bytes()
+    except FileNotFoundError:
+        active_bytes = b""
+    control, _control_line, tail_and_appended = _split_activity_lineage_head(
+        active_bytes
+    )
+    if not rows:
+        if control is not None:
+            raise RuntimeError(
+                "unexpected active lineage-head control record without lineage"
+            )
+        return
+    if control is None:
+        raise RuntimeError("missing active lineage-head control record")
+    last = rows[-1]
+    expected = {
+        "record_type": ACTIVITY_ROTATION_HEAD_RECORD_TYPE,
+        "schema_version": ACTIVITY_LOG_ROTATION_SCHEMA_VERSION,
+        "log_name": log_path.name,
+        "sequence": last["sequence"],
+        "transaction_id": last["transaction_id"],
+        "archive_payload_sha256": last["archive_payload_sha256"],
+        "archive_gzip_sha256": last["archive_gzip_sha256"],
+        "lineage_sha256": _sha256_bytes(lineage_bytes),
+        "lineage_row_sha256": _canonical_json_sha256(last),
+        "tail_sha256": last["tail_sha256"],
+        "tail_byte_count": last["tail_byte_count"],
+        "tail_line_count": last["tail_line_count"],
+    }
+    if control != expected:
+        raise RuntimeError("active lineage-head control record mismatch")
+    tail_byte_count = int(control["tail_byte_count"])
+    if len(tail_and_appended) < tail_byte_count:
+        raise RuntimeError("active lineage-head retained tail is truncated")
+    retained_tail = tail_and_appended[:tail_byte_count]
+    if _sha256_bytes(retained_tail) != control["tail_sha256"]:
+        raise RuntimeError("active lineage-head retained tail digest mismatch")
+    if _jsonl_line_count(retained_tail) != control["tail_line_count"]:
+        raise RuntimeError("active lineage-head retained tail line count mismatch")
+
+
+def _read_active_payload_without_lineage_head(log_path: Path) -> tuple[bytes, bytes, dict[str, Any] | None]:
+    data = log_path.read_bytes()
+    control, control_line, payload = _split_activity_lineage_head(data)
+    return data, payload, control
 
 
 def _activity_rotation_stage_paths(
@@ -1056,7 +1853,7 @@ def _read_gzip_bytes(path: Path) -> bytes:
 
 
 def recover_activity_log_rotation_unlocked(log_path: Path) -> Path | None:
-    """Finish a durable archive/tail transaction while audit EX is held."""
+    """Finish a durable archive/tail/lineage transaction while audit EX is held."""
 
     log_path = log_path.expanduser().resolve()
     intent = _load_activity_rotation_intent(log_path)
@@ -1070,30 +1867,40 @@ def recover_activity_log_rotation_unlocked(log_path: Path) -> Path | None:
     archive_path = (
         log_path.parent / str(intent["archive_relative_path"])
     ).resolve()
+    lineage_path = activity_rotation_lineage_path(log_path)
 
     try:
-        tail = stage_tail.read_bytes()
+        tail = read_regular_file_bytes(
+            stage_tail,
+            source="activity rotation tail stage",
+        )
     except OSError as exc:
         raise RuntimeError("activity rotation tail stage is missing") from exc
     if hashlib.sha256(tail).hexdigest() != intent["tail_sha256"]:
         raise RuntimeError("activity rotation tail stage digest mismatch")
+    if len(tail) != intent["tail_byte_count"]:
+        raise RuntimeError("activity rotation tail stage byte count mismatch")
+    if _jsonl_line_count(tail) != intent["tail_line_count"]:
+        raise RuntimeError("activity rotation tail stage line count mismatch")
+    active_control = intent["active_control"]
+    active_bytes = _activity_lineage_head_bytes(active_control) + tail
+    if _sha256_bytes(active_bytes) != intent["active_sha256"]:
+        raise RuntimeError("activity rotation active control digest mismatch")
 
-    if stage_archive.is_file():
+    if stage_archive.exists() or stage_archive.is_symlink():
         try:
-            archive_payload = _read_gzip_bytes(stage_archive)
+            _compressed, archive_payload = _activity_archive_payload(stage_archive)
         except (OSError, EOFError, gzip.BadGzipFile) as exc:
             raise RuntimeError("activity rotation archive stage is unreadable") from exc
-    elif archive_path.is_file():
+    elif archive_path.exists() or archive_path.is_symlink():
         try:
-            archive_payload = _read_gzip_bytes(archive_path)
+            _compressed, archive_payload = _activity_archive_payload(archive_path)
         except (OSError, EOFError, gzip.BadGzipFile) as exc:
             raise RuntimeError("activity rotation archive is unreadable") from exc
     else:
         raise RuntimeError("activity rotation archive stage is missing")
-    if hashlib.sha256(archive_payload).hexdigest() != intent["archive_sha256"]:
+    if hashlib.sha256(archive_payload).hexdigest() != intent["archive_payload_sha256"]:
         raise RuntimeError("activity rotation archive digest mismatch")
-    if hashlib.sha256(archive_payload + tail).hexdigest() != intent["source_sha256"]:
-        raise RuntimeError("activity rotation source partition digest mismatch")
 
     if archive_path.exists():
         try:
@@ -1114,15 +1921,45 @@ def recover_activity_log_rotation_unlocked(log_path: Path) -> Path | None:
         raise RuntimeError("activity log is unreadable during recovery") from exc
     active_digest = hashlib.sha256(active).hexdigest() if active is not None else None
     if active_digest == intent["source_sha256"] or active is None:
-        durable_write_bytes(log_path, tail)
-    elif active_digest != intent["tail_sha256"]:
+        durable_write_bytes(log_path, active_bytes)
+    elif active_digest != intent["active_sha256"]:
         raise RuntimeError("activity log changed during rotation recovery")
     _activity_rotation_fault("tail")
 
-    if log_path.read_bytes() != tail:
-        raise RuntimeError("activity rotation tail readback mismatch")
+    row_bytes = _canonical_json_line(intent["lineage_row"])
+    previous_lineage_sha = intent["lineage_previous_sha256"]
+    current_lineage = (
+        read_regular_file_bytes(lineage_path, source="activity rotation lineage")
+        if lineage_path.exists() or lineage_path.is_symlink()
+        else b""
+    )
+    current_lineage_sha = _sha256_bytes(current_lineage)
+    if current_lineage_sha == intent["lineage_sha256"]:
+        pass
+    elif current_lineage_sha == previous_lineage_sha:
+        lineage_bytes = current_lineage + row_bytes
+        if _sha256_bytes(lineage_bytes) != intent["lineage_sha256"]:
+            raise RuntimeError("activity rotation lineage digest mismatch")
+        durable_write_bytes(lineage_path, lineage_bytes)
+    else:
+        raise RuntimeError("activity rotation lineage changed during recovery")
+    _activity_rotation_fault("lineage")
+
+    if log_path.read_bytes() != active_bytes:
+        raise RuntimeError("activity rotation active readback mismatch")
     if _read_gzip_bytes(archive_path) != archive_payload:
         raise RuntimeError("activity rotation archive readback mismatch")
+    lineage_readback = read_regular_file_bytes(
+        lineage_path,
+        source="activity rotation lineage",
+    )
+    if _sha256_bytes(lineage_readback) != intent["lineage_sha256"]:
+        raise RuntimeError("activity rotation lineage readback mismatch")
+    lineage_bytes, rows, _archives = _load_activity_rotation_lineage_unlocked(
+        log_path,
+        validate_archives=True,
+    )
+    _validate_active_lineage_head_unlocked(log_path, lineage_bytes, rows)
 
     intent_path = activity_rotation_intent_path(log_path)
     intent_path.unlink(missing_ok=True)
@@ -1135,6 +1972,8 @@ def recover_activity_log_rotation_unlocked(log_path: Path) -> Path | None:
 def prepare_activity_audit_unlocked(log_path: Path) -> None:
     """Recover rotation and one interrupted, non-newline append under audit EX."""
 
+    if activity_rotation_writer_guard_active():
+        return
     recover_activity_log_rotation_unlocked(log_path)
     repair_activity_log_tail_unlocked(log_path)
 
@@ -1142,7 +1981,8 @@ def prepare_activity_audit_unlocked(log_path: Path) -> None:
 def assert_activity_audit_stable_unlocked(log_path: Path) -> None:
     """Fail closed when a shared reader observes unfinished writer recovery."""
 
-    if activity_rotation_intent_path(log_path).exists():
+    intent_path = activity_rotation_intent_path(log_path)
+    if intent_path.exists() or intent_path.is_symlink():
         raise RuntimeError("activity rotation recovery is pending")
     if log_path.is_file():
         data = log_path.read_bytes()
@@ -1173,6 +2013,135 @@ def repair_activity_log_tail_unlocked(log_path: Path) -> bool:
     return True
 
 
+def _partition_activity_rotation_payload(
+    payload: bytes,
+    *,
+    keep_lines: int,
+) -> tuple[bytes, bytes]:
+    if keep_lines > 0:
+        lines = payload.splitlines(keepends=True)
+        if len(lines) > keep_lines:
+            return b"".join(lines[:-keep_lines]), b"".join(lines[-keep_lines:])
+        return payload, b""
+    return payload, b""
+
+
+def _legacy_activity_source_paths_unlocked(log_path: Path) -> list[Path]:
+    archive_dir = log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR
+    legacy_dir = log_path.parent / ACTIVITY_LOG_LEGACY_ARCHIVE_SUBDIR
+    sources: list[Path] = []
+    sources.extend(sorted(archive_dir.glob(f"{log_path.name}-*.gz")))
+    sources.extend(sorted(legacy_dir.glob(f"{log_path.stem}-*.jsonl.gz")))
+    legacy_old: list[Path] = []
+    legacy_std: list[Path] = []
+    for source in sources:
+        if source.is_symlink():
+            legacy_std.append(source)
+            continue
+        source_class = classify_source(source)
+        if source_class == "content_addressed":
+            continue
+        if source_class == "legacy_ts_old":
+            legacy_old.append(source)
+        elif source_class == "legacy_ts_std":
+            legacy_std.append(source)
+        elif source_class == "unknown":
+            raise RuntimeError(f"Unknown source format: {source.name}")
+    return legacy_old + legacy_std
+
+
+def _activity_source_payload(path: Path) -> bytes:
+    if path.suffix == ".gz":
+        compressed, payload = _activity_archive_payload(path)
+        if not compressed:
+            raise RuntimeError(f"activity source is empty: {path}")
+        return payload
+    return read_regular_file_bytes(path, source="activity audit source")
+
+
+def _suffix_lines(payload: bytes, count: int) -> bytes | None:
+    lines = payload.splitlines(keepends=True)
+    if len(lines) < count:
+        return None
+    return b"".join(lines[-count:])
+
+
+def _prefix_lines(payload: bytes, count: int) -> bytes | None:
+    lines = payload.splitlines(keepends=True)
+    if len(lines) < count:
+        return None
+    return b"".join(lines[:count])
+
+
+def _activity_boundary_normalization_unlocked(
+    log_path: Path,
+    active_payload: bytes,
+    *,
+    source_sha256: str,
+    existing_lineage_rows: list[dict[str, Any]],
+    existing_content_archives: list[Path],
+) -> tuple[bytes, dict[str, Any] | None]:
+    if existing_lineage_rows or existing_content_archives:
+        return active_payload, None
+    legacy_sources = _legacy_activity_source_paths_unlocked(log_path)
+    if not legacy_sources:
+        return active_payload, None
+    predecessor = legacy_sources[-1]
+    predecessor_payload = _activity_source_payload(predecessor)
+    predecessor_lines = predecessor_payload.splitlines(keepends=True)
+    active_lines = active_payload.splitlines(keepends=True)
+    if len(predecessor_lines) < 999 or len(active_lines) < 999:
+        return active_payload, None
+    overlap_len = 0
+    for count in (999, 1000, 1001):
+        if len(predecessor_lines) >= count and len(active_lines) >= count:
+            if b"".join(predecessor_lines[-count:]) == b"".join(active_lines[:count]):
+                overlap_len = count
+    if overlap_len in (999, 1001):
+        raise RuntimeError(
+            f"invalid first content-addressed boundary overlap length {overlap_len}"
+        )
+    prefix_1000 = _prefix_lines(active_payload, 1000)
+    predecessor_suffix_1000 = _suffix_lines(predecessor_payload, 1000)
+    if prefix_1000 is not None and predecessor_suffix_1000 is not None:
+        line_matches = sum(
+            1
+            for prev_line, active_line in zip(
+                predecessor_lines[-1000:],
+                active_lines[:1000],
+            )
+            if prev_line == active_line
+        )
+        if line_matches == 999 and prefix_1000 != predecessor_suffix_1000:
+            raise RuntimeError("invalid first content-addressed boundary mismatch")
+    for older in legacy_sources[:-1]:
+        older_payload = _activity_source_payload(older)
+        older_suffix = _suffix_lines(older_payload, 1000)
+        if (
+            older_suffix is not None
+            and prefix_1000 is not None
+            and older_suffix == prefix_1000
+        ):
+            raise RuntimeError("first content-addressed boundary matches non-adjacent legacy source")
+    if overlap_len != 1000:
+        return active_payload, None
+    excluded_prefix = prefix_1000
+    assert excluded_prefix is not None
+    predecessor_relative = _activity_rotation_relative_path(log_path, predecessor)
+    boundary = {
+        "type": "legacy-active-prefix-1000",
+        "predecessor_relative_path": predecessor_relative,
+        "predecessor_sha256": _sha256_bytes(predecessor_payload),
+        "predecessor_byte_count": len(predecessor_payload),
+        "predecessor_line_count": _jsonl_line_count(predecessor_payload),
+        "excluded_prefix_sha256": _sha256_bytes(excluded_prefix),
+        "excluded_prefix_byte_count": len(excluded_prefix),
+        "excluded_prefix_line_count": 1000,
+        "active_source_sha256": source_sha256,
+    }
+    return active_payload[len(excluded_prefix):], boundary
+
+
 def rotate_activity_log_unlocked(
     log_path: Path,
     *,
@@ -1183,26 +2152,47 @@ def rotate_activity_log_unlocked(
     """Durably partition active bytes into one archive and one active tail."""
 
     log_path = log_path.expanduser().resolve()
+    if activity_rotation_writer_guard_active():
+        return None
     prepare_activity_audit_unlocked(log_path)
     if max_bytes <= 0:
         return None
+    # Validate source order, registered content archives, and any active
+    # lineage-head before deciding whether this writer may publish bytes.
+    existing_sources = activity_audit_source_paths_unlocked(log_path)
     try:
-        data = log_path.read_bytes()
+        data, active_payload, _active_control = _read_active_payload_without_lineage_head(
+            log_path
+        )
     except FileNotFoundError:
         return None
     if len(data) <= max_bytes:
         return None
-    if keep_lines > 0:
-        lines = data.splitlines(keepends=True)
-        if len(lines) > keep_lines:
-            archive_payload = b"".join(lines[:-keep_lines])
-            tail = b"".join(lines[-keep_lines:])
-        else:
-            archive_payload = data
-            tail = b""
-    else:
-        archive_payload = data
-        tail = b""
+    lineage_bytes, lineage_rows, lineage_archives = (
+        _load_activity_rotation_lineage_unlocked(
+            log_path,
+            validate_archives=True,
+        )
+    )
+    existing_content_archives = [
+        source
+        for source in existing_sources
+        if classify_source(source) == "content_addressed"
+    ]
+    source_sha256 = _sha256_bytes(data)
+    source_payload, boundary_normalization = (
+        _activity_boundary_normalization_unlocked(
+            log_path,
+            active_payload,
+            source_sha256=source_sha256,
+            existing_lineage_rows=lineage_rows,
+            existing_content_archives=existing_content_archives,
+        )
+    )
+    archive_payload, tail = _partition_activity_rotation_payload(
+        source_payload,
+        keep_lines=keep_lines,
+    )
     if not archive_payload:
         return None
 
@@ -1217,16 +2207,60 @@ def rotate_activity_log_unlocked(
     except ValueError as exc:
         raise RuntimeError("activity archive directory escapes status root") from exc
     archive_path = archive_dir / f"{log_path.name}-{archive_digest}.gz"
+    if archive_path in lineage_archives:
+        raise RuntimeError("activity rotation archive path is already registered")
+    _, _, superseded_for_rotate = _load_activity_rotation_resolutions_unlocked(
+        log_path,
+        validate_archives=False,
+    )
+    if archive_path.resolve() in {path.resolve() for path in superseded_for_rotate}:
+        raise RuntimeError("activity rotation archive path is already superseded")
+    lineage_relative = activity_rotation_lineage_path(log_path).relative_to(
+        log_path.parent
+    )
+    previous_row = lineage_rows[-1] if lineage_rows else None
+    next_sequence = int(previous_row["sequence"]) + 1 if previous_row else 1
+    previous_transaction_id = (
+        str(previous_row["transaction_id"]) if previous_row else None
+    )
+    previous_lineage_sha = _sha256_bytes(lineage_bytes)
     seed = {
         "schema_version": ACTIVITY_LOG_ROTATION_SCHEMA_VERSION,
         "log_name": log_path.name,
-        "source_sha256": hashlib.sha256(data).hexdigest(),
-        "archive_sha256": archive_digest,
+        "source_sha256": source_sha256,
+        "source_payload_sha256": _sha256_bytes(source_payload),
+        "archive_payload_sha256": archive_digest,
         "tail_sha256": hashlib.sha256(tail).hexdigest(),
+        "tail_byte_count": len(tail),
+        "tail_line_count": _jsonl_line_count(tail),
         "archive_relative_path": str(archive_relative / archive_path.name),
+        "lineage_relative_path": str(lineage_relative),
+        "lineage_previous_sha256": previous_lineage_sha,
+        "lineage_row": {
+            "record_type": ACTIVITY_ROTATION_LINEAGE_RECORD_TYPE,
+            "schema_version": ACTIVITY_LOG_ROTATION_SCHEMA_VERSION,
+            "log_name": log_path.name,
+            "sequence": next_sequence,
+            "transaction_id": "",
+            "archive_relative_path": str(archive_relative / archive_path.name),
+            "archive_payload_sha256": archive_digest,
+            "archive_gzip_sha256": "",
+            "archive_byte_count": len(archive_payload),
+            "archive_line_count": _jsonl_line_count(archive_payload),
+            "source_sha256": source_sha256,
+            "source_payload_sha256": _sha256_bytes(source_payload),
+            "source_byte_count": len(data),
+            "source_line_count": _jsonl_line_count(data),
+            "tail_sha256": hashlib.sha256(tail).hexdigest(),
+            "tail_byte_count": len(tail),
+            "tail_line_count": _jsonl_line_count(tail),
+            "previous_sequence": int(previous_row["sequence"]) if previous_row else 0,
+            "previous_transaction_id": previous_transaction_id,
+            "previous_lineage_sha256": previous_lineage_sha,
+            "boundary_normalization": boundary_normalization,
+        },
     }
     transaction_id = "activity-rotation-" + _canonical_json_sha256(seed)
-    intent = {**seed, "transaction_id": transaction_id}
     rotation_dir = _activity_rotation_dir(log_path)
     rotation_dir.mkdir(parents=True, exist_ok=True)
     stage_archive, stage_tail = _activity_rotation_stage_paths(
@@ -1234,6 +2268,51 @@ def rotate_activity_log_unlocked(
         transaction_id,
     )
     _durable_write_gzip(stage_archive, archive_payload)
+    archive_gzip_sha = _sha256_bytes(
+        read_regular_file_bytes(stage_archive, source="activity rotation archive")
+    )
+    lineage_row = dict(seed["lineage_row"])
+    lineage_row["transaction_id"] = transaction_id
+    lineage_row["archive_gzip_sha256"] = archive_gzip_sha
+    lineage_row_sha = _canonical_json_sha256(lineage_row)
+    lineage_row_bytes = _canonical_json_line(lineage_row)
+    new_lineage_bytes = lineage_bytes + lineage_row_bytes
+    lineage_sha = _sha256_bytes(new_lineage_bytes)
+    active_control = {
+        "record_type": ACTIVITY_ROTATION_HEAD_RECORD_TYPE,
+        "schema_version": ACTIVITY_LOG_ROTATION_SCHEMA_VERSION,
+        "log_name": log_path.name,
+        "sequence": next_sequence,
+        "transaction_id": transaction_id,
+        "archive_payload_sha256": archive_digest,
+        "archive_gzip_sha256": archive_gzip_sha,
+        "lineage_sha256": lineage_sha,
+        "lineage_row_sha256": lineage_row_sha,
+        "tail_sha256": hashlib.sha256(tail).hexdigest(),
+        "tail_byte_count": len(tail),
+        "tail_line_count": _jsonl_line_count(tail),
+    }
+    active_bytes = _activity_lineage_head_bytes(active_control) + tail
+    intent = {
+        "schema_version": ACTIVITY_LOG_ROTATION_SCHEMA_VERSION,
+        "transaction_id": transaction_id,
+        "log_name": log_path.name,
+        "source_sha256": source_sha256,
+        "source_payload_sha256": _sha256_bytes(source_payload),
+        "archive_payload_sha256": archive_digest,
+        "archive_gzip_sha256": archive_gzip_sha,
+        "tail_sha256": hashlib.sha256(tail).hexdigest(),
+        "tail_byte_count": len(tail),
+        "tail_line_count": _jsonl_line_count(tail),
+        "archive_relative_path": str(archive_relative / archive_path.name),
+        "lineage_relative_path": str(lineage_relative),
+        "lineage_previous_sha256": previous_lineage_sha,
+        "lineage_sha256": lineage_sha,
+        "lineage_row_sha256": lineage_row_sha,
+        "lineage_row": lineage_row,
+        "active_control": active_control,
+        "active_sha256": _sha256_bytes(active_bytes),
+    }
     durable_write_bytes(stage_tail, tail)
     write_json(activity_rotation_intent_path(log_path), intent)
     _activity_rotation_fault("intent")
@@ -1256,18 +2335,37 @@ def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
 
     log_path = log_path.expanduser().resolve()
     assert_activity_audit_stable_unlocked(log_path)
-    sources = sorted(
-        (log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR).glob(
-            f"{log_path.name}-*.gz"
+    archive_dir = log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR
+    archive_sources = sorted(archive_dir.glob(f"{log_path.name}-*.gz"))
+    legacy_sources = _legacy_activity_source_paths_unlocked(log_path)
+    lineage_bytes, lineage_rows, lineage_archives = (
+        _load_activity_rotation_lineage_unlocked(
+            log_path,
+            validate_archives=True,
         )
     )
-    sources.extend(
-        sorted(
-            (log_path.parent / ACTIVITY_LOG_LEGACY_ARCHIVE_SUBDIR).glob(
-                f"{log_path.stem}-*.jsonl.gz"
-            )
+    _validate_active_lineage_head_unlocked(log_path, lineage_bytes, lineage_rows)
+    _resolution_bytes, _resolution_rows, superseded_archives = (
+        _load_activity_rotation_resolutions_unlocked(
+            log_path,
+            validate_archives=True,
         )
     )
+    registered_content = {path.resolve() for path in lineage_archives}
+    superseded_content = {path.resolve() for path in superseded_archives}
+    if registered_content & superseded_content:
+        raise RuntimeError(
+            "activity archive is both lineage-registered and resolution-superseded"
+        )
+    discovered_content = [
+        source.resolve()
+        for source in archive_sources
+        if classify_source(source) == "content_addressed"
+    ]
+    if set(discovered_content) != registered_content | superseded_content:
+        raise RuntimeError("activity content-addressed archives do not match lineage")
+    sources = list(legacy_sources)
+    sources.extend(lineage_archives)
     if log_path.is_file():
         sources.append(log_path)
     for source in sources:
@@ -1280,27 +2378,30 @@ def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
             raise RuntimeError(
                 f"activity audit source leaf cannot be a symlink: {source}"
             )
+        source_class = classify_source(source)
+        if source_class == "unknown":
+            raise RuntimeError(f"Unknown source format: {source.name}")
     return sources
 
 
 def classify_source(path: Path) -> str:
     name = path.name
-    if name == "ai-activity-log.jsonl":
+    if name.endswith(".jsonl"):
         return "active"
-    if re.match(r"^ai-activity-log\.jsonl-\d{4}-\d{2}-\d{2}T\d{4}Z\.gz$", name):
+    if re.match(r"^.+\.jsonl-\d{4}-\d{2}-\d{2}T\d{4}Z\.gz$", name):
         return "legacy_ts_std"
-    if re.match(r"^ai-activity-log-\d{8}T\d{6}Z\.jsonl\.gz$", name):
+    if re.match(r"^.+-\d{8}T\d{6}Z\.jsonl\.gz$", name):
         return "legacy_ts_old"
-    if re.match(r"^ai-activity-log\.jsonl-[a-f0-9]{64}\.gz$", name):
+    if re.match(r"^.+\.jsonl-[a-f0-9]{64}\.gz$", name):
         return "content_addressed"
     return "unknown"
 
 
 def extract_timestamp_from_name(name: str) -> str:
-    m = re.match(r"^ai-activity-log\.jsonl-(\d{4}-\d{2}-\d{2}T\d{4})Z\.gz$", name)
+    m = re.match(r"^.+\.jsonl-(\d{4}-\d{2}-\d{2}T\d{4})Z\.gz$", name)
     if m:
         return m.group(1)
-    m = re.match(r"^ai-activity-log-(\d{8}T\d{6})Z\.jsonl\.gz$", name)
+    m = re.match(r"^.+-(\d{8}T\d{6})Z\.jsonl\.gz$", name)
     if m:
         return m.group(1)
     return ""
@@ -1410,6 +2511,21 @@ def _stream_logical_activity_unlocked(
 
                     line_number = 0
                     current_buffer_1001: list[bytes] = []
+                    active_source = source.resolve() == log_path.resolve()
+                    if active_source:
+                        first_position = binary_stream.tell()
+                        first_line = binary_stream.readline()
+                        if first_line:
+                            try:
+                                first_entry = json.loads(
+                                    first_line.decode("utf-8").strip()
+                                )
+                            except (UnicodeError, json.JSONDecodeError):
+                                first_entry = None
+                            if _is_activity_lineage_head(first_entry):
+                                line_number = 1
+                            else:
+                                binary_stream.seek(first_position)
 
                     # Buffer the first 1001 lines of the current file
                     while True:
@@ -1515,6 +2631,10 @@ def _stream_logical_activity_unlocked(
                             raise RuntimeError(f"Bad JSON in {source}:{l_num}: {exc}")
                         if not isinstance(entry, dict):
                             raise RuntimeError(f"activity audit row is not an object: {source}:{l_num}")
+                        if _is_activity_lineage_head(entry):
+                            raise RuntimeError(
+                                f"activity lineage-head control record is not allowed in payload: {source}:{l_num}"
+                            )
 
                         event_id = str(entry.get("event_id") or "").strip()
                         if event_id:
