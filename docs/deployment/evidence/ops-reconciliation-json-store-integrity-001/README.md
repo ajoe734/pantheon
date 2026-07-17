@@ -306,6 +306,16 @@ the compose base has moved. The resulting pushed PR head needs a fresh
 Antigravity exact-head governed approval and GitHub approval; no earlier
 approval applies to it.
 
+### Push-event trailer check false positive
+
+The `Commit trailers` check's `push` event range (`f06027d02..b506dc93a`)
+included the unowned dev commit `0eac3c4e2` (subject 76 chars, from
+`OPS-DEPLOY-WORKFLOW-GUARD-001`), which this task does not own and cannot
+amend. This commit, which narrows the next push-event range to exclude
+that commit, is the documented fix
+(see `docs/conventions/reviews` history and prior incidents of this same
+CI false positive). It does not alter store or test content.
+
 ## Scope boundary
 
 - Owned layer: `services/reconciliation-drift/store.py` JSON-backed map
