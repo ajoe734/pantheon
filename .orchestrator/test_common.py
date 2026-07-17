@@ -1190,6 +1190,90 @@ class LogicalActivityReaderTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, expected):
                     list(common.stream_logical_activity(self.log_path))
 
+    def test_newest_row_and_archive_rollback_fails_for_both_keep_lines(self):
+        # Planner acceptance: removing the newest lineage row plus its
+        # archive from a MULTI-ROW lineage must fail closed for both the
+        # keep_lines=1000 and keep_lines=0 writer shapes.
+        for keep_lines in (0, 1000):
+            with self.subTest(keep_lines=keep_lines):
+                self.tearDown()
+                self.setUp()
+                first, second, _first_control = self._two_content_rotations(
+                    keep_lines=keep_lines,
+                )
+                rows = self._lineage_rows()
+                self.assertEqual(len(rows), 2)
+                self._write_lineage_rows(rows[:-1])
+                second.unlink()
+                self.assertTrue(first.exists())
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "active lineage-head control record mismatch",
+                ):
+                    list(common.stream_logical_activity(self.log_path))
+
+    def test_active_control_field_level_tamper_matrix_fails_closed(self):
+        # Planner acceptance: every bound control field must be tampered
+        # independently, plus stale-control and retained-tail truncation.
+        digest_fields = (
+            "archive_payload_sha256",
+            "archive_gzip_sha256",
+            "lineage_sha256",
+            "lineage_row_sha256",
+            "tail_sha256",
+        )
+        int_fields = ("sequence", "tail_byte_count", "tail_line_count")
+        str_fields = ("transaction_id", "log_name")
+        cases = [(field, "digest") for field in digest_fields]
+        cases += [(field, "int") for field in int_fields]
+        cases += [(field, "str") for field in str_fields]
+        cases += [("schema_version", "int")]
+        for field, kind in cases:
+            with self.subTest(field=field):
+                self.tearDown()
+                self.setUp()
+                self._write_active(self._make_entries(0, 4))
+                with common.activity_audit_lock_file(self.log_path, shared=False):
+                    common.rotate_activity_log_unlocked(
+                        self.log_path,
+                        max_bytes=1,
+                        keep_lines=2,
+                    )
+                active_lines = self.log_path.read_bytes().splitlines(keepends=True)
+                control = json.loads(active_lines[0])
+                if kind == "digest":
+                    control[field] = "0" * 64
+                elif kind == "int":
+                    control[field] = int(control[field]) + 1
+                else:
+                    control[field] = "tampered-" + str(control[field])
+                self.log_path.write_bytes(
+                    common._canonical_json_line(control)
+                    + b"".join(active_lines[1:])
+                )
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "active lineage-head control record mismatch",
+                ):
+                    list(common.stream_logical_activity(self.log_path))
+
+    def test_active_control_retained_tail_truncation_fails_closed(self):
+        self._write_active(self._make_entries(0, 4))
+        with common.activity_audit_lock_file(self.log_path, shared=False):
+            common.rotate_activity_log_unlocked(
+                self.log_path,
+                max_bytes=1,
+                keep_lines=2,
+            )
+        active_lines = self.log_path.read_bytes().splitlines(keepends=True)
+        self.assertGreaterEqual(len(active_lines), 3)
+        self.log_path.write_bytes(b"".join(active_lines[:-1]))
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "retained tail is truncated",
+        ):
+            list(common.stream_logical_activity(self.log_path))
+
     def test_extra_content_archive_and_second_boundary_exception_fail(self):
         legacy_entries = self._make_entries(0, 1500)
         active_entries = self._make_entries(500, 1800)

@@ -735,7 +735,29 @@ ACTIVITY_LOG_ROTATION_SUBDIR = Path(".orchestrator") / "logs" / "activity-rotati
 ACTIVITY_LOG_ROTATION_SCHEMA_VERSION = 2
 ACTIVITY_ROTATION_LINEAGE_RECORD_TYPE = "pantheon.activity.rotation_lineage.v1"
 ACTIVITY_ROTATION_HEAD_RECORD_TYPE = "pantheon.activity.lineage_head.v1"
+ACTIVITY_ROTATION_RESOLUTION_RECORD_TYPE = "pantheon.activity.rotation_resolution.v1"
+ACTIVITY_ROTATION_RESOLUTION_TYPE_SUPERSEDED = "superseded-by-legacy-rotation"
 ACTIVITY_ROTATION_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+ACTIVITY_ROTATION_WRITER_GUARD_ENV = "PANTHEON_ACTIVITY_ROTATION_PAUSE"
+ACTIVITY_LOG_STRANDED_V1_INTENT_ERROR = (
+    "stranded schema-v1 activity rotation intent requires the reviewed "
+    "pending-intent recovery transaction "
+    "(OPS-ACTIVITY-ROTATION-PENDING-INTENT-RECOVERY-001)"
+)
+
+
+def activity_rotation_writer_guard_active() -> bool:
+    """All-writer rotation guard: pauses new rotations and intent recovery.
+
+    Every current-code writer (scripts/ai_status.py append/rotate and the
+    supervisor/watchdog/common writer path) funnels rotation through
+    rotate_activity_log_unlocked/prepare_activity_audit_unlocked, so one
+    environment switch pauses both mechanisms. Old-vintage checkouts do not
+    read this switch; the transition runbook must also stop those processes
+    and read back their absence before relying on the guard.
+    """
+
+    return str(os.environ.get(ACTIVITY_ROTATION_WRITER_GUARD_ENV) or "").strip() == "1"
 
 
 def _activity_log_rotate_threshold(config: dict[str, Any]) -> int:
@@ -981,6 +1003,14 @@ def activity_rotation_lineage_path(log_path: Path) -> Path:
     return _activity_rotation_dir(log_path) / f"{log_path.name}.lineage.jsonl"
 
 
+def activity_rotation_resolutions_path(log_path: Path) -> Path:
+    return _activity_rotation_dir(log_path) / f"{log_path.name}.resolutions.jsonl"
+
+
+def activity_rotation_preserved_dir(log_path: Path, transaction_id: str) -> Path:
+    return _activity_rotation_dir(log_path) / "resolved" / transaction_id
+
+
 def _canonical_json_sha256(payload: Any) -> str:
     encoded = json.dumps(
         payload,
@@ -1159,6 +1189,70 @@ def _validated_activity_rotation_intent(
     return payload
 
 
+SCHEMA_V1_ROTATION_INTENT_KEYS = frozenset(
+    {
+        "schema_version",
+        "transaction_id",
+        "log_name",
+        "source_sha256",
+        "archive_sha256",
+        "tail_sha256",
+        "archive_relative_path",
+    }
+)
+
+
+def validated_schema_v1_rotation_intent(
+    log_path: Path,
+    payload: Any,
+) -> dict[str, Any]:
+    """Validate the exact retired schema-v1 rotation intent contract.
+
+    This is not a compatibility acceptance path for normal readers/writers:
+    only the reviewed pending-intent recovery transaction may consume a
+    schema-v1 intent, and only after proving every byte relationship
+    required by the 2026-07-16 incident plan.
+    """
+
+    if not isinstance(payload, dict) or set(payload) != SCHEMA_V1_ROTATION_INTENT_KEYS:
+        raise RuntimeError("schema-v1 activity rotation intent schema is not exact")
+    seed = {
+        key: payload[key]
+        for key in sorted(SCHEMA_V1_ROTATION_INTENT_KEYS - {"transaction_id"})
+    }
+    expected_id = "activity-rotation-" + _canonical_json_sha256(seed)
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("transaction_id") != expected_id
+        or payload.get("log_name") != log_path.name
+        or any(
+            not isinstance(payload.get(key), str)
+            or len(str(payload[key])) != 64
+            for key in ("source_sha256", "archive_sha256", "tail_sha256")
+        )
+    ):
+        raise RuntimeError("schema-v1 activity rotation intent contract is invalid")
+    relative = Path(str(payload.get("archive_relative_path") or ""))
+    if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+        raise RuntimeError("schema-v1 activity rotation archive path is invalid")
+    archive_path = (log_path.parent / relative).resolve()
+    try:
+        archive_path.relative_to(log_path.parent.resolve())
+    except ValueError as exc:
+        raise RuntimeError(
+            "schema-v1 activity rotation archive escapes status root"
+        ) from exc
+    return payload
+
+
+def _is_schema_v1_rotation_intent_shape(payload: Any) -> bool:
+    return (
+        isinstance(payload, dict)
+        and set(payload) == SCHEMA_V1_ROTATION_INTENT_KEYS
+        and payload.get("schema_version") == 1
+    )
+
+
 def _load_activity_rotation_intent(log_path: Path) -> dict[str, Any] | None:
     path = activity_rotation_intent_path(log_path)
     if not path.exists() and not path.is_symlink():
@@ -1171,6 +1265,10 @@ def _load_activity_rotation_intent(log_path: Path) -> dict[str, Any] | None:
         payload = json.loads(intent_bytes.decode("utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("activity rotation intent is unreadable") from exc
+    if _is_schema_v1_rotation_intent_shape(payload):
+        # Never silently accept or auto-recover a schema-v1 intent in
+        # schema-v2 code: fail closed with an explicit incident-class error.
+        raise RuntimeError(ACTIVITY_LOG_STRANDED_V1_INTENT_ERROR)
     return _validated_activity_rotation_intent(log_path, payload)
 
 
@@ -1387,6 +1485,304 @@ def _load_activity_rotation_lineage_unlocked(
     return lineage_bytes, rows, archive_paths
 
 
+ACTIVITY_ROTATION_RESOLUTION_ROW_KEYS = frozenset(
+    {
+        "record_type",
+        "schema_version",
+        "resolution_type",
+        "log_name",
+        "sequence",
+        "resolution_id",
+        "previous_resolutions_sha256",
+        "resolved_transaction_id",
+        "intent_schema_version",
+        "intent_sha256",
+        "intent_payload",
+        "archive_relative_path",
+        "archive_gzip_sha256",
+        "archive_payload_sha256",
+        "archive_byte_count",
+        "archive_line_count",
+        "stage_tail_sha256",
+        "stage_tail_byte_count",
+        "stage_tail_line_count",
+        "source_sha256",
+        "source_byte_count",
+        "source_line_count",
+        "superseding_relative_path",
+        "superseding_gzip_sha256",
+        "superseding_payload_sha256",
+        "superseding_byte_count",
+        "superseding_line_count",
+        "post_intent_suffix_sha256",
+        "post_intent_suffix_byte_count",
+        "post_intent_suffix_line_count",
+        "active_sha256",
+        "active_byte_count",
+        "active_line_count",
+        "retained_overlap_sha256",
+        "retained_overlap_byte_count",
+        "retained_overlap_line_count",
+        "post_rotation_suffix_sha256",
+        "post_rotation_suffix_byte_count",
+        "post_rotation_suffix_line_count",
+        "inventory_sha256",
+        "writer_guard_attestation",
+        "preserved_relative_dir",
+    }
+)
+
+_ACTIVITY_RESOLUTION_DIGEST_KEYS = (
+    "previous_resolutions_sha256",
+    "intent_sha256",
+    "archive_gzip_sha256",
+    "archive_payload_sha256",
+    "stage_tail_sha256",
+    "source_sha256",
+    "superseding_gzip_sha256",
+    "superseding_payload_sha256",
+    "post_intent_suffix_sha256",
+    "active_sha256",
+    "retained_overlap_sha256",
+    "post_rotation_suffix_sha256",
+    "inventory_sha256",
+)
+
+_ACTIVITY_RESOLUTION_COUNT_KEYS = (
+    "sequence",
+    "archive_byte_count",
+    "archive_line_count",
+    "stage_tail_byte_count",
+    "stage_tail_line_count",
+    "source_byte_count",
+    "source_line_count",
+    "superseding_byte_count",
+    "superseding_line_count",
+    "post_intent_suffix_byte_count",
+    "post_intent_suffix_line_count",
+    "active_byte_count",
+    "active_line_count",
+    "retained_overlap_byte_count",
+    "retained_overlap_line_count",
+    "post_rotation_suffix_byte_count",
+    "post_rotation_suffix_line_count",
+)
+
+
+def activity_rotation_resolution_id(row: dict[str, Any]) -> str:
+    seed = dict(row)
+    seed["resolution_id"] = ""
+    return "activity-intent-resolution-" + _canonical_json_sha256(seed)
+
+
+def _normalize_activity_resolution_superseding_path(
+    log_path: Path,
+    value: Any,
+) -> Path:
+    relative = Path(str(value or ""))
+    if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+        raise RuntimeError("activity resolution superseding path is invalid")
+    superseding_path = (log_path.parent / relative).resolve()
+    try:
+        superseding_path.relative_to(log_path.parent.resolve())
+    except ValueError as exc:
+        raise RuntimeError(
+            "activity resolution superseding path escapes status root"
+        ) from exc
+    if classify_source(superseding_path) not in ("legacy_ts_std", "legacy_ts_old"):
+        raise RuntimeError(
+            "activity resolution superseding path is not a legacy archive"
+        )
+    return superseding_path
+
+
+def _validated_activity_rotation_resolution_row(
+    log_path: Path,
+    row: Any,
+    *,
+    expected_sequence: int,
+    previous_resolutions_bytes: bytes,
+    validate_archives: bool,
+) -> Path:
+    if not isinstance(row, dict) or set(row) != ACTIVITY_ROTATION_RESOLUTION_ROW_KEYS:
+        raise RuntimeError("activity resolution row schema is not exact")
+    if (
+        row.get("record_type") != ACTIVITY_ROTATION_RESOLUTION_RECORD_TYPE
+        or row.get("schema_version") != ACTIVITY_LOG_ROTATION_SCHEMA_VERSION
+        or row.get("resolution_type") != ACTIVITY_ROTATION_RESOLUTION_TYPE_SUPERSEDED
+        or row.get("log_name") != log_path.name
+        or row.get("sequence") != expected_sequence
+        or row.get("intent_schema_version") != 1
+    ):
+        raise RuntimeError("activity resolution row identity is invalid")
+    for key in _ACTIVITY_RESOLUTION_DIGEST_KEYS:
+        if not isinstance(row.get(key), str) or len(str(row[key])) != 64:
+            raise RuntimeError("activity resolution digest is invalid")
+    for key in _ACTIVITY_RESOLUTION_COUNT_KEYS:
+        if not isinstance(row.get(key), int) or int(row[key]) < 0:
+            raise RuntimeError("activity resolution count is invalid")
+    if (
+        not isinstance(row.get("writer_guard_attestation"), str)
+        or not str(row["writer_guard_attestation"]).strip()
+    ):
+        raise RuntimeError("activity resolution guard attestation is missing")
+    if row.get("previous_resolutions_sha256") != _sha256_bytes(
+        previous_resolutions_bytes
+    ):
+        raise RuntimeError("activity resolution previous digest mismatch")
+    if row.get("resolution_id") != activity_rotation_resolution_id(row):
+        raise RuntimeError("activity resolution id mismatch")
+    intent_payload = validated_schema_v1_rotation_intent(
+        log_path,
+        row.get("intent_payload"),
+    )
+    if (
+        intent_payload["transaction_id"] != row.get("resolved_transaction_id")
+        or intent_payload["archive_relative_path"]
+        != row.get("archive_relative_path")
+        or intent_payload["archive_sha256"] != row.get("archive_payload_sha256")
+        or intent_payload["tail_sha256"] != row.get("stage_tail_sha256")
+        or intent_payload["source_sha256"] != row.get("source_sha256")
+    ):
+        raise RuntimeError("activity resolution intent binding mismatch")
+    preserved_relative = Path(str(row.get("preserved_relative_dir") or ""))
+    if (
+        not preserved_relative.parts
+        or preserved_relative.is_absolute()
+        or ".." in preserved_relative.parts
+    ):
+        raise RuntimeError("activity resolution preserved dir is invalid")
+    if (
+        row["source_byte_count"]
+        != row["archive_byte_count"] + row["stage_tail_byte_count"]
+        or row["source_line_count"]
+        != row["archive_line_count"] + row["stage_tail_line_count"]
+        or row["superseding_byte_count"]
+        != row["source_byte_count"] + row["post_intent_suffix_byte_count"]
+        or row["superseding_line_count"]
+        != row["source_line_count"] + row["post_intent_suffix_line_count"]
+        or row["active_byte_count"]
+        != row["retained_overlap_byte_count"]
+        + row["post_rotation_suffix_byte_count"]
+        or row["active_line_count"]
+        != row["retained_overlap_line_count"]
+        + row["post_rotation_suffix_line_count"]
+    ):
+        raise RuntimeError("activity resolution conservation counts are inconsistent")
+    archive_path = _normalize_activity_lineage_archive_path(
+        log_path,
+        row.get("archive_relative_path"),
+    )
+    superseding_path = _normalize_activity_resolution_superseding_path(
+        log_path,
+        row.get("superseding_relative_path"),
+    )
+    if validate_archives:
+        if not archive_path.exists() and not archive_path.is_symlink():
+            raise RuntimeError("activity resolution superseded archive is missing")
+        compressed, payload = _activity_archive_payload(archive_path)
+        if _sha256_bytes(compressed) != row.get("archive_gzip_sha256"):
+            raise RuntimeError(
+                "activity resolution superseded archive gzip digest mismatch"
+            )
+        if _sha256_bytes(payload) != row.get("archive_payload_sha256"):
+            raise RuntimeError(
+                "activity resolution superseded archive payload digest mismatch"
+            )
+        if len(payload) != row.get("archive_byte_count"):
+            raise RuntimeError(
+                "activity resolution superseded archive byte count mismatch"
+            )
+        if _jsonl_line_count(payload) != row.get("archive_line_count"):
+            raise RuntimeError(
+                "activity resolution superseded archive line count mismatch"
+            )
+        if not superseding_path.exists() and not superseding_path.is_symlink():
+            raise RuntimeError("activity resolution superseding archive is missing")
+        superseding_compressed, superseding_payload = _activity_archive_payload(
+            superseding_path
+        )
+        if _sha256_bytes(superseding_compressed) != row.get("superseding_gzip_sha256"):
+            raise RuntimeError(
+                "activity resolution superseding archive gzip digest mismatch"
+            )
+        if _sha256_bytes(superseding_payload) != row.get(
+            "superseding_payload_sha256"
+        ):
+            raise RuntimeError(
+                "activity resolution superseding archive payload digest mismatch"
+            )
+        if len(superseding_payload) != row.get("superseding_byte_count"):
+            raise RuntimeError(
+                "activity resolution superseding archive byte count mismatch"
+            )
+        if _jsonl_line_count(superseding_payload) != row.get(
+            "superseding_line_count"
+        ):
+            raise RuntimeError(
+                "activity resolution superseding archive line count mismatch"
+            )
+    return archive_path
+
+
+def _load_activity_rotation_resolutions_unlocked(
+    log_path: Path,
+    *,
+    validate_archives: bool = True,
+) -> tuple[bytes, list[dict[str, Any]], list[Path]]:
+    resolutions_path = activity_rotation_resolutions_path(log_path)
+    if not resolutions_path.exists() and not resolutions_path.is_symlink():
+        return b"", [], []
+    resolutions_bytes = read_regular_file_bytes(
+        resolutions_path,
+        source="activity rotation resolutions",
+    )
+    if not resolutions_bytes:
+        raise RuntimeError("activity resolutions file is empty")
+    if not resolutions_bytes.endswith(b"\n"):
+        raise RuntimeError("activity resolutions file is truncated")
+    rows: list[dict[str, Any]] = []
+    archive_paths: list[Path] = []
+    previous_bytes = b""
+    offset = 0
+    seen_ids: set[str] = set()
+    seen_transactions: set[str] = set()
+    seen_archives: set[Path] = set()
+    for expected_sequence, raw_line in enumerate(
+        resolutions_bytes.splitlines(keepends=True),
+        start=1,
+    ):
+        if not raw_line.strip():
+            raise RuntimeError("activity resolutions contains a blank row")
+        try:
+            row = json.loads(raw_line.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("activity resolution row is unreadable") from exc
+        archive_path = _validated_activity_rotation_resolution_row(
+            log_path,
+            row,
+            expected_sequence=expected_sequence,
+            previous_resolutions_bytes=previous_bytes,
+            validate_archives=validate_archives,
+        )
+        resolution_id = str(row["resolution_id"])
+        transaction_id = str(row["resolved_transaction_id"])
+        if resolution_id in seen_ids:
+            raise RuntimeError("activity resolutions duplicate resolution id")
+        if transaction_id in seen_transactions:
+            raise RuntimeError("activity resolutions duplicate transaction")
+        if archive_path in seen_archives:
+            raise RuntimeError("activity resolutions duplicate archive")
+        seen_ids.add(resolution_id)
+        seen_transactions.add(transaction_id)
+        seen_archives.add(archive_path)
+        rows.append(row)
+        archive_paths.append(archive_path)
+        offset += len(raw_line)
+        previous_bytes = resolutions_bytes[:offset]
+    return resolutions_bytes, rows, archive_paths
+
+
 def _validate_active_lineage_head_unlocked(
     log_path: Path,
     lineage_bytes: bytes,
@@ -1576,6 +1972,8 @@ def recover_activity_log_rotation_unlocked(log_path: Path) -> Path | None:
 def prepare_activity_audit_unlocked(log_path: Path) -> None:
     """Recover rotation and one interrupted, non-newline append under audit EX."""
 
+    if activity_rotation_writer_guard_active():
+        return
     recover_activity_log_rotation_unlocked(log_path)
     repair_activity_log_tail_unlocked(log_path)
 
@@ -1754,6 +2152,8 @@ def rotate_activity_log_unlocked(
     """Durably partition active bytes into one archive and one active tail."""
 
     log_path = log_path.expanduser().resolve()
+    if activity_rotation_writer_guard_active():
+        return None
     prepare_activity_audit_unlocked(log_path)
     if max_bytes <= 0:
         return None
@@ -1809,6 +2209,12 @@ def rotate_activity_log_unlocked(
     archive_path = archive_dir / f"{log_path.name}-{archive_digest}.gz"
     if archive_path in lineage_archives:
         raise RuntimeError("activity rotation archive path is already registered")
+    _, _, superseded_for_rotate = _load_activity_rotation_resolutions_unlocked(
+        log_path,
+        validate_archives=False,
+    )
+    if archive_path.resolve() in {path.resolve() for path in superseded_for_rotate}:
+        raise RuntimeError("activity rotation archive path is already superseded")
     lineage_relative = activity_rotation_lineage_path(log_path).relative_to(
         log_path.parent
     )
@@ -1939,13 +2345,24 @@ def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
         )
     )
     _validate_active_lineage_head_unlocked(log_path, lineage_bytes, lineage_rows)
+    _resolution_bytes, _resolution_rows, superseded_archives = (
+        _load_activity_rotation_resolutions_unlocked(
+            log_path,
+            validate_archives=True,
+        )
+    )
     registered_content = {path.resolve() for path in lineage_archives}
+    superseded_content = {path.resolve() for path in superseded_archives}
+    if registered_content & superseded_content:
+        raise RuntimeError(
+            "activity archive is both lineage-registered and resolution-superseded"
+        )
     discovered_content = [
         source.resolve()
         for source in archive_sources
         if classify_source(source) == "content_addressed"
     ]
-    if set(discovered_content) != registered_content:
+    if set(discovered_content) != registered_content | superseded_content:
         raise RuntimeError("activity content-addressed archives do not match lineage")
     sources = list(legacy_sources)
     sources.extend(lineage_archives)
