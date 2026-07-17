@@ -7,12 +7,14 @@ import json
 import multiprocessing
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
 import tracemalloc
 import unittest
+from itertools import islice
 from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
@@ -117,6 +119,14 @@ class JsonLoadResilienceTests(unittest.TestCase):
                 "ORCH_TASK_ID",
                 "ORCH_RUNNER_STATUS_PATH",
                 "ORCH_HEARTBEAT_PATH",
+                "PANTHEON_COMMAND_ROOT",
+                "PANTHEON_COMMAND_RUNTIME_SHA",
+                "PANTHEON_COMMAND_REMOTE",
+                "PANTHEON_COMMAND_BASE_REF",
+                "PANTHEON_STATUS_COMMAND_ROOT",
+                "PANTHEON_STATUS_COMMAND_SHA",
+                "PANTHEON_STATUS_COMMAND_REMOTE",
+                "PANTHEON_STATUS_COMMAND_BASE_REF",
             ):
                 env.pop(env_name, None)
             env["PANTHEON_STATUS_ROOT"] = str(status_root)
@@ -410,39 +420,118 @@ class ClaudeAuthTests(unittest.TestCase):
 
 
 class RecentTaskActivityTests(unittest.TestCase):
-    def test_recent_task_activity_reads_from_tail_without_full_log_scan(self) -> None:
+    def test_recent_task_activity_returns_latest_rows_from_validated_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             activity_log = root / "ai-activity-log.jsonl"
-            lines = []
-            for idx in range(40):
-                lines.append(json.dumps({"task_id": f"OTHER-{idx}", "message": f"other-{idx}"}))
-            for idx in range(8):
-                lines.append(json.dumps({"task_id": "TASK-1", "message": f"match-{idx}"}))
-            activity_log.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-            result = common._recent_task_activity({"paths": {"activity_log": str(activity_log)}}, "TASK-1", limit=3)
-
-        self.assertEqual([entry["message"] for entry in result], ["match-5", "match-6", "match-7"])
-
-    def test_recent_task_activity_ignores_partial_tail_line(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            activity_log = root / "ai-activity-log.jsonl"
+            archive_dir = root / "archive" / "logs"
+            archive_dir.mkdir(parents=True)
+            archive = (
+                archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+            )
+            archived = [
+                {
+                    "event_id": f"archived-{idx}",
+                    "task_id": "TASK-1",
+                    "message": f"match-{idx}",
+                }
+                for idx in range(5)
+            ]
+            with gzip.open(archive, "wt", encoding="utf-8") as handle:
+                handle.write("".join(json.dumps(row) + "\n" for row in archived))
+            active = [
+                {
+                    "event_id": f"active-{idx}",
+                    "task_id": "TASK-1",
+                    "message": f"match-{idx + 5}",
+                }
+                for idx in range(3)
+            ]
             activity_log.write_text(
-                "\n".join(
-                    [
-                        json.dumps({"task_id": "TASK-1", "message": "older"}),
-                        json.dumps({"task_id": "TASK-1", "message": "newer"}),
-                    ]
-                )
-                + '\n{"task_id": "TASK-1", "message": "partial"',
+                "".join(json.dumps(row) + "\n" for row in active),
                 encoding="utf-8",
             )
 
             result = common._recent_task_activity({"paths": {"activity_log": str(activity_log)}}, "TASK-1", limit=3)
 
-        self.assertEqual([entry["message"] for entry in result], ["older", "newer"])
+        self.assertEqual([entry["message"] for entry in result], ["match-5", "match-6", "match-7"])
+
+    def test_recent_task_activity_rejects_late_invalid_row_before_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            activity_log = root / "ai-activity-log.jsonl"
+            activity_log.write_text(
+                json.dumps(
+                    {
+                        "event_id": "valid-first",
+                        "task_id": "TASK-1",
+                        "message": "must-not-return",
+                    }
+                )
+                + "\n{bad late json}\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "Bad JSON"):
+                common._recent_task_activity(
+                    {"paths": {"activity_log": str(activity_log)}},
+                    "TASK-1",
+                    limit=3,
+                )
+
+    def test_recent_task_activity_rejects_duplicate_keys_in_active_and_gzip(self) -> None:
+        ambiguous = (
+            '{"event_id":"ambiguous","task_id":"OTHER",'
+            '"task_id":"TASK-1","metadata":{"role":"a","role":"b"}}\n'
+        )
+        for source_kind in ("active", "gzip"):
+            with self.subTest(source=source_kind), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                activity_log = root / "ai-activity-log.jsonl"
+                if source_kind == "active":
+                    activity_log.write_text(ambiguous, encoding="utf-8")
+                else:
+                    archive_dir = root / "archive" / "logs"
+                    archive_dir.mkdir(parents=True)
+                    archive = (
+                        archive_dir
+                        / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+                    )
+                    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+                        handle.write(ambiguous)
+
+                with self.assertRaisesRegex(RuntimeError, "duplicate JSON key"):
+                    common._recent_task_activity(
+                        {"paths": {"activity_log": str(activity_log)}},
+                        "TASK-1",
+                        limit=3,
+                    )
+
+    def test_recent_task_activity_fails_closed_on_partial_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            activity_log = root / "ai-activity-log.jsonl"
+            activity_log.write_text(
+                json.dumps(
+                    {
+                        "event_id": "complete",
+                        "task_id": "TASK-1",
+                        "message": "older",
+                    }
+                )
+                + '\n{"task_id":"TASK-1","message":"partial"',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "interrupted trailing row",
+            ):
+                common._recent_task_activity(
+                    {"paths": {"activity_log": str(activity_log)}},
+                    "TASK-1",
+                    limit=3,
+                )
 
 
 class StableCanonicalLockPathTests(unittest.TestCase):
@@ -558,6 +647,31 @@ class StableCanonicalLockPathTests(unittest.TestCase):
                     nonblocking=False,
                 ):
                     self.fail("replaced sidecar pathname must never be admitted")
+
+    def test_stable_sidecar_identity_validation_eagain_is_propagated(self) -> None:
+        """Verify that an EAGAIN OSError raised from the post-flock identity validation
+        is propagated and NOT converted to LockContentionError."""
+        import errno
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            lock_path = root / "task-state.lock"
+
+            def fake_assert(*args, **kwargs):
+                raise OSError(errno.EAGAIN, "EAGAIN during validation")
+
+            with (
+                mock.patch("common._assert_stable_lock_identity", fake_assert),
+                self.assertRaises(OSError) as ctx,
+            ):
+                with common.stable_sidecar_lock(
+                    lock_path,
+                    plane="task_state",
+                    shared=False,
+                    nonblocking=True,
+                ):
+                    self.fail("should not reach here")
+            self.assertEqual(ctx.exception.errno, errno.EAGAIN)
+            self.assertNotIsInstance(ctx.exception, common.LockContentionError)
 
     def test_pid_change_resets_inherited_thread_local_state(self) -> None:
         fake_handle = mock.Mock()
@@ -1693,7 +1807,7 @@ class LogicalActivityReaderTests(unittest.TestCase):
         stream = common.stream_logical_activity(self.log_path)
         with self.assertRaisesRegex(
             RuntimeError,
-            "path contains a symlink",
+            "(?:path contains a symlink|source leaf cannot be a symlink)",
         ):
             next(stream)
 
@@ -1728,6 +1842,39 @@ class LogicalActivityReaderTests(unittest.TestCase):
             ctx.exception.diagnostic["invariant"],
             "activity_source_path",
         )
+
+    def test_active_log_symlink_swap_during_leaf_guard_is_rejected(self):
+        self._write_active([{"event_id": "original"}])
+        target = self.root / "external-activity.jsonl"
+        target.write_text(
+            json.dumps({"event_id": "redirected"}) + "\n",
+            encoding="utf-8",
+        )
+        real_is_symlink = Path.is_symlink
+        swapped = False
+
+        def swap_after_leaf_check(path: Path) -> bool:
+            nonlocal swapped
+            result = real_is_symlink(path)
+            if path == self.log_path and not swapped:
+                swapped = True
+                self.log_path.unlink()
+                self.log_path.symlink_to(target)
+            return result
+
+        with mock.patch.object(
+            Path,
+            "is_symlink",
+            autospec=True,
+            side_effect=swap_after_leaf_check,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "(?:activity audit source leaf|canonical activity-audit data file) "
+                "cannot be a symlink|activity audit source path contains a symlink",
+            ):
+                list(common.stream_logical_activity(self.log_path))
+        self.assertTrue(swapped)
 
     def test_source_replacement_and_mutation_during_read(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
@@ -1807,6 +1954,45 @@ class LogicalActivityReaderTests(unittest.TestCase):
             ):
                 next(gen)
 
+    def test_aba_mutation_cannot_change_bytes_parsed_into_snapshot(self):
+        original = b'{"event_id":"original"}\n'
+        attacker = b'{"event_id":"attacker"}\n'
+        self.assertEqual(len(original), len(attacker))
+        self.log_path.write_bytes(original)
+        stat_before = self.log_path.stat()
+        real_hash = common._sha256_file_descriptor
+        hash_calls = 0
+
+        def mutate_after_first_hash(descriptor: int) -> str:
+            nonlocal hash_calls
+            hash_calls += 1
+            if hash_calls == 1:
+                digest = real_hash(descriptor)
+                self.log_path.write_bytes(attacker)
+                os.utime(
+                    self.log_path,
+                    ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns),
+                )
+                return digest
+            if hash_calls == 2:
+                self.log_path.write_bytes(original)
+                os.utime(
+                    self.log_path,
+                    ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns),
+                )
+            return real_hash(descriptor)
+
+        with mock.patch.object(
+            common,
+            "_sha256_file_descriptor",
+            side_effect=mutate_after_first_hash,
+        ):
+            entries = list(common.stream_logical_activity(self.log_path))
+
+        self.assertGreaterEqual(hash_calls, 2)
+        self.assertEqual([entry[0]["event_id"] for entry in entries], ["original"])
+        self.assertEqual(self.log_path.read_bytes(), original)
+
     def test_late_validation_failure_precedes_first_row_and_collapse_callback(self):
         entries = self._make_entries(0, 1500)
         successor_entries = self._make_entries(500, 1001)
@@ -1830,6 +2016,17 @@ class LogicalActivityReaderTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Bad JSON"):
             next(stream)
         self.assertEqual(callbacks, [])
+
+    def test_islice_cannot_hide_late_validation_failure(self):
+        self.log_path.write_text(
+            json.dumps({"event_id": "first", "message": "must-not-return"})
+            + "\n{bad late json}\n",
+            encoding="utf-8",
+        )
+
+        stream = common.stream_logical_activity(self.log_path)
+        with self.assertRaisesRegex(RuntimeError, "Bad JSON"):
+            list(islice(stream, 1))
 
     def test_duplicate_json_keys_rejected_before_first_row_in_active_and_gzip(self):
         ambiguous_rows = {
@@ -1866,6 +2063,47 @@ class LogicalActivityReaderTests(unittest.TestCase):
                     ):
                         next(stream)
                     self.assertEqual(source.read_bytes(), before)
+
+    def test_activity_control_records_reject_duplicate_json_keys(self):
+        self.log_path.write_text(
+            '{"record_type":"activity_rotation_head",'
+            '"record_type":"activity_rotation_head"}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "duplicate JSON key"):
+            list(common.stream_logical_activity(self.log_path))
+        self.log_path.unlink()
+
+        intent_path = common.activity_rotation_intent_path(self.log_path)
+        common.ensure_parent(intent_path)
+        intent_path.write_text(
+            '{"schema_version":2,"schema_version":2}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "intent is unreadable"):
+            common._load_activity_rotation_intent(self.log_path)
+        intent_path.unlink()
+
+        lineage_path = common.activity_rotation_lineage_path(self.log_path)
+        common.ensure_parent(lineage_path)
+        lineage_path.write_text(
+            '{"sequence":1,"sequence":1}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "lineage row is unreadable"):
+            common._load_activity_rotation_lineage_unlocked(self.log_path)
+        lineage_path.unlink()
+
+        resolutions_path = common.activity_rotation_resolutions_path(
+            self.log_path
+        )
+        common.ensure_parent(resolutions_path)
+        resolutions_path.write_text(
+            '{"sequence":1,"sequence":1}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "resolution row is unreadable"):
+            common._load_activity_rotation_resolutions_unlocked(self.log_path)
 
     def test_validation_snapshot_memory_is_bounded_by_window_not_history(self):
         row_count = 12000
@@ -2371,7 +2609,9 @@ class LogicalActivityReaderTests(unittest.TestCase):
         self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
 
         created_paths: list[str] = []
+        connections: list[sqlite3.Connection] = []
         original_tempfile = common.tempfile.NamedTemporaryFile
+        original_open_snapshot = common._open_ephemeral_activity_snapshot_database
 
         def tracking_tempfile(*args, **kwargs):
             handle = original_tempfile(*args, **kwargs)
@@ -2381,23 +2621,41 @@ class LogicalActivityReaderTests(unittest.TestCase):
                 created_paths.append(handle.name)
             return handle
 
+        def tracking_open_snapshot() -> sqlite3.Connection:
+            connection = original_open_snapshot()
+            connections.append(connection)
+            return connection
+
         def assert_all_snapshots_unlinked() -> None:
             self.assertTrue(created_paths)
             self.assertTrue(all(not os.path.exists(path) for path in created_paths))
 
-        with mock.patch.object(
-            common.tempfile,
-            "NamedTemporaryFile",
-            side_effect=tracking_tempfile,
+        def assert_connection_closed(connection: sqlite3.Connection) -> None:
+            with self.assertRaises(sqlite3.ProgrammingError):
+                connection.execute("SELECT 1")
+
+        with (
+            mock.patch.object(
+                common.tempfile,
+                "NamedTemporaryFile",
+                side_effect=tracking_tempfile,
+            ),
+            mock.patch.object(
+                common,
+                "_open_ephemeral_activity_snapshot_database",
+                side_effect=tracking_open_snapshot,
+            ),
         ):
             # Case 1: success. The live SQLite connection retains the disk
             # allocation, but its pathname is already gone before first yield.
             gen = common.stream_logical_activity(self.log_path)
             next(gen)
             assert_all_snapshots_unlinked()
-
+            self.assertEqual(connections[-1].execute("SELECT 1").fetchone(), (1,))
+            success_connection = connections[-1]
             list(gen)
             assert_all_snapshots_unlinked()
+            assert_connection_closed(success_connection)
 
             # Case 2: validation failure.
             self._write_gz(
@@ -2411,24 +2669,50 @@ class LogicalActivityReaderTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "duplicate activity event_id"):
                 next(gen)
             assert_all_snapshots_unlinked()
+            assert_connection_closed(connections[-1])
 
             # Case 3: explicit generator close.
             self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
             gen = common.stream_logical_activity(self.log_path)
             next(gen)
             assert_all_snapshots_unlinked()
+            explicit_close_connection = connections[-1]
             gen.close()
             assert_all_snapshots_unlinked()
+            assert_connection_closed(explicit_close_connection)
 
             # Case 4: a consumer exception followed by explicit close.
             gen = common.stream_logical_activity(self.log_path)
+            consumer_exception_connection: sqlite3.Connection | None = None
             with self.assertRaisesRegex(RuntimeError, "consumer failed"):
                 try:
                     next(gen)
+                    consumer_exception_connection = connections[-1]
                     raise RuntimeError("consumer failed")
                 finally:
                     gen.close()
             assert_all_snapshots_unlinked()
+            self.assertIsNotNone(consumer_exception_connection)
+            assert_connection_closed(consumer_exception_connection)
+
+    def test_deliberate_break_occurs_after_full_validation_and_explicit_close(self):
+        self._write_active(self._make_entries(0, 3))
+        real_final_validation = common._assert_activity_sources_stable_unlocked
+
+        with mock.patch.object(
+            common,
+            "_assert_activity_sources_stable_unlocked",
+            wraps=real_final_validation,
+        ) as final_validation:
+            stream = common.stream_logical_activity(self.log_path)
+            observed = []
+            for entry, _source, _line_number in stream:
+                observed.append(entry["event_id"])
+                break
+
+            self.assertEqual(observed, ["event-0"])
+            final_validation.assert_called_once()
+            stream.close()
 
     def test_validation_complete_event_lookup_omits_unrequested_payloads(self):
         entries = [

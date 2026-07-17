@@ -7,11 +7,11 @@
   },
   "files": {
     "specs/agora/v10/persona_interaction_daily.schema.json": "1c5eae77368b1c70cef790e7605efa5f1d5e18793e37b55a0e1df33dfcf70bba",
-    "specs/agora/v10/capability_manifest_v1_9.json": "5c3b4f68e5c9d31969a0a62510d49f3f2a957346743e7445708dca825c63dce6"
+    "specs/agora/v10/capability_manifest_v1_9.json": "927094f40f1f51e8e5edb8e627fb2cb5ae2512216edd9810cc9ce2d050343312"
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_9.openapi.yaml",
-    "sha256": "f67884a653d6aec0b62c2e2322fafaf040ce61fa4d58c84d84fd801e92d111fe"
+    "sha256": "f8974da8b83c2118507141f9a99b4a45485a3f5b1a4b70f765bfb85e51b7f043"
   },
   "required_definition_checksums": {
     "AuthorityBoundary": "65e3a1b8ff7cd9bfd033e92b22a62870e94e8903e17bbf5908d55063cc6d3f27",
@@ -37,7 +37,11 @@
     "persona_interaction_daily_contract": [
       "GET /bff/agora/interactions",
       "POST /bff/agora/interactions",
-      "GET /bff/agora/interactions/{interaction_id}"
+      "GET /bff/agora/interactions/{interaction_id}",
+      "GET /bff/agora/interactions/{interaction_id}/timeline",
+      "POST /bff/agora/interactions/{interaction_id}:retry",
+      "POST /bff/agora/interactions:recover",
+      "GET /bff/agora/interactions/{interaction_id}/stream"
     ],
     "persona_recommended_measure_governance_contract": [
       "POST /bff/agora/interactions/{interaction_id}/recommended-measures/{measure_id}/candidates",
@@ -47,11 +51,11 @@
       "GET /bff/agora/proposals/{proposal_id}/validations/{validation_receipt_id}"
     ]
   },
-  "implementation_status": "contract_only",
+  "implementation_status": "partially_implemented",
   "contract_refs": {
     "product_truth": "docs/bff/execution-tasks/2026-07-17-persona-daily-strict-operator/PINT-011-CONTRACT.md",
     "superseded_daily_interpretation": "docs/bff/execution-tasks/2026-07-12-persona-interaction/PINT-010-R2-EVIDENCE.md",
     "runtime_implementation_tasks": ["PINT-012", "PINT-013", "PINT-014"]
   },
-  "note": "Additive contract-only extension over exact v1.8 bytes. It does not claim the planned routes are live and grants no execution authority."
+  "note": "Additive extension over exact v1.8 bytes. PINT-013 implements the durable Persona interaction route family; remaining v1.9 governance routes retain their per-capability contract status. This does not claim hosted deployment and grants no execution authority."
 }

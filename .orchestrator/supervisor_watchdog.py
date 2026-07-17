@@ -19,7 +19,7 @@ ROOT = THIS_DIR.parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from common import config_path, durable_write_bytes, load_config, repo_root_for_config, utc_now, write_activity_log
+from common import config_path, durable_write_bytes, load_config, repo_root_for_config, utc_now, write_activity_log, LockContentionError
 from runtime_state import runtime_state_lock, save_runtime_state
 
 
@@ -389,6 +389,7 @@ def append_watchdog_contention_metric(config: dict[str, Any], payload: dict[str,
     lock_path = path.with_suffix(".lock")
     flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 
+    lock_descriptor = None
     try:
         lock_descriptor = os.open(lock_path, flags, 0o600)
         try:
@@ -428,7 +429,8 @@ def append_watchdog_contention_metric(config: dict[str, Any], payload: dict[str,
 
         fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
     finally:
-        os.close(lock_descriptor)
+        if lock_descriptor is not None:
+            os.close(lock_descriptor)
 
 
 def load_runtime_state_file(config: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
@@ -447,7 +449,13 @@ def load_runtime_state_file(config: dict[str, Any]) -> tuple[dict[str, Any], str
     return raw, None
 
 
-def resource_snapshot(config: dict[str, Any], runtime_state: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+def resource_snapshot(
+    config: dict[str, Any],
+    runtime_state: dict[str, Any],
+    settings: dict[str, Any],
+    *,
+    skip_proc_scan: bool = False,
+) -> dict[str, Any]:
     state_path = config_path(config, "state_file")
     usage = os.statvfs(str(ROOT))
     disk_free_gb = (usage.f_bavail * usage.f_frsize) / (1024 ** 3)
@@ -465,7 +473,13 @@ def resource_snapshot(config: dict[str, Any], runtime_state: dict[str, Any], set
         load_1m = float(os.getloadavg()[0])
     except OSError:
         load_1m = 0.0
-    live_worker_identities, worker_scan_error = scan_live_worker_runner_identities()
+
+    if skip_proc_scan:
+        live_worker_identities = set()
+        worker_scan_error = "skipped_during_lock_contention"
+    else:
+        live_worker_identities, worker_scan_error = scan_live_worker_runner_identities()
+
     recorded_worker_count = active_worker_count(runtime_state)
     if worker_scan_error:
         # The explicit scan error below suppresses restart.  Keep the larger
@@ -692,16 +706,16 @@ def summarize_decision(
 
 
 def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:
+    lock_manager = runtime_state_lock(
+        config,
+        shared=False,
+        nonblocking=True,
+    )
+    acquired = False
     try:
-        with runtime_state_lock(
-            config,
-            shared=False,
-            nonblocking=True,
-        ):
-            return _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
-    except (BlockingIOError, OSError) as exc:
-        if not (isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK)):
-            raise
+        lock_manager.__enter__()
+        acquired = True
+    except LockContentionError:
         # We hit lock contention.
         # Construct a skip/contention result without writing to the locked state files.
         now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -709,7 +723,7 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
         runtime_state, state_error = load_runtime_state_file(config)
         heartbeat_age = heartbeat_age_seconds(runtime_state, now)
         settings = watchdog_settings(config)
-        resource = resource_snapshot(config, runtime_state, settings)
+        resource = resource_snapshot(config, runtime_state, settings, skip_proc_scan=True)
         lock_held = supervisor_lock_held(config)
 
         result = {
@@ -727,10 +741,20 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
 
         try:
             append_watchdog_contention_metric(config, result, settings)
-        except Exception:
-            pass
+        except Exception as metric_exc:
+            sys.stderr.write(f"watchdog contention metric write failed: {metric_exc}\n")
+            sys.stderr.flush()
 
         return result
+
+    try:
+        result = _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
+    except BaseException:
+        lock_manager.__exit__(*sys.exc_info())
+        raise
+    else:
+        lock_manager.__exit__(None, None, None)
+    return result
 
 
 def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:

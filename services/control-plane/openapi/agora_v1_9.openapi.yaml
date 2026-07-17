@@ -8,9 +8,9 @@ info:
     readback, independent selected-Persona OpenClaw invocations, typed opinions,
     structured recommended measures, and governed candidate decisions.
 
-    Every route in this extension is contract_only until PINT-012 through
-    PINT-014 implement it. In particular, the existing interaction simulator is
-    not conformant: production opinions cannot be canned, fixture-backed,
+    The durable interaction and provider-content routes are implemented by
+    PINT-013; recommended-measure governance remains contract_only under its
+    owning task. Production opinions cannot be canned, fixture-backed,
     keyword-driven, or triggered by magic topic text. Provider failure must be
     represented as failed/degraded invocation state without a forged opinion.
 
@@ -21,7 +21,7 @@ info:
     reviewer, decision time, and expiry.
   x-extends-contract: "services/control-plane/specs/agora/bundle_index.v1_8.json"
   x-capability-manifest: "services/control-plane/specs/agora/v10/capability_manifest_v1_9.json"
-  x-implementation-status: contract_only
+  x-implementation-status: partially_implemented
 servers:
   - url: "{bff_base}"
     variables:
@@ -81,7 +81,12 @@ components:
     PageSize:
       name: page_size
       in: query
-      schema: {type: integer, minimum: 1, maximum: 200, default: 20}
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+    LastEventId:
+      name: Last-Event-ID
+      in: header
+      required: false
+      schema: {type: string, minLength: 1}
   schemas:
     InteractionSubmitRequestV2:
       $ref: "../specs/agora/v10/persona_interaction_daily.schema.json#/definitions/InteractionSubmitRequestV2"
@@ -194,7 +199,7 @@ paths:
     get:
       operationId: listDailyPersonaInteractions
       summary: List durable Persona interactions for the authenticated operator scope
-      x-implementation-status: contract_only
+      x-implementation-status: implemented
       parameters:
         - {$ref: "#/components/parameters/XTenantId"}
         - {$ref: "#/components/parameters/PageToken"}
@@ -211,7 +216,7 @@ paths:
       operationId: submitDailyPersonaInteraction
       summary: Queue independent provider-backed Persona invocations
       description: No canned, magic-topic, simulator, or fixture-backed opinion can satisfy this route contract.
-      x-implementation-status: contract_only
+      x-implementation-status: implemented
       parameters:
         - {$ref: "#/components/parameters/XTenantId"}
         - {$ref: "#/components/parameters/IdempotencyKey"}
@@ -233,7 +238,7 @@ paths:
     get:
       operationId: getDailyPersonaInteraction
       summary: Read immutable request, invocations, independent opinions, synthesis, and failures
-      x-implementation-status: contract_only
+      x-implementation-status: implemented
       parameters:
         - {$ref: "#/components/parameters/InteractionId"}
         - {$ref: "#/components/parameters/XTenantId"}
@@ -246,6 +251,86 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+  /bff/agora/interactions/{interaction_id}/timeline:
+    get:
+      operationId: getDailyPersonaInteractionTimeline
+      summary: Read the durable projection/outbox timeline
+      x-implementation-status: implemented
+      parameters:
+        - {$ref: "#/components/parameters/InteractionId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+      responses:
+        "200":
+          description: Durable interaction timeline
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /bff/agora/interactions/{interaction_id}:retry:
+    post:
+      operationId: retryDailyPersonaInteraction
+      summary: Retry a failed or degraded interaction as a new immutable provider attempt
+      x-implementation-status: implemented
+      parameters:
+        - {$ref: "#/components/parameters/InteractionId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string, minLength: 1, maxLength: 500}
+              additionalProperties: false
+      responses:
+        "202":
+          description: Retry command durably admitted
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/InteractionEnvelope"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /bff/agora/interactions:recover:
+    post:
+      operationId: recoverDailyPersonaInteractions
+      summary: Resume queued/running attempts and drain durable projections
+      x-implementation-status: implemented
+      parameters:
+        - {$ref: "#/components/parameters/XTenantId"}
+      responses:
+        "202":
+          description: Recovery pass accepted
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /bff/agora/interactions/{interaction_id}/stream:
+    get:
+      operationId: streamDailyPersonaInteraction
+      summary: Replay durable interaction events and continue as SSE
+      x-implementation-status: implemented
+      parameters:
+        - {$ref: "#/components/parameters/InteractionId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/LastEventId"}
+      responses:
+        "200":
+          description: text/event-stream backed by the durable outbox
+          content:
+            text/event-stream:
+              schema: {type: string}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
   /bff/agora/interactions/{interaction_id}/recommended-measures/{measure_id}/candidates:
     post:
       operationId: createCandidateFromPersonaRecommendedMeasure

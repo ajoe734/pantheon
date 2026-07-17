@@ -52,6 +52,49 @@ def _jsonl(entries: list[dict]) -> bytes:
     ).encode("utf-8")
 
 
+class StrictRecoveryParserTests(unittest.TestCase):
+    def test_active_and_gzip_payload_event_ids_reject_duplicate_keys(self):
+        ambiguous = (
+            b'{"event_id":"first","event_id":"second",'
+            b'"metadata":{"role":"a","role":"b"}}\n'
+        )
+        for source in ("active activity log", "superseding gzip payload"):
+            with self.subTest(source=source), self.assertRaisesRegex(
+                recovery.RecoveryProofError,
+                "duplicate JSON key",
+            ):
+                recovery._event_ids(ambiguous, source=source)
+
+    def test_pending_intent_rejects_duplicate_control_keys(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            log_path = root / "ai-activity-log.jsonl"
+            intent_path = common.activity_rotation_intent_path(log_path)
+            intent_path.parent.mkdir(parents=True)
+            intent_path.write_text(
+                '{"schema_version":1,"schema_version":1}\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                recovery.RecoveryProofError,
+                "pending rotation intent contains duplicate JSON key",
+            ):
+                recovery.capture_inventory(root)
+
+    def test_pinned_manifest_rejects_duplicate_control_keys(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "inventory.json"
+            path.write_text(
+                '{"proof":{"version":1},"proof":{"version":2}}\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                recovery.RecoveryProofError,
+                "pinned inventory manifest contains duplicate JSON key",
+            ):
+                recovery._load_pinned_manifest(str(path))
+
+
 class PendingIntentIncidentFixture(unittest.TestCase):
     """Builds the exact stranded-intent incident inside an isolated root."""
 
@@ -818,7 +861,10 @@ class ResolutionReaderContractTests(PendingIntentIncidentFixture):
         backup = archive.with_name(f"{archive.name}.bak")
         archive.replace(shadow)
         backup.symlink_to(shadow)
-        with self.assertRaisesRegex(RuntimeError, "regular file"):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "regular file|path contains a symlink",
+        ):
             common.activity_audit_source_paths_unlocked(self.log_path)
 
     def test_superseding_archive_tamper_fails_closed(self):
@@ -837,7 +883,10 @@ class ResolutionReaderContractTests(PendingIntentIncidentFixture):
         shadow = path.with_name(path.name + ".shadow")
         shutil.move(path, shadow)
         path.symlink_to(shadow)
-        with self.assertRaisesRegex(RuntimeError, "regular file"):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "regular file|path contains a symlink",
+        ):
             common.activity_audit_source_paths_unlocked(self.log_path)
 
     def test_rotation_rejects_publishing_onto_superseded_archive_path(self):

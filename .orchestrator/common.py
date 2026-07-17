@@ -17,14 +17,14 @@ import uuid
 import hashlib
 import urllib.error
 import urllib.request
-from contextlib import contextmanager
 from collections import deque
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import local
-from typing import Any, Mapping, Generator, Callable, Iterable
+from typing import Any, Mapping, Generator, Callable, Iterable, Final
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
@@ -176,6 +176,12 @@ def _trace_stable_lock(action: str, plane: str, path: Path) -> None:
         os.close(descriptor)
 
 
+import errno
+
+class LockContentionError(BlockingIOError):
+    """Raised when a non-blocking lock request fails due to contention."""
+    pass
+
 @contextmanager
 def stable_sidecar_lock(
     path: str | Path,
@@ -245,7 +251,16 @@ def stable_sidecar_lock(
         operation |= fcntl.LOCK_NB
     _trace_stable_lock("request", plane, lock_path)
     try:
-        fcntl.flock(handle.fileno(), operation)
+        try:
+            fcntl.flock(handle.fileno(), operation)
+        except (BlockingIOError, OSError) as exc:
+            if nonblocking and (isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK)):
+                raise LockContentionError(
+                    errno.EAGAIN,
+                    f"lock contention on {lock_path}: {exc}",
+                    str(lock_path),
+                ) from exc
+            raise
         # A pathname swap between open(2) and flock(2) would otherwise leave
         # this process holding an orphaned inode while the next contender opens
         # the replacement.  Verify the pathname still names our locked FD.
@@ -440,6 +455,21 @@ def resolve_path(value: str | Path | None) -> Path | None:
     return path
 
 
+def _first_symlink_component(path: Path) -> Path | None:
+    current = Path(path.anchor)
+    parts = path.parts[1:] if path.is_absolute() else path.parts
+    for part in parts:
+        current = current / part
+        try:
+            if current.is_symlink():
+                return current
+            if not current.exists():
+                return None
+        except OSError:
+            return current
+    return None
+
+
 def relpath(path: Path) -> str:
     try:
         return str(path.relative_to(ROOT))
@@ -500,14 +530,199 @@ def delivery_status_root(config: dict[str, Any], metadata: dict[str, Any] | None
     return repo_root
 
 
+STATUS_COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
+STATUS_COMMAND_SHA_ENV = "PANTHEON_COMMAND_RUNTIME_SHA"
+STATUS_COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
+STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
+LEGACY_STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
+LEGACY_STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
+LEGACY_STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
+LEGACY_STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_STATUS_COMMAND_BASE_REF"
+
+
+def _git_stdout(cwd: Path, args: list[str]) -> str:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "git command failed").strip()
+        raise RuntimeError(detail)
+    return proc.stdout.strip()
+
+
+def normalize_github_repo_slug(value: str | None) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    candidate = candidate.removesuffix(".git")
+    if candidate.startswith("git@github.com:"):
+        candidate = candidate[len("git@github.com:") :]
+    elif candidate.startswith("ssh://git@github.com/"):
+        candidate = candidate[len("ssh://git@github.com/") :]
+    elif candidate.startswith("https://github.com/"):
+        candidate = candidate[len("https://github.com/") :]
+    elif candidate.startswith("http://github.com/"):
+        candidate = candidate[len("http://github.com/") :]
+    return candidate.strip("/")
+
+
+def status_command_expected_remote(config: dict[str, Any]) -> str:
+    configured = str(((config.get("github_bus") or {}).get("repo")) or "").strip()
+    return configured or "ajoe734/pantheon"
+
+
+def status_command_base_ref(config: dict[str, Any]) -> str:
+    branch = str(((config.get("branch_workflow") or {}).get("dev_branch")) or "dev").strip() or "dev"
+    return f"origin/{branch}"
+
+
+def validate_status_command_runtime(
+    root: Path,
+    *,
+    expected_sha: str | None = None,
+    expected_remote: str | None = None,
+    base_ref: str | None = None,
+    require_merged: bool = True,
+) -> dict[str, str]:
+    """Validate the installed status command checkout without reading task state."""
+
+    if not root.is_absolute():
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be an absolute path")
+    symlink_component = _first_symlink_component(root)
+    if symlink_component is not None:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} cannot include a symlink component: {symlink_component}"
+        )
+    resolved = root.resolve()
+    if not resolved.exists() or not resolved.is_dir():
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} does not exist or is not a directory: {resolved}")
+    git_root = _git_stdout(resolved, ["rev-parse", "--show-toplevel"])
+    if Path(git_root).resolve() != resolved:
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be a git repository root: {resolved}")
+
+    source_sha = _git_stdout(resolved, ["rev-parse", "HEAD"])
+    if expected_sha and source_sha != expected_sha:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_SHA_ENV} mismatch: command root is {source_sha}, expected {expected_sha}"
+        )
+
+    expected_slug = normalize_github_repo_slug(expected_remote)
+    remote_url = _git_stdout(resolved, ["remote", "get-url", "origin"])
+    actual_slug = normalize_github_repo_slug(remote_url)
+    if expected_slug and actual_slug != expected_slug:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} remote mismatch: {actual_slug or remote_url} != {expected_slug}"
+        )
+
+    if require_merged:
+        target_ref = str(base_ref or "origin/dev").strip() or "origin/dev"
+        _git_stdout(resolved, ["rev-parse", "--verify", target_ref])
+        proc = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", source_sha, target_ref],
+            cwd=resolved,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            suffix = f": {detail}" if detail else ""
+            raise RuntimeError(
+                f"{STATUS_COMMAND_ROOT_ENV} source SHA {source_sha} is not merged into {target_ref}{suffix}"
+            )
+    else:
+        target_ref = str(base_ref or "").strip()
+
+    return {
+        "root": str(resolved),
+        "source_sha": source_sha,
+        "remote": expected_slug or actual_slug,
+        "base_ref": target_ref,
+    }
+
+
+def status_command_runtime_record_from_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Return the supervisor-issued command runtime fields safe for state files."""
+
+    return {
+        "command_root": str(env.get(STATUS_COMMAND_ROOT_ENV) or ""),
+        "source_sha": str(env.get(STATUS_COMMAND_SHA_ENV) or ""),
+        "remote": str(env.get(STATUS_COMMAND_REMOTE_ENV) or ""),
+        "base_ref": str(env.get(STATUS_COMMAND_BASE_REF_ENV) or ""),
+    }
+
+
+def _status_command_runtime_env_from_record(record: Mapping[str, Any]) -> dict[str, str] | None:
+    raw_root = str(record.get("command_root") or record.get("root") or "").strip()
+    raw_sha = str(record.get("source_sha") or record.get("runtime_sha") or "").strip()
+    if not raw_root or not raw_sha:
+        return None
+    remote = str(record.get("remote") or "").strip()
+    base_ref = str(record.get("base_ref") or "").strip() or "origin/dev"
+    metadata = validate_status_command_runtime(
+        Path(raw_root).expanduser(),
+        expected_sha=raw_sha,
+        expected_remote=remote or None,
+        base_ref=base_ref,
+        require_merged=False,
+    )
+    return {
+        STATUS_COMMAND_ROOT_ENV: metadata["root"],
+        STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
+        STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
+        STATUS_COMMAND_BASE_REF_ENV: base_ref,
+        LEGACY_STATUS_COMMAND_ROOT_ENV: metadata["root"],
+        LEGACY_STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
+        LEGACY_STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
+        LEGACY_STATUS_COMMAND_BASE_REF_ENV: base_ref,
+    }
+
+
+def status_command_runtime_env(
+    config: dict[str, Any],
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
+    if isinstance(metadata, Mapping):
+        issued = metadata.get("status_command_runtime")
+        if isinstance(issued, Mapping):
+            issued_env = _status_command_runtime_env_from_record(issued)
+            if issued_env is not None:
+                return issued_env
+
+    expected_remote = status_command_expected_remote(config)
+    base_ref = status_command_base_ref(config)
+    metadata = validate_status_command_runtime(
+        ROOT.resolve(),
+        expected_remote=expected_remote,
+        base_ref=base_ref,
+        require_merged=False,
+    )
+    return {
+        STATUS_COMMAND_ROOT_ENV: metadata["root"],
+        STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
+        STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
+        STATUS_COMMAND_BASE_REF_ENV: base_ref,
+        LEGACY_STATUS_COMMAND_ROOT_ENV: metadata["root"],
+        LEGACY_STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
+        LEGACY_STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
+        LEGACY_STATUS_COMMAND_BASE_REF_ENV: base_ref,
+    }
+
+
 def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> dict[str, str]:
     workspace_root = delivery_workspace_root(config, metadata)
     status_root = delivery_status_root(config, metadata)
-    return {
+    env = {
         "PANTHEON_WORKTREE_ROOT": str(workspace_root),
         "PANTHEON_STATUS_ROOT": str(status_root),
         "ORCH_WORKSPACE_PATH": str(workspace_root),
     }
+    env.update(status_command_runtime_env(config, metadata))
+    return env
 
 
 def github_cli_config_dir(env: Mapping[str, str] | None = None) -> Path:
@@ -1184,7 +1399,9 @@ class HistoricalActivityOverlapException:
     overlap_line_count: int
 
 
-HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS = (
+HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS: Final[
+    tuple[HistoricalActivityOverlapException, ...]
+] = (
     HistoricalActivityOverlapException(
         predecessor_name="ai-activity-log.jsonl-2026-05-24T1237Z.gz",
         predecessor_gzip_sha256=(
@@ -1544,6 +1761,18 @@ def _stream_activity_archive_metrics(path: Path) -> _ActivityArchiveMetrics:
         source="activity rotation archive",
     )
     try:
+        path_stat_before = path.lstat()
+    except OSError as exc:
+        raise RuntimeError(
+            f"activity rotation archive is unreadable: {path}"
+        ) from exc
+    if stat.S_ISLNK(path_stat_before.st_mode) or not stat.S_ISREG(
+        path_stat_before.st_mode
+    ):
+        raise RuntimeError(
+            f"activity rotation archive must be a regular file: {path}"
+        )
+    try:
         descriptor = os.open(
             path,
             os.O_RDONLY
@@ -1554,7 +1783,6 @@ def _stream_activity_archive_metrics(path: Path) -> _ActivityArchiveMetrics:
         raise RuntimeError(f"activity rotation archive is unreadable: {path}") from exc
     try:
         descriptor_stat = os.fstat(descriptor)
-        path_stat_before = path.lstat()
         if (
             not stat.S_ISREG(descriptor_stat.st_mode)
             or stat.S_ISLNK(path_stat_before.st_mode)
@@ -1612,8 +1840,6 @@ def _stream_activity_archive_metrics(path: Path) -> _ActivityArchiveMetrics:
         )
     finally:
         os.close(descriptor)
-
-
 def _stream_activity_archive_tail(path: Path, line_count: int) -> bytes:
     """Read a bounded decompressed tail while pinning one stable archive FD."""
 
@@ -2178,10 +2404,9 @@ def _validated_activity_rotation_resolution_row(
                 raise RuntimeError(
                     "activity resolution superseded archive is missing"
                 )
-            # Operators preserve incident artifacts with this exact suffix.
-            # The backup is safe only as a validation source: all pinned
-            # compressed/payload digests and conservation counts below still
-            # have to match, and read_regular_file_bytes rejects symlinks.
+            # A preserved incident backup is only a validation source. The
+            # resolution row's compressed/payload digests and counts below
+            # still have to match, and the streaming reader rejects symlinks.
             validation_path = backup_path
         metrics = _stream_activity_archive_metrics(validation_path)
         if metrics.gzip_sha256 != row.get("archive_gzip_sha256"):
@@ -2923,10 +3148,7 @@ def _rotate_activity_log_if_needed(
 def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
     """Return disjoint rotated sources plus active while audit SH/EX is held."""
 
-    log_path = _assert_no_symlink_components(
-        log_path,
-        source="activity log",
-    )
+    log_path = _resolved_activity_log_path(log_path)
     assert_activity_audit_stable_unlocked(log_path)
     archive_dir = _assert_no_symlink_components(
         log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR,
@@ -2999,6 +3221,8 @@ def classify_source(path: Path) -> str:
         return "active"
     if re.match(r"^.+\.jsonl-\d{4}-\d{2}-\d{2}T\d{4}Z\.gz$", name):
         return "legacy_ts_std"
+    if re.match(r"^.+\.jsonl-\d{4}\.gz$", name):
+        return "legacy_ts_std"
     if re.match(r"^.+-\d{8}T\d{6}Z\.jsonl\.gz$", name):
         return "legacy_ts_old"
     if re.match(r"^.+\.jsonl-[a-f0-9]{64}\.gz$", name):
@@ -3047,6 +3271,51 @@ def _sha256_file_descriptor(descriptor: int) -> str:
         hasher.update(chunk)
     os.lseek(descriptor, 0, os.SEEK_SET)
     return hasher.hexdigest()
+
+
+def _snapshot_activity_source_descriptor(
+    descriptor: int,
+    *,
+    source: Path,
+    expected_size: int,
+) -> tuple[Any, str, int]:
+    """Copy one live source into a private file and bind the copied raw bytes.
+
+    Parsing the live descriptor after hashing leaves an ABA window: a writer
+    can replace same-size bytes, let the reader consume them, then restore the
+    original bytes before final validation.  The private temporary file makes
+    the parsed bytes immutable to external writers; its digest must also match
+    a fresh digest of the still-open live descriptor before it is returned.
+    """
+
+    snapshot_file = tempfile.TemporaryFile(
+        mode="w+b",
+        prefix="pantheon-activity-source-",
+        suffix=".raw",
+    )
+    hasher = hashlib.sha256()
+    byte_count = 0
+    try:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            snapshot_file.write(chunk)
+            hasher.update(chunk)
+            byte_count += len(chunk)
+        snapshot_file.flush()
+        raw_sha256 = hasher.hexdigest()
+        if (
+            byte_count != expected_size
+            or _sha256_file_descriptor(descriptor) != raw_sha256
+        ):
+            raise RuntimeError(f"Source changed while snapshotting: {source}")
+        snapshot_file.seek(0)
+        return snapshot_file, raw_sha256, byte_count
+    except BaseException:
+        snapshot_file.close()
+        raise
 
 
 def _validate_historical_activity_source(
@@ -3102,7 +3371,11 @@ def _assert_activity_sources_stable_unlocked(
     final_sources = _ordered_activity_sources_unlocked(log_path)
     if [str(source) for source in final_sources] != [str(source) for source in sources]:
         raise RuntimeError("activity audit source set changed during validation")
+    if len(sources) != len(snapshots):
+        raise RuntimeError("activity source snapshot count mismatch")
     for source, snapshot in zip(sources, snapshots):
+        if source != snapshot.path:
+            raise RuntimeError("activity source snapshot identity mismatch")
         descriptor = os.open(
             source,
             os.O_RDONLY
@@ -3182,12 +3455,31 @@ def _build_logical_activity_snapshot_unlocked(
     log_path: Path,
     *,
     capture_logical_entries: bool = True,
+    recent_task_id: str | None = None,
+    recent_limit: int | None = None,
 ) -> sqlite3.Connection:
     """Validate every source into an unlink-on-create, disk-backed snapshot."""
+
+    if (recent_task_id is None) != (recent_limit is None):
+        raise RuntimeError("recent activity snapshot query is incomplete")
+    if recent_task_id is not None and (
+        capture_logical_entries
+        or not isinstance(recent_task_id, str)
+        or not recent_task_id
+        or recent_task_id != recent_task_id.strip()
+        or not isinstance(recent_limit, int)
+        or recent_limit <= 0
+    ):
+        raise RuntimeError("recent activity snapshot query is invalid")
 
     sources = _ordered_activity_sources_unlocked(log_path)
     conn = _open_ephemeral_activity_snapshot_database()
     snapshots: list[_ActivitySourceSnapshot] = []
+    recent_entries: deque[tuple[str, str, int]] | None = (
+        deque(maxlen=recent_limit)
+        if recent_task_id is not None and recent_limit is not None
+        else None
+    )
     try:
         conn.execute(
             "CREATE TABLE seen_events (event_id TEXT PRIMARY KEY, digest TEXT)"
@@ -3214,6 +3506,24 @@ def _build_logical_activity_snapshot_unlocked(
             "line_count INTEGER NOT NULL, byte_count INTEGER NOT NULL, "
             "sha256 TEXT NOT NULL)"
         )
+
+        def capture_entry(
+            entry: dict[str, Any],
+            decoded: str,
+            source: Path,
+            line_number: int,
+        ) -> None:
+            if capture_logical_entries:
+                conn.execute(
+                    "INSERT INTO logical_entries "
+                    "(payload, source_path, line_number) VALUES (?, ?, ?)",
+                    (decoded, str(source), line_number),
+                )
+                return
+            if recent_entries is not None and (
+                str(entry.get("task_id") or "").strip() == recent_task_id
+            ):
+                recent_entries.append((decoded, str(source), line_number))
 
         prev_source: Path | None = None
         prev_source_payload_sha256: str | None = None
@@ -3254,7 +3564,6 @@ def _build_logical_activity_snapshot_unlocked(
                 | getattr(os, "O_CLOEXEC", 0)
                 | getattr(os, "O_NOFOLLOW", 0),
             )
-            descriptor_owned = True
             try:
                 descriptor_stat = os.fstat(descriptor)
                 if not stat.S_ISREG(descriptor_stat.st_mode):
@@ -3266,7 +3575,13 @@ def _build_logical_activity_snapshot_unlocked(
                     or path_stat_before.st_ino != descriptor_stat.st_ino
                 ):
                     raise RuntimeError(f"Source is a symlink or changed: {source}")
-                raw_sha256 = _sha256_file_descriptor(descriptor)
+                file_obj, raw_sha256, raw_byte_count = (
+                    _snapshot_activity_source_descriptor(
+                        descriptor,
+                        source=source,
+                        expected_size=descriptor_stat.st_size,
+                    )
+                )
                 snapshot = _ActivitySourceSnapshot(
                     path=source,
                     st_dev=descriptor_stat.st_dev,
@@ -3276,8 +3591,6 @@ def _build_logical_activity_snapshot_unlocked(
                     raw_sha256=raw_sha256,
                 )
 
-                file_obj = os.fdopen(descriptor, "rb")
-                descriptor_owned = False
                 try:
                     binary_stream = (
                         gzip.GzipFile(fileobj=file_obj, mode="rb")
@@ -3539,21 +3852,13 @@ def _build_logical_activity_snapshot_unlocked(
                             physical_line_number,
                             is_collapsed_prefix=is_collapsed,
                         )
-                        if (
-                            processed is not None
-                            and not is_collapsed
-                            and capture_logical_entries
-                        ):
-                            _entry, decoded = processed
-                            conn.execute(
-                                "INSERT INTO logical_entries "
-                                "(payload, source_path, line_number) "
-                                "VALUES (?, ?, ?)",
-                                (
-                                    decoded,
-                                    str(source),
-                                    physical_line_number,
-                                ),
+                        if processed is not None and not is_collapsed:
+                            entry, decoded = processed
+                            capture_entry(
+                                entry,
+                                decoded,
+                                source,
+                                physical_line_number,
                             )
                     conn.commit()
 
@@ -3574,18 +3879,9 @@ def _build_logical_activity_snapshot_unlocked(
                             line_number,
                             is_collapsed_prefix=False,
                         )
-                        if processed is not None and capture_logical_entries:
-                            _entry, decoded = processed
-                            conn.execute(
-                                "INSERT INTO logical_entries "
-                                "(payload, source_path, line_number) "
-                                "VALUES (?, ?, ?)",
-                                (
-                                    decoded,
-                                    str(source),
-                                    line_number,
-                                ),
-                            )
+                        if processed is not None:
+                            entry, decoded = processed
+                            capture_entry(entry, decoded, source, line_number)
                         if current_line_count % 1000 == 0:
                             conn.commit()
 
@@ -3628,7 +3924,7 @@ def _build_logical_activity_snapshot_unlocked(
                     _validate_historical_activity_source(
                         source,
                         raw_sha256=raw_sha256,
-                        raw_byte_count=descriptor_stat.st_size,
+                        raw_byte_count=raw_byte_count,
                         payload_sha256=source_payload_sha256,
                         payload_byte_count=current_byte_count,
                         payload_line_count=current_line_count,
@@ -3660,10 +3956,15 @@ def _build_logical_activity_snapshot_unlocked(
                     )
                 snapshots.append(snapshot)
             finally:
-                if descriptor_owned:
-                    os.close(descriptor)
+                os.close(descriptor)
 
         _assert_activity_sources_stable_unlocked(log_path, sources, snapshots)
+        if recent_entries is not None:
+            conn.executemany(
+                "INSERT INTO logical_entries "
+                "(payload, source_path, line_number) VALUES (?, ?, ?)",
+                recent_entries,
+            )
         conn.commit()
     except BaseException:
         conn.close()
@@ -3737,6 +4038,62 @@ def validated_activity_event_digests_unlocked(
         conn.close()
 
 
+def _resolved_activity_log_path(log_path: Path) -> Path:
+    requested_log_path = log_path.expanduser()
+    if requested_log_path.is_symlink():
+        raise RuntimeError(
+            f"activity audit source leaf cannot be a symlink: {requested_log_path}"
+        )
+    # Keep the lexical path so an ancestor alias cannot silently relocate the
+    # governed status root. The component walk also closes the leaf swap
+    # window between the compatibility check above and later O_NOFOLLOW opens.
+    return _assert_no_symlink_components(
+        requested_log_path,
+        source="activity audit source",
+    )
+
+
+def validated_recent_task_activity(
+    log_path: Path,
+    task_id: str,
+    *,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    """Return recent task rows only after validating all logical history.
+
+    The validation pass retains at most ``limit`` matching rows in Python
+    memory and exposes none until source ordering, identity, content, JSON,
+    and overlap checks complete under the shared activity lock.
+    """
+
+    if (
+        not isinstance(task_id, str)
+        or not task_id
+        or task_id != task_id.strip()
+        or not isinstance(limit, int)
+        or limit <= 0
+    ):
+        raise RuntimeError("recent task activity request is not canonical")
+    resolved_log_path = _resolved_activity_log_path(log_path)
+    with activity_audit_lock_file(resolved_log_path, shared=True):
+        snapshot = _build_logical_activity_snapshot_unlocked(
+            resolved_log_path,
+            capture_logical_entries=False,
+            recent_task_id=task_id,
+            recent_limit=limit,
+        )
+    try:
+        return [
+            entry
+            for entry, _source, _line_number in _replay_logical_activity_snapshot(
+                snapshot,
+                None,
+            )
+        ]
+    finally:
+        snapshot.close()
+
+
 def stream_logical_activity(
     log_path: Path,
     on_collapse: Callable[[Path | None, Path, int, int, str], None] | None = None,
@@ -3753,10 +4110,7 @@ def stream_logical_activity(
     snapshot: sqlite3.Connection | None = None
     try:
         try:
-            log_path = _assert_no_symlink_components(
-                requested_log_path,
-                source="activity log",
-            )
+            log_path = _resolved_activity_log_path(requested_log_path)
             with activity_audit_lock_file(log_path, shared=True):
                 snapshot = _build_logical_activity_snapshot_unlocked(log_path)
         except RuntimeError as exc:
@@ -4127,53 +4481,7 @@ def task_brief_path(task_id: str | None) -> Path:
 
 def _recent_task_activity(config: dict[str, Any], task_id: str, *, limit: int = 6) -> list[dict[str, Any]]:
     path = config_path(config, "activity_log")
-    with activity_audit_lock_file(path, shared=True, nonblocking=False):
-        if not path.exists():
-            return []
-
-        entries: list[dict[str, Any]] = []
-        chunk_size = 64 * 1024
-        max_scan_bytes = 16 * 1024 * 1024
-        scanned = 0
-
-        with path.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            position = handle.tell()
-            buffer = b""
-
-            while position > 0 and len(entries) < limit and scanned < max_scan_bytes:
-                read_size = min(chunk_size, position)
-                position -= read_size
-                handle.seek(position)
-                chunk = handle.read(read_size)
-                scanned += read_size
-                buffer = chunk + buffer
-                lines = buffer.splitlines()
-
-                if position > 0:
-                    buffer = lines[0] if lines else buffer
-                    complete_lines = lines[1:]
-                else:
-                    buffer = b""
-                    complete_lines = lines
-
-                for raw_line in reversed(complete_lines):
-                    line = raw_line.decode("utf-8", errors="ignore").strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = json.loads(line)
-                    except json.JSONDecodeError:
-                        # Ignore a partially-written tail line rather than stalling dispatch.
-                        continue
-                    if str(entry.get("task_id") or "").strip() != task_id:
-                        continue
-                    entries.append(entry)
-                    if len(entries) >= limit:
-                        break
-
-        entries.reverse()
-        return entries
+    return validated_recent_task_activity(path, task_id, limit=limit)
 
 
 def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None:

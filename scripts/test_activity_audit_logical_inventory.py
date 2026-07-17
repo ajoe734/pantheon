@@ -537,6 +537,33 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         self.assertEqual((self.status_root / "evidence" / "summary.json").read_bytes(), summary_before)
         self.assertEqual((self.status_root / "evidence" / "evidence.md").read_bytes(), evidence_before)
 
+    def test_source_insertion_between_physical_and_logical_passes_fails(self):
+        self.log_path.write_text(
+            json.dumps({"event_id": "initial-active"}) + "\n",
+            encoding="utf-8",
+        )
+        inserted = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-07-17T1700Z.gz"
+        )
+        real_stream = common.stream_logical_activity
+
+        def stream_after_insertion(*args, **kwargs):
+            self._write_gz(inserted, [{"event_id": "inserted-archive"}])
+            return real_stream(*args, **kwargs)
+
+        with mock.patch(
+            "scripts.activity_audit_logical_inventory.stream_logical_activity",
+            side_effect=stream_after_insertion,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "source set changed between physical and logical passes",
+            ):
+                inventory.generate_inventory(
+                    status_root=self.status_root,
+                    evidence_dir=self.status_root / "evidence",
+                )
+
     def test_pinned_pair_success(self):
         b1, b2 = self._get_hermetic_pinned_bytes()
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
@@ -559,18 +586,124 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
     def test_production_pinned_registry_metadata_is_exact(self):
         self.assertEqual(len(self.production_pinned_registry), 1)
         exception = self.production_pinned_registry[0]
-        self.assertIsInstance(
+        self.assertEqual(
             exception,
-            common.HistoricalActivityOverlapException,
+            common.HistoricalActivityOverlapException(
+                predecessor_name=(
+                    "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
+                ),
+                predecessor_gzip_sha256=(
+                    "ad7dd174e0278a3c21b10024cd227f0d138052dd0945bc3b24159538d87ed6c5"
+                ),
+                predecessor_gzip_byte_count=772038,
+                predecessor_payload_sha256=(
+                    "8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57"
+                ),
+                predecessor_payload_byte_count=5326818,
+                predecessor_line_count=1001,
+                successor_name=(
+                    "ai-activity-log.jsonl-2026-05-24T1239Z.gz"
+                ),
+                successor_gzip_sha256=(
+                    "d211e27bc5337c8eff200e14d48800f949658e6c8b43d9fd22e54ea8c77061da"
+                ),
+                successor_gzip_byte_count=771941,
+                successor_payload_sha256=(
+                    "da6a102178c82fb4eca8d0794ed5b419f0c97770e0ad63542dde0033e7efa3ff"
+                ),
+                successor_payload_byte_count=5326326,
+                successor_line_count=1001,
+                overlap_sha256=(
+                    "0a3b56f720a5aa493d8968edfff8e32e0df98e410f6334d6790f10a06019f247"
+                ),
+                overlap_byte_count=5325808,
+                overlap_line_count=999,
+            ),
         )
-        self.assertEqual(exception.predecessor_gzip_byte_count, 772038)
-        self.assertEqual(exception.predecessor_payload_byte_count, 5326818)
-        self.assertEqual(exception.predecessor_line_count, 1001)
-        self.assertEqual(exception.successor_gzip_byte_count, 771941)
-        self.assertEqual(exception.successor_payload_byte_count, 5326326)
-        self.assertEqual(exception.successor_line_count, 1001)
-        self.assertEqual(exception.overlap_line_count, 999)
-        self.assertEqual(exception.overlap_byte_count, 5325808)
+
+    def test_pinned_pair_same_payload_with_different_gzip_fails(self):
+        predecessor_payload, successor_payload = self._get_hermetic_pinned_bytes()
+        predecessor = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
+        )
+        successor = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1239Z.gz"
+        )
+        predecessor.write_bytes(gzip.compress(predecessor_payload, mtime=1))
+        self._write_gz_raw(successor, successor_payload)
+        self.log_path.write_text(
+            json.dumps({"event_id": "active"}) + "\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Invalid predecessor gzip hash"):
+            list(common.stream_logical_activity(self.log_path))
+
+    def test_pinned_registry_count_mismatches_fail_closed(self):
+        predecessor_payload, successor_payload = self._get_hermetic_pinned_bytes()
+        predecessor = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
+        )
+        successor = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1239Z.gz"
+        )
+        self._write_gz_raw(predecessor, predecessor_payload)
+        self._write_gz_raw(successor, successor_payload)
+        self.log_path.write_text(
+            json.dumps({"event_id": "active"}) + "\n",
+            encoding="utf-8",
+        )
+
+        cases = (
+            (
+                "predecessor_payload_byte_count",
+                self.pinned_exception.predecessor_payload_byte_count + 1,
+                "Invalid predecessor byte count",
+            ),
+            (
+                "predecessor_line_count",
+                self.pinned_exception.predecessor_line_count + 1,
+                "Invalid predecessor line count",
+            ),
+            (
+                "predecessor_gzip_byte_count",
+                self.pinned_exception.predecessor_gzip_byte_count + 1,
+                "Invalid predecessor gzip byte count",
+            ),
+            (
+                "successor_payload_byte_count",
+                self.pinned_exception.successor_payload_byte_count + 1,
+                "Invalid successor byte count",
+            ),
+            (
+                "successor_line_count",
+                self.pinned_exception.successor_line_count + 1,
+                "Invalid successor line count",
+            ),
+            (
+                "successor_gzip_byte_count",
+                self.pinned_exception.successor_gzip_byte_count + 1,
+                "Invalid successor gzip byte count",
+            ),
+            (
+                "overlap_byte_count",
+                self.pinned_exception.overlap_byte_count + 1,
+                "Invalid overlap bytes length",
+            ),
+            (
+                "overlap_line_count",
+                self.pinned_exception.overlap_line_count + 1,
+                "Invalid overlap length",
+            ),
+        )
+        for field, value, expected in cases:
+            with self.subTest(field=field), mock.patch.object(
+                common,
+                "HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS",
+                (replace(self.pinned_exception, **{field: value}),),
+            ):
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    list(common.stream_logical_activity(self.log_path))
 
     @unittest.skipUnless(
         os.environ.get("PANTHEON_RUN_CENTRAL_ACTIVITY_INTEGRATION") == "1",
@@ -585,7 +718,7 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
             central / "ai-activity-log.jsonl-2026-05-24T1239Z.gz"
         )
         if not predecessor_source.is_file() or not successor_source.is_file():
-            self.skipTest("central pinned archives are unavailable")
+            self.fail("opt-in central pinned archives are unavailable")
         predecessor = self.archive_dir / predecessor_source.name
         successor = self.archive_dir / successor_source.name
         predecessor.write_bytes(predecessor_source.read_bytes())
