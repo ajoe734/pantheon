@@ -1,0 +1,393 @@
+{
+      "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Loop product-level closeout guard evidence contract",
+    "note": "Evidence manifest for the loop closeout truth guard repair task.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DONE-GUARDRAIL-REPAIR-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Evidence manifest is replaced only by a newer task-owned evidence commit; archived task snapshots are read-only sources and are never rewritten by this task.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-17T03:04:44Z",
+    "evidence_cut_semantics": "Owner closeout evidence cut after PR #3748 merged into dev and after current-dev verification at 7097e8d2a7c15593763bdba302a8b3950a998b04. The guardrail implementation and audit artifacts are already merged; this manifest binds the task closeout state to that delivery and Claude's exact-head approval.",
+    "id": "LOOP-PROD-DONE-GUARDRAIL-REPAIR-001",
+    "overall_admission": "review_approved_owner_closeout_ready",
+    "owner": "Codex2",
+    "phase": "Wave -1 closeout integrity repair",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DONE-GUARDRAIL-REPAIR-001/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "dev",
+    "target_maturity": "product-level closeout guard",
+    "task_branch": "task/LOOP-PROD-DONE-GUARDRAIL-REPAIR-001",
+    "title": "Loop closeout truth guard repair"
+  },
+  "authorities": {
+    "actual_state": [
+      "scripts/loop_done_guardrail.py",
+      "scripts/ai_status.py",
+      "scripts/test_loop_done_guardrail.py",
+      "docs/deployment/evidence/loop-product-level/closeout-truth-audit-2026-07-16.json",
+      "docs/deployment/evidence/loop-product-level/closeout-truth-audit-2026-07-16.md",
+      "docs/reviews/LOOP-PROD-DONE-GUARDRAIL-REPAIR-001-claude-review.md",
+      "GitHub PR #3748 merge and CI records"
+    ],
+    "desired_state": [
+      "done transition rejects blocked, pending, review-required, failed, rejected, missing-verdict, or blocking-risk product evidence",
+      "frozen 18-ID LOOP-PROD archive replay is fixed by explicit ID set and fails closed on malformed, missing, unexpected, duplicate, or mismatched sources",
+      "archive replay proves source snapshots are byte-identical before and after replay",
+      "every non-valid replay result names a unique repair task ID and exact proof gap"
+    ],
+    "task_packet": ".orchestrator/task-briefs/loop_prod_done_guardrail_repair_001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex2 for guardrail implementation, replay audit artifacts, and this closeout manifest; archived LOOP-PROD snapshots remain immutable read-only sources.",
+    "composes_with": [
+      "LOOP-PROD-002",
+      "PR #3748",
+      "Claude exact-head review at 93ed9fcd9799ddc6063dbd46a79b2e808aa9603d"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-DONE-GUARDRAIL-REPAIR-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-DONE-GUARDRAIL-REPAIR-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "scripts/loop_done_guardrail.py",
+      "scripts/ai_status.py",
+      "scripts/test_loop_done_guardrail.py",
+      "docs/deployment/evidence/loop-product-level/closeout-truth-audit-2026-07-16.json",
+      "docs/deployment/evidence/loop-product-level/closeout-truth-audit-2026-07-16.md",
+      "docs/reviews/LOOP-PROD-DONE-GUARDRAIL-REPAIR-001-claude-review.md"
+    ],
+    "not_changing": "No archive snapshot mutation, no evidence status rewriting for prior LOOP-PROD tasks, no live broker or capital path, no frontend deployment, and no reinterpretation of false closures as completed product proof.",
+    "owned_layer": "loop closeout done guard, fixed frozen archive replay audit, task-scoped closeout evidence, and status closeout binding"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "cd9ef311776fd34b4e0cb6c686302969151ca3cb",
+        "subject": "LOOP-PROD-DONE-GUARDRAIL-REPAIR-001: anchor replay guard"
+      },
+      {
+        "sha": "5f48d6145f3f790a33abc462e58fd972de8dcbb9",
+        "subject": "LOOP-PROD-DONE-GUARDRAIL-REPAIR-001: publish replay audit"
+      },
+      {
+        "sha": "b60a8d84481ea08233cc4fc6486c84ef57c93dc9",
+        "subject": "LOOP-PROD-DONE-GUARDRAIL-REPAIR-001: finalize replay audit"
+      },
+      {
+        "sha": "64379611f23bf19092030c5e15915ab09438e909",
+        "subject": "LOOP-PROD-DONE-GUARDRAIL-REPAIR-001: compose current dev"
+      },
+      {
+        "sha": "c22b8d087716f80db2ca59cb2f8d35ab1f9203ab",
+        "subject": "LOOP-PROD-DONE-GUARDRAIL-REPAIR-001: compose latest dev"
+      },
+      {
+        "sha": "93ed9fcd9799ddc6063dbd46a79b2e808aa9603d",
+        "subject": "LOOP-PROD-DONE-GUARDRAIL-REPAIR-001: compose latest dev"
+      }
+    ],
+    "pull_request": {
+      "number": 3748,
+      "url": "https://github.com/ajoe734/pantheon/pull/3748",
+      "head_sha": "93ed9fcd9799ddc6063dbd46a79b2e808aa9603d",
+      "base": "dev",
+      "merged_at": "2026-07-16T16:49:28Z",
+      "merge_sha": "fc5283d72f28d6e616113aeda06edbd02ed2ac2d"
+    },
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "conclusion": "success",
+        "head_sha": "93ed9fcd9799ddc6063dbd46a79b2e808aa9603d",
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29516704777",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        }
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "conclusion": "success",
+        "head_sha": "93ed9fcd9799ddc6063dbd46a79b2e808aa9603d",
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29516701569",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        }
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 -m pytest scripts/test_loop_done_guardrail.py -q",
+        "conclusion": "59 passed in 9.91s",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m py_compile scripts/loop_done_guardrail.py scripts/ai_status.py scripts/test_loop_done_guardrail.py",
+        "conclusion": "no output",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "no output",
+        "result": "pass"
+      },
+      {
+        "command": "git diff origin/dev..HEAD --check",
+        "conclusion": "no output",
+        "result": "pass"
+      },
+      {
+        "command": "python3 scripts/loop_done_guardrail.py --archive-root /home/lupin/code/pantheon/ai-task-archive/tasks --audit-json /tmp/loop-prod-done-guardrail-repair-001-audit.json --audit-md /tmp/loop-prod-done-guardrail-repair-001-audit.md",
+        "conclusion": "expected exit 1; 2/18 valid closures, 12 false_closure, 4 stale_evidence, zero source-set errors after explicitly excluding five governance/meta snapshots, and archive replay remained read-only",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-17T03:04:44Z",
+    "validated_base_sha": "fc5283d72f28d6e616113aeda06edbd02ed2ac2d",
+    "validated_head_sha": "7097e8d2a7c15593763bdba302a8b3950a998b04"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "dev",
+    "public_bff_base_url": "not_applicable",
+    "publish_cut": {
+      "status": "not_applicable",
+      "reason": "This task changes guardrail scripts and evidence artifacts only; no hosted deployment cutover is claimed."
+    },
+    "canonical_root_deploy": {
+      "status": "not_applicable",
+      "reason": "No frontend or hosted BFF release is part of this repair."
+    },
+    "identity_admission": {
+      "status": "not_applicable",
+      "reason": "Delivery identity is the merged Pantheon PR #3748 and the current dev ancestry verification.",
+      "required_before_done": false
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "not_applicable",
+      "reason": "No hosted runtime deployment is claimed; terminal readback for this task is merged GitHub delivery plus the read-only archive replay."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "audit_archive_root drives replay from the fixed FROZEN_ARCHIVE_REPLAY_TASK_IDS tuple and reports duplicate frozen IDs, duplicate top-level task_id values, and duplicate nested task.id values as gaps or source-set errors.",
+        "The replay records snapshot_sha256_before and snapshot_sha256_after per included frozen source and exposes snapshot_hash_unchanged for every result."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "check_task rejects blocked, pending, review_required, rejected, failed, and unknown overall_admission states.",
+        "check_task rejects any acceptance item whose status is not pass or not_applicable.",
+        "check_task rejects any residual risk with blocking_for_this_task true.",
+        "check_task requires a formal reviewer verdict in record_log from the assigned reviewer before done admission."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "scripts/ai_status.py calls validate_loop_completion_claim before task status is set to done in command_done.",
+        "PR #3748 merged the guard, tests, audit artifacts, and Claude review artifact into dev at merge commit fc5283d72f28d6e616113aeda06edbd02ed2ac2d.",
+        "Current dev head 7097e8d2a7c15593763bdba302a8b3950a998b04 contains PR #3748 and was used for the closeout verification commands."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "The guard is invoked by scripts/ai_status.py during every governed done transition, so process restart reuses the repository implementation rather than session-local state.",
+        "The closeout replay uses the authoritative archive root at /home/lupin/code/pantheon/ai-task-archive/tasks and recomputes source hashes during each run."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "The repair has no live-capital or broker side effect.",
+        "Non-valid archived product closures are not rewritten; every non-valid replay result names a follow-up repair task ID instead of mutating history."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Changes are limited to Pantheon guardrail scripts, tests, review records, and evidence artifacts."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "proof": "No execute-plans frontend artifact is changed."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "proof": "No operator authentication flow or browser write path is changed."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "The task only reads archived JSON snapshots and local repository files; no broker, order, or capital path is invoked."
+    },
+    "rbac": {
+      "status": "not_applicable",
+      "proof": "No application authorization surface is changed."
+    },
+    "tenant_isolation": {
+      "status": "not_applicable",
+      "proof": "No tenant-scoped runtime storage or hosted API path is changed."
+    },
+    "two_person_approval": {
+      "status": "pass",
+      "proof": "Claude recorded independent exact-head approval for PR #3748 at 93ed9fcd9799ddc6063dbd46a79b2e808aa9603d before merge."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC-01",
+      "statement": "Start from current origin/dev in a clean task worktree and preserve every existing ai-task-archive snapshot byte-for-byte.",
+      "status": "pass",
+      "evidence_refs": [
+        "validation.commands[4]",
+        "behavioral_proof.duplicate_safety"
+      ]
+    },
+    {
+      "id": "AC-02",
+      "statement": "Reject blocked, pending, review-required, rejected, failed, or nonterminal product evidence during done admission.",
+      "status": "pass",
+      "evidence_refs": [
+        "behavioral_proof.failure_and_degraded_behavior"
+      ]
+    },
+    {
+      "id": "AC-03",
+      "statement": "Reject non-pass acceptance items and blocking residual risks.",
+      "status": "pass",
+      "evidence_refs": [
+        "behavioral_proof.failure_and_degraded_behavior"
+      ]
+    },
+    {
+      "id": "AC-04",
+      "statement": "Require approved reviewer verdict before review_approved to done.",
+      "status": "pass",
+      "evidence_refs": [
+        "behavioral_proof.failure_and_degraded_behavior",
+        "record_log[1]"
+      ]
+    },
+    {
+      "id": "AC-05",
+      "statement": "Keep owner, reviewer, task id, review file checksum, merge ancestry, hosted proof, security evidence, and no-live-capital checks fail closed.",
+      "status": "pass",
+      "evidence_refs": [
+        "task",
+        "implementation_delivery.pull_request",
+        "security_and_safety"
+      ]
+    },
+    {
+      "id": "AC-06",
+      "statement": "Add named regressions for blocked overall admission, blocking residual risk, missing reviewer verdict, source-set validation, and valid manifest pass.",
+      "status": "pass",
+      "evidence_refs": [
+        "validation.commands[0]"
+      ]
+    },
+    {
+      "id": "AC-07",
+      "statement": "Run the read-only 18-task archive replay and publish machine-readable classifications.",
+      "status": "pass",
+      "evidence_refs": [
+        "validation.commands[4]",
+        "scope.implementation_changed_files"
+      ]
+    },
+    {
+      "id": "AC-08",
+      "statement": "Identify unique repair task IDs and exact missing or contradictory proof for every non-valid replay result.",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/loop-product-level/closeout-truth-audit-2026-07-16.json"
+      ]
+    },
+    {
+      "id": "AC-09",
+      "statement": "Open, validate, and merge a PR to dev with required trailers and independent review.",
+      "status": "pass",
+      "evidence_refs": [
+        "implementation_delivery.pull_request",
+        "implementation_delivery.required_checks",
+        "record_log[1]"
+      ]
+    }
+  ],
+  "residual_risks": {},
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-DONE-GUARDRAIL-REPAIR-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DONE-GUARDRAIL-REPAIR-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-DONE-GUARDRAIL-REPAIR-001/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "Companion checksum covers this manifest; embedding the manifest hash inside itself would be unstable.",
+    "source_artifact_sha256_by_epoch": {
+      "current_closeout_audit_json": "72e292f234db085c06b8fc0751cd367c507760314ebe2c4ffc071a1b0bb10fe8",
+      "current_closeout_audit_md": "2340fb02f0b4b4704d244f94c0ddc7ad0390303f3637cb485dc89f129da7929b",
+      "current_guard_script": "1e0a73a484bcb0b72636d5e72a916ea43a38df12b7e7b7800849ec8fea5bdb0a",
+      "current_guard_tests": "484aef63bffbd66dc84bc8ba414c26bb76ed342dfc29db2d7dca368b2913e53f",
+      "current_status_script": "6fb396c8667c2009f168b5dfc54208900007518926274b67cf0a60c390aa7b72",
+      "review_artifact": "26cdd044abf9b86bfc1175dfca6af6195f7595c8592636f366d3a0fb697c1af2"
+    }
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-17T03:04:44Z",
+      "kind": "owner_closeout_validation",
+      "status": "pass",
+      "actor": "Codex2",
+      "reference": "Current-dev verification at 7097e8d2a7c15593763bdba302a8b3950a998b04",
+      "sha": "7097e8d2a7c15593763bdba302a8b3950a998b04"
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-07-16T16:48:37Z",
+      "kind": "independent_reviewer_approval_verdict",
+      "status": "approved",
+      "actor": "Claude",
+      "reference": "https://github.com/ajoe734/pantheon/pull/3748#issuecomment-4994423329",
+      "sha": "93ed9fcd9799ddc6063dbd46a79b2e808aa9603d"
+    },
+    {
+      "sequence": 3,
+      "recorded_at": "2026-07-16T16:49:28Z",
+      "kind": "merged_delivery_verified",
+      "status": "pass",
+      "actor": "Codex2",
+      "reference": "https://github.com/ajoe734/pantheon/pull/3748",
+      "sha": "fc5283d72f28d6e616113aeda06edbd02ed2ac2d"
+    }
+  ]
+}
