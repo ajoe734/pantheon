@@ -182,6 +182,11 @@ def _status_root_from_runtime_path(raw: str, *, label: str) -> Path:
     path = Path(os.path.expanduser(raw))
     if not path.is_absolute():
         raise RuntimeError(f"{label} must be absolute when set")
+    symlink_comp = _first_symlink_component(path)
+    if symlink_comp is not None:
+        raise RuntimeError(f"{label} path contains a symlink component: {symlink_comp}")
+    if path.is_symlink():
+        raise RuntimeError(f"{label} cannot be a symlink: {path}")
     resolved = path.resolve()
     parent = resolved.parent
     if (
@@ -343,9 +348,16 @@ def validate_status_root_binding() -> None:
                 f"PANTHEON_STATUS_ROOT path binding for {label} cannot be a symlink: {path}"
             )
 
-    _validate_directory_no_symlinks_recursive(root / "ai-task-archive", "task archive")
-    _validate_directory_no_symlinks_recursive(root / "archive" / "logs", "activity rotation archive")
-    _validate_directory_no_symlinks_recursive(root / ".orchestrator" / "logs" / "activity-log-archive", "legacy activity archive")
+    for path, label in (
+        (root / "ai-task-archive", "task archive"),
+        (root / "archive" / "logs", "activity rotation archive"),
+        (root / ".orchestrator" / "logs" / "activity-log-archive", "legacy activity archive"),
+        (root / ".orchestrator" / "logs" / "activity-rotation", "activity rotation"),
+    ):
+        symlink_comp = _first_symlink_component(path)
+        if symlink_comp is not None:
+            raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} component cannot be a symlink: {symlink_comp}")
+        _validate_directory_no_symlinks_recursive(path, label)
 
     assert_task_archive_root_binding()
 
