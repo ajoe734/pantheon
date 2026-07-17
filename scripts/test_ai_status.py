@@ -22,6 +22,61 @@ import task_archive
 from canonical_writer_guard import assert_isolated_legacy_write_target
 
 
+def _setup_test_isolation(test_case):
+    test_case._test_temp_dir = tempfile.TemporaryDirectory(prefix="ai-status-test-")
+    test_case._test_root = Path(test_case._test_temp_dir.name)
+    test_case._test_status_file = test_case._test_root / "ai-status.json"
+    test_case._test_log_file = test_case._test_root / "ai-activity-log.jsonl"
+
+    test_case._test_status_file.write_text("{}\n", encoding="utf-8")
+    test_case._test_log_file.write_text("", encoding="utf-8")
+
+    test_case._orig_paths = {
+        "STATUS_ROOT": ai_status.STATUS_ROOT,
+        "STATUS_FILE": ai_status.STATUS_FILE,
+        "LOG_FILE": ai_status.LOG_FILE,
+        "CURRENT_WORK_FILE": ai_status.CURRENT_WORK_FILE,
+        "DOCS_SITE_DIR": ai_status.DOCS_SITE_DIR,
+        "PLANNING_STATE_FILE": ai_status.PLANNING_STATE_FILE,
+        "ORCHESTRATOR_STATE_FILE": ai_status.ORCHESTRATOR_STATE_FILE,
+        "APPROVAL_QUEUE_FILE": ai_status.APPROVAL_QUEUE_FILE,
+        "DASHBOARD_BUNDLE_FILE": ai_status.DASHBOARD_BUNDLE_FILE,
+        "TA_STATUS_ROOT": task_archive.STATUS_ROOT,
+        "TA_STATUS_FILE": task_archive.STATUS_FILE,
+        "TA_ARCHIVE_DIR": task_archive.ARCHIVE_DIR,
+        "TA_ARCHIVE_TASKS_DIR": task_archive.ARCHIVE_TASKS_DIR,
+        "TA_ARCHIVE_INDEX_FILE": task_archive.ARCHIVE_INDEX_FILE,
+    }
+
+    ai_status.configure_status_root_paths(test_case._test_root)
+    task_archive.ARCHIVE_TASKS_DIR.mkdir(parents=True, exist_ok=True)
+    task_archive.ARCHIVE_INDEX_FILE.write_text("{}\n", encoding="utf-8")
+
+
+def _teardown_test_isolation(test_case):
+    paths = test_case._orig_paths
+    ai_status.STATUS_ROOT = paths["STATUS_ROOT"]
+    ai_status.STATUS_FILE = paths["STATUS_FILE"]
+    ai_status.LOG_FILE = paths["LOG_FILE"]
+    ai_status.CURRENT_WORK_FILE = paths["CURRENT_WORK_FILE"]
+    ai_status.DOCS_SITE_DIR = paths["DOCS_SITE_DIR"]
+    ai_status.PLANNING_STATE_FILE = paths["PLANNING_STATE_FILE"]
+    ai_status.ORCHESTRATOR_STATE_FILE = paths["ORCHESTRATOR_STATE_FILE"]
+    ai_status.APPROVAL_QUEUE_FILE = paths["APPROVAL_QUEUE_FILE"]
+    ai_status.DASHBOARD_BUNDLE_FILE = paths["DASHBOARD_BUNDLE_FILE"]
+
+    task_archive.STATUS_ROOT = paths["TA_STATUS_ROOT"]
+    task_archive.STATUS_FILE = paths["TA_STATUS_FILE"]
+    task_archive.ARCHIVE_DIR = paths["TA_ARCHIVE_DIR"]
+    task_archive.ARCHIVE_TASKS_DIR = paths["TA_ARCHIVE_TASKS_DIR"]
+    task_archive.ARCHIVE_INDEX_FILE = paths["TA_ARCHIVE_INDEX_FILE"]
+
+    try:
+        test_case._test_temp_dir.cleanup()
+    except Exception:
+        pass
+
+
 def _locked_status_update(
     status_file: str,
     task_id: str,
@@ -453,6 +508,19 @@ class StatusRootRoutingTests(unittest.TestCase):
             )
             self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
 
+            subprocess.run(["git", "add", "ai-task-archive/tasks/CENTRAL-ROOT-001.json"], cwd=central, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "commit archived task"], cwd=central, check=True)
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys, pathlib; sys.path.append('.orchestrator'); import task_archive; task_archive.STATUS_ROOT=pathlib.Path(sys.argv[1]); task_archive.STATUS_FILE=task_archive.STATUS_ROOT/'ai-status.json'; task_archive.ARCHIVE_DIR=task_archive.STATUS_ROOT/'ai-task-archive'; task_archive.ARCHIVE_TASKS_DIR=task_archive.ARCHIVE_DIR/'tasks'; task_archive.ARCHIVE_INDEX_FILE=task_archive.ARCHIVE_DIR/'index.json'; task_archive.rebuild_archive_index()",
+                    str(central),
+                ],
+                cwd=worktree,
+                check=True,
+            )
+
             central_state = json.loads((central / "ai-status.json").read_text(encoding="utf-8"))
             self.assertIsNone(ai_status.get_task(central_state, "CENTRAL-ROOT-001"))
             archived = json.loads(
@@ -598,6 +666,169 @@ class StatusRootRoutingTests(unittest.TestCase):
                     self.assertNotEqual(proc.returncode, 0)
                     self.assertIn(expected, proc.stderr + proc.stdout)
 
+    def test_status_root_validation_rejects_symlinked_leaves_and_mirror_children(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-symlink-") as temp_dir:
+            root = Path(temp_dir)
+            code_root = root / "code"
+            self._init_repo(code_root)
+            self._copy_status_tooling(code_root)
+            subprocess.run(["git", "add", "."], cwd=code_root, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "add status tooling"], cwd=code_root, check=True)
+            subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=code_root, check=True)
+            command_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=code_root, text=True).strip()
+
+            valid = root / "central"
+            self._init_repo(valid)
+            self._write_status_state(valid, owner="Codex2", next_value="valid")
+
+            # 1. Test dangling symlink in central root
+            dangling = valid / "current-work.md"
+            if dangling.exists() or dangling.is_symlink():
+                dangling.unlink()
+            dangling.symlink_to(root / "nonexistent-target")
+
+            runner_status = valid / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+            heartbeat = valid / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AI_NAME": "Codex2",
+                    "PANTHEON_WORKTREE_ROOT": str(code_root),
+                    "ORCH_WORKSPACE_PATH": str(code_root),
+                    "ORCH_RUN_ID": "codex-test-run",
+                    "ORCH_RUNNER_STATUS_PATH": str(runner_status),
+                    "ORCH_HEARTBEAT_PATH": str(heartbeat),
+                    "PANTHEON_STATUS_ROOT": str(valid),
+                    "PANTHEON_COMMAND_ROOT": str(code_root),
+                    "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
+                    "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                    "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+                }
+            )
+
+            # Show command should reject due to dangling symlink
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(code_root / "scripts" / "ai_status.py"),
+                    "show",
+                    "CENTRAL-ROOT-001",
+                ],
+                cwd=code_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("cannot be a symlink", proc.stderr)
+
+            # Clean up dangling symlink
+            dangling.unlink()
+
+            # 2. Test mirror child symlink (e.g. docs-site/ai-status.json)
+            docs_site = valid / "docs-site"
+            docs_site.mkdir(parents=True, exist_ok=True)
+            mirror_child = docs_site / "ai-status.json"
+            mirror_child.symlink_to(root / "nonexistent-target-2")
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(code_root / "scripts" / "ai_status.py"),
+                    "show",
+                    "CENTRAL-ROOT-001",
+                ],
+                cwd=code_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("cannot be a symlink", proc.stderr)
+
+            # Clean up mirror child
+            mirror_child.unlink()
+
+            # 3. Test symlink in ai-task-archive/tasks
+            tasks_dir = valid / "ai-task-archive" / "tasks"
+            tasks_dir.mkdir(parents=True, exist_ok=True)
+            archive_leaf = tasks_dir / "bad-leaf.json"
+            archive_leaf.symlink_to(root / "nonexistent-target-3")
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(code_root / "scripts" / "ai_status.py"),
+                    "show",
+                    "CENTRAL-ROOT-001",
+                ],
+                cwd=code_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("cannot be a symlink", proc.stderr)
+
+            archive_leaf.unlink()
+
+            # 4. Test symlink in archive/logs
+            logs_dir = valid / "archive" / "logs"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            log_archive_leaf = logs_dir / "bad-log.gz"
+            log_archive_leaf.symlink_to(root / "nonexistent-target-4")
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(code_root / "scripts" / "ai_status.py"),
+                    "show",
+                    "CENTRAL-ROOT-001",
+                ],
+                cwd=code_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("cannot be a symlink", proc.stderr)
+
+            log_archive_leaf.unlink()
+
+            # 5. Test symlink in .orchestrator/worker-runtime
+            runtime_dir = valid / ".orchestrator" / "worker-runtime"
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            runtime_leaf = runtime_dir / "bad-leaf.json"
+            runtime_leaf.symlink_to(root / "nonexistent-target-5")
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(code_root / "scripts" / "ai_status.py"),
+                    "show",
+                    "CENTRAL-ROOT-001",
+                ],
+                cwd=code_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("cannot be a symlink", proc.stderr)
+
+            runtime_leaf.unlink()
+
 
 class CanonicalWriterGuardTests(unittest.TestCase):
     def test_isolated_override_never_bypasses_a_git_checkout(self) -> None:
@@ -644,6 +875,7 @@ class CanonicalWriterGuardTests(unittest.TestCase):
 
 class ReviewApprovedWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
+        _setup_test_isolation(self)
         self.state = {
             "agents": [
                 {"name": "Codex", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
@@ -680,6 +912,9 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "workload": {},
             "workload_summary": {},
         }
+
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
 
     def test_approve_creates_owner_finalize_handoff(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude", "REVIEW_NOTES_ZH": "審查通過||交回 owner 收尾"}, clear=False):
@@ -1072,6 +1307,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
 
 class ArchiveWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
+        _setup_test_isolation(self)
         self.state = {
             "agents": [
                 {"name": "Codex", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
@@ -1129,6 +1365,9 @@ class ArchiveWorkflowTests(unittest.TestCase):
             "workload": {},
             "workload_summary": {},
         }
+
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
 
     def test_archive_migrate_moves_terminal_tasks_out_of_active_state(self) -> None:
         ai_status.command_archive_migrate(self.state, [])
@@ -1205,6 +1444,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
 
 class SidecarTaskTests(unittest.TestCase):
     def setUp(self) -> None:
+        _setup_test_isolation(self)
         self.state = {
             "agents": [
                 {"name": "Codex", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
@@ -1219,6 +1459,9 @@ class SidecarTaskTests(unittest.TestCase):
             "workload": {},
             "workload_summary": {},
         }
+
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
 
     def test_assign_supports_sidecar_metadata_from_env(self) -> None:
         env = {
@@ -1373,6 +1616,12 @@ class RuntimeWorkerLivenessTests(unittest.TestCase):
 
 
 class PortableStateRenderingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
+
     def test_default_canonical_document_layers_exclude_review_and_session_records(self) -> None:
         layers = ai_status.default_canonical_document_layers()
         flattened = ai_status.flatten_canonical_document_layers(layers)
@@ -3348,6 +3597,15 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
         self.root = Path(self.temp_dir.name)
         self.status_file = self.root / "ai-status.json"
         self.log_file = self.root / "ai-activity-log.jsonl"
+
+        import subprocess
+        subprocess.run(["git", "init", "-q"], cwd=str(self.root), check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=str(self.root), check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(self.root), check=True)
+        dummy_file = self.root / "dummy.txt"
+        dummy_file.write_text("dummy", encoding="utf-8")
+        subprocess.run(["git", "add", "dummy.txt"], cwd=str(self.root), check=True)
+        subprocess.run(["git", "commit", "-m", "initial commit", "-q"], cwd=str(self.root), check=True)
 
     def _fixture_state(self) -> dict[str, object]:
         state = ai_status.default_state()
