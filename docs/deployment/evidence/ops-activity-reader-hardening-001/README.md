@@ -85,8 +85,7 @@ git diff --check
 
 Results:
 
-- common: 67 tests passed at anchor `163927e31`; the current-head active
-  source-leaf regression also passed
+- common: 68 tests passed at draft head `6e609c7fe`
 - inventory: 21 passed, one explicit opt-in skip, two subtests passed
 - opt-in production pinned pair: 1 passed in 3.02 seconds
 - pending intent: 32 passed, 49 subtests passed
@@ -123,13 +122,43 @@ independent Claude exact-head review. It owns `ActivityAuditInvariantError`,
 the structured non-adjacent-tail diagnostic, and an `ai_status` existing
 archive conflict fix.
 
+### Disposable prerequisite composition
+
+While the dependency remains open, a disposable worktree merged its exact head
+into draft head `6e609c7fed5b7e1390cab2a93e036c7d4ea085fc`. The two textual conflicts were
+resolved as a semantic union: both strict duplicate-key/registry definitions
+and `ActivityAuditInvariantError` are retained; the validation-snapshot
+non-adjacent-tail path raises the structured error using the rewritten loop's
+`source_idx` and `source_class` names; and both `time` and `tracemalloc` test
+imports are retained. The disposable tree does not alter this task branch or
+relax the merge-order gate.
+
+Results on that exact composition:
+
+- common: 69 passed
+- `scripts.test_ai_status`: 75 passed, including the dependency's archive
+  conflict regression
+- supervisor: 277 passed
+- inventory: 21 passed, one explicit opt-in skip, two subtests passed
+- pending intent: 32 passed, 49 subtests passed
+- runtime state: passed
+- supervisor watchdog: 33 passed
+- worker runner heartbeat: 13 passed
+- py_compile and diff check: passed
+
+The dry-run also caught an unsafe mechanical conflict resolution: PR #3797's
+old reader used `s_idx`/`s_class`, while the snapshot builder uses
+`source_idx`/`source_class`. The final merge must use the latter names and rerun
+the same matrix after the dependency is present on `origin/dev`.
+
 An isolated `scripts.test_ai_status` run on current `dev` produced 73 passes
 and one failure: `test_existing_archive_conflict_or_legacy_shape_preserves_active_task`.
 That is the exact behavior changed by PR #3797 and is recorded as dependency
 evidence, not absorbed into this task. After #3797 merges, this branch must be
 rebased with semantic conflict resolution and the full isolated matrix rerun.
 
-Three governed `AI_NAME=Codex ./scripts/ai-status.sh progress ...` attempts
-timed out while waiting on central locks and made no observable CLI return.
+Three governed 30-second and one governed 180-second
+`AI_NAME=Codex ./scripts/ai-status.sh progress ...` attempts timed out in the
+central synchronization path and made no observable CLI return.
 No state file was edited manually. Canonical state still shows this task
-`in_progress`; draft PR #3800 and both anchor commits are published remotely.
+`in_progress`; draft PR #3800 and all task anchors are published remotely.
