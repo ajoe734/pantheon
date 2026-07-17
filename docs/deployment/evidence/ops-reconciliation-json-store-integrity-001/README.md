@@ -121,6 +121,40 @@ git diff --check
 (no output; clean)
 ```
 
+### Post-compose revalidation
+
+The candidate was recomposed with `origin/dev` at
+`b122d005bbee3884c77ce6dbe5f225b8f3fe6c1c` and revalidated on pushed head
+`9d84d0010790f511814a1d47f12bf9a10e800b7d` at 2026-07-17T02:06:00Z:
+
+```text
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py -q
+22 passed in 6.23s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py -q
+6 passed in 3.31s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py -q
+20 passed in 7.59s
+
+python3 -m pytest services/reconciliation-drift/tests/ -q
+79 passed in 38.36s
+
+python3 -m py_compile services/reconciliation-drift/store.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py
+(no output; passed)
+
+git diff --check origin/dev...HEAD
+(no output; clean)
+
+python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge
+(no output; passed)
+```
+
+The commit that adds this evidence note does not alter the store or test
+content validated above. The final governed approval must name the resulting
+PR head; the earlier approval of `249e1d0d3984c41a801695b59550df65817ed742`
+is historical only.
+
 ## Scope boundary
 
 - Owned layer: `services/reconciliation-drift/store.py` JSON-backed map
