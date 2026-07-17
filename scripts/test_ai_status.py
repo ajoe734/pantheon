@@ -805,6 +805,7 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
             },
         }
         with (
+            mock.patch.object(ai_status, "validate_status_root_binding"),
             mock.patch.object(
                 ai_status,
                 "canonical_task_state_lock",
@@ -839,6 +840,7 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
             "program_activity_outbox": {"schema_version": 5},
         }
         with (
+            mock.patch.object(ai_status, "validate_status_root_binding"),
             mock.patch.object(
                 ai_status,
                 "canonical_task_state_lock",
@@ -1088,6 +1090,9 @@ class ProgramActivityOutboxGuardTests(unittest.TestCase):
 
 class ReviewApprovedWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
+        append_log_patch = mock.patch.object(ai_status, "append_log")
+        append_log_patch.start()
+        self.addCleanup(append_log_patch.stop)
         self.state = {
             "agents": [
                 {"name": "Codex", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+from copy import deepcopy
 import importlib.util
 import inspect
 import multiprocessing
@@ -19,45 +20,145 @@ import supervisor
 import runtime_state
 
 
-def _sequencing_source_ref(authority, task_id: str) -> dict:
-    return {
-        "program_id": authority.PROGRAM_ID,
-        "catalog_sha256": authority.EFFECTIVE_CATALOG_SHA256,
-        "source_catalog_sha256": authority.SOURCE_CATALOG_SHA256,
-        "sequencing_addendum_sha256": authority.SEQUENCING_ADDENDUM_SHA256,
-        "merge_pr_3737_sha": authority.MERGE_PR_3737_SHA,
-        "sequencing_overlay_sha256": authority.SEQUENCING_OVERLAY_SHA256,
-        "release_gate_id": authority.RELEASE_GATE_ID,
-        "sequencing_classification": (
-            authority.EXPECTED_CLASSIFICATION_BY_TASK_ID[task_id]
-        ),
-    }
-
-
-def _sequencing_release_status(*, released: bool, audited: bool = True) -> dict:
+def _sequencing_release_status(
+    *,
+    released: bool,
+    audited: bool = True,
+    visible_task_id: str = "LOOP-PROD-FE-001",
+) -> dict:
     authority = supervisor.sequencing_gate
     dispatcher = _load_loop_product_dispatcher_module()
+    root = Path(__file__).resolve().parents[1]
     source_catalog_path = (
-        Path(__file__).resolve().parents[1]
+        root
         / "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/tasks.json"
     )
     source_catalog_raw = source_catalog_path.read_bytes()
     source_catalog = json.loads(source_catalog_raw)
     source_catalog_digest = dispatcher.sha256_bytes(source_catalog_raw)
+    effective_catalog = json.loads(source_catalog_raw)
+    dispatcher.apply_sequencing_overlay(
+        effective_catalog,
+        source_catalog_path.with_name("sequencing-overlay-2026-07-16.json"),
+    )
+    effective_catalog_digest = dispatcher.canonical_json_sha256(
+        effective_catalog
+    )
+    if effective_catalog_digest != authority.EFFECTIVE_CATALOG_SHA256:
+        raise AssertionError("supervisor sequencing fixture catalog drifted")
     program_id = authority.PROGRAM_ID
-    task_id = "LOOP-PROD-AUTH-001"
     catalog_sha = authority.EFFECTIVE_CATALOG_SHA256
     overlay_sha = authority.SEQUENCING_OVERLAY_SHA256
     gate_id = authority.RELEASE_GATE_ID
-    task = {
-        "id": task_id,
-        "status": "todo",
-        "owner": "Codex",
-        "reviewer": "Claude",
-        "depends_on": [],
-        "last_update": "2026-07-16T00:00:00Z",
-        "source_ref": _sequencing_source_ref(authority, task_id),
+    applied_at = "2026-07-16T00:00:00Z"
+    released_at = "2026-07-16T00:03:00Z"
+    all_task_ids = list(authority.EXPECTED_TASK_IDS)
+    source_by_id = {
+        task["id"]: task for task in source_catalog["tasks"]
     }
+    effective_by_id = {
+        task["id"]: task for task in effective_catalog["tasks"]
+    }
+    epoch_transitions = []
+    after_by_id = {}
+    for epoch_task_id in all_task_ids:
+        before_snapshot = dispatcher.build_task(
+            source_by_id[epoch_task_id],
+            source_catalog,
+            source_catalog_digest,
+            "2026-07-15T00:00:00Z",
+        )
+        after_snapshot, gate_marker = dispatcher._sequencing_epoch_after_task(
+            before_snapshot,
+            effective_by_id[epoch_task_id],
+            effective_catalog,
+            effective_catalog_digest,
+            applied_at,
+            install_mode="base_epoch_migration",
+        )
+        after_by_id[epoch_task_id] = after_snapshot
+        epoch_transitions.append(
+            {
+                "task_id": epoch_task_id,
+                "before_task_snapshot": before_snapshot,
+                "before_task_snapshot_sha256": authority.canonical_sha256(
+                    before_snapshot
+                ),
+                "after_task_snapshot_sha256": authority.canonical_sha256(
+                    after_snapshot
+                ),
+                "before_task_contract_sha256": dispatcher.task_contract_sha256(
+                    before_snapshot
+                ),
+                "after_task_contract_sha256": dispatcher.task_contract_sha256(
+                    after_snapshot
+                ),
+                "before_source_ref_sha256": authority.canonical_sha256(
+                    before_snapshot["source_ref"]
+                ),
+                "after_source_ref_sha256": authority.canonical_sha256(
+                    after_snapshot["source_ref"]
+                ),
+                "before_status": "todo",
+                "after_status": after_snapshot["status"],
+                "acceptance_deferral_sha256": authority.canonical_sha256(
+                    after_snapshot.get("acceptance_deferral")
+                ),
+                "gate_marker_sha256": authority.canonical_sha256(gate_marker),
+            }
+        )
+    epoch_by_id = {row["task_id"]: row for row in epoch_transitions}
+    released_by_id = {}
+    release_transitions = []
+    for released_task_id in authority.EXPECTED_GATED_TASK_IDS:
+        released_task = deepcopy(after_by_id[released_task_id])
+        released_task.pop("sequencing_release_gate", None)
+        released_task["status"] = "todo"
+        released_task["last_update"] = released_at
+        released_by_id[released_task_id] = released_task
+        release_transitions.append(
+            {
+                "task_id": released_task_id,
+                "before_task_snapshot_sha256": epoch_by_id[released_task_id][
+                    "after_task_snapshot_sha256"
+                ],
+                "after_task_snapshot_sha256": authority.canonical_sha256(
+                    released_task
+                ),
+                "after_task_contract_sha256": dispatcher.task_contract_sha256(
+                    released_task
+                ),
+                "after_source_ref_sha256": authority.canonical_sha256(
+                    released_task["source_ref"]
+                ),
+                "before_status": "blocked",
+                "after_status": "todo",
+            }
+        )
+    epoch = {
+        "schema_version": 2,
+        "program_id": program_id,
+        "source_catalog_sha256": authority.SOURCE_CATALOG_SHA256,
+        "effective_catalog_sha256": catalog_sha,
+        "sequencing_overlay_sha256": overlay_sha,
+        "release_gate_id": gate_id,
+        "install_mode": "base_epoch_migration",
+        "applied_at": applied_at,
+        "source_graph_projection_sha256": authority.SOURCE_GRAPH_PROJECTION_SHA256,
+        "effective_graph_projection_sha256": (
+            authority.EFFECTIVE_GRAPH_PROJECTION_SHA256
+        ),
+        "task_count": authority.EXPECTED_TASK_COUNT,
+        "task_transitions": epoch_transitions,
+        "task_transition_set_sha256": authority.canonical_sha256(
+            epoch_transitions
+        ),
+    }
+    task = deepcopy(
+        released_by_id[visible_task_id]
+        if released and visible_task_id in released_by_id
+        else after_by_id[visible_task_id]
+    )
     admission = {
         "g2_evidence_sha256": "c" * 64,
         "canonical_record_bundle_sha256": "d" * 64,
@@ -95,102 +196,18 @@ def _sequencing_release_status(*, released: bool, audited: bool = True) -> dict:
         "product_manifest_sha256": "f" * 64,
         "product_manifest_sidecar_sha256": "1" * 64,
         "target_task_snapshot_sha256": "2" * 64,
+        "owner": "Codex",
         "reviewer": "Codex2",
         "review_binding_sha256": "7" * 64,
         "review_approval_event_sha256": "8" * 64,
+        "owner_closeout_event_sha256": "9" * 64,
         "review_verdict_sha256": "3" * 64,
         "g2_issued_at": "2026-07-16T00:01:00Z",
+        "g2_expires_at": "2026-07-17T00:01:00Z",
+        "g2_fresh_until": "2026-07-16T12:01:00Z",
         "closeout_at": "2026-07-16T00:02:00Z",
     }
     release_admission_sha = authority.canonical_sha256(admission)
-    all_task_ids = list(authority.EXPECTED_TASK_IDS)
-    epoch_transitions = []
-    for epoch_task_id in all_task_ids:
-        blocked = epoch_task_id in authority.EXPECTED_GATED_TASK_IDS
-        source_task = next(
-            task for task in source_catalog["tasks"] if task["id"] == epoch_task_id
-        )
-        before_snapshot = dispatcher.build_task(
-            source_task,
-            source_catalog,
-            source_catalog_digest,
-            "2026-07-15T00:00:00Z",
-        )
-        gate_marker = (
-            {
-                "schema_version": 1,
-                "gate_id": authority.RELEASE_GATE_ID,
-                "release_predicate": authority.RELEASE_PREDICATE,
-                "sequencing_overlay_sha256": authority.SEQUENCING_OVERLAY_SHA256,
-                "state": "parked",
-                "previous_status": "todo",
-                "parked_at": "2026-07-16T00:00:00Z",
-            }
-            if blocked
-            else None
-        )
-        epoch_transitions.append(
-            {
-                "task_id": epoch_task_id,
-                "before_task_snapshot": before_snapshot,
-                "before_task_snapshot_sha256": authority.canonical_sha256(
-                    before_snapshot
-                ),
-                "after_task_snapshot_sha256": authority.canonical_sha256(
-                    {"parked": epoch_task_id}
-                ),
-                "before_task_contract_sha256": dispatcher.task_contract_sha256(
-                    before_snapshot
-                ),
-                "after_task_contract_sha256": "9" * 64,
-                "before_source_ref_sha256": authority.canonical_sha256(
-                    before_snapshot["source_ref"]
-                ),
-                "after_source_ref_sha256": authority.canonical_sha256(
-                    _sequencing_source_ref(authority, epoch_task_id)
-                ),
-                "before_status": "todo",
-                "after_status": "blocked" if blocked else "todo",
-                "acceptance_deferral_sha256": (
-                    authority.canonical_sha256(None) if blocked else "c" * 64
-                ),
-                "gate_marker_sha256": authority.canonical_sha256(gate_marker),
-            }
-        )
-    epoch_by_id = {row["task_id"]: row for row in epoch_transitions}
-    release_transitions = [
-        {
-            "task_id": released_task_id,
-            "before_task_snapshot_sha256": epoch_by_id[released_task_id][
-                "after_task_snapshot_sha256"
-            ],
-            "after_task_snapshot_sha256": authority.canonical_sha256(
-                {"released": released_task_id}
-            ),
-            "before_status": "blocked",
-            "after_status": "todo",
-        }
-        for released_task_id in authority.EXPECTED_GATED_TASK_IDS
-    ]
-    epoch = {
-        "schema_version": 2,
-        "program_id": program_id,
-        "source_catalog_sha256": authority.SOURCE_CATALOG_SHA256,
-        "effective_catalog_sha256": catalog_sha,
-        "sequencing_overlay_sha256": overlay_sha,
-        "release_gate_id": gate_id,
-        "install_mode": "base_epoch_migration",
-        "applied_at": "2026-07-16T00:00:00Z",
-        "source_graph_projection_sha256": authority.SOURCE_GRAPH_PROJECTION_SHA256,
-        "effective_graph_projection_sha256": (
-            authority.EFFECTIVE_GRAPH_PROJECTION_SHA256
-        ),
-        "task_count": authority.EXPECTED_TASK_COUNT,
-        "task_transitions": epoch_transitions,
-        "task_transition_set_sha256": authority.canonical_sha256(
-            epoch_transitions
-        ),
-    }
     release = {
         "schema_version": 2,
         "program_id": program_id,
@@ -199,7 +216,7 @@ def _sequencing_release_status(*, released: bool, audited: bool = True) -> dict:
         "release_gate_id": gate_id,
         "release_predicate": authority.RELEASE_PREDICATE,
         "sequencing_epoch_sha256": authority.canonical_sha256(epoch),
-        "released_at": "2026-07-16T00:03:00Z",
+        "released_at": released_at,
         **admission,
         "release_admission_sha256": release_admission_sha,
         "released_task_transitions": release_transitions,
@@ -207,8 +224,19 @@ def _sequencing_release_status(*, released: bool, audited: bool = True) -> dict:
             authority.canonical_sha256(release_transitions)
         ),
     }
+    dependency_tasks = [
+        {
+            "id": dependency_id,
+            "status": "done",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "depends_on": [],
+            "last_update": "2026-07-16T00:00:00Z",
+        }
+        for dependency_id in task.get("depends_on") or []
+    ]
     status = {
-        "tasks": [task],
+        "tasks": [task, *dependency_tasks],
         "program_sequencing_epochs": {program_id: epoch},
         "program_sequencing_releases": {program_id: release if released else {}},
     }
@@ -1724,12 +1752,11 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         authority = supervisor.sequencing_gate
 
         def pre_g2_status() -> tuple[dict, dict]:
-            status = _sequencing_release_status(released=False)
+            status = _sequencing_release_status(
+                released=False,
+                visible_task_id="LOOP-PROD-000",
+            )
             task = status["tasks"][0]
-            task_id = "LOOP-PROD-000"
-            task["id"] = task_id
-            task["source_ref"] = _sequencing_source_ref(authority, task_id)
-            task.pop("sequencing_release_admission_sha256", None)
             return status, task
 
         status, task = pre_g2_status()

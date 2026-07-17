@@ -4999,17 +4999,225 @@ def test_g2_v4_rejects_closeout_actor_outside_fleet(
         )
 
 
+@pytest.mark.parametrize("mutation", ["missing", "extra"])
+def test_g2_v4_rejects_nonexact_manifest_schema_directly(
+    g2_v2_fixture: dict,
+    mutation: str,
+) -> None:
+    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
+    if mutation == "missing":
+        evidence.pop("closeout_admission")
+    else:
+        evidence["unbound"] = True
+    _rewrite_g2(g2_v2_fixture, evidence)
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="G2 evidence manifest schema is not exact",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra"])
+def test_g2_v4_rejects_nonexact_record_reference_schema_directly(
+    g2_v2_fixture: dict,
+    mutation: str,
+) -> None:
+    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
+    signal = evidence["records"]["signal"]
+    if mutation == "missing":
+        signal.pop("sha256")
+    else:
+        signal["unbound"] = True
+    _rewrite_g2(g2_v2_fixture, evidence)
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="G2 signal record reference schema is not exact",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v4_rejects_wrong_target_task_directly(
+    g2_v2_fixture: dict,
+) -> None:
+    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
+    evidence["task_id"] = "LOOP-PROD-FORGED-001"
+    _rewrite_g2(g2_v2_fixture, evidence)
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="G2 evidence manifest authority mismatch",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "tasks_catalog_sha256",
+        "sequencing_addendum_sha256",
+        "merge_pr_3737_sha",
+        "overlay_sha256",
+        "target_task_original_contract_sha256",
+        "target_task_amended_contract_sha256",
+    ],
+)
+def test_g2_v4_rejects_wrong_source_authority_directly(
+    g2_v2_fixture: dict,
+    field: str,
+) -> None:
+    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
+    width = 40 if field == "merge_pr_3737_sha" else 64
+    evidence["authority"][field] = "0" * width
+    _rewrite_g2(g2_v2_fixture, evidence)
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="G2 evidence hash authority mismatch",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+@pytest.mark.parametrize(
+    ("role", "field", "expected"),
+    [
+        ("signal", "event_id", "G2 signal record digest resolution mismatch"),
+        ("order", "event_id", "G2 order record digest resolution mismatch"),
+        ("fill", "event_id", "G2 fill record digest resolution mismatch"),
+        (
+            "telemetry",
+            "event_id",
+            "G2 telemetry record digest resolution mismatch",
+        ),
+        ("loop_run_projection", "id", "G2 loop projection digest resolution mismatch"),
+    ],
+)
+def test_g2_v4_rejects_wrong_record_linkage_directly(
+    g2_v2_fixture: dict,
+    role: str,
+    field: str,
+    expected: str,
+) -> None:
+    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
+    evidence["records"][role][field] = "forged-link"
+    _rewrite_g2(g2_v2_fixture, evidence)
+    dispatcher = g2_v2_fixture["dispatcher"]
+
+    with pytest.raises(dispatcher.DispatchError, match=expected):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+def test_g2_v4_rejects_authoritative_source_row_omission_directly(
+    g2_v2_fixture: dict,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    snapshot = g2_v2_fixture["authoritative_snapshot"]
+    snapshot["rows"] = snapshot["rows"][:-1]
+    snapshot["attestation"]["rows_sha256"] = dispatcher.canonical_json_sha256(
+        snapshot["rows"]
+    )
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="G2 canonical bundle does not resolve against authoritative stores",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
+@pytest.mark.parametrize("mutation", ["causal_parent", "sequence"])
+def test_g2_v4_rejects_coherent_chain_topology_mutation_directly(
+    g2_v2_fixture: dict,
+    mutation: str,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    bundle = _read_artifact(g2_v2_fixture["paths"]["bundle"])
+    evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
+    if mutation == "causal_parent":
+        row = next(
+            item
+            for item in bundle["rows"]
+            if item["event_type"] == "paper_fill_simulated"
+        )
+        payload = row["payload"]
+        payload["causal_parent_id"] = "forged-causal-parent"
+        payload["metadata"]["causal_parent_id"] = "forged-causal-parent"
+        payload["correlation_envelope"]["causation_event_id"] = (
+            "forged-causal-parent"
+        )
+        role = "fill"
+    else:
+        row = next(
+            item
+            for item in bundle["rows"]
+            if item["event_type"] == "order_submitted"
+        )
+        row["payload"]["sequence_no"] = 4
+        row["payload"]["metadata"]["sequence_no"] = 4
+        role = "order"
+    evidence["records"][role]["sha256"] = dispatcher.canonical_json_sha256(
+        row
+    )
+    evidence["record_bundle"]["sha256"] = _write_json_artifact(
+        g2_v2_fixture["paths"]["bundle"], bundle
+    )
+    _rewrite_g2(g2_v2_fixture, evidence)
+
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="G2 bundle contains canonical rows outside complete lifecycles",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
+
+
 def test_g2_v2_rejects_stale_evidence(g2_v2_fixture: dict) -> None:
     evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
     evidence["issued_at"] = "2026-07-13T00:03:00Z"
     evidence["expires_at"] = "2026-07-14T00:03:00Z"
     _rewrite_g2(g2_v2_fixture, evidence)
 
-    assert not g2_v2_fixture["dispatcher"].check_g2_evidence_valid(
-        g2_v2_fixture["state"],
-        g2_v2_fixture["catalog"],
-        now=g2_v2_fixture["now"],
-    )
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="G2 evidence is stale, future-dated, or expired",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
 
 
 def test_g2_v4_rejects_canonical_rows_stale_against_verifier_now(
@@ -5055,11 +5263,16 @@ def test_g2_v2_rejects_wrong_merge_sha_authority(g2_v2_fixture: dict) -> None:
     evidence["authority"]["merge_pr_3737_sha"] = "0" * 40
     _rewrite_g2(g2_v2_fixture, evidence)
 
-    assert not g2_v2_fixture["dispatcher"].check_g2_evidence_valid(
-        g2_v2_fixture["state"],
-        g2_v2_fixture["catalog"],
-        now=g2_v2_fixture["now"],
-    )
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="G2 evidence hash authority mismatch",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
 
 
 @pytest.mark.parametrize("closeout_source", ["active", "archive"])
@@ -5072,11 +5285,18 @@ def test_g2_v2_rejects_false_active_or_archive_closeout(
     else:
         _archive_closeout(g2_v2_fixture, outcome="superseded")
 
-    assert not g2_v2_fixture["dispatcher"].check_g2_evidence_valid(
-        g2_v2_fixture["state"],
-        g2_v2_fixture["catalog"],
-        now=g2_v2_fixture["now"],
+    dispatcher = g2_v2_fixture["dispatcher"]
+    expected = (
+        "G2 target is not done with completed outcome"
+        if closeout_source == "active"
+        else "G2 target archive closeout is not exact"
     )
+    with pytest.raises(dispatcher.DispatchError, match=expected):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
 
 
 def test_g2_v4_rejects_active_done_without_source_approval_truth(
@@ -5147,11 +5367,16 @@ def test_g2_v2_rejects_missing_canonical_row(g2_v2_fixture: dict) -> None:
     ]
     _rewrite_bundle(g2_v2_fixture, bundle)
 
-    assert not g2_v2_fixture["dispatcher"].check_g2_evidence_valid(
-        g2_v2_fixture["state"],
-        g2_v2_fixture["catalog"],
-        now=g2_v2_fixture["now"],
-    )
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="G2 canonical rows are not exact",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
 
 
 def test_g2_v2_rejects_canonical_record_digest_mismatch(
@@ -5161,11 +5386,16 @@ def test_g2_v2_rejects_canonical_record_digest_mismatch(
     evidence["records"]["fill"]["sha256"] = "0" * 64
     _rewrite_g2(g2_v2_fixture, evidence)
 
-    assert not g2_v2_fixture["dispatcher"].check_g2_evidence_valid(
-        g2_v2_fixture["state"],
-        g2_v2_fixture["catalog"],
-        now=g2_v2_fixture["now"],
-    )
+    dispatcher = g2_v2_fixture["dispatcher"]
+    with pytest.raises(
+        dispatcher.DispatchError,
+        match="G2 fill record digest resolution mismatch",
+    ):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
 
 
 @pytest.mark.parametrize(
@@ -5528,12 +5758,25 @@ def test_g2_v2_rejects_product_evidence_leaf_symlink(
 
 
 @pytest.mark.parametrize(
-    "mutation",
-    ["status", "tenant", "environment", "run", "order"],
+    ("mutation", "expected"),
+    [
+        ("status", "G2 loop-run projection record mismatch"),
+        (
+            "tenant",
+            "G2 bundle contains canonical rows outside complete lifecycles",
+        ),
+        ("environment", "G2 record environment mismatch"),
+        ("run", "G2 bundle does not resolve the declared natural lifecycle"),
+        (
+            "order",
+            "G2 bundle contains canonical rows outside complete lifecycles",
+        ),
+    ],
 )
 def test_g2_v2_rejects_status_identity_environment_run_and_order_mutations(
     g2_v2_fixture: dict,
     mutation: str,
+    expected: str,
 ) -> None:
     dispatcher = g2_v2_fixture["dispatcher"]
     evidence = _read_artifact(g2_v2_fixture["paths"]["g2"])
@@ -5576,11 +5819,12 @@ def test_g2_v2_rejects_status_identity_environment_run_and_order_mutations(
         evidence["record_bundle"]["sha256"] = digest
         _rewrite_g2(g2_v2_fixture, evidence)
 
-    assert not dispatcher.check_g2_evidence_valid(
-        g2_v2_fixture["state"],
-        g2_v2_fixture["catalog"],
-        now=g2_v2_fixture["now"],
-    )
+    with pytest.raises(dispatcher.DispatchError, match=expected):
+        dispatcher._validate_g2_evidence(
+            g2_v2_fixture["state"],
+            g2_v2_fixture["catalog"],
+            now=g2_v2_fixture["now"],
+        )
 
 
 def test_g2_v4_rejects_bundle_with_a_second_complete_lifecycle(
