@@ -1212,6 +1212,8 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                     )
             counts: dict[str, int] = {}
             for row in rows:
+                if "record_type" in row:
+                    continue
                 event_id = str(row.get("event_id") or "")
                 counts[event_id] = counts.get(event_id, 0) + 1
             self.assertEqual(
