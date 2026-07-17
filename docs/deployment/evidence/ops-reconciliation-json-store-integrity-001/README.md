@@ -523,6 +523,49 @@ validated store or tests. Its resulting pushed full SHA supersedes the stale
 unchanged exact head through both the governed task state and a GitHub review
 before manual merge; auto-merge remains disabled.
 
+### Final closeout compose revalidation
+
+The owner-finalization dispatch found PR #3778 at approved pushed head
+`d51835165a1b98c218a1932f224a6c751b848a9a`, but GitHub reported the PR as
+`BEHIND` after `origin/dev` advanced three commits through PR #3822 to
+`7be97fa5cffe99e704e672b5aa56abe1515da5d9`. Those commits changed only
+watchdog and orchestrator support files; they did not touch this task's store,
+tests, review, or evidence paths. The branch composed that dev tip without
+conflict, producing pre-evidence merge head
+`c2bf0588b68480ed398e4abe13be32be152efd44`, and was revalidated at
+2026-07-17T22:42:15Z:
+
+```text
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py -q
+22 passed in 5.06s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py -q
+6 passed in 2.63s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py -q
+20 passed in 6.45s
+
+python3 -m pytest services/reconciliation-drift/tests/ -q
+79 passed in 22.14s
+
+python3 -m py_compile services/reconciliation-drift/store.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py
+(no output; passed)
+
+git diff --check origin/dev...HEAD
+(no output; clean)
+
+git show --check --oneline HEAD
+(no whitespace errors)
+
+python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge
+(no output; passed)
+```
+
+This evidence-only owner closeout does not alter store or test behavior. The
+resulting pushed exact head supersedes the approval of `d5183516...` and must
+receive fresh Antigravity governed approval plus a GitHub approval review
+before manual merge. Auto-merge remains disabled.
+
 ### Push-event trailer check false positive
 
 The `Commit trailers` check's `push` event range (`f06027d02..b506dc93a`)
