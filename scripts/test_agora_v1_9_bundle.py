@@ -90,7 +90,7 @@ def test_required_definition_checksums_are_complete_and_locked() -> None:
         assert actual == expected_hash, name
 
 
-def test_openapi_and_manifest_publish_the_same_contract_only_routes() -> None:
+def test_openapi_and_manifest_publish_the_same_route_statuses() -> None:
     spec = yaml.safe_load(OPENAPI_PATH.read_text(encoding="utf-8"))
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     openapi_routes = {
@@ -106,9 +106,16 @@ def test_openapi_and_manifest_publish_the_same_contract_only_routes() -> None:
     }
 
     assert openapi_routes == manifest_routes
-    assert spec["info"]["x-implementation-status"] == "contract_only"
+    assert spec["info"]["x-implementation-status"] == "partially_implemented"
     assert {item["implementation_status"] for item in manifest["capabilities"]} == {
-        "contract_only"
+        "implemented", "contract_only"
+    }
+    implemented = {
+        item["id"] for item in manifest["capabilities"]
+        if item["implementation_status"] == "implemented"
+    }
+    assert implemented == {
+        "persona_interaction_daily_contract", "persona_provider_content_contract",
     }
 
 

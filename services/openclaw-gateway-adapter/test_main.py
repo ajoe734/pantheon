@@ -1938,7 +1938,8 @@ class TestGovernedServantAgentSync(unittest.TestCase):
                         "metadata": {"allowed_tools": []}, "agent_id": payload["agent_id"],
                         "persona_admission": admission,
                     },
-                    headers={"X-Pantheon-Service-Token": "adapter-secret", "X-Operator-Id": "operator-1"},
+                    headers={"X-Pantheon-Service-Token": "adapter-secret", "X-Operator-Id": "operator-1",
+                             "Idempotency-Key": f"persona-invoke-{index}"},
                 )
                 self.assertEqual(invoked.status_code, 200, invoked.text)
 
@@ -1958,7 +1959,8 @@ class TestGovernedServantAgentSync(unittest.TestCase):
                     "metadata": {"allowed_tools": []}, "agent_id": alpha["agent_id"],
                     "persona_admission": alpha_admission,
                 },
-                headers={"X-Pantheon-Service-Token": "adapter-secret", "X-Operator-Id": "operator-1"},
+                headers={"X-Pantheon-Service-Token": "adapter-secret", "X-Operator-Id": "operator-1",
+                         "Idempotency-Key": "persona-policy-drift"},
             )
             self.assertEqual(denied.status_code, 403, denied.text)
 
@@ -2032,6 +2034,7 @@ class TestGovernedServantAgentSync(unittest.TestCase):
                 headers={
                     "X-Pantheon-Service-Token": "adapter-secret",
                     "X-Operator-Id": "operator-1",
+                    "Idempotency-Key": "persona-opinion-provider-invoke",
                 },
             )
 
@@ -2041,7 +2044,51 @@ class TestGovernedServantAgentSync(unittest.TestCase):
         self.assertEqual(invoke.call_args.kwargs["metadata"]["allowed_tools"], [])
         self.assertEqual(invoke.call_args.kwargs["metadata"]["execution_authority"], "none")
         self.assertFalse(invoke.call_args.kwargs["metadata"]["persona_memory_mutated"])
-        self.assertRegex(invoke.call_args.kwargs["session_id"], r"^[0-9a-f-]{36}$")
+        self.assertRegex(invoke.call_args.kwargs["session_id"], r"^pint-[0-9a-f]{32}$")
+
+    def test_persona_invocation_replays_terminal_and_fences_restart_in_doubt(self):
+        payload = self._opinion_payload()
+        admission = {
+            key: payload[key]
+            for key in adapter_main.PersonaOpinionInvocationAdmission.model_fields
+        }
+        request = adapter_main.AssistantProviderInvokeRequest(
+            mode="user",
+            prompt="Return the exact opinion",
+            agent_id=payload["agent_id"],
+            persona_admission=admission,
+            metadata={"allowed_tools": []},
+        )
+        calls = []
+
+        def completed():
+            calls.append("completed")
+            return {"status": "ok", "data": {"status": "completed", "output": {"request_id": "r1"}}}
+
+        first = adapter_main._invoke_persona_opinion_idempotently(
+            request, idempotency_key="invocation-terminal", invoke_fn=completed,
+        )
+        second = adapter_main._invoke_persona_opinion_idempotently(
+            request, idempotency_key="invocation-terminal", invoke_fn=completed,
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(calls, ["completed"])
+
+        def crash_after_claim():
+            calls.append("crashed")
+            raise RuntimeError("adapter process died after upstream acceptance")
+
+        with self.assertRaises(RuntimeError):
+            adapter_main._invoke_persona_opinion_idempotently(
+                request, idempotency_key="invocation-in-doubt", invoke_fn=crash_after_claim,
+            )
+        with self.assertRaises(adapter_main._PersonaOpinionInvocationInDoubt):
+            adapter_main._invoke_persona_opinion_idempotently(
+                request,
+                idempotency_key="invocation-in-doubt",
+                invoke_fn=lambda: calls.append("must-not-run"),
+            )
+        self.assertNotIn("must-not-run", calls)
 
 
 class TestSessions(unittest.TestCase):

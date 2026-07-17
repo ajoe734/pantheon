@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
@@ -12,6 +13,56 @@ from .provider import (
     build_provider_prompt,
     validate_provider_opinion,
 )
+from .store import InteractionLifecycleStore
+
+
+def _outbox(kind: str, identity: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "outbox_id": f"iob:{kind}:{identity}",
+        "projection_kind": kind,
+        "payload": payload,
+    }
+
+
+def drain_interaction_outbox(store: InteractionLifecycleStore, workshop_store: Any) -> int:
+    """Idempotently project durable interaction outbox rows to Workshop views."""
+    from agora.strategy_workshop.router import _ws_publish
+
+    def dispatch(kind: str, payload: Dict[str, Any]) -> None:
+        if kind == "workshop_event":
+            workshop_store.create_event(payload)
+        elif kind == "workshop_card":
+            existing = next(
+                (item for item in workshop_store.list_workshop_cards(payload["workshop_id"])
+                 if item.get("card_id") == payload.get("card_id")),
+                None,
+            )
+            if existing is None:
+                workshop_store.record_workshop_card(payload)
+            else:
+                comparable = (
+                    "card_type", "workshop_id", "status", "title", "summary",
+                    "payload", "evidence_refs", "allowed_actions",
+                )
+                if any(existing.get(key) != payload.get(key) for key in comparable):
+                    raise ValueError("workshop card projector identity reused with different content")
+        elif kind == "workshop_sse":
+            _ws_publish(
+                payload["workshop_id"], payload["event_type"], payload["data"],
+                event_id=str(payload["data"].get("event_id") or ""),
+            )
+        else:  # pragma: no cover - durable corruption guard
+            raise ValueError(f"unknown interaction projection kind: {kind}")
+
+    return store.drain_outbox(dispatch)
+
+
+def _best_effort_drain(store: InteractionLifecycleStore, workshop_store: Any) -> int:
+    """Projection failure never turns an accepted canonical write into 500."""
+    try:
+        return drain_interaction_outbox(store, workshop_store)
+    except Exception:  # durable outbox remains pending for explicit recovery
+        return 0
 
 
 def _event_id(tenant_id: str, user_id: str, interaction_id: str, stage: str) -> str:
@@ -130,33 +181,49 @@ def run_selected_persona_interaction(
     operator_id: str,
     trace_id: str,
     occurred_at: str,
+    human_submitted_at: Optional[str] = None,
     proposal_snapshot: Optional[Dict[str, Any]] = None,
     proposal_etag: Optional[str] = None,
     client_factory: Optional[Callable[[], OpenClawOpsClient]] = None,
+    lifecycle_store: Optional[InteractionLifecycleStore] = None,
+    frozen_participants: Optional[List[Dict[str, Any]]] = None,
+    invocation_attempt: int = 0,
 ) -> Dict[str, Any]:
     from agora.strategy_workshop.router import _ws_publish
 
-    personas = {
-        str(persona.get("persona_id") or persona.get("id") or ""): persona
-        for persona in read_store.list_personas(include_market_persona_defaults=True)
-        if isinstance(persona, dict)
-    }
     frozen: List[tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]] = []
-    for persona_id in participants:
-        persona = personas.get(persona_id)
-        snapshot = _snapshot_for(read_store, persona or {}) if persona else None
-        if persona is None or snapshot is None:
-            raise ValueError(f"selected Persona {persona_id} lost canonical admission before invocation")
-        participant, admission = build_participant_admission(
-            persona=persona,
-            capability_snapshot=snapshot,
-            environment=environment,
-            tenant_id=tenant_id,
-            captured_at=occurred_at,
-        )
-        frozen.append((persona, participant, admission))
+    if frozen_participants is not None:
+        by_id = {str(item["participant"]["persona_id"]): item for item in frozen_participants}
+        for persona_id in participants:
+            item = by_id.get(persona_id)
+            if item is None:
+                raise ValueError(f"persisted frozen Persona admission missing for {persona_id}")
+            frozen.append((item["persona_profile"], item["participant"], item["admission"]))
+    else:
+        personas = {
+            str(persona.get("persona_id") or persona.get("id") or ""): persona
+            for persona in read_store.list_personas(include_market_persona_defaults=True)
+            if isinstance(persona, dict)
+        }
+        for persona_id in participants:
+            persona = personas.get(persona_id)
+            snapshot = _snapshot_for(read_store, persona or {}) if persona else None
+            if persona is None or snapshot is None:
+                raise ValueError(f"selected Persona {persona_id} lost canonical admission before invocation")
+            participant, admission = build_participant_admission(
+                persona=persona,
+                capability_snapshot=snapshot,
+                environment=environment,
+                tenant_id=tenant_id,
+                captured_at=occurred_at,
+            )
+            frozen.append((persona, participant, admission))
 
-    requested_event_id = _event_id(tenant_id, user_id, interaction_id, "requested")
+    attempt_key = "" if invocation_attempt == 0 else f":retry:{invocation_attempt}"
+    def attempt_event(component: str) -> str:
+        return f"{component}{attempt_key}"
+
+    requested_event_id = _event_id(tenant_id, user_id, interaction_id, attempt_event("requested"))
     requested_event = {
         "spec_version": "1.9",
         "event_id": requested_event_id,
@@ -171,7 +238,7 @@ def run_selected_persona_interaction(
         "trace_id": trace_id,
         "created_at": occurred_at,
     }
-    workshop_store.create_event({
+    requested_projection = {
         "event_id": requested_event_id,
         "workshop_id": workshop_id,
         "actor_type": "operator",
@@ -180,21 +247,35 @@ def run_selected_persona_interaction(
         "redacted_summary": "Independent Persona opinions requested.",
         "payload_refs_json": requested_event,
         "trace_id": trace_id,
-    })
-    _ws_publish(workshop_id, "consultation.started", {
+    }
+    started_sse = {
+        "workshop_id": workshop_id,
+        "event_type": "consultation.started",
+        "data": {
         "interaction_id": interaction_id,
         "participants": [item[1] for item in frozen],
         "trace_id": trace_id,
         "event_id": requested_event_id,
-    })
+        },
+    }
+    if lifecycle_store is not None:
+        lifecycle_store.mark_running(interaction_id)
+        lifecycle_store.enqueue(interaction_id, _outbox("workshop_event", requested_event_id, requested_projection))
+        lifecycle_store.enqueue(interaction_id, _outbox("workshop_sse", requested_event_id, started_sse))
+        _best_effort_drain(lifecycle_store, workshop_store)
+    else:
+        workshop_store.create_event(requested_projection)
+        _ws_publish(workshop_id, "consultation.started", started_sse["data"])
 
     opinions: List[Dict[str, Any]] = []
     invocations: List[Dict[str, Any]] = []
     failed_persona_ids: List[str] = []
+    in_progress_persona_ids: List[str] = []
     client = (client_factory or OpenClawOpsClient)()
+    lease_owner = f"bff:{uuid.uuid4().hex}"
     for index, (persona, participant, admission) in enumerate(frozen):
         invocation_id = "inv-" + hashlib.sha256(
-            f"{interaction_id}\0{participant['persona_id']}\0{participant['persona_version']}".encode("utf-8")
+            f"{interaction_id}\0{participant['persona_id']}\0{participant['persona_version']}\0{invocation_attempt}".encode("utf-8")
         ).hexdigest()[:20]
         request_correlation_id = f"{trace_id}:{invocation_id}"
         prompt, context_pack = build_provider_prompt(
@@ -205,7 +286,7 @@ def run_selected_persona_interaction(
             persona_profile=persona,
             context_refs=context_refs,
             tenant_id=tenant_id,
-            submitted_at=occurred_at,
+            submitted_at=human_submitted_at or occurred_at,
         )
         invocation = {
             "invocation_id": invocation_id,
@@ -218,6 +299,25 @@ def run_selected_persona_interaction(
             "started_at": occurred_at,
             "authority": authority_boundary(),
         }
+        if lifecycle_store is not None:
+            durable_invocation, claimed = lifecycle_store.claim_invocation(
+                interaction_id,
+                invocation,
+                lease_owner=lease_owner,
+            )
+            if not claimed:
+                stored_invocation = durable_invocation["invocation"]
+                stored_opinion = durable_invocation.get("opinion")
+                if stored_invocation.get("status") == "succeeded" and stored_opinion:
+                    opinions.append(stored_opinion)
+                elif stored_invocation.get("status") == "failed":
+                    failed_persona_ids.append(participant["persona_id"])
+                # Another worker may still hold the unexpired claim.  Do not
+                # invoke the provider again; the aggregate remains degraded.
+                elif stored_invocation.get("status") == "running":
+                    in_progress_persona_ids.append(participant["persona_id"])
+                invocations.append(stored_invocation)
+                continue
         try:
             ensure_result = client.ensure_persona_opinion_agent(
                 admission,
@@ -240,6 +340,7 @@ def run_selected_persona_interaction(
                 trace_id=request_correlation_id,
                 agent_id=admission["agent_id"],
                 persona_admission=admission,
+                idempotency_key=invocation_id,
             )
             raw_opinion, response_correlation_id, response_sha = validate_provider_opinion(
                 provider_payload,
@@ -275,8 +376,8 @@ def run_selected_persona_interaction(
                 "authority": authority_boundary(),
             }
             opinions.append(opinion)
-            event_id = _event_id(tenant_id, user_id, interaction_id, f"opinion:{index}:{participant['persona_id']}")
-            workshop_store.create_event({
+            event_id = _event_id(tenant_id, user_id, interaction_id, attempt_event(f"opinion:{index}:{participant['persona_id']}"))
+            opinion_event = {
                 "event_id": event_id,
                 "workshop_id": workshop_id,
                 "actor_type": "persona_session",
@@ -300,7 +401,18 @@ def run_selected_persona_interaction(
                     "authority": authority_boundary(),
                 },
                 "trace_id": trace_id,
-            })
+            }
+            if lifecycle_store is not None:
+                lifecycle_store.finish_invocation(
+                    interaction_id,
+                    invocation=invocation,
+                    opinion=opinion,
+                    error=None,
+                    outbox=[_outbox("workshop_event", event_id, opinion_event)],
+                )
+                _best_effort_drain(lifecycle_store, workshop_store)
+            else:
+                workshop_store.create_event(opinion_event)
         except Exception as exc:  # noqa: BLE001
             error = _provider_error(exc)
             invocation.update({
@@ -309,8 +421,8 @@ def run_selected_persona_interaction(
                 "error": error,
             })
             failed_persona_ids.append(participant["persona_id"])
-            event_id = _event_id(tenant_id, user_id, interaction_id, f"failed:{index}:{participant['persona_id']}")
-            workshop_store.create_event({
+            event_id = _event_id(tenant_id, user_id, interaction_id, attempt_event(f"failed:{index}:{participant['persona_id']}"))
+            failed_event = {
                 "event_id": event_id,
                 "workshop_id": workshop_id,
                 "actor_type": "openclaw_provider",
@@ -329,21 +441,51 @@ def run_selected_persona_interaction(
                     "authority": authority_boundary(),
                 },
                 "trace_id": trace_id,
-            })
-            _ws_publish(workshop_id, "workshop.openclaw.degraded", {
+            }
+            failed_sse = {
+                "workshop_id": workshop_id,
+                "event_type": "workshop.openclaw.degraded",
+                "data": {
                 "workshop_id": workshop_id,
                 "interaction_id": interaction_id,
                 "persona_id": participant["persona_id"],
                 "error_code": error["code"],
                 "message": error["message"],
                 "trace_id": trace_id,
-            })
+                "event_id": event_id,
+                },
+            }
+            if lifecycle_store is not None:
+                lifecycle_store.finish_invocation(
+                    interaction_id,
+                    invocation=invocation,
+                    opinion=None,
+                    error=error,
+                    outbox=[
+                        _outbox("workshop_event", event_id, failed_event),
+                        _outbox("workshop_sse", event_id, failed_sse),
+                    ],
+                )
+                _best_effort_drain(lifecycle_store, workshop_store)
+            else:
+                workshop_store.create_event(failed_event)
+                _ws_publish(workshop_id, "workshop.openclaw.degraded", failed_sse["data"])
         invocations.append(invocation)
+
+    if in_progress_persona_ids:
+        return {
+            "status": "running",
+            "opinions": opinions,
+            "invocations": invocations,
+            "synthesis": None,
+            "missing_participant_ids": [],
+            "in_progress_participant_ids": in_progress_persona_ids,
+        }
 
     synthesis = _synthesize(opinions, failed_persona_ids, occurred_at)
     final_status = "completed" if opinions and not failed_persona_ids else ("degraded" if opinions else "failed")
-    closed_event_id = _event_id(tenant_id, user_id, interaction_id, "closed")
-    workshop_store.create_event({
+    closed_event_id = _event_id(tenant_id, user_id, interaction_id, attempt_event("closed"))
+    closed_event = {
         "event_id": closed_event_id,
         "workshop_id": workshop_id,
         "actor_type": "operator",
@@ -364,7 +506,7 @@ def run_selected_persona_interaction(
             "authority": authority_boundary(),
         },
         "trace_id": trace_id,
-    })
+    }
 
     evidence_refs = list((synthesis or {}).get("evidence_refs") or [])
     card_payload = {
@@ -400,8 +542,8 @@ def run_selected_persona_interaction(
             "execution_authority": "none",
             "authority": authority_boundary(),
         }
-        workshop_store.record_workshop_card({
-            "card_id": f"card_proposal_{interaction_id}",
+        workshop_card = {
+            "card_id": f"card_proposal_{interaction_id}{attempt_key.replace(':', '_')}",
             "card_type": "governed_proposal",
             "workshop_id": workshop_id,
             "status": "informational",
@@ -410,10 +552,10 @@ def run_selected_persona_interaction(
             "payload": proposal_payload,
             "evidence_refs": evidence_refs,
             "allowed_actions": {},
-        })
+        }
     else:
-        workshop_store.record_workshop_card({
-            "card_id": f"card_consult_{interaction_id}",
+        workshop_card = {
+            "card_id": f"card_consult_{interaction_id}{attempt_key.replace(':', '_')}",
             "card_type": "consult_result",
             "workshop_id": workshop_id,
             "status": final_status,
@@ -422,15 +564,37 @@ def run_selected_persona_interaction(
             "payload": card_payload,
             "evidence_refs": evidence_refs,
             "allowed_actions": {},
-        })
-    _ws_publish(workshop_id, "consultation.completed", {
-        "interaction_id": interaction_id,
-        "status": final_status,
-        "opinion_ids": [opinion["opinion_id"] for opinion in opinions],
-        "missing_participant_ids": failed_persona_ids,
-        "trace_id": trace_id,
-        "event_id": closed_event_id,
-    })
+        }
+    completed_sse = {
+        "workshop_id": workshop_id,
+        "event_type": "consultation.completed",
+        "data": {
+            "interaction_id": interaction_id,
+            "status": final_status,
+            "opinion_ids": [opinion["opinion_id"] for opinion in opinions],
+            "missing_participant_ids": failed_persona_ids,
+            "trace_id": trace_id,
+            "event_id": closed_event_id,
+        },
+    }
+    if lifecycle_store is not None:
+        lifecycle_store.finalize(
+            interaction_id,
+            status=final_status,
+            synthesis=synthesis,
+            missing_participant_ids=failed_persona_ids,
+            degraded_participant_ids=failed_persona_ids,
+            outbox=[
+                _outbox("workshop_event", closed_event_id, closed_event),
+                _outbox("workshop_card", workshop_card["card_id"], workshop_card),
+                _outbox("workshop_sse", closed_event_id, completed_sse),
+            ],
+        )
+        _best_effort_drain(lifecycle_store, workshop_store)
+    else:
+        workshop_store.create_event(closed_event)
+        workshop_store.record_workshop_card(workshop_card)
+        _ws_publish(workshop_id, "consultation.completed", completed_sse["data"])
     return {
         "status": final_status,
         "opinions": opinions,
