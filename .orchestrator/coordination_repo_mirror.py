@@ -8,12 +8,19 @@ from typing import Any
 
 from common import ensure_parent
 from lovable_task_publisher import render_lovable_prompt, resolve_contract_packet_refs
-from multi_repo_registry import coordination_responses_dir, repository_local_path
+from multi_repo_registry import coordination_responses_dir, repository_local_path, repository_slug, resolve_repository
 
 try:
     import yaml
 except ImportError:  # pragma: no cover - best effort fallback
     yaml = None
+
+
+ACTIVE_FRONTEND_REPO_ID = "execute_plans"
+
+
+class CoordinationMirrorError(RuntimeError):
+    """A packet-local mirror precondition failure that must not stop dispatch."""
 
 
 def _write_if_changed(path: Path, content: str) -> bool:
@@ -62,7 +69,7 @@ def _require_git_checkout(path: Path, display_name: str) -> None:
     )
     if result.returncode == 0 and result.stdout.strip() == "true":
         return
-    raise RuntimeError(
+    raise CoordinationMirrorError(
         f"{display_name} checkout is invalid at {path}; local mirror validation requires a sibling git checkout "
         "of the target repo."
     )
@@ -112,13 +119,15 @@ def mirror_backend_delivery_bundle(
     if not feature_id:
         return None
 
-    target_repo_id = "front_ai_trading_system"
+    target_repo_id = ACTIVE_FRONTEND_REPO_ID
     responses_dir = coordination_responses_dir(config, target_repo_id)
     target_root = repository_local_path(config, target_repo_id)
     pantheon_root = repository_local_path(config, "pantheon")
     if responses_dir is None or target_root is None or pantheon_root is None:
         return None
-    _require_git_checkout(target_root, "front-ai-trading-system")
+    target_name = str(resolve_repository(config, target_repo_id).get("display_name") or "execute-plans")
+    target_repo = repository_slug(config, target_repo_id) or "ajoe734/execute-plans"
+    _require_git_checkout(target_root, target_name)
 
     changed = False
     mirrored_paths: list[str] = []
@@ -139,7 +148,7 @@ def mirror_backend_delivery_bundle(
         {
             "mirror_only": True,
             "mirrored_from_repo": "pantheon",
-            "mirrored_target_repo": "front-ai-trading-system",
+            "mirrored_target_repo": target_repo,
         }
     )
 
@@ -164,12 +173,14 @@ def mirror_contract_ready_bundle(
     if not feature_id:
         return None
 
-    target_repo_id = "front_ai_trading_system"
+    target_repo_id = ACTIVE_FRONTEND_REPO_ID
     responses_dir = coordination_responses_dir(config, target_repo_id)
     target_root = repository_local_path(config, target_repo_id)
     if responses_dir is None or target_root is None:
         return None
-    _require_git_checkout(target_root, "front-ai-trading-system")
+    target_name = str(resolve_repository(config, target_repo_id).get("display_name") or "execute-plans")
+    target_repo = repository_slug(config, target_repo_id) or "ajoe734/execute-plans"
+    _require_git_checkout(target_root, target_name)
 
     refs = resolve_contract_packet_refs(config, contract_payload)
     pantheon_root = refs.get("pantheon_root")
@@ -241,7 +252,7 @@ def mirror_contract_ready_bundle(
         {
             "mirror_only": True,
             "mirrored_from_repo": "pantheon",
-            "mirrored_target_repo": "front-ai-trading-system",
+            "mirrored_target_repo": target_repo,
         }
     )
     if refs.get("workbench"):
@@ -282,7 +293,7 @@ def mirror_contract_ready_bundle(
             {
                 "mirror_only": True,
                 "mirrored_from_repo": "pantheon",
-                "mirrored_target_repo": "front-ai-trading-system",
+                "mirrored_target_repo": target_repo,
             }
         )
         if refs.get("workbench"):
