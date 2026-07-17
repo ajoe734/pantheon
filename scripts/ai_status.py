@@ -164,6 +164,8 @@ def _worker_workspace_root() -> Path | None:
 
 
 def _first_symlink_component(path: Path) -> Path | None:
+    if ".." in path.parts:
+        raise RuntimeError(f"Path contains parent directory references (..): {path}")
     current = Path(path.anchor)
     parts = path.parts[1:] if path.is_absolute() else path.parts
     for part in parts:
@@ -171,11 +173,12 @@ def _first_symlink_component(path: Path) -> Path | None:
         try:
             if current.is_symlink():
                 return current
-            if not current.exists():
+            if not current.exists() and not current.is_symlink():
                 return None
         except OSError:
             return current
     return None
+
 
 
 def _status_root_from_runtime_path(raw: str, *, label: str) -> Path:

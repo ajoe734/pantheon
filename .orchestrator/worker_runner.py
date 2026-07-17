@@ -49,6 +49,8 @@ def _git_toplevel(path: Path) -> Path | None:
 
 
 def _first_symlink_component(path: Path) -> Path | None:
+    if ".." in path.parts:
+        raise RuntimeError(f"Path contains parent directory references (..): {path}")
     current = Path(path.anchor)
     parts = path.parts[1:] if path.is_absolute() else path.parts
     for part in parts:
@@ -56,11 +58,12 @@ def _first_symlink_component(path: Path) -> Path | None:
         try:
             if current.is_symlink():
                 return current
-            if not current.exists():
+            if not current.exists() and not current.is_symlink():
                 return None
         except OSError:
             return current
     return None
+
 
 
 def _status_root_from_runtime_path(path: Path, *, label: str) -> Path:
@@ -245,17 +248,33 @@ def main(argv: list[str] | None = None) -> int:
     agent = derive_agent(args.run_id)
     task_id = derive_task_id(command)
 
-    heartbeat_path = Path(args.heartbeat_path).resolve()
-    status_path = Path(args.status_path).resolve()
+    raw_heartbeat_path = Path(args.heartbeat_path)
+    raw_status_path = Path(args.status_path)
+
+    # Validate raw supplied paths to prevent symlink bypasses
+    for path, label in [
+        (raw_heartbeat_path, "heartbeat_path"),
+        (raw_status_path, "status_path"),
+    ]:
+        expanded = Path(os.path.expanduser(str(path)))
+        if not expanded.is_absolute():
+            raise RuntimeError(f"{label} must be absolute: {expanded}")
+        symlink_comp = _first_symlink_component(expanded)
+        if symlink_comp is not None:
+            raise RuntimeError(f"{label} contains a symlink component: {symlink_comp}")
+        if expanded.is_symlink():
+            raise RuntimeError(f"{label} cannot be a symlink: {expanded}")
 
     workspace_path = os.environ.get("PANTHEON_WORKTREE_ROOT") or os.environ.get("ORCH_WORKSPACE_PATH")
     if workspace_path:
         workspace_path = Path(os.path.expanduser(workspace_path)).resolve()
     validate_coordination_root(
         workspace_path if isinstance(workspace_path, Path) else None,
-        heartbeat_path=heartbeat_path,
-        status_path=status_path,
+        heartbeat_path=raw_heartbeat_path,
+        status_path=raw_status_path,
     )
+    heartbeat_path = raw_heartbeat_path.resolve()
+    status_path = raw_status_path.resolve()
     if workspace_path:
         try:
             os.chdir(workspace_path)
@@ -329,31 +348,57 @@ def main(argv: list[str] | None = None) -> int:
         status["child_pid"] = child.pid
         publish("running")
         next_heartbeat = time.monotonic() + interval
+        direct_exit_code: int | None = None
         while True:
-            exit_code = child.poll()
-            if exit_code is not None:
-                status["exit_code"] = exit_code
-                status["finished_at"] = utc_now()
-                publish("completed" if exit_code == 0 else "failed")
-                if exit_code < 0:
-                    return 128 + abs(exit_code)
-                return exit_code
+            if direct_exit_code is None:
+                direct_exit_code = child.poll()
+                if direct_exit_code is not None:
+                    status["exit_code"] = direct_exit_code
+                    status["finished_at"] = utc_now()
 
+            # Normal path: child exited and we aren't terminating
+            if direct_exit_code is not None and terminating_signal is None:
+                publish("completed" if direct_exit_code == 0 else "failed")
+                if direct_exit_code < 0:
+                    return 128 + abs(direct_exit_code)
+                return direct_exit_code
+
+            # Termination path: check if group contains survivors
             if terminating_signal is not None and signal_received_at is not None:
+                group_alive = False
+                try:
+                    os.killpg(child.pid, 0)
+                    group_alive = True
+                except OSError:
+                    pass
+
+                if not group_alive:
+                    publish("failed")
+                    exit_code = direct_exit_code if direct_exit_code is not None else -terminating_signal
+                    if exit_code < 0:
+                        return 128 + abs(exit_code)
+                    return exit_code
+
+                # Group is still alive, check 5-second deadline
                 elapsed = time.monotonic() - signal_received_at
-                if elapsed > 5.0:  # 5-second deadline
+                if elapsed > 5.0:
                     try:
                         os.killpg(child.pid, signal.SIGKILL)
                     except OSError:
+                        pass
+                    if direct_exit_code is None:
                         try:
-                            child.kill()
-                        except OSError:
+                            child.wait(timeout=1.0)
+                        except subprocess.TimeoutExpired:
                             pass
-                    child.wait()
-                    status["exit_code"] = -signal.SIGKILL
+                        direct_exit_code = child.poll()
+                    status["exit_code"] = direct_exit_code if direct_exit_code is not None else -signal.SIGKILL
                     status["finished_at"] = utc_now()
                     publish("failed")
-                    return 128 + signal.SIGKILL
+                    exit_code = status["exit_code"]
+                    if exit_code < 0:
+                        return 128 + abs(exit_code)
+                    return exit_code
 
             if time.monotonic() >= next_heartbeat:
                 publish("running")

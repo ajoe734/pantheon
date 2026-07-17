@@ -250,7 +250,13 @@ def recent_terminal_summaries(limit: int = DEFAULT_RECENT_LIMIT) -> list[dict[st
         return summaries
 
 
-def _rebuild_archive_index_locked(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -> dict[str, Any]:
+def _rebuild_archive_index_locked(
+    *,
+    recent_limit: int = DEFAULT_RECENT_LIMIT,
+    allow_uncommitted: bool = True,
+    bypass_downgrade_check: bool = False,
+    pinned_commit: str = "HEAD",
+) -> dict[str, Any]:
     import subprocess
     import io
     summaries: list[dict[str, Any]] = []
@@ -258,22 +264,35 @@ def _rebuild_archive_index_locked(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -
 
     existing_index = load_json(ARCHIVE_INDEX_FILE, default=None)
     existing_total = 0
-    if isinstance(existing_index, dict):
+    if isinstance(existing_index, dict) and not bypass_downgrade_check:
         existing_total = int(existing_index.get("counts", {}).get("total") or 0)
 
-    if ARCHIVE_TASKS_DIR.exists():
-        pinned_commit = "HEAD"
-        try:
-            res_head = subprocess.run(
-                ["git", "-C", str(STATUS_ROOT), "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if res_head.returncode == 0:
-                pinned_commit = res_head.stdout.strip()
-        except Exception:
-            pass
+    is_git = False
+    try:
+        res_git = subprocess.run(
+            ["git", "-C", str(STATUS_ROOT), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res_git.returncode == 0 and res_git.stdout.strip() == "true":
+            is_git = True
+    except Exception:
+        pass
+
+    if is_git:
+        if pinned_commit == "HEAD":
+            try:
+                res_head = subprocess.run(
+                    ["git", "-C", str(STATUS_ROOT), "rev-parse", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if res_head.returncode == 0:
+                    pinned_commit = res_head.stdout.strip()
+            except Exception:
+                pass
 
         # Get committed file list and SHAs from pinned commit
         res = subprocess.run(
@@ -340,9 +359,12 @@ def _rebuild_archive_index_locked(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -
                     except Exception as e:
                         raise RuntimeError(f"Failed to parse committed snapshot for {sha}: {e}")
 
-        # Process newly created / uncommitted local snapshots
+    # Process newly created / uncommitted local snapshots
+    if allow_uncommitted and ARCHIVE_TASKS_DIR.exists():
         for path in ARCHIVE_TASKS_DIR.glob("*.json"):
             if path.is_symlink():
+                raise RuntimeError(f"uncommitted snapshot cannot be a symlink: {path}")
+            if not path.is_file():
                 continue
             try:
                 path.relative_to(ARCHIVE_TASKS_DIR)
@@ -355,19 +377,32 @@ def _rebuild_archive_index_locked(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -
                     text = path.read_text(encoding="utf-8").strip()
                     if text:
                         snapshot = json.loads(text)
+                        # STRICT SNAPSHOT VALIDATION
                         task_id = normalize_task_id(
                             snapshot.get("task_id")
                             or ((snapshot.get("task") or {}).get("id"))
                             or snapshot.get("id")
                         )
-                        if task_id:
-                            outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
-                            archived_at = str(snapshot.get("archived_at") or "").strip()
-                            summaries.append({
-                                "task_id": task_id,
-                                "terminal_outcome": outcome,
-                                "archived_at": archived_at,
-                            })
+                        if not task_id:
+                            raise RuntimeError(f"uncommitted snapshot is missing task id: {path}")
+                        if basename != f"{task_id}.json":
+                            raise RuntimeError(f"uncommitted snapshot filename {basename} does not match task_id {task_id}")
+                        version = snapshot.get("version")
+                        if version is not None and int(version) != ARCHIVE_VERSION:
+                            raise RuntimeError(f"uncommitted snapshot has invalid version: {version}")
+                        outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
+                        if outcome not in {TERMINAL_OUTCOME_COMPLETED, TERMINAL_OUTCOME_SUPERSEDED}:
+                            raise RuntimeError(f"uncommitted snapshot has invalid terminal_outcome: {outcome}")
+                        status_val = snapshot.get("terminal_status") or (snapshot.get("task") or {}).get("status")
+                        if status_val is not None and str(status_val).strip().lower() != "done":
+                            raise RuntimeError(f"uncommitted snapshot has invalid status: {status_val}")
+
+                        archived_at = str(snapshot.get("archived_at") or "").strip()
+                        summaries.append({
+                            "task_id": task_id,
+                            "terminal_outcome": outcome,
+                            "archived_at": archived_at,
+                        })
                 except Exception as e:
                     raise RuntimeError(f"Failed to parse newly created snapshot at {path}: {e}")
 
@@ -395,7 +430,31 @@ def rebuild_archive_index(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -> dict[s
         shared=False,
         nonblocking=False,
     ):
-        return _rebuild_archive_index_locked(recent_limit=recent_limit)
+        return _rebuild_archive_index_locked(
+            recent_limit=recent_limit,
+            allow_uncommitted=True,
+            bypass_downgrade_check=False,
+        )
+
+
+def rebuild_archive_index_from_commit(
+    *,
+    recent_limit: int = DEFAULT_RECENT_LIMIT,
+    pinned_commit: str = "HEAD",
+    bypass_downgrade_check: bool = False,
+) -> dict[str, Any]:
+    with canonical_task_state_lock_file(
+        STATUS_FILE,
+        shared=False,
+        nonblocking=False,
+    ):
+        return _rebuild_archive_index_locked(
+            recent_limit=recent_limit,
+            allow_uncommitted=False,
+            bypass_downgrade_check=bypass_downgrade_check,
+            pinned_commit=pinned_commit,
+        )
+
 
 
 def _archive_task_snapshot_locked(

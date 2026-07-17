@@ -362,12 +362,100 @@ class TestCoordinationRootValidation(unittest.TestCase):
                                             os.kill(os.getpid(), signal.SIGTERM)
                                             current_time[0] += 6.0
                                         mock_sleep.side_effect = side_effect_sleep
-                                        
+
                                         exit_code = wr.main()
                                         self.assertEqual(exit_code, 128 + 9) # 128 + SIGKILL
                                         mock_killpg.assert_any_call(88888, 9) # SIGKILL
             finally:
                 os.chdir(orig_cwd)
+
+    @mock.patch("time.sleep")
+    def test_sigterm_grandchild_cleanup_when_direct_child_exits_first(self, mock_sleep):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-grandchild-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            worktree = root / "task-worktree"
+            _init_repo(central)
+            _init_repo(worktree)
+            _write_status(central)
+
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+
+            test_args = [
+                "worker_runner.py",
+                "--run-id", "test-run",
+                "--heartbeat-path", str(heartbeat),
+                "--status-path", str(status),
+                "--heartbeat-interval-seconds", "15.0",
+                "--", "python", "-c", "pass"
+            ]
+
+            mock_child = mock.Mock()
+            mock_child.pid = 99999
+            mock_child.poll.side_effect = [None, -15, -15, -15]
+
+            orig_cwd = os.getcwd()
+            try:
+                with mock.patch.object(wr, "_git_toplevel", return_value=central):
+                    with mock.patch("subprocess.Popen", return_value=mock_child):
+                        with mock.patch("sys.argv", test_args):
+                            with mock.patch.dict(os.environ, {
+                                "PANTHEON_STATUS_ROOT": str(central),
+                                "PANTHEON_WORKTREE_ROOT": str(worktree),
+                                "ORCH_WORKSPACE_PATH": str(worktree),
+                            }, clear=True):
+                                current_time = [100.0]
+                                def mock_monotonic():
+                                    t = current_time[0]
+                                    current_time[0] += 0.1
+                                    return t
+
+                                with mock.patch("time.monotonic", side_effect=mock_monotonic):
+                                    with mock.patch("os.killpg") as mock_killpg:
+                                        killpg_calls = []
+                                        def side_effect_killpg(pgid, sig):
+                                            killpg_calls.append((pgid, sig))
+                                            if sig == 0:
+                                                if not any(c[1] == 9 for c in killpg_calls):
+                                                    return None
+                                                raise OSError("No such process")
+                                            return None
+                                        mock_killpg.side_effect = side_effect_killpg
+
+                                        def side_effect_sleep(*args, **kwargs):
+                                            import signal
+                                            handler = signal.getsignal(signal.SIGTERM)
+                                            if callable(handler):
+                                                handler(signal.SIGTERM, None)
+                                            current_time[0] += 6.0
+                                        mock_sleep.side_effect = side_effect_sleep
+
+                                        exit_code = wr.main()
+                                        self.assertEqual(exit_code, 128 + 15)
+                                        mock_killpg.assert_any_call(99999, 9)
+            finally:
+                os.chdir(orig_cwd)
+
+    def test_rejects_parent_directory_reference_in_marker_paths(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-dotdot-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            worktree = root / "task-worktree"
+            _init_repo(central)
+            _init_repo(worktree)
+            _write_status(central)
+
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / ".." / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(central)}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "parent directory references"):
+                    wr.validate_coordination_root(
+                        worktree,
+                        heartbeat_path=heartbeat,
+                        status_path=status,
+                    )
 
 
 if __name__ == "__main__":
