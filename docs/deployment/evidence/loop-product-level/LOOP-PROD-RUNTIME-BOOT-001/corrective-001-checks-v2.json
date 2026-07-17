@@ -49,9 +49,9 @@
     },
     "corrective_pr_3_evidence_rebind": {
       "repo": "ajoe734/pantheon",
-      "number": null,
+      "number": 3756,
       "title": "LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001: rebind evidence to PR #3742 merged state",
-      "state": "PENDING",
+      "state": "OPEN",
       "note": "This is the follow-up PR that this evidence file (corrective-001-checks-v2.json) is itself part of. Its exact head SHA and merge commit are not yet known at authoring time and MUST NOT be fabricated. base_commit below is the origin/dev-composed commit this file's diff, source-inventory recomputation, and validation re-run were taken against, immediately before this file was added. Codex2 must resolve this PR's actual number/head/merge SHA from GitHub once opened, verify it is an ancestor of origin/dev, and confirm this file's recorded base_commit matches this file's own first parent before treating any of the bindings below as accepted."
     }
   },
