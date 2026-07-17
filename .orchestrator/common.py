@@ -220,25 +220,7 @@ def stable_sidecar_lock(
         operation |= fcntl.LOCK_NB
     _trace_stable_lock("request", plane, lock_path)
     try:
-        if nonblocking:
-            fcntl.flock(handle.fileno(), operation)
-        else:
-            timeout = 10.0
-            start_time = time.monotonic()
-            while True:
-                try:
-                    fcntl.flock(handle.fileno(), operation | fcntl.LOCK_NB)
-                    break
-                except (BlockingIOError, OSError) as exc:
-                    import errno
-                    if isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK):
-                        if time.monotonic() - start_time >= timeout:
-                            raise BlockingIOError(
-                                f"Timeout waiting for {plane} lock on {lock_path} after {timeout}s"
-                            )
-                        time.sleep(0.05)
-                    else:
-                        raise
+        fcntl.flock(handle.fileno(), operation)
         # A pathname swap between open(2) and flock(2) would otherwise leave
         # this process holding an orphaned inode while the next contender opens
         # the replacement.  Verify the pathname still names our locked FD.

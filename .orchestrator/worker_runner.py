@@ -64,7 +64,15 @@ def _first_symlink_component(path: Path) -> Path | None:
 
 
 def _status_root_from_runtime_path(path: Path, *, label: str) -> Path:
-    resolved = path.expanduser().resolve()
+    expanded = Path(os.path.expanduser(str(path)))
+    if not expanded.is_absolute():
+        raise RuntimeError(f"{label} must be absolute: {expanded}")
+    symlink_comp = _first_symlink_component(expanded)
+    if symlink_comp is not None:
+        raise RuntimeError(f"{label} path contains a symlink component: {symlink_comp}")
+    if expanded.is_symlink():
+        raise RuntimeError(f"{label} cannot be a symlink: {expanded}")
+    resolved = expanded.resolve()
     parent = resolved.parent
     if (
         parent.name not in {"status", "heartbeats"}
@@ -189,9 +197,16 @@ def validate_coordination_root(
         if path.is_symlink():
             raise RuntimeError(f"coordination path cannot be a symlink: {path}")
 
-    _validate_directory_no_symlinks_recursive(root / "ai-task-archive", "task archive")
-    _validate_directory_no_symlinks_recursive(root / "archive" / "logs", "activity rotation archive")
-    _validate_directory_no_symlinks_recursive(root / ".orchestrator" / "logs" / "activity-log-archive", "legacy activity archive")
+    for path, label in (
+        (root / "ai-task-archive", "task archive"),
+        (root / "archive" / "logs", "activity rotation archive"),
+        (root / ".orchestrator" / "logs" / "activity-log-archive", "legacy activity archive"),
+        (root / ".orchestrator" / "logs" / "activity-rotation", "activity rotation"),
+    ):
+        symlink_comp = _first_symlink_component(path)
+        if symlink_comp is not None:
+            raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} component cannot be a symlink: {symlink_comp}")
+        _validate_directory_no_symlinks_recursive(path, label)
 
     os.environ["PANTHEON_STATUS_ROOT"] = str(root)
     return root
@@ -282,15 +297,22 @@ def main(argv: list[str] | None = None) -> int:
         })
         write_json(status_path, status)
 
+    signal_received_at: float | None = None
+
     def forward_signal(signum: int, _frame: Any) -> None:
-        nonlocal terminating_signal
-        terminating_signal = signum
+        nonlocal terminating_signal, signal_received_at
+        if terminating_signal is None:
+            terminating_signal = signum
+            signal_received_at = time.monotonic()
         status["signal"] = signum
         if child is not None and child.poll() is None:
             try:
-                child.send_signal(signum)
+                os.killpg(child.pid, signum)
             except OSError:
-                pass
+                try:
+                    child.send_signal(signum)
+                except OSError:
+                    pass
 
     signal.signal(signal.SIGTERM, forward_signal)
     signal.signal(signal.SIGINT, forward_signal)
@@ -301,6 +323,7 @@ def main(argv: list[str] | None = None) -> int:
             command,
             text=True,
             cwd=str(workspace_path) if workspace_path else None,
+            start_new_session=True,
         )
         status["child_pid"] = child.pid
         publish("running")
@@ -314,6 +337,23 @@ def main(argv: list[str] | None = None) -> int:
                 if exit_code < 0:
                     return 128 + abs(exit_code)
                 return exit_code
+
+            if terminating_signal is not None and signal_received_at is not None:
+                elapsed = time.monotonic() - signal_received_at
+                if elapsed > 5.0:  # 5-second deadline
+                    try:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    except OSError:
+                        try:
+                            child.kill()
+                        except OSError:
+                            pass
+                    child.wait()
+                    status["exit_code"] = -signal.SIGKILL
+                    status["finished_at"] = utc_now()
+                    publish("failed")
+                    return 128 + signal.SIGKILL
+
             if time.monotonic() >= next_heartbeat:
                 publish("running")
                 next_heartbeat = time.monotonic() + interval
@@ -326,14 +366,22 @@ def main(argv: list[str] | None = None) -> int:
             status["signal"] = terminating_signal
         if child is not None and child.poll() is None:
             try:
-                child.terminate()
+                os.killpg(child.pid, signal.SIGTERM)
                 try:
                     child.wait(timeout=2.0)
                 except subprocess.TimeoutExpired:
-                    child.kill()
+                    os.killpg(child.pid, signal.SIGKILL)
                     child.wait()
             except OSError:
-                pass
+                try:
+                    child.terminate()
+                    try:
+                        child.wait(timeout=2.0)
+                    except subprocess.TimeoutExpired:
+                        child.kill()
+                        child.wait()
+                except OSError:
+                    pass
         try:
             write_json(status_path, status)
         except OSError:

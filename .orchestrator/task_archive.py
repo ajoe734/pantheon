@@ -252,49 +252,105 @@ def recent_terminal_summaries(limit: int = DEFAULT_RECENT_LIMIT) -> list[dict[st
 
 def _rebuild_archive_index_locked(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -> dict[str, Any]:
     import subprocess
+    import io
     summaries: list[dict[str, Any]] = []
-    if ARCHIVE_TASKS_DIR.exists():
-        try:
-            res = subprocess.run(
-                ["git", "ls-tree", "-r", "--name-only", "HEAD", "ai-task-archive/tasks/"],
-                cwd=STATUS_ROOT,
-                capture_output=True,
-                text=True,
-                check=False
-            )
-            if res.returncode == 0:
-                committed_relative_paths = [line.strip() for line in res.stdout.splitlines() if line.strip() and line.strip().endswith(".json")]
-                tracked_paths = [STATUS_ROOT / p for p in committed_relative_paths]
-                tracked_paths = [p for p in tracked_paths if p.exists()]
-            else:
-                tracked_paths = sorted(ARCHIVE_TASKS_DIR.glob("*.json"))
-        except Exception:
-            tracked_paths = sorted(ARCHIVE_TASKS_DIR.glob("*.json"))
+    committed_snapshots: dict[str, str] = {}
 
-        for path in tracked_paths:
-            snapshot = load_json(path, default=None)
-            if not isinstance(snapshot, dict):
+    if ARCHIVE_TASKS_DIR.exists():
+        # Get committed file list and SHAs from HEAD
+        res = subprocess.run(
+            ["git", "-C", str(STATUS_ROOT), "ls-tree", "-r", "HEAD", "ai-task-archive/tasks/"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        sha_to_filename: dict[str, str] = {}
+        for line in res.stdout.splitlines():
+            line = line.strip()
+            if not line:
                 continue
-            # Resolve the task id across all archive snapshot schema variants.
-            # Legacy entries store the id at the top level as ``id`` (not
-            # ``task_id`` / nested ``task.id``); without this fallback such files
-            # resolve to None and are silently excluded from the index forever.
-            task_id = normalize_task_id(
-                snapshot.get("task_id")
-                or ((snapshot.get("task") or {}).get("id"))
-                or snapshot.get("id")
-            )
-            if not task_id:
+            parts = line.split(maxsplit=3)
+            if len(parts) < 4:
                 continue
-            outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
-            archived_at = str(snapshot.get("archived_at") or "").strip()
-            summaries.append(
-                {
-                    "task_id": task_id,
-                    "terminal_outcome": outcome,
-                    "archived_at": archived_at,
-                }
+            meta, file_path = parts[0:3], parts[3]
+            sha = meta[2]
+            if file_path.endswith(".json"):
+                basename = os.path.basename(file_path)
+                committed_snapshots[basename] = sha
+                sha_to_filename[sha] = file_path
+
+        # Read committed blobs using cat-file --batch
+        if sha_to_filename:
+            stdin_data = "\n".join(sha_to_filename.keys()).encode("utf-8") + b"\n"
+            proc = subprocess.Popen(
+                ["git", "-C", str(STATUS_ROOT), "cat-file", "--batch"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
             )
+            stdout_data, _ = proc.communicate(input=stdin_data)
+            if proc.returncode != 0:
+                raise RuntimeError("git cat-file --batch failed")
+
+            stream = io.BytesIO(stdout_data)
+            for sha, file_path in sha_to_filename.items():
+                header = stream.readline()
+                if not header:
+                    break
+                h_parts = header.split()
+                if len(h_parts) < 3 or h_parts[1] != b"blob":
+                    continue
+                size = int(h_parts[2])
+                content = stream.read(size)
+                stream.read(1)
+
+                try:
+                    snapshot = json.loads(content.decode("utf-8"))
+                    task_id = normalize_task_id(
+                        snapshot.get("task_id")
+                        or ((snapshot.get("task") or {}).get("id"))
+                        or snapshot.get("id")
+                    )
+                    if task_id:
+                        outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
+                        archived_at = str(snapshot.get("archived_at") or "").strip()
+                        summaries.append({
+                            "task_id": task_id,
+                            "terminal_outcome": outcome,
+                            "archived_at": archived_at,
+                        })
+                except Exception as e:
+                    raise RuntimeError(f"Failed to parse committed snapshot for {sha}: {e}")
+
+        # Process newly created / uncommitted local snapshots
+        for path in ARCHIVE_TASKS_DIR.glob("*.json"):
+            if path.is_symlink():
+                continue
+            try:
+                path.relative_to(ARCHIVE_TASKS_DIR)
+            except ValueError:
+                continue
+
+            basename = path.name
+            if basename not in committed_snapshots:
+                try:
+                    text = path.read_text(encoding="utf-8").strip()
+                    if text:
+                        snapshot = json.loads(text)
+                        task_id = normalize_task_id(
+                            snapshot.get("task_id")
+                            or ((snapshot.get("task") or {}).get("id"))
+                            or snapshot.get("id")
+                        )
+                        if task_id:
+                            outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
+                            archived_at = str(snapshot.get("archived_at") or "").strip()
+                            summaries.append({
+                                "task_id": task_id,
+                                "terminal_outcome": outcome,
+                                "archived_at": archived_at,
+                            })
+                except Exception as e:
+                    raise RuntimeError(f"Failed to parse newly created snapshot at {path}: {e}")
 
     summaries.sort(key=lambda item: (str(item.get("archived_at") or ""), str(item.get("task_id") or "")), reverse=True)
     index = default_archive_index()

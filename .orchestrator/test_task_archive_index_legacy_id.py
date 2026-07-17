@@ -22,36 +22,59 @@ def _write(dir_: Path, name: str, payload: dict) -> None:
 
 
 def test_rebuild_indexes_legacy_top_level_id(tmp_path, monkeypatch) -> None:
-    tasks_dir = tmp_path / "tasks"
-    tasks_dir.mkdir()
-    index_file = tmp_path / "index.json"
+    import subprocess
+    # Initialize a temporary git repo to avoid test pollution
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True)
+
+    archive_dir = tmp_path / "ai-task-archive"
+    tasks_dir = archive_dir / "tasks"
+    tasks_dir.mkdir(parents=True)
+    index_file = archive_dir / "index.json"
+
+    monkeypatch.setattr(task_archive, "STATUS_ROOT", tmp_path)
+    monkeypatch.setattr(task_archive, "ARCHIVE_DIR", archive_dir)
     monkeypatch.setattr(task_archive, "ARCHIVE_TASKS_DIR", tasks_dir)
     monkeypatch.setattr(task_archive, "ARCHIVE_INDEX_FILE", index_file)
     monkeypatch.setattr(task_archive, "STATUS_FILE", tmp_path / "ai-status.json")
 
-    # Modern schema
+    # Modern schema (committed)
     _write(
         tasks_dir,
         "MODERN-001.json",
         {"task_id": "MODERN-001", "terminal_outcome": "completed", "archived_at": "2026-06-14T00:00:00Z"},
     )
-    # Legacy schema: id only at the top level
+    # Legacy schema: id only at the top level (committed)
     _write(
         tasks_dir,
         "LEGACY-001.json",
         {"id": "LEGACY-001", "status": "done", "terminal_outcome": "completed", "archived_at": "2026-06-14T01:00:00Z"},
     )
 
+    # Commit them to HEAD
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=tmp_path, check=True)
+
+    # Uncommitted newly created snapshot (on disk only)
+    _write(
+        tasks_dir,
+        "NEW-001.json",
+        {"task_id": "NEW-001", "terminal_outcome": "completed", "archived_at": "2026-06-14T02:00:00Z"},
+    )
+
     index = task_archive.rebuild_archive_index(recent_limit=10)
 
-    assert index["counts"]["total"] == 2, index["counts"]
+    assert index["counts"]["total"] == 3, index["counts"]
     assert "LEGACY-001" in index["recent_terminal_ids"], "legacy top-level id was dropped from the index"
     assert "MODERN-001" in index["recent_terminal_ids"]
+    assert "NEW-001" in index["recent_terminal_ids"], "new uncommitted snapshot was dropped"
 
     summaries = task_archive.recent_terminal_summaries(10)
     assert {item["task_id"] for item in summaries} == {
         "LEGACY-001",
         "MODERN-001",
+        "NEW-001",
     }
     resolver = task_archive.TaskResolver([], archive_tasks_dir=tasks_dir)
     assert resolver.get("LEGACY-001")["id"] == "LEGACY-001"
