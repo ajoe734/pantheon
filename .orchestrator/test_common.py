@@ -988,6 +988,59 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
                 intent,
             )
 
+    def test_append_below_rotation_threshold_does_not_scan_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_path.write_text('{"event_id":"old"}\n', encoding="utf-8")
+
+            with mock.patch.object(
+                common,
+                "activity_audit_source_paths_unlocked",
+                side_effect=AssertionError("history must stay unopened"),
+            ):
+                common.write_activity_log(
+                    {
+                        "paths": {
+                            "activity_log": str(log_path),
+                            "activity_log_rotate_bytes": 1024 * 1024,
+                        }
+                    },
+                    {"event_id": "new", "type": "bounded_append_test"},
+                )
+
+            self.assertEqual(
+                [row["event_id"] for row in self._audit_rows(log_path)],
+                ["old", "new"],
+            )
+
+    def test_append_above_rotation_threshold_still_scans_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_path.write_text(
+                json.dumps({"event_id": "old", "payload": "x" * 256}) + "\n",
+                encoding="utf-8",
+            )
+
+            with (
+                mock.patch.object(
+                    common,
+                    "activity_audit_source_paths_unlocked",
+                    side_effect=RuntimeError("history validation marker"),
+                ),
+                self.assertRaisesRegex(RuntimeError, "history validation marker"),
+            ):
+                common.write_activity_log(
+                    {
+                        "paths": {
+                            "activity_log": str(log_path),
+                            "activity_log_rotate_bytes": 1,
+                        }
+                    },
+                    {"event_id": "must-not-append", "type": "rotation_test"},
+                )
+
+            self.assertNotIn("must-not-append", log_path.read_text(encoding="utf-8"))
+
     def test_interrupted_non_newline_tail_is_repaired_before_append(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "ai-activity-log.jsonl"

@@ -1,7 +1,7 @@
 # OPS-ACTIVITY-ROTATION-OVERLAP-PREVENTION-001 Evidence
 
 Status: exact-head owner evidence after composing current `origin/dev`
-`fb31456a4fb6aa653f8ec74d103b562d5bd731a4`. Auto-merge remains disabled;
+`deab7fc14686f428dbdfa5745288db998a0e7f2d`. Auto-merge remains disabled;
 independent exact-head review is still required.
 
 ## Scope
@@ -183,6 +183,11 @@ the original pre-review evidence:
   global activity archives merely to render six redundant recent rows. The
   canonical task row is the bounded dispatch context; complete activity
   validation remains available for explicit forensic readers.
+- normal appends use a stable `O_NOFOLLOW` descriptor/leaf identity and size
+  check before entering rotation. An active log below the configured threshold
+  no longer enumerates immutable history on every event; once the threshold is
+  exceeded, rotation still performs the complete lineage/history validation
+  before publishing or appending anything.
 
 All validation used test-local or repo-external status roots. One initial
 unisolated status-suite invocation rotated the isolated task worktree's tracked
@@ -212,7 +217,7 @@ git diff --check
 
 Results before the final evidence-only commit:
 
-- common: 88 passed;
+- common: 90 passed;
 - isolated ai-status: 81 passed;
 - inventory/status guard: 41 passed, 1 explicit opt-in skip;
 - pending intent/resolution: 37 passed;
@@ -234,3 +239,10 @@ archive was still timestamped `17:47:56Z`. Recent worker exits were mixed
 shared task/activity locks. This is direct evidence that process activity did
 not equal task completion and that automatic full-history task-brief reads
 were still starving dispatch before this patch.
+
+A subsequent live read-only descriptor sample found one supervisor cycle
+reopening the 423-source immutable archive set more than once while the active
+log was still roughly 5 MiB against a 50 MiB rotation threshold. That second
+append-side scan source is what the stable size gate removes. The two new
+regressions prove a below-threshold append never opens immutable history and an
+above-threshold append still fails closed when history validation fails.

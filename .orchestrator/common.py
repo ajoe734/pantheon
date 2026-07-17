@@ -4141,6 +4141,40 @@ def _stream_logical_activity_unlocked(
         snapshot.close()
 
 
+def _activity_log_exceeds_rotation_threshold_unlocked(
+    log_path: Path,
+    max_bytes: int,
+) -> bool:
+    """Check the active leaf size without opening immutable history."""
+
+    if max_bytes <= 0:
+        return False
+    try:
+        descriptor = os.open(
+            log_path,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except FileNotFoundError:
+        return False
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        path_stat = log_path.lstat()
+        if (
+            not stat.S_ISREG(descriptor_stat.st_mode)
+            or stat.S_ISLNK(path_stat.st_mode)
+            or (path_stat.st_dev, path_stat.st_ino)
+            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        ):
+            raise RuntimeError(
+                f"activity audit source must be a stable regular file: {log_path}"
+            )
+        return descriptor_stat.st_size > max_bytes
+    finally:
+        os.close(descriptor)
+
+
 def append_activity_log_entries_unlocked(
     log_path: Path,
     entries: list[dict[str, Any]],
@@ -4161,7 +4195,13 @@ def append_activity_log_entries_unlocked(
         # source digest. Stable, intent-free logs remain appendable while new
         # rotations are paused.
         assert_activity_audit_stable_unlocked(log_path)
-    if rotate_bytes is not None:
+    if (
+        rotate_bytes is not None
+        and _activity_log_exceeds_rotation_threshold_unlocked(
+            log_path,
+            rotate_bytes,
+        )
+    ):
         rotate_activity_log_unlocked(
             log_path,
             max_bytes=rotate_bytes,
