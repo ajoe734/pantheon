@@ -650,6 +650,31 @@ class StableCanonicalLockPathTests(unittest.TestCase):
                 ):
                     self.fail("replaced sidecar pathname must never be admitted")
 
+    def test_stable_sidecar_identity_validation_eagain_is_propagated(self) -> None:
+        """Verify that an EAGAIN OSError raised from the post-flock identity validation
+        is propagated and NOT converted to LockContentionError."""
+        import errno
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            lock_path = root / "task-state.lock"
+
+            def fake_assert(*args, **kwargs):
+                raise OSError(errno.EAGAIN, "EAGAIN during validation")
+
+            with (
+                mock.patch("common._assert_stable_lock_identity", fake_assert),
+                self.assertRaises(OSError) as ctx,
+            ):
+                with common.stable_sidecar_lock(
+                    lock_path,
+                    plane="task_state",
+                    shared=False,
+                    nonblocking=True,
+                ):
+                    self.fail("should not reach here")
+            self.assertEqual(ctx.exception.errno, errno.EAGAIN)
+            self.assertNotIsInstance(ctx.exception, common.LockContentionError)
+
     def test_pid_change_resets_inherited_thread_local_state(self) -> None:
         fake_handle = mock.Mock()
         common._STABLE_LOCK_LOCAL.held = {

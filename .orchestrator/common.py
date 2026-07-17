@@ -229,20 +229,20 @@ def stable_sidecar_lock(
         operation |= fcntl.LOCK_NB
     _trace_stable_lock("request", plane, lock_path)
     try:
-        fcntl.flock(handle.fileno(), operation)
+        try:
+            fcntl.flock(handle.fileno(), operation)
+        except (BlockingIOError, OSError) as exc:
+            if nonblocking and (isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK)):
+                raise LockContentionError(
+                    errno.EAGAIN,
+                    f"lock contention on {lock_path}: {exc}",
+                    str(lock_path),
+                ) from exc
+            raise
         # A pathname swap between open(2) and flock(2) would otherwise leave
         # this process holding an orphaned inode while the next contender opens
         # the replacement.  Verify the pathname still names our locked FD.
         _assert_stable_lock_identity(lock_path, handle.fileno())
-    except (BlockingIOError, OSError) as exc:
-        handle.close()
-        if nonblocking and (isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK)):
-            raise LockContentionError(
-                errno.EAGAIN,
-                f"lock contention on {lock_path}: {exc}",
-                str(lock_path),
-            ) from exc
-        raise
     except BaseException:
         handle.close()
         raise
