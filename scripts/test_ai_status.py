@@ -513,20 +513,20 @@ class StatusRootRoutingTests(unittest.TestCase):
             code_root = root / "code"
             self._init_repo(code_root)
             self._copy_status_tooling(code_root)
-            
+
             valid = root / "central"
             self._init_repo(valid)
             self._write_status_state(valid, owner="Codex2", next_value="valid")
-            
+
             # 1. Test dangling symlink in central root
             dangling = valid / "current-work.md"
             if dangling.exists() or dangling.is_symlink():
                 dangling.unlink()
             dangling.symlink_to(root / "nonexistent-target")
-            
+
             runner_status = valid / ".orchestrator" / "worker-runtime" / "status" / "run.json"
             heartbeat = valid / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
-            
+
             env = os.environ.copy()
             env.update(
                 {
@@ -539,7 +539,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                     "PANTHEON_STATUS_ROOT": str(valid),
                 }
             )
-            
+
             # Show command should reject due to dangling symlink
             proc = subprocess.run(
                 [
@@ -557,16 +557,16 @@ class StatusRootRoutingTests(unittest.TestCase):
             )
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("cannot be a symlink", proc.stderr)
-            
+
             # Clean up dangling symlink
             dangling.unlink()
-            
+
             # 2. Test mirror child symlink (e.g. docs-site/ai-status.json)
             docs_site = valid / "docs-site"
             docs_site.mkdir(parents=True, exist_ok=True)
             mirror_child = docs_site / "ai-status.json"
             mirror_child.symlink_to(root / "nonexistent-target-2")
-            
+
             proc = subprocess.run(
                 [
                     sys.executable,
@@ -583,7 +583,7 @@ class StatusRootRoutingTests(unittest.TestCase):
             )
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("cannot be a symlink", proc.stderr)
-            
+
             # Clean up mirror child
             mirror_child.unlink()
 
@@ -1424,6 +1424,12 @@ class RuntimeWorkerLivenessTests(unittest.TestCase):
 
 
 class PortableStateRenderingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
+
     def test_default_canonical_document_layers_exclude_review_and_session_records(self) -> None:
         layers = ai_status.default_canonical_document_layers()
         flattened = ai_status.flatten_canonical_document_layers(layers)

@@ -1235,6 +1235,24 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
     existing = archived_task_snapshot(task_id)
     if existing is not None:
         _validate_status_archive_snapshot(existing)
+        if is_terminal_task(task):
+            related_handoffs = [deepcopy(handoff) for handoff in state.get("handoffs", []) if handoff.get("task_id") == task_id]
+            related_blockers = [deepcopy(blocker) for blocker in state.get("blockers", []) if blocker.get("task_id") == task_id]
+            candidate = {
+                "version": 1,
+                "task_id": task_id,
+                "archived_at": archived_at or (str(existing.get("archived_at") or "").strip()) or iso_now(),
+                "terminal_status": "done",
+                "terminal_outcome": terminal_outcome_for(task) or "completed",
+                "task": deepcopy(task),
+                "handoffs": related_handoffs,
+                "blockers": related_blockers,
+            }
+            _validate_status_archive_snapshot(candidate)
+            if _canonical_json_sha256(existing) != _canonical_json_sha256(candidate):
+                raise RuntimeError(
+                    f"existing archive snapshot conflicts with terminal task: {task_id}"
+                )
         snapshot = deepcopy(existing)
     else:
         related_handoffs = [deepcopy(handoff) for handoff in state.get("handoffs", []) if handoff.get("task_id") == task_id]

@@ -114,28 +114,28 @@ class TestCoordinationRootValidation(unittest.TestCase):
             _init_repo(central)
             _init_repo(worktree)
             _write_status(central)
-            
+
             # 1. Test dangling symlink in central root
             dangling = central / "current-work.md"
             dangling.symlink_to(root / "nonexistent-target")
-            
+
             with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(central)}, clear=True):
                 with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
                     wr.validate_coordination_root(worktree)
-            
+
             # Clean up dangling symlink
             dangling.unlink()
-            
+
             # 2. Test mirror child symlink (e.g. docs-site/ai-status.json)
             docs_site = central / "docs-site"
             docs_site.mkdir(parents=True, exist_ok=True)
             mirror_child = docs_site / "ai-status.json"
             mirror_child.symlink_to(root / "nonexistent-target-2")
-            
+
             with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(central)}, clear=True):
                 with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
                     wr.validate_coordination_root(worktree)
-            
+
             # Clean up mirror child
             mirror_child.unlink()
 
