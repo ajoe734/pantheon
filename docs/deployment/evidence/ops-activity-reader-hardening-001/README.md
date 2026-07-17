@@ -9,6 +9,8 @@ the exact-head review and merge of prerequisite PR #3797.
   activity JSON parsing, stable source snapshot, and pinned exception registry
 - `.orchestrator/test_common.py`: early-stop, mutation, duplicate-key,
   cleanup, source-leaf, and bounded-memory regressions
+- `scripts/ai_status.py`: validation-complete requested event lookup without
+  copying or replaying every logical payload into the control-plane process
 - `scripts/activity_audit_logical_inventory.py` and its direct test: shared
   strict parsing plus hermetic/optional pinned-pair coverage
 - the task brief and this redacted evidence note
@@ -18,19 +20,28 @@ Not changed:
 - rotation or lineage semantics owned by PR #3797
 - structured non-adjacent-tail diagnostics owned by PR #3797
 - dispatcher behavior owned by draft PR #3799
-- central status/activity state or any legacy archive byte
+- central activity/archive bytes or any coordination file by direct editing
 
 ## Contract Delivered
 
 `stream_logical_activity()` now performs these phases:
 
 1. acquire the shared activity lock;
-2. validate source order, JSON, event IDs, overlap rules, inode/metadata, and
-   raw SHA-256 before/after into a task-local SQLite snapshot;
+2. validate source order, JSON, event IDs, overlap rules, inode/metadata,
+   content-archive metrics, and raw SHA-256 before/after into a task-local
+   SQLite snapshot;
 3. defer every logical row and collapse callback until validation completes;
 4. release the activity lock;
-5. replay the validated snapshot with bounded memory and remove it on normal
+5. replay the validated snapshot with bounded memory and close it on normal
    completion, validation error, explicit close, or consumer exception.
+
+The SQLite file is unlinked immediately after opening. Its live connection
+retains disk-backed bounded storage during validation/replay, while normal
+close, SIGTERM, or SIGKILL releases the allocation without leaving an orphaned
+file. Temporary journaling is in-memory and non-durable because the snapshot
+is an ephemeral cache, never an authority. Content-addressed lineage and
+resolution archives are hashed and counted in chunks rather than retaining
+both complete compressed and decompressed payloads.
 
 As a result, `next()`, early `break`, `islice`, or a consumer exception cannot
 turn an unread late row, replaced source, or unverified later source into an
@@ -85,7 +96,7 @@ git diff --check
 
 Results:
 
-- common: 68 tests passed at draft head `6e609c7fe`
+- common: 70 tests passed at draft head `5125f3338`
 - inventory: 21 passed, one explicit opt-in skip, two subtests passed
 - opt-in production pinned pair: 1 passed in 3.02 seconds
 - pending intent: 32 passed, 49 subtests passed
@@ -99,6 +110,11 @@ A 12,000-row fixture with a 2,048-byte payload per row measured a 7,319,009-byte
 `tracemalloc` peak, below the 12 MiB acceptance bound and independent of the
 roughly 24 MiB history size. This also exposed and removed two preflight
 `read_bytes()` calls that previously doubled peak memory.
+
+A second 12,000-row/2,048-byte fixture is rotated through the
+content-addressed lineage path and asserts the same 12 MiB ceiling. This covers
+the former full `read_regular_file_bytes()` plus `gzip.decompress()` manifest
+validation path, which the active-only fixture could not exercise.
 
 ## Dispatcher Composition Proof
 
@@ -125,7 +141,7 @@ archive conflict fix.
 ### Disposable prerequisite composition
 
 While the dependency remains open, a disposable worktree merged its exact head
-into draft head `6e609c7fed5b7e1390cab2a93e036c7d4ea085fc`. The two textual conflicts were
+into draft head `5125f3338f832c147b1e192d12f212e3381927f9`. The two textual conflicts were
 resolved as a semantic union: both strict duplicate-key/registry definitions
 and `ActivityAuditInvariantError` are retained; the validation-snapshot
 non-adjacent-tail path raises the structured error using the rewritten loop's
@@ -135,7 +151,7 @@ relax the merge-order gate.
 
 Results on that exact composition:
 
-- common: 69 passed
+- common: 71 passed
 - `scripts.test_ai_status`: 75 passed, including the dependency's archive
   conflict regression
 - supervisor: 277 passed
@@ -157,8 +173,25 @@ That is the exact behavior changed by PR #3797 and is recorded as dependency
 evidence, not absorbed into this task. After #3797 merges, this branch must be
 rebased with semantic conflict resolution and the full isolated matrix rerun.
 
+## Governed Central Status Observation
+
 Three governed 30-second and one governed 180-second
-`AI_NAME=Codex ./scripts/ai-status.sh progress ...` attempts timed out in the
-central synchronization path and made no observable CLI return.
-No state file was edited manually. Canonical state still shows this task
-`in_progress`; draft PR #3800 and all task anchors are published remotely.
+`AI_NAME=Codex ./scripts/ai-status.sh progress ...` attempts timed out before
+the bounded snapshot anchor. Four anonymous SQLite files from those exact
+attempt windows were later confirmed by schema, size, and lack of open file
+descriptors, then removed explicitly. They occupied about 2.85 GiB; no other
+temporary file was removed. Unlink-on-create prevents recurrence.
+
+A later governed `sync` returned in 5.09 seconds, but a concurrent actor had
+already cleared the prior pending outbox, so this is not claimed as a full
+central-history recovery benchmark. The next governed `progress` durably
+updated this task's canonical state, then correctly failed closed before
+activity append because the existing resolution manifest references a missing
+superseded archive. Its preserved incident copy exists and matches the recorded
+gzip digest, but restoring or redefining that resolution layout is outside this
+task and was not attempted. The progress outbox remains durable for normal
+recovery after the owning repair resolves that external inconsistency.
+
+No state, activity, resolution, or archive file was edited manually. Canonical
+state shows this task `in_progress`; draft PR #3800 and all task anchors are
+published remotely.
