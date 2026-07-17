@@ -301,6 +301,35 @@ def is_valid_modern_contract(snapshot: Any) -> bool:
     return True
 
 
+def is_valid_legacy_contract(snapshot: Any) -> bool:
+    if not isinstance(snapshot, dict):
+        return False
+    # A legacy snapshot must have id or task_id
+    task_id = normalize_task_id(snapshot.get("id") or snapshot.get("task_id"))
+    if not task_id:
+        return False
+    # status must be done
+    status_val = str(
+        snapshot.get("status")
+        or snapshot.get("terminal_status")
+        or (TERMINAL_STATUS_DONE if snapshot.get("terminal_outcome") else "")
+    ).strip().lower()
+    if status_val != "done":
+        return False
+    # terminal_outcome must be completed or superseded
+    outcome = str(
+        snapshot.get("terminal_outcome")
+        or ("completed" if status_val == "done" else "")
+    ).strip().lower()
+    if outcome not in {TERMINAL_OUTCOME_COMPLETED, TERMINAL_OUTCOME_SUPERSEDED}:
+        return False
+    # archived_at must be present
+    archived_at = str(snapshot.get("archived_at") or "").strip()
+    if not archived_at:
+        return False
+    return True
+
+
 def _canonical_json_sha256(value: Any) -> str:
     import hashlib
     payload = json.dumps(
@@ -378,6 +407,20 @@ def _rebuild_archive_index_locked(
     if isinstance(existing_index, dict) and not bypass_downgrade_check:
         existing_total = int(existing_index.get("counts", {}).get("total") or 0)
 
+    # Load archive outbox task IDs for provenance verification
+    outbox_snapshots = {}
+    if STATUS_FILE.exists():
+        status_data = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+        if isinstance(status_data, dict):
+            outbox = status_data.get("status_archive_outbox")
+            if outbox not in (None, {}, []):
+                # Validate the canonical outbox schema/digest/payload exactly
+                validated_outbox = validate_status_archive_outbox(outbox)
+                for item in validated_outbox["snapshots"]:
+                    t_id = normalize_task_id(item.get("task_id"))
+                    if t_id:
+                        outbox_snapshots[t_id] = item
+
     is_git = False
     git_dir_exists = (STATUS_ROOT / ".git").exists() or any((p / ".git").exists() for p in STATUS_ROOT.parents)
     res_git = subprocess.run(
@@ -413,6 +456,23 @@ def _rebuild_archive_index_locked(
                 raise RuntimeError("Failed to resolve HEAD")
             pinned_commit = res_head.stdout.strip()
 
+        # Get list of files with uncommitted changes (modified, deleted, added, etc.)
+        uncommitted_files = set()
+        if allow_uncommitted:
+            res_status = subprocess.run(
+                ["git", "-C", str(STATUS_ROOT), "status", "--porcelain", "ai-task-archive/tasks/"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if res_status.returncode == 0:
+                for line in res_status.stdout.splitlines():
+                    if line.strip():
+                        # Format: XY path
+                        parts = line.strip().split(maxsplit=1)
+                        if len(parts) == 2:
+                            uncommitted_files.add(os.path.basename(parts[1]))
+
         # Get committed file list and SHAs from pinned commit
         res = subprocess.run(
             ["git", "-C", str(STATUS_ROOT), "ls-tree", "-r", pinned_commit, "ai-task-archive/tasks/"],
@@ -430,11 +490,18 @@ def _rebuild_archive_index_locked(
                 continue
             parts = line.split(maxsplit=3)
             if len(parts) < 4:
+                raise RuntimeError(f"Malformed ls-tree row: {line}")
+            mode, obj_type, sha, file_path = parts[0], parts[1], parts[2], parts[3]
+            # OID validation: check SHA length and hex characters
+            if len(sha) not in (40, 64) or not all(c in "0123456789abcdefABCDEF" for c in sha):
+                raise RuntimeError(f"Invalid OID in ls-tree row: {line}")
+            if obj_type != "blob":
                 continue
-            meta, file_path = parts[0:3], parts[3]
-            sha = meta[2]
             if file_path.endswith(".json"):
                 basename = os.path.basename(file_path)
+                if basename in uncommitted_files:
+                    # Skip git version, we will read it from disk later
+                    continue
                 committed_snapshots[basename] = sha
                 sha_to_filename[sha] = file_path
 
@@ -451,16 +518,33 @@ def _rebuild_archive_index_locked(
                 raise RuntimeError("git cat-file --batch failed")
 
             stream = io.BytesIO(stdout_data)
+            parsed_count = 0
             for sha, file_path in sha_to_filename.items():
                 header = stream.readline()
                 if not header:
-                    break
+                    raise RuntimeError(f"early cat-file EOF: expected header for {sha}")
                 h_parts = header.split()
-                if len(h_parts) < 3 or h_parts[1] != b"blob":
+                if len(h_parts) < 3:
                     raise RuntimeError(f"git cat-file returned malformed header for {sha}: {header}")
-                size = int(h_parts[2])
+                h_sha = h_parts[0].decode("utf-8")
+                h_type = h_parts[1]
+                h_size_str = h_parts[2]
+                if h_sha != sha:
+                    raise RuntimeError(f"git cat-file OID mismatch: expected {sha}, got {h_sha}")
+                if h_type != b"blob":
+                    raise RuntimeError(f"git cat-file returned invalid type for {sha}: {h_type}")
+                try:
+                    size = int(h_size_str)
+                except ValueError:
+                    raise RuntimeError(f"git cat-file returned invalid size for {sha}: {h_size_str}")
+
                 content = stream.read(size)
-                stream.read(1)
+                if len(content) != size:
+                    raise RuntimeError(f"early cat-file EOF: expected {size} bytes for blob {sha}, got {len(content)}")
+
+                terminator = stream.read(1)
+                if terminator != b"\n":
+                    raise RuntimeError(f"git cat-file missing terminator newline for {sha}, got {terminator}")
 
                 try:
                     snapshot = json.loads(content.decode("utf-8"))
@@ -478,6 +562,25 @@ def _rebuild_archive_index_locked(
                 if not task_id:
                     raise RuntimeError(f"Committed snapshot for {sha} is missing task id")
 
+                basename = os.path.basename(file_path)
+                if basename != f"{task_id}.json":
+                    raise RuntimeError(f"Committed snapshot filename {basename} does not match task_id {task_id}")
+
+                # Enforce modern or legacy contract or proven outbox provenance for committed snapshot
+                valid_contract = is_valid_modern_contract(snapshot) or is_valid_legacy_contract(snapshot)
+                if not valid_contract:
+                    if not task_id or task_id not in outbox_snapshots:
+                        raise RuntimeError(
+                            f"committed snapshot for {task_id} does not satisfy any valid contract "
+                            f"and lacks proven durable outbox provenance"
+                        )
+                    # Validate the snapshot content itself matches the outbox snapshot exactly
+                    outbox_snap = outbox_snapshots[task_id]
+                    if _canonical_json_sha256(snapshot) != _canonical_json_sha256(outbox_snap):
+                        raise RuntimeError(
+                            f"committed snapshot for {task_id} content does not match the outbox snapshot exactly"
+                        )
+
                 outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
                 if outcome not in {TERMINAL_OUTCOME_COMPLETED, TERMINAL_OUTCOME_SUPERSEDED}:
                     raise RuntimeError(f"Committed snapshot {task_id} has invalid terminal_outcome: {outcome}")
@@ -488,20 +591,11 @@ def _rebuild_archive_index_locked(
                     "terminal_outcome": outcome,
                     "archived_at": archived_at,
                 })
+                parsed_count += 1
 
-    # Load archive outbox task IDs for provenance verification
-    outbox_snapshots = {}
-    if STATUS_FILE.exists():
-        status_data = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
-        if isinstance(status_data, dict):
-            outbox = status_data.get("status_archive_outbox")
-            if outbox not in (None, {}, []):
-                # Validate the canonical outbox schema/digest/payload exactly
-                validated_outbox = validate_status_archive_outbox(outbox)
-                for item in validated_outbox["snapshots"]:
-                    t_id = normalize_task_id(item.get("task_id"))
-                    if t_id:
-                        outbox_snapshots[t_id] = item
+            # Count validation
+            if parsed_count != len(sha_to_filename):
+                raise RuntimeError(f"git cat-file count mismatch: expected {len(sha_to_filename)} blobs, parsed {parsed_count}")
 
     # Process newly created / uncommitted local snapshots
     if allow_uncommitted and ARCHIVE_TASKS_DIR.exists():
