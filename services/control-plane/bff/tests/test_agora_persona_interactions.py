@@ -217,7 +217,9 @@ def test_submission_same_key_different_body_conflicts_without_duplicate_side_eff
     changed = {**body, "topic": "Different request"}
     assert c.post("/bff/agora/interactions", headers={**AUTH, "Idempotency-Key": key}, json=changed).status_code == 409
     events = c.get(f"/bff/agora/workshops/{resolved['workshop_id']}/events", headers=AUTH).json()["data"]
-    assert [event["event_type"] for event in events] == ["opinion_requested", "opinion_offered", "thread_closed"]
+    assert [event["event_type"] for event in events] == [
+        "opinion_requested", "provider_invocation_failed", "thread_closed"
+    ]
 
 
 def test_partial_side_effect_failure_replays_to_exactly_one_event_set(monkeypatch):
@@ -245,7 +247,9 @@ def test_partial_side_effect_failure_replays_to_exactly_one_event_set(monkeypatc
     assert c.post("/bff/agora/interactions", headers=headers, json=body).status_code == 500
     assert c.post("/bff/agora/interactions", headers=headers, json=body).status_code == 202
     events = c.get(f"/bff/agora/workshops/{resolved['workshop_id']}/events", headers=AUTH).json()["data"]
-    assert [event["event_type"] for event in events] == ["opinion_requested", "opinion_offered", "thread_closed"]
+    assert [event["event_type"] for event in events] == [
+        "opinion_requested", "provider_invocation_failed", "thread_closed"
+    ]
     cards = c.get(f"/bff/agora/workshops/{resolved['workshop_id']}/cards", headers=AUTH).json()["data"]
     assert len([card for card in cards if card["card_type"] == "consult_result"]) == 1
 

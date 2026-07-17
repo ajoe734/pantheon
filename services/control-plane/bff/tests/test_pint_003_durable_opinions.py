@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import sys
 import uuid
 import pytest
@@ -8,6 +9,8 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import main as bff_main
+import agora.interaction.runner as interaction_runner
+from openclaw_ops_client import OpenClawOpsClientError
 from agora.strategy_workshop.router import _ws_replay_after
 
 AUTH = {"Authorization": "Bearer interaction-user:operator", "Idempotency-Key": "idem-context-p3"}
@@ -17,6 +20,7 @@ class FakeReadStore:
     def list_personas(self, **kwargs):
         return [
             {"persona_id": "ready", "tenant_id": "pantheon-dev", "display_name": "Ready", "lifecycle_state": "active", "environment_ceiling": "paper"},
+            {"persona_id": "risk", "tenant_id": "pantheon-dev", "display_name": "Risk", "lifecycle_state": "active", "environment_ceiling": "paper"},
             {"persona_id": "draft", "tenant_id": "pantheon-dev", "display_name": "Draft", "lifecycle_state": "draft", "environment_ceiling": "paper"},
             {"persona_id": "research", "tenant_id": "pantheon-dev", "display_name": "Research", "lifecycle_state": "active", "environment_ceiling": "research"},
         ]
@@ -25,10 +29,43 @@ class FakeReadStore:
         return {"snapshot_id": f"snap-{persona_id}", "capabilities": ["persona_opinion"]}
 
 
-def client(monkeypatch):
+class FakeProvider:
+    def __init__(self, conclusions=None, *, unavailable=False):
+        self.conclusions = conclusions or {"ready": "support", "risk": "oppose"}
+        self.unavailable = unavailable
+
+    def ensure_persona_opinion_agent(self, admission, *, persona_profile):
+        return {"agent": {"agent_id": admission["agent_id"]}, "execution_authority": "none"}
+
+    def invoke_assistant_provider(self, **kwargs):
+        persona_id = kwargs["context_pack"]["participant"]["persona_id"]
+        if self.unavailable:
+            raise OpenClawOpsClientError(
+                "provider unavailable", status_code=503, error_code="OPENCLAW_UNAVAILABLE"
+            )
+        conclusion = self.conclusions[persona_id]
+        text = json.dumps({
+            "conclusion": conclusion,
+            "rationale": f"provider rationale for {persona_id}",
+            "confidence": 0.9,
+            "uncertainty": ["sample uncertainty"] if conclusion == "insufficient_evidence" else [],
+            "risks": ["correlation risk"],
+            "invalidation_conditions": ["collect more evidence"],
+            "evidence_refs": [],
+            "recommended_measures": [],
+        })
+        return {"status": "ok", "data": {"status": "completed", "output": {
+            "agent_id": kwargs["agent_id"],
+            "request_id": f"response-{persona_id}",
+            "json_events": [{"type": "item.completed", "item": {"text": text}}],
+        }}}
+
+
+def client(monkeypatch, provider=None):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     monkeypatch.setattr(bff_main, "read_store", FakeReadStore())
+    monkeypatch.setattr(interaction_runner, "OpenClawOpsClient", lambda: provider or FakeProvider())
     return TestClient(bff_main.app, raise_server_exceptions=False)
 
 
@@ -74,11 +111,11 @@ def test_durable_opinions_debate_and_synthesis_flow(monkeypatch):
 
     # Verify the full payload survived persistence/readback
     full_payload = offered_ev["payload_refs_json"]
-    assert full_payload["spec_version"] == "1.0"
+    assert full_payload["spec_version"] == "1.9"
     assert "opinion" in full_payload
-    assert full_payload["opinion"]["stance"] == "agree"
+    assert full_payload["opinion"]["conclusion"] == "support"
     assert full_payload["opinion"]["confidence"] == 0.90
-    assert "ev-telemetry-001" in full_payload["opinion"]["evidence_refs"]
+    assert full_payload["opinion"]["provenance"]["simulation"] is False
 
     # Check cards
     cards_response = c.get(f"/bff/agora/workshops/{workshop_id}/cards", headers=AUTH)
@@ -89,11 +126,11 @@ def test_durable_opinions_debate_and_synthesis_flow(monkeypatch):
     consult_card = next(card for card in cards if card["card_type"] == "consult_result")
     assert consult_card["status"] == "completed"
     assert consult_card["payload"]["status"] == "recommendation"
-    assert "agree" in consult_card["summary"].lower() or "agree" in consult_card["title"].lower() or "synthesized" in consult_card["title"].lower()
+    assert "provider rationale for ready" in consult_card["summary"]
 
 
 def test_durable_opinions_no_consensus_flow(monkeypatch):
-    c = client(monkeypatch)
+    c = client(monkeypatch, FakeProvider({"ready": "support", "risk": "oppose"}))
     resolve_headers = {**AUTH, "Idempotency-Key": f"idem-context-{uuid.uuid4().hex[:8]}"}
     resolved = c.post("/bff/agora/interactions/context:resolve", headers=resolve_headers, json=context_payload()).json()["data"]
     workshop_id = resolved["workshop_id"]
@@ -103,7 +140,7 @@ def test_durable_opinions_no_consensus_flow(monkeypatch):
         "mode": "consult",
         "environment": "paper",
         "topic": "Debate with no_consensus outcome",
-        "participant_persona_ids": ["ready"],
+        "participant_persona_ids": ["ready", "risk"],
         "context_refs": context_payload()["context_refs"]
     }
 
@@ -115,11 +152,11 @@ def test_durable_opinions_no_consensus_flow(monkeypatch):
     cards = c.get(f"/bff/agora/workshops/{workshop_id}/cards", headers=AUTH).json()["data"]
     consult_card = next(card for card in cards if card["card_type"] == "consult_result")
     assert consult_card["payload"]["status"] == "no_consensus"
-    assert len(consult_card["payload"]["disagreements"]) > 0
+    assert len(consult_card["payload"]["synthesis"]["disagreements"]) > 0
 
 
 def test_durable_opinions_more_research_flow(monkeypatch):
-    c = client(monkeypatch)
+    c = client(monkeypatch, FakeProvider({"ready": "insufficient_evidence"}))
     resolve_headers = {**AUTH, "Idempotency-Key": f"idem-context-{uuid.uuid4().hex[:8]}"}
     resolved = c.post("/bff/agora/interactions/context:resolve", headers=resolve_headers, json=context_payload()).json()["data"]
     workshop_id = resolved["workshop_id"]
@@ -141,7 +178,7 @@ def test_durable_opinions_more_research_flow(monkeypatch):
     cards = c.get(f"/bff/agora/workshops/{workshop_id}/cards", headers=AUTH).json()["data"]
     consult_card = next(card for card in cards if card["card_type"] == "consult_result")
     assert consult_card["payload"]["status"] == "more_research_required"
-    assert len(consult_card["payload"]["conditions"]) > 0
+    assert len(consult_card["payload"]["synthesis"]["conditions"]) > 0
 
 
 def test_durable_opinions_homogeneity_warning_flow(monkeypatch):
@@ -166,12 +203,12 @@ def test_durable_opinions_homogeneity_warning_flow(monkeypatch):
     # Verify consult_result card contains homogeneity warning in risk notes
     cards = c.get(f"/bff/agora/workshops/{workshop_id}/cards", headers=AUTH).json()["data"]
     consult_card = next(card for card in cards if card["card_type"] == "consult_result")
-    risk_notes = consult_card["payload"]["risk_notes"]
-    assert any("homogeneity" in note.lower() or "correlation" in note.lower() for note in risk_notes)
+    risk_notes = consult_card["payload"]["synthesis"]["risk_notes"]
+    assert any("correlation" in note.lower() for note in risk_notes)
 
 
 def test_durable_opinions_degraded_path_flow(monkeypatch):
-    c = client(monkeypatch)
+    c = client(monkeypatch, FakeProvider(unavailable=True))
     resolve_headers = {**AUTH, "Idempotency-Key": f"idem-context-{uuid.uuid4().hex[:8]}"}
     resolved = c.post("/bff/agora/interactions/context:resolve", headers=resolve_headers, json=context_payload()).json()["data"]
     workshop_id = resolved["workshop_id"]
@@ -189,12 +226,12 @@ def test_durable_opinions_degraded_path_flow(monkeypatch):
     response = c.post("/bff/agora/interactions", headers=headers, json=payload)
     assert response.status_code == 202, response.text
 
-    # Check that events contain openclaw.degraded or abstain stance
+    # Provider failure is persisted without manufacturing an abstain opinion.
     events_response = c.get(f"/bff/agora/workshops/{workshop_id}/events", headers=AUTH)
     assert events_response.status_code == 200, events_response.text
     events = events_response.json()["data"]
-    offered_ev = next(e for e in events if e["event_type"] == "opinion_offered")
-    assert offered_ev["payload_refs_json"]["opinion"]["stance"] == "abstain"
+    failed_ev = next(e for e in events if e["event_type"] == "provider_invocation_failed")
+    assert failed_ev["payload_refs_json"]["opinion"] is None
 
 
 def test_sse_replay_database_fallback(monkeypatch):
