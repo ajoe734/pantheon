@@ -1840,6 +1840,8 @@ def _stream_activity_archive_metrics(path: Path) -> _ActivityArchiveMetrics:
         )
     finally:
         os.close(descriptor)
+
+
 def _stream_activity_archive_tail(path: Path, line_count: int) -> bytes:
     """Read a bounded decompressed tail while pinning one stable archive FD."""
 
@@ -3010,10 +3012,11 @@ def rotate_activity_log_unlocked(
         return None
 
     archive_digest = hashlib.sha256(archive_payload).hexdigest()
-    archive_dir = (
-        archive_dir.expanduser().resolve()
+    archive_dir = _assert_no_symlink_components(
+        archive_dir
         if archive_dir is not None
-        else (log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR).resolve()
+        else log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR,
+        source="activity archive directory",
     )
     try:
         archive_relative = archive_dir.relative_to(log_path.parent)
@@ -4501,7 +4504,6 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
     planning_active = str(planning_state.get("status") or "") in {"active", "human_required", "accepted"}
     source_ref = task.get("source_ref") if isinstance(task.get("source_ref"), dict) else {}
     source_plane = str(task.get("source_plane") or "").strip()
-    recent = _recent_task_activity(config, task_id)
     path = task_brief_path(task_id)
     ensure_parent(path)
     body = [
@@ -4536,13 +4538,11 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
     artifacts = [str(item).strip() for item in (task.get("artifacts") or []) if str(item).strip()]
     body.extend([f"- {item}" for item in artifacts] or ["- none"])
     body.extend(["", "## Recent Task Activity"])
-    if recent:
-        body.extend(
-            f"- {entry.get('ts') or '-'} · {entry.get('agent') or '-'} · {entry.get('type') or '-'} · {compact_whitespace(entry.get('message') or '-')}"
-            for entry in recent
-        )
-    else:
-        body.append("- none")
+    body.append(
+        "- Omitted from automatic dispatch context. The canonical task row above "
+        "is the bounded handoff context; query validated activity history only for "
+        "targeted forensic work."
+    )
     body.extend(["", "## Relevant Canonical Files", "- AI_COLLABORATION_GUIDE.md", "- ai-status.json"])
     if planning_active:
         session_file = str(planning_state.get("session_file") or "").strip()

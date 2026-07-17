@@ -420,6 +420,53 @@ class ClaudeAuthTests(unittest.TestCase):
 
 
 class RecentTaskActivityTests(unittest.TestCase):
+    def test_automatic_task_brief_never_scans_global_activity_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status_file = root / "ai-status.json"
+            status_file.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "TASK-1",
+                                "title": "Bounded dispatch context",
+                                "status": "in_progress",
+                                "owner": "Codex",
+                                "reviewer": "Claude",
+                                "depends_on": [],
+                                "artifacts": [],
+                                "next": "Finish without global history scan",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            brief_path = root / "task-brief.md"
+            config = {
+                "paths": {
+                    "status_file": str(status_file),
+                    "activity_log": str(root / "huge-activity-log.jsonl"),
+                }
+            }
+
+            with (
+                mock.patch.object(common, "task_brief_path", return_value=brief_path),
+                mock.patch.object(
+                    common,
+                    "_recent_task_activity",
+                    side_effect=AssertionError("global activity scan must not run"),
+                ) as recent_activity,
+            ):
+                result = common.write_task_brief(config, "TASK-1")
+
+            recent_activity.assert_not_called()
+            self.assertEqual(result, brief_path)
+            rendered = brief_path.read_text(encoding="utf-8")
+            self.assertIn("Finish without global history scan", rendered)
+            self.assertIn("Omitted from automatic dispatch context", rendered)
+
     def test_recent_task_activity_returns_latest_rows_from_validated_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

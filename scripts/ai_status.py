@@ -98,6 +98,7 @@ from common import (
     durable_write_bytes,
     prepare_activity_audit_unlocked,
     read_activity_log_tail_bytes,
+    read_regular_file_bytes,
     rotate_activity_log_unlocked,
     strict_activity_json_loads,
     validated_activity_event_digests_unlocked,
@@ -1266,11 +1267,16 @@ def default_state() -> dict[str, Any]:
 
 
 def load_state() -> dict[str, Any]:
-    if not STATUS_FILE.exists():
+    try:
+        payload = read_regular_file_bytes(
+            STATUS_FILE,
+            source="canonical status state",
+        )
+    except FileNotFoundError:
         return default_state()
-    if STATUS_FILE.read_text(encoding="utf-8").strip() == "":
+    if not payload.strip():
         raise SystemExit(f"Refusing to initialize from empty status file: {STATUS_FILE}")
-    state = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+    state = json.loads(payload.decode("utf-8", errors="strict"))
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
     return state
