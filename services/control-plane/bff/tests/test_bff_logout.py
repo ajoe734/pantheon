@@ -57,6 +57,7 @@ def _strict_cookie_client(monkeypatch) -> TestClient:
     monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", JWT_ISSUER)
     monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", JWT_AUDIENCE)
     monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+    monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://frontend.test")
     return TestClient(bff_main.app)
 
 
@@ -94,7 +95,7 @@ def test_post_bff_logout_clears_cookie_and_followup_me_returns_401(monkeypatch) 
     token = _jwt_token(extra={"sid": "session-cookie-logout-b1-006"})
     client.cookies.set("pantheon_session", token)
 
-    logout_resp = client.post("/bff/logout")
+    logout_resp = client.post("/bff/logout", headers={"Origin": "https://frontend.test"})
     assert logout_resp.status_code == 200, logout_resp.text
     set_cookie = logout_resp.headers.get("set-cookie", "")
     assert "pantheon_session=" in set_cookie
