@@ -172,14 +172,22 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         self.assertEqual(summary["total_sources"], 6)  # f1, f2, f3, f4, f5, log_path
         self.assertEqual(summary["total_byte_identical_folds"], 4)
         self.assertNotIn("baseline_incident_pairs", summary)
+        self.assertNotIn("observed_20260716_adjacent_pairs", summary)
         self.assertEqual(
-            summary["observed_20260716_adjacent_pairs"],
+            summary["observed_incident_tail_pairs"],
             [
-                {"prev": "ai-activity-log.jsonl-2026-07-16T0358Z.gz", "next": "ai-activity-log.jsonl-2026-07-16T1130Z.gz"},
-                {"prev": "ai-activity-log.jsonl-2026-07-16T1301Z.gz", "next": "ai-activity-log.jsonl-2026-07-16T1404Z.gz"},
-                {"prev": "ai-activity-log.jsonl-2026-07-16T1404Z.gz", "next": "ai-activity-log.jsonl-2026-07-16T1450Z.gz"},
                 {"prev": "ai-activity-log.jsonl-2026-07-16T1450Z.gz", "next": "ai-activity-log.jsonl"},
             ],
+        )
+        self.assertEqual(
+            summary["incident_tail_boundary"],
+            {
+                "start_source": "ai-activity-log.jsonl-2026-07-16T1450Z.gz",
+                "terminal_source": "ai-activity-log.jsonl",
+                "reaches_active": True,
+                "successor_source": None,
+                "successor_class": None,
+            },
         )
         self.assertFalse(
             (self.status_root / "evidence" / "evidence.md")
@@ -483,7 +491,7 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         self.assertEqual(fold_1609_active["event_id_count"], 0)
         self.assertEqual(fold_1609_active["fold_type"], "post_incident_rotation")
 
-        observed_pairs = summary["observed_20260716_adjacent_pairs"]
+        observed_pairs = summary["observed_incident_tail_pairs"]
         self.assertIn(
             {"prev": f5.name, "next": f6.name},
             observed_pairs,
@@ -496,6 +504,64 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
             {"prev": f5.name, "next": "ai-activity-log.jsonl"},
             observed_pairs,
         )
+        self.assertTrue(summary["incident_tail_boundary"]["reaches_active"])
+
+    def test_incident_tail_can_end_at_validated_disjoint_boundary(self):
+        self._setup_all_four_incident_pairs()
+        f5 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        active_entries = [
+            {"event_id": f"boundary-overlap-{index}"}
+            for index in range(1000)
+        ]
+        f4 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1404Z.gz"
+        with gzip.open(f4, "rt", encoding="utf-8") as handle:
+            predecessor_overlap = [
+                json.loads(line)
+                for line in handle.read().splitlines()[-1000:]
+            ]
+        f6 = self.archive_dir / "ai-activity-log.jsonl-2026-07-17T0404Z.gz"
+        f7 = self.archive_dir / "ai-activity-log.jsonl-2026-07-17T1754Z.gz"
+        self._write_gz(f5, predecessor_overlap + active_entries)
+        self._write_gz(f6, active_entries + [{"event_id": "f6-terminal"}])
+        self._write_gz(
+            f7,
+            [
+                {"event_id": "disjoint-successor-0"},
+                {"event_id": "disjoint-successor-1"},
+            ],
+        )
+        self.log_path.write_text(
+            json.dumps({"event_id": "disjoint-active"}) + "\n",
+            encoding="utf-8",
+        )
+
+        inventory.generate_inventory(
+            status_root=self.status_root,
+            evidence_dir=self.status_root / "evidence",
+        )
+        summary = json.loads(
+            (self.status_root / "evidence" / "summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            summary["observed_incident_tail_pairs"],
+            [{"prev": f5.name, "next": f6.name}],
+        )
+        self.assertEqual(
+            summary["incident_tail_boundary"],
+            {
+                "start_source": f5.name,
+                "terminal_source": f6.name,
+                "reaches_active": False,
+                "successor_source": f7.name,
+                "successor_class": "legacy_ts_std",
+            },
+        )
+        evidence_text = (self.status_root / "evidence" / "evidence.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("validated disjoint successor", evidence_text)
 
     def test_failure_leaves_evidence_unchanged(self):
         self._setup_all_four_incident_pairs()

@@ -60,9 +60,6 @@ EXPECTED_INCIDENTS = {
     ("ai-activity-log.jsonl-2026-07-16T1404Z.gz", "ai-activity-log.jsonl-2026-07-16T1450Z.gz"),
 }
 
-INCIDENT_DAY_SOURCE_PREFIX = "ai-activity-log.jsonl-2026-07-16T"
-
-
 @contextlib.contextmanager
 def open_fd_strictly(source: Path) -> Generator[tuple[int, Any], None, None]:
     """Open the file descriptor strictly, check symlink/replacement before reading."""
@@ -380,7 +377,13 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                     "activity source set changed between physical and logical passes"
                 )
 
-            # Dynamic chain resolution from 1450Z -> ... -> active
+            # Resolve the exact-overlap component that begins at the final
+            # incident archive.  Legacy keep-lines rotations originally made
+            # this component reach active, but a later validated disjoint
+            # rotation epoch may terminate it at an archive.  Missing overlap
+            # is not corruption by itself: the shared logical reader has
+            # already validated the complete ordered source set, duplicate
+            # identities, and non-adjacent overlap constraints.
             prev_to_fold = {f["prev_source"]: f for f in folds if f["prev_source"]}
             start_node = None
             for p_name in prev_to_fold:
@@ -388,15 +391,38 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                     start_node = p_name
                     break
 
-            lineage_folds = []
+            incident_tail_folds = []
+            incident_tail_terminal_source = None
+            incident_tail_boundary_successor = None
+            incident_tail_boundary_successor_class = None
+            incident_tail_reaches_active = False
             if start_node:
                 curr = start_node
-                while curr != "ai-activity-log.jsonl":
-                    if curr not in prev_to_fold:
-                        raise RuntimeError(f"Incident lineage broken at {curr}")
+                visited: set[str] = set()
+                while curr != "ai-activity-log.jsonl" and curr in prev_to_fold:
+                    if curr in visited:
+                        raise RuntimeError(f"Incident lineage cycle at {curr}")
+                    visited.add(curr)
                     f = prev_to_fold[curr]
-                    lineage_folds.append(f)
+                    incident_tail_folds.append(f)
                     curr = f["next_source"]
+                incident_tail_terminal_source = curr
+                incident_tail_reaches_active = curr == "ai-activity-log.jsonl"
+                if not incident_tail_reaches_active:
+                    ordered_names = [source.name for source in sources]
+                    try:
+                        terminal_index = ordered_names.index(curr)
+                    except ValueError as exc:
+                        raise RuntimeError(
+                            f"Incident lineage terminal source is missing: {curr}"
+                        ) from exc
+                    if terminal_index + 1 >= len(sources):
+                        raise RuntimeError(
+                            f"Incident lineage terminal source has no successor: {curr}"
+                        )
+                    successor = sources[terminal_index + 1]
+                    incident_tail_boundary_successor = successor.name
+                    incident_tail_boundary_successor_class = classify_source(successor)
 
             # Map folds to their dynamic classification
             for f in folds:
@@ -407,7 +433,7 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                 elif f["is_unchanged_incident"]:
                     f["contains_incident_id"] = True
                     f["fold_type"] = "incident_lineage"
-                elif f in lineage_folds:
+                elif f in incident_tail_folds:
                     f["contains_incident_id"] = True
                     if f["event_id_count"] > 0:
                         f["fold_type"] = "incident_lineage"
@@ -429,8 +455,10 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
 
             # Assert lineage complete if 1450Z is present
             has_1450 = any("2026-07-16T1450Z" in name for name in source_names)
-            if has_1450 and not lineage_folds:
-                raise RuntimeError("Incident lineage from 1450Z to active was expected but not found.")
+            if has_1450 and not incident_tail_folds:
+                raise RuntimeError(
+                    "Incident lineage from 1450Z was expected but not found."
+                )
 
             # Rehash and restat every source after logical pass to verify stability
             for info, source in zip(source_infos, sources):
@@ -501,15 +529,17 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                 lc = str(f["lines"])
                 line_count_classes[lc] = line_count_classes.get(lc, 0) + 1
 
-            observed_20260716_adjacent_pairs = [
+            observed_incident_tail_pairs = [
                 {"prev": f["prev_source"], "next": f["next_source"]}
-                for f in folds
-                if f["prev_source"].startswith(INCIDENT_DAY_SOURCE_PREFIX)
-                and (
-                    f["next_source"].startswith(INCIDENT_DAY_SOURCE_PREFIX)
-                    or f["next_source"] == "ai-activity-log.jsonl"
-                )
+                for f in incident_tail_folds
             ]
+            incident_tail_boundary = {
+                "start_source": start_node,
+                "terminal_source": incident_tail_terminal_source,
+                "reaches_active": incident_tail_reaches_active,
+                "successor_source": incident_tail_boundary_successor,
+                "successor_class": incident_tail_boundary_successor_class,
+            }
 
             observed_pinned_pairs = {
                 (f["prev_source"], f["next_source"])
@@ -567,7 +597,8 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                 "total_byte_identical_folds": len(folds),
                 "total_mismatch_folds": 0,
                 "folds_details": folds,
-                "observed_20260716_adjacent_pairs": observed_20260716_adjacent_pairs,
+                "observed_incident_tail_pairs": observed_incident_tail_pairs,
+                "incident_tail_boundary": incident_tail_boundary,
                 "pinned_exception_identities": pinned_exception_identities,
             }
 
@@ -584,15 +615,31 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
 
             run_id = os.environ.get("ORCH_RUN_ID", f"antigravity-bootstrap-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%MZ')}")
 
-            std_count = source_class_counts.get("legacy_ts_std", 0)
-            old_count = source_class_counts.get("legacy_ts_old", 0)
-            active_count = source_class_counts.get("active", 0)
-            source_class_counts_str = f"{std_count} std/{old_count} old/{active_count} active"
+            source_labels = {
+                "legacy_ts_std": "std",
+                "legacy_ts_old": "old",
+                "content_addressed": "content addressed",
+                "active": "active",
+            }
+            source_order = tuple(source_labels)
+            source_class_counts_str = "/".join(
+                f"{source_class_counts[key]} {source_labels.get(key, key)}"
+                for key in (*source_order, *sorted(set(source_class_counts) - set(source_order)))
+                if source_class_counts.get(key, 0)
+            )
 
-            valid_legacy_count = fold_class_counts.get("valid_legacy_rotation", 0)
-            incident_lineage_count = fold_class_counts.get("incident_lineage", 0)
-            pinned_count = fold_class_counts.get("pinned_exception", 0)
-            fold_class_counts_str = f"{valid_legacy_count} valid legacy/{incident_lineage_count} incident lineage/{pinned_count} pinned"
+            fold_labels = {
+                "valid_legacy_rotation": "valid legacy",
+                "incident_lineage": "incident lineage",
+                "post_incident_rotation": "post-incident rotation",
+                "pinned_exception": "pinned",
+            }
+            fold_order = tuple(fold_labels)
+            fold_class_counts_str = "/".join(
+                f"{fold_class_counts[key]} {fold_labels.get(key, key)}"
+                for key in (*fold_order, *sorted(set(fold_class_counts) - set(fold_order)))
+                if fold_class_counts.get(key, 0)
+            )
 
             line_classes_parts = []
             for lc in sorted(line_count_classes.keys(), key=lambda x: int(x), reverse=True):
@@ -631,16 +678,26 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                 "Using a callback-based diagnostics mechanism, it successfully identified and folded the duplicate overlaps from legacy timestamp rotations.\n"
             )
 
-            evidence_md.append("### Observed 2026-07-16 Adjacent Tail Lineage")
+            evidence_md.append("### Observed Incident Tail Overlap Component")
             evidence_md.append("| Predecessor Source | Successor Source |")
             evidence_md.append("| :--- | :--- |")
-            for pair in observed_20260716_adjacent_pairs:
+            for pair in observed_incident_tail_pairs:
                 evidence_md.append(f"| `{pair['prev']}` | `{pair['next']}` |")
             evidence_md.append("")
-            evidence_md.append(
-                "This chain is generated from verified adjacent fold diagnostics; "
-                "superseded archive-to-active shorthand is not retained."
-            )
+            if incident_tail_reaches_active:
+                evidence_md.append(
+                    "This exact-overlap component reaches the active log. It is "
+                    "generated from verified adjacent fold diagnostics; superseded "
+                    "archive-to-active shorthand is not retained."
+                )
+            else:
+                evidence_md.append(
+                    "This exact-overlap component terminates at "
+                    f"`{incident_tail_terminal_source}` before the validated disjoint "
+                    f"successor `{incident_tail_boundary_successor}` "
+                    f"(`{incident_tail_boundary_successor_class}`). The shared logical "
+                    "reader validated the full boundary without collapsing it."
+                )
             evidence_md.append("")
 
             evidence_md.append("### Standard 1,000-Line Log Folds")
