@@ -163,6 +163,18 @@ class TestCoordinationRootValidation(unittest.TestCase):
 
             log_archive_leaf.unlink()
 
+            # 5. Test symlink in .orchestrator/worker-runtime
+            runtime_dir = central / ".orchestrator" / "worker-runtime"
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            runtime_leaf = runtime_dir / "bad-leaf.json"
+            runtime_leaf.symlink_to(root / "nonexistent-target-5")
+
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(central)}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
+                    wr.validate_coordination_root(worktree)
+
+            runtime_leaf.unlink()
+
     def test_child_command_runs_in_task_worktree_with_central_status_root(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-cwd-") as temp_dir:
             root = Path(temp_dir)
@@ -259,33 +271,33 @@ class TestCoordinationRootValidation(unittest.TestCase):
     @mock.patch("time.sleep")
     def test_child_cleanup_on_exception(self, mock_sleep):
         mock_sleep.side_effect = KeyboardInterrupt()
-        orig_cwd = os.getcwd()
 
-        try:
-            with tempfile.TemporaryDirectory(prefix="worker-runner-cleanup-") as temp_dir:
-                root = Path(temp_dir)
-                central = root / "central"
-                worktree = root / "task-worktree"
-                _init_repo(central)
-                _init_repo(worktree)
-                _write_status(central)
+        with tempfile.TemporaryDirectory(prefix="worker-runner-cleanup-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            worktree = root / "task-worktree"
+            _init_repo(central)
+            _init_repo(worktree)
+            _write_status(central)
 
-                heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
-                status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
 
-                test_args = [
-                    "worker_runner.py",
-                    "--run-id", "test-run",
-                    "--heartbeat-path", str(heartbeat),
-                    "--status-path", str(status),
-                    "--heartbeat-interval-seconds", "0.1",
-                    "--", "python", "-c", "pass"
-                ]
+            test_args = [
+                "worker_runner.py",
+                "--run-id", "test-run",
+                "--heartbeat-path", str(heartbeat),
+                "--status-path", str(status),
+                "--heartbeat-interval-seconds", "0.1",
+                "--", "python", "-c", "pass"
+            ]
 
-                mock_child = mock.Mock()
-                mock_child.pid = 99999
-                mock_child.poll.return_value = None
+            mock_child = mock.Mock()
+            mock_child.pid = 99999
+            mock_child.poll.return_value = None
 
+            orig_cwd = os.getcwd()
+            try:
                 with mock.patch.object(wr, "_git_toplevel", return_value=central):
                     with mock.patch("subprocess.Popen", return_value=mock_child):
                         with mock.patch("sys.argv", test_args):
@@ -298,8 +310,8 @@ class TestCoordinationRootValidation(unittest.TestCase):
                                     wr.main()
 
                 mock_child.terminate.assert_called_once()
-        finally:
-            os.chdir(orig_cwd)
+            finally:
+                os.chdir(orig_cwd)
 
     @mock.patch("time.sleep")
     def test_sigterm_deadline_force_kills_group(self, mock_sleep):

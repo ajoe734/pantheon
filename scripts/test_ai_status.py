@@ -650,6 +650,31 @@ class StatusRootRoutingTests(unittest.TestCase):
 
             log_archive_leaf.unlink()
 
+            # 5. Test symlink in .orchestrator/worker-runtime
+            runtime_dir = valid / ".orchestrator" / "worker-runtime"
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            runtime_leaf = runtime_dir / "bad-leaf.json"
+            runtime_leaf.symlink_to(root / "nonexistent-target-5")
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(code_root / "scripts" / "ai_status.py"),
+                    "show",
+                    "CENTRAL-ROOT-001",
+                ],
+                cwd=code_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("cannot be a symlink", proc.stderr)
+
+            runtime_leaf.unlink()
+
 
 class CanonicalWriterGuardTests(unittest.TestCase):
     def test_isolated_override_never_bypasses_a_git_checkout(self) -> None:

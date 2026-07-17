@@ -256,70 +256,89 @@ def _rebuild_archive_index_locked(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -
     summaries: list[dict[str, Any]] = []
     committed_snapshots: dict[str, str] = {}
 
+    existing_index = load_json(ARCHIVE_INDEX_FILE, default=None)
+    existing_total = 0
+    if isinstance(existing_index, dict):
+        existing_total = int(existing_index.get("counts", {}).get("total") or 0)
+
     if ARCHIVE_TASKS_DIR.exists():
-        # Get committed file list and SHAs from HEAD
+        pinned_commit = "HEAD"
+        try:
+            res_head = subprocess.run(
+                ["git", "-C", str(STATUS_ROOT), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if res_head.returncode == 0:
+                pinned_commit = res_head.stdout.strip()
+        except Exception:
+            pass
+
+        # Get committed file list and SHAs from pinned commit
         res = subprocess.run(
-            ["git", "-C", str(STATUS_ROOT), "ls-tree", "-r", "HEAD", "ai-task-archive/tasks/"],
+            ["git", "-C", str(STATUS_ROOT), "ls-tree", "-r", pinned_commit, "ai-task-archive/tasks/"],
             capture_output=True,
             text=True,
-            check=True,
+            check=False,
         )
-        sha_to_filename: dict[str, str] = {}
-        for line in res.stdout.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            parts = line.split(maxsplit=3)
-            if len(parts) < 4:
-                continue
-            meta, file_path = parts[0:3], parts[3]
-            sha = meta[2]
-            if file_path.endswith(".json"):
-                basename = os.path.basename(file_path)
-                committed_snapshots[basename] = sha
-                sha_to_filename[sha] = file_path
-
-        # Read committed blobs using cat-file --batch
-        if sha_to_filename:
-            stdin_data = "\n".join(sha_to_filename.keys()).encode("utf-8") + b"\n"
-            proc = subprocess.Popen(
-                ["git", "-C", str(STATUS_ROOT), "cat-file", "--batch"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-            )
-            stdout_data, _ = proc.communicate(input=stdin_data)
-            if proc.returncode != 0:
-                raise RuntimeError("git cat-file --batch failed")
-
-            stream = io.BytesIO(stdout_data)
-            for sha, file_path in sha_to_filename.items():
-                header = stream.readline()
-                if not header:
-                    break
-                h_parts = header.split()
-                if len(h_parts) < 3 or h_parts[1] != b"blob":
+        if res.returncode == 0:
+            sha_to_filename: dict[str, str] = {}
+            for line in res.stdout.splitlines():
+                line = line.strip()
+                if not line:
                     continue
-                size = int(h_parts[2])
-                content = stream.read(size)
-                stream.read(1)
+                parts = line.split(maxsplit=3)
+                if len(parts) < 4:
+                    continue
+                meta, file_path = parts[0:3], parts[3]
+                sha = meta[2]
+                if file_path.endswith(".json"):
+                    basename = os.path.basename(file_path)
+                    committed_snapshots[basename] = sha
+                    sha_to_filename[sha] = file_path
 
-                try:
-                    snapshot = json.loads(content.decode("utf-8"))
-                    task_id = normalize_task_id(
-                        snapshot.get("task_id")
-                        or ((snapshot.get("task") or {}).get("id"))
-                        or snapshot.get("id")
-                    )
-                    if task_id:
-                        outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
-                        archived_at = str(snapshot.get("archived_at") or "").strip()
-                        summaries.append({
-                            "task_id": task_id,
-                            "terminal_outcome": outcome,
-                            "archived_at": archived_at,
-                        })
-                except Exception as e:
-                    raise RuntimeError(f"Failed to parse committed snapshot for {sha}: {e}")
+            # Read committed blobs using cat-file --batch
+            if sha_to_filename:
+                stdin_data = "\n".join(sha_to_filename.keys()).encode("utf-8") + b"\n"
+                proc = subprocess.Popen(
+                    ["git", "-C", str(STATUS_ROOT), "cat-file", "--batch"],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                )
+                stdout_data, _ = proc.communicate(input=stdin_data)
+                if proc.returncode != 0:
+                    raise RuntimeError("git cat-file --batch failed")
+
+                stream = io.BytesIO(stdout_data)
+                for sha, file_path in sha_to_filename.items():
+                    header = stream.readline()
+                    if not header:
+                        break
+                    h_parts = header.split()
+                    if len(h_parts) < 3 or h_parts[1] != b"blob":
+                        continue
+                    size = int(h_parts[2])
+                    content = stream.read(size)
+                    stream.read(1)
+
+                    try:
+                        snapshot = json.loads(content.decode("utf-8"))
+                        task_id = normalize_task_id(
+                            snapshot.get("task_id")
+                            or ((snapshot.get("task") or {}).get("id"))
+                            or snapshot.get("id")
+                        )
+                        if task_id:
+                            outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
+                            archived_at = str(snapshot.get("archived_at") or "").strip()
+                            summaries.append({
+                                "task_id": task_id,
+                                "terminal_outcome": outcome,
+                                "archived_at": archived_at,
+                            })
+                    except Exception as e:
+                        raise RuntimeError(f"Failed to parse committed snapshot for {sha}: {e}")
 
         # Process newly created / uncommitted local snapshots
         for path in ARCHIVE_TASKS_DIR.glob("*.json"):
@@ -351,6 +370,13 @@ def _rebuild_archive_index_locked(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -
                             })
                 except Exception as e:
                     raise RuntimeError(f"Failed to parse newly created snapshot at {path}: {e}")
+
+    total_found = len(summaries)
+    if existing_total > 0 and total_found < existing_total:
+        raise RuntimeError(
+            f"Archive index rebuild check failed: found {total_found} snapshots but "
+            f"existing index has {existing_total}. Failing closed to prevent index downgrade."
+        )
 
     summaries.sort(key=lambda item: (str(item.get("archived_at") or ""), str(item.get("task_id") or "")), reverse=True)
     index = default_archive_index()

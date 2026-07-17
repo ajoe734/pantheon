@@ -353,6 +353,7 @@ def validate_status_root_binding() -> None:
         (root / "archive" / "logs", "activity rotation archive"),
         (root / ".orchestrator" / "logs" / "activity-log-archive", "legacy activity archive"),
         (root / ".orchestrator" / "logs" / "activity-rotation", "activity rotation"),
+        (root / ".orchestrator" / "worker-runtime", "worker runtime"),
     ):
         symlink_comp = _first_symlink_component(path)
         if symlink_comp is not None:

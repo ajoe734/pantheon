@@ -79,3 +79,56 @@ def test_rebuild_indexes_legacy_top_level_id(tmp_path, monkeypatch) -> None:
     resolver = task_archive.TaskResolver([], archive_tasks_dir=tasks_dir)
     assert resolver.get("LEGACY-001")["id"] == "LEGACY-001"
     assert resolver.dependency_satisfied("LEGACY-001") is True
+
+
+def test_rebuild_index_fail_closed_on_downgrade(tmp_path, monkeypatch) -> None:
+    import pytest
+    import subprocess
+    # Initialize a temporary git repo to avoid test pollution
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True)
+
+    archive_dir = tmp_path / "ai-task-archive"
+    tasks_dir = archive_dir / "tasks"
+    tasks_dir.mkdir(parents=True)
+    index_file = archive_dir / "index.json"
+
+    monkeypatch.setattr(task_archive, "STATUS_ROOT", tmp_path)
+    monkeypatch.setattr(task_archive, "ARCHIVE_DIR", archive_dir)
+    monkeypatch.setattr(task_archive, "ARCHIVE_TASKS_DIR", tasks_dir)
+    monkeypatch.setattr(task_archive, "ARCHIVE_INDEX_FILE", index_file)
+    monkeypatch.setattr(task_archive, "STATUS_FILE", tmp_path / "ai-status.json")
+
+    # Create a pre-existing index.json claiming total count is 5
+    existing_index = {
+        "version": 1,
+        "updated_at": "2026-07-17T03:25:21Z",
+        "counts": {
+            "total": 5,
+            "completed": 5,
+            "superseded": 0
+        },
+        "recent_terminal_ids": []
+    }
+    index_file.write_text(json.dumps(existing_index), encoding="utf-8")
+
+    # Create only 3 snapshots on disk
+    _write(
+        tasks_dir,
+        "TASK-001.json",
+        {"task_id": "TASK-001", "terminal_outcome": "completed", "archived_at": "2026-06-14T00:00:00Z"},
+    )
+    _write(
+        tasks_dir,
+        "TASK-002.json",
+        {"task_id": "TASK-002", "terminal_outcome": "completed", "archived_at": "2026-06-14T01:00:00Z"},
+    )
+
+    # Commit them to HEAD
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=tmp_path, check=True)
+
+    # Try rebuilding the index, which should fail closed because 2 found < 5 claimed
+    with pytest.raises(RuntimeError, match="Failing closed to prevent index downgrade"):
+        task_archive.rebuild_archive_index(recent_limit=10)
