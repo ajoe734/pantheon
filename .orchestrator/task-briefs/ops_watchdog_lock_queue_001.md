@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Bound supervisor watchdog lock contention (capacity rebalance to Antigravity)
-- Status: todo
+- Status: in_progress
 - Owner: Antigravity
 - Reviewer: Codex
-- Next: [auto-reap] in_progress 34m with no live worker; run abandoned. Reset to todo for re-dispatch (auto-reap #1/2).
+- Next: CHANGES REQUIRED on merged PR #3815 / merge 288fb046e. P1 .orchestrator/supervisor_watchdog.py:749-755 returns from the try before the else, so normal success calls __exit__ zero times (reproduced entered=1/exited=0) and relies on CPython destruction for lock release; explicitly release on success and add a normal-path exact-once test. P1 lines 742-745 silently swallow non-EAGAIN contention-metric failures (reproduced EACCES => stderr empty/no result marker); surface every drop/error and add wrapper-level coverage. P2 lines 713-718 classify any EAGAIN from the whole __enter__ path, including validation I/O, as lock contention; distinguish actual flock contention from I/O/config failures. Acceptance evidence is invalid/stale: documented SHA 710958642a8... does not exist, cycles 16:37-16:39 predate implementation 959dab at 16:42 and PR merges, dev-root remains 6d833 and differs from #3815, and current --require-watchdog is unhealthy. Deploy a descendant containing 288fb, then capture three consecutive real cycles with exact SHA and per-cycle health/process/hash proof. Validation: watchdog 37 passed; ai-status 74 passed + 15 subtests, but these P1 paths remain uncovered. Resubmit a fresh exact head.
 
 ## Summary
 容量調度：由 Antigravity 執行 watchdog lock contention 修復，Codex 做獨立驗收；交付 bounded single-flight 行為、測試、部署與三個排程週期證據。
