@@ -190,3 +190,37 @@ has not resolved. This confirms the resync-on-BEHIND pattern is the
 correct, low-risk action for this task while the merge itself remains a
 human/governance-gated action (self-merge of an evidence/approval PR is not
 permitted regardless of CI state).
+
+Rewake note (2026-07-17, third cycle): PR #3784 drifted `mergeStateStatus:
+BEHIND` again (5 new `dev` commits: `PINT-013` durable interaction store
+merge and `SEARCH-RELOAD-001` topology-reload merge; neither touches lease
+controller, workflow, or evidence files), so this branch was resynced with
+`git merge origin/dev` (clean, no conflicts) and pushed non-force (head now
+`942738521`). Reran the full mandatory validation set: 65 passed (one more
+than the 64 recorded on the prior cycle, again unrelated dev churn), 19
+subtests passed; `py_compile`, YAML parse, `check_shared_deploy_workflow_disabled`,
+`git diff --check` all clean.
+
+Also found a governance-tool discrepancy worth recording: an earlier
+session's memory/notes report that `scripts/ai_status.py approve` ran
+successfully this same day (2026-07-17 ~15:05:39Z) and moved this task to
+`review_approved`. On this rewake, `python3 scripts/ai_status.py show
+OPS-LEASE-READ-AFTER-WRITE-PIN-001` (after finally returning, following two
+prior calls that each hit the 60-180s timeout) instead reported `status:
+"review"` with `last_update: "2026-07-17T14:48:01Z"` - a timestamp *before*
+the reported approve, i.e. the approve appears to have been silently lost
+rather than durably persisted. `ps`/`fuser` against the canonical store
+showed an unrelated, long-running (`3m43s+` at 80% CPU) `ai_status.py
+assign OPS-WATCHDOG-LOCK-QUEUE-POSTMERGE-001 ...` process from another
+worker holding `task-state.lock` and `activity-audit.lock` exclusively,
+which explains the timeouts on `show` but not the apparent state loss
+(`show` did eventually return real data, it just showed a status this task
+had already moved past). This looks like another symptom of the ongoing
+activity-log rotation/lock instability (see fleet memory notes on the
+rotation-recovery and non-adjacent-tail outages), not a new defect in this
+task's deliverable. Did not attempt to fix the status tool from this task.
+The durable governed record remains the `Verdict: **APPROVED**` section
+above (final audited head `be2d61636`, unchanged); if `ai_status.py` still
+shows `status: "review"` on a future rewake, re-running `scripts/ai_status.py
+approve` is safe and expected (it only hard-errors when status is already
+`review_approved`).
