@@ -155,6 +155,44 @@ content validated above. The final governed approval must name the resulting
 PR head; the earlier approval of `249e1d0d3984c41a801695b59550df65817ed742`
 is historical only.
 
+### Final dev-tip compose revalidation
+
+The candidate was composed again with `origin/dev` at
+`7097e8d2a7c15593763bdba302a8b3950a998b04`. The resulting pre-evidence
+compose head `6bafe903f152131de2226f5920056c2867b2a638` was revalidated at
+2026-07-17T02:59:30Z:
+
+```text
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py -q
+22 passed in 4.71s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py -q
+6 passed in 2.60s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py -q
+20 passed in 6.55s
+
+python3 -m pytest services/reconciliation-drift/tests/ -q
+79 passed in 24.84s
+
+python3 -m py_compile services/reconciliation-drift/store.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py
+(no output; passed)
+
+git diff --check origin/dev...HEAD
+(no output; clean)
+
+git show --check --oneline HEAD
+(no whitespace errors)
+
+python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge
+(no output; passed)
+```
+
+This evidence-only commit does not alter the validated store or test content.
+Antigravity must independently approve the final PR head produced by this
+commit; neither the historical `249e1d0d...` approval nor the later approval
+event preceding this dev-tip compose applies to that final head.
+
 ## Scope boundary
 
 - Owned layer: `services/reconciliation-drift/store.py` JSON-backed map
