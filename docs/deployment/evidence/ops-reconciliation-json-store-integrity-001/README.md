@@ -437,6 +437,48 @@ resulting pushed PR head supersedes every earlier exact-head approval and must
 receive fresh Antigravity governed approval plus a GitHub approval review
 before the PR is merged. Auto-merge remains disabled.
 
+### Latest owner finalization compose revalidation
+
+While the exact-head handoff for `1d77c58e707a297c619ff24d757e01be4a42ad78`
+was completing, `origin/dev` advanced through PR #3821 to
+`4d1dabe03e558d96388badc56344a4e4229e761f`. The owner withdrew that stale
+review request before approval. The new base changed watchdog and orchestrator
+files only; it did not touch this task's store, tests, review, or evidence
+paths. The branch composed the new tip without conflict, producing
+pre-evidence merge head `8f2eb39dc7c44d404bdd43c7525b9d705087e055`, and was
+revalidated at 2026-07-17T20:50:37Z:
+
+```text
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py -q
+22 passed in 10.81s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py -q
+6 passed in 7.43s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py -q
+20 passed in 14.14s
+
+python3 -m pytest services/reconciliation-drift/tests/ -q
+79 passed in 22.34s
+
+python3 -m py_compile services/reconciliation-drift/store.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py
+(no output; passed)
+
+git diff --check origin/dev...HEAD
+(no output; clean)
+
+git show --check --oneline HEAD
+(no whitespace errors)
+
+python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge
+(no output; passed)
+```
+
+This evidence-only commit restores the owner commit as the branch tip after
+the base merge and does not alter the validated store or tests. Only its
+resulting full SHA is eligible for the next exact-head approval; the withdrawn
+`1d77c58e...` handoff and every earlier approval remain superseded.
+
 ### Push-event trailer check false positive
 
 The `Commit trailers` check's `push` event range (`f06027d02..b506dc93a`)
