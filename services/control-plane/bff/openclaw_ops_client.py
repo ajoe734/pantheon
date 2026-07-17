@@ -240,6 +240,48 @@ class OpenClawOpsClient:
             )
         return agent
 
+    def ensure_persona_opinion_agent(
+        self,
+        admission: Dict[str, Any],
+        *,
+        persona_profile: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Admit one frozen Persona snapshot to an advice-only OpenClaw agent."""
+
+        # Identity is frozen by the BFF admission builder.  Do not rebuild it
+        # from a mutable Registry projection here: that would create a TOCTOU
+        # window between admission and agent reconciliation.
+        payload = dict(admission)
+        idempotency_key = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                "pantheon:persona-opinion-agent:"
+                f"{admission.get('agent_id')}:{admission.get('capability_snapshot_id')}",
+            )
+        )
+        response = self._request(
+            "POST",
+            f"{OPENCLAW_ADAPTER_AGENT_PREFIX}/persona-opinion/ensure",
+            body=payload,
+            headers={
+                "Idempotency-Key": idempotency_key,
+                "X-Request-Id": str(uuid.uuid4()),
+            },
+            expected_status={200, 201},
+            timeout_seconds=max(self._timeout, 135.0),
+        )
+        agent = response.get("agent")
+        if not isinstance(agent, dict) or str(agent.get("agent_id") or "") != str(
+            admission.get("agent_id") or ""
+        ):
+            raise OpenClawOpsClientError(
+                "OpenClaw adapter returned a mismatched Persona opinion agent.",
+                status_code=503,
+                error_code="OPENCLAW_PERSONA_AGENT_INVALID_RESPONSE",
+                payload=response,
+            )
+        return response
+
     def list_lifecycle_sessions(
         self,
         *,
@@ -354,18 +396,29 @@ class OpenClawOpsClient:
         trace_id: Optional[str] = None,
         messages: Optional[list[Dict[str, Any]]] = None,
         attachments: Optional[list[Dict[str, Any]]] = None,
+        agent_id: Optional[str] = None,
+        persona_admission: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         normalized = str(provider or "").strip().lower()
         headers: Dict[str, str] = {"X-Operator-Id": operator_id}
         if trace_id:
             headers["X-Trace-Id"] = trace_id
         if normalized in {"openclaw", "openclaw_agent"}:
+            if (agent_id is None) != (persona_admission is None):
+                raise OpenClawOpsClientError(
+                    "agent_id and persona_admission must be supplied together.",
+                    status_code=422,
+                    error_code="OPENCLAW_PERSONA_ADMISSION_REQUIRED",
+                )
             body: Dict[str, Any] = {
                 "mode": mode,
                 "prompt": prompt,
                 "context_pack": context_pack,
                 "metadata": metadata or {},
             }
+            if agent_id is not None:
+                body["agent_id"] = agent_id
+                body["persona_admission"] = persona_admission
             if messages is not None:
                 body["messages"] = messages
             if attachments is not None:
