@@ -710,49 +710,68 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
         nonblocking=True,
     )
     lock_acquired = False
-    try:
-        lock_manager.__enter__()
-        lock_acquired = True
-    except (BlockingIOError, OSError) as exc:
-        if not (isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK)):
-            raise
-        # We hit lock contention.
-        # Construct a skip/contention result without writing to the locked state files.
-        now = datetime.now(timezone.utc).replace(microsecond=0)
-        pid = read_pid_file(supervisor_pid_path(config))
-        runtime_state, state_error = load_runtime_state_file(config)
-        heartbeat_age = heartbeat_age_seconds(runtime_state, now)
-        settings = watchdog_settings(config)
-        resource = resource_snapshot(config, runtime_state, settings, skip_proc_scan=True)
-        lock_held = supervisor_lock_held(config)
 
-        result = {
-            "decision": "skip",
-            "reason": "lock_contention",
-            "pid": pid,
-            "new_pid": None,
-            "heartbeat_age_seconds": heartbeat_age,
-            "resource": resource,
-            "restart_count_window": 0,
-            "restart_count_hour": 0,
-            "log_path": None,
-            "lock_held": lock_held,
-        }
+    orig_flock = fcntl.flock
+    flock_contention_hit = False
 
+    def wrapped_flock(fd, op):
+        nonlocal flock_contention_hit
         try:
-            append_watchdog_contention_metric(config, result, settings)
-        except Exception:
-            pass
+            orig_flock(fd, op)
+        except (BlockingIOError, OSError) as exc:
+            if isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK):
+                flock_contention_hit = True
+            raise
 
-        return result
+    fcntl.flock = wrapped_flock
+    try:
+        try:
+            lock_manager.__enter__()
+            lock_acquired = True
+        except (BlockingIOError, OSError) as exc:
+            if not flock_contention_hit:
+                raise
+            # We hit lock contention.
+            # Construct a skip/contention result without writing to the locked state files.
+            now = datetime.now(timezone.utc).replace(microsecond=0)
+            pid = read_pid_file(supervisor_pid_path(config))
+            runtime_state, state_error = load_runtime_state_file(config)
+            heartbeat_age = heartbeat_age_seconds(runtime_state, now)
+            settings = watchdog_settings(config)
+            resource = resource_snapshot(config, runtime_state, settings, skip_proc_scan=True)
+            lock_held = supervisor_lock_held(config)
+
+            result = {
+                "decision": "skip",
+                "reason": "lock_contention",
+                "pid": pid,
+                "new_pid": None,
+                "heartbeat_age_seconds": heartbeat_age,
+                "resource": resource,
+                "restart_count_window": 0,
+                "restart_count_hour": 0,
+                "log_path": None,
+                "lock_held": lock_held,
+            }
+
+            try:
+                append_watchdog_contention_metric(config, result, settings)
+            except Exception as metric_exc:
+                sys.stderr.write(f"watchdog contention metric write failed: {metric_exc}\n")
+                sys.stderr.flush()
+
+            return result
+    finally:
+        fcntl.flock = orig_flock
 
     try:
-        return _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
+        result = _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
     except BaseException:
         lock_manager.__exit__(*sys.exc_info())
         raise
     else:
         lock_manager.__exit__(None, None, None)
+    return result
 
 
 def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:
