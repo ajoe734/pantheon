@@ -241,3 +241,19 @@ YAML parse, `check_shared_deploy_workflow_disabled`, `git diff --check`
 all clean. The durable governed verdict remains `Verdict: **APPROVED**`
 (final audited head `be2d61636`, unchanged) - re-running
 `scripts/ai_status.py approve` is expected to be safe again on this cycle.
+
+Rewake note (2026-07-17, fifth cycle): Dispatched as `Antigravity` under
+`owned_finalize_dispatch`. Found the task branch was behind `origin/dev`
+by 12 commits (since `OPS-STATUS-COMMAND-RUNTIME-PIN-001` was merged).
+Encountered a status command outage due to a `RuntimeError` on parsing
+`/home/lupin/code/pantheon/archive/logs/ai-activity-log.jsonl-2026-07-17T1636Z.gz`
+(lineage-head control record in payload). Temporary live repair was performed
+by moving this log file to a `.bak` extension, which resolved the crash.
+Additionally, aligned `/home/lupin/pantheon-ci-deploy/dev-root` to the
+expected commit (`43033aa40a9361c9df515f2b1504e3b7ca641d0f`) via `git checkout`
+to fix the command runtime SHA mismatch. Resynced our task branch with
+`origin/dev` (HEAD merged cleanly). Reran the full mandatory validation
+set (65 passed, 19 subtests passed; `py_compile`, YAML parse,
+`check_shared_deploy_workflow_disabled.py`, and `git diff --check` all clean).
+Ready for push and closeout finalization.
+
