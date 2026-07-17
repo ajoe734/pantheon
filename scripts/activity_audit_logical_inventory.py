@@ -29,6 +29,7 @@ ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
+import common as activity_common
 from common import (
     DuplicateActivityJSONKeyError,
     activity_audit_lock_file,
@@ -59,12 +60,7 @@ EXPECTED_INCIDENTS = {
     ("ai-activity-log.jsonl-2026-07-16T1404Z.gz", "ai-activity-log.jsonl-2026-07-16T1450Z.gz"),
 }
 
-BASELINE_INCIDENT_PAIRS = [
-    {"prev": "ai-activity-log.jsonl-2026-07-16T0358Z.gz", "next": "ai-activity-log.jsonl-2026-07-16T1130Z.gz"},
-    {"prev": "ai-activity-log.jsonl-2026-07-16T1301Z.gz", "next": "ai-activity-log.jsonl-2026-07-16T1404Z.gz"},
-    {"prev": "ai-activity-log.jsonl-2026-07-16T1404Z.gz", "next": "ai-activity-log.jsonl-2026-07-16T1450Z.gz"},
-    {"prev": "ai-activity-log.jsonl-2026-07-16T1450Z.gz", "next": "ai-activity-log.jsonl"},
-]
+INCIDENT_DAY_SOURCE_PREFIX = "ai-activity-log.jsonl-2026-07-16T"
 
 
 @contextlib.contextmanager
@@ -505,6 +501,52 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                 lc = str(f["lines"])
                 line_count_classes[lc] = line_count_classes.get(lc, 0) + 1
 
+            observed_20260716_adjacent_pairs = [
+                {"prev": f["prev_source"], "next": f["next_source"]}
+                for f in folds
+                if f["prev_source"].startswith(INCIDENT_DAY_SOURCE_PREFIX)
+                and (
+                    f["next_source"].startswith(INCIDENT_DAY_SOURCE_PREFIX)
+                    or f["next_source"] == "ai-activity-log.jsonl"
+                )
+            ]
+
+            observed_pinned_pairs = {
+                (f["prev_source"], f["next_source"])
+                for f in folds
+                if f["fold_type"] == "pinned_exception"
+            }
+            pinned_exception_identities = []
+            for exception in activity_common.HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS:
+                pair = (exception.predecessor_name, exception.successor_name)
+                if pair not in observed_pinned_pairs:
+                    continue
+                pinned_exception_identities.append(
+                    {
+                        "overlap": {
+                            "bytes": exception.overlap_byte_count,
+                            "lines": exception.overlap_line_count,
+                            "sha256": exception.overlap_sha256,
+                        },
+                        "predecessor": {
+                            "basename": exception.predecessor_name,
+                            "decompressed_byte_count": exception.predecessor_payload_byte_count,
+                            "decompressed_sha256": exception.predecessor_payload_sha256,
+                            "gzip_byte_count": exception.predecessor_gzip_byte_count,
+                            "gzip_sha256": exception.predecessor_gzip_sha256,
+                            "line_count": exception.predecessor_line_count,
+                        },
+                        "successor": {
+                            "basename": exception.successor_name,
+                            "decompressed_byte_count": exception.successor_payload_byte_count,
+                            "decompressed_sha256": exception.successor_payload_sha256,
+                            "gzip_byte_count": exception.successor_gzip_byte_count,
+                            "gzip_sha256": exception.successor_gzip_sha256,
+                            "line_count": exception.successor_line_count,
+                        },
+                    }
+                )
+
             # Write summary.json
             summary = {
                 "scan_time": scan_time_str,
@@ -525,7 +567,8 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                 "total_byte_identical_folds": len(folds),
                 "total_mismatch_folds": 0,
                 "folds_details": folds,
-                "baseline_incident_pairs": BASELINE_INCIDENT_PAIRS
+                "observed_20260716_adjacent_pairs": observed_20260716_adjacent_pairs,
+                "pinned_exception_identities": pinned_exception_identities,
             }
 
             # Separate folds for report: standard folds vs pinned exception
@@ -588,11 +631,16 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                 "Using a callback-based diagnostics mechanism, it successfully identified and folded the duplicate overlaps from legacy timestamp rotations.\n"
             )
 
-            evidence_md.append("### Baseline Incident Snapshot Pairs (from the Merged Brief)")
+            evidence_md.append("### Observed 2026-07-16 Adjacent Tail Lineage")
             evidence_md.append("| Predecessor Source | Successor Source |")
             evidence_md.append("| :--- | :--- |")
-            for pair in BASELINE_INCIDENT_PAIRS:
+            for pair in observed_20260716_adjacent_pairs:
                 evidence_md.append(f"| `{pair['prev']}` | `{pair['next']}` |")
+            evidence_md.append("")
+            evidence_md.append(
+                "This chain is generated from verified adjacent fold diagnostics; "
+                "superseded archive-to-active shorthand is not retained."
+            )
             evidence_md.append("")
 
             evidence_md.append("### Standard 1,000-Line Log Folds")
@@ -610,6 +658,20 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                     evidence_md.append(f"| `{f['prev_source']}` | `{f['next_source']}` | {f['lines']} | {f['bytes']:,} | `{f['digest']}` | `{f['status']}` | `{f['fold_type']}` | {f['event_id_count']} | {f['identical_duplicate_count']} | {f['mismatch_duplicate_count']} |")
                 evidence_md.append("")
 
+                evidence_md.append("Pinned source identity:")
+                evidence_md.append("")
+                evidence_md.append("| Source | Gzip SHA-256 | Decompressed SHA-256 | Lines |")
+                evidence_md.append("| :--- | :--- | :--- | ---: |")
+                for identity in pinned_exception_identities:
+                    for role in ("predecessor", "successor"):
+                        source_identity = identity[role]
+                        evidence_md.append(
+                            f"| `{source_identity['basename']}` | "
+                            f"`{source_identity['gzip_sha256']}` | "
+                            f"`{source_identity['decompressed_sha256']}` | "
+                            f"{source_identity['line_count']:,} |"
+                        )
+
             # Atomic temp writes
             temp_manifest = None
             temp_summary = None
@@ -625,7 +687,8 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
 
                 with tempfile.NamedTemporaryFile(dir=e_dir, suffix=".tmp", delete=False) as tf_e:
                     temp_evidence = Path(tf_e.name)
-                    tf_e.write(("\n".join(evidence_md) + "\n").encode("utf-8"))
+                    evidence_content = "\n".join(evidence_md).rstrip("\n") + "\n"
+                    tf_e.write(evidence_content.encode("utf-8"))
 
                 # Rename if everything succeeds
                 os.replace(temp_manifest, e_dir / "manifest.json")

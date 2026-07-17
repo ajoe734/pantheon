@@ -4,6 +4,7 @@
 - **Bootstrap Run ID**: `antigravity-bootstrap-20260716T2030Z`
 - **Worktree Path**: `/tmp/pantheon-worker-worktrees/pantheon/ops-activity-audit-legacy-overlap-postmerge-001`
 - **Base HEAD SHA**: `64844eef7e87c63c955c98fa95579992aa3af5e2`
+- **Bootstrap Reason**: the activity-reader outage prevented the first governed assignment, so fleet started from a clean task worktree and materialized the task through governed commands after recovery
 - **Source Class Counts**: `411 std/10 old/1 active`
 - **Fold Class Counts**: `234 valid legacy/5 incident lineage/1 pinned`
 - **Line-Count Classes**: `239x1000/1x999`
@@ -26,13 +27,20 @@
 ## Summary of Legacy Log Folds
 The logical activity reader scanned 422 activity log archives on the central status root (`/home/lupin/code/pantheon`). Using a callback-based diagnostics mechanism, it successfully identified and folded the duplicate overlaps from legacy timestamp rotations.
 
-### Baseline Incident Snapshot Pairs (from the Merged Brief)
+### Observed 2026-07-16 Adjacent Tail Lineage
 | Predecessor Source | Successor Source |
 | :--- | :--- |
 | `ai-activity-log.jsonl-2026-07-16T0358Z.gz` | `ai-activity-log.jsonl-2026-07-16T1130Z.gz` |
+| `ai-activity-log.jsonl-2026-07-16T1130Z.gz` | `ai-activity-log.jsonl-2026-07-16T1301Z.gz` |
 | `ai-activity-log.jsonl-2026-07-16T1301Z.gz` | `ai-activity-log.jsonl-2026-07-16T1404Z.gz` |
 | `ai-activity-log.jsonl-2026-07-16T1404Z.gz` | `ai-activity-log.jsonl-2026-07-16T1450Z.gz` |
-| `ai-activity-log.jsonl-2026-07-16T1450Z.gz` | `ai-activity-log.jsonl` |
+| `ai-activity-log.jsonl-2026-07-16T1450Z.gz` | `ai-activity-log.jsonl-2026-07-16T1609Z.gz` |
+| `ai-activity-log.jsonl-2026-07-16T1609Z.gz` | `ai-activity-log.jsonl` |
+
+The `1130Z -> 1301Z` pair is a standard legacy rotation with no incident
+event ID. The other five pairs are the incident lineage. This table is the
+observed adjacent chain; it does not preserve the superseded early-snapshot
+`1450Z -> active` shorthand.
 
 ### Standard 1,000-Line Log Folds
 | Predecessor Source File | Successor Source File | Folded Lines | Size (Bytes) | SHA-256 Digest | Status | Fold Type | Event IDs | Identical Dups | Mismatch Dups |
@@ -282,3 +290,9 @@ The logical activity reader scanned 422 activity log archives on the central sta
 | :--- | :--- | :---: | :---: | :--- | :--- | :--- | :---: | :---: | :---: |
 | `ai-activity-log.jsonl-2026-05-24T1237Z.gz` | `ai-activity-log.jsonl-2026-05-24T1239Z.gz` | 999 | 5,325,808 | `0a3b56f720a5aa493d8968edfff8e32e0df98e410f6334d6790f10a06019f247` | `byte_identical` | `pinned_exception` | 0 | 0 | 0 |
 
+Pinned source identity:
+
+| Source | Gzip SHA-256 | Decompressed SHA-256 | Lines |
+| :--- | :--- | :--- | ---: |
+| `ai-activity-log.jsonl-2026-05-24T1237Z.gz` | `ad7dd174e0278a3c21b10024cd227f0d138052dd0945bc3b24159538d87ed6c5` | `8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57` | 1,001 |
+| `ai-activity-log.jsonl-2026-05-24T1239Z.gz` | `d211e27bc5337c8eff200e14d48800f949658e6c8b43d9fd22e54ea8c77061da` | `da6a102178c82fb4eca8d0794ed5b419f0c97770e0ad63542dde0033e7efa3ff` | 1,001 |

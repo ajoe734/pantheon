@@ -1,8 +1,12 @@
 {
-  "baseline_incident_pairs": [
+  "observed_20260716_adjacent_pairs": [
     {
       "next": "ai-activity-log.jsonl-2026-07-16T1130Z.gz",
       "prev": "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+    },
+    {
+      "next": "ai-activity-log.jsonl-2026-07-16T1301Z.gz",
+      "prev": "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
     },
     {
       "next": "ai-activity-log.jsonl-2026-07-16T1404Z.gz",
@@ -13,8 +17,37 @@
       "prev": "ai-activity-log.jsonl-2026-07-16T1404Z.gz"
     },
     {
-      "next": "ai-activity-log.jsonl",
+      "next": "ai-activity-log.jsonl-2026-07-16T1609Z.gz",
       "prev": "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+    },
+    {
+      "next": "ai-activity-log.jsonl",
+      "prev": "ai-activity-log.jsonl-2026-07-16T1609Z.gz"
+    }
+  ],
+  "pinned_exception_identities": [
+    {
+      "overlap": {
+        "bytes": 5325808,
+        "lines": 999,
+        "sha256": "0a3b56f720a5aa493d8968edfff8e32e0df98e410f6334d6790f10a06019f247"
+      },
+      "predecessor": {
+        "basename": "ai-activity-log.jsonl-2026-05-24T1237Z.gz",
+        "decompressed_byte_count": 5326818,
+        "decompressed_sha256": "8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57",
+        "gzip_byte_count": 772038,
+        "gzip_sha256": "ad7dd174e0278a3c21b10024cd227f0d138052dd0945bc3b24159538d87ed6c5",
+        "line_count": 1001
+      },
+      "successor": {
+        "basename": "ai-activity-log.jsonl-2026-05-24T1239Z.gz",
+        "decompressed_byte_count": 5326326,
+        "decompressed_sha256": "da6a102178c82fb4eca8d0794ed5b419f0c97770e0ad63542dde0033e7efa3ff",
+        "gzip_byte_count": 771941,
+        "gzip_sha256": "d211e27bc5337c8eff200e14d48800f949658e6c8b43d9fd22e54ea8c77061da",
+        "line_count": 1001
+      }
     }
   ],
   "duplicate_id_lines": 110,

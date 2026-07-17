@@ -1,6 +1,6 @@
 # Postmerge Evidence: OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001
 
-This receipt document verifies the postmerge acceptance, installation, inventory validation, and task activation for **OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001**, noting the remaining items listed at the end of this document. All steps have been processed in accordance with the repository's strict collaboration and validation policies.
+This receipt documents the accepted merge, installation, inventory, and task activation for **OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001**. The inventory is accepted; final stale-worktree write proof remains gated as described in section 7 and in `closeout-20260717.md`.
 
 ---
 
@@ -38,6 +38,12 @@ The official post-merge inventory run was performed to validate the postmerge st
   - `summary.json`: `720914279393f6d401a59803547f7e03c9649d0b83ca8f7cbb1776606189bc20`
   - `manifest.json`: `2416b7fc1da07b963be4c3aaf7059159f647a59a5d02861fa05526b9902d1722`
 
+The hashes above identify the immutable artifacts reviewed at PR #3775 exact
+head `773f20f52a6badb8577dbe09faf51a0a85edb026`. The human-readable
+evidence and summary were later corrected for the final adjacent tail chain,
+pinned decompressed source hashes, and EOF whitespace; corrected hashes are
+recorded in `closeout-20260717.md`.
+
 ### Pre-merge Comparison Baseline
 For comparison, the pre-merge baseline run was performed prior to merging:
 - **Pre-merge Timestamp**: `2026-07-16T18:59:50Z`
@@ -63,6 +69,11 @@ The pending outbox target event is `ai-status-event-96647dfb76bf1b7c8c1f657b78be
 Note that `worker-commit-deb673789747a71068bff9f2578ad9f41d7b8253` was a duplicate historical ID that caused the legacy logical reader outage, rather than the pending outbox event itself.
 After the recovery run, the target event is physically written exactly once in the active log, and the target transaction was cleared from the outbox. This outbox recovery resolves the block on this specific transaction, and does not imply the global outbox will remain permanently empty, as subsequent unrelated transactions can process normally.
 
+This historical receipt was accepted during the exact-head reviews of PRs
+#3773 and #3775. The packet does not retain the original typed outbox
+before/after payload, so the 2026-07-17 closeout does not claim a new recovery
+or reconstruct unavailable transaction bytes.
+
 ---
 
 ## 6. Official Task Assignment and Start Readback
@@ -78,14 +89,25 @@ The task was formally initialized and advanced through the central governed comm
     ```
   - **Result**: Successfully logged and read back. Status transited to `in_progress`.
 
+The task was subsequently reassigned by the supervisor to owner `Codex` with
+reviewer `Claude`; the current central object remains the single active task
+record for this ID.
+
 ---
 
-## 7. Remaining Work & Status (Not Completely Closed)
-This task and its evidence are not completely finished/unblocked:
-- **PR #3775**: The current post-merge evidence PR #3775 is pending Claude's review.
-- **PR #3763**: The original task requires PR #3763 stale-worktree show/note/handoff proof.
+## 7. Current Closeout Status (Not Completely Closed)
+
+- **PR #3775**: Claude approved exact head `773f20f5`; the PR merged as `d651dbb99cc0870c4e9ac4d2815bdc116824c815`.
+- **PR #3800**: Reader hardening merged as `a124a19bf525f93a8996651189845e5569c89ab4`, but the supervisor-provided command runtime for the 2026-07-17 recovery probe remained pinned to older ancestor `6d833e4b0aa5e07d1b151f0064f82c2d3368ce06` and therefore did not contain that merge.
+- **Read-only stale-worktree probe**: governed `show` succeeded from detached stale merge `d4d0f693...` and returned the central `in_progress` task in 145.10 seconds; all six local sentinels remained byte-identical and the disposable worktree was removed.
+- **Write proof**: governed `note` and owner-to-reviewer `handoff` were intentionally not run on the pre-hardening command runtime.
+- **PR #3763**: still open and awaiting a fresh installed-runtime `show`/`note`/`handoff` proof plus Codex2 exact-head review.
+
+The task must remain `in_progress` until the installed command runtime is
+`a124a19bf...` or a descendant, the current inventory and stale write proof
+pass, and the final evidence receives independent review.
 
 ---
 
 ## 8. Git Diff Check Verification
-- **Diff Check Status**: The human-authored files (`README.md` and `receipts.md`) pass the `git diff --check` validation cleanly. The raw inventory output `evidence.md` contains a terminal blank line at the end-of-file, which is a known and byte-preserved exception required to keep the audited raw hashes intact.
+- **Diff Check Status**: The earlier terminal blank line in `evidence.md` was removed during the 2026-07-17 evidence consistency correction. The corrected task-scoped diff must pass `git diff --check` without exception.

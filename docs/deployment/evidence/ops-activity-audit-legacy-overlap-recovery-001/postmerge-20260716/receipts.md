@@ -25,7 +25,7 @@
   - Source classes: 411/10/1
   - Fold classes: 234/5/1
   - Line classes: 239x1000 + 1x999
-- **Post-merge Evidence File Hashes**:
+- **Original PR #3775 Exact-Head Evidence File Hashes**:
   - `evidence.md`: `112aa73ff758342ee905f9a54042e1f8a84028b44d860dd8829c65ac0a522d9e`
   - `summary.json`: `720914279393f6d401a59803547f7e03c9649d0b83ca8f7cbb1776606189bc20`
   - `manifest.json`: `2416b7fc1da07b963be4c3aaf7059159f647a59a5d02861fa05526b9902d1722`
@@ -51,6 +51,14 @@
 - **Event Type**: `review_approved`
 - **Task ID**: `OPS-WORKTREE-DELIVERY-CONTEXT-PLAN-001`
 - **Recovery Action**: The target event is physically recorded once in the active log, and the corresponding target transaction has been cleared from the outbox. The duplicate historical ID `worker-commit-deb673789747a71068bff9f2578ad9f41d7b8253` which previously caused the reader outage was successfully bypassed. Unrelated subsequent transactions are unaffected.
+- **Receipt Boundary**: PRs #3773 and #3775 accepted this historical result; the packet does not retain the original typed outbox before/after payload, so no later transaction reconstruction is claimed.
+
+## Pinned 999-Line Exception Identity Receipt
+- **T1237Z gzip SHA-256**: `ad7dd174e0278a3c21b10024cd227f0d138052dd0945bc3b24159538d87ed6c5`
+- **T1237Z decompressed SHA-256**: `8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57`
+- **T1239Z gzip SHA-256**: `d211e27bc5337c8eff200e14d48800f949658e6c8b43d9fd22e54ea8c77061da`
+- **T1239Z decompressed SHA-256**: `da6a102178c82fb4eca8d0794ed5b419f0c97770e0ad63542dde0033e7efa3ff`
+- **Overlap**: 999 lines, 5,325,808 bytes, SHA-256 `0a3b56f720a5aa493d8968edfff8e32e0df98e410f6334d6790f10a06019f247`
 
 ## Governed Command Readback Receipt
 - **Task Assignment Timestamp**: `2026-07-16T20:50:57Z`
@@ -58,8 +66,10 @@
 - **Command Used**: `PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon AI_NAME=Antigravity python3 scripts/ai_status.py start OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001 "Starting postmerge evidence collection and acceptance validation"`
 
 ## Git Diff Check Verification
-- **Diff Check Status**: The human-authored files (`README.md` and `receipts.md`) pass the `git diff --check` validation cleanly. The raw inventory output `evidence.md` contains a terminal blank line at the end-of-file, which is a known and byte-preserved exception required to keep the audited raw hashes intact.
+- **Diff Check Status**: The earlier `evidence.md` terminal blank line was removed; the corrected task-scoped diff is required to pass without exception.
 
 ## Remaining Work & Status
-- **PR #3775**: The current post-merge evidence PR #3775 is pending Claude's review.
-- **PR #3763**: The original task requires PR #3763 stale-worktree show/note/handoff proof.
+- **PR #3775**: Claude approved exact head `773f20f5`; merged as `d651dbb99cc0870c4e9ac4d2815bdc116824c815`.
+- **PR #3800 / runtime install**: hardening merged as `a124a19bf525f93a8996651189845e5569c89ab4`; the dispatched command runtime remained `6d833e4b...`, so installed-head acceptance must be rerun after sync/restart.
+- **Stale proof**: read-only `show` succeeded from detached stale merge `d4d0f693...`; local sentinels remained unchanged. `note` and `handoff` remain intentionally pending for the installed hardening runtime.
+- **PR #3763**: still requires the complete stale-worktree write proof and Codex2 exact-head approval.

@@ -171,6 +171,21 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         summary = json.loads((self.status_root / "evidence" / "summary.json").read_text(encoding="utf-8"))
         self.assertEqual(summary["total_sources"], 6)  # f1, f2, f3, f4, f5, log_path
         self.assertEqual(summary["total_byte_identical_folds"], 4)
+        self.assertNotIn("baseline_incident_pairs", summary)
+        self.assertEqual(
+            summary["observed_20260716_adjacent_pairs"],
+            [
+                {"prev": "ai-activity-log.jsonl-2026-07-16T0358Z.gz", "next": "ai-activity-log.jsonl-2026-07-16T1130Z.gz"},
+                {"prev": "ai-activity-log.jsonl-2026-07-16T1301Z.gz", "next": "ai-activity-log.jsonl-2026-07-16T1404Z.gz"},
+                {"prev": "ai-activity-log.jsonl-2026-07-16T1404Z.gz", "next": "ai-activity-log.jsonl-2026-07-16T1450Z.gz"},
+                {"prev": "ai-activity-log.jsonl-2026-07-16T1450Z.gz", "next": "ai-activity-log.jsonl"},
+            ],
+        )
+        self.assertFalse(
+            (self.status_root / "evidence" / "evidence.md")
+            .read_bytes()
+            .endswith(b"\n\n")
+        )
 
         folds = summary["folds_details"]
         for f in folds:
@@ -468,6 +483,20 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         self.assertEqual(fold_1609_active["event_id_count"], 0)
         self.assertEqual(fold_1609_active["fold_type"], "post_incident_rotation")
 
+        observed_pairs = summary["observed_20260716_adjacent_pairs"]
+        self.assertIn(
+            {"prev": f5.name, "next": f6.name},
+            observed_pairs,
+        )
+        self.assertIn(
+            {"prev": f6.name, "next": "ai-activity-log.jsonl"},
+            observed_pairs,
+        )
+        self.assertNotIn(
+            {"prev": f5.name, "next": "ai-activity-log.jsonl"},
+            observed_pairs,
+        )
+
     def test_failure_leaves_evidence_unchanged(self):
         self._setup_all_four_incident_pairs()
 
@@ -582,6 +611,30 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         self.assertEqual(res[-3][0]["event_id"], "redacted-pinned-successor-0")
         self.assertEqual(res[-2][0]["event_id"], "redacted-pinned-successor-1")
         self.assertEqual(res[-1][0]["event_id"], "evt_active")
+
+        evidence_dir = self.status_root / "evidence"
+        inventory.generate_inventory(
+            status_root=self.status_root,
+            evidence_dir=evidence_dir,
+        )
+        summary = json.loads(
+            (evidence_dir / "summary.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(summary["pinned_exception_identities"]), 1)
+        identity = summary["pinned_exception_identities"][0]
+        self.assertEqual(
+            identity["predecessor"]["decompressed_sha256"],
+            self.pinned_exception.predecessor_payload_sha256,
+        )
+        self.assertEqual(
+            identity["successor"]["decompressed_sha256"],
+            self.pinned_exception.successor_payload_sha256,
+        )
+        evidence_text = (evidence_dir / "evidence.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(self.pinned_exception.predecessor_payload_sha256, evidence_text)
+        self.assertIn(self.pinned_exception.successor_payload_sha256, evidence_text)
 
     def test_production_pinned_registry_metadata_is_exact(self):
         self.assertEqual(len(self.production_pinned_registry), 1)
