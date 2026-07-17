@@ -565,7 +565,7 @@ def write_legacy_activity_fold(
     root: Path,
     *,
     conflicting_tail: bool = False,
-) -> None:
+) -> tuple[Path, Path]:
     predecessor_rows = [
         {
             "event_id": f"synthetic-legacy-event-{index:04d}",
@@ -593,13 +593,17 @@ def write_legacy_activity_fold(
 
     archive_root = root / "archive" / "logs"
     archive_root.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
     for name, rows in (
         ("ai-activity-log.jsonl-2026-07-13T0000Z.gz", predecessor_rows),
         ("ai-activity-log.jsonl-2026-07-13T0001Z.gz", successor_rows),
     ):
-        with gzip.open(archive_root / name, "wt", encoding="utf-8") as handle:
+        path = archive_root / name
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
             for row in rows:
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+        paths.append(path)
+    return paths[0], paths[1]
 
 
 def refresh_route_derived(payload: dict) -> dict:
@@ -1360,7 +1364,8 @@ def test_dispatch_accepts_shared_legacy_fold_and_remains_idempotent() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         prepare_status(root)
-        write_legacy_activity_fold(root)
+        sources = write_legacy_activity_fold(root)
+        sources_before = {path: path.read_bytes() for path in sources}
 
         first = run_dispatch(root)
 
@@ -1378,13 +1383,15 @@ def test_dispatch_accepts_shared_legacy_fold_and_remains_idempotent() -> None:
         assert "No state changes required." in second.stdout
         assert (root / "ai-status.json").read_bytes() == status_after_first
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_after_first
+        assert {path: path.read_bytes() for path in sources} == sources_before
 
 
 def test_dispatch_rejects_payload_mismatch_after_shared_legacy_fold() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         prepare_status(root)
-        write_legacy_activity_fold(root, conflicting_tail=True)
+        sources = write_legacy_activity_fold(root, conflicting_tail=True)
+        sources_before = {path: path.read_bytes() for path in sources}
         status_before = (root / "ai-status.json").read_bytes()
         log_before = (root / "ai-activity-log.jsonl").read_bytes()
 
@@ -1394,6 +1401,7 @@ def test_dispatch_rejects_payload_mismatch_after_shared_legacy_fold() -> None:
         assert "activity event_id payload mismatch" in result.stderr
         assert (root / "ai-status.json").read_bytes() == status_before
         assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+        assert {path: path.read_bytes() for path in sources} == sources_before
 
 
 def test_activity_event_index_fully_drains_shared_reader(
@@ -2652,7 +2660,7 @@ def test_lock_order_is_runtime_then_task_then_audit() -> None:
         acquired = [
             line.removeprefix("acquire:")
             for line in trace.read_text(encoding="utf-8").splitlines()
-            if line.startswith("acquire:")
+            if line.startswith("acquire:") and line.count(":") == 1
         ]
         assert acquired == ["runtime_admission", "task_state", "activity_audit"]
 
