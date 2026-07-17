@@ -405,6 +405,96 @@ Output:
 
 The health check now returns `"healthy": true`, and all checks (including watchdog probe freshness) are fully passing.
 
+## Fresh Post-Merge Acceptance and P1/P2 Resolution (2026-07-17T18:30Z)
+
+We resolved the remaining P1 and P2 implementation defects identified during review of the merged PR #3815:
+- **P1 (Success Path Lock Exit)**: Modified `run_watchdog` in `.orchestrator/supervisor_watchdog.py` to capture `result` in the try block and return it after the `else` block (which invokes `__exit__`), ensuring `__exit__` is executed on success. Added a unit test `test_watchdog_success_releases_lock_exactly_once` to verify this behavior.
+- **P1 (Surface Contention-Metric Errors)**: Modified the contention metrics try-except block to write metric append failures (such as `EACCES` / `PermissionError`) to `sys.stderr` rather than silently swallowing them. Added a wrapper-level unit test `test_contention_metric_error_surfaced_in_wrapper`.
+- **P2 (EAGAIN Distinction)**: Wrapped `fcntl.flock` temporarily during `__enter__` inside `run_watchdog` to detect actual flock contention. Other non-flock `EAGAIN` exceptions (e.g. from validation I/O or open) are now correctly propagated. Added a unit test `test_non_flock_eagain_is_propagated`.
+
+All 40 tests are passing. We pushed the task branch and opened PR #3818 with auto-merge, which was successfully integrated to `dev` under commit `d719d262eef5d6095628785b3dee75e7a8e693b9`.
+
+### 1. Deployed Commit SHA
+- **Task Commit SHA**: `c3d3e4101`
+- **Merge Commit SHA**: `d719d262eef5d6095628785b3dee75e7a8e693b9`
+- **Dev-root HEAD SHA**: `d719d262eef5d6095628785b3dee75e7a8e693b9`
+
+### 2. Three-Cycle Live Scheduler Evidence
+We synced the `dev-root` deployment with `origin/dev` using `scripts/sync-dev-root.sh` and restarted the supervisor under PID `371543`. We observed three consecutive real cycles from the watchdog cron logs confirming the deployed fixes are active:
+- **Cycle 1 (2026-07-17T18:26:01Z)**: `watchdog decision=observe_only reason=supervisor_healthy pid=371543 new_pid=None`
+- **Cycle 2 (2026-07-17T18:27:01Z)**: `watchdog decision=skip reason=lock_contention pid=371543 new_pid=None` (watchdog skipped correctly and exited instantly without accumulating waiter processes)
+- **Cycle 3 (2026-07-17T18:28:01Z)**: `watchdog decision=observe_only reason=supervisor_healthy pid=371543 new_pid=None`
+
+### 3. Live Health Check
+Running the health check script on `dev-root` confirmed a fully healthy posture:
+```json
+{
+  "checks": [
+    {
+      "lock_held": true,
+      "name": "supervisor_process_alive",
+      "ok": true,
+      "pid": 371543,
+      "pid_matches": true
+    },
+    {
+      "last_heartbeat_at": "2026-07-17T18:28:09Z",
+      "name": "supervisor_heartbeat_present",
+      "ok": true
+    },
+    {
+      "age_seconds": 4.367443,
+      "max_age_seconds": 900.0,
+      "name": "supervisor_heartbeat_fresh",
+      "ok": true
+    },
+    {
+      "last_loop_error": null,
+      "lifecycle": "running",
+      "name": "supervisor_not_degraded",
+      "ok": true
+    },
+    {
+      "age_seconds": 12.367443,
+      "max_age_seconds": 180.0,
+      "name": "watchdog_state_present",
+      "ok": true,
+      "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+      "updated_at": "2026-07-17T18:28:01Z"
+    },
+    {
+      "age_seconds": 12.367443,
+      "max_age_seconds": 180.0,
+      "name": "watchdog_probe_fresh",
+      "ok": true,
+      "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+      "updated_at": "2026-07-17T18:28:01Z"
+    }
+  ],
+  "generated_at": "2026-07-17T18:28:13.367443Z",
+  "healthy": true,
+  "repo_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+  "state_file": "/home/lupin/code/pantheon/.orchestrator/state.json",
+  "supervisor": {
+    "alive": true,
+    "heartbeat_age_seconds": 4.367443,
+    "last_heartbeat_at": "2026-07-17T18:28:09Z",
+    "last_loop_error": null,
+    "lifecycle": "running",
+    "lock_held": true,
+    "max_heartbeat_age_seconds": 900.0,
+    "pid": 371543,
+    "process_alive": true
+  },
+  "watchdog": {
+    "age_seconds": 12.367443,
+    "max_age_seconds": 180.0,
+    "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+    "updated_at": "2026-07-17T18:28:01Z"
+  }
+}
+```
+
 ### Conclusion
 
 The watchdog's lock contention avoidance protocol behaves exactly as designed under load: it prevents waiter accumulation by skipping when the lock is held, while successfully checking status and executing recovery decisions the moment the lock is available. With the audit lineage recovered, product acceptance is complete.
