@@ -219,8 +219,9 @@ gates are open.
 1. #3797 reaches an approved exact head and merges to `dev`.
 2. This branch composes that merge, reruns the entire matrix, and records a
    clean full status result.
-3. #3799 resolves its canonical-ID consumer gap and the final exact heads are
-   recomposed.
+3. The final reader head is recomposed with the then-current #3799 head and
+   its direct active/gzip zero-write regressions pass. The whitespace-ID fix
+   remains a #3799 merge gate, not a #3800 prerequisite or scope expansion.
 4. Claude approves the final #3800 head; required checks remain green.
 5. #3800 merges with auto-merge still off, then task-scoped artifacts are
    finalized and `AI_NAME=Codex ./scripts/ai-status.sh done` performs governed
