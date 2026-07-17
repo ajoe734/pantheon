@@ -235,3 +235,104 @@ proof (exactly-once central mutation, unchanged worktree sentinel bytes)
 must be rerun here and resubmitted for Codex2 exact-head review. Until then
 this task cannot reach a full `done` closeout against its original
 acceptance criteria.
+
+## 6. Post-Overlap-Recovery Verification Proof (2026-07-17)
+
+Following the merge of the dedicated activity-log overlap recovery task (`OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001`), the legacy timestamp-named rotation reader now correctly handles overlap. This allows us to complete the full governed `show` and `progress`/`note` isolation proof.
+
+### 6a. Setup Stale Conflicting Local Board
+
+Created a new detached worktree `postmerge-002-proof-antigravity` at the current task branch tip containing the integrated recovery fix:
+```bash
+git worktree add --detach /tmp/pantheon-disposable-worktrees/postmerge-002-proof-antigravity HEAD
+```
+
+Modified the worktree-local files to contain conflicting stale data:
+- Edited `ai-status.json` project ID to `"stale-disposable-proof"`.
+- Appended `<!-- STALE SENTINEL MARKER FOR ISOLATION PROOF -->` to `current-work.md`.
+
+Recorded the baseline stale hashes inside `/tmp/pantheon-disposable-worktrees/postmerge-002-proof-antigravity`:
+```text
+d039327bc7d55035ea36c972396ea55c662feccec76193e266abeb7b7cb6523f  ai-status.json
+71eb9c6aefb797bf866b5d3c63215efc39859c8cb5314cae19b85b9c0b0c77e3  current-work.md
+bd242576fb45f1ea3c58f6b8af6f036e4b3fc26626a7167edf2450b3cdca7009  ai-activity-log.jsonl
+```
+
+### 6b. Positive Binding & Read (show) Path
+
+Executed `scripts/ai_status.py show` from inside the stale worktree, binding it to the central status root `/home/lupin/code/pantheon`:
+```bash
+AI_NAME=Antigravity \
+PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon \
+PANTHEON_WORKTREE_ROOT=/tmp/pantheon-disposable-worktrees/postmerge-002-proof-antigravity \
+ORCH_RUN_ID=proof-test-antigravity-001 \
+python3 scripts/ai_status.py show OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002
+```
+
+**Result:** The command succeeded and printed the correct central task state (showing status `in_progress`), bypassing the stale local `ai-status.json` file completely.
+
+### 6c. Positive Binding & Write (progress) Path
+
+Executed `scripts/ai_status.py progress` from the stale worktree:
+```bash
+AI_NAME=Antigravity \
+PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon \
+PANTHEON_WORKTREE_ROOT=/tmp/pantheon-disposable-worktrees/postmerge-002-proof-antigravity \
+ORCH_RUN_ID=proof-test-antigravity-002 \
+python3 scripts/ai_status.py progress OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002 \
+"Antigravity verified positive show path and is running write path isolation test"
+```
+
+**Result:** The command completed successfully.
+
+### 6d. Proof of Write Isolation
+
+Verified that the worktree-local files in `/tmp/pantheon-disposable-worktrees/postmerge-002-proof-antigravity` remained untouched and byte-identical:
+```bash
+sha256sum ai-status.json current-work.md ai-activity-log.jsonl
+# Output:
+# d039327bc7d55035ea36c972396ea55c662feccec76193e266abeb7b7cb6523f  ai-status.json
+# 71eb9c6aefb797bf866b5d3c63215efc39859c8cb5314cae19b85b9c0b0c77e3  current-work.md
+# bd242576fb45f1ea3c58f6b8af6f036e4b3fc26626a7167edf2450b3cdca7009  ai-activity-log.jsonl
+```
+This matches the baseline hashes exactly.
+
+Verified that the central `ai-activity-log.jsonl` correctly received the progress update:
+```bash
+grep -n "Antigravity verified positive show path" /home/lupin/code/pantheon/ai-activity-log.jsonl
+# Line 1812:
+# {"ts": "2026-07-17T02:24:26Z", "agent": "Antigravity", "type": "progress", "task_id": "OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002", "message": "Antigravity verified positive show path and is running write path isolation test", "event_id": "ai-status-event-f489fef9448f5cb71db56a7422f0eb75999f3d4259ca7c6c81874ce2c58c32c1"}
+```
+
+This proves that mutations from the isolated worktree are correctly routed to the central status files without leaking or modifying the local stale worktree files.
+
+### 6e. Negative Binding Paths
+
+1. **Rejection of worktree as root:**
+   ```bash
+   AI_NAME=Antigravity \
+   PANTHEON_STATUS_ROOT=/tmp/pantheon-disposable-worktrees/postmerge-002-proof-antigravity \
+   PANTHEON_WORKTREE_ROOT=/tmp/pantheon-disposable-worktrees/postmerge-002-proof-antigravity \
+   ORCH_RUN_ID=proof-test-antigravity-003 \
+   python3 scripts/ai_status.py show OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002
+   ```
+   *Result:* Failed immediately with:
+   `RuntimeError: PANTHEON_STATUS_ROOT must point at the supervisor coordination root, not the isolated task worktree`
+
+2. **Rejection of missing root under auto-worker:**
+   ```bash
+   env -u PANTHEON_STATUS_ROOT AI_NAME=Antigravity \
+   PANTHEON_WORKTREE_ROOT=/tmp/pantheon-disposable-worktrees/postmerge-002-proof-antigravity \
+   ORCH_RUN_ID=proof-test-antigravity-004 \
+   python3 scripts/ai_status.py show OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002
+   ```
+   *Result:* Failed immediately with:
+   `RuntimeError: PANTHEON_STATUS_ROOT is required for auto workers running outside the supervisor coordination root`
+
+### Cleanup
+
+```bash
+git worktree remove --force /tmp/pantheon-disposable-worktrees/postmerge-002-proof-antigravity
+```
+Verified that the worktree was cleanly removed from the repository metadata.
+
