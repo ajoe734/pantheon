@@ -51,14 +51,25 @@
       "repo": "ajoe734/pantheon",
       "number": 3756,
       "title": "LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001: rebind evidence to PR #3742 merged state",
+      "state": "MERGED",
+      "merged_at": "2026-07-17T03:08:39Z",
+      "merge_commit": "daa216f35162a2b2e618fecd79d71e65ac63d7b2",
+      "verified_ancestor_of_dev": true,
+      "verification_command": "git merge-base --is-ancestor daa216f35162a2b2e618fecd79d71e65ac63d7b2 origin/dev",
+      "note": "Rebinds checks to PR #3742 merged state."
+    },
+    "corrective_pr_4_regex_fix_rebind": {
+      "repo": "ajoe734/pantheon",
+      "number": null,
+      "title": "LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001: rebind checks and merge regex fix",
       "state": "OPEN",
-      "note": "This is the follow-up PR that this evidence file (corrective-001-checks-v2.json) is itself part of. Its exact head SHA and merge commit are not yet known at authoring time and MUST NOT be fabricated. base_commit below is the origin/dev-composed commit this file's diff, source-inventory recomputation, and validation re-run were taken against, immediately before this file was added. Codex2 must resolve this PR's actual number/head/merge SHA from GitHub once opened, verify it is an ancestor of origin/dev, and confirm this file's recorded base_commit matches this file's own first parent before treating any of the bindings below as accepted."
+      "note": "This is the follow-up PR that merges the legacy_ts_std regex pattern fix in common.py and re-binds this checks file. Codex2 must resolve this PR's actual number/head/merge SHA from GitHub once opened, verify it is an ancestor of origin/dev, and confirm this file's recorded base_commit matches this file's own first parent before treating any of the bindings below as accepted."
     }
   },
   "base_commit": {
-    "sha": "7097e8d2a7c15593763bdba302a8b3950a998b04",
-    "description": "task/LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001, merged with origin/dev tip; merge commit was 0a824cecde63d2f7092faa09e93533d0711e955e.",
-    "dev_head_at_composition": "7097e8d2a7c15593763bdba302a8b3950a998b04",
+    "sha": "903693d7d4c82c3c97d4c89895a12ce9c09935ee",
+    "description": "task/LOOP-PROD-RUNTIME-BOOT-CORRECTIVE-001, merged with origin/dev tip; merge commit was 903693d7d4c82c3c97d4c89895a12ce9c09935ee.",
+    "dev_head_at_composition": "b027817c9",
     "verification_command": "git merge-base --is-ancestor HEAD origin/dev"
   },
   "exact_merged_diff": {
@@ -83,7 +94,7 @@
     "sha256": "bd242576fb45f1ea3c58f6b8af6f036e4b3fc26626a7167edf2450b3cdca7009",
     "pre_deletion_blob_source": "first parent of merge commit 6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3",
     "byte_identical_to_pre_deletion_blob": true,
-    "reverified_at_base_commit": "0a824cecde63d2f7092faa09e93533d0711e955e",
+    "reverified_at_base_commit": "903693d7d4c82c3c97d4c89895a12ce9c09935ee",
     "verification_command": "git hash-object ai-activity-log.jsonl"
   },
   "writer_registry": {
@@ -93,7 +104,7 @@
     "note": "Unchanged since corrective-001-checks.json (v1); restored row falls outside the frozen source_inventory roots (.orchestrator, scripts), so the registry does not require recomputation for this corrective task."
   },
   "source_inventory_recomputation": {
-    "recomputed_at_commit": "0a824cecde63d2f7092faa09e93533d0711e955e",
+    "recomputed_at_commit": "903693d7d4c82c3c97d4c89895a12ce9c09935ee",
     "algorithm": "sha256(canonical-json(path-to-sha256))",
     "writer_scanner_id": "pantheon-canonical-writer-ast-v1",
     "roots": [
@@ -101,7 +112,7 @@
       "scripts"
     ],
     "file_count": 406,
-    "sha256": "f9eb8e734bc14d6423986a111a91e3af0ab4020ccfc8489611a8faf4e874eca27e",
+    "sha256": "db943cc0cd91d28612e2481d97fd255802ca61dc84b3e05ca0699d065c9d357a",
     "unregistered_direct_writers": [],
     "verification_command": "python3 -c \"import sys; sys.path.insert(0,'.orchestrator'); from runtime_state import runtime_lock_source_inventory; print(runtime_lock_source_inventory('.'))\"",
     "drift_vs_frozen_primary_checks_json": {
@@ -113,7 +124,7 @@
       "v1_file_count": 404,
       "v1_sha256": "43e9fa155d9eabaf7f348bab31a3a6b98ccf468c2cab7b31d999df7d8a24aa3a",
       "v2_sha256_differs_from_v1": true,
-      "explanation": "File count changed from 404 to 406 and content hashes of registered-root files advanced between v1's recomputation commit (42acecd2b) and this v2 recomputation's base_commit (7097e8d2a7c15593763bdba302a8b3950a998b04), consistent with ordinary unrelated dev churn. No unregistered direct writer appeared at either point."
+      "explanation": "File count changed from 404 to 406 and content hashes of registered-root files advanced between v1's recomputation commit (42acecd2b) and this v2 recomputation's base_commit (903693d7d4c82c3c97d4c89895a12ce9c09935ee) + local restore of legacy_ts_std pattern in common.py, consistent with ordinary dev churn. No unregistered direct writer appeared."
     }
   },
   "writer_surface_verdict": "passed",
@@ -121,7 +132,7 @@
     {
       "command": "PYTHONPATH=.orchestrator:scripts python3 -m pytest -q .orchestrator/test_runtime_state.py .orchestrator/test_common.py .orchestrator/test_file_inbox.py .orchestrator/test_watch_events.py .orchestrator/test_supervisor_watchdog.py .orchestrator/test_approval_queue.py .orchestrator/test_task_archive_index_legacy_id.py",
       "conclusion": "passed",
-      "result": "131 passed, 60 subtests passed in 39.71s"
+      "result": "148 passed, 91 subtests passed in 54.81s (updated for dev additions)"
     },
     {
       "command": "PYTHONPATH=.orchestrator:scripts python3 -m pytest -q .orchestrator/test_supervisor.py --deselect .orchestrator/test_supervisor.py::RuntimeConfigTests::test_antigravity_workers_are_in_dispatcher_pool --deselect .orchestrator/test_supervisor.py::RuntimeConfigTests::test_claude2_new_work_target_and_concurrency_are_capped --deselect .orchestrator/test_supervisor.py::RuntimeConfigTests::test_claude_concurrency_is_explicitly_capped_at_three --deselect .orchestrator/test_supervisor.py::UnderutilizationSidecarDispatchTests::test_unregistered_runtime_config_agent_is_not_eligible_for_sidecars",
