@@ -245,6 +245,7 @@
       "type": "object",
       "required": [
         "measure_id",
+        "measure_sha256",
         "measure_type",
         "target",
         "proposed_value",
@@ -261,6 +262,7 @@
       ],
       "properties": {
         "measure_id": {"type": "string", "minLength": 1},
+        "measure_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
         "measure_type": {
           "enum": [
             "strategy_parameter_change",
@@ -472,12 +474,11 @@
     },
     "CandidateFromMeasureRequest": {
       "type": "object",
-      "required": ["interaction_id", "opinion_id", "measure_id", "expected_measure_sha256"],
+      "required": ["interaction_id", "opinion_id", "measure_id"],
       "properties": {
         "interaction_id": {"type": "string", "minLength": 1},
         "opinion_id": {"type": "string", "minLength": 1},
-        "measure_id": {"type": "string", "minLength": 1},
-        "expected_measure_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        "measure_id": {"type": "string", "minLength": 1}
       },
       "additionalProperties": false
     },

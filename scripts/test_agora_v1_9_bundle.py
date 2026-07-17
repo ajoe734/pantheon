@@ -200,6 +200,7 @@ def test_every_typed_opinion_requires_provider_and_persona_provenance() -> None:
 def test_recommended_measure_is_structured_versioned_and_non_executing() -> None:
     measure = {
         "measure_id": "measure-risk-budget",
+        "measure_sha256": "a" * 64,
         "measure_type": "risk_limit_recommendation",
         "target": {
             "kind": "strategy",

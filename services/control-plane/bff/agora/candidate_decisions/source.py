@@ -6,7 +6,11 @@ import uuid
 from datetime import datetime
 from typing import Any, Mapping
 
-from ..interaction.provider import RecommendedMeasure, authority_boundary
+from ..interaction.provider import (
+    RecommendedMeasure,
+    authority_boundary,
+    recommended_measure_sha256,
+)
 from .models import CandidateFromMeasureCommand, canonical_sha256
 
 
@@ -87,10 +91,12 @@ def build_candidate_from_persisted_measure(
     measure_raw = _find_unique(
         opinion.get("recommended_measures"), "measure_id", command.measure_id, "recommended measure"
     )
-    measure = RecommendedMeasure.model_validate(dict(measure_raw)).model_dump(mode="json")
-    measure_sha = canonical_sha256(measure)
-    if measure_sha != command.expected_measure_sha256:
-        raise ValueError("recommended measure digest does not match persisted content")
+    persisted_measure = dict(measure_raw)
+    persisted_measure_sha = _clean(persisted_measure.pop("measure_sha256", ""))
+    measure = RecommendedMeasure.model_validate(persisted_measure).model_dump(mode="json")
+    measure_sha = recommended_measure_sha256(measure)
+    if not persisted_measure_sha or measure_sha != persisted_measure_sha:
+        raise ValueError("persisted recommended measure server digest is missing or invalid")
     opinion_sha = canonical_sha256(dict(opinion))
     participant = opinion.get("participant") if isinstance(opinion.get("participant"), Mapping) else {}
     persona_id = _clean(participant.get("persona_id"))

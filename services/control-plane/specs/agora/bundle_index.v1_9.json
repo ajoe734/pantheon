@@ -6,7 +6,7 @@
     "bundle_index_sha256": "8bedd60c2d0be4edf9d1c2c76d77e4771d6116cffb4e059092441a9b30dfe653"
   },
   "files": {
-    "specs/agora/v10/persona_interaction_daily.schema.json": "1c5eae77368b1c70cef790e7605efa5f1d5e18793e37b55a0e1df33dfcf70bba",
+    "specs/agora/v10/persona_interaction_daily.schema.json": "2e435f3a0c13c3d0d8d9a6729095d69848098c63b85df01aa91ef31f4b7c4e7a",
     "specs/agora/v10/capability_manifest_v1_9.json": "927094f40f1f51e8e5edb8e627fb2cb5ae2512216edd9810cc9ce2d050343312"
   },
   "openapi": {
@@ -21,12 +21,12 @@
     "PersonaParticipantSnapshot": "22bbf5c3e88a3ec55205ae8d256e4a0be8d401447c80b84bb21d195cd220f39e",
     "ProviderInvocation": "a0fa6812b949fe0f31c4787f2b309be90ab865071c8d6ba763b48c51340551f4",
     "ProductionContentProvenance": "8b58f13b9e0cc674771a53bfce5d245681ed6a3c4629e3eaba5c00f4fd5ba23c",
-    "RecommendedMeasure": "160911b0f2e863c5d7b1431573a45edf854b92564f60a50ce6565c7d4efc0925",
+    "RecommendedMeasure": "01a8b526601c94a7553f711485e63079ca9e6ee75498073fd506298803b7178d",
     "TypedPersonaOpinion": "c666c90140a0743af6bd4eca9e93d978074bbd86a1c160b96e91a36343f23c25",
     "InteractionSynthesis": "ff6389ad5a4be503ae2c9e001f2b76f085c3069b927963d1f72ab61c1a7620a6",
     "InteractionSubmitRequestV2": "4ce123dffccecac0ab074f4bf87ca5ae4960d0e303d965bd32454048530f3bd3",
     "InteractionResource": "17336304139be7f2908298568d4520bdc95bbb56c3c5980caf548f10c36ff777",
-    "CandidateFromMeasureRequest": "01dbd965fc099f79139e6053896a381776c08d6dce58eba3a620a598e8c78f06",
+    "CandidateFromMeasureRequest": "3079eb44644c573d5193ca28cf516ca0ae78a9979485704513450252432dff46",
     "CandidateDecisionRequest": "21a8616cdb7723c21eee8d59219caa1e335a1bf166242b657e54af41b93a2644",
     "CandidateDecisionRecord": "99e1a9bed4cfd618568bf6c0db6a95fcbf1045b8e42ae220ee56873f37340dc5",
     "AuthoritativeValidationRequest": "6f4806cb40d4f0a4c62d69ea2211224fa552caf8036af2da66ff4ca5e5c26352",

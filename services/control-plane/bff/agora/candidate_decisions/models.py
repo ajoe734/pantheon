@@ -41,7 +41,6 @@ class CandidateFromMeasureCommand(BaseModel):
     interaction_id: str = Field(min_length=1)
     opinion_id: str = Field(min_length=1)
     measure_id: str = Field(min_length=1)
-    expected_measure_sha256: str = Field(pattern=SHA256_PATTERN)
 
 
 class CandidateDecisionCommand(BaseModel):

@@ -203,7 +203,21 @@ class CandidateDecisionStore:
         *,
         idempotency_key: str,
         fingerprint: str,
+        interaction_store: Any = None,
+        candidate_link: Optional[dict[str, Any]] = None,
+        workshop_outbox: Optional[list[dict[str, Any]]] = None,
     ) -> StoredMutation:
+        if interaction_store is not None:
+            if candidate_link is None or not workshop_outbox:
+                raise ValueError("atomic candidate creation requires its interaction link and outbox")
+            return self._create_candidate_with_interaction(
+                record,
+                idempotency_key=idempotency_key,
+                fingerprint=fingerprint,
+                interaction_store=interaction_store,
+                candidate_link=candidate_link,
+                workshop_outbox=workshop_outbox,
+            )
         compound = self._compound(
             record["tenant_id"], record["owner_user_id"], "create", idempotency_key
         )
@@ -241,6 +255,117 @@ class CandidateDecisionStore:
                     record["owner_user_id"], json.dumps(record, default=str), self.etag(record),
                 ),
             )
+        return StoredMutation(copy.deepcopy(record), False)
+
+    def _create_candidate_with_interaction(
+        self,
+        record: dict[str, Any],
+        *,
+        idempotency_key: str,
+        fingerprint: str,
+        interaction_store: Any,
+        candidate_link: dict[str, Any],
+        workshop_outbox: list[dict[str, Any]],
+    ) -> StoredMutation:
+        """Commit candidate, exact interaction link and UI outbox together."""
+
+        compound = self._compound(
+            record["tenant_id"], record["owner_user_id"], "create", idempotency_key
+        )
+        if self.backend != interaction_store.backend:
+            raise RuntimeError("candidate and interaction stores must use the same durable backend")
+        if self.backend == "memory":
+            # The lifecycle lock is the aggregate lock. Candidate readers use
+            # the nested candidate lock, keeping all public access serialized.
+            with interaction_store._lock:
+                with self._lock:
+                    replay = self._memory_replay(compound, fingerprint)
+                    if replay:
+                        return replay
+                    interaction = interaction_store._requests.get(record["interaction_id"])
+                    if (
+                        interaction is None
+                        or interaction.get("tenant_id") != record["tenant_id"]
+                        or interaction.get("owner_user_id") != record["owner_user_id"]
+                    ):
+                        raise CandidateDecisionConflict("interaction scope is invalid")
+                    if record["proposal_id"] in self._candidates:
+                        raise CandidateDecisionConflict("proposal id already exists")
+                    link_bucket = interaction_store._candidate_links.setdefault(
+                        record["interaction_id"], {}
+                    )
+                    existing_link = link_bucket.get(record["proposal_id"])
+                    if existing_link is not None and existing_link != candidate_link:
+                        raise CandidateDecisionConflict("candidate proposal link is immutable")
+                    for item in workshop_outbox:
+                        existing_outbox = interaction_store._outbox.get(str(item["outbox_id"]))
+                        if existing_outbox and (
+                            existing_outbox["interaction_id"] != record["interaction_id"]
+                            or existing_outbox["projection_kind"] != item["projection_kind"]
+                            or existing_outbox["payload"] != item["payload"]
+                        ):
+                            raise CandidateDecisionConflict(
+                                "candidate workshop outbox identity is immutable"
+                            )
+                    # All conflict checks precede the first mutation. This is
+                    # the memory backend's transaction boundary.
+                    saved = copy.deepcopy(record)
+                    self._candidates[saved["proposal_id"]] = [saved]
+                    link_bucket[record["proposal_id"]] = copy.deepcopy(candidate_link)
+                    for item in workshop_outbox:
+                        interaction_store._enqueue_locked(record["interaction_id"], item)
+                    self._idempotency[compound] = (fingerprint, copy.deepcopy(saved))
+                    return StoredMutation(copy.deepcopy(saved), False)
+        if (
+            self.backend != "postgres"
+            or self.dsn != interaction_store.dsn
+            or self.schema != interaction_store.schema
+        ):
+            raise RuntimeError("candidate and interaction stores must share one Postgres authority")
+        with self._connect() as conn:
+            request = conn.execute(
+                f"SELECT tenant_id,owner_user_id FROM {interaction_store._request_table} "
+                "WHERE interaction_id=%s FOR UPDATE",
+                (record["interaction_id"],),
+            ).fetchone()
+            if (
+                request is None
+                or request[0] != record["tenant_id"]
+                or request[1] != record["owner_user_id"]
+            ):
+                raise CandidateDecisionConflict("interaction scope is invalid")
+            replay = self._pg_replay(conn, self._idempotency_table, compound, fingerprint)
+            if replay:
+                return replay
+            inserted = conn.execute(
+                f"INSERT INTO {self._idempotency_table} (scope_key,fingerprint,response_json) "
+                "VALUES (%s,%s,%s::jsonb) ON CONFLICT (scope_key) DO NOTHING RETURNING scope_key",
+                (compound, fingerprint, json.dumps(record, default=str)),
+            ).fetchone()
+            if inserted is None:
+                replay = self._pg_replay(conn, self._idempotency_table, compound, fingerprint)
+                if replay is None:  # pragma: no cover - transaction invariant
+                    raise RuntimeError("candidate idempotency winner is not readable")
+                return replay
+            conn.execute(
+                f"INSERT INTO {self._candidate_table} "
+                "(proposal_id,revision,tenant_id,owner_user_id,record_json,etag) "
+                "VALUES (%s,%s,%s,%s,%s::jsonb,%s)",
+                (
+                    record["proposal_id"], record["revision"], record["tenant_id"],
+                    record["owner_user_id"], json.dumps(record, default=str), self.etag(record),
+                ),
+            )
+            conn.execute(
+                f"INSERT INTO {interaction_store._candidate_table} "
+                "(interaction_id,proposal_id,link_json) VALUES (%s,%s,%s::jsonb)",
+                (
+                    record["interaction_id"], record["proposal_id"],
+                    json.dumps(candidate_link, default=str),
+                ),
+            )
+            for item in workshop_outbox:
+                interaction_store._enqueue_pg(conn, record["interaction_id"], item)
         return StoredMutation(copy.deepcopy(record), False)
 
     def get(self, proposal_id: str, tenant_id: str, owner_user_id: str) -> Optional[dict[str, Any]]:

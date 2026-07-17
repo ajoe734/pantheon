@@ -15,6 +15,8 @@ from agora.candidate_decisions.models import (
 from agora.candidate_decisions.service import CandidateDecisionService
 from agora.candidate_decisions.store import CandidateDecisionConflict, CandidateDecisionStore
 from agora.interaction.provider import RecommendedMeasure, authority_boundary
+from agora.interaction.provider import recommended_measure_sha256
+from agora.interaction.store import InteractionLifecycleStore
 
 
 NOW = datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc)
@@ -59,7 +61,9 @@ def _measure(*, proposed_value: Any = 0.08) -> dict[str, Any]:
 
 
 def _canonical_measure(**kwargs: Any) -> dict[str, Any]:
-    return RecommendedMeasure.model_validate(_measure(**kwargs)).model_dump(mode="json")
+    measure = RecommendedMeasure.model_validate(_measure(**kwargs)).model_dump(mode="json")
+    measure["measure_sha256"] = recommended_measure_sha256(measure)
+    return measure
 
 
 def _interaction(*, tenant_id: str = "tenant-a", topic: str = "human topic must not win") -> dict[str, Any]:
@@ -98,19 +102,18 @@ def _interaction(*, tenant_id: str = "tenant-a", topic: str = "human topic must 
 
 
 def _command(interaction: dict[str, Any] | None = None) -> CandidateFromMeasureCommand:
-    interaction = interaction or _interaction()
-    measure = interaction["opinions"][0]["recommended_measures"][0]
     return CandidateFromMeasureCommand(
         interaction_id="interaction-1",
         opinion_id="opinion-1",
         measure_id="measure-risk-1",
-        expected_measure_sha256=canonical_sha256(measure),
     )
 
 
 def _service() -> CandidateDecisionService:
+    interactions = InteractionLifecycleStore(backend="memory")
     return CandidateDecisionService(
         CandidateDecisionStore(backend="off"),
+        interaction_store=interactions,
         trusted_validation_adapter_ids={"validator-prod"},
         clock=lambda: NOW,
     )
@@ -124,8 +127,29 @@ def test_store_has_no_implicit_process_local_runtime_fallback(monkeypatch) -> No
 
 def _create(service: CandidateDecisionService, *, interaction: dict[str, Any] | None = None):
     interaction = interaction or _interaction()
+    persisted = copy.deepcopy(interaction)
+    persisted.update({
+        "owner_user_id": "user-a",
+        "workshop_id": "workshop-a",
+        "status": "completed",
+        "created_at": NOW.isoformat(),
+        "updated_at": NOW.isoformat(),
+    })
+    service.interaction_store._requests[interaction["interaction_id"]] = persisted
+    opinion = persisted["opinions"][0]
+    service.interaction_store._invocations[interaction["interaction_id"]] = {
+        opinion["provider_invocation_id"]: {
+            "invocation": {
+                "invocation_id": opinion["provider_invocation_id"],
+                "participant": opinion["participant"],
+                "status": "succeeded",
+            },
+            "opinion": opinion,
+            "error": None,
+            "status": "succeeded",
+        }
+    }
     return service.create_from_measure(
-        interaction=interaction,
         command=_command(interaction),
         tenant_id="tenant-a",
         owner_user_id="user-a",
@@ -172,11 +196,35 @@ def test_candidate_is_only_the_exact_persisted_measure_not_human_topic() -> None
     assert candidate["proposed_value"] == 0.08
     assert candidate["rationale"] == interaction["opinions"][0]["recommended_measures"][0]["rationale"]
     assert "100x" not in str(candidate)
-    assert candidate["measure_sha256"] == _command(interaction).expected_measure_sha256
+    assert candidate["measure_sha256"] == interaction["opinions"][0]["recommended_measures"][0]["measure_sha256"]
     assert candidate["opinion_sha256"] == canonical_sha256(interaction["opinions"][0])
     assert candidate["provider_invocation_id"] == "invocation-openclaw-1"
     assert candidate["execution_authority"] == "none"
     assert candidate["authority"] == authority_boundary()
+    interaction_readback = service.interaction_store.get(
+        "interaction-1", "tenant-a", "user-a"
+    )
+    assert interaction_readback is not None
+    assert interaction_readback["candidate_proposal_links"] == [{
+        "proposal_id": candidate["proposal_id"],
+        "interaction_id": "interaction-1",
+        "opinion_id": "opinion-1",
+        "opinion_sha256": candidate["opinion_sha256"],
+        "measure_id": "measure-risk-1",
+        "measure_sha256": candidate["measure_sha256"],
+        "proposal_digest": candidate["proposal_digest"],
+        "revision": 1,
+        "state": "draft",
+        "created_at": candidate["created_at"],
+        "execution_authority": "none",
+    }]
+    timeline = service.interaction_store.timeline(
+        "interaction-1", "tenant-a", "user-a"
+    )
+    assert timeline is not None
+    assert [item["projection_kind"] for item in timeline] == [
+        "workshop_event", "workshop_sse"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -192,24 +240,16 @@ def test_candidate_source_fails_closed_for_invalid_persisted_truth(mutate, messa
     service = _service()
     interaction = _interaction()
     mutate(interaction)
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises((ValueError, CandidateDecisionConflict), match=message):
         _create(service, interaction=interaction)
 
 
 def test_measure_digest_and_ambiguity_fail_closed() -> None:
     service = _service()
     interaction = _interaction()
-    bad = _command(interaction).model_copy(update={"expected_measure_sha256": "0" * 64})
+    interaction["opinions"][0]["recommended_measures"][0]["measure_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="digest"):
-        service.create_from_measure(
-            interaction=interaction,
-            command=bad,
-            tenant_id="tenant-a",
-            owner_user_id="user-a",
-            proposer_id="operator-a",
-            expires_at=NOW + timedelta(days=1),
-            idempotency_key="bad-digest",
-        )
+        _create(service, interaction=interaction)
     interaction["opinions"][0]["recommended_measures"].append(
         copy.deepcopy(interaction["opinions"][0]["recommended_measures"][0])
     )

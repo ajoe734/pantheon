@@ -16,6 +16,7 @@ from .models import (
 )
 from .source import build_candidate_from_persisted_measure, candidate_digest
 from .store import CandidateDecisionConflict, CandidateDecisionStore, StoredMutation
+from ..interaction.store import InteractionLifecycleStore
 
 
 class CanonicalValidationAdapter(Protocol):
@@ -72,12 +73,14 @@ class CandidateDecisionService:
         self,
         store: CandidateDecisionStore,
         *,
+        interaction_store: InteractionLifecycleStore,
         trusted_validation_adapter_ids: set[str] | frozenset[str],
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         if not trusted_validation_adapter_ids:
             raise ValueError("at least one trusted validation adapter id is required")
         self.store = store
+        self.interaction_store = interaction_store
         self.trusted_validation_adapter_ids = frozenset(trusted_validation_adapter_ids)
         self.clock = clock
 
@@ -107,7 +110,6 @@ class CandidateDecisionService:
     def create_from_measure(
         self,
         *,
-        interaction: Mapping[str, Any],
         command: CandidateFromMeasureCommand,
         tenant_id: str,
         owner_user_id: str,
@@ -115,6 +117,13 @@ class CandidateDecisionService:
         expires_at: datetime,
         idempotency_key: str,
     ) -> StoredMutation:
+        interaction = self.interaction_store.get(
+            command.interaction_id, tenant_id, owner_user_id
+        )
+        if interaction is None:
+            raise CandidateDecisionConflict(
+                "interaction was not found in the requested tenant and user scope"
+            )
         now = self.clock()
         record = build_candidate_from_persisted_measure(
             interaction=interaction,
@@ -134,10 +143,56 @@ class CandidateDecisionService:
                 "expires_at": expires_at.isoformat(),
             }
         )
+        link = {
+            "proposal_id": record["proposal_id"],
+            "interaction_id": record["interaction_id"],
+            "opinion_id": record["opinion_id"],
+            "opinion_sha256": record["opinion_sha256"],
+            "measure_id": record["measure_id"],
+            "measure_sha256": record["measure_sha256"],
+            "proposal_digest": record["proposal_digest"],
+            "revision": record["revision"],
+            "state": record["state"],
+            "created_at": record["created_at"],
+            "execution_authority": "none",
+        }
+        event_id = "candidate-" + canonical_sha256(link)[:24]
+        workshop_event = {
+            "event_id": event_id,
+            "workshop_id": interaction["workshop_id"],
+            "actor_type": "operator",
+            "event_type": "candidate_created",
+            "private_content_ref": f"agora-candidate://{record['proposal_id']}",
+            "redacted_summary": "A Persona recommended measure became a governed review candidate.",
+            "payload_refs_json": {
+                "spec_version": "1.9",
+                **link,
+                "authority": record["authority"],
+            },
+        }
+        sse = {
+            "workshop_id": interaction["workshop_id"],
+            "event_type": "candidate.created",
+            "data": {"event_id": event_id, **link},
+        }
         return self.store.create_candidate(
             record,
             idempotency_key=idempotency_key,
             fingerprint=fingerprint,
+            interaction_store=self.interaction_store,
+            candidate_link=link,
+            workshop_outbox=[
+                {
+                    "outbox_id": f"outbox:{event_id}:event",
+                    "projection_kind": "workshop_event",
+                    "payload": workshop_event,
+                },
+                {
+                    "outbox_id": f"outbox:{event_id}:sse",
+                    "projection_kind": "workshop_sse",
+                    "payload": sse,
+                },
+            ],
         )
 
     def decide(
