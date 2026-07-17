@@ -254,7 +254,7 @@ def stable_sidecar_lock(
         try:
             fcntl.flock(handle.fileno(), operation)
         except (BlockingIOError, OSError) as exc:
-            if nonblocking and (isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK)):
+            if nonblocking and getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK):
                 raise LockContentionError(
                     errno.EAGAIN,
                     f"lock contention on {lock_path}: {exc}",

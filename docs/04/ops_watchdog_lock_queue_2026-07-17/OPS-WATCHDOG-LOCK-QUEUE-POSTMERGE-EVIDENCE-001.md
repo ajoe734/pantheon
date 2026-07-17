@@ -10,7 +10,7 @@ We resolved the remaining P1 and P2 implementation defects identified during the
 - **P1 (Acquired-Lock Cleanup)**: Removed manual `__enter__` and `__exit__` in `run_watchdog` and transitioned to standard Python `with` context management blocks, guaranteeing exact-once cleanup and preventing any resource cleanup gaps.
 - **P2 (Metric Lock EACCES)**: Initialized `lock_descriptor = None` inside `append_watchdog_contention_metric` to prevent masking of `os.open` `PermissionError` (EACCES) with `UnboundLocalError`.
 
-All 42 unit and integration tests are passing. The dev-root deployment matches the mainline `dev` integration line. The live scheduler running the installed commit `98aa5611ac57fb195d4ea36bfd12f157a2139dd0` has been validated.
+All 43 unit and integration tests are passing. The dev-root deployment matches the mainline `dev` integration line. The live scheduler running the installed commit `98aa5611ac57fb195d4ea36bfd12f157a2139dd0` has been validated.
 
 ---
 
@@ -23,7 +23,7 @@ python3 -m pytest .orchestrator/test_supervisor_watchdog.py
 
 Result:
 ```text
-============================== 42 passed in 5.04s ==============================
+============================== 43 passed in 5.64s ==============================
 ```
 
 Unit tests added and verified:
