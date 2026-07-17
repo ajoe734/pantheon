@@ -17,7 +17,7 @@
   "task": {
     "base_branch": "dev",
     "evidence_cut_at": "2026-07-17T03:04:44Z",
-    "evidence_cut_semantics": "Owner closeout evidence cut after PR #3748 merged into dev and after current-dev verification at 7097e8d2a7c15593763bdba302a8b3950a998b04. The guardrail implementation and audit artifacts are already merged; this manifest binds the task closeout state to that delivery and Claude's exact-head approval.",
+    "evidence_cut_semantics": "Owner closeout evidence cut after PR #3748 merged into dev and after current-dev verification at b9516fed14f89e4d31bf8f3f559038c5537973c4. The guardrail implementation and audit artifacts are already merged; this manifest binds the task closeout state to that delivery and Claude's exact-head approval.",
     "id": "LOOP-PROD-DONE-GUARDRAIL-REPAIR-001",
     "overall_admission": "review_approved_owner_closeout_ready",
     "owner": "Codex2",
@@ -137,7 +137,7 @@
     "commands": [
       {
         "command": "python3 -m pytest scripts/test_loop_done_guardrail.py -q",
-        "conclusion": "59 passed in 9.91s",
+        "conclusion": "59 passed in 7.29s",
         "result": "pass"
       },
       {
@@ -161,9 +161,9 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-17T03:04:44Z",
+    "validated_at": "2026-07-17T03:13:44Z",
     "validated_base_sha": "fc5283d72f28d6e616113aeda06edbd02ed2ac2d",
-    "validated_head_sha": "7097e8d2a7c15593763bdba302a8b3950a998b04"
+    "validated_head_sha": "b9516fed14f89e4d31bf8f3f559038c5537973c4"
   },
   "deployment": {
     "applicable": false,
@@ -210,7 +210,7 @@
       "proof": [
         "scripts/ai_status.py calls validate_loop_completion_claim before task status is set to done in command_done.",
         "PR #3748 merged the guard, tests, audit artifacts, and Claude review artifact into dev at merge commit fc5283d72f28d6e616113aeda06edbd02ed2ac2d.",
-        "Current dev head 7097e8d2a7c15593763bdba302a8b3950a998b04 contains PR #3748 and was used for the closeout verification commands."
+        "Current dev head b9516fed14f89e4d31bf8f3f559038c5537973c4 contains PR #3748 and was used for the closeout verification commands."
       ],
       "status": "pass"
     },
@@ -364,12 +364,12 @@
   "record_log": [
     {
       "sequence": 1,
-      "recorded_at": "2026-07-17T03:04:44Z",
+      "recorded_at": "2026-07-17T03:13:44Z",
       "kind": "owner_closeout_validation",
       "status": "pass",
       "actor": "Codex2",
-      "reference": "Current-dev verification at 7097e8d2a7c15593763bdba302a8b3950a998b04",
-      "sha": "7097e8d2a7c15593763bdba302a8b3950a998b04"
+      "reference": "Current-dev verification at b9516fed14f89e4d31bf8f3f559038c5537973c4",
+      "sha": "b9516fed14f89e4d31bf8f3f559038c5537973c4"
     },
     {
       "sequence": 2,
