@@ -663,15 +663,84 @@ class SupervisorWatchdogTests(unittest.TestCase):
             self.assertEqual(data["decision"], "skip")
             self.assertEqual(data["reason"], "lock_contention")
 
-        # Contention metrics file should contain exactly 12 events
+        # Contention metrics file should contain the events that were not dropped
         contention_file = self.root / "metrics-contention.jsonl"
-        self.assertTrue(contention_file.exists())
-        lines = contention_file.read_text(encoding="utf-8").splitlines()
-        self.assertEqual(len(lines), 12)
+        lines = []
+        if contention_file.exists():
+            lines = contention_file.read_text(encoding="utf-8").splitlines()
+
+        dropped_count = sum(
+            1 for _, _, stderr in outputs
+            if "watchdog contention metric write dropped due to lock contention" in stderr.decode()
+        )
+        self.assertEqual(len(lines) + dropped_count, 12, "Total metric events (written + dropped) should equal 12")
+
         for line in lines:
             event = json.loads(line)
             self.assertEqual(event["decision"], "skip")
             self.assertEqual(event["reason"], "lock_contention")
+
+    def test_metric_lock_contention_subprocess_launches(self) -> None:
+        """Spawn concurrent watchdog processes via subprocess while BOTH the primary lock and the metric lock are held,
+        proving they all exit immediately within a deadline, do not block, and their metric writes are dropped."""
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+
+        # Hold primary lock
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lock_handle.close)
+
+        # Hold secondary metric lock
+        metric_lock_path = self.root / "metrics-contention.lock"
+        metric_lock_path.parent.mkdir(parents=True, exist_ok=True)
+        metric_lock_handle = open(metric_lock_path, "w", encoding="utf-8")
+        fcntl.flock(metric_lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(metric_lock_handle.close)
+
+        # Write config.json under self.root/.orchestrator so scripts can find it
+        config_path = self.root / ".orchestrator" / "config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(self.config, f)
+
+        self.write_pid(123)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": "2026-05-18T13:00:00Z",
+                "lifecycle": "running"
+            }
+        })
+
+        import subprocess
+        processes = []
+        for _ in range(5):
+            p = subprocess.Popen(
+                [sys.executable, str(Path(supervisor_watchdog.__file__).resolve()), "--config", str(config_path), "--json"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            processes.append(p)
+
+        outputs = []
+        for p in processes:
+            # Enforce a strict timeout deadline of 2.0 seconds
+            stdout, stderr = p.communicate(timeout=2.0)
+            outputs.append((p.returncode, stdout, stderr))
+
+        for code, stdout, stderr in outputs:
+            self.assertEqual(code, 0, f"Subprocess failed with stderr: {stderr.decode()}")
+            data = json.loads(stdout.decode())
+            self.assertEqual(data["decision"], "skip")
+            self.assertEqual(data["reason"], "lock_contention")
+            self.assertIn("watchdog contention metric write dropped due to lock contention", stderr.decode())
+
+        # Contention metrics file should remain empty or nonexistent because all writes were dropped
+        contention_file = self.root / "metrics-contention.jsonl"
+        if contention_file.exists():
+            self.assertEqual(contention_file.read_text(encoding="utf-8"), "")
 
     def test_lock_release_and_probe_updates_state(self) -> None:
         """After releasing the lock, a subsequent probe succeeds, updates the state files, and is healthy."""
