@@ -212,7 +212,11 @@ bounded `progress` attempt durably updated this task's canonical `next` field
 but timed out while recovering the existing activity outbox; the outbox entry
 remains durable and unapplied rather than being bypassed. Canonical task state
 therefore remains `in_progress` while the prerequisite and exact-head review
-gates are open.
+gates are open. After the last code/evidence anchor, one bounded 60-second
+`blocker` attempt was made once the previously stuck `show` process exited. It
+timed out while recovering a newer, unrelated task outbox before mutating this
+task; readback confirmed no new blocker record or task-state transition. No
+blind retry was made.
 
 ## Remaining Closeout Gates
 
