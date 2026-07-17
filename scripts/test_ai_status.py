@@ -463,6 +463,118 @@ class StatusRootRoutingTests(unittest.TestCase):
                     self.assertNotEqual(proc.returncode, 0)
                     self.assertIn(expected, proc.stderr + proc.stdout)
 
+    def test_sanitized_isolated_test_process_never_uses_coordination_locks(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="ai-status-isolated-lock-routing-"
+        ) as temp_dir:
+            root = Path(temp_dir)
+            coordination_root = root / "coordination"
+            isolated_root = root / "isolated-test-root"
+            for status_root in (coordination_root, isolated_root):
+                self._init_repo(status_root)
+                self._write_status_state(
+                    status_root,
+                    owner="Codex",
+                    next_value="lock-routing fixture",
+                )
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PANTHEON_STATUS_ROOT": str(isolated_root),
+                    "PANTHEON_ALLOW_ISOLATED_LEGACY_WRITES": "1",
+                    "PANTHEON_WORKTREE_ROOT": str(root / "worker"),
+                    "ORCH_WORKSPACE_PATH": str(root / "worker"),
+                    "ORCH_RUN_ID": "inherited-worker-run",
+                    "ORCH_TASK_ID": "INHERITED-TASK",
+                    "ORCH_RUNNER_STATUS_PATH": str(
+                        coordination_root
+                        / ".orchestrator/worker-runtime/status/run.json"
+                    ),
+                    "ORCH_HEARTBEAT_PATH": str(
+                        coordination_root
+                        / ".orchestrator/worker-runtime/heartbeats/run.json"
+                    ),
+                }
+            )
+            for name in (
+                "PANTHEON_WORKTREE_ROOT",
+                "ORCH_WORKSPACE_PATH",
+                "ORCH_RUN_ID",
+                "ORCH_TASK_ID",
+                "ORCH_RUNNER_STATUS_PATH",
+                "ORCH_HEARTBEAT_PATH",
+            ):
+                env.pop(name, None)
+            repo_root = Path(__file__).resolve().parents[1]
+            env["PYTHONPATH"] = os.pathsep.join(
+                filter(
+                    None,
+                    (
+                        str(repo_root / "scripts"),
+                        str(repo_root / ".orchestrator"),
+                        env.get("PYTHONPATH", ""),
+                    ),
+                )
+            )
+            program = """
+import json
+import ai_status
+
+ai_status.validate_status_root_binding()
+with ai_status.canonical_task_state_lock(shared=True):
+    with ai_status.activity_audit_lock_file(
+        ai_status.LOG_FILE,
+        shared=True,
+        nonblocking=False,
+    ):
+        print(json.dumps({
+            "status_root": str(ai_status.STATUS_ROOT),
+            "task_lock": str(ai_status.canonical_task_state_lock_path(ai_status.STATUS_FILE)),
+            "activity_lock": str(ai_status.activity_audit_lock_path(ai_status.LOG_FILE)),
+        }, sort_keys=True))
+"""
+            proc = subprocess.run(
+                [sys.executable, "-c", program],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            binding = json.loads(proc.stdout)
+            isolated_task_lock = (
+                isolated_root / ".orchestrator" / "task-state.lock"
+            )
+            isolated_activity_lock = (
+                isolated_root / ".orchestrator" / "activity-audit.lock"
+            )
+            self.assertEqual(binding["status_root"], str(isolated_root))
+            self.assertEqual(binding["task_lock"], str(isolated_task_lock))
+            self.assertEqual(
+                binding["activity_lock"], str(isolated_activity_lock)
+            )
+            self.assertTrue(isolated_task_lock.is_file())
+            self.assertTrue(isolated_activity_lock.is_file())
+            self.assertFalse(
+                (
+                    coordination_root
+                    / ".orchestrator"
+                    / "task-state.lock"
+                ).exists()
+            )
+            self.assertFalse(
+                (
+                    coordination_root
+                    / ".orchestrator"
+                    / "activity-audit.lock"
+                ).exists()
+            )
+
 
 class CanonicalWriterGuardTests(unittest.TestCase):
     def test_isolated_override_never_bypasses_a_git_checkout(self) -> None:
