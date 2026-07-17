@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import json
 import gzip
+import hashlib
+import json
 import multiprocessing
 import os
 import subprocess
@@ -615,6 +616,23 @@ class StableCanonicalLockPathTests(unittest.TestCase):
 
 
 class ActivityAuditRecoveryTests(unittest.TestCase):
+    def _leave_pending_rotation(self, log_path: Path) -> dict:
+        context = multiprocessing.get_context("fork")
+        process = context.Process(
+            target=_sigkill_during_activity_rotation,
+            args=(str(log_path), "intent"),
+        )
+        process.start()
+        process.join(timeout=10)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=5)
+            self.fail("rotation child hung while creating pending intent")
+        self.assertEqual(process.exitcode, -9)
+        intent_path = common.activity_rotation_intent_path(log_path)
+        self.assertTrue(intent_path.exists())
+        return json.loads(intent_path.read_text(encoding="utf-8"))
+
     def _audit_rows(self, log_path: Path) -> list[dict]:
         rows: list[dict] = []
         with common.activity_audit_lock_file(
@@ -628,12 +646,18 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
                         text = handle.read()
                 else:
                     text = source.read_text(encoding="utf-8")
-                rows.extend(json.loads(line) for line in text.splitlines() if line)
+                for line in text.splitlines():
+                    if not line:
+                        continue
+                    row = json.loads(line)
+                    if common._is_activity_lineage_head(row):
+                        continue
+                    rows.append(row)
         return rows
 
     def test_sigkill_at_each_rotation_boundary_recovers_exactly_once(self) -> None:
         context = multiprocessing.get_context("fork")
-        for point in ("intent", "archive", "tail"):
+        for point in ("intent", "archive", "tail", "lineage"):
             with self.subTest(point=point), tempfile.TemporaryDirectory() as tmpdir:
                 log_path = Path(tmpdir) / "ai-activity-log.jsonl"
                 original = [
@@ -689,6 +713,53 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
                 self.assertFalse(
                     common.activity_rotation_intent_path(log_path).exists()
                 )
+
+    def test_rotation_recovery_rejects_symlinked_intent_and_stage_leaves(self) -> None:
+        for target in ("intent", "archive_stage", "tail_stage"):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as tmpdir:
+                log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+                log_path.write_text(
+                    "".join(
+                        json.dumps(
+                            {
+                                "event_id": f"original-{index}",
+                                "payload": "x" * 256,
+                            }
+                        )
+                        + "\n"
+                        for index in range(3)
+                    ),
+                    encoding="utf-8",
+                )
+                intent = self._leave_pending_rotation(log_path)
+                transaction_id = str(intent["transaction_id"])
+                stage_archive, stage_tail = common._activity_rotation_stage_paths(
+                    log_path,
+                    transaction_id,
+                )
+                target_path = {
+                    "intent": common.activity_rotation_intent_path(log_path),
+                    "archive_stage": stage_archive,
+                    "tail_stage": stage_tail,
+                }[target]
+                external = Path(tmpdir) / f"external-{target}"
+                external.write_bytes(target_path.read_bytes())
+                target_path.unlink()
+                target_path.symlink_to(external)
+
+                with self.assertRaisesRegex(RuntimeError, "stable regular file"):
+                    common.write_activity_log(
+                        {
+                            "paths": {
+                                "activity_log": str(log_path),
+                                "activity_log_rotate_bytes": 1_000_000,
+                            }
+                        },
+                        {
+                            "event_id": "must-not-append",
+                            "type": "rotation_test",
+                        },
+                    )
 
     def test_interrupted_non_newline_tail_is_repaired_before_append(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -784,6 +855,69 @@ class LogicalActivityReaderTests(unittest.TestCase):
             for i in range(start_id, start_id + count)
         ]
 
+    def _write_active(self, entries: list[dict]) -> None:
+        self.log_path.write_text(
+            "".join(json.dumps(entry) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+
+    def _append_active(self, entries: list[dict]) -> None:
+        with self.log_path.open("ab") as handle:
+            for entry in entries:
+                handle.write((json.dumps(entry) + "\n").encode("utf-8"))
+
+    def _lineage_rows(self) -> list[dict]:
+        lineage_path = common.activity_rotation_lineage_path(self.log_path)
+        return [
+            json.loads(line)
+            for line in lineage_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+
+    def _write_lineage_rows(self, rows: list[dict]) -> None:
+        common.activity_rotation_lineage_path(self.log_path).write_text(
+            "".join(common._canonical_json_line(row).decode("utf-8") for row in rows),
+            encoding="utf-8",
+        )
+
+    def _append_and_rotate(
+        self,
+        entries: list[dict],
+        *,
+        keep_lines: int = 0,
+    ) -> Path:
+        if self.log_path.exists():
+            self._append_active(entries)
+        else:
+            self._write_active(entries)
+        with common.activity_audit_lock_file(self.log_path, shared=False):
+            archive = common.rotate_activity_log_unlocked(
+                self.log_path,
+                max_bytes=1,
+                keep_lines=keep_lines,
+            )
+        assert archive is not None
+        return archive
+
+    def _two_content_rotations(self, *, keep_lines: int = 0) -> tuple[Path, Path, bytes]:
+        line_count = max(1, keep_lines + 1)
+        first = self._append_and_rotate(
+            [
+                {"event_id": f"content-0-{index}", "message": "first"}
+                for index in range(line_count)
+            ],
+            keep_lines=keep_lines,
+        )
+        first_control = self.log_path.read_bytes().splitlines(keepends=True)[0]
+        second = self._append_and_rotate(
+            [
+                {"event_id": f"content-1-{index}", "message": "second"}
+                for index in range(line_count)
+            ],
+            keep_lines=keep_lines,
+        )
+        return first, second, first_control
+
     def test_exact_1000_line_overlap_two_archives_and_callback(self):
         entries1 = self._make_entries(0, 1500)
         entries2 = self._make_entries(500, 1500)
@@ -841,6 +975,260 @@ class LogicalActivityReaderTests(unittest.TestCase):
         self.assertEqual(len(results), 1500)
         for idx, (entry, _, _) in enumerate(results):
             self.assertEqual(entry["event_id"], f"event-{500 + idx}")
+
+    def test_first_content_rotation_excludes_verified_legacy_active_prefix(self):
+        legacy_entries = self._make_entries(0, 1500)
+        active_entries = self._make_entries(500, 1800)
+        predecessor = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        self._write_gz(predecessor, legacy_entries)
+        self._write_active(active_entries)
+
+        with common.activity_audit_lock_file(self.log_path, shared=False):
+            archive = common.rotate_activity_log_unlocked(
+                self.log_path,
+                max_bytes=1,
+                keep_lines=1000,
+            )
+
+        self.assertIsNotNone(archive)
+        with gzip.open(archive, "rt", encoding="utf-8") as handle:
+            archived_ids = [
+                json.loads(line)["event_id"]
+                for line in handle.read().splitlines()
+                if line
+            ]
+        self.assertEqual(archived_ids[0], "event-1500")
+        self.assertNotIn("event-500", archived_ids)
+
+        rows = self._lineage_rows()
+        self.assertEqual(len(rows), 1)
+        boundary = rows[0]["boundary_normalization"]
+        self.assertEqual(boundary["excluded_prefix_line_count"], 1000)
+        self.assertEqual(boundary["predecessor_relative_path"], str(predecessor.relative_to(self.root)))
+
+        logical_ids = [entry["event_id"] for entry, _, _ in common.stream_logical_activity(self.log_path)]
+        self.assertEqual(logical_ids, [f"event-{idx}" for idx in range(2300)])
+
+    def test_first_content_rotation_rejects_bad_boundary_candidates(self):
+        predecessor = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        legacy_entries = self._make_entries(0, 1500)
+        self._write_gz(predecessor, legacy_entries)
+
+        bad_cases = {
+            "999": self._make_entries(501, 1200),
+            "1001": self._make_entries(499, 1200),
+            "mismatch": [
+                *self._make_entries(500, 999),
+                {"event_id": "event-1499", "message": "mutated"},
+                *self._make_entries(1500, 200),
+            ],
+        }
+        for name, active_entries in bad_cases.items():
+            with self.subTest(name=name):
+                self._write_active(active_entries)
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "invalid first content-addressed boundary",
+                ):
+                    with common.activity_audit_lock_file(self.log_path, shared=False):
+                        common.rotate_activity_log_unlocked(
+                            self.log_path,
+                            max_bytes=1,
+                            keep_lines=1000,
+                        )
+                self.assertFalse(common.activity_rotation_lineage_path(self.log_path).exists())
+                content_archives = [
+                    path
+                    for path in self.archive_dir.glob("ai-activity-log.jsonl-*.gz")
+                    if common.classify_source(path) == "content_addressed"
+                ]
+                self.assertEqual(content_archives, [])
+
+    def test_content_lineage_order_overrides_hash_lexical_order(self):
+        candidates = []
+        for index in range(30):
+            entry = {"event_id": f"content-{index}", "message": f"payload {index}"}
+            payload = (json.dumps(entry) + "\n").encode("utf-8")
+            candidates.append((hashlib.sha256(payload).hexdigest(), entry))
+        ordered = sorted(candidates, key=lambda item: item[0])
+        creation_entries = [ordered[-1][1], ordered[0][1], ordered[len(ordered) // 2][1]]
+
+        for entry in creation_entries:
+            if self.log_path.exists():
+                self._append_active([entry])
+            else:
+                self._write_active([entry])
+            with common.activity_audit_lock_file(self.log_path, shared=False):
+                common.rotate_activity_log_unlocked(
+                    self.log_path,
+                    max_bytes=1,
+                    keep_lines=0,
+                )
+
+        rows = self._lineage_rows()
+        lineage_names = [Path(row["archive_relative_path"]).name for row in rows]
+        self.assertNotEqual(lineage_names, sorted(lineage_names))
+        with common.activity_audit_lock_file(self.log_path, shared=True):
+            source_names = [
+                path.name
+                for path in common.activity_audit_source_paths_unlocked(self.log_path)
+                if common.classify_source(path) == "content_addressed"
+            ]
+        self.assertEqual(source_names, lineage_names)
+        logical_ids = [entry["event_id"] for entry, _, _ in common.stream_logical_activity(self.log_path)]
+        self.assertEqual(logical_ids, [entry["event_id"] for entry in creation_entries])
+
+    def test_lineage_tamper_and_rollback_fail_closed(self):
+        for keep_lines in (0, 2):
+            with self.subTest(keep_lines=keep_lines):
+                self.tearDown()
+                self.setUp()
+                self._write_active(self._make_entries(0, 4))
+                with common.activity_audit_lock_file(self.log_path, shared=False):
+                    archive = common.rotate_activity_log_unlocked(
+                        self.log_path,
+                        max_bytes=1,
+                        keep_lines=keep_lines,
+                    )
+                self.assertIsNotNone(archive)
+                archive.unlink()
+                common.activity_rotation_lineage_path(self.log_path).unlink()
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "unexpected active lineage-head control record without lineage",
+                ):
+                    list(common.stream_logical_activity(self.log_path))
+
+    def test_active_lineage_head_control_tamper_failures(self):
+        self._write_active(self._make_entries(0, 4))
+        with common.activity_audit_lock_file(self.log_path, shared=False):
+            common.rotate_activity_log_unlocked(
+                self.log_path,
+                max_bytes=1,
+                keep_lines=2,
+            )
+
+        active_lines = self.log_path.read_bytes().splitlines(keepends=True)
+        self.log_path.write_bytes(b"".join(active_lines[1:]))
+        with self.assertRaisesRegex(RuntimeError, "missing active lineage-head control record"):
+            list(common.stream_logical_activity(self.log_path))
+
+    def test_content_lineage_archive_and_row_tamper_failures(self):
+        cases = (
+            ("missing_archive", "activity lineage archive is missing"),
+            ("modified_gzip", "activity lineage archive gzip digest mismatch"),
+            ("sequence_gap", "activity lineage row identity is invalid"),
+            ("forked_predecessor", "activity lineage predecessor fork"),
+            ("duplicate_transaction", "activity lineage duplicate transaction"),
+            ("duplicate_archive", "activity lineage duplicate archive"),
+        )
+        for case, expected in cases:
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+                first, second, _first_control = self._two_content_rotations()
+                lineage_path = common.activity_rotation_lineage_path(self.log_path)
+                rows = self._lineage_rows()
+
+                if case == "missing_archive":
+                    second.unlink()
+                elif case == "modified_gzip":
+                    self._write_gz(second, [{"event_id": "tampered"}])
+                elif case == "sequence_gap":
+                    rows[1]["sequence"] = 3
+                    self._write_lineage_rows(rows)
+                elif case == "forked_predecessor":
+                    rows[1]["previous_transaction_id"] = "wrong-transaction"
+                    self._write_lineage_rows(rows)
+                elif case == "duplicate_transaction":
+                    rows[1]["transaction_id"] = rows[0]["transaction_id"]
+                    self._write_lineage_rows(rows)
+                elif case == "duplicate_archive":
+                    for key in (
+                        "archive_relative_path",
+                        "archive_payload_sha256",
+                        "archive_gzip_sha256",
+                        "archive_byte_count",
+                        "archive_line_count",
+                    ):
+                        rows[1][key] = rows[0][key]
+                    self._write_lineage_rows(rows)
+
+                self.assertTrue(lineage_path.exists())
+                self.assertTrue(first.exists())
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    list(common.stream_logical_activity(self.log_path))
+
+    def test_active_lineage_head_stale_tail_and_newest_row_rollback_fail(self):
+        cases = (
+            ("stale_control", 0, "active lineage-head control record mismatch"),
+            ("tail_digest", 2, "active lineage-head retained tail digest mismatch"),
+            ("newest_row_archive_rollback", 0, "active lineage-head control record mismatch"),
+        )
+        for case, keep_lines, expected in cases:
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+                _first, second, first_control = self._two_content_rotations(
+                    keep_lines=keep_lines,
+                )
+                lineage_path = common.activity_rotation_lineage_path(self.log_path)
+                active_lines = self.log_path.read_bytes().splitlines(keepends=True)
+
+                if case == "stale_control":
+                    self.log_path.write_bytes(first_control + b"".join(active_lines[1:]))
+                elif case == "tail_digest":
+                    self.assertGreater(len(active_lines), 1)
+                    active_lines[1] = active_lines[1].replace(b"content-1", b"content-X")
+                    self.log_path.write_bytes(b"".join(active_lines))
+                elif case == "newest_row_archive_rollback":
+                    rows = self._lineage_rows()
+                    self._write_lineage_rows(rows[:-1])
+                    second.unlink()
+
+                self.assertTrue(lineage_path.exists())
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    list(common.stream_logical_activity(self.log_path))
+
+    def test_extra_content_archive_and_second_boundary_exception_fail(self):
+        legacy_entries = self._make_entries(0, 1500)
+        active_entries = self._make_entries(500, 1800)
+        predecessor = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        self._write_gz(predecessor, legacy_entries)
+        self._write_active(active_entries)
+        with common.activity_audit_lock_file(self.log_path, shared=False):
+            common.rotate_activity_log_unlocked(
+                self.log_path,
+                max_bytes=1,
+                keep_lines=1000,
+            )
+
+        extra = self.archive_dir / (
+            "ai-activity-log.jsonl-"
+            + ("0" * 64)
+            + ".gz"
+        )
+        self._write_gz(extra, [{"event_id": "extra"}])
+        with self.assertRaisesRegex(RuntimeError, "content-addressed archives do not match lineage"):
+            list(common.stream_logical_activity(self.log_path))
+        extra.unlink()
+
+        self._append_active([{"event_id": "after-first"}])
+        with common.activity_audit_lock_file(self.log_path, shared=False):
+            common.rotate_activity_log_unlocked(
+                self.log_path,
+                max_bytes=1,
+                keep_lines=0,
+            )
+        lineage_path = common.activity_rotation_lineage_path(self.log_path)
+        rows = self._lineage_rows()
+        rows[1]["boundary_normalization"] = dict(rows[0]["boundary_normalization"])
+        lineage_path.write_text(
+            "".join(common._canonical_json_line(row).decode("utf-8") for row in rows),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "invalid boundary normalization|second boundary"):
+            list(common.stream_logical_activity(self.log_path))
 
     def test_invalid_overlaps_rejected(self):
         # 999 lines of overlap
@@ -934,7 +1322,7 @@ class LogicalActivityReaderTests(unittest.TestCase):
         f2_ca = self.archive_dir / "ai-activity-log.jsonl-b5c3586ee6a53b62a47dfb199587d809284961f56705e05e9ccf1bd7c3178afe.gz"
         self._write_gz(f1_ca, entries1)
         self._write_gz(f2_ca, entries2)
-        with self.assertRaisesRegex(RuntimeError, "duplicate across sources|payload mismatch|Non-collapsible 1000-line overlap"):
+        with self.assertRaisesRegex(RuntimeError, "duplicate across sources|payload mismatch|Non-collapsible 1000-line overlap|content-addressed archives do not match lineage"):
             list(common.stream_logical_activity(self.log_path))
 
     def test_corruptions_and_security(self):
