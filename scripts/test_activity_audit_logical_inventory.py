@@ -537,6 +537,33 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         self.assertEqual((self.status_root / "evidence" / "summary.json").read_bytes(), summary_before)
         self.assertEqual((self.status_root / "evidence" / "evidence.md").read_bytes(), evidence_before)
 
+    def test_source_insertion_between_physical_and_logical_passes_fails(self):
+        self.log_path.write_text(
+            json.dumps({"event_id": "initial-active"}) + "\n",
+            encoding="utf-8",
+        )
+        inserted = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-07-17T1700Z.gz"
+        )
+        real_stream = common.stream_logical_activity
+
+        def stream_after_insertion(*args, **kwargs):
+            self._write_gz(inserted, [{"event_id": "inserted-archive"}])
+            return real_stream(*args, **kwargs)
+
+        with mock.patch(
+            "scripts.activity_audit_logical_inventory.stream_logical_activity",
+            side_effect=stream_after_insertion,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "source set changed between physical and logical passes",
+            ):
+                inventory.generate_inventory(
+                    status_root=self.status_root,
+                    evidence_dir=self.status_root / "evidence",
+                )
+
     def test_pinned_pair_success(self):
         b1, b2 = self._get_hermetic_pinned_bytes()
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1237Z.gz"

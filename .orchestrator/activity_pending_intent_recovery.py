@@ -233,7 +233,13 @@ def capture_inventory(
     if intent_raw is not None:
         raw_bytes["intent"] = intent_raw
         try:
-            parsed = json.loads(intent_raw.decode("utf-8"))
+            parsed = common.strict_activity_json_loads(
+                intent_raw.decode("utf-8")
+            )
+        except common.DuplicateActivityJSONKeyError as exc:
+            raise RecoveryProofError(
+                f"pending rotation intent contains {exc}"
+            ) from exc
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise RecoveryProofError("pending rotation intent is unreadable") from exc
         intent_payload = common.validated_schema_v1_rotation_intent(log_path, parsed)
@@ -1042,7 +1048,16 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _load_pinned_manifest(path: str) -> dict[str, Any]:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    try:
+        payload = common.strict_activity_json_loads(
+            Path(path).read_text(encoding="utf-8")
+        )
+    except common.DuplicateActivityJSONKeyError as exc:
+        raise RecoveryProofError(
+            f"pinned inventory manifest contains {exc}"
+        ) from exc
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RecoveryProofError("pinned inventory manifest is unreadable") from exc
     if not isinstance(payload, dict):
         raise RecoveryProofError("pinned inventory manifest is not an object")
     payload.pop("inventory_sha256", None)

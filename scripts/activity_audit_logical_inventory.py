@@ -376,6 +376,14 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                         conn.execute("INSERT OR IGNORE INTO logical_events (event_id) VALUES (?)", (event_id,))
             conn.commit()
 
+            final_sources = activity_audit_source_paths_unlocked(log_file)
+            if [str(source) for source in final_sources] != [
+                str(source) for source in sources
+            ]:
+                raise RuntimeError(
+                    "activity source set changed between physical and logical passes"
+                )
+
             # Dynamic chain resolution from 1450Z -> ... -> active
             prev_to_fold = {f["prev_source"]: f for f in folds if f["prev_source"]}
             start_node = None

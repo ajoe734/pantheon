@@ -2860,7 +2860,7 @@ def _rotate_activity_log_if_needed(
 def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
     """Return disjoint rotated sources plus active while audit SH/EX is held."""
 
-    log_path = log_path.expanduser().resolve()
+    log_path = _resolved_activity_log_path(log_path)
     assert_activity_audit_stable_unlocked(log_path)
     archive_dir = log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR
     archive_sources = sorted(archive_dir.glob(f"{log_path.name}-*.gz"))
@@ -2980,6 +2980,51 @@ def _sha256_file_descriptor(descriptor: int) -> str:
         hasher.update(chunk)
     os.lseek(descriptor, 0, os.SEEK_SET)
     return hasher.hexdigest()
+
+
+def _snapshot_activity_source_descriptor(
+    descriptor: int,
+    *,
+    source: Path,
+    expected_size: int,
+) -> tuple[Any, str, int]:
+    """Copy one live source into a private file and bind the copied raw bytes.
+
+    Parsing the live descriptor after hashing leaves an ABA window: a writer
+    can replace same-size bytes, let the reader consume them, then restore the
+    original bytes before final validation.  The private temporary file makes
+    the parsed bytes immutable to external writers; its digest must also match
+    a fresh digest of the still-open live descriptor before it is returned.
+    """
+
+    snapshot_file = tempfile.TemporaryFile(
+        mode="w+b",
+        prefix="pantheon-activity-source-",
+        suffix=".raw",
+    )
+    hasher = hashlib.sha256()
+    byte_count = 0
+    try:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            snapshot_file.write(chunk)
+            hasher.update(chunk)
+            byte_count += len(chunk)
+        snapshot_file.flush()
+        raw_sha256 = hasher.hexdigest()
+        if (
+            byte_count != expected_size
+            or _sha256_file_descriptor(descriptor) != raw_sha256
+        ):
+            raise RuntimeError(f"Source changed while snapshotting: {source}")
+        snapshot_file.seek(0)
+        return snapshot_file, raw_sha256, byte_count
+    except BaseException:
+        snapshot_file.close()
+        raise
 
 
 def _validate_historical_activity_source(
@@ -3228,7 +3273,6 @@ def _build_logical_activity_snapshot_unlocked(
                 | getattr(os, "O_CLOEXEC", 0)
                 | getattr(os, "O_NOFOLLOW", 0),
             )
-            descriptor_owned = True
             try:
                 descriptor_stat = os.fstat(descriptor)
                 if not stat.S_ISREG(descriptor_stat.st_mode):
@@ -3240,7 +3284,13 @@ def _build_logical_activity_snapshot_unlocked(
                     or path_stat_before.st_ino != descriptor_stat.st_ino
                 ):
                     raise RuntimeError(f"Source is a symlink or changed: {source}")
-                raw_sha256 = _sha256_file_descriptor(descriptor)
+                file_obj, raw_sha256, raw_byte_count = (
+                    _snapshot_activity_source_descriptor(
+                        descriptor,
+                        source=source,
+                        expected_size=descriptor_stat.st_size,
+                    )
+                )
                 snapshot = _ActivitySourceSnapshot(
                     path=source,
                     st_dev=descriptor_stat.st_dev,
@@ -3250,8 +3300,6 @@ def _build_logical_activity_snapshot_unlocked(
                     raw_sha256=raw_sha256,
                 )
 
-                file_obj = os.fdopen(descriptor, "rb")
-                descriptor_owned = False
                 try:
                     binary_stream = (
                         gzip.GzipFile(fileobj=file_obj, mode="rb")
@@ -3573,7 +3621,7 @@ def _build_logical_activity_snapshot_unlocked(
                     _validate_historical_activity_source(
                         source,
                         raw_sha256=raw_sha256,
-                        raw_byte_count=descriptor_stat.st_size,
+                        raw_byte_count=raw_byte_count,
                         payload_sha256=source_payload_sha256,
                         payload_byte_count=current_byte_count,
                         payload_line_count=current_line_count,
@@ -3605,8 +3653,7 @@ def _build_logical_activity_snapshot_unlocked(
                     )
                 snapshots.append(snapshot)
             finally:
-                if descriptor_owned:
-                    os.close(descriptor)
+                os.close(descriptor)
 
         _assert_activity_sources_stable_unlocked(log_path, sources, snapshots)
         if recent_entries is not None:
@@ -3687,7 +3734,11 @@ def _resolved_activity_log_path(log_path: Path) -> Path:
         raise RuntimeError(
             f"activity audit source leaf cannot be a symlink: {requested_log_path}"
         )
-    return requested_log_path.resolve()
+    # Resolve only the stable parent.  Resolving the checked leaf separately
+    # would follow a symlink installed between ``is_symlink`` and ``resolve``;
+    # all later O_NOFOLLOW/inode checks must continue to address the requested
+    # leaf name so such a replacement fails closed.
+    return requested_log_path.parent.resolve() / requested_log_path.name
 
 
 def validated_recent_task_activity(

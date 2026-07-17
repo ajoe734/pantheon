@@ -7,6 +7,7 @@ import json
 import multiprocessing
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -1609,6 +1610,39 @@ class LogicalActivityReaderTests(unittest.TestCase):
         ):
             next(stream)
 
+    def test_active_log_symlink_swap_during_leaf_guard_is_rejected(self):
+        self._write_active([{"event_id": "original"}])
+        target = self.root / "external-activity.jsonl"
+        target.write_text(
+            json.dumps({"event_id": "redirected"}) + "\n",
+            encoding="utf-8",
+        )
+        real_is_symlink = Path.is_symlink
+        swapped = False
+
+        def swap_after_leaf_check(path: Path) -> bool:
+            nonlocal swapped
+            result = real_is_symlink(path)
+            if path == self.log_path and not swapped:
+                swapped = True
+                self.log_path.unlink()
+                self.log_path.symlink_to(target)
+            return result
+
+        with mock.patch.object(
+            Path,
+            "is_symlink",
+            autospec=True,
+            side_effect=swap_after_leaf_check,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "(?:activity audit source leaf|canonical activity-audit data file) "
+                "cannot be a symlink",
+            ):
+                list(common.stream_logical_activity(self.log_path))
+        self.assertTrue(swapped)
+
     def test_source_replacement_and_mutation_during_read(self):
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         entries = self._make_entries(0, 100)
@@ -1686,6 +1720,45 @@ class LogicalActivityReaderTests(unittest.TestCase):
                 "Source content changed during validation",
             ):
                 next(gen)
+
+    def test_aba_mutation_cannot_change_bytes_parsed_into_snapshot(self):
+        original = b'{"event_id":"original"}\n'
+        attacker = b'{"event_id":"attacker"}\n'
+        self.assertEqual(len(original), len(attacker))
+        self.log_path.write_bytes(original)
+        stat_before = self.log_path.stat()
+        real_hash = common._sha256_file_descriptor
+        hash_calls = 0
+
+        def mutate_after_first_hash(descriptor: int) -> str:
+            nonlocal hash_calls
+            hash_calls += 1
+            if hash_calls == 1:
+                digest = real_hash(descriptor)
+                self.log_path.write_bytes(attacker)
+                os.utime(
+                    self.log_path,
+                    ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns),
+                )
+                return digest
+            if hash_calls == 2:
+                self.log_path.write_bytes(original)
+                os.utime(
+                    self.log_path,
+                    ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns),
+                )
+            return real_hash(descriptor)
+
+        with mock.patch.object(
+            common,
+            "_sha256_file_descriptor",
+            side_effect=mutate_after_first_hash,
+        ):
+            entries = list(common.stream_logical_activity(self.log_path))
+
+        self.assertGreaterEqual(hash_calls, 2)
+        self.assertEqual([entry[0]["event_id"] for entry in entries], ["original"])
+        self.assertEqual(self.log_path.read_bytes(), original)
 
     def test_late_validation_failure_precedes_first_row_and_collapse_callback(self):
         entries = self._make_entries(0, 1500)
@@ -2261,7 +2334,9 @@ class LogicalActivityReaderTests(unittest.TestCase):
         self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
 
         created_paths: list[str] = []
+        connections: list[sqlite3.Connection] = []
         original_tempfile = common.tempfile.NamedTemporaryFile
+        original_open_snapshot = common._open_ephemeral_activity_snapshot_database
 
         def tracking_tempfile(*args, **kwargs):
             handle = original_tempfile(*args, **kwargs)
@@ -2271,22 +2346,41 @@ class LogicalActivityReaderTests(unittest.TestCase):
                 created_paths.append(handle.name)
             return handle
 
+        def tracking_open_snapshot() -> sqlite3.Connection:
+            connection = original_open_snapshot()
+            connections.append(connection)
+            return connection
+
         def assert_all_snapshots_unlinked() -> None:
             self.assertTrue(created_paths)
             self.assertTrue(all(not os.path.exists(path) for path in created_paths))
 
-        with mock.patch.object(
-            common.tempfile,
-            "NamedTemporaryFile",
-            side_effect=tracking_tempfile,
+        def assert_connection_closed(connection: sqlite3.Connection) -> None:
+            with self.assertRaises(sqlite3.ProgrammingError):
+                connection.execute("SELECT 1")
+
+        with (
+            mock.patch.object(
+                common.tempfile,
+                "NamedTemporaryFile",
+                side_effect=tracking_tempfile,
+            ),
+            mock.patch.object(
+                common,
+                "_open_ephemeral_activity_snapshot_database",
+                side_effect=tracking_open_snapshot,
+            ),
         ):
             # Case 1: success. The live SQLite connection retains the disk
             # allocation, but its pathname is already gone before first yield.
             gen = common.stream_logical_activity(self.log_path)
             next(gen)
             assert_all_snapshots_unlinked()
+            self.assertEqual(connections[-1].execute("SELECT 1").fetchone(), (1,))
+            success_connection = connections[-1]
             list(gen)
             assert_all_snapshots_unlinked()
+            assert_connection_closed(success_connection)
 
             # Case 2: validation failure.
             self._write_gz(
@@ -2300,24 +2394,31 @@ class LogicalActivityReaderTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "duplicate activity event_id"):
                 next(gen)
             assert_all_snapshots_unlinked()
+            assert_connection_closed(connections[-1])
 
             # Case 3: explicit generator close.
             self._write_gz(f1, [{"message": "line 1"}, {"message": "line 2"}])
             gen = common.stream_logical_activity(self.log_path)
             next(gen)
             assert_all_snapshots_unlinked()
+            explicit_close_connection = connections[-1]
             gen.close()
             assert_all_snapshots_unlinked()
+            assert_connection_closed(explicit_close_connection)
 
             # Case 4: a consumer exception followed by explicit close.
             gen = common.stream_logical_activity(self.log_path)
+            consumer_exception_connection: sqlite3.Connection | None = None
             with self.assertRaisesRegex(RuntimeError, "consumer failed"):
                 try:
                     next(gen)
+                    consumer_exception_connection = connections[-1]
                     raise RuntimeError("consumer failed")
                 finally:
                     gen.close()
             assert_all_snapshots_unlinked()
+            self.assertIsNotNone(consumer_exception_connection)
+            assert_connection_closed(consumer_exception_connection)
 
     def test_deliberate_break_occurs_after_full_validation_and_explicit_close(self):
         self._write_active(self._make_entries(0, 3))

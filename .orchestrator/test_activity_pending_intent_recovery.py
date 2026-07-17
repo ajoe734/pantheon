@@ -65,6 +65,35 @@ class StrictRecoveryParserTests(unittest.TestCase):
             ):
                 recovery._event_ids(ambiguous, source=source)
 
+    def test_pending_intent_rejects_duplicate_control_keys(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            log_path = root / "ai-activity-log.jsonl"
+            intent_path = common.activity_rotation_intent_path(log_path)
+            intent_path.parent.mkdir(parents=True)
+            intent_path.write_text(
+                '{"schema_version":1,"schema_version":1}\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                recovery.RecoveryProofError,
+                "pending rotation intent contains duplicate JSON key",
+            ):
+                recovery.capture_inventory(root)
+
+    def test_pinned_manifest_rejects_duplicate_control_keys(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "inventory.json"
+            path.write_text(
+                '{"proof":{"version":1},"proof":{"version":2}}\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                recovery.RecoveryProofError,
+                "pinned inventory manifest contains duplicate JSON key",
+            ):
+                recovery._load_pinned_manifest(str(path))
+
 
 class PendingIntentIncidentFixture(unittest.TestCase):
     """Builds the exact stranded-intent incident inside an isolated root."""
