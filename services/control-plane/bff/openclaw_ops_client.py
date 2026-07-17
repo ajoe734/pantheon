@@ -398,6 +398,7 @@ class OpenClawOpsClient:
         attachments: Optional[list[Dict[str, Any]]] = None,
         agent_id: Optional[str] = None,
         persona_admission: Optional[Dict[str, Any]] = None,
+        idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         normalized = str(provider or "").strip().lower()
         headers: Dict[str, str] = {"X-Operator-Id": operator_id}
@@ -410,6 +411,14 @@ class OpenClawOpsClient:
                     status_code=422,
                     error_code="OPENCLAW_PERSONA_ADMISSION_REQUIRED",
                 )
+            if persona_admission is not None and not str(idempotency_key or "").strip():
+                raise OpenClawOpsClientError(
+                    "idempotency_key is required for a governed Persona invocation.",
+                    status_code=422,
+                    error_code="OPENCLAW_PERSONA_IDEMPOTENCY_REQUIRED",
+                )
+            if idempotency_key:
+                headers["Idempotency-Key"] = str(idempotency_key).strip()
             body: Dict[str, Any] = {
                 "mode": mode,
                 "prompt": prompt,

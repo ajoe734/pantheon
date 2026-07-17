@@ -21,10 +21,11 @@ from datetime import datetime, timedelta, timezone
 from functools import partial, wraps
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
-from urllib.parse import quote, urlencode
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
+from jsonschema import Draft7Validator
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -66911,6 +66912,161 @@ def _ensure_agora_servant_openclaw_agent(persona: Dict[str, Any]) -> Dict[str, A
     return OpenClawOpsClient().ensure_agora_servant_agent(persona)
 
 
+def _resolve_agora_interaction_context_ref(
+    *,
+    kind: str,
+    ref_id: str,
+    ref_version: Optional[str],
+    resolved: Any,
+    session: Dict[str, Any],
+    context_refs: List[Dict[str, Any]],
+    authorization: Optional[str],
+    source_route: Optional[str],
+    focused_object: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Resolve only context kinds whose existing owner can prove audience scope.
+
+    Management positions, performance windows, and Human Inbox rows currently
+    have no canonical per-user ownership contract.  They remain explicit
+    dependency-unavailable sources instead of being promoted from a global
+    read-model row into a user-scoped interaction receipt.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    if kind in {"position", "performance_window", "human_inbox_item"}:
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            f"Canonical {kind} interaction scope is unavailable",
+            f"{kind} does not yet expose a tenant-and-user-scoped ownership receipt",
+            precondition_failed=f"{kind}_scope_unavailable",
+        )
+
+    if kind == "decision_event":
+        if (
+            focused_object.get("kind") == "decision_event"
+            and str(focused_object.get("id") or "") == ref_id
+        ):
+            raise _bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Focused Decision Event interaction source is unavailable",
+                "No canonical frontend Decision Event source-route owner is registered yet",
+                precondition_failed="decision_event_source_route_unavailable",
+            )
+        from agora.trading_room.router import _get_store as _get_trading_room_store
+
+        event = _get_trading_room_store().get_decision_event(ref_id)
+        if not isinstance(event, dict):
+            return {"row": None, "audience_verified": False}
+        event_strategy = str(event.get("strategy_id") or "")
+        event_version = str(event.get("strategy_spec_registry_id") or "")
+        scoped_strategy = str(session.get("strategy_id") or "")
+        scoped_version = str(session.get("active_strategy_spec_registry_id") or "")
+        audience_verified = bool(
+            event_strategy
+            and event_strategy == scoped_strategy
+            and (not event_version or event_version == scoped_version)
+        )
+        return {"row": event, "audience_verified": audience_verified}
+
+    if kind == "journal_entry":
+        from trade_journal import _allowed as _trade_journal_allowed
+        from trade_journal import _load as _load_trade_journal
+
+        episodes = _load_trade_journal("PANTHEON_BFF_TRADE_EPISODES_STORE")
+        matches = [
+            row for row in (episodes or [])
+            if str(row.get("trade_episode_id") or "") == ref_id
+        ]
+        if len(matches) == 1:
+            episode = matches[0]
+            schema_path = (
+                Path(__file__).resolve().parents[2]
+                / "telemetry"
+                / "trade_episode_projection.schema.json"
+            )
+            try:
+                projection_schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                projection_valid = Draft7Validator(projection_schema).is_valid(episode)
+            except (OSError, TypeError, ValueError):
+                projection_valid = False
+            persona_id = str(episode.get("persona_id") or "")
+            referenced_personas = {
+                str(item.get("id") or "")
+                for item in context_refs
+                if item.get("kind") == "persona"
+            }
+            persona = read_store.get_persona(persona_id)
+            if persona is None:
+                persona = next(
+                    (
+                        row for row in read_store.list_personas(include_market_persona_defaults=True)
+                        if str(row.get("persona_id") or row.get("id") or "") == persona_id
+                    ),
+                    None,
+                )
+            episode_strategy = str(episode.get("strategy_id") or "")
+            artifact_id = str(episode.get("artifact_id") or "")
+            artifact_version = str(episode.get("artifact_version") or "")
+            episode_strategy_version = str(episode.get("strategy_spec_registry_id") or "")
+            scoped_strategy = str(session.get("strategy_id") or "")
+            scoped_version = str(session.get("active_strategy_spec_registry_id") or "")
+            source = urlsplit(str(source_route or ""))
+            source_path = unquote(source.path).rstrip("/")
+            source_query = parse_qs(source.query, keep_blank_values=True)
+            focused_is_episode = (
+                focused_object.get("kind") == "journal_entry"
+                and str(focused_object.get("id") or "") == ref_id
+            )
+            canonical_persona_journal_route = bool(
+                source_path == f"/management/personas/{persona_id}"
+                and source_query.get("tab") == ["tradeJournal"]
+                and not source.fragment
+            )
+            canonical_workshop_route = bool(
+                not focused_is_episode
+                and source_path == f"/agora/strategy-workshop/{session.get('workshop_id')}"
+                and not source.fragment
+            )
+            audience_verified = bool(
+                projection_valid
+                and persona_id
+                and episode_strategy
+                and artifact_id
+                and artifact_version
+                and persona_id in referenced_personas
+                and isinstance(persona, dict)
+                and persona.get("tenant_id") == resolved.tenant_id
+                and _trade_journal_allowed(identity, persona_id)
+                and episode_strategy == scoped_strategy
+                and (not episode_strategy_version or episode_strategy_version == scoped_version)
+                and (canonical_persona_journal_route or canonical_workshop_route)
+            )
+            return {"row": episode, "audience_verified": audience_verified}
+
+        journal_rows = _agora_filter_private_records(
+            read_store.list_decision_journal_entries(), identity,
+        )
+        journal = next(
+            (row for row in journal_rows if str(row.get("id") or row.get("entry_id") or "") == ref_id),
+            None,
+        )
+        # Legacy Decision Journal rows are returned for exact not-found/error
+        # semantics, but without explicit scope they are intentionally not
+        # elevated to an audience-verified receipt.
+        return {"row": journal, "audience_verified": False}
+
+    raise _bff_error(
+        503,
+        ErrorCode.DEPENDENCY_UNAVAILABLE,
+        f"Canonical {kind} readback is unavailable",
+        f"{kind}_store_unavailable",
+        precondition_failed=f"{kind}_store_unavailable",
+    )
+
+
 # AG-BE-000: Agora BFF package router (must stay last to avoid route conflicts)
 from agora.router import create_agora_router as _create_agora_router  # noqa: E402
 app.include_router(
@@ -66922,6 +67078,7 @@ app.include_router(
         utc_now=utc_now,
         get_read_store=lambda: read_store,
         sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
+        canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
     )
 )
 
