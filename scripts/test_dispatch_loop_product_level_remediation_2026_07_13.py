@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import sqlite3
 import subprocess
 import tempfile
 
@@ -1431,6 +1432,71 @@ def test_activity_event_index_fully_drains_shared_reader(
         match="Source mutated or truncated during read",
     ):
         DISPATCH["activity_event_index"]()
+
+
+def test_activity_event_index_normalizes_shared_reader_database_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    function_globals = DISPATCH["activity_event_index"].__globals__
+
+    def failed_stream(_path: Path):
+        yield from ()
+        raise sqlite3.OperationalError("temporary database is full")
+
+    monkeypatch.setitem(
+        function_globals,
+        "stream_logical_activity",
+        failed_stream,
+    )
+
+    with pytest.raises(
+        DISPATCH["DispatchError"],
+        match="temporary database is full",
+    ):
+        DISPATCH["activity_event_index"]()
+
+
+@pytest.mark.parametrize("source", ["active", "archive"])
+def test_dispatch_rejects_duplicate_activity_json_keys_without_writes(
+    source: str,
+) -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        prepare_status(root)
+        ambiguous = (
+            '{"event_id":"synthetic-duplicate-key-a",'
+            '"event_id":"synthetic-duplicate-key-b",'
+            '"type":"synthetic_activity"}\n'
+        )
+        sources: list[Path] = []
+        if source == "active":
+            (root / "ai-activity-log.jsonl").write_text(
+                ambiguous,
+                encoding="utf-8",
+            )
+        else:
+            archive = (
+                root
+                / "archive"
+                / "logs"
+                / "ai-activity-log.jsonl-2026-07-13T0000Z.gz"
+            )
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            with gzip.open(archive, "wt", encoding="utf-8") as handle:
+                handle.write(ambiguous)
+            sources.append(archive)
+        status_before = (root / "ai-status.json").read_bytes()
+        log_before = (root / "ai-activity-log.jsonl").read_bytes()
+        sources_before = {path: path.read_bytes() for path in sources}
+
+        result = run_dispatch(root)
+
+        assert result.returncode == 2
+        assert "duplicate" in result.stderr.lower()
+        assert "key" in result.stderr.lower()
+        assert (root / "ai-status.json").read_bytes() == status_before
+        assert (root / "ai-activity-log.jsonl").read_bytes() == log_before
+        assert {path: path.read_bytes() for path in sources} == sources_before
 
 
 @pytest.mark.parametrize("source", ["active", "archive"])

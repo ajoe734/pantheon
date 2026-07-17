@@ -2277,7 +2277,7 @@ def validated_logical_activity_entries(
             yield entry, path, line_number
     except DispatchError:
         raise
-    except (OSError, RuntimeError, UnicodeError) as exc:
+    except Exception as exc:
         raise DispatchError(f"activity audit logical reader rejected history: {exc}") from exc
 
 
