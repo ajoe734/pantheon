@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -16,12 +17,14 @@ import uuid
 import hashlib
 import urllib.error
 import urllib.request
+from collections import deque
 from contextlib import contextmanager
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import local
-from typing import Any, Mapping, Generator, Callable
+from typing import Any, Mapping, Generator, Callable, Iterable, Final
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
@@ -416,6 +419,21 @@ def resolve_path(value: str | Path | None) -> Path | None:
     return path
 
 
+def _first_symlink_component(path: Path) -> Path | None:
+    current = Path(path.anchor)
+    parts = path.parts[1:] if path.is_absolute() else path.parts
+    for part in parts:
+        current = current / part
+        try:
+            if current.is_symlink():
+                return current
+            if not current.exists():
+                return None
+        except OSError:
+            return current
+    return None
+
+
 def relpath(path: Path) -> str:
     try:
         return str(path.relative_to(ROOT))
@@ -476,14 +494,199 @@ def delivery_status_root(config: dict[str, Any], metadata: dict[str, Any] | None
     return repo_root
 
 
+STATUS_COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
+STATUS_COMMAND_SHA_ENV = "PANTHEON_COMMAND_RUNTIME_SHA"
+STATUS_COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
+STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
+LEGACY_STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
+LEGACY_STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
+LEGACY_STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
+LEGACY_STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_STATUS_COMMAND_BASE_REF"
+
+
+def _git_stdout(cwd: Path, args: list[str]) -> str:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "git command failed").strip()
+        raise RuntimeError(detail)
+    return proc.stdout.strip()
+
+
+def normalize_github_repo_slug(value: str | None) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    candidate = candidate.removesuffix(".git")
+    if candidate.startswith("git@github.com:"):
+        candidate = candidate[len("git@github.com:") :]
+    elif candidate.startswith("ssh://git@github.com/"):
+        candidate = candidate[len("ssh://git@github.com/") :]
+    elif candidate.startswith("https://github.com/"):
+        candidate = candidate[len("https://github.com/") :]
+    elif candidate.startswith("http://github.com/"):
+        candidate = candidate[len("http://github.com/") :]
+    return candidate.strip("/")
+
+
+def status_command_expected_remote(config: dict[str, Any]) -> str:
+    configured = str(((config.get("github_bus") or {}).get("repo")) or "").strip()
+    return configured or "ajoe734/pantheon"
+
+
+def status_command_base_ref(config: dict[str, Any]) -> str:
+    branch = str(((config.get("branch_workflow") or {}).get("dev_branch")) or "dev").strip() or "dev"
+    return f"origin/{branch}"
+
+
+def validate_status_command_runtime(
+    root: Path,
+    *,
+    expected_sha: str | None = None,
+    expected_remote: str | None = None,
+    base_ref: str | None = None,
+    require_merged: bool = True,
+) -> dict[str, str]:
+    """Validate the installed status command checkout without reading task state."""
+
+    if not root.is_absolute():
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be an absolute path")
+    symlink_component = _first_symlink_component(root)
+    if symlink_component is not None:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} cannot include a symlink component: {symlink_component}"
+        )
+    resolved = root.resolve()
+    if not resolved.exists() or not resolved.is_dir():
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} does not exist or is not a directory: {resolved}")
+    git_root = _git_stdout(resolved, ["rev-parse", "--show-toplevel"])
+    if Path(git_root).resolve() != resolved:
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be a git repository root: {resolved}")
+
+    source_sha = _git_stdout(resolved, ["rev-parse", "HEAD"])
+    if expected_sha and source_sha != expected_sha:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_SHA_ENV} mismatch: command root is {source_sha}, expected {expected_sha}"
+        )
+
+    expected_slug = normalize_github_repo_slug(expected_remote)
+    remote_url = _git_stdout(resolved, ["remote", "get-url", "origin"])
+    actual_slug = normalize_github_repo_slug(remote_url)
+    if expected_slug and actual_slug != expected_slug:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} remote mismatch: {actual_slug or remote_url} != {expected_slug}"
+        )
+
+    if require_merged:
+        target_ref = str(base_ref or "origin/dev").strip() or "origin/dev"
+        _git_stdout(resolved, ["rev-parse", "--verify", target_ref])
+        proc = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", source_sha, target_ref],
+            cwd=resolved,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            suffix = f": {detail}" if detail else ""
+            raise RuntimeError(
+                f"{STATUS_COMMAND_ROOT_ENV} source SHA {source_sha} is not merged into {target_ref}{suffix}"
+            )
+    else:
+        target_ref = str(base_ref or "").strip()
+
+    return {
+        "root": str(resolved),
+        "source_sha": source_sha,
+        "remote": expected_slug or actual_slug,
+        "base_ref": target_ref,
+    }
+
+
+def status_command_runtime_record_from_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Return the supervisor-issued command runtime fields safe for state files."""
+
+    return {
+        "command_root": str(env.get(STATUS_COMMAND_ROOT_ENV) or ""),
+        "source_sha": str(env.get(STATUS_COMMAND_SHA_ENV) or ""),
+        "remote": str(env.get(STATUS_COMMAND_REMOTE_ENV) or ""),
+        "base_ref": str(env.get(STATUS_COMMAND_BASE_REF_ENV) or ""),
+    }
+
+
+def _status_command_runtime_env_from_record(record: Mapping[str, Any]) -> dict[str, str] | None:
+    raw_root = str(record.get("command_root") or record.get("root") or "").strip()
+    raw_sha = str(record.get("source_sha") or record.get("runtime_sha") or "").strip()
+    if not raw_root or not raw_sha:
+        return None
+    remote = str(record.get("remote") or "").strip()
+    base_ref = str(record.get("base_ref") or "").strip() or "origin/dev"
+    metadata = validate_status_command_runtime(
+        Path(raw_root).expanduser(),
+        expected_sha=raw_sha,
+        expected_remote=remote or None,
+        base_ref=base_ref,
+        require_merged=False,
+    )
+    return {
+        STATUS_COMMAND_ROOT_ENV: metadata["root"],
+        STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
+        STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
+        STATUS_COMMAND_BASE_REF_ENV: base_ref,
+        LEGACY_STATUS_COMMAND_ROOT_ENV: metadata["root"],
+        LEGACY_STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
+        LEGACY_STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
+        LEGACY_STATUS_COMMAND_BASE_REF_ENV: base_ref,
+    }
+
+
+def status_command_runtime_env(
+    config: dict[str, Any],
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
+    if isinstance(metadata, Mapping):
+        issued = metadata.get("status_command_runtime")
+        if isinstance(issued, Mapping):
+            issued_env = _status_command_runtime_env_from_record(issued)
+            if issued_env is not None:
+                return issued_env
+
+    expected_remote = status_command_expected_remote(config)
+    base_ref = status_command_base_ref(config)
+    metadata = validate_status_command_runtime(
+        ROOT.resolve(),
+        expected_remote=expected_remote,
+        base_ref=base_ref,
+        require_merged=False,
+    )
+    return {
+        STATUS_COMMAND_ROOT_ENV: metadata["root"],
+        STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
+        STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
+        STATUS_COMMAND_BASE_REF_ENV: base_ref,
+        LEGACY_STATUS_COMMAND_ROOT_ENV: metadata["root"],
+        LEGACY_STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
+        LEGACY_STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
+        LEGACY_STATUS_COMMAND_BASE_REF_ENV: base_ref,
+    }
+
+
 def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> dict[str, str]:
     workspace_root = delivery_workspace_root(config, metadata)
     status_root = delivery_status_root(config, metadata)
-    return {
+    env = {
         "PANTHEON_WORKTREE_ROOT": str(workspace_root),
         "PANTHEON_STATUS_ROOT": str(status_root),
         "ORCH_WORKSPACE_PATH": str(workspace_root),
     }
+    env.update(status_command_runtime_env(config, metadata))
+    return env
 
 
 def github_cli_config_dir(env: Mapping[str, str] | None = None) -> Path:
@@ -1037,6 +1240,115 @@ def _canonical_json_line(payload: Any) -> bytes:
     ).encode("utf-8")
 
 
+class DuplicateActivityJSONKeyError(ValueError):
+    """Raised before an ambiguous activity JSON object can become a dict."""
+
+
+def _reject_duplicate_activity_json_keys(
+    pairs: list[tuple[str, Any]],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise DuplicateActivityJSONKeyError(
+                f"duplicate JSON key is forbidden: {key}"
+            )
+        result[key] = value
+    return result
+
+
+def strict_activity_json_loads(payload: str | bytes | bytearray) -> Any:
+    """Decode activity JSON while rejecting duplicate keys at every depth."""
+
+    return json.loads(
+        payload,
+        object_pairs_hook=_reject_duplicate_activity_json_keys,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalActivityOverlapException:
+    """Closed identity for one byte-proven legacy overlap exception."""
+
+    predecessor_name: str
+    predecessor_gzip_sha256: str
+    predecessor_gzip_byte_count: int
+    predecessor_payload_sha256: str
+    predecessor_payload_byte_count: int
+    predecessor_line_count: int
+    successor_name: str
+    successor_gzip_sha256: str
+    successor_gzip_byte_count: int
+    successor_payload_sha256: str
+    successor_payload_byte_count: int
+    successor_line_count: int
+    overlap_sha256: str
+    overlap_byte_count: int
+    overlap_line_count: int
+
+
+HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS: Final[
+    tuple[HistoricalActivityOverlapException, ...]
+] = (
+    HistoricalActivityOverlapException(
+        predecessor_name="ai-activity-log.jsonl-2026-05-24T1237Z.gz",
+        predecessor_gzip_sha256=(
+            "ad7dd174e0278a3c21b10024cd227f0d138052dd0945bc3b24159538d87ed6c5"
+        ),
+        predecessor_gzip_byte_count=772038,
+        predecessor_payload_sha256=(
+            "8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57"
+        ),
+        predecessor_payload_byte_count=5326818,
+        predecessor_line_count=1001,
+        successor_name="ai-activity-log.jsonl-2026-05-24T1239Z.gz",
+        successor_gzip_sha256=(
+            "d211e27bc5337c8eff200e14d48800f949658e6c8b43d9fd22e54ea8c77061da"
+        ),
+        successor_gzip_byte_count=771941,
+        successor_payload_sha256=(
+            "da6a102178c82fb4eca8d0794ed5b419f0c97770e0ad63542dde0033e7efa3ff"
+        ),
+        successor_payload_byte_count=5326326,
+        successor_line_count=1001,
+        overlap_sha256=(
+            "0a3b56f720a5aa493d8968edfff8e32e0df98e410f6334d6790f10a06019f247"
+        ),
+        overlap_byte_count=5325808,
+        overlap_line_count=999,
+    ),
+)
+
+
+def _historical_activity_overlap_for_pair(
+    predecessor_name: str,
+    successor_name: str,
+) -> HistoricalActivityOverlapException | None:
+    matches = [
+        exception
+        for exception in HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS
+        if exception.predecessor_name == predecessor_name
+        and exception.successor_name == successor_name
+    ]
+    if len(matches) > 1:
+        raise RuntimeError("historical activity overlap registry has a duplicate pair")
+    return matches[0] if matches else None
+
+
+def _historical_activity_source_identity(
+    source_name: str,
+) -> tuple[HistoricalActivityOverlapException, str] | None:
+    matches: list[tuple[HistoricalActivityOverlapException, str]] = []
+    for exception in HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS:
+        if exception.predecessor_name == source_name:
+            matches.append((exception, "predecessor"))
+        if exception.successor_name == source_name:
+            matches.append((exception, "successor"))
+    if len(matches) > 1:
+        raise RuntimeError("historical activity overlap registry reuses a source")
+    return matches[0] if matches else None
+
+
 def _jsonl_line_count(payload: bytes) -> int:
     return len(payload.splitlines()) if payload else 0
 
@@ -1047,6 +1359,8 @@ def _activity_lineage_head_bytes(record: dict[str, Any]) -> bytes:
 
 def _split_activity_lineage_head(
     payload: bytes,
+    *,
+    source: Path | None = None,
 ) -> tuple[dict[str, Any] | None, bytes, bytes]:
     if not payload:
         return None, b"", payload
@@ -1058,7 +1372,10 @@ def _split_activity_lineage_head(
         first_line = payload[: newline_at + 1]
         rest = payload[newline_at + 1 :]
     try:
-        parsed = json.loads(first_line.decode("utf-8").strip())
+        parsed = strict_activity_json_loads(first_line.decode("utf-8").strip())
+    except DuplicateActivityJSONKeyError as exc:
+        location = f" in {source}:1" if source is not None else ""
+        raise RuntimeError(f"active lineage-head contains {exc}{location}") from exc
     except (UnicodeError, json.JSONDecodeError):
         return None, b"", payload
     if (
@@ -1262,8 +1579,13 @@ def _load_activity_rotation_intent(log_path: Path) -> dict[str, Any] | None:
             path,
             source="activity rotation intent",
         )
-        payload = json.loads(intent_bytes.decode("utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        payload = strict_activity_json_loads(intent_bytes.decode("utf-8"))
+    except (
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        DuplicateActivityJSONKeyError,
+    ) as exc:
         raise RuntimeError("activity rotation intent is unreadable") from exc
     if _is_schema_v1_rotation_intent_shape(payload):
         # Never silently accept or auto-recover a schema-v1 intent in
@@ -1290,6 +1612,118 @@ def _activity_archive_payload(path: Path) -> tuple[bytes, bytes]:
 
 def _activity_archive_backup_path(path: Path) -> Path:
     return path.with_name(f"{path.name}.bak")
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivityArchiveMetrics:
+    gzip_sha256: str
+    gzip_byte_count: int
+    payload_sha256: str
+    payload_byte_count: int
+    payload_line_count: int
+
+
+class _HashingActivityArchiveReader:
+    """Record the exact compressed bytes consumed by ``gzip.GzipFile``."""
+
+    def __init__(self, file_obj: Any) -> None:
+        self._file_obj = file_obj
+        self._hasher = hashlib.sha256()
+        self.byte_count = 0
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = self._file_obj.read(size)
+        self._hasher.update(chunk)
+        self.byte_count += len(chunk)
+        return chunk
+
+    def hexdigest(self) -> str:
+        return self._hasher.hexdigest()
+
+
+def _stream_activity_archive_metrics(path: Path) -> _ActivityArchiveMetrics:
+    """Hash and count a gzip archive without retaining either full byte stream."""
+
+    try:
+        path_stat_before = path.lstat()
+    except OSError as exc:
+        raise RuntimeError(
+            f"activity rotation archive is unreadable: {path}"
+        ) from exc
+    if stat.S_ISLNK(path_stat_before.st_mode) or not stat.S_ISREG(
+        path_stat_before.st_mode
+    ):
+        raise RuntimeError(
+            f"activity rotation archive must be a regular file: {path}"
+        )
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError as exc:
+        raise RuntimeError(f"activity rotation archive is unreadable: {path}") from exc
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(descriptor_stat.st_mode)
+            or stat.S_ISLNK(path_stat_before.st_mode)
+            or path_stat_before.st_dev != descriptor_stat.st_dev
+            or path_stat_before.st_ino != descriptor_stat.st_ino
+        ):
+            raise RuntimeError(f"activity rotation archive changed: {path}")
+
+        payload_hasher = hashlib.sha256()
+        payload_byte_count = 0
+        payload_newline_count = 0
+        payload_last_byte = b""
+        try:
+            with os.fdopen(descriptor, "rb", closefd=False) as file_obj:
+                compressed_reader = _HashingActivityArchiveReader(file_obj)
+                with gzip.GzipFile(fileobj=compressed_reader, mode="rb") as handle:
+                    while True:
+                        chunk = handle.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        payload_hasher.update(chunk)
+                        payload_byte_count += len(chunk)
+                        payload_newline_count += chunk.count(b"\n")
+                        payload_last_byte = chunk[-1:]
+        except (EOFError, gzip.BadGzipFile, OSError) as exc:
+            raise RuntimeError(
+                f"activity rotation archive is unreadable: {path}"
+            ) from exc
+
+        if compressed_reader.byte_count != descriptor_stat.st_size:
+            raise RuntimeError(
+                f"activity rotation archive changed during validation: {path}"
+            )
+
+        path_stat_after = path.lstat()
+        if (
+            stat.S_ISLNK(path_stat_after.st_mode)
+            or path_stat_after.st_dev != descriptor_stat.st_dev
+            or path_stat_after.st_ino != descriptor_stat.st_ino
+            or path_stat_after.st_size != descriptor_stat.st_size
+            or path_stat_after.st_mtime_ns != descriptor_stat.st_mtime_ns
+        ):
+            raise RuntimeError(
+                f"activity rotation archive changed during validation: {path}"
+            )
+        payload_line_count = payload_newline_count + int(
+            payload_byte_count > 0 and payload_last_byte != b"\n"
+        )
+        return _ActivityArchiveMetrics(
+            gzip_sha256=compressed_reader.hexdigest(),
+            gzip_byte_count=compressed_reader.byte_count,
+            payload_sha256=payload_hasher.hexdigest(),
+            payload_byte_count=payload_byte_count,
+            payload_line_count=payload_line_count,
+        )
+    finally:
+        os.close(descriptor)
 
 
 def _normalize_activity_lineage_archive_path(log_path: Path, value: Any) -> Path:
@@ -1411,14 +1845,14 @@ def _validate_activity_rotation_lineage_row(
     if validate_archive:
         if not archive_path.exists():
             raise RuntimeError("activity lineage archive is missing")
-        compressed, payload = _activity_archive_payload(archive_path)
-        if _sha256_bytes(compressed) != row.get("archive_gzip_sha256"):
+        metrics = _stream_activity_archive_metrics(archive_path)
+        if metrics.gzip_sha256 != row.get("archive_gzip_sha256"):
             raise RuntimeError("activity lineage archive gzip digest mismatch")
-        if _sha256_bytes(payload) != row.get("archive_payload_sha256"):
+        if metrics.payload_sha256 != row.get("archive_payload_sha256"):
             raise RuntimeError("activity lineage archive payload digest mismatch")
-        if len(payload) != row.get("archive_byte_count"):
+        if metrics.payload_byte_count != row.get("archive_byte_count"):
             raise RuntimeError("activity lineage archive byte count mismatch")
-        if _jsonl_line_count(payload) != row.get("archive_line_count"):
+        if metrics.payload_line_count != row.get("archive_line_count"):
             raise RuntimeError("activity lineage archive line count mismatch")
     return archive_path
 
@@ -1455,8 +1889,12 @@ def _load_activity_rotation_lineage_unlocked(
         if not raw_line.strip():
             raise RuntimeError("activity lineage contains a blank row")
         try:
-            row = json.loads(raw_line.decode("utf-8"))
-        except (UnicodeError, json.JSONDecodeError) as exc:
+            row = strict_activity_json_loads(raw_line.decode("utf-8"))
+        except (
+            UnicodeError,
+            json.JSONDecodeError,
+            DuplicateActivityJSONKeyError,
+        ) as exc:
             raise RuntimeError("activity lineage row is unreadable") from exc
         archive_path = _validate_activity_rotation_lineage_row(
             log_path,
@@ -1689,48 +2127,47 @@ def _validated_activity_rotation_resolution_row(
                 raise RuntimeError(
                     "activity resolution superseded archive is missing"
                 )
-            # Operators preserve incident artifacts with this exact suffix.
-            # The backup is safe only as a validation source: all pinned
-            # compressed/payload digests and conservation counts below still
-            # have to match, and read_regular_file_bytes rejects symlinks.
+            # A preserved incident backup is only a validation source. The
+            # resolution row's compressed/payload digests and counts below
+            # still have to match, and the streaming reader rejects symlinks.
             validation_path = backup_path
-        compressed, payload = _activity_archive_payload(validation_path)
-        if _sha256_bytes(compressed) != row.get("archive_gzip_sha256"):
+        metrics = _stream_activity_archive_metrics(validation_path)
+        if metrics.gzip_sha256 != row.get("archive_gzip_sha256"):
             raise RuntimeError(
                 "activity resolution superseded archive gzip digest mismatch"
             )
-        if _sha256_bytes(payload) != row.get("archive_payload_sha256"):
+        if metrics.payload_sha256 != row.get("archive_payload_sha256"):
             raise RuntimeError(
                 "activity resolution superseded archive payload digest mismatch"
             )
-        if len(payload) != row.get("archive_byte_count"):
+        if metrics.payload_byte_count != row.get("archive_byte_count"):
             raise RuntimeError(
                 "activity resolution superseded archive byte count mismatch"
             )
-        if _jsonl_line_count(payload) != row.get("archive_line_count"):
+        if metrics.payload_line_count != row.get("archive_line_count"):
             raise RuntimeError(
                 "activity resolution superseded archive line count mismatch"
             )
         if not superseding_path.exists() and not superseding_path.is_symlink():
             raise RuntimeError("activity resolution superseding archive is missing")
-        superseding_compressed, superseding_payload = _activity_archive_payload(
-            superseding_path
-        )
-        if _sha256_bytes(superseding_compressed) != row.get("superseding_gzip_sha256"):
+        superseding_metrics = _stream_activity_archive_metrics(superseding_path)
+        if superseding_metrics.gzip_sha256 != row.get("superseding_gzip_sha256"):
             raise RuntimeError(
                 "activity resolution superseding archive gzip digest mismatch"
             )
-        if _sha256_bytes(superseding_payload) != row.get(
+        if superseding_metrics.payload_sha256 != row.get(
             "superseding_payload_sha256"
         ):
             raise RuntimeError(
                 "activity resolution superseding archive payload digest mismatch"
             )
-        if len(superseding_payload) != row.get("superseding_byte_count"):
+        if superseding_metrics.payload_byte_count != row.get(
+            "superseding_byte_count"
+        ):
             raise RuntimeError(
                 "activity resolution superseding archive byte count mismatch"
             )
-        if _jsonl_line_count(superseding_payload) != row.get(
+        if superseding_metrics.payload_line_count != row.get(
             "superseding_line_count"
         ):
             raise RuntimeError(
@@ -1769,8 +2206,12 @@ def _load_activity_rotation_resolutions_unlocked(
         if not raw_line.strip():
             raise RuntimeError("activity resolutions contains a blank row")
         try:
-            row = json.loads(raw_line.decode("utf-8"))
-        except (UnicodeError, json.JSONDecodeError) as exc:
+            row = strict_activity_json_loads(raw_line.decode("utf-8"))
+        except (
+            UnicodeError,
+            json.JSONDecodeError,
+            DuplicateActivityJSONKeyError,
+        ) as exc:
             raise RuntimeError("activity resolution row is unreadable") from exc
         archive_path = _validated_activity_rotation_resolution_row(
             log_path,
@@ -1802,51 +2243,88 @@ def _validate_active_lineage_head_unlocked(
     lineage_bytes: bytes,
     rows: list[dict[str, Any]],
 ) -> None:
+    descriptor: int | None = None
     try:
-        active_bytes = log_path.read_bytes()
+        descriptor = os.open(
+            log_path,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
     except FileNotFoundError:
-        active_bytes = b""
-    control, _control_line, tail_and_appended = _split_activity_lineage_head(
-        active_bytes
-    )
-    if not rows:
-        if control is not None:
-            raise RuntimeError(
-                "unexpected active lineage-head control record without lineage"
-            )
+        if rows:
+            raise RuntimeError("missing active lineage-head control record")
         return
-    if control is None:
-        raise RuntimeError("missing active lineage-head control record")
-    last = rows[-1]
-    expected = {
-        "record_type": ACTIVITY_ROTATION_HEAD_RECORD_TYPE,
-        "schema_version": ACTIVITY_LOG_ROTATION_SCHEMA_VERSION,
-        "log_name": log_path.name,
-        "sequence": last["sequence"],
-        "transaction_id": last["transaction_id"],
-        "archive_payload_sha256": last["archive_payload_sha256"],
-        "archive_gzip_sha256": last["archive_gzip_sha256"],
-        "lineage_sha256": _sha256_bytes(lineage_bytes),
-        "lineage_row_sha256": _canonical_json_sha256(last),
-        "tail_sha256": last["tail_sha256"],
-        "tail_byte_count": last["tail_byte_count"],
-        "tail_line_count": last["tail_line_count"],
-    }
-    if control != expected:
-        raise RuntimeError("active lineage-head control record mismatch")
-    tail_byte_count = int(control["tail_byte_count"])
-    if len(tail_and_appended) < tail_byte_count:
-        raise RuntimeError("active lineage-head retained tail is truncated")
-    retained_tail = tail_and_appended[:tail_byte_count]
-    if _sha256_bytes(retained_tail) != control["tail_sha256"]:
-        raise RuntimeError("active lineage-head retained tail digest mismatch")
-    if _jsonl_line_count(retained_tail) != control["tail_line_count"]:
-        raise RuntimeError("active lineage-head retained tail line count mismatch")
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        path_stat = log_path.lstat()
+        if (
+            not stat.S_ISREG(descriptor_stat.st_mode)
+            or stat.S_ISLNK(path_stat.st_mode)
+            or path_stat.st_dev != descriptor_stat.st_dev
+            or path_stat.st_ino != descriptor_stat.st_ino
+        ):
+            raise RuntimeError("active activity source changed while opening")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            first_line = handle.readline()
+            control, _control_line, _rest = _split_activity_lineage_head(
+                first_line,
+                source=log_path,
+            )
+            if not rows:
+                if control is not None:
+                    raise RuntimeError(
+                        "unexpected active lineage-head control record without lineage"
+                    )
+                return
+            if control is None:
+                raise RuntimeError("missing active lineage-head control record")
+            last = rows[-1]
+            expected = {
+                "record_type": ACTIVITY_ROTATION_HEAD_RECORD_TYPE,
+                "schema_version": ACTIVITY_LOG_ROTATION_SCHEMA_VERSION,
+                "log_name": log_path.name,
+                "sequence": last["sequence"],
+                "transaction_id": last["transaction_id"],
+                "archive_payload_sha256": last["archive_payload_sha256"],
+                "archive_gzip_sha256": last["archive_gzip_sha256"],
+                "lineage_sha256": _sha256_bytes(lineage_bytes),
+                "lineage_row_sha256": _canonical_json_sha256(last),
+                "tail_sha256": last["tail_sha256"],
+                "tail_byte_count": last["tail_byte_count"],
+                "tail_line_count": last["tail_line_count"],
+            }
+            if control != expected:
+                raise RuntimeError("active lineage-head control record mismatch")
+            tail_byte_count = int(control["tail_byte_count"])
+            retained_tail = handle.read(tail_byte_count)
+            if len(retained_tail) < tail_byte_count:
+                raise RuntimeError("active lineage-head retained tail is truncated")
+            if _sha256_bytes(retained_tail) != control["tail_sha256"]:
+                raise RuntimeError("active lineage-head retained tail digest mismatch")
+            if _jsonl_line_count(retained_tail) != control["tail_line_count"]:
+                raise RuntimeError(
+                    "active lineage-head retained tail line count mismatch"
+                )
+        path_stat_after = log_path.lstat()
+        if (
+            stat.S_ISLNK(path_stat_after.st_mode)
+            or path_stat_after.st_dev != descriptor_stat.st_dev
+            or path_stat_after.st_ino != descriptor_stat.st_ino
+            or path_stat_after.st_size != descriptor_stat.st_size
+            or path_stat_after.st_mtime_ns != descriptor_stat.st_mtime_ns
+        ):
+            raise RuntimeError("active activity source changed during head validation")
+    finally:
+        os.close(descriptor)
 
 
 def _read_active_payload_without_lineage_head(log_path: Path) -> tuple[bytes, bytes, dict[str, Any] | None]:
     data = log_path.read_bytes()
-    control, control_line, payload = _split_activity_lineage_head(data)
+    control, control_line, payload = _split_activity_lineage_head(
+        data,
+        source=log_path,
+    )
     return data, payload, control
 
 
@@ -1998,10 +2476,43 @@ def assert_activity_audit_stable_unlocked(log_path: Path) -> None:
     intent_path = activity_rotation_intent_path(log_path)
     if intent_path.exists() or intent_path.is_symlink():
         raise RuntimeError("activity rotation recovery is pending")
-    if log_path.is_file():
-        data = log_path.read_bytes()
-        if data and not data.endswith(b"\n"):
-            raise RuntimeError("activity audit has an interrupted trailing row")
+    if log_path.is_symlink():
+        raise RuntimeError(
+            f"activity audit source leaf cannot be a symlink: {log_path}"
+        )
+    if not log_path.is_file():
+        return
+    descriptor = os.open(
+        log_path,
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        path_stat = log_path.lstat()
+        if (
+            not stat.S_ISREG(descriptor_stat.st_mode)
+            or stat.S_ISLNK(path_stat.st_mode)
+            or path_stat.st_dev != descriptor_stat.st_dev
+            or path_stat.st_ino != descriptor_stat.st_ino
+        ):
+            raise RuntimeError("activity audit source changed while opening")
+        if descriptor_stat.st_size:
+            os.lseek(descriptor, -1, os.SEEK_END)
+            if os.read(descriptor, 1) != b"\n":
+                raise RuntimeError("activity audit has an interrupted trailing row")
+        path_stat_after = log_path.lstat()
+        if (
+            stat.S_ISLNK(path_stat_after.st_mode)
+            or path_stat_after.st_dev != descriptor_stat.st_dev
+            or path_stat_after.st_ino != descriptor_stat.st_ino
+            or path_stat_after.st_size != descriptor_stat.st_size
+            or path_stat_after.st_mtime_ns != descriptor_stat.st_mtime_ns
+        ):
+            raise RuntimeError("activity audit source changed during tail validation")
+    finally:
+        os.close(descriptor)
 
 
 def repair_activity_log_tail_unlocked(log_path: Path) -> bool:
@@ -2018,8 +2529,10 @@ def repair_activity_log_tail_unlocked(log_path: Path) -> bool:
     fragment = data[split_at + 1 :]
     try:
         decoded = fragment.decode("utf-8")
-        parsed = json.loads(decoded)
+        parsed = strict_activity_json_loads(decoded)
         complete = isinstance(parsed, dict)
+    except DuplicateActivityJSONKeyError as exc:
+        raise RuntimeError(f"activity audit trailing row contains {exc}") from exc
     except (UnicodeError, json.JSONDecodeError):
         complete = False
     repaired = data + b"\n" if complete else prefix
@@ -2347,7 +2860,7 @@ def _rotate_activity_log_if_needed(
 def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
     """Return disjoint rotated sources plus active while audit SH/EX is held."""
 
-    log_path = log_path.expanduser().resolve()
+    log_path = _resolved_activity_log_path(log_path)
     assert_activity_audit_stable_unlocked(log_path)
     archive_dir = log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR
     archive_sources = sorted(archive_dir.glob(f"{log_path.name}-*.gz"))
@@ -2417,6 +2930,8 @@ def classify_source(path: Path) -> str:
         return "active"
     if re.match(r"^.+\.jsonl-\d{4}-\d{2}-\d{2}T\d{4}Z\.gz$", name):
         return "legacy_ts_std"
+    if re.match(r"^.+\.jsonl-\d{4}\.gz$", name):
+        return "legacy_ts_std"
     if re.match(r"^.+-\d{8}T\d{6}Z\.jsonl\.gz$", name):
         return "legacy_ts_old"
     if re.match(r"^.+\.jsonl-[a-f0-9]{64}\.gz$", name):
@@ -2434,108 +2949,363 @@ def extract_timestamp_from_name(name: str) -> str:
     return ""
 
 
-def stream_logical_activity(
-    log_path: Path,
-    on_collapse: Callable[[Path | None, Path, int, int, str], None] | None = None,
-) -> Generator[tuple[dict[str, Any], Path, int], None, None]:
-    """A bounded-memory, streaming logical activity reader that collapses legacy overlaps
-    and fails closed on any invalid duplicates, corruptions, or mutations.
-    Yields (entry, source_path, line_number).
-    """
-    log_path = log_path.expanduser().resolve()
-    with activity_audit_lock_file(log_path, shared=True):
-        yield from _stream_logical_activity_unlocked(log_path, on_collapse)
+@dataclass(frozen=True, slots=True)
+class _ActivitySourceSnapshot:
+    path: Path
+    st_dev: int
+    st_ino: int
+    st_size: int
+    st_mtime_ns: int
+    raw_sha256: str
 
 
-def _stream_logical_activity_unlocked(
-    log_path: Path,
-    on_collapse: Callable[[Path | None, Path, int, int, str], None] | None = None,
-) -> Generator[tuple[dict[str, Any], Path, int], None, None]:
-    import sqlite3
-    import tempfile
-
+def _ordered_activity_sources_unlocked(log_path: Path) -> list[Path]:
     sources = activity_audit_source_paths_unlocked(log_path)
+    legacy_old = [
+        source for source in sources if classify_source(source) == "legacy_ts_old"
+    ]
+    remaining = [
+        source for source in sources if classify_source(source) != "legacy_ts_old"
+    ]
+    return legacy_old + remaining
 
-    # Group sources to process legacy_ts_old files before legacy_ts_std and active,
-    # while preserving the original relative order within each group to allow
-    # chronological order checks to work correctly.
-    group_old = []
-    group_std = []
-    for src in sources:
-        if classify_source(src) == "legacy_ts_old":
-            group_old.append(src)
-        else:
-            group_std.append(src)
-    sources = group_old + group_std
 
-    # Initialize O(1)-memory task-local SQLite database
-    db_file = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-    db_path = db_file.name
-    db_file.close()
+def _sha256_file_descriptor(descriptor: int) -> str:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    hasher = hashlib.sha256()
+    while True:
+        chunk = os.read(descriptor, 1024 * 1024)
+        if not chunk:
+            break
+        hasher.update(chunk)
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    return hasher.hexdigest()
 
-    conn = sqlite3.connect(db_path)
+
+def _snapshot_activity_source_descriptor(
+    descriptor: int,
+    *,
+    source: Path,
+    expected_size: int,
+) -> tuple[Any, str, int]:
+    """Copy one live source into a private file and bind the copied raw bytes.
+
+    Parsing the live descriptor after hashing leaves an ABA window: a writer
+    can replace same-size bytes, let the reader consume them, then restore the
+    original bytes before final validation.  The private temporary file makes
+    the parsed bytes immutable to external writers; its digest must also match
+    a fresh digest of the still-open live descriptor before it is returned.
+    """
+
+    snapshot_file = tempfile.TemporaryFile(
+        mode="w+b",
+        prefix="pantheon-activity-source-",
+        suffix=".raw",
+    )
+    hasher = hashlib.sha256()
+    byte_count = 0
     try:
-        conn.execute("CREATE TABLE seen_events (event_id TEXT PRIMARY KEY, digest TEXT)")
-        conn.execute("CREATE TABLE source_events (source_idx INTEGER, event_id TEXT, PRIMARY KEY (source_idx, event_id))")
-        conn.execute("CREATE TABLE file_digests (path TEXT PRIMARY KEY, prefix_digest TEXT, suffix_digest TEXT)")
-        conn.commit()
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            snapshot_file.write(chunk)
+            hasher.update(chunk)
+            byte_count += len(chunk)
+        snapshot_file.flush()
+        raw_sha256 = hasher.hexdigest()
+        if (
+            byte_count != expected_size
+            or _sha256_file_descriptor(descriptor) != raw_sha256
+        ):
+            raise RuntimeError(f"Source changed while snapshotting: {source}")
+        snapshot_file.seek(0)
+        return snapshot_file, raw_sha256, byte_count
+    except BaseException:
+        snapshot_file.close()
+        raise
 
-        # To keep only the immediate canonical predecessor's buffer in RAM,
-        # we track the last source processed, and its 1001-line suffix buffer.
-        prev_source = None
-        prev_buffer_1001 = []
 
-        max_ts_std = None
-        max_ts_old = None
+def _validate_historical_activity_source(
+    source: Path,
+    *,
+    raw_sha256: str,
+    raw_byte_count: int,
+    payload_sha256: str,
+    payload_byte_count: int,
+    payload_line_count: int,
+) -> None:
+    identity = _historical_activity_source_identity(source.name)
+    if identity is None:
+        return
+    exception, role = identity
+    expected_payload_sha256 = getattr(exception, f"{role}_payload_sha256")
+    expected_payload_byte_count = getattr(
+        exception, f"{role}_payload_byte_count"
+    )
+    expected_line_count = getattr(exception, f"{role}_line_count")
+    expected_gzip_sha256 = getattr(exception, f"{role}_gzip_sha256")
+    expected_gzip_byte_count = getattr(exception, f"{role}_gzip_byte_count")
+    if payload_sha256 != expected_payload_sha256:
+        raise RuntimeError(
+            f"Invalid {role} hash for historical exception: {payload_sha256}"
+        )
+    if payload_byte_count != expected_payload_byte_count:
+        raise RuntimeError(
+            f"Invalid {role} byte count for historical exception: "
+            f"{payload_byte_count}"
+        )
+    if payload_line_count != expected_line_count:
+        raise RuntimeError(
+            f"Invalid {role} line count for historical exception: "
+            f"{payload_line_count}"
+        )
+    if raw_sha256 != expected_gzip_sha256:
+        raise RuntimeError(
+            f"Invalid {role} gzip hash for historical exception: {raw_sha256}"
+        )
+    if raw_byte_count != expected_gzip_byte_count:
+        raise RuntimeError(
+            f"Invalid {role} gzip byte count for historical exception: "
+            f"{raw_byte_count}"
+        )
 
-        decompressed_hashes = {}
-        verify_successor_hash = False
 
-        for s_idx, source in enumerate(sources):
+def _assert_activity_sources_stable_unlocked(
+    log_path: Path,
+    sources: list[Path],
+    snapshots: list[_ActivitySourceSnapshot],
+) -> None:
+    final_sources = _ordered_activity_sources_unlocked(log_path)
+    if [str(source) for source in final_sources] != [str(source) for source in sources]:
+        raise RuntimeError("activity audit source set changed during validation")
+    if len(sources) != len(snapshots):
+        raise RuntimeError("activity source snapshot count mismatch")
+    for source, snapshot in zip(sources, snapshots):
+        if source != snapshot.path:
+            raise RuntimeError("activity source snapshot identity mismatch")
+        descriptor = os.open(
+            source,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            descriptor_stat = os.fstat(descriptor)
+            path_stat = source.lstat()
+            if (
+                not stat.S_ISREG(descriptor_stat.st_mode)
+                or stat.S_ISLNK(path_stat.st_mode)
+                or path_stat.st_dev != descriptor_stat.st_dev
+                or path_stat.st_ino != descriptor_stat.st_ino
+                or descriptor_stat.st_dev != snapshot.st_dev
+                or descriptor_stat.st_ino != snapshot.st_ino
+            ):
+                raise RuntimeError(f"Source replaced during validation: {source}")
+            if (
+                descriptor_stat.st_size != snapshot.st_size
+                or descriptor_stat.st_mtime_ns != snapshot.st_mtime_ns
+            ):
+                raise RuntimeError(
+                    f"Source mutated or truncated during validation: {source}"
+                )
+            final_sha256 = _sha256_file_descriptor(descriptor)
+            if final_sha256 != snapshot.raw_sha256:
+                raise RuntimeError(
+                    f"Source content changed during validation: {source}"
+                )
+            path_stat_after = source.lstat()
+            if (
+                stat.S_ISLNK(path_stat_after.st_mode)
+                or path_stat_after.st_dev != snapshot.st_dev
+                or path_stat_after.st_ino != snapshot.st_ino
+                or path_stat_after.st_size != snapshot.st_size
+                or path_stat_after.st_mtime_ns != snapshot.st_mtime_ns
+            ):
+                raise RuntimeError(f"Source changed during final validation: {source}")
+        finally:
+            os.close(descriptor)
+
+
+def _open_ephemeral_activity_snapshot_database() -> sqlite3.Connection:
+    """Open an unlink-on-create SQLite store that cannot survive process death."""
+
+    db_file = tempfile.NamedTemporaryFile(
+        prefix="pantheon-activity-snapshot-",
+        suffix=".db",
+        delete=False,
+    )
+    db_path = Path(db_file.name)
+    db_file.close()
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(db_path)
+        # The open connection owns the only reference after unlink. A normal
+        # close, SIGTERM, or SIGKILL therefore releases the disk allocation;
+        # no multi-gigabyte snapshot can be orphaned in the system temp dir.
+        db_path.unlink()
+        # This is an ephemeral validation cache, never a durable authority.
+        # Small in-memory rollback journals keep each bounded transaction
+        # atomic without fsyncing temporary data on every 1,000 rows.
+        conn.execute("PRAGMA journal_mode = MEMORY")
+        conn.execute("PRAGMA synchronous = OFF")
+        conn.execute("PRAGMA cache_size = -2048")
+        conn.execute("PRAGMA temp_store = FILE")
+        return conn
+    except BaseException:
+        if conn is not None:
+            conn.close()
+        db_path.unlink(missing_ok=True)
+        raise
+
+
+def _build_logical_activity_snapshot_unlocked(
+    log_path: Path,
+    *,
+    capture_logical_entries: bool = True,
+    recent_task_id: str | None = None,
+    recent_limit: int | None = None,
+) -> sqlite3.Connection:
+    """Validate every source into an unlink-on-create, disk-backed snapshot."""
+
+    if (recent_task_id is None) != (recent_limit is None):
+        raise RuntimeError("recent activity snapshot query is incomplete")
+    if recent_task_id is not None and (
+        capture_logical_entries
+        or not isinstance(recent_task_id, str)
+        or not recent_task_id
+        or recent_task_id != recent_task_id.strip()
+        or not isinstance(recent_limit, int)
+        or recent_limit <= 0
+    ):
+        raise RuntimeError("recent activity snapshot query is invalid")
+
+    sources = _ordered_activity_sources_unlocked(log_path)
+    conn = _open_ephemeral_activity_snapshot_database()
+    snapshots: list[_ActivitySourceSnapshot] = []
+    recent_entries: deque[tuple[str, str, int]] | None = (
+        deque(maxlen=recent_limit)
+        if recent_task_id is not None and recent_limit is not None
+        else None
+    )
+    try:
+        conn.execute(
+            "CREATE TABLE seen_events (event_id TEXT PRIMARY KEY, digest TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE source_events ("
+            "source_idx INTEGER, event_id TEXT, "
+            "PRIMARY KEY (source_idx, event_id))"
+        )
+        conn.execute(
+            "CREATE TABLE file_digests ("
+            "path TEXT PRIMARY KEY, prefix_digest TEXT, suffix_digest TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE logical_entries ("
+            "sequence INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "payload TEXT NOT NULL, source_path TEXT NOT NULL, "
+            "line_number INTEGER NOT NULL)"
+        )
+        conn.execute(
+            "CREATE TABLE collapse_events ("
+            "sequence INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "predecessor_path TEXT, successor_path TEXT NOT NULL, "
+            "line_count INTEGER NOT NULL, byte_count INTEGER NOT NULL, "
+            "sha256 TEXT NOT NULL)"
+        )
+
+        def capture_entry(
+            entry: dict[str, Any],
+            decoded: str,
+            source: Path,
+            line_number: int,
+        ) -> None:
+            if capture_logical_entries:
+                conn.execute(
+                    "INSERT INTO logical_entries "
+                    "(payload, source_path, line_number) VALUES (?, ?, ?)",
+                    (decoded, str(source), line_number),
+                )
+                return
+            if recent_entries is not None and (
+                str(entry.get("task_id") or "").strip() == recent_task_id
+            ):
+                recent_entries.append((decoded, str(source), line_number))
+
+        prev_source: Path | None = None
+        prev_source_payload_sha256: str | None = None
+        prev_buffer_1001: list[bytes] = []
+        max_ts_std: str | None = None
+        max_ts_old: str | None = None
+
+        for source_idx, source in enumerate(sources):
             current_hasher = hashlib.sha256()
-            s_class = classify_source(source)
-            if s_class == "unknown":
+            current_byte_count = 0
+            current_line_count = 0
+            source_class = classify_source(source)
+            if source_class == "unknown":
                 raise RuntimeError(f"Unknown source format: {source.name}")
 
-            if s_class == "legacy_ts_std":
-                ts = extract_timestamp_from_name(source.name)
-                if ts:
-                    if max_ts_std is not None and ts <= max_ts_std:
-                        raise RuntimeError(f"Strict name sequence violation: {source.name} is out of chronological order")
-                    max_ts_std = ts
-            elif s_class == "legacy_ts_old":
-                ts = extract_timestamp_from_name(source.name)
-                if ts:
-                    if max_ts_old is not None and ts <= max_ts_old:
-                        raise RuntimeError(f"Strict name sequence violation: {source.name} is out of chronological order")
-                    max_ts_old = ts
+            if source_class == "legacy_ts_std":
+                timestamp = extract_timestamp_from_name(source.name)
+                if timestamp:
+                    if max_ts_std is not None and timestamp <= max_ts_std:
+                        raise RuntimeError(
+                            f"Strict name sequence violation: {source.name} "
+                            "is out of chronological order"
+                        )
+                    max_ts_std = timestamp
+            elif source_class == "legacy_ts_old":
+                timestamp = extract_timestamp_from_name(source.name)
+                if timestamp:
+                    if max_ts_old is not None and timestamp <= max_ts_old:
+                        raise RuntimeError(
+                            f"Strict name sequence violation: {source.name} "
+                            "is out of chronological order"
+                        )
+                    max_ts_old = timestamp
 
-            # Verify file type and lock stability
-            fd = os.open(source, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0))
-            fd_closed = False
+            descriptor = os.open(
+                source,
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+            )
             try:
-                fd_stat = os.fstat(fd)
-                if not stat.S_ISREG(fd_stat.st_mode):
+                descriptor_stat = os.fstat(descriptor)
+                if not stat.S_ISREG(descriptor_stat.st_mode):
                     raise RuntimeError(f"Source is not a regular file: {source}")
                 path_stat_before = source.lstat()
-                if stat.S_ISLNK(path_stat_before.st_mode) or path_stat_before.st_dev != fd_stat.st_dev or path_stat_before.st_ino != fd_stat.st_ino:
+                if (
+                    stat.S_ISLNK(path_stat_before.st_mode)
+                    or path_stat_before.st_dev != descriptor_stat.st_dev
+                    or path_stat_before.st_ino != descriptor_stat.st_ino
+                ):
                     raise RuntimeError(f"Source is a symlink or changed: {source}")
+                file_obj, raw_sha256, raw_byte_count = (
+                    _snapshot_activity_source_descriptor(
+                        descriptor,
+                        source=source,
+                        expected_size=descriptor_stat.st_size,
+                    )
+                )
+                snapshot = _ActivitySourceSnapshot(
+                    path=source,
+                    st_dev=descriptor_stat.st_dev,
+                    st_ino=descriptor_stat.st_ino,
+                    st_size=descriptor_stat.st_size,
+                    st_mtime_ns=descriptor_stat.st_mtime_ns,
+                    raw_sha256=raw_sha256,
+                )
 
-                size_before = fd_stat.st_size
-                mtime_ns_before = fd_stat.st_mtime_ns
-
-                file_obj = os.fdopen(fd, "rb")
-                fd_closed = True
                 try:
-                    if source.suffix == ".gz":
-                        try:
-                            gzip_file = gzip.GzipFile(fileobj=file_obj, mode="rb")
-                            binary_stream = gzip_file
-                        except Exception as exc:
-                            raise RuntimeError(f"Failed to open gzip source {source}: {exc}")
-                    else:
-                        binary_stream = file_obj
-
+                    binary_stream = (
+                        gzip.GzipFile(fileobj=file_obj, mode="rb")
+                        if source.suffix == ".gz"
+                        else file_obj
+                    )
                     line_number = 0
                     current_buffer_1001: list[bytes] = []
                     active_source = source.resolve() == log_path.resolve()
@@ -2544,227 +3314,508 @@ def _stream_logical_activity_unlocked(
                         first_line = binary_stream.readline()
                         if first_line:
                             try:
-                                first_entry = json.loads(
+                                first_entry = strict_activity_json_loads(
                                     first_line.decode("utf-8").strip()
                                 )
-                            except (UnicodeError, json.JSONDecodeError):
+                            except (
+                                UnicodeError,
+                                json.JSONDecodeError,
+                                DuplicateActivityJSONKeyError,
+                            ):
                                 first_entry = None
                             if _is_activity_lineage_head(first_entry):
                                 line_number = 1
                             else:
                                 binary_stream.seek(first_position)
 
-                    # Buffer the first 1001 lines of the current file
+                    buffer_first_line_number = line_number + 1
                     while True:
                         line = binary_stream.readline()
                         if not line:
                             break
                         line_number += 1
+                        current_line_count += 1
+                        current_byte_count += len(line)
                         current_hasher.update(line)
                         current_buffer_1001.append(line)
                         if len(current_buffer_1001) == 1001:
                             break
 
-                    # Check for overlaps using prefix/suffix buffers of 1001 lines
                     should_collapse = False
                     overlap_len = 0
-                    max_check = min(len(prev_buffer_1001), len(current_buffer_1001))
-                    for k in (999, 1000, 1001):
-                        if k <= max_check:
-                            if current_buffer_1001[:k] == prev_buffer_1001[-k:]:
-                                overlap_len = k
-
-                    if prev_source is not None:
+                    max_check = min(
+                        len(prev_buffer_1001), len(current_buffer_1001)
+                    )
+                    for count in (999, 1000, 1001):
                         if (
-                            prev_source.name == "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
-                            and source.name == "ai-activity-log.jsonl-2026-05-24T1239Z.gz"
+                            count <= max_check
+                            and current_buffer_1001[:count]
+                            == prev_buffer_1001[-count:]
                         ):
-                            if overlap_len != 999:
-                                raise RuntimeError(f"Invalid overlap length {overlap_len} between {prev_source.name} and {source.name}")
+                            overlap_len = count
+
+                    historical_exception = None
+                    if prev_source is not None:
+                        historical_exception = _historical_activity_overlap_for_pair(
+                            prev_source.name,
+                            source.name,
+                        )
+                    if (
+                        historical_exception is not None
+                        and overlap_len
+                        != historical_exception.overlap_line_count
+                    ):
+                        raise RuntimeError(
+                            f"Invalid overlap length {overlap_len} between "
+                            f"{prev_source.name} and {source.name}"
+                        )
 
                     if overlap_len > 0:
-                        # Reject non-adjacent matching legacy older tail by checking standard/old classification and position
-                        # Here, we strictly iterate the source list once in its exact order and collapse only immediately adjacent sources.
-                        if prev_source is not None:
-                            if overlap_len == 1000:
-                                prev_class = classify_source(prev_source)
-                                curr_class = classify_source(source)
-                                if prev_class == "legacy_ts_std" and curr_class in ("legacy_ts_std", "active"):
-                                    should_collapse = True
-                                elif prev_class == "legacy_ts_old" and curr_class == "legacy_ts_old":
-                                    should_collapse = True
-                                else:
-                                    raise RuntimeError(f"Non-collapsible 1000-line overlap between {prev_source.name} and {source.name}")
-                            elif overlap_len == 999:
-                                # ONLY the pinned historical exception can pass
-                                if (
-                                    prev_source.name == "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
-                                    and source.name == "ai-activity-log.jsonl-2026-05-24T1239Z.gz"
-                                ):
-                                    prev_hash = decompressed_hashes.get(prev_source.name)
-                                    if prev_hash != "8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57":
-                                        raise RuntimeError(f"Invalid predecessor hash for historical exception: {prev_hash}")
-
-                                    overlap_bytes = b"".join(current_buffer_1001[:999])
-                                    if len(overlap_bytes) != 5325808:
-                                        raise RuntimeError(f"Invalid overlap bytes length: {len(overlap_bytes)}")
-                                    overlap_sha = hashlib.sha256(overlap_bytes).hexdigest()
-                                    if overlap_sha != "0a3b56f720a5aa493d8968edfff8e32e0df98e410f6334d6790f10a06019f247":
-                                        raise RuntimeError(f"Invalid overlap SHA-256: {overlap_sha}")
-
-                                    should_collapse = True
-                                else:
-                                    raise RuntimeError(f"Invalid overlap length {overlap_len} between {prev_source.name} and {source.name}")
+                        if prev_source is None:
+                            raise RuntimeError(
+                                f"Overlap detected with no predecessor: {source.name}"
+                            )
+                        if overlap_len == 1000:
+                            previous_class = classify_source(prev_source)
+                            if (
+                                previous_class == "legacy_ts_std"
+                                and source_class in ("legacy_ts_std", "active")
+                            ) or (
+                                previous_class == "legacy_ts_old"
+                                and source_class == "legacy_ts_old"
+                            ):
+                                should_collapse = True
                             else:
-                                raise RuntimeError(f"Invalid overlap length {overlap_len} between {prev_source.name} and {source.name}")
+                                raise RuntimeError(
+                                    "Non-collapsible 1000-line overlap between "
+                                    f"{prev_source.name} and {source.name}"
+                                )
+                        elif (
+                            historical_exception is not None
+                            and overlap_len
+                            == historical_exception.overlap_line_count
+                        ):
+                            if (
+                                prev_source_payload_sha256
+                                != historical_exception.predecessor_payload_sha256
+                            ):
+                                raise RuntimeError(
+                                    "Invalid predecessor hash for historical "
+                                    f"exception: {prev_source_payload_sha256}"
+                                )
+                            overlap_bytes = b"".join(
+                                current_buffer_1001[:overlap_len]
+                            )
+                            if (
+                                len(overlap_bytes)
+                                != historical_exception.overlap_byte_count
+                            ):
+                                raise RuntimeError(
+                                    "Invalid overlap bytes length: "
+                                    f"{len(overlap_bytes)}"
+                                )
+                            overlap_sha256 = hashlib.sha256(
+                                overlap_bytes
+                            ).hexdigest()
+                            if (
+                                overlap_sha256
+                                != historical_exception.overlap_sha256
+                            ):
+                                raise RuntimeError(
+                                    f"Invalid overlap SHA-256: {overlap_sha256}"
+                                )
+                            should_collapse = True
                         else:
-                            raise RuntimeError(f"Overlap detected with no predecessor: {source.name}")
-                    else:
-                        # Check for the explicit mismatch case for a 1000-line candidate (proving exactly 999 of 1000 raw lines are equal)
-                        if len(prev_buffer_1001) >= 1000 and len(current_buffer_1001) >= 1000:
-                            matches = sum(1 for a, b in zip(prev_buffer_1001[-1000:], current_buffer_1001[:1000]) if a == b)
-                            if matches == 999:
-                                raise RuntimeError(f"Invalid overlap: mismatch in 1000-line candidate between {prev_source.name} and {source.name}")
-
-                    # Disk-backed check for non-adjacent older tail matching
-                    if len(current_buffer_1001) >= 1000:
-                        prefix_1000_digest = hashlib.sha256(b"".join(current_buffer_1001[:1000])).hexdigest()
-                        # Query if prefix_1000_digest matches any suffix_1000_digest of an older file (which is NOT the immediate predecessor)
-                        cursor = conn.cursor()
-                        cursor.execute(
-                            "SELECT path FROM file_digests WHERE suffix_digest = ? LIMIT 2",
-                            (prefix_1000_digest,)
+                            raise RuntimeError(
+                                f"Invalid overlap length {overlap_len} between "
+                                f"{prev_source.name} and {source.name}"
+                            )
+                    elif (
+                        len(prev_buffer_1001) >= 1000
+                        and len(current_buffer_1001) >= 1000
+                    ):
+                        matches = sum(
+                            1
+                            for previous_line, current_line in zip(
+                                prev_buffer_1001[-1000:],
+                                current_buffer_1001[:1000],
+                            )
+                            if previous_line == current_line
                         )
-                        while True:
-                            row = cursor.fetchone()
-                            if not row:
-                                break
-                            matched_path = Path(row[0])
-                            if prev_source is not None and (matched_path == prev_source or matched_path.resolve() == prev_source.resolve()):
-                                continue
-                            raise RuntimeError(f"Matching non-adjacent older tail detected: {row[0]} -> {source}")
+                        if matches == 999:
+                            raise RuntimeError(
+                                "Invalid overlap: mismatch in 1000-line candidate "
+                                f"between {prev_source.name} and {source.name}"
+                            )
 
-                    # Setup helper to validate a row and check for duplicates using SQLite
-                    def process_line(raw_line: bytes, l_num: int, is_collapsed_prefix: bool):
+                    if len(current_buffer_1001) >= 1000:
+                        prefix_1000_digest = hashlib.sha256(
+                            b"".join(current_buffer_1001[:1000])
+                        ).hexdigest()
+                        cursor = conn.execute(
+                            "SELECT path FROM file_digests "
+                            "WHERE suffix_digest = ? LIMIT 2",
+                            (prefix_1000_digest,),
+                        )
+                        for (matched_path_raw,) in cursor:
+                            matched_path = Path(matched_path_raw)
+                            if prev_source is not None and (
+                                matched_path == prev_source
+                                or matched_path.resolve() == prev_source.resolve()
+                            ):
+                                continue
+                            raise RuntimeError(
+                                "Matching non-adjacent older tail detected: "
+                                f"{matched_path_raw} -> {source}"
+                            )
+
+                    def process_line(
+                        raw_line: bytes,
+                        current_line_number: int,
+                        *,
+                        is_collapsed_prefix: bool,
+                    ) -> tuple[dict[str, Any], str] | None:
                         if not raw_line.strip():
                             return None
                         try:
                             decoded = raw_line.decode("utf-8", errors="strict")
                         except UnicodeError as exc:
-                            raise RuntimeError(f"Bad UTF-8 in {source}:{l_num}: {exc}")
+                            raise RuntimeError(
+                                f"Bad UTF-8 in {source}:{current_line_number}: {exc}"
+                            ) from exc
                         try:
-                            entry = json.loads(decoded)
+                            entry = strict_activity_json_loads(decoded)
+                        except DuplicateActivityJSONKeyError as exc:
+                            raise RuntimeError(
+                                f"{exc} in {source}:{current_line_number}"
+                            ) from exc
                         except json.JSONDecodeError as exc:
-                            raise RuntimeError(f"Bad JSON in {source}:{l_num}: {exc}")
+                            raise RuntimeError(
+                                f"Bad JSON in {source}:{current_line_number}: {exc}"
+                            ) from exc
                         if not isinstance(entry, dict):
-                            raise RuntimeError(f"activity audit row is not an object: {source}:{l_num}")
+                            raise RuntimeError(
+                                "activity audit row is not an object: "
+                                f"{source}:{current_line_number}"
+                            )
                         if _is_activity_lineage_head(entry):
                             raise RuntimeError(
-                                f"activity lineage-head control record is not allowed in payload: {source}:{l_num}"
+                                "activity lineage-head control record is not "
+                                f"allowed in payload: {source}:{current_line_number}"
                             )
 
                         event_id = str(entry.get("event_id") or "").strip()
                         if event_id:
-                            # SQLite-based within-source uniqueness check (O(1) memory)
-                            cursor = conn.cursor()
-                            cursor.execute("SELECT 1 FROM source_events WHERE source_idx = ? AND event_id = ?", (s_idx, event_id))
-                            if cursor.fetchone():
-                                raise RuntimeError(f"duplicate activity event_id in {source}: {event_id}")
-                            cursor.execute("INSERT INTO source_events (source_idx, event_id) VALUES (?, ?)", (s_idx, event_id))
-
+                            try:
+                                conn.execute(
+                                    "INSERT INTO source_events "
+                                    "(source_idx, event_id) VALUES (?, ?)",
+                                    (source_idx, event_id),
+                                )
+                            except sqlite3.IntegrityError as exc:
+                                raise RuntimeError(
+                                    f"duplicate activity event_id in {source}: "
+                                    f"{event_id}"
+                                ) from exc
                             digest = _canonical_json_sha256(entry)
                             if not is_collapsed_prefix:
-                                # SQLite-based unique event ID check
-                                cursor.execute("SELECT digest FROM seen_events WHERE event_id = ?", (event_id,))
-                                row = cursor.fetchone()
-                                if row:
-                                    detail = "payload mismatch" if row[0] != digest else "duplicate across sources"
-                                    raise RuntimeError(f"activity event_id {detail}: {event_id}")
-                                cursor.execute("INSERT INTO seen_events (event_id, digest) VALUES (?, ?)", (event_id, digest))
-                        return entry
+                                try:
+                                    conn.execute(
+                                        "INSERT INTO seen_events "
+                                        "(event_id, digest) VALUES (?, ?)",
+                                        (event_id, digest),
+                                    )
+                                except sqlite3.IntegrityError as exc:
+                                    row = conn.execute(
+                                        "SELECT digest FROM seen_events "
+                                        "WHERE event_id = ?",
+                                        (event_id,),
+                                    ).fetchone()
+                                    detail = (
+                                        "payload mismatch"
+                                        if row is None or row[0] != digest
+                                        else "duplicate across sources"
+                                    )
+                                    raise RuntimeError(
+                                        f"activity event_id {detail}: {event_id}"
+                                    ) from exc
+                        return entry, decoded
 
-                    # Process the buffered prefix (up to 1001 lines)
-                    for idx, raw_line in enumerate(current_buffer_1001):
-                        is_col = should_collapse and (idx < overlap_len)
-                        entry = process_line(raw_line, idx + 1, is_collapsed_prefix=is_col)
-                        if entry is not None and not is_col:
-                            yield entry, source, idx + 1
+                    for index, raw_line in enumerate(current_buffer_1001):
+                        is_collapsed = should_collapse and index < overlap_len
+                        physical_line_number = buffer_first_line_number + index
+                        processed = process_line(
+                            raw_line,
+                            physical_line_number,
+                            is_collapsed_prefix=is_collapsed,
+                        )
+                        if processed is not None and not is_collapsed:
+                            entry, decoded = processed
+                            capture_entry(
+                                entry,
+                                decoded,
+                                source,
+                                physical_line_number,
+                            )
+                    conn.commit()
 
                     sliding_window_1001 = list(current_buffer_1001)
-
-                    # Stream and process the rest of the lines
                     while True:
                         line = binary_stream.readline()
                         if not line:
                             break
                         line_number += 1
+                        current_line_count += 1
+                        current_byte_count += len(line)
                         current_hasher.update(line)
                         sliding_window_1001.append(line)
                         if len(sliding_window_1001) > 1001:
                             sliding_window_1001.pop(0)
+                        processed = process_line(
+                            line,
+                            line_number,
+                            is_collapsed_prefix=False,
+                        )
+                        if processed is not None:
+                            entry, decoded = processed
+                            capture_entry(entry, decoded, source, line_number)
+                        if current_line_count % 1000 == 0:
+                            conn.commit()
 
-                        entry = process_line(line, line_number, is_collapsed_prefix=False)
-                        if entry is not None:
-                            yield entry, source, line_number
-
-                    # Record prefix and suffix digests for non-adjacent overlap check
                     if len(current_buffer_1001) >= 1000:
-                        prefix_1000_digest = hashlib.sha256(b"".join(current_buffer_1001[:1000])).hexdigest()
-                        suffix_1000_digest = hashlib.sha256(b"".join(sliding_window_1001[-1000:])).hexdigest()
+                        prefix_1000_digest = hashlib.sha256(
+                            b"".join(current_buffer_1001[:1000])
+                        ).hexdigest()
+                        suffix_1000_digest = hashlib.sha256(
+                            b"".join(sliding_window_1001[-1000:])
+                        ).hexdigest()
                         conn.execute(
-                            "INSERT INTO file_digests (path, prefix_digest, suffix_digest) VALUES (?, ?, ?)",
-                            (str(source), prefix_1000_digest, suffix_1000_digest)
+                            "INSERT INTO file_digests "
+                            "(path, prefix_digest, suffix_digest) "
+                            "VALUES (?, ?, ?)",
+                            (
+                                str(source),
+                                prefix_1000_digest,
+                                suffix_1000_digest,
+                            ),
                         )
 
-                    # Trigger collapse diagnostic callback if collapsed
                     if should_collapse:
-                        digest = hashlib.sha256(b"".join(current_buffer_1001[:overlap_len])).hexdigest()
-                        bytes_count = sum(len(line) for line in current_buffer_1001[:overlap_len])
-                        if on_collapse:
-                            on_collapse(prev_source, source, overlap_len, bytes_count, digest)
+                        collapsed_bytes = b"".join(
+                            current_buffer_1001[:overlap_len]
+                        )
+                        conn.execute(
+                            "INSERT INTO collapse_events "
+                            "(predecessor_path, successor_path, line_count, "
+                            "byte_count, sha256) VALUES (?, ?, ?, ?, ?)",
+                            (
+                                str(prev_source) if prev_source is not None else None,
+                                str(source),
+                                overlap_len,
+                                len(collapsed_bytes),
+                                hashlib.sha256(collapsed_bytes).hexdigest(),
+                            ),
+                        )
 
-                    # Commit SQLite transaction at the end of each source file for batch optimization
-                    conn.commit()
-
-                    source_hash = current_hasher.hexdigest()
-                    decompressed_hashes[source.name] = source_hash
-
-                    if source.name == "ai-activity-log.jsonl-2026-05-24T1237Z.gz":
-                        if source_hash != "8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57":
-                            raise RuntimeError(f"Invalid predecessor hash for historical exception: {source_hash}")
-                    elif source.name == "ai-activity-log.jsonl-2026-05-24T1239Z.gz":
-                        if source_hash != "da6a102178c82fb4eca8d0794ed5b419f0c97770e0ad63542dde0033e7efa3ff":
-                            raise RuntimeError(f"Invalid successor hash for historical exception: {source_hash}")
-
-                    # Store suffix of current file as the single predecessor buffer in RAM
+                    source_payload_sha256 = current_hasher.hexdigest()
+                    _validate_historical_activity_source(
+                        source,
+                        raw_sha256=raw_sha256,
+                        raw_byte_count=raw_byte_count,
+                        payload_sha256=source_payload_sha256,
+                        payload_byte_count=current_byte_count,
+                        payload_line_count=current_line_count,
+                    )
                     prev_source = source
+                    prev_source_payload_sha256 = source_payload_sha256
                     prev_buffer_1001 = list(sliding_window_1001)
-
+                    conn.commit()
                 except (EOFError, gzip.BadGzipFile, OSError) as exc:
-                    raise RuntimeError(f"Truncated or corrupt gzip/file {source}: {exc}")
+                    raise RuntimeError(
+                        f"Truncated or corrupt gzip/file {source}: {exc}"
+                    ) from exc
                 finally:
                     file_obj.close()
 
-                # Verify inode and mutation metadata post-read
                 path_stat_after = source.lstat()
-                if stat.S_ISLNK(path_stat_after.st_mode) or path_stat_after.st_dev != fd_stat.st_dev or path_stat_after.st_ino != fd_stat.st_ino:
+                if (
+                    stat.S_ISLNK(path_stat_after.st_mode)
+                    or path_stat_after.st_dev != snapshot.st_dev
+                    or path_stat_after.st_ino != snapshot.st_ino
+                ):
                     raise RuntimeError(f"Source replaced during read: {source}")
-                if path_stat_after.st_size != size_before or path_stat_after.st_mtime_ns != mtime_ns_before:
-                    raise RuntimeError(f"Source mutated or truncated during read: {source}")
+                if (
+                    path_stat_after.st_size != snapshot.st_size
+                    or path_stat_after.st_mtime_ns != snapshot.st_mtime_ns
+                ):
+                    raise RuntimeError(
+                        f"Source mutated or truncated during read: {source}"
+                    )
+                snapshots.append(snapshot)
+            finally:
+                os.close(descriptor)
 
-            except Exception:
-                if not fd_closed:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
-                raise
+        _assert_activity_sources_stable_unlocked(log_path, sources, snapshots)
+        if recent_entries is not None:
+            conn.executemany(
+                "INSERT INTO logical_entries "
+                "(payload, source_path, line_number) VALUES (?, ?, ?)",
+                recent_entries,
+            )
+        conn.commit()
+    except BaseException:
+        conn.close()
+        raise
+    return conn
+
+
+def _replay_logical_activity_snapshot(
+    conn: sqlite3.Connection,
+    on_collapse: Callable[[Path | None, Path, int, int, str], None] | None,
+) -> Generator[tuple[dict[str, Any], Path, int], None, None]:
+    if on_collapse is not None:
+        for row in conn.execute(
+            "SELECT predecessor_path, successor_path, line_count, "
+            "byte_count, sha256 FROM collapse_events ORDER BY sequence"
+        ):
+            predecessor = Path(row[0]) if row[0] is not None else None
+            on_collapse(predecessor, Path(row[1]), row[2], row[3], row[4])
+    for payload, source_path, line_number in conn.execute(
+        "SELECT payload, source_path, line_number "
+        "FROM logical_entries ORDER BY sequence"
+    ):
+        entry = strict_activity_json_loads(payload)
+        if not isinstance(entry, dict):
+            raise RuntimeError("validated activity snapshot row is not an object")
+        yield entry, Path(source_path), line_number
+
+
+def validated_activity_event_digests_unlocked(
+    log_path: Path,
+    event_ids: Iterable[str],
+) -> dict[str, str]:
+    """Validate all history and return digests only for requested event IDs.
+
+    The caller must hold the activity audit lock. Every source and event is
+    still parsed and validated; only the redundant logical replay copy is
+    omitted, and Python memory is bounded by the small requested ID set.
+    """
+
+    requested: set[str] = set()
+    for event_id in event_ids:
+        if (
+            not isinstance(event_id, str)
+            or not event_id
+            or event_id != event_id.strip()
+        ):
+            raise RuntimeError("requested activity event_id is not canonical")
+        requested.add(event_id)
+    conn = _build_logical_activity_snapshot_unlocked(
+        log_path,
+        capture_logical_entries=False,
+    )
+    try:
+        result: dict[str, str] = {}
+        for event_id in requested:
+            row = conn.execute(
+                "SELECT digest FROM seen_events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            if row is not None:
+                result[event_id] = str(row[0])
+        return result
     finally:
         conn.close()
-        try:
-            os.unlink(db_path)
-        except OSError:
-            pass
+
+
+def _resolved_activity_log_path(log_path: Path) -> Path:
+    requested_log_path = log_path.expanduser()
+    if requested_log_path.is_symlink():
+        raise RuntimeError(
+            f"activity audit source leaf cannot be a symlink: {requested_log_path}"
+        )
+    # Resolve only the stable parent.  Resolving the checked leaf separately
+    # would follow a symlink installed between ``is_symlink`` and ``resolve``;
+    # all later O_NOFOLLOW/inode checks must continue to address the requested
+    # leaf name so such a replacement fails closed.
+    return requested_log_path.parent.resolve() / requested_log_path.name
+
+
+def validated_recent_task_activity(
+    log_path: Path,
+    task_id: str,
+    *,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    """Return recent task rows only after validating all logical history.
+
+    The validation pass retains at most ``limit`` matching rows in Python
+    memory and exposes none until source ordering, identity, content, JSON,
+    and overlap checks complete under the shared activity lock.
+    """
+
+    if (
+        not isinstance(task_id, str)
+        or not task_id
+        or task_id != task_id.strip()
+        or not isinstance(limit, int)
+        or limit <= 0
+    ):
+        raise RuntimeError("recent task activity request is not canonical")
+    resolved_log_path = _resolved_activity_log_path(log_path)
+    with activity_audit_lock_file(resolved_log_path, shared=True):
+        snapshot = _build_logical_activity_snapshot_unlocked(
+            resolved_log_path,
+            capture_logical_entries=False,
+            recent_task_id=task_id,
+            recent_limit=limit,
+        )
+    try:
+        return [
+            entry
+            for entry, _source, _line_number in _replay_logical_activity_snapshot(
+                snapshot,
+                None,
+            )
+        ]
+    finally:
+        snapshot.close()
+
+
+def stream_logical_activity(
+    log_path: Path,
+    on_collapse: Callable[[Path | None, Path, int, int, str], None] | None = None,
+) -> Generator[tuple[dict[str, Any], Path, int], None, None]:
+    """Replay a validation-complete, bounded-disk logical activity snapshot.
+
+    The first row and every collapse callback are withheld until all sources
+    pass ordering, JSON, duplicate, identity, metadata, and before/after raw
+    digest checks under the shared activity lock. Early stop therefore cannot
+    turn incomplete source validation into apparent success.
+    """
+
+    log_path = _resolved_activity_log_path(log_path)
+    snapshot: sqlite3.Connection | None = None
+    try:
+        with activity_audit_lock_file(log_path, shared=True):
+            snapshot = _build_logical_activity_snapshot_unlocked(log_path)
+        yield from _replay_logical_activity_snapshot(snapshot, on_collapse)
+    finally:
+        if snapshot is not None:
+            snapshot.close()
+
+
+def _stream_logical_activity_unlocked(
+    log_path: Path,
+    on_collapse: Callable[[Path | None, Path, int, int, str], None] | None = None,
+) -> Generator[tuple[dict[str, Any], Path, int], None, None]:
+    """Compatibility path for callers that already hold the activity lock."""
+
+    snapshot = _build_logical_activity_snapshot_unlocked(log_path)
+    try:
+        yield from _replay_logical_activity_snapshot(snapshot, on_collapse)
+    finally:
+        snapshot.close()
 
 
 def append_activity_log_entries_unlocked(
@@ -3101,53 +4152,7 @@ def task_brief_path(task_id: str | None) -> Path:
 
 def _recent_task_activity(config: dict[str, Any], task_id: str, *, limit: int = 6) -> list[dict[str, Any]]:
     path = config_path(config, "activity_log")
-    with activity_audit_lock_file(path, shared=True, nonblocking=False):
-        if not path.exists():
-            return []
-
-        entries: list[dict[str, Any]] = []
-        chunk_size = 64 * 1024
-        max_scan_bytes = 16 * 1024 * 1024
-        scanned = 0
-
-        with path.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            position = handle.tell()
-            buffer = b""
-
-            while position > 0 and len(entries) < limit and scanned < max_scan_bytes:
-                read_size = min(chunk_size, position)
-                position -= read_size
-                handle.seek(position)
-                chunk = handle.read(read_size)
-                scanned += read_size
-                buffer = chunk + buffer
-                lines = buffer.splitlines()
-
-                if position > 0:
-                    buffer = lines[0] if lines else buffer
-                    complete_lines = lines[1:]
-                else:
-                    buffer = b""
-                    complete_lines = lines
-
-                for raw_line in reversed(complete_lines):
-                    line = raw_line.decode("utf-8", errors="ignore").strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = json.loads(line)
-                    except json.JSONDecodeError:
-                        # Ignore a partially-written tail line rather than stalling dispatch.
-                        continue
-                    if str(entry.get("task_id") or "").strip() != task_id:
-                        continue
-                    entries.append(entry)
-                    if len(entries) >= limit:
-                        break
-
-        entries.reverse()
-        return entries
+    return validated_recent_task_activity(path, task_id, limit=limit)
 
 
 def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None:

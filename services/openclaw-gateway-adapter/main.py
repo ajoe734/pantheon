@@ -51,6 +51,7 @@ import uuid
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
@@ -1451,11 +1452,89 @@ def _delegated_codex_text(value: Any) -> str:
     return ""
 
 
+class _PersonaOpinionInvocationConflict(RuntimeError):
+    pass
+
+
+class _PersonaOpinionInvocationInDoubt(RuntimeError):
+    pass
+
+
+def _invoke_persona_opinion_idempotently(
+    req: AssistantProviderInvokeRequest,
+    *,
+    idempotency_key: str,
+    invoke_fn: Any,
+) -> tuple[int, Dict[str, Any]]:
+    """Fence and replay an exact governed Persona provider attempt.
+
+    The running claim is committed before the upstream CLI is called.  If the
+    adapter dies after OpenClaw has accepted the call but before the terminal
+    response is committed, a restart returns ``in_doubt`` and never calls the
+    provider again.  This deliberately prefers an honest missing opinion over
+    duplicate provider work.
+    """
+
+    fingerprint = hashlib.sha256(
+        json.dumps(req.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    _OPENCLAW_AGENT_IDEMPOTENCY_DB.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(_OPENCLAW_AGENT_IDEMPOTENCY_DB), timeout=10.0) as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS persona_opinion_invocation_replays (
+                idempotency_key TEXT PRIMARY KEY,
+                request_fingerprint TEXT NOT NULL,
+                state TEXT NOT NULL,
+                http_status INTEGER,
+                response_json TEXT,
+                claimed_at TEXT NOT NULL,
+                completed_at TEXT
+            )
+        """)
+        row = connection.execute(
+            "SELECT request_fingerprint,state,http_status,response_json "
+            "FROM persona_opinion_invocation_replays WHERE idempotency_key=?",
+            (idempotency_key,),
+        ).fetchone()
+        if row is not None:
+            if row[0] != fingerprint:
+                raise _PersonaOpinionInvocationConflict(
+                    "Idempotency-Key was already used for different Persona invocation content"
+                )
+            if row[1] == "completed" and row[2] is not None and row[3]:
+                return int(row[2]), json.loads(str(row[3]))
+            raise _PersonaOpinionInvocationInDoubt(
+                "The exact provider attempt was already claimed and has no terminal replay; duplicate invocation is fenced"
+            )
+        connection.execute(
+            "INSERT INTO persona_opinion_invocation_replays "
+            "(idempotency_key,request_fingerprint,state,claimed_at) VALUES (?,?, 'running', ?)",
+            (idempotency_key, fingerprint, datetime.now(timezone.utc).isoformat()),
+        )
+        connection.commit()
+
+    payload = invoke_fn()
+    response_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    with sqlite3.connect(str(_OPENCLAW_AGENT_IDEMPOTENCY_DB), timeout=10.0) as connection:
+        updated = connection.execute(
+            "UPDATE persona_opinion_invocation_replays SET state='completed',http_status=200,"
+            "response_json=?,completed_at=? WHERE idempotency_key=? AND request_fingerprint=? AND state='running'",
+            (response_json, datetime.now(timezone.utc).isoformat(), idempotency_key, fingerprint),
+        ).rowcount
+        if updated != 1:
+            raise _PersonaOpinionInvocationInDoubt(
+                "Provider returned but its durable invocation claim could not be finalized"
+            )
+        connection.commit()
+    return 200, payload
+
+
 @app.post("/api/openclaw-adapter/assistant/providers/openclaw/invoke")
 def invoke_openclaw_provider(
     req: AssistantProviderInvokeRequest,
     x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
     x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ) -> JSONResponse:
     """Invoke the OpenClaw gateway agent as the assistant provider.
 
@@ -1478,6 +1557,15 @@ def invoke_openclaw_provider(
         metadata.setdefault("trace_id", x_trace_id)
     mode = str(req.mode or "user").strip().lower() or "user"
     if req.persona_admission is not None:
+        if not str(idempotency_key or "").strip():
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "status": "provider_error",
+                    "error_code": "PERSONA_OPINION_IDEMPOTENCY_REQUIRED",
+                    "message": "Idempotency-Key is required for governed Persona opinion invocation.",
+                },
+            )
         if mode != "user":
             return JSONResponse(
                 status_code=422,
@@ -1537,7 +1625,7 @@ def invoke_openclaw_provider(
                 ),
             },
         )
-    try:
+    def _invoke_upstream() -> Dict[str, Any]:
         invoke_kwargs: Dict[str, Any] = {
             "mode": mode,
             "context_pack": req.context_pack or {},
@@ -1549,12 +1637,16 @@ def invoke_openclaw_provider(
         if req.agent_id is not None:
             invoke_kwargs["agent_id"] = req.agent_id
         if req.persona_admission is not None:
-            invoke_kwargs["session_id"] = str(uuid.uuid4())
-        result = _OPENCLAW_AGENT_PROVIDER.invoke(req.prompt, **invoke_kwargs)
-    except GatewayOpenClawProviderError as exc:
-        return JSONResponse(
-            status_code=200,
-            content={
+            # A deterministic session identity makes the upstream attempt
+            # auditable.  The invocation ledger below fences a crash/in-doubt
+            # attempt instead of invoking the provider a second time.
+            invoke_kwargs["session_id"] = "pint-" + hashlib.sha256(
+                str(idempotency_key).encode("utf-8")
+            ).hexdigest()[:32]
+        try:
+            result = _OPENCLAW_AGENT_PROVIDER.invoke(req.prompt, **invoke_kwargs)
+        except GatewayOpenClawProviderError as exc:
+            return {
                 "status": "ok",
                 "data": {
                     "provider": "openclaw",
@@ -1567,15 +1659,33 @@ def invoke_openclaw_provider(
                     },
                     "redaction": {"provider_invocation": {"redacted_fields": 0}},
                 },
-            },
-        )
-    return JSONResponse(
-        status_code=200,
-        content={
+            }
+        return {
             "status": "ok",
             "data": result.to_dict(),
-        },
-    )
+        }
+
+    if req.persona_admission is not None:
+        try:
+            status_code, payload = _invoke_persona_opinion_idempotently(
+                req,
+                idempotency_key=str(idempotency_key).strip(),
+                invoke_fn=_invoke_upstream,
+            )
+        except _PersonaOpinionInvocationConflict as exc:
+            return JSONResponse(status_code=409, content={
+                "status": "provider_error",
+                "error_code": "PERSONA_OPINION_IDEMPOTENCY_CONFLICT",
+                "message": str(exc),
+            })
+        except _PersonaOpinionInvocationInDoubt as exc:
+            return JSONResponse(status_code=409, content={
+                "status": "provider_error",
+                "error_code": "PERSONA_OPINION_INVOCATION_IN_DOUBT",
+                "message": str(exc),
+            })
+        return JSONResponse(status_code=status_code, content=payload)
+    return JSONResponse(status_code=200, content=_invoke_upstream())
 
 
 @app.post("/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream")

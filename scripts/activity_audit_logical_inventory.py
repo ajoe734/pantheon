@@ -30,10 +30,12 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 from common import (
+    DuplicateActivityJSONKeyError,
     activity_audit_lock_file,
     activity_audit_source_paths_unlocked,
     stream_logical_activity,
     classify_source,
+    strict_activity_json_loads,
     _canonical_json_sha256,
 )
 
@@ -173,7 +175,11 @@ def scan_physical_sources(sources: list[Path], conn: sqlite3.Connection, status_
                                 continue
 
                             try:
-                                entry = json.loads(stripped)
+                                entry = strict_activity_json_loads(stripped)
+                            except DuplicateActivityJSONKeyError as exc:
+                                raise RuntimeError(
+                                    f"{exc} in {source}:{line_count}"
+                                ) from exc
                             except json.JSONDecodeError as exc:
                                 raise RuntimeError(f"Bad JSON in {source}:{line_count}: {exc}")
 
@@ -369,6 +375,14 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                         logical_event_id_lines += 1
                         conn.execute("INSERT OR IGNORE INTO logical_events (event_id) VALUES (?)", (event_id,))
             conn.commit()
+
+            final_sources = activity_audit_source_paths_unlocked(log_file)
+            if [str(source) for source in final_sources] != [
+                str(source) for source in sources
+            ]:
+                raise RuntimeError(
+                    "activity source set changed between physical and logical passes"
+                )
 
             # Dynamic chain resolution from 1450Z -> ... -> active
             prev_to_fold = {f["prev_source"]: f for f in folds if f["prev_source"]}
