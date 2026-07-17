@@ -393,6 +393,19 @@ class StatusRootRoutingTests(unittest.TestCase):
             )
             self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
 
+            subprocess.run(["git", "add", "ai-task-archive/tasks/CENTRAL-ROOT-001.json"], cwd=central, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "commit archived task"], cwd=central, check=True)
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys, pathlib; sys.path.append('.orchestrator'); import task_archive; task_archive.STATUS_ROOT=pathlib.Path(sys.argv[1]); task_archive.STATUS_FILE=task_archive.STATUS_ROOT/'ai-status.json'; task_archive.ARCHIVE_DIR=task_archive.STATUS_ROOT/'ai-task-archive'; task_archive.ARCHIVE_TASKS_DIR=task_archive.ARCHIVE_DIR/'tasks'; task_archive.ARCHIVE_INDEX_FILE=task_archive.ARCHIVE_DIR/'index.json'; task_archive.rebuild_archive_index()",
+                    str(central),
+                ],
+                cwd=worktree,
+                check=True,
+            )
+
             central_state = json.loads((central / "ai-status.json").read_text(encoding="utf-8"))
             self.assertIsNone(ai_status.get_task(central_state, "CENTRAL-ROOT-001"))
             archived = json.loads(

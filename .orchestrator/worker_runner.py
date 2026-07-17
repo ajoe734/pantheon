@@ -101,6 +101,8 @@ def _expected_coordination_root(
 
 
 def _validate_directory_no_symlinks_recursive(directory: Path, label: str) -> None:
+    if directory.is_symlink():
+        raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} directory cannot be a symlink: {directory}")
     if not directory.exists() or not directory.is_dir():
         return
     for dirpath, dirnames, filenames in os.walk(directory):
@@ -189,6 +191,7 @@ def validate_coordination_root(
 
     _validate_directory_no_symlinks_recursive(root / "ai-task-archive", "task archive")
     _validate_directory_no_symlinks_recursive(root / "archive" / "logs", "activity rotation archive")
+    _validate_directory_no_symlinks_recursive(root / ".orchestrator" / "logs" / "activity-log-archive", "legacy activity archive")
 
     os.environ["PANTHEON_STATUS_ROOT"] = str(root)
     return root
@@ -321,6 +324,16 @@ def main(argv: list[str] | None = None) -> int:
         status["error"] = f"{type(exc).__name__}: {exc}"
         if terminating_signal is not None:
             status["signal"] = terminating_signal
+        if child is not None and child.poll() is None:
+            try:
+                child.terminate()
+                try:
+                    child.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait()
+            except OSError:
+                pass
         try:
             write_json(status_path, status)
         except OSError:

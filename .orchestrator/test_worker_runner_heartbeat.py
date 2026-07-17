@@ -256,6 +256,47 @@ class TestCoordinationRootValidation(unittest.TestCase):
             self.assertEqual(runner_status["status"], "failed")
             self.assertEqual(runner_status["exit_code"], 1)
 
+    @mock.patch("time.sleep")
+    def test_child_cleanup_on_exception(self, mock_sleep):
+        mock_sleep.side_effect = KeyboardInterrupt()
+
+        with tempfile.TemporaryDirectory(prefix="worker-runner-cleanup-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            worktree = root / "task-worktree"
+            _init_repo(central)
+            _init_repo(worktree)
+            _write_status(central)
+
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+
+            test_args = [
+                "worker_runner.py",
+                "--run-id", "test-run",
+                "--heartbeat-path", str(heartbeat),
+                "--status-path", str(status),
+                "--heartbeat-interval-seconds", "0.1",
+                "--", "python", "-c", "pass"
+            ]
+
+            mock_child = mock.Mock()
+            mock_child.pid = 99999
+            mock_child.poll.return_value = None
+
+            with mock.patch.object(wr, "_git_toplevel", return_value=central):
+                with mock.patch("subprocess.Popen", return_value=mock_child):
+                    with mock.patch("sys.argv", test_args):
+                        with mock.patch.dict(os.environ, {
+                            "PANTHEON_STATUS_ROOT": str(central),
+                            "PANTHEON_WORKTREE_ROOT": str(worktree),
+                            "ORCH_WORKSPACE_PATH": str(worktree),
+                        }, clear=True):
+                            with self.assertRaises(KeyboardInterrupt):
+                                wr.main()
+
+            mock_child.terminate.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

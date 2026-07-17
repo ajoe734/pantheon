@@ -243,6 +243,8 @@ def _existing_path_is_symlink(path: Path) -> bool:
 
 
 def _validate_directory_no_symlinks_recursive(directory: Path, label: str) -> None:
+    if directory.is_symlink():
+        raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} directory cannot be a symlink: {directory}")
     if not directory.exists() or not directory.is_dir():
         return
     for dirpath, dirnames, filenames in os.walk(directory):
@@ -343,6 +345,7 @@ def validate_status_root_binding() -> None:
 
     _validate_directory_no_symlinks_recursive(root / "ai-task-archive", "task archive")
     _validate_directory_no_symlinks_recursive(root / "archive" / "logs", "activity rotation archive")
+    _validate_directory_no_symlinks_recursive(root / ".orchestrator" / "logs" / "activity-log-archive", "legacy activity archive")
 
     assert_task_archive_root_binding()
 
@@ -4886,13 +4889,21 @@ def main(argv: list[str]) -> int:
         # A killed terminal transition may leave durable archive/activity
         # outboxes. Complete those writer transactions under EX before taking
         # the normal shared read snapshot.
+        lock = canonical_task_state_lock(shared=False, nonblocking=True)
+        acquired = False
         try:
-            with canonical_task_state_lock(shared=False, nonblocking=True):
+            lock.__enter__()
+            acquired = True
+        except BlockingIOError:
+            pass
+
+        if acquired:
+            try:
                 recovery_state = load_state()
                 recover_status_archive_outbox(recovery_state)
                 recover_status_activity_outbox(recovery_state)
-        except BlockingIOError:
-            pass
+            finally:
+                lock.__exit__(None, None, None)
         with canonical_task_state_lock(shared=True):
             state = load_state()
             read_only_commands[command](state, args)

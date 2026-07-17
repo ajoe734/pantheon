@@ -251,9 +251,27 @@ def recent_terminal_summaries(limit: int = DEFAULT_RECENT_LIMIT) -> list[dict[st
 
 
 def _rebuild_archive_index_locked(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -> dict[str, Any]:
+    import subprocess
     summaries: list[dict[str, Any]] = []
     if ARCHIVE_TASKS_DIR.exists():
-        for path in sorted(ARCHIVE_TASKS_DIR.glob("*.json")):
+        try:
+            res = subprocess.run(
+                ["git", "ls-tree", "-r", "--name-only", "HEAD", "ai-task-archive/tasks/"],
+                cwd=STATUS_ROOT,
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if res.returncode == 0:
+                committed_relative_paths = [line.strip() for line in res.stdout.splitlines() if line.strip() and line.strip().endswith(".json")]
+                tracked_paths = [STATUS_ROOT / p for p in committed_relative_paths]
+                tracked_paths = [p for p in tracked_paths if p.exists()]
+            else:
+                tracked_paths = sorted(ARCHIVE_TASKS_DIR.glob("*.json"))
+        except Exception:
+            tracked_paths = sorted(ARCHIVE_TASKS_DIR.glob("*.json"))
+
+        for path in tracked_paths:
             snapshot = load_json(path, default=None)
             if not isinstance(snapshot, dict):
                 continue

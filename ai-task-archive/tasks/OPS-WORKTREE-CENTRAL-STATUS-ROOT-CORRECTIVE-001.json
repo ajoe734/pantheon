@@ -37,9 +37,11 @@
       "repository_slug": "ajoe734/pantheon",
       "branch": "task/OPS-WORKTREE-CENTRAL-STATUS-ROOT-CORRECTIVE-001",
       "head_commit": "22a513d5a03cf449f165ea4e4ca68d8efc1a6b55",
-      "dirty_count": 0,
-      "remote_status": "synced",
-      "push_status": "pushed",
+      "dirty_count": 494,
+      "dirty_entry_count": 494,
+      "git_clean": false,
+      "remote_status": "none",
+      "push_status": "no_upstream",
       "implementation_pr": "https://github.com/ajoe734/pantheon/pull/3750",
       "merge_commit": "d4d0f693ec40e2196c47f2601380e1e0fc8b2fb9"
     }
