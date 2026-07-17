@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "task_id": "OPS-DEPLOY-WORKFLOW-GUARD-001",
+  "captured_at": "2026-07-17T12:39:00Z",
+  "context": "STOP-gate recheck; no proof dispatched",
+  "workflow_states": {
+    "ajoe734/pantheon#269991390": "active",
+    "ajoe734/execute-plans#292028803": "active"
+  },
+  "live_guard_process_found": false,
+  "corrective_1_reconciliation_json_store_integrity": {
+    "pr": 3778,
+    "state": "OPEN",
+    "current_head_sha": "f06027d02afa784e769ebc23bd5b2f76798c5858",
+    "ai_status_review_approved": true,
+    "ai_status_review_file": "docs/conventions/reviews/ops-reconciliation-json-store-integrity-001-review.md",
+    "ai_status_approved_head_sha": "249e1d0d3984c41a801695b59550df65817ed742",
+    "commits_between_approved_head_and_current_head": 8,
+    "gh_pr_reviews_count": 0,
+    "gate_satisfied": false,
+    "gap": "ai_status.py reports review_approved but the recorded approval targets a head 8 commits behind the PR's actual current head; PR has zero GitHub-native reviews"
+  },
+  "corrective_2_lease_read_after_write_pin": {
+    "prs": [3757, 3760],
+    "runtime_code_state": "merged into dev",
+    "evidence_pr": 3784,
+    "evidence_pr_state": "OPEN",
+    "evidence_pr_head_sha": "c7fd7352ab21e352e2fd2de03b8649f38156b509",
+    "ai_status_status": "review",
+    "ai_status_owner": "Antigravity",
+    "ai_status_reviewer": "Codex2",
+    "prior_independent_review": {
+      "reviewer": "Claude",
+      "verdict": "APPROVED",
+      "recorded_in": "docs/deployment/evidence/ops-lease-read-after-write-pin-001/README.md"
+    },
+    "gate_satisfied": false,
+    "gap": "evidence PR still open/unmerged and ai_status tracked status regressed from independently-recorded APPROVED to plain review with ownership reassigned"
+  },
+  "ai_status_py_outage": {
+    "observed": "hangs past 120s with no output when invoked with cwd set to this task's own worktree; returns promptly when invoked with cwd set to the central PANTHEON_STATUS_ROOT (/home/lupin/code/pantheon)",
+    "status_recorded_via": "task-scoped commit + this evidence file, canonical status tooling unreliable from this worktree"
+  },
+  "action_taken": "none (no dispatch, no workflow mutation, no cancel)",
+  "recommendation": "Antigravity records a fresh exact-head review of PR 3778 at f06027d0; a human merges PR 3784 to close corrective 2's review record; only then does a human dispatch the Pantheon-only proof"
+}
