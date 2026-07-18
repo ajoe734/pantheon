@@ -2,6 +2,13 @@ name: Rotate execute-plans dev proof JWTs
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - dev
+    paths:
+      - .github/workflows/rotate-execute-plans-dev-proof-jwts.yml
+      - scripts/mint_execute_plans_dev_proof_jwts.py
+      - scripts/test_mint_execute_plans_dev_proof_jwts.py
 
 permissions:
   contents: read

@@ -73,6 +73,11 @@ def test_workflow_is_dev_only_and_validates_before_secret_updates() -> None:
     workflow = Path(".github/workflows/rotate-execute-plans-dev-proof-jwts.yml").read_text()
     assert "github.ref == 'refs/heads/dev'" in workflow
     assert "environment: dev" in workflow
+    assert "push:" in workflow
+    assert "- dev" in workflow
+    assert "- .github/workflows/rotate-execute-plans-dev-proof-jwts.yml" in workflow
+    assert "- scripts/mint_execute_plans_dev_proof_jwts.py" in workflow
+    assert "- scripts/test_mint_execute_plans_dev_proof_jwts.py" in workflow
     assert "staging" not in workflow.lower()
     assert "production" not in workflow.lower()
     validate_at = workflow.index('"${DEV_BFF_URL%/}/bff/me"')
