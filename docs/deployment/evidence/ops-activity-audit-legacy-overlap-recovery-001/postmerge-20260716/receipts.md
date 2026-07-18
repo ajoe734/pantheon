@@ -13,7 +13,9 @@
 - **Sync/Restart ISO Timestamp**: `2026-07-16T20:25:12Z` (Supervisor start log: `2026-07-17 04:25:15 +0800`)
 - **Synchronization Method**: Normal manual call of `bash scripts/sync-dev-root.sh` by fleet, where the script's normal implementation updated the dev-root ref to origin/dev.
 
-## Post-merge Inventory Run Receipt (Official Receipt)
+## Historical Post-merge Inventory Run Receipt
+- **Scope**: The following values describe only the 2026-07-16 snapshot. They
+  do not prove current global ordering, gap-free history, or conservation.
 - **Bootstrap Run ID**: `antigravity-bootstrap-20260716T2030Z`
 - **Inventory Scan Timestamp**: `2026-07-16T20:30:50Z`
 - **Inventory Metrics**:
@@ -50,7 +52,7 @@
 - **Saga Outbox Target Event ID**: `ai-status-event-96647dfb76bf1b7c8c1f657b78be8a4b2bc3ef3ef7adb86ee50f359289dfc99f`
 - **Event Type**: `review_approved`
 - **Task ID**: `OPS-WORKTREE-DELIVERY-CONTEXT-PLAN-001`
-- **Recovery Action**: The target event is physically recorded once in the active log, and the corresponding target transaction has been cleared from the outbox. The duplicate historical ID `worker-commit-deb673789747a71068bff9f2578ad9f41d7b8253` which previously caused the reader outage was successfully bypassed. Unrelated subsequent transactions are unaffected.
+- **Recovery Action**: The target event is physically recorded once in the active log, and the corresponding target transaction has been cleared from the outbox. The duplicate historical ID `worker-commit-deb673789747a71068bff9f2578ad9f41d7b8253` which previously caused the reader outage was successfully bypassed. This receipt is limited to that historical transaction and makes no claim about later transaction health.
 - **Receipt Boundary**: PRs #3773 and #3775 accepted this historical result; the packet does not retain the original typed outbox before/after payload, so no later transaction reconstruction is claimed.
 
 ## Pinned 999-Line Exception Identity Receipt
@@ -69,6 +71,7 @@
 - **Diff Check Status**: The earlier `evidence.md` terminal blank line was removed; the corrected task-scoped diff is required to pass without exception.
 
 ## Remaining Work & Status
+- **2026-07-18 P0 boundary**: the raw installed-runtime snapshot is retained, but its `0404Z -> 1754Z` legacy disjoint edge has no durable authority. Any current inventory acceptance based on filename order is withdrawn; see `p0-disjoint-edge-fail-closed-20260718.md`.
 - **PR #3775**: Claude approved exact head `773f20f5`; merged as `d651dbb99cc0870c4e9ac4d2815bdc116824c815`.
 - **PR #3800 / runtime install**: hardening merged as `a124a19bf525f93a8996651189845e5569c89ab4`; the dispatched command runtime remained `6d833e4b...`, so installed-head acceptance must be rerun after sync/restart.
 - **Stale proof**: read-only `show` succeeded from detached stale merge `d4d0f693...`; local sentinels remained unchanged. `note` and `handoff` remain intentionally pending for the installed hardening runtime.

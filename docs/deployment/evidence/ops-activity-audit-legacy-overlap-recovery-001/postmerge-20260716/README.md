@@ -1,6 +1,6 @@
 # Postmerge Evidence: OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001
 
-This receipt documents the accepted merge, installation, inventory, and task activation for **OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001**. The inventory is accepted; final stale-worktree write proof remains gated as described in section 7 and in `closeout-20260717.md`.
+This receipt documents the historical merge, installation, inventory, and task activation for **OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001**. The 2026-07-16 inventory remains an immutable historical receipt, but current product-level inventory acceptance is withdrawn after the 2026-07-18 P0 finding described in `p0-disjoint-edge-fail-closed-20260718.md`. Final stale-worktree write proof remains gated as described in section 7 and in `closeout-20260717.md`.
 
 ---
 
@@ -23,8 +23,10 @@ This time, a normal manual call of `bash scripts/sync-dev-root.sh` was invoked b
 
 ---
 
-## 3. Unique Inventory Run (Post-merge Receipt)
-The official post-merge inventory run was performed to validate the postmerge state:
+## 3. Historical Inventory Run (Post-merge Receipt)
+The official post-merge inventory run captured the following 2026-07-16
+snapshot. These metrics are diagnostic observations for that snapshot; they do
+not prove gap-free ordering, complete conservation, or current global history:
 - **Inventory Timestamp**: `2026-07-16T20:30:50Z`
 - **Bootstrap Run ID**: `antigravity-bootstrap-20260716T2030Z`
 - **Scan Source Count**: `422` files total (411 `legacy_ts_std`, 10 `legacy_ts_old`, 1 active `ai-activity-log.jsonl`)
@@ -60,7 +62,9 @@ For comparison, the pre-merge baseline run was performed prior to merging:
 Comparing the post-merge `manifest.json` against the pre-merge comparison baseline `manifest.json`:
 - **Archive Invariance**: All **421 non-active gzip log archives** match exactly.
 - **Active Log Growths**: The only modifications are limited to the active `ai-activity-log.jsonl` file (size increased from `3,658,460` to `4,003,730` bytes, line count from `1,659` to `1,851`, and unique logical event IDs from `121` to `139`) as new events were appended in the interim.
-- **Fold Consistency**: The duplicate log fold count remains exactly `240`, proving no new overlaps or data corruption occurred.
+- **Fold Consistency**: The observed duplicate log fold count remains exactly
+  `240`. This per-edge comparison does not prove that no source, gap, ordering
+  break, or unrelated corruption exists outside the observed folds.
 
 ---
 
@@ -97,15 +101,19 @@ record for this ID.
 
 ## 7. Current Closeout Status (Not Completely Closed)
 
+- **2026-07-18 P0**: the installed-runtime packet later treated the unregistered `0404Z -> 1754Z` legacy gap as a validated disjoint successor. Filename order is not durable continuity authority; that conclusion is rejected while the raw source observations remain preserved.
 - **PR #3775**: Claude approved exact head `773f20f5`; the PR merged as `d651dbb99cc0870c4e9ac4d2815bdc116824c815`.
 - **PR #3800**: Reader hardening merged as `a124a19bf525f93a8996651189845e5569c89ab4`, but the supervisor-provided command runtime for the 2026-07-17 recovery probe remained pinned to older ancestor `6d833e4b0aa5e07d1b151f0064f82c2d3368ce06` and therefore did not contain that merge.
 - **Read-only stale-worktree probe**: governed `show` succeeded from detached stale merge `d4d0f693...` and returned the central `in_progress` task in 145.10 seconds; all six local sentinels remained byte-identical and the disposable worktree was removed.
 - **Write proof**: governed `note` and owner-to-reviewer `handoff` were intentionally not run on the pre-hardening command runtime.
 - **PR #3763**: still open and awaiting a fresh installed-runtime `show`/`note`/`handoff` proof plus Codex2 exact-head review.
 
-The task must remain `in_progress` until the installed command runtime is
-`a124a19bf...` or a descendant, the current inventory and stale write proof
-pass, and the final evidence receives independent review.
+The task must remain `in_progress` until the shared reader rejects
+unregistered incident-continuity gaps and the `0404Z -> 1754Z` boundary either
+receives immutable hash-bound lineage authority or remains fail-closed under a
+planner decision that global conservation cannot be proved. A current inventory
+can pass only with lineage authority; stale write proof must pass on the
+accepted installed runtime, and the final evidence requires independent review.
 
 ---
 
