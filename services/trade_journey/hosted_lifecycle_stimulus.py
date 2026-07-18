@@ -162,7 +162,7 @@ def fetch_running_paper_workers(
     url = paper_fleet_reconciler_url.rstrip("/") + "/api/fleet/state"
     try:
         payload = http_get_json(url, timeout=10.0)
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+    except (urllib.error.URLError, OSError, ValueError) as exc:
         raise _http_error(
             "paper_fleet_reconciler_unavailable",
             "paper fleet reconciler state query failed",
@@ -392,8 +392,24 @@ def trigger_reconciliation(
     try:
         payload = http_post_json(
             endpoint,
-            {"tick_id": tick_id, "binding_id": binding_id},
+            {
+                "tick_id": tick_id,
+                "binding_id": binding_id,
+                "dispatch_incidents": False,
+            },
             timeout=20.0,
+        )
+    except urllib.error.HTTPError as exc:
+        raise _http_error(
+            "reconciliation_http_error",
+            f"scheduled reconciliation returned HTTP {int(exc.code)}",
+            exc,
+        )
+    except TimeoutError as exc:
+        raise _http_error(
+            "reconciliation_timeout",
+            "scheduled reconciliation request timed out",
+            exc,
         )
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         raise _http_error(

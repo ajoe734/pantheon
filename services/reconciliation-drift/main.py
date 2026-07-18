@@ -1243,6 +1243,7 @@ def mark_alert_handoff(alert_id: str, body: HandoffBody) -> Dict[str, Any]:
 class ScheduledReconcileBody(BaseModel):
     tick_id: Optional[str] = None
     binding_id: Optional[str] = None
+    dispatch_incidents: bool = True
 
 
 class IncidentTriggerBody(BaseModel):
@@ -2241,6 +2242,7 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
     lifecycle_retryable_errors: List[Dict[str, Any]] = []
     lifecycle_terminal_rejections: List[Dict[str, Any]] = []
     lifecycle_ineligible_binding_ids: List[str] = []
+    dispatch_incidents = bool(body.dispatch_incidents)
 
     def record_lifecycle_append(binding_id: str, state: Dict[str, Any]) -> None:
         receipt = _lifecycle_append_receipt(binding_id, state)
@@ -2299,6 +2301,8 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
                 timestamp=timestamp,
             )
             record_lifecycle_append(binding_id, lifecycle_state)
+            if not dispatch_incidents:
+                continue
             report = _scheduled_drift_report(
                 summary=summary,
                 evaluation=existing_evaluation,
@@ -2383,6 +2387,8 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
             timestamp=timestamp,
         )
         record_lifecycle_append(binding_id, lifecycle_state)
+        if not dispatch_incidents:
+            continue
 
         report = _scheduled_drift_report(
             summary=summary,
@@ -2434,6 +2440,7 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
         "lifecycle_retryable_errors": lifecycle_retryable_errors,
         "lifecycle_terminal_rejections": lifecycle_terminal_rejections,
         "lifecycle_ineligible_binding_ids": list(dict.fromkeys(lifecycle_ineligible_binding_ids)),
+        "incident_dispatch_enabled": dispatch_incidents,
         "telemetry_summaries_fetched": len(summaries),
         "triggered_at": timestamp,
     }
