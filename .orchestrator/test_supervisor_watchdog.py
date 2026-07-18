@@ -1155,6 +1155,42 @@ class SupervisorWatchdogTests(unittest.TestCase):
         with canonical_task_state_lock_file(status_file, shared=False, nonblocking=True):
             pass
 
+    def test_lock_contention_timeout_decouples_and_returns_fallback(self) -> None:
+        """Verify that when operations in the contention path hang/timeout,
+        run_watchdog returns lock_contention_timeout fallback without blocking indefinitely."""
+        import time
+        from common import LockContentionError
+
+        # Set a short timeout deadline in configuration
+        config = dict(self.config)
+        config["watchdog"] = dict(config["watchdog"])
+        config["watchdog"]["contention_deadline_seconds"] = 0.1
+
+        # Hold the runtime lock to trigger LockContentionError
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lock_handle.close)
+
+        # Mock supervisor_lock_held to block/sleep longer than the deadline
+        def slow_lock_held(*args, **kwargs):
+            time.sleep(0.5)
+            return True
+
+        with mock.patch.object(supervisor_watchdog, "supervisor_lock_held", slow_lock_held):
+            start = time.monotonic()
+            result = supervisor_watchdog.run_watchdog(config, restart=True)
+            elapsed = time.monotonic() - start
+
+        # Check that it timed out and returned within a reasonable window (less than 0.4s, since timeout is 0.1)
+        self.assertLess(elapsed, 0.4)
+        self.assertEqual(result["decision"], "skip")
+        self.assertEqual(result["reason"], "lock_contention_timeout")
+        self.assertEqual(result["resource"]["active_worker_count_source"], "skipped_due_to_timeout")
+        self.assertEqual(result["resource"]["active_worker_scan_error"], "timeout")
+
 
 class ActiveWorkerCountDedupeTests(unittest.TestCase):
     """Watchdog restart pressure must use live wrapper identities, not stale state."""
