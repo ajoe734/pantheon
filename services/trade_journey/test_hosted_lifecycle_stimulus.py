@@ -228,6 +228,89 @@ def test_stimulus_fails_when_reconciliation_append_is_not_accepted(tmp_path):
 
     assert code == 1
     assert artifact["failure"]["code"] == "reconciliation_append_not_accepted"
+    assert artifact["failure"]["details"]["reconciliation_receipt"] == {
+        "binding_id": binding["binding_id"],
+        "status": "retryable_error",
+        "terminal": False,
+        "retryable": True,
+    }
+    assert len(store.enqueued) == 1
+
+
+def test_stimulus_can_continue_after_ambiguous_reconciliation_receipt(tmp_path):
+    binding = _binding()
+
+    def post_json(_url: str, _payload: dict, **_kwargs):
+        return {
+            "lifecycle_append_results": [
+                {
+                    "binding_id": binding["binding_id"],
+                    "event_id": "event-reconciliation-loop-prod-tel-002",
+                    "status": "retryable_error",
+                    "terminal": False,
+                    "retryable": True,
+                    "outcome": "ambiguous",
+                    "http_status": None,
+                    "error": "timed out waiting for telemetry ingest acknowledgement",
+                }
+            ]
+        }
+
+    code, artifact, store, _posts = _run(
+        tmp_path,
+        binding=binding,
+        post_json=post_json,
+        execute_kwargs={"allow_ambiguous_reconciliation": True},
+    )
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert artifact["stimulus"]["reconciliation_event_id"] == (
+        "event-reconciliation-loop-prod-tel-002"
+    )
+    assert artifact["stimulus"]["reconciliation_status"] == "retryable_error"
+    assert artifact["stimulus"]["reconciliation_ambiguous"] is True
+    assert len(store.enqueued) == 1
+
+
+def test_stimulus_rejects_terminal_reconciliation_receipt_even_when_ambiguous_allowed(tmp_path):
+    binding = _binding()
+
+    def post_json(_url: str, _payload: dict, **_kwargs):
+        return {
+            "lifecycle_append_results": [
+                {
+                    "binding_id": binding["binding_id"],
+                    "event_id": "event-reconciliation-loop-prod-tel-002",
+                    "status": "terminal_rejected",
+                    "terminal": True,
+                    "retryable": False,
+                    "outcome": "failed",
+                    "http_status": 400,
+                    "error": "telemetry ingest returned HTTP 400",
+                }
+            ]
+        }
+
+    code, artifact, store, _posts = _run(
+        tmp_path,
+        binding=binding,
+        post_json=post_json,
+        execute_kwargs={"allow_ambiguous_reconciliation": True},
+    )
+
+    assert code == 1
+    assert artifact["failure"]["code"] == "reconciliation_append_not_accepted"
+    assert artifact["failure"]["details"]["reconciliation_receipt"] == {
+        "binding_id": binding["binding_id"],
+        "event_id": "event-reconciliation-loop-prod-tel-002",
+        "status": "terminal_rejected",
+        "terminal": True,
+        "retryable": False,
+        "outcome": "failed",
+        "http_status": 400,
+        "error": "telemetry ingest returned HTTP 400",
+    }
     assert len(store.enqueued) == 1
 
 

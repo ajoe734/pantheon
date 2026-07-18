@@ -50,11 +50,19 @@ NowFactory = Callable[[], str]
 class StimulusError(RuntimeError):
     """A redaction-safe, fail-closed stimulus rejection."""
 
-    def __init__(self, code: str, message: str, *, timed_out: bool = False) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        timed_out: bool = False,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.safe_message = message
         self.timed_out = timed_out
+        self.safe_details = dict(details or {})
 
 
 def _utc_now() -> str:
@@ -125,6 +133,38 @@ def _http_error(code: str, message: str, exc: BaseException) -> StimulusError:
 
 def _clean(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _safe_receipt_details(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    details: dict[str, Any] = {}
+    for key in (
+        "binding_id",
+        "event_id",
+        "status",
+        "terminal",
+        "retryable",
+        "outcome",
+        "attempt_count",
+        "reason",
+        "http_status",
+        "error",
+    ):
+        value = receipt.get(key)
+        if value not in (None, "", [], {}):
+            details[key] = value
+    return details
+
+
+def _is_ambiguous_reconciliation_receipt(receipt: Mapping[str, Any]) -> bool:
+    status = _clean(receipt.get("status"))
+    outcome = _clean(receipt.get("outcome"))
+    if status == "ambiguous_timeout":
+        return True
+    if status != "retryable_error":
+        return False
+    if outcome == "ambiguous":
+        return True
+    return receipt.get("http_status") is None and bool(receipt.get("retryable"))
 
 
 def fetch_active_paper_bindings(
@@ -442,9 +482,14 @@ def trigger_reconciliation(
             continue
         if _clean(receipt.get("status")) == "accepted" and _clean(receipt.get("event_id")):
             return dict(receipt)
+        if allow_timeout and _is_ambiguous_reconciliation_receipt(receipt):
+            ambiguous_receipt = dict(receipt)
+            ambiguous_receipt["ambiguous"] = True
+            return ambiguous_receipt
         raise StimulusError(
             "reconciliation_append_not_accepted",
             "scheduled reconciliation did not accept a lifecycle append for the stimulus binding",
+            details={"reconciliation_receipt": _safe_receipt_details(receipt)},
         )
     raise StimulusError(
         "reconciliation_append_not_accepted",
@@ -532,7 +577,9 @@ def run_stimulus(
             "tick_id": tick_id,
             "reconciliation_event_id": _clean(receipt.get("event_id")),
             "reconciliation_status": _clean(receipt.get("status")),
-            "reconciliation_ambiguous": bool(receipt.get("timed_out")),
+            "reconciliation_ambiguous": bool(
+                receipt.get("timed_out") or receipt.get("ambiguous")
+            ),
         },
         "redaction": {
             "tokens_included": False,
@@ -547,10 +594,13 @@ def _failure_artifact(
     code: str,
     message: str,
     timed_out: bool = False,
+    details: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     failure: dict[str, Any] = {"code": code, "message": message}
     if timed_out:
         failure["timed_out"] = True
+    if details:
+        failure["details"] = dict(details)
     return {
         "schema_version": SCHEMA_VERSION,
         "task_id": TASK_ID,
@@ -578,6 +628,7 @@ def execute(
             code=exc.code,
             message=exc.safe_message,
             timed_out=exc.timed_out,
+            details=exc.safe_details,
         )
         code = 1
     except Exception:  # noqa: BLE001 - keep unexpected failures redacted
@@ -600,7 +651,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--allow-ambiguous-reconciliation",
         action="store_true",
-        help="Continue to the read-only proof if the scheduled reconciliation request times out.",
+        help=(
+            "Continue to the read-only proof if scheduled reconciliation has "
+            "ambiguous timeout or response-loss evidence."
+        ),
     )
     parser.add_argument(
         "--runtime-manager-url",
