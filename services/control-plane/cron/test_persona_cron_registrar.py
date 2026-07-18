@@ -59,13 +59,12 @@ def _existing_job_fixture(
         "enabled": True,
         "deleteAfterRun": False,
         "schedule": {"kind": "cron", "expr": workflow.schedule},
-        "sessionTarget": persona_id,
+        "sessionTarget": "main",
         "wakeMode": "next-heartbeat",
         "payload": {
             "kind": "systemEvent",
             "text": json.dumps(event),
         },
-        "delivery": {"mode": "none"},
     }
 
 
@@ -1135,11 +1134,11 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
         self.assertTrue(result.failed)
         self.assertIn("pagination cycle", result.failed[0]["error"])
 
-    def test_session_target_defaults_to_persona_own_agent(self):
+    def test_session_target_defaults_to_main_system_event_session(self):
         spy = GatewayRuntimeSpy()
         PersonaCronRegistrar(gateway_runtime=spy).register_for_persona("persona-crypto")
         for _, params in spy.add_calls:
-            self.assertEqual((params or {}).get("sessionTarget"), "persona-crypto")
+            self.assertEqual((params or {}).get("sessionTarget"), "main")
 
     def test_session_target_override_is_respected(self):
         spy = GatewayRuntimeSpy()

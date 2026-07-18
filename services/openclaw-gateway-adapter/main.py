@@ -1887,9 +1887,9 @@ def _is_well_formed_persona_cron_job(job: Dict[str, Any]) -> bool:
         and isinstance(schedule, dict)
         and schedule.get("kind") == "cron"
         and schedule.get("expr") == contract["schedule"]
-        and job.get("sessionTarget") == persona_id
+        and job.get("sessionTarget") == "main"
         and job.get("wakeMode") == "next-heartbeat"
-        and delivery == {"mode": "none"}
+        and (delivery is None or delivery == {"mode": "none"})
         and event.get("request_id")
         == f"persona-provisioning:{persona_id}:{workflow_id}"
         and event.get("policy_id") == contract["policy_id"]

@@ -175,11 +175,22 @@ class PersonaCronRegistrar:
     ) -> None:
         self._runtime = gateway_runtime
         self._dry_run = dry_run
-        # None → each persona's OODA jobs wake THAT persona's own agent (agent id
-        # == persona_id). An explicit value overrides (e.g. "main" to route every
-        # job through the orchestrator agent instead).
+        # OpenClaw 2026.6.8 only allows systemEvent cron payloads on the main
+        # session. Persona/runtime/capital ownership stays in the systemEvent
+        # text, which is the authoritative readback key for Pantheon.
         self._session_target = session_target
         self._delivery_mode = delivery_mode
+
+    def _expected_session_target(self, persona_id: str) -> str:
+        return self._session_target or "main"
+
+    def _delivery_matches_expected(self, delivery: Any) -> bool:
+        if self._delivery_mode == "none":
+            # OpenClaw accepts delivery {"mode":"none"} on create/update but
+            # normalizes main-session systemEvent rows by omitting delivery on
+            # list readback. Treat both as the same no-delivery authority.
+            return delivery is None or delivery == {"mode": "none"}
+        return delivery == {"mode": self._delivery_mode}
 
     def _get_runtime(self) -> Any:
         if self._runtime is not None:
@@ -279,7 +290,7 @@ class PersonaCronRegistrar:
             "enabled": True,
             "deleteAfterRun": False,
             "schedule": {"kind": "cron", "expr": workflow.schedule},
-            "sessionTarget": self._session_target or persona_id,
+            "sessionTarget": self._expected_session_target(persona_id),
             "wakeMode": "next-heartbeat",
             "payload": {"kind": "systemEvent", "text": event_text},
             "delivery": {"mode": self._delivery_mode},
@@ -919,9 +930,9 @@ class PersonaCronRegistrar:
             and isinstance(schedule, dict)
             and schedule.get("kind") == "cron"
             and schedule.get("expr") == workflow.schedule
-            and job.get("sessionTarget") == (self._session_target or persona_id)
+            and job.get("sessionTarget") == self._expected_session_target(persona_id)
             and job.get("wakeMode") == "next-heartbeat"
-            and job.get("delivery") == {"mode": self._delivery_mode}
+            and self._delivery_matches_expected(job.get("delivery"))
             and isinstance(payload, dict)
             and payload.get("kind") == "systemEvent"
             and inner.get("kind") == "pantheon.workflow.dispatch"
@@ -980,9 +991,9 @@ class PersonaCronRegistrar:
             and isinstance(schedule, dict)
             and schedule.get("kind") == "cron"
             and schedule.get("expr") == workflow.schedule
-            and job.get("sessionTarget") == (self._session_target or persona_id)
+            and job.get("sessionTarget") == self._expected_session_target(persona_id)
             and job.get("wakeMode") == "next-heartbeat"
-            and job.get("delivery") == {"mode": self._delivery_mode}
+            and self._delivery_matches_expected(job.get("delivery"))
             and isinstance(payload, dict)
             and payload.get("kind") == "systemEvent"
             and inner.get("kind") == "pantheon.workflow.dispatch"
