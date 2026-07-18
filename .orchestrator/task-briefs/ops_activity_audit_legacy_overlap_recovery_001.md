@@ -1,5 +1,13 @@
 # OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001
 
+## 目前 recovery dispatch（2026-07-18）
+
+- 狀態：`in_progress`。
+- Current owner：`Codex`。
+- Current reviewer：`Antigravity`。
+- Reviewer 以 P0 safety finding 退回：未註冊的 legacy-to-legacy disjoint gap 必須維持 fail-closed。shared reader 必須拒絕精確的 `1450Z -> 0404Z -> 1754Z` 形狀，只接受 lineage-bound disjoint edge。
+- 本段只更新目前 corrective dispatch；下列原始範圍、addendum 與 postmerge 驗收要求仍全部有效。
+
 ## 目的
 
 恢復所有 `ai-status` 正式命令，並在不刪除、不改寫歷史活動紀錄的前提下，讓新版活動紀錄讀取器正確處理舊版輪替格式刻意保留的 1,000 行重疊。
@@ -25,8 +33,8 @@
 
 ## Fleet 分工
 
-- Owner：`Antigravity`。
-- Reviewer：`Claude`。
+- 原始 implementation owner：`Antigravity`；原始 reviewer：`Claude`。
+- 目前 P0 corrective owner：`Codex`；目前 reviewer：`Antigravity`，以 canonical `ai-status.json` 為準。
 - owner 與 reviewer 必須是不同 admitted identity。
 - auto-merge 必須關閉；owner 不得自行核准或合併。
 
@@ -80,7 +88,7 @@
 
 - final candidate 必須先 compose 當時最新 `origin/dev`。
 - PR target `dev`，只含本 task scope，必要 trailers 正確，auto-merge 關閉。
-- Claude 必須在 final exact head 獨立重跑必要測試並核准；review 不得再以 commit 改變 head。
+- reviewer 必須在 final exact head 獨立重跑必要測試並核准；review 不得再以 commit 改變 head。
 - 合併後由 fleet 透過正常 dev-root sync 安裝 exact merge，記錄舊／新 source SHA 與 process identity。
 - 重新執行完整 incident inventory，證明原始來源 hashes 未變、四段 legacy overlap 被 logical view 精確折疊、100 個 duplicate payload 仍全相同、零 mismatch。
 - pending outbox 必須正式 recovery；接著從 disposable stale worktree 執行 `show`、`note`、`handoff`，中央各收到預期事件恰好一次，worktree-local `ai-status.json`、activity log、archive sentinel bytes 全部不變。
@@ -89,3 +97,8 @@
 ## 完成定義
 
 只有在修正 PR 已獨立核准並合併、exact merge 已安裝、incident inventory 與 outbox recovery 通過、三個 governed command 的 stale-worktree proof 通過，而且本 bootstrap task 已經由恢復後的正式命令 materialize，才可標記完成。
+
+## Coordination Root
+
+- Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
+- Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.
