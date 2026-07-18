@@ -662,6 +662,53 @@ that commit, is the documented fix
 (see `docs/conventions/reviews` history and prior incidents of this same
 CI false positive). It does not alter store or test content.
 
+### Final merge and owner closeout
+
+The final current-dev compose used base
+`c5592c1068a8570c659cb484dbd53466c080769b` and produced candidate
+`81f2b0256ff9d5244fb6fdc6365f11b4ec6db6e5`. Antigravity recorded governed
+approval of that exact candidate in
+`docs/conventions/reviews/ops-reconciliation-json-store-integrity-001-review.md`.
+The resulting review-record commit
+`e07001009f6e4799b14721d083bba1416c82c38a` changed only that task-scoped
+review document; all six GitHub checks passed on the resulting PR head and
+auto-merge remained disabled.
+
+Immediately before manual merge, owner closeout re-ran the required local
+verification on the unchanged store and test blobs:
+
+```text
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py -q
+22 passed in 5.94s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py -q
+6 passed in 2.86s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py -q
+20 passed in 6.64s
+
+python3 -m pytest services/reconciliation-drift/tests/ -q
+79 passed in 23.24s
+
+python3 -m py_compile services/reconciliation-drift/store.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py
+(no output; passed)
+
+git diff --check origin/dev...HEAD
+(no output; clean)
+
+git show --check --oneline HEAD
+(no whitespace errors)
+
+python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge
+(no output; passed)
+```
+
+PR #3778 was then manually merged into `dev` at
+`f9875d6f87905e4900edfd4deb218fa65c3b1c3f` on
+2026-07-18T02:03:28Z. This owner closeout record is documentation-only and
+does not alter the validated store/test blobs, any live JSON volume, hosted
+service state, or either shared deploy workflow.
+
 ## Scope boundary
 
 - Owned layer: `services/reconciliation-drift/store.py` JSON-backed map

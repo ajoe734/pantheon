@@ -27,6 +27,42 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertEqual(evaluation["decision"], "allow")
         self.assertEqual(evaluation["risk_class"], "safe_read")
 
+    def test_task_output_is_auto_allowed(self) -> None:
+        # Regression for OPS-APPROVAL-BROKER-RISK-CLASS-001: TaskOutput
+        # (polling a background sub-task's output) previously fell through
+        # to risk_class=unknown and sat pending indefinitely, suspending
+        # claude worker slots for hours.
+        evaluation = permission_broker.evaluate_tool_request(
+            "TaskOutput", {"task_id": "bg-1", "block": True, "timeout": 30000}, {}
+        )
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "harness_orchestration_read")
+
+    def test_harness_orchestration_read_tools_are_auto_allowed(self) -> None:
+        for tool_name, tool_input in (
+            ("TaskGet", {"taskId": "1"}),
+            ("TaskList", {}),
+            ("Monitor", {"description": "watch", "timeout_ms": 1000, "persistent": False}),
+            ("CronList", {}),
+        ):
+            with self.subTest(tool_name=tool_name):
+                evaluation = permission_broker.evaluate_tool_request(tool_name, tool_input, {})
+
+                self.assertEqual(evaluation["decision"], "allow")
+                self.assertEqual(evaluation["risk_class"], "harness_orchestration_read")
+
+    def test_mutating_orchestration_tools_still_require_review(self) -> None:
+        # Harness orchestration tools with real side effects (creating,
+        # updating, or stopping a task) are intentionally NOT auto-allowed;
+        # only read-only polling tools are.
+        for tool_name in ("TaskCreate", "TaskUpdate", "TaskStop"):
+            with self.subTest(tool_name=tool_name):
+                evaluation = permission_broker.evaluate_tool_request(tool_name, {}, {})
+
+                self.assertEqual(evaluation["decision"], "defer")
+                self.assertEqual(evaluation["risk_class"], "unknown")
+
     def test_read_only_agent_explore_request_is_auto_allowed(self) -> None:
         evaluation = permission_broker.evaluate_tool_request(
             "Agent",
@@ -69,6 +105,26 @@ class ProviderPermissionsTest(unittest.TestCase):
                     "then report the current branch state."
                 ),
                 "subagent_type": "Explore",
+            },
+            {},
+        )
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "safe_read")
+
+    def test_read_only_agent_code_review_subagent_type_is_auto_allowed(self) -> None:
+        # Regression for OPS-APPROVAL-BROKER-RISK-CLASS-001: a spawned
+        # code-review subagent request (subagent_type="code-review") was
+        # denied/deferred as risk_class=unknown because the exact-match
+        # SAFE_AGENT_SUBAGENT_TYPES set only contained "review", not the
+        # hyphenated "code-review" variant actually used to spawn review
+        # subagents.
+        evaluation = permission_broker.evaluate_tool_request(
+            "Agent",
+            {
+                "description": "Independent code review of the current diff",
+                "prompt": "Review the pending diff for correctness bugs and report findings.",
+                "subagent_type": "code-review",
             },
             {},
         )

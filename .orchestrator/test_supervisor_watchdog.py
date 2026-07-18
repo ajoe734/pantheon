@@ -680,6 +680,90 @@ class SupervisorWatchdogTests(unittest.TestCase):
             self.assertEqual(event["decision"], "skip")
             self.assertEqual(event["reason"], "lock_contention")
 
+    def test_initially_free_concurrent_probes_max_one_owner(self) -> None:
+        """Proves that when the lock is initially free and multiple concurrent probes execute,
+        at most one active probe can own the critical section while others immediately skip."""
+        import threading
+        import time
+
+        self.write_pid(123)
+        now = datetime.now(timezone.utc)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": supervisor_watchdog.isoformat_utc(now),
+                "lifecycle": "running"
+            }
+        })
+
+        active_owners = 0
+        max_seen_owners = 0
+        owner_lock = threading.Lock()
+        
+        entered_event = threading.Event()
+        continue_event = threading.Event()
+
+        orig_run_locked = supervisor_watchdog._run_watchdog_locked
+
+        def mock_run_locked(*args, **kwargs):
+            nonlocal active_owners, max_seen_owners
+            with owner_lock:
+                active_owners += 1
+                if active_owners > max_seen_owners:
+                    max_seen_owners = active_owners
+            
+            entered_event.set()
+            continue_event.wait(timeout=5.0)
+            
+            try:
+                res = orig_run_locked(*args, **kwargs)
+            finally:
+                with owner_lock:
+                    active_owners -= 1
+            return res
+
+        with mock.patch.object(supervisor_watchdog, "_run_watchdog_locked", side_effect=mock_run_locked), \
+             mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()):
+            
+            results = []
+            threads = []
+            
+            def worker():
+                res = supervisor_watchdog.run_watchdog(self.config, restart=True)
+                results.append(res)
+
+            t1 = threading.Thread(target=worker)
+            threads.append(t1)
+            t1.start()
+
+            self.assertTrue(entered_event.wait(timeout=5.0))
+
+            for _ in range(4):
+                t = threading.Thread(target=worker)
+                threads.append(t)
+                t.start()
+
+            for t in threads[1:]:
+                t.join(timeout=5.0)
+
+            continue_event.set()
+            t1.join(timeout=5.0)
+
+            decisions = [r["decision"] for r in results]
+            reasons = [r["reason"] for r in results]
+            
+            self.assertEqual(decisions.count("observe_only"), 1)
+            self.assertEqual(decisions.count("skip"), 4)
+            self.assertEqual(reasons.count("lock_contention"), 4)
+
+            for r in results:
+                if r["decision"] == "skip":
+                    self.assertIsNone(r["restart_count_window"])
+                    self.assertIsNone(r["restart_count_hour"])
+
+            self.assertEqual(max_seen_owners, 1)
+            self.assertEqual(active_owners, 0)
+
     def test_metric_lock_contention_subprocess_launches(self) -> None:
         """Spawn concurrent watchdog processes via subprocess while BOTH the primary lock and the metric lock are held,
         proving they all exit immediately within a deadline, do not block, and their metric writes are dropped."""
