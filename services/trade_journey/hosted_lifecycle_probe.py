@@ -99,9 +99,16 @@ def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
 class AsyncpgTelemetrySource:
     """Take a bounded, read-only snapshot of committed lifecycle rows."""
 
-    def __init__(self, dsn: str, *, row_limit: int = 20_000) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        row_limit: int = 20_000,
+        query_types: Sequence[str] = QUERY_TYPES,
+    ) -> None:
         self._dsn = dsn
         self._row_limit = row_limit
+        self._query_types = tuple(query_types)
 
     async def high_watermark(self) -> int:
         try:
@@ -112,7 +119,9 @@ class AsyncpgTelemetrySource:
                 async with conn.transaction(isolation="repeatable_read", readonly=True):
                     return int(
                         await conn.fetchval(
-                            "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events"
+                            "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
+                            "WHERE event_type = ANY($1::text[])",
+                            list(self._query_types),
                         )
                         or 0
                     )
@@ -132,7 +141,9 @@ class AsyncpgTelemetrySource:
                 async with conn.transaction(isolation="repeatable_read", readonly=True):
                     high = int(
                         await conn.fetchval(
-                            "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events"
+                            "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
+                            "WHERE event_type = ANY($1::text[])",
+                            list(self._query_types),
                         )
                         or 0
                     )
@@ -142,7 +153,7 @@ class AsyncpgTelemetrySource:
                         "WHERE ingested_seq > $1 AND event_type = ANY($2::text[]) "
                         "ORDER BY ingested_seq ASC LIMIT $3",
                         int(baseline_high_watermark),
-                        list(QUERY_TYPES),
+                        list(self._query_types),
                         self._row_limit,
                     )
             finally:

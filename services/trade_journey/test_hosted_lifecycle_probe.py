@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+import sys
+import types
 import uuid
 
 import pytest
@@ -59,6 +61,58 @@ class IncrementalSource:
     async def snapshot(self):
         self.snapshot_calls += 1
         raise AssertionError("incremental source should not use full snapshot")
+
+
+def test_asyncpg_telemetry_source_filters_watermark_and_snapshot(monkeypatch):
+    calls: list[tuple] = []
+
+    class Transaction:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class Connection:
+        def transaction(self, **kwargs):
+            calls.append(("transaction", kwargs))
+            return Transaction()
+
+        async def fetchval(self, query: str, event_types: list[str]) -> int:
+            calls.append(("fetchval", query, tuple(event_types)))
+            return 106
+
+        async def fetch(
+            self,
+            query: str,
+            baseline: int,
+            event_types: list[str],
+            row_limit: int,
+        ) -> list[dict]:
+            calls.append(("fetch", query, baseline, tuple(event_types), row_limit))
+            return []
+
+        async def close(self) -> None:
+            calls.append(("close",))
+
+    async def connect(dsn: str) -> Connection:
+        calls.append(("connect", dsn))
+        return Connection()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+    source = probe.AsyncpgTelemetrySource("postgresql://unit", row_limit=17)
+
+    assert asyncio.run(source.high_watermark()) == 106
+    assert asyncio.run(source.snapshot_after(100)) == (106, [])
+
+    fetchval = next(call for call in calls if call[0] == "fetchval")
+    fetch = next(call for call in calls if call[0] == "fetch")
+    assert "event_type = ANY" in fetchval[1]
+    assert "event_type = ANY" in fetch[1]
+    assert fetchval[2] == probe.QUERY_TYPES
+    assert fetch[2] == 100
+    assert fetch[3] == probe.QUERY_TYPES
+    assert fetch[4] == 17
 
 
 def _natural_lifecycle_rows() -> list[dict]:

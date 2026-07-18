@@ -1173,13 +1173,10 @@ services:
         condition: service_healthy
     healthcheck:
       # Deploy-unblock relaxation (OPS-PROJECTOR-HEALTH-RELAX 2026-07-17): strict CLI health
-      # (last_poll<30s AND backlog<5000 AND status in {ready,recovering,repair_only}) is
-      # unsatisfiable at cold start with a large committed-telemetry backlog -- one 500-event
-      # batch takes ~39s (>30s) so poll reads stale mid-batch and backlog (9700+) exceeds 5000,
-      # leaving the container perpetually unhealthy and failing `compose up --wait` for the whole
-      # dev deploy. Lenient probe still fails on crash (no state file), tick error (last_error set),
-      # or a truly-stuck loop (no poll 600s), but tolerates the degraded/high-backlog catch-up
-      # state. Proper throughput fix belongs to LOOP-PROD-TEL-002.
+      # is stronger than container readiness during startup/recovery. The projector now tracks a
+      # lifecycle-filtered source watermark, while hosted proofs remain the canonical acceptance
+      # gate for zero-backlog live truth. Lenient health still fails on crash (no state file), tick
+      # error (last_error set), or a truly-stuck loop (no poll 600s).
       test: ["CMD-SHELL", "python -c \"import json,sys,datetime as dt; c=json.load(open('/data/bff/lifecycle-projection/controller_state.json'))['controller']; age=(dt.datetime.now(dt.timezone.utc)-dt.datetime.fromisoformat(c['last_poll_at'].replace('Z','+00:00'))).total_seconds(); sys.exit(0 if (c.get('last_error') is None and age < 600) else 1)\""]
       interval: 15s
       timeout: 10s
