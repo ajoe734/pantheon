@@ -171,6 +171,8 @@ class RuntimeManagerServiceTests(unittest.TestCase):
         self.assertEqual(binding.execution_mode, "paper")
         self.assertEqual(binding.status, "active")
         self.assertEqual(binding.persona_capital_binding_id, "pcb-001")
+        self.assertEqual(binding.metadata["persona_id"], "persona-alpha")
+        self.assertEqual(binding.metadata["sponsor_persona_id"], "persona-alpha")
 
         plan_bindings = self.service.list_by_plan("plan-001")
         self.assertEqual([item.binding_id for item in plan_bindings], [binding.binding_id])
