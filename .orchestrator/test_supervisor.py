@@ -18,6 +18,22 @@ import supervisor
 import runtime_state
 
 
+_OLD_ENV = {}
+
+
+def setUpModule() -> None:
+    global _OLD_ENV
+    _OLD_ENV = dict(os.environ)
+    for k in list(os.environ.keys()):
+        if k.startswith("PANTHEON_"):
+            del os.environ[k]
+
+
+def tearDownModule() -> None:
+    os.environ.clear()
+    os.environ.update(_OLD_ENV)
+
+
 def _run_supervisor_writer_transaction_until_released(
     config: dict[str, object],
     connection: object,
@@ -8340,6 +8356,69 @@ class SingleSupervisorGuardTests(unittest.TestCase):
             finally:
                 _fcntl.flock(regained.fileno(), _fcntl.LOCK_UN)
                 regained.close()
+
+    def test_status_root_consistency_gate_fail_fast(self) -> None:
+        """Verify that when PANTHEON_STATUS_ROOT environment variable does not match
+        the config-derived status root, check_status_root_consistency raises SystemExit."""
+        config = {"paths": {"state_file": "/tmp/test-worktree/.orchestrator/state.json"}}
+        # When environment has a mismatched status root, it should fail-fast
+        with (
+            mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": "/home/lupin/code/pantheon"}),
+            self.assertRaises(SystemExit) as cm
+        ):
+            supervisor.check_status_root_consistency(config, allow_isolated=False)
+        self.assertEqual(cm.exception.code, 1)
+
+        # Bypassed when --allow-isolated-status-root is set
+        try:
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": "/home/lupin/code/pantheon"}):
+                supervisor.check_status_root_consistency(config, allow_isolated=True)
+        except SystemExit:
+            self.fail("check_status_root_consistency exited unexpectedly when allow_isolated=True")
+
+        # Bypassed when env variable is not set or empty
+        try:
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": ""}):
+                supervisor.check_status_root_consistency(config, allow_isolated=False)
+        except SystemExit:
+            self.fail("check_status_root_consistency exited unexpectedly when env is empty")
+
+    def test_multiple_supervisors_same_status_root_collision(self) -> None:
+        """Verify that two supervisors pointing to the same status root (but different state file folders / cwds)
+        will collide on the authoritative status root lock."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp1, tempfile.TemporaryDirectory() as tmp2:
+            status_root = Path(tmp1)
+            # Setup configs for two instances sharing same status_root
+            config1 = {
+                "paths": {
+                    "status_file": str(status_root / "ai-status.json"),
+                    "state_file": str(Path(tmp1) / ".orchestrator" / "state.json")
+                }
+            }
+            config2 = {
+                "paths": {
+                    "status_file": str(status_root / "ai-status.json"),
+                    "state_file": str(Path(tmp2) / ".orchestrator" / "state.json")
+                }
+            }
+
+            # Acquire first lock
+            self.assertTrue(supervisor.acquire_singleton_lock(config1))
+            first_handle = supervisor._SINGLETON_LOCK_HANDLE
+            self.assertIsNotNone(first_handle)
+
+            # Second contender fails to acquire
+            self.assertFalse(supervisor.acquire_singleton_lock(config2))
+
+            # Clean up first lock
+            first_handle.close()
+            supervisor._SINGLETON_LOCK_HANDLE = None
+
+            # Now second contender succeeds
+            self.assertTrue(supervisor.acquire_singleton_lock(config2))
+            second_handle = supervisor._SINGLETON_LOCK_HANDLE
+            self.addCleanup(second_handle.close)
 
 
 class WorktreeDirtClassificationTests(unittest.TestCase):
