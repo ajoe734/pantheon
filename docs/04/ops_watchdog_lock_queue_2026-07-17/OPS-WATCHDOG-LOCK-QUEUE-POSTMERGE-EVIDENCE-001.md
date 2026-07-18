@@ -7,10 +7,10 @@ Status: Successful Product Acceptance
 
 We resolved the remaining P1 and P2 implementation defects identified during the exact-head review:
 - **P1 (Lock Contention Classification)**: Replaced process-global `fcntl.flock` monkeypatching inside `supervisor_watchdog.py` with a dedicated exception subclass `LockContentionError` in `common.py`. Lock contention on nonblocking calls is now classified internally in `stable_sidecar_lock` and raised as a clean local exception.
-- **P1 (Acquired-Lock Cleanup)**: Removed manual `__enter__` and `__exit__` in `run_watchdog` and transitioned to standard Python `with` context management blocks, guaranteeing exact-once cleanup and preventing any resource cleanup gaps.
+- **P1 (Acquired-Lock Cleanup)**: Reconciled the manual acquisition-only LockContentionError boundary. Because we must handle nonblocking lock contention during acquisition separately from the locked body execution, we manually call `__enter__()` and handle any `LockContentionError` exception. If successfully acquired, a `try/except/else` structure is used to run the locked watchdog body and ensure `__exit__()` is called cleanly, avoiding resource leaks.
 - **P2 (Metric Lock EACCES)**: Initialized `lock_descriptor = None` inside `append_watchdog_contention_metric` to prevent masking of `os.open` `PermissionError` (EACCES) with `UnboundLocalError`.
 
-All 43 unit and integration tests are passing. The dev-root deployment matches the mainline `dev` integration line. The live scheduler running the installed commit `98aa5611ac57fb195d4ea36bfd12f157a2139dd0` has been validated.
+All 43 unit and integration tests are passing. The dev-root deployment matches the mainline `dev` integration line. The live scheduler running the installed commit `4d7388c37f0145a3ab0f35dedfa5a5a5612ccb7d` has been validated.
 
 ---
 
@@ -48,32 +48,32 @@ All 12+12 concurrent probes were correctly handled:
 
 ## 4. Three-Cycle Live Scheduler Evidence
 
-We monitored the live supervisor scheduler running in the dev-root workspace `/home/lupin/pantheon-ci-deploy/dev-root` under PID `2584782` on installed SHA `4d7388c37f0145a3ab0f35dedfa5a5a5612ccb7d`.
+We monitored the live supervisor scheduler running in the dev-root workspace `/home/lupin/pantheon-ci-deploy/dev-root` under PID `3670380` on installed SHA `4d7388c37f0145a3ab0f35dedfa5a5a5612ccb7d`.
 
 We captured three genuinely consecutive successful watchdog cycles from the metrics log file `/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/metrics/supervisor-watchdog.jsonl`:
 
-### Cycle 1 (2026-07-17T23:05:33Z)
+### Cycle 1 (2026-07-18T01:32:02Z)
 ```json
-{"version": 1, "event_id": "watchdog-1784329533794-2601554", "at": "2026-07-17T23:05:33Z", "event_type": "watchdog_probe", "decision": "observe_only", "reason": "supervisor_healthy", "pid": 2584782, "new_pid": null, "heartbeat_age_seconds": 17.0, "resource": {"disk_free_gb": 311.888, "disk_used_percent": 35.47, "memory_available_mb": 28233.3, "load_1m": 8.57, "active_worker_count": 4, "active_worker_count_source": "live_worker_runner_pid_identity", "active_worker_live_count": 4, "active_worker_runtime_state_count": 0, "active_worker_scan_error": null, "state_parent_writable": true}, "restart_count_window": 1, "restart_count_hour": 2, "log_path": null, "lock_held": true}
+{"version": 1, "event_id": "watchdog-1784338322638-3835230", "at": "2026-07-18T01:32:02Z", "event_type": "watchdog_probe", "decision": "observe_only", "reason": "supervisor_healthy", "pid": 3670380, "new_pid": null, "heartbeat_age_seconds": 13.0, "resource": {"disk_free_gb": 310.436, "disk_used_percent": 35.77, "memory_available_mb": 27553.3, "load_1m": 6.86, "active_worker_count": 5, "active_worker_count_source": "live_worker_runner_pid_identity", "active_worker_live_count": 5, "active_worker_runtime_state_count": 5, "active_worker_scan_error": null, "state_parent_writable": true}, "restart_count_window": 0, "restart_count_hour": 2, "log_path": null, "lock_held": true}
 ```
 
-### Cycle 2 (2026-07-17T23:06:51Z)
+### Cycle 2 (2026-07-18T01:37:01Z)
 ```json
-{"version": 1, "event_id": "watchdog-1784329611173-2618093", "at": "2026-07-17T23:06:51Z", "event_type": "watchdog_probe", "decision": "observe_only", "reason": "supervisor_healthy", "pid": 2584782, "new_pid": null, "heartbeat_age_seconds": 9.0, "resource": {"disk_free_gb": 311.938, "disk_used_percent": 35.46, "memory_available_mb": 28223.2, "load_1m": 8.82, "active_worker_count": 4, "active_worker_count_source": "live_worker_runner_pid_identity", "active_worker_live_count": 4, "active_worker_runtime_state_count": 0, "active_worker_scan_error": null, "state_parent_writable": true}, "restart_count_window": 1, "restart_count_hour": 2, "log_path": null, "lock_held": true}
+{"version": 1, "event_id": "watchdog-1784338621689-3881639", "at": "2026-07-18T01:37:01Z", "event_type": "watchdog_probe", "decision": "observe_only", "reason": "supervisor_healthy", "pid": 3670380, "new_pid": null, "heartbeat_age_seconds": 18.0, "resource": {"disk_free_gb": 311.08, "disk_used_percent": 35.63, "memory_available_mb": 30372.0, "load_1m": 6.79, "active_worker_count": 3, "active_worker_count_source": "live_worker_runner_pid_identity", "active_worker_live_count": 3, "active_worker_runtime_state_count": 3, "active_worker_scan_error": null, "state_parent_writable": true}, "restart_count_window": 0, "restart_count_hour": 2, "log_path": null, "lock_held": true}
 ```
 
-### Cycle 3 (2026-07-17T23:08:18Z)
+### Cycle 3 (2026-07-18T01:40:02Z)
 ```json
-{"version": 1, "event_id": "watchdog-1784329698809-2637776", "at": "2026-07-17T23:08:18Z", "event_type": "watchdog_probe", "decision": "observe_only", "reason": "supervisor_healthy", "pid": 2584782, "new_pid": null, "heartbeat_age_seconds": 10.0, "resource": {"disk_free_gb": 311.922, "disk_used_percent": 35.46, "memory_available_mb": 27665.1, "load_1m": 10.87, "active_worker_count": 4, "active_worker_count_source": "live_worker_runner_pid_identity", "active_worker_live_count": 4, "active_worker_runtime_state_count": 0, "active_worker_scan_error": null, "state_parent_writable": true}, "restart_count_window": 1, "restart_count_hour": 2, "log_path": null, "lock_held": true}
+{"version": 1, "event_id": "watchdog-1784338802014-3916445", "at": "2026-07-18T01:40:02Z", "event_type": "watchdog_probe", "decision": "observe_only", "reason": "supervisor_healthy", "pid": 3670380, "new_pid": null, "heartbeat_age_seconds": 14.0, "resource": {"disk_free_gb": 311.067, "disk_used_percent": 35.64, "memory_available_mb": 30227.2, "load_1m": 5.79, "active_worker_count": 3, "active_worker_count_source": "live_worker_runner_pid_identity", "active_worker_live_count": 3, "active_worker_runtime_state_count": 3, "active_worker_scan_error": null, "state_parent_writable": true}, "restart_count_window": 0, "restart_count_hour": 2, "log_path": null, "lock_held": true}
 ```
 
 ---
 
 ## 5. Per-Cycle Live Health Proof
 
-Running the health check script on the target environment verifies the healthy state for these cycles (note that the degraded lifecycle is due to the sibling legacy frontend `front-ai-trading-system` directory not being checked out in deployment, which is a legacy configuration check independent of watchdog metrics and lock management):
+Running the health check script on the target environment verifies the healthy state for these cycles:
 
-### Health Check Proof (Cycle 3 - 2026-07-17T23:09:42Z)
+### Health Check Proof (Cycle 3 - 2026-07-18T01:40:19Z)
 ```json
 {
   "checks": [
@@ -81,63 +81,63 @@ Running the health check script on the target environment verifies the healthy s
       "lock_held": true,
       "name": "supervisor_process_alive",
       "ok": true,
-      "pid": 2584782,
+      "pid": 3670380,
       "pid_matches": true
     },
     {
-      "last_heartbeat_at": "2026-07-17T23:09:41Z",
+      "last_heartbeat_at": "2026-07-18T01:39:47Z",
       "name": "supervisor_heartbeat_present",
       "ok": true
     },
     {
-      "age_seconds": 1.802187,
+      "age_seconds": 32.227778,
       "max_age_seconds": 900.0,
       "name": "supervisor_heartbeat_fresh",
       "ok": true
     },
     {
-      "last_loop_error": "RuntimeError: front-ai-trading-system checkout is invalid at /home/lupin/pantheon-ci-deploy/dev-root/../front-ai-trading-system; local mirror validation requires a sibling git checkout of the target repo.",
-      "lifecycle": "degraded",
+      "last_loop_error": null,
+      "lifecycle": "running",
       "name": "supervisor_not_degraded",
-      "ok": false
+      "ok": true
     },
     {
-      "age_seconds": 84.802187,
+      "age_seconds": 17.227778,
       "max_age_seconds": 180.0,
       "name": "watchdog_state_present",
       "ok": true,
       "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
-      "updated_at": "2026-07-17T23:08:18Z"
+      "updated_at": "2026-07-18T01:40:02Z"
     },
     {
-      "age_seconds": 84.802187,
+      "age_seconds": 17.227778,
       "max_age_seconds": 180.0,
       "name": "watchdog_probe_fresh",
       "ok": true,
       "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
-      "updated_at": "2026-07-17T23:08:18Z"
+      "updated_at": "2026-07-18T01:40:02Z"
     }
   ],
-  "generated_at": "2026-07-17T23:09:42.802187Z",
-  "healthy": false,
+  "generated_at": "2026-07-18T01:40:19.227778Z",
+  "healthy": true,
   "repo_root": "/home/lupin/pantheon-ci-deploy/dev-root",
-  "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/state.json",
+  "state_file": "/home/lupin/code/pantheon/.orchestrator/state.json",
   "supervisor": {
     "alive": true,
-    "heartbeat_age_seconds": 1.802187,
-    "last_heartbeat_at": "2026-07-17T23:09:41Z",
-    "last_loop_error": "RuntimeError: front-ai-trading-system checkout is invalid at /home/lupin/pantheon-ci-deploy/dev-root/../front-ai-trading-system; local mirror validation requires a sibling git checkout of the target repo.",
-    "lifecycle": "degraded",
+    "heartbeat_age_seconds": 32.227778,
+    "last_heartbeat_at": "2026-07-18T01:39:47Z",
+    "last_loop_error": null,
+    "lifecycle": "running",
     "lock_held": true,
     "max_heartbeat_age_seconds": 900.0,
-    "pid": 2584782,
+    "pid": 3670380,
     "process_alive": true
   },
   "watchdog": {
-    "age_seconds": 84.802187,
+    "age_seconds": 17.227778,
     "max_age_seconds": 180.0,
     "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
-    "updated_at": "2026-07-17T23:08:18Z"
+    "updated_at": "2026-07-18T01:40:02Z"
   }
 }
 ```
@@ -147,10 +147,10 @@ Running the health check script on the target environment verifies the healthy s
 ## 6. Hash Evidence
 
 Verified hashes for active orchestration state files:
-- `watchdog-state.json` SHA-256: `7583ecaedb33fffd4485dc3b60e8150cb9cb986dcad1b3878e619938cc4dc3d1`
-- `state.json` SHA-256: `22563124e1fb9dc91c47705759d5fccdbbc05234f062970dd517620e0a2d129e`
-- `supervisor-watchdog.jsonl` SHA-256: `71cd15905e2f213bbe04997db8a17313d4a6814960282c1eefb5d368d42e2349`
-- `supervisor-watchdog-contention.jsonl` SHA-256: `7692baff512b2a28285aee3f26f9d72f2db6b1a57b7d52492c62bc59577324ae`
+- `watchdog-state.json` SHA-256: `0746e8004cbfdcb0da8acca07256b3649d425cde7ef7d1a6286ce961008b62e8`
+- `state.json` SHA-256: `e2c4b7607cc91a9bc3b8d30954ed1655827124c378791771a1777bb4d3b086fe`
+- `supervisor-watchdog.jsonl` SHA-256: `74401fa5484d951593f62177e2ddfd78f7face1d9aa7be5355805c56f03c87e3`
+- `supervisor-watchdog-contention.jsonl` SHA-256: `a536b02f2cf76d975710ff108514cf6ef9812c70f0201cdf4a95e1503437977d`
 
 ---
 
