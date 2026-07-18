@@ -88,7 +88,9 @@ from runtime_state import (
     runtime_state_lock,
 )
 from common import (
+    ActivityAuditInvariantError,
     DuplicateActivityJSONKeyError,
+    activity_audit_invariant_error,
     activity_audit_lock_path,
     activity_audit_source_paths_unlocked,
     append_activity_log_entries_unlocked,
@@ -96,6 +98,7 @@ from common import (
     durable_write_bytes,
     prepare_activity_audit_unlocked,
     read_activity_log_tail_bytes,
+    read_regular_file_bytes,
     rotate_activity_log_unlocked,
     strict_activity_json_loads,
     validated_activity_event_digests_unlocked,
@@ -1264,11 +1267,16 @@ def default_state() -> dict[str, Any]:
 
 
 def load_state() -> dict[str, Any]:
-    if not STATUS_FILE.exists():
+    try:
+        payload = read_regular_file_bytes(
+            STATUS_FILE,
+            source="canonical status state",
+        )
+    except FileNotFoundError:
         return default_state()
-    if STATUS_FILE.read_text(encoding="utf-8").strip() == "":
+    if not payload.strip():
         raise SystemExit(f"Refusing to initialize from empty status file: {STATUS_FILE}")
-    state = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+    state = json.loads(payload.decode("utf-8", errors="strict"))
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
     return state
@@ -1846,8 +1854,68 @@ def _activity_audit_sources() -> list[Path]:
 
 
 def _activity_event_index_unlocked(event_ids: set[str]) -> dict[str, str]:
-    prepare_activity_audit_unlocked(LOG_FILE)
-    return validated_activity_event_digests_unlocked(LOG_FILE, event_ids)
+    try:
+        prepare_activity_audit_unlocked(LOG_FILE)
+        return validated_activity_event_digests_unlocked(LOG_FILE, event_ids)
+    except ActivityAuditInvariantError:
+        raise
+    except RuntimeError as exc:
+        raise activity_audit_invariant_error(
+            exc,
+            log_path=LOG_FILE,
+            operation="status_outbox_recovery",
+        ) from exc
+
+
+def _active_activity_event_digests_unlocked(
+    event_ids: set[str],
+) -> dict[str, str]:
+    """Look for a just-appended outbox transaction in a bounded active tail."""
+
+    payload = read_activity_log_tail_bytes(
+        LOG_FILE,
+        max_lines=max(64, len(event_ids) * 8),
+    )
+    result: dict[str, str] = {}
+    for line_number, raw_line in enumerate((payload or b"").splitlines(), start=1):
+        if not raw_line.strip():
+            continue
+        try:
+            entry = strict_activity_json_loads(
+                raw_line.decode("utf-8", errors="strict")
+            )
+        except (
+            UnicodeError,
+            json.JSONDecodeError,
+            DuplicateActivityJSONKeyError,
+        ) as exc:
+            raise ActivityAuditInvariantError(
+                "active activity tail is unreadable",
+                invariant="activity_tail_json",
+                evidence={
+                    "log_path": str(LOG_FILE),
+                    "tail_line_number": line_number,
+                    "error_type": type(exc).__name__,
+                },
+            ) from exc
+        if not isinstance(entry, dict):
+            raise ActivityAuditInvariantError(
+                "active activity tail row is not an object",
+                invariant="activity_tail_json",
+                evidence={
+                    "log_path": str(LOG_FILE),
+                    "tail_line_number": line_number,
+                },
+            )
+        event_id = str(entry.get("event_id") or "")
+        if event_id not in event_ids:
+            continue
+        digest = _canonical_json_sha256(entry)
+        existing = result.get(event_id)
+        if existing is not None and existing != digest:
+            raise RuntimeError(f"activity outbox payload conflict: {event_id}")
+        result[event_id] = digest
+    return result
 
 
 def _validate_status_archive_outbox(value: Any) -> dict[str, Any]:
@@ -1994,14 +2062,22 @@ def _validate_status_activity_outbox(value: Any) -> dict[str, Any]:
     return value
 
 
-def recover_status_activity_outbox(state: dict[str, Any]) -> bool:
+def recover_status_activity_outbox(
+    state: dict[str, Any],
+    *,
+    known_unappended: bool = False,
+) -> bool:
     pending = state.get(STATUS_ACTIVITY_OUTBOX_KEY)
     if pending in (None, {}, []):
         return False
     pending = _validate_status_activity_outbox(pending)
     pending_event_ids = {str(event["event_id"]) for event in pending["events"]}
     with activity_audit_lock_file(LOG_FILE, shared=False, nonblocking=False):
-        existing = _activity_event_index_unlocked(pending_event_ids)
+        existing = (
+            {}
+            if known_unappended
+            else _activity_event_index_unlocked(pending_event_ids)
+        )
         missing: list[dict[str, Any]] = []
         for event in pending["events"]:
             event_id = str(event["event_id"])
@@ -2015,7 +2091,9 @@ def recover_status_activity_outbox(state: dict[str, Any]) -> bool:
             missing.append(event)
             existing[event_id] = digest
         _append_logs_unlocked(missing)
-        final = _activity_event_index_unlocked(pending_event_ids)
+        final = _active_activity_event_digests_unlocked(pending_event_ids)
+        if set(final) != pending_event_ids:
+            final = _activity_event_index_unlocked(pending_event_ids)
         if any(
             final.get(str(event["event_id"])) != _canonical_json_sha256(event)
             for event in pending["events"]
@@ -2041,7 +2119,7 @@ def commit_state_with_activity_outbox(
         _status_archive_fault("pending_status")
     recover_status_archive_outbox(state)
     if events:
-        recover_status_activity_outbox(state)
+        recover_status_activity_outbox(state, known_unappended=True)
 
 
 def ensure_agent(name: str) -> dict[str, Any]:
@@ -5219,6 +5297,21 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def _emit_fail_closed(error: ActivityAuditInvariantError) -> None:
+    print(
+        json.dumps(
+            {
+                "status": "fail_closed",
+                "diagnostic": error.diagnostic,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ),
+        file=sys.stderr,
+    )
+
+
 def command_wave(state: dict[str, Any], args: list[str]) -> None:
     """wave open <wave-id> | wave close | wave freeze"""
     from wave_guards import (  # lazy: only needed for this command
@@ -5316,84 +5409,42 @@ def main(argv: list[str]) -> int:
     }
 
     if command in read_only_commands:
-        import time
-        pending_outbox = False
-        
-        # Bounded shared lock acquisition to check for pending outbox
-        acquired_sh = False
-        start_time = time.monotonic()
-        while time.monotonic() - start_time < 5.0:
-            lock_sh = canonical_task_state_lock(shared=True, nonblocking=True)
-            try:
-                lock_sh.__enter__()
-                acquired_sh = True
-                break
-            except BlockingIOError:
-                time.sleep(0.1)
-                
-        if not acquired_sh:
-            raise RuntimeError(
-                "Task-state shared lock could not be acquired within 5 seconds to check pending outbox"
-            )
-            
+        # Read-only commands must never join the writer convoy or mutate
+        # recovery state. Writers/supervisor own outbox recovery; a reader
+        # reports a bounded fail-closed diagnostic instead.
         try:
-            state_data = load_state()
-            if (
-                state_data.get("status_archive_outbox") not in (None, {}, [])
-                or state_data.get("status_activity_outbox") not in (None, {}, [])
-            ):
-                pending_outbox = True
-        except Exception:
-            pass
-        finally:
-            lock_sh.__exit__(None, None, None)
-
-        if pending_outbox:
-            acquired = False
-            start_time = time.monotonic()
-            while time.monotonic() - start_time < 5.0:
-                lock = canonical_task_state_lock(shared=False, nonblocking=True)
-                try:
-                    lock.__enter__()
-                    acquired = True
-                    break
-                except BlockingIOError:
-                    time.sleep(0.1)
-
-            if acquired:
-                try:
-                    recovery_state = load_state()
-                    recover_status_archive_outbox(recovery_state)
-                    recover_status_activity_outbox(recovery_state)
-                finally:
-                    lock.__exit__(None, None, None)
-            else:
-                raise RuntimeError(
-                    "Pending outbox recovery is required but task-state EX lock could not be acquired"
+            with canonical_task_state_lock(shared=True, nonblocking=True):
+                state = load_state()
+                pending_planes = [
+                    key
+                    for key in (
+                        STATUS_ARCHIVE_OUTBOX_KEY,
+                        STATUS_ACTIVITY_OUTBOX_KEY,
+                    )
+                    if state.get(key) not in (None, {}, [])
+                ]
+                if pending_planes:
+                    raise ActivityAuditInvariantError(
+                        "canonical status recovery is pending",
+                        invariant="status_recovery_pending",
+                        evidence={"pending_planes": pending_planes},
+                    )
+                read_only_commands[command](state, args)
+        except BlockingIOError as exc:
+            _emit_fail_closed(
+                ActivityAuditInvariantError(
+                    "canonical task-state lock is busy",
+                    invariant="status_task_lock_busy",
+                    evidence={
+                        "command": command,
+                        "lock_path": str(canonical_task_state_lock_path(STATUS_FILE)),
+                    },
                 )
-
-        # Bounded shared lock acquisition to execute the read-only command
-        acquired_sh2 = False
-        start_time = time.monotonic()
-        while time.monotonic() - start_time < 5.0:
-            lock_sh2 = canonical_task_state_lock(shared=True, nonblocking=True)
-            try:
-                lock_sh2.__enter__()
-                acquired_sh2 = True
-                break
-            except BlockingIOError:
-                time.sleep(0.1)
-
-        if not acquired_sh2:
-            raise RuntimeError(
-                "Task-state shared lock could not be acquired within 5 seconds to run command"
             )
-
-        try:
-            state = load_state()
-            read_only_commands[command](state, args)
-        finally:
-            lock_sh2.__exit__(None, None, None)
+            return 75
+        except ActivityAuditInvariantError as exc:
+            _emit_fail_closed(exc)
+            return 2
         return 0
 
     if command not in commands:

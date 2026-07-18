@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -97,6 +98,18 @@ def _locked_status_update(
             raise RuntimeError(f"missing fixture task: {task_id}")
         task["next"] = message
         ai_status.save_state(state)
+
+
+def _hold_task_state_lock(
+    status_file: str,
+    entered: multiprocessing.synchronize.Event,
+    release: multiprocessing.synchronize.Event,
+) -> None:
+    ai_status.STATUS_FILE = Path(status_file)
+    with ai_status.canonical_task_state_lock(shared=False):
+        entered.set()
+        if not release.wait(timeout=10):
+            raise RuntimeError("timed out waiting to release task-state lock")
 
 
 def _recover_pending_status_outbox(
@@ -1440,6 +1453,177 @@ class ArchiveWorkflowTests(unittest.TestCase):
         self.assertIn('"source": "archive"', rendered)
         self.assertIn('"task_id": "REG-100"', rendered)
         self.assertIn("ai-task-archive/tasks", rendered)
+
+    def test_read_only_main_fails_closed_without_recovering_pending_outbox(self) -> None:
+        class NullLock:
+            def __enter__(self):
+                return None
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        pending_state = dict(self.state)
+        pending_state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = {
+            "schema_version": 1,
+            "transaction_id": "pending",
+            "events": [{"event_id": "pending-event"}],
+        }
+
+        with (
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(
+                ai_status,
+                "canonical_task_state_lock",
+                return_value=NullLock(),
+            ),
+            mock.patch.object(ai_status, "load_state", return_value=pending_state),
+            mock.patch.object(ai_status, "recover_status_archive_outbox") as archive_recovery,
+            mock.patch.object(ai_status, "recover_status_activity_outbox") as activity_recovery,
+            mock.patch("sys.stderr", new_callable=io.StringIO) as stderr,
+        ):
+            rc = ai_status.main(["ai_status.py", "show", "REG-100"])
+
+        self.assertEqual(rc, 2)
+        rendered = json.loads(stderr.getvalue())
+        self.assertEqual(rendered["status"], "fail_closed")
+        diagnostic = rendered["diagnostic"]
+        self.assertEqual(diagnostic["invariant"], "status_recovery_pending")
+        archive_recovery.assert_not_called()
+        activity_recovery.assert_not_called()
+
+    def test_real_show_is_bounded_and_does_not_mutate_pending_outbox(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir)
+            subprocess.run(
+                ["git", "init", "-q", str(status_root)],
+                check=True,
+            )
+            (status_root / ".orchestrator").mkdir()
+            (status_root / ".orchestrator" / "task-state.lock").write_bytes(b"")
+            state = deepcopy(self.state)
+            state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = {
+                "schema_version": 1,
+                "transaction_id": "pending-read-only-fixture",
+                "events": [{"event_id": "pending-read-only-event"}],
+            }
+            status_file = status_root / "ai-status.json"
+            status_file.write_text(
+                json.dumps(state, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            before = status_file.read_bytes()
+            env = os.environ.copy()
+            for name in (
+                "ORCH_RUN_ID",
+                "PANTHEON_WORKTREE_ROOT",
+                "ORCH_WORKSPACE_PATH",
+                "ORCH_RUNNER_STATUS_PATH",
+                "ORCH_HEARTBEAT_PATH",
+            ):
+                env.pop(name, None)
+            env.update(
+                {
+                    "AI_NAME": "Codex",
+                    "PANTHEON_STATUS_ROOT": str(status_root),
+                }
+            )
+
+            started = time.monotonic()
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(Path(__file__).resolve().parents[1] / "scripts" / "ai-status.sh"),
+                    "show",
+                    "REG-100",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            elapsed = time.monotonic() - started
+
+            self.assertEqual(result.returncode, 2, result.stderr + result.stdout)
+            self.assertLess(elapsed, 2.0)
+            rendered = json.loads(result.stderr)
+            self.assertEqual(
+                rendered["diagnostic"]["invariant"],
+                "status_recovery_pending",
+            )
+            self.assertEqual(status_file.read_bytes(), before)
+            self.assertFalse(
+                (status_root / ".orchestrator" / "activity-audit.lock").exists()
+            )
+
+    def test_real_show_returns_immediately_when_writer_holds_task_lock(self) -> None:
+        context = multiprocessing.get_context("fork")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir)
+            subprocess.run(["git", "init", "-q", str(status_root)], check=True)
+            (status_root / ".orchestrator").mkdir()
+            (status_root / ".orchestrator" / "task-state.lock").write_bytes(b"")
+            status_file = status_root / "ai-status.json"
+            status_file.write_text(
+                json.dumps(self.state, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            before = status_file.read_bytes()
+            entered = context.Event()
+            release = context.Event()
+            holder = context.Process(
+                target=_hold_task_state_lock,
+                args=(str(status_file), entered, release),
+            )
+            holder.start()
+            self.assertTrue(entered.wait(timeout=5))
+            env = os.environ.copy()
+            for name in (
+                "ORCH_RUN_ID",
+                "PANTHEON_WORKTREE_ROOT",
+                "ORCH_WORKSPACE_PATH",
+                "ORCH_RUNNER_STATUS_PATH",
+                "ORCH_HEARTBEAT_PATH",
+            ):
+                env.pop(name, None)
+            env.update(
+                {
+                    "AI_NAME": "Codex",
+                    "PANTHEON_STATUS_ROOT": str(status_root),
+                }
+            )
+            try:
+                started = time.monotonic()
+                result = subprocess.run(
+                    [
+                        "bash",
+                        str(Path(__file__).resolve().parents[1] / "scripts" / "ai-status.sh"),
+                        "show",
+                        "REG-100",
+                    ],
+                    cwd=Path(__file__).resolve().parents[1],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                elapsed = time.monotonic() - started
+            finally:
+                release.set()
+                holder.join(timeout=5)
+                if holder.is_alive():
+                    holder.kill()
+                    holder.join(timeout=5)
+            self.assertEqual(holder.exitcode, 0)
+            self.assertEqual(result.returncode, 75, result.stderr + result.stdout)
+            self.assertLess(elapsed, 2.0)
+            self.assertEqual(
+                json.loads(result.stderr)["diagnostic"]["invariant"],
+                "status_task_lock_busy",
+            )
+            self.assertEqual(status_file.read_bytes(), before)
 
 
 class SidecarTaskTests(unittest.TestCase):
@@ -3794,6 +3978,44 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
         )
         final = json.loads(self.status_file.read_text(encoding="utf-8"))
         self.assertIsNone(final[ai_status.STATUS_ACTIVITY_OUTBOX_KEY])
+
+    def test_fresh_outbox_commit_never_scans_historical_archives(self) -> None:
+        events = [
+            {
+                "event_id": "fresh-fast-path",
+                "ts": "2026-07-14T00:01:00Z",
+                "agent": "Codex2",
+                "type": "progress",
+                "task_id": "LOCK-ONE",
+                "message": "fresh event",
+            }
+        ]
+        state = self._fixture_state()
+        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = self._outbox(events)
+        self._write_state(state)
+
+        with (
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+            mock.patch.object(ai_status, "LOG_FILE", self.log_file),
+            mock.patch.object(
+                ai_status,
+                "_activity_event_index_unlocked",
+                side_effect=AssertionError("historical scan must not run"),
+            ) as historical_scan,
+        ):
+            ai_status.recover_status_activity_outbox(
+                state,
+                known_unappended=True,
+            )
+
+        historical_scan.assert_not_called()
+        self.assertIsNone(state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY])
+        rows = [
+            json.loads(line)
+            for line in self.log_file.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        self.assertEqual(rows, events)
 
     def test_outbox_rejects_noncanonical_event_id_before_append(self) -> None:
         event_id_cases = (
