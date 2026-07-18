@@ -3,7 +3,7 @@
   "packet_type": "fleet_corrective_task",
   "task_id": "LOOP-PROD-RUNTIME-GATE-SEPARATION-001",
   "title": "Separate runtime dispatch safety from final completion authority",
-  "status": "ready_for_fleet_admission",
+  "status": "deferred_security_backlog",
   "program_id": "loop-product-level-remediation-2026-07-13",
   "plan": "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_RUNTIME_GATE_SEPARATION_2026-07-18.md",
   "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-RUNTIME-GATE-SEPARATION-001.md",
@@ -47,7 +47,7 @@
   "product_level_required": true,
   "requires_human_ops_signoff": false,
   "dispatch_rules": [
-    "Fleet implementation only in a clean task worktree.",
+    "Do not dispatch while security work is paused; future implementation is only in a clean fleet task worktree.",
     "Owner and reviewer must be distinct admitted fleet identities.",
     "Planner may inspect and accept evidence but may not implement declared artifacts.",
     "Human/Ops authority is required only by LOOP-PROD-CLOSE-002, never by pre-dispatch materialization."

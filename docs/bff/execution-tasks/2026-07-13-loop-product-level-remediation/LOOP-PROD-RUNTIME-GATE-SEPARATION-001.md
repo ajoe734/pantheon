@@ -1,12 +1,12 @@
 # LOOP-PROD-RUNTIME-GATE-SEPARATION-001
 
-Status: corrective fleet task; must be admitted before the primary catalog is
-materialized
+Status: deferred control-plane/security backlog task; do not dispatch in the
+current phase
 
 Plan:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_RUNTIME_GATE_SEPARATION_2026-07-18.md`
 
-## Objective
+## Objective (future control-plane phase)
 
 Separate the runtime-lock safety gate from the final product-completion
 authority. The current dispatcher requires a protected Ed25519 completion
@@ -14,7 +14,7 @@ record before it will materialize any primary task. That is the wrong ordering:
 the signing authority certifies the final program and must not prevent fleets
 from doing the development work that the final program will later certify.
 
-## Fleet-owned scope
+## Fleet-owned scope (future; not current dispatch)
 
 - `scripts/dispatch_loop_product_level_remediation_2026-07-13.py`
 - `scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py`
@@ -22,9 +22,10 @@ from doing the development work that the final program will later certify.
 - `docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/INDEX.md`
 - the exact task/evidence contract files required by the changed schemas
 
-The planner must not implement the dispatcher or any product artifact. The
-fleet owns the code and tests in a clean task worktree, with a distinct fleet
-reviewer and a normal PR to `dev`.
+The planner must not implement the dispatcher or any product artifact. When
+security/control-plane work is explicitly resumed, the fleet owns the code and
+tests in a clean task worktree, with a distinct fleet reviewer and a normal PR
+to `dev`. Do not dispatch this task while security work is paused.
 
 ## Required behavior
 

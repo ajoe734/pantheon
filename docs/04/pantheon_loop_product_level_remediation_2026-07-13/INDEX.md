@@ -1,7 +1,7 @@
 # Pantheon Loop Product-Level Remediation Program
 
-Status: planning baseline archived; runtime gate sequencing correction pending
-fleet implementation
+Status: planning baseline archived; system availability restoration pending;
+security/control-plane changes deferred
 
 Baseline date: 2026-07-13
 
@@ -25,10 +25,16 @@ Program objective:
   `docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/tasks.json`
 - Idempotent dispatcher:
   `scripts/dispatch_loop_product_level_remediation_2026-07-13.py`
-- Runtime gate correction (superseding addendum):
+- Runtime gate correction (deferred security/control-plane addendum):
   `archive/REMEDIATION_RUNTIME_GATE_SEPARATION_2026-07-18.md`
 - Corrective fleet task:
   `docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-RUNTIME-GATE-SEPARATION-001.md`
+- Security preflight and hold matrix:
+  `archive/SECURITY_PREFLIGHT_AND_HOLD_MATRIX_2026-07-18.md`
+- Security preflight task (deferred; do not dispatch):
+  `docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-SECURITY-PREFLIGHT-001.md`
+- System availability restoration (only current dispatchable task):
+  `docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-SYSTEM-AVAILABILITY-001.md`
 
 ## Dispatch posture
 

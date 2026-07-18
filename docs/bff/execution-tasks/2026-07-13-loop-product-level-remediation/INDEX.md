@@ -23,12 +23,26 @@ Sequencing correction:
 Machine-readable corrective packet:
 `corrections/runtime-gate-separation-task.v1.json`
 
+Security preflight (deferred; do not dispatch now):
+`LOOP-PROD-SECURITY-PREFLIGHT-001.md`
+
+Machine-readable security packet:
+`corrections/security-preflight-task.v1.json`
+
+System availability restoration (dispatch this, not security work):
+`LOOP-PROD-SYSTEM-AVAILABILITY-001.md`
+
+Machine-readable availability packet:
+`corrections/system-availability-task.v1.json`
+
 The protected verifier policy and Ed25519 completion verdict are final
-closeout controls. They must not block primary task materialization. The fleet
-must first merge the sequencing correction, then rerun validation and the
-zero-write dry-run before dispatching the 48 primary tasks. The final
-`LOOP-PROD-CLOSE-002` task remains the only task allowed to install and consume
-the protected completion authority.
+closeout controls. All security/control-plane implementation tasks are
+`security_deferred` and are not dispatched in this phase. Ordinary system fixes may proceed only when
+they preserve the existing security contract. The dedicated
+Only the `LOOP-PROD-SYSTEM-AVAILABILITY-001` task is dispatchable now; it restores the existing dev-login
+transport without changing roles, permissions, token policy, or fallback
+security posture. The final `LOOP-PROD-CLOSE-002` task remains the only task
+allowed to install and consume the protected completion authority.
 
 Planning authority delivery:
 
