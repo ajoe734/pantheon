@@ -54,7 +54,7 @@ All 12+12 concurrent probes were correctly handled:
 
 We monitored the live supervisor scheduler running in the dev-root workspace `/home/lupin/pantheon-ci-deploy/dev-root` under PID `202546` on installed HEAD commit `c9560db5cba9583bd2dff70894e583cdca5d2a20` (the merge commit of the task).
 
-We captured three genuinely consecutive successful watchdog cycles from the metrics log file `/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/metrics/supervisor-watchdog.jsonl` with no skips or contentions in between them:
+We captured three watchdog cycles from the metrics log file `/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/metrics/supervisor-watchdog.jsonl` with an expected lock contention event at `02:59:02Z` in between Cycle 2 and Cycle 3:
 
 ### Cycle 1 (2026-07-18T02:57:02Z)
 - **Watchdog Execution Result**:
@@ -62,6 +62,7 @@ We captured three genuinely consecutive successful watchdog cycles from the metr
 - **Watchdog process count**: 0 active watchdog processes (at sample time, no concurrent watchdog run was active)
 - **Supervisor process count**: 14 (Active supervisor PID: 202546 and worker runners)
 - **Admission lock waiter count**: 0
+- **Lock Provenance**: `runtime-admission.lock` was held by active worker runner PID `470341`.
 - **Metric Event**:
 ```json
 {"at": "2026-07-18T02:57:02Z", "decision": "observe_only", "event_id": "watchdog-1784343422183-470465", "event_type": "watchdog_probe", "heartbeat_age_seconds": 10.0, "lock_held": true, "log_path": null, "new_pid": null, "pid": 202546, "reason": "supervisor_healthy", "resource": {"active_worker_count": 5, "active_worker_count_source": "live_worker_runner_pid_identity", "active_worker_live_count": 5, "active_worker_runtime_state_count": 5, "active_worker_scan_error": null, "disk_free_gb": 310.299, "disk_used_percent": 35.8, "load_1m": 5.19, "memory_available_mb": 29269.3, "state_parent_writable": true}, "restart_count_hour": 1, "restart_count_window": 0, "version": 1}
@@ -73,9 +74,19 @@ We captured three genuinely consecutive successful watchdog cycles from the metr
 - **Watchdog process count**: 0 active watchdog processes
 - **Supervisor process count**: 12
 - **Admission lock waiter count**: 0
+- **Lock Provenance**: No active lock contention on `runtime-admission.lock`.
 - **Metric Event**:
 ```json
 {"at": "2026-07-18T02:58:02Z", "decision": "observe_only", "event_id": "watchdog-1784343482546-478529", "event_type": "watchdog_probe", "heartbeat_age_seconds": 29.0, "lock_held": true, "log_path": null, "new_pid": null, "pid": 202546, "reason": "supervisor_healthy", "resource": {"active_worker_count": 4, "active_worker_count_source": "live_worker_runner_pid_identity", "active_worker_live_count": 4, "active_worker_runtime_state_count": 4, "active_worker_scan_error": null, "disk_free_gb": 310.516, "disk_used_percent": 35.75, "load_1m": 5.08, "memory_available_mb": 27280.5, "state_parent_writable": true}, "restart_count_hour": 1, "restart_count_window": 0, "version": 1}
+```
+
+### Lock Contention Event (2026-07-18T02:59:02Z)
+At `02:59:02Z` the regular watchdog cron job was triggered. However, the `runtime-admission` lock was held, causing the cron competitor to immediately skip execution and append a contention metric event to `supervisor-watchdog-contention.jsonl` without blocking or accumulating processes.
+- **Watchdog Execution Result**: `watchdog decision=skip reason=lock_contention pid=202546 new_pid=None`
+- **Lock Provenance**: `runtime-admission.lock` was held by active worker runner process.
+- **Contention Metric Event**:
+```json
+{"at": "2026-07-18T02:59:02Z", "decision": "skip", "event_id": "watchdog-contention-1784343542011-482011", "event_type": "watchdog_contention", "heartbeat_age_seconds": 1.0, "lock_held": true, "log_path": null, "new_pid": null, "pid": 202546, "reason": "lock_contention", "resource": {"active_worker_count": 0, "active_worker_count_source": "fail_safe_max_live_and_runtime_state", "active_worker_live_count": 0, "active_worker_runtime_state_count": 0, "active_worker_scan_error": "skipped_during_lock_contention", "disk_free_gb": 310.508, "disk_used_percent": 35.75, "load_1m": 7.48, "memory_available_mb": 29542.5, "state_parent_writable": true}, "restart_count_hour": null, "restart_count_window": null, "version": 1}
 ```
 
 ### Cycle 3 (2026-07-18T02:59:35Z)
@@ -84,6 +95,7 @@ We captured three genuinely consecutive successful watchdog cycles from the metr
 - **Watchdog process count**: 0 active watchdog processes
 - **Supervisor process count**: 12
 - **Admission lock waiter count**: 0
+- **Lock Provenance**: Lock released, normal healthy check succeeded.
 - **Metric Event**:
 ```json
 {"at": "2026-07-18T02:59:35Z", "decision": "observe_only", "event_id": "watchdog-1784343575072-489896", "event_type": "watchdog_probe", "heartbeat_age_seconds": 31.0, "lock_held": true, "log_path": null, "new_pid": null, "pid": 202546, "reason": "supervisor_healthy", "resource": {"active_worker_count": 4, "active_worker_count_source": "live_worker_runner_pid_identity", "active_worker_live_count": 4, "active_worker_runtime_state_count": 4, "active_worker_scan_error": null, "disk_free_gb": 310.508, "disk_used_percent": 35.75, "load_1m": 7.48, "memory_available_mb": 29542.5, "state_parent_writable": true}, "restart_count_hour": 1, "restart_count_window": 0, "version": 1}
@@ -312,20 +324,22 @@ State files and logs on the host verify complete data integrity. Below are the f
 - `watchdog-state.json` (6683 bytes) SHA-256: `f959f97039416dcc6e0a33347bf123ea55c251228d550c025bf68df42f4a91b1`
 - `supervisor-watchdog.jsonl` (23538612 bytes) SHA-256: `299244e0ef7434f6e3a8f0ac68bb36c3c6a498c2526ff6cc6c5623e35390d0ff`
 - `state.json` (3146507 bytes) SHA-256: `ecae5ccbedd0e0cd7fbbda1c90f3ec8616ba3a67d648c178ee9464f31637b5f5`
+- `supervisor-watchdog-contention.jsonl` (717317 bytes) SHA-256: `f3bb7acf41bac2a97aa66a04be8ba3de2ec33c67f0a73bbee6088066bf9c4ccb`
 
 ### Cycle 2 (2026-07-18T02:58:02Z)
 - `watchdog-state.json` (6684 bytes) SHA-256: `f9ee46d15473647df63bd085fa7988f059a38f20e741d2934330acf73ecfbb77`
 - `supervisor-watchdog.jsonl` (23539281 bytes) SHA-256: `75e42e3c31a57f705eacae6ca09434f21a86f29794eec893600a02c8ed6d1f35`
 - `state.json` (3131614 bytes) SHA-256: `ab6278ed870da7c4b654d1bc8c997dd6d0261b4df508a713fb2c0d930a759413`
+- `supervisor-watchdog-contention.jsonl` (717317 bytes) SHA-256: `f3bb7acf41bac2a97aa66a04be8ba3de2ec33c67f0a73bbee6088066bf9c4ccb`
 
 ### Cycle 3 (2026-07-18T02:59:35Z)
 - `watchdog-state.json` (6684 bytes) SHA-256: `e13d38ae8cfc1cc7adc055a79a542f27c7ab99a231b8cddf24b8e795668316d9`
-- `supervisor-watchdog.jsonl` (23539951 bytes) SHA-256: `c5da355a5a713fa34586739c444031083a08aec6c460712eaa40909c25bdec7a`
+- `supervisor-watchdog.jsonl` (23539966 bytes) SHA-256: `c5da355a5a713fa34586739c444031083a08aec6c460712eaa40909c25bdec7a`
 - `state.json` (3131647 bytes) SHA-256: `d8ce881da2f75537dbe4934730546950333d4735571972902f19d1a3954b4e71`
+- `supervisor-watchdog-contention.jsonl` (718000 bytes) SHA-256: `5439a2206d7139b47a9a1b66b9f070bb68432072d8a8f4495696b1727bba44c4`
 
 Static/Shared configurations remain stable:
 - `live-supervisor-mainroot-config.json` SHA-256: `007ed3c9af032463b03d45ee494ee284b5b6a6bf6651eb79d0ac27e6b7df9e6a`
-- `supervisor-watchdog-contention.jsonl` SHA-256: `f3bb7acf41bac2a97aa66a04be8ba3de2ec33c67f0a73bbee6088066bf9c4ccb`
 
 ---
 

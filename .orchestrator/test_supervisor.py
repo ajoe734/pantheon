@@ -9,6 +9,7 @@ import unittest
 import os
 import json
 import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -4302,7 +4303,14 @@ class DispatchStatusSyncTests(unittest.TestCase):
             "reason": "owned_ready_dispatch",
         }
 
-        with mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock:
+        command_env = {
+            "PANTHEON_COMMAND_ROOT": str(self.root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
+        }
+        with (
+            mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
+            mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock,
+        ):
             changed = supervisor.sync_dispatched_task_status(self.config, event)
 
         self.assertTrue(changed)
@@ -4311,6 +4319,29 @@ class DispatchStatusSyncTests(unittest.TestCase):
         self.assertEqual(command[3], "APP-002-W1-FRONT-HANDOFF")
         self.assertIn("Supervisor auto-started", command[4])
         self.assertEqual(run_mock.call_args.kwargs["env"]["AI_NAME"], "Copilot")
+        self.assertEqual(run_mock.call_args.kwargs["env"]["PANTHEON_STATUS_ROOT"], str(self.root))
+
+    def test_sync_status_pipeline_uses_installed_command_runtime(self) -> None:
+        command_env = {
+            "PANTHEON_COMMAND_ROOT": str(self.root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
+        }
+
+        with (
+            mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
+            mock.patch.object(
+                supervisor.subprocess,
+                "run",
+                return_value=mock.Mock(returncode=0, stderr="", stdout=""),
+            ) as run_mock,
+        ):
+            changed = supervisor.sync_status_pipeline(self.config)
+
+        self.assertTrue(changed)
+        command = run_mock.call_args.args[0]
+        self.assertEqual(command[:3], [sys.executable, str(self.root / "scripts" / "ai_status.py"), "sync"])
+        self.assertEqual(run_mock.call_args.kwargs["cwd"], str(self.root))
+        self.assertEqual(run_mock.call_args.kwargs["env"]["PANTHEON_STATUS_ROOT"], str(self.root))
 
     def test_sync_dispatched_task_status_skips_review_dispatch(self) -> None:
         event = {
@@ -8826,6 +8857,93 @@ class WorkerReassignmentTests(unittest.TestCase):
 
         self.assertFalse(changed)
         persist.assert_not_called()
+
+    def test_failure_streak_sweep_reassigns_first_terminal_quota_failure(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "owner_fallbacks": {"Codex2": ["Antigravity", "Claude", "Codex"]},
+                "reviewer_fallbacks": {"Codex2": ["Codex", "Claude"]},
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+            "agents": {
+                "codex2": {"display_name": "Codex2", "provider": "codex2"},
+                "codex2_1": {
+                    "display_name": "Codex2",
+                    "provider": "codex2-1",
+                    "dispatch_slot_for": "codex2",
+                },
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+            },
+        }
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "OPS-QUOTA-001:codex2_1": {
+                        "task_id": "OPS-QUOTA-001",
+                        "provider": "codex2_1",
+                        "count": 1,
+                        "last_failure_kind": "quota_terminal",
+                        "last_reason": "You've hit your usage limit",
+                    }
+                }
+            }
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "OPS-QUOTA-001",
+                    "status": "in_progress",
+                    "owner": "Codex2",
+                    "reviewer": "Codex",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.maybe_reassign_tasks_from_failure_streaks(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Antigravity")
+        self.assertEqual(persist.call_args.kwargs["new_status"], "todo")
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+
+    def test_failure_streaks_aggregate_dispatch_slots_by_logical_agent(self) -> None:
+        state: dict = {}
+        worker_one = {
+            "task_id": "OPS-CHURN-001",
+            "provider": "codex1-1",
+            "request_snapshot": {"metadata": {"logical_agent_id": "codex"}},
+        }
+        worker_two = {
+            "task_id": "OPS-CHURN-001",
+            "provider": "codex1-2",
+            "request_snapshot": {"metadata": {"logical_agent_id": "codex"}},
+        }
+
+        self.assertEqual(
+            supervisor.record_task_failure_streak(state, worker_one, "no progress", failure_kind="generic_exit"),
+            1,
+        )
+        self.assertEqual(
+            supervisor.record_task_failure_streak(state, worker_two, "no progress", failure_kind="generic_exit"),
+            2,
+        )
+        self.assertEqual(
+            list(state["provider_guardrails"]["task_failure_streaks"]),
+            ["OPS-CHURN-001:codex"],
+        )
+
+        supervisor.clear_task_failure_streak(state, worker=worker_two)
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
 
     def test_reassigns_owned_task_to_new_owner_after_repeated_failure(self) -> None:
         worker = {
