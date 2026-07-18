@@ -2305,6 +2305,59 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Codex")
         self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
 
+    def test_dispatcher_prioritizes_declared_p0_review(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "OLDER-REVIEW",
+                    "status": "review",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                    "last_update": "2026-07-17T16:00:00Z",
+                },
+                {
+                    "id": "INCIDENT-P0",
+                    "status": "review",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "priority": "P0",
+                    "depends_on": [],
+                    "last_update": "2026-07-17T17:00:00Z",
+                },
+            ]
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+        config = json.loads(json.dumps(self.config))
+        config["ready_dispatcher"]["max_dispatches_per_tick"] = 1
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                return_value=True,
+            ) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        queue_delivery_event.assert_called_once()
+        self.assertEqual(
+            queue_delivery_event.call_args.args[1]["task_id"],
+            "INCIDENT-P0",
+        )
+
+    def test_task_declared_priority_rank_is_fail_safe(self) -> None:
+        self.assertEqual(supervisor.task_declared_priority_rank({"priority": "P0"}), 0)
+        self.assertEqual(supervisor.task_declared_priority_rank({"priority": "p12"}), 12)
+        self.assertEqual(supervisor.task_declared_priority_rank({"priority": 3}), 3)
+        self.assertGreater(
+            supervisor.task_declared_priority_rank({"priority": "urgent"}),
+            supervisor.task_declared_priority_rank({"priority": "P99"}),
+        )
+
     def test_dispatcher_queues_multiple_codex_tasks_up_to_worker_slot_capacity(self) -> None:
         config = json.loads(json.dumps(self.config))
         config["agents"]["codex"]["worker_slots"] = ["codex1_1", "codex1_2", "codex1_3", "codex1_4"]
