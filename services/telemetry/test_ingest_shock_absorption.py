@@ -248,6 +248,33 @@ class TestDeadLetterQueue(unittest.TestCase):
         finally:
             os.unlink(spill_path)
 
+    def test_load_from_large_spill_retains_only_recent_entries(self):
+        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            with open(spill_path, "w") as f:
+                for idx in range(5):
+                    entry = DeadLetterEntry(
+                        event=_make_event(event_id=f"loaded-{idx}"),
+                        tags=[TAG_POISON_EVENT],
+                        reason="poison",
+                    )
+                    f.write(entry.to_json() + "\n")
+
+            dlq = DeadLetterQueue(spill_path=spill_path, max_memory_entries=2)
+            count = dlq.load_from_spill()
+
+            self.assertEqual(count, 5)
+            entries = dlq.get_entries()
+            self.assertEqual([entry.event["event_id"] for entry in entries], ["loaded-3", "loaded-4"])
+            stats = dlq.stats()
+            self.assertEqual(stats["memory_entries"], 2)
+            self.assertEqual(stats["total_rejected"], 5)
+            self.assertEqual(stats["tag_counts"][TAG_POISON_EVENT], 2)
+        finally:
+            os.unlink(spill_path)
+
     def test_incident_threshold_fires(self):
         dlq = DeadLetterQueue(incident_threshold=3)
         for i in range(3):

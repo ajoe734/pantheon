@@ -350,6 +350,20 @@ class TestMainRoutes(unittest.TestCase):
         self.assertFalse(dependency["table_exists"])
         self.assertIn("scripts/db_migrate.sh", dependency["message"])
 
+    def test_startup_timeout_is_env_backed_and_bounded(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TELEMETRY_STARTUP_TIMEOUT_SECONDS", None)
+            self.assertEqual(_main._startup_timeout_seconds(), 180.0)
+
+        with patch.dict(os.environ, {"TELEMETRY_STARTUP_TIMEOUT_SECONDS": "2.5"}):
+            self.assertEqual(_main._startup_timeout_seconds(), 2.5)
+
+        with patch.dict(os.environ, {"TELEMETRY_STARTUP_TIMEOUT_SECONDS": "0"}):
+            self.assertEqual(_main._startup_timeout_seconds(), 1.0)
+
+        with patch.dict(os.environ, {"TELEMETRY_STARTUP_TIMEOUT_SECONDS": "invalid"}):
+            self.assertEqual(_main._startup_timeout_seconds(), 180.0)
+
     def test_replay_route_replays_write_failure_entry(self):
         _main._svc._dlq.reject(
             _make_event(
