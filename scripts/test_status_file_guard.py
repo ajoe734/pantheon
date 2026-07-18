@@ -203,7 +203,10 @@ class StatusFileGuardTests(unittest.TestCase):
             board("2026-07-12T21:49:53Z")
         )
 
-        with self.assertRaisesRegex(RuntimeError, "data file cannot be a symlink"):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "data (?:file cannot be|path contains) a symlink",
+        ):
             self._guard()
 
         self.assertEqual(outside.read_bytes(), outside_bytes)

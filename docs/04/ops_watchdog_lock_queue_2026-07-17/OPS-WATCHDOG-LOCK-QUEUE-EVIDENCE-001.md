@@ -21,10 +21,10 @@ python3 -m pytest -v .orchestrator/test_supervisor_watchdog.py
 
 ### Result:
 ```text
-============================== 37 passed in 7.12s ==============================
+============================== 43 passed in 5.64s ==============================
 ```
 
-All 37 tests passed, including the new lock contention, subprocess concurrency, and health check validation tests:
+All 43 tests passed, including the new lock contention, subprocess concurrency, and health check validation tests:
 - `test_contention_metric_dropped_on_eagain` (verify metrics drop when the metrics lock file is contested, outputting the correct warning to stderr).
 - `test_contention_metric_raises_on_other_oserror` (verify non-EAGAIN OSErrors propagate out).
 - `test_watchdog_dry_run` (verify dry_run=True returns restart_supervisor without launching Popen).
