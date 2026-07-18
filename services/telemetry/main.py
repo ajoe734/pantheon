@@ -178,6 +178,8 @@ log = logging.getLogger(__name__)
 _loop: asyncio.AbstractEventLoop | None = None
 _loop_thread: threading.Thread | None = None
 
+_DEFAULT_STARTUP_TIMEOUT_SECONDS = 180.0
+
 
 def _start_background_loop() -> asyncio.AbstractEventLoop:
     loop = asyncio.new_event_loop()
@@ -197,6 +199,23 @@ def _run_async(coro, timeout: float = 30.0):
         raise RuntimeError("Background event loop not initialised")
     future = asyncio.run_coroutine_threadsafe(coro, _loop)
     return future.result(timeout=timeout)
+
+
+def _startup_timeout_seconds() -> float:
+    raw = os.getenv(
+        "TELEMETRY_STARTUP_TIMEOUT_SECONDS",
+        str(int(_DEFAULT_STARTUP_TIMEOUT_SECONDS)),
+    )
+    try:
+        timeout = float(raw)
+    except ValueError:
+        log.warning(
+            "Invalid TELEMETRY_STARTUP_TIMEOUT_SECONDS=%r; using %.0fs",
+            raw,
+            _DEFAULT_STARTUP_TIMEOUT_SECONDS,
+        )
+        return _DEFAULT_STARTUP_TIMEOUT_SECONDS
+    return max(1.0, timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -702,8 +721,9 @@ def startup():
     # through the lineage read routes without a corpus reload.
     _lineage_svc = _build_lineage_service()
     _svc = _build_service(lineage_write_store=_lineage_svc)
-    _run_async(_svc.start())
-    log.info("TelemetryIngestService started")
+    startup_timeout = _startup_timeout_seconds()
+    _run_async(_svc.start(), timeout=startup_timeout)
+    log.info("TelemetryIngestService started within %.0fs startup budget", startup_timeout)
 
 
 def shutdown():
