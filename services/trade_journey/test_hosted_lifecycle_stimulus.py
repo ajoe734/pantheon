@@ -78,6 +78,7 @@ def _run(
     binding: dict | None = None,
     get_json=None,
     post_json=None,
+    execute_kwargs=None,
 ):
     now_iso = "2026-07-18T14:00:00Z"
     binding = binding or _binding()
@@ -116,6 +117,7 @@ def _run(
         store_factory=lambda _binding: store,
         sleeper=lambda _seconds: None,
         now_factory=lambda: now_iso,
+        **(execute_kwargs or {}),
     )
     return code, artifact, store, posts
 
@@ -141,6 +143,8 @@ def test_stimulus_enqueues_waits_for_runtime_lifecycle_and_reconciles(tmp_path):
     assert artifact["stimulus"]["reconciliation_event_id"] == (
         "event-reconciliation-loop-prod-tel-002"
     )
+    assert artifact["stimulus"]["reconciliation_status"] == "accepted"
+    assert artifact["stimulus"]["reconciliation_ambiguous"] is False
     assert posts[0][0].endswith("/api/reconciliation-drift/scheduled-reconcile")
     assert posts[0][1]["tick_id"].startswith("loop-prod-tel-002-")
     assert posts[0][1]["binding_id"] == "rb-loop-prod-tel-002"
@@ -224,4 +228,25 @@ def test_stimulus_fails_when_reconciliation_append_is_not_accepted(tmp_path):
 
     assert code == 1
     assert artifact["failure"]["code"] == "reconciliation_append_not_accepted"
+    assert len(store.enqueued) == 1
+
+
+def test_stimulus_can_continue_after_ambiguous_reconciliation_timeout(tmp_path):
+    def post_json(_url: str, _payload: dict, **_kwargs):
+        raise TimeoutError("timed out")
+
+    code, artifact, store, _posts = _run(
+        tmp_path,
+        post_json=post_json,
+        execute_kwargs={
+            "allow_ambiguous_reconciliation": True,
+            "reconciliation_timeout_seconds": 0.01,
+        },
+    )
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert artifact["stimulus"]["reconciliation_event_id"] == ""
+    assert artifact["stimulus"]["reconciliation_status"] == "ambiguous_timeout"
+    assert artifact["stimulus"]["reconciliation_ambiguous"] is True
     assert len(store.enqueued) == 1

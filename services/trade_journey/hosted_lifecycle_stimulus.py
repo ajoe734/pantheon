@@ -382,6 +382,8 @@ def trigger_reconciliation(
     reconciliation_url: str,
     binding_id: str,
     tick_id: str,
+    timeout_seconds: float = 60.0,
+    allow_timeout: bool = False,
     http_post_json: JsonPoster = _http_post_json,
 ) -> Mapping[str, Any]:
     endpoint = (
@@ -398,7 +400,7 @@ def trigger_reconciliation(
                 "dispatch_incidents": False,
                 "lifecycle_only": True,
             },
-            timeout=20.0,
+            timeout=timeout_seconds,
         )
     except urllib.error.HTTPError as exc:
         raise _http_error(
@@ -407,6 +409,15 @@ def trigger_reconciliation(
             exc,
         )
     except TimeoutError as exc:
+        if allow_timeout:
+            return {
+                "binding_id": binding_id,
+                "event_id": None,
+                "status": "ambiguous_timeout",
+                "terminal": False,
+                "retryable": True,
+                "timed_out": True,
+            }
         raise _http_error(
             "reconciliation_timeout",
             "scheduled reconciliation request timed out",
@@ -451,6 +462,8 @@ def run_stimulus(
     signal_store_url: str,
     timeout_seconds: float,
     poll_seconds: float,
+    reconciliation_timeout_seconds: float = 60.0,
+    allow_ambiguous_reconciliation: bool = False,
     quantity: float = 7.0,
     symbol: str = "AAPL.US",
     http_get_json: JsonGetter = _http_get_json,
@@ -498,6 +511,8 @@ def run_stimulus(
         reconciliation_url=reconciliation_url,
         binding_id=_clean(binding.get("binding_id")),
         tick_id=tick_id,
+        timeout_seconds=reconciliation_timeout_seconds,
+        allow_timeout=allow_ambiguous_reconciliation,
         http_post_json=http_post_json,
     )
     return {
@@ -516,6 +531,8 @@ def run_stimulus(
             "lifecycle_sequence_no": identity.get("sequence_no"),
             "tick_id": tick_id,
             "reconciliation_event_id": _clean(receipt.get("event_id")),
+            "reconciliation_status": _clean(receipt.get("status")),
+            "reconciliation_ambiguous": bool(receipt.get("timed_out")),
         },
         "redaction": {
             "tokens_included": False,
@@ -579,6 +596,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--timeout-seconds", "--timeout", dest="timeout", type=float, default=180.0)
     parser.add_argument("--poll-seconds", "--poll", dest="poll", type=float, default=5.0)
+    parser.add_argument("--reconciliation-timeout-seconds", type=float, default=60.0)
+    parser.add_argument(
+        "--allow-ambiguous-reconciliation",
+        action="store_true",
+        help="Continue to the read-only proof if the scheduled reconciliation request times out.",
+    )
     parser.add_argument(
         "--runtime-manager-url",
         default=os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "http://runtime-manager:8081"),
@@ -616,6 +639,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         signal_store_url=args.signal_store_url,
         timeout_seconds=args.timeout,
         poll_seconds=args.poll,
+        reconciliation_timeout_seconds=args.reconciliation_timeout_seconds,
+        allow_ambiguous_reconciliation=args.allow_ambiguous_reconciliation,
         quantity=args.quantity,
         symbol=args.symbol,
     )

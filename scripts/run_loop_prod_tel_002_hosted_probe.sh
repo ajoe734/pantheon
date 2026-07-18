@@ -108,7 +108,8 @@ set +e
 "${compose[@]}" exec -T paper-signal-producer \
   python -m services.trade_journey.hosted_lifecycle_stimulus \
     --timeout-seconds "${stimulus_timeout_seconds}" \
-    --poll-seconds "${poll_seconds}"
+    --poll-seconds "${poll_seconds}" \
+    --allow-ambiguous-reconciliation
 stimulus_status=$?
 set -e
 if [[ "${stimulus_status}" -ne 0 ]]; then
