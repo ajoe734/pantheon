@@ -686,3 +686,48 @@ def test_candidate_routes_return_reload_arrays_and_rotate_full_record_etag(monke
     assert mutation.headers["etag"] != detail.headers["etag"]
     assert len(mutation.json()["data"]["decisions"]) == 1
     assert mutation.json()["data"]["execution_authority"] == "none"
+
+
+def test_candidate_create_route_replays_when_server_expiry_clock_advances(monkeypatch) -> None:
+    from models import OperatorIdentity
+
+    service = _service()
+    _create(service)
+    identity = OperatorIdentity(
+        operator_id="operator-a",
+        roles=["operator"],
+        claims={"tenant_id": "tenant-a", "sub": "user-a"},
+    )
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-a")
+    app = FastAPI()
+    app.include_router(create_candidate_decision_router(
+        service=service,
+        extract_identity=lambda _auth: identity,
+        require_read_role=lambda _identity: None,
+        require_write_role=lambda _identity: None,
+        bff_error=lambda *args, **kwargs: HTTPException(args[0], detail=str(args[2])),
+        utc_now=lambda: NOW.isoformat(),
+    ))
+    client = TestClient(app)
+    headers = {
+        "Authorization": "Bearer test",
+        "X-Tenant-Id": "tenant-a",
+        "Idempotency-Key": "route-create-replay-1",
+    }
+    path = (
+        "/bff/agora/interactions/interaction-1/recommended-measures/"
+        "measure-risk-1/candidates"
+    )
+    body = {
+        "interaction_id": "interaction-1",
+        "opinion_id": "opinion-1",
+        "measure_id": "measure-risk-1",
+    }
+
+    created = client.post(path, headers=headers, json=body)
+    replayed = client.post(path, headers=headers, json=body)
+
+    assert created.status_code == 201, created.text
+    assert replayed.status_code == 200, replayed.text
+    assert replayed.json() == created.json()
+    assert replayed.headers["etag"] == created.headers["etag"]

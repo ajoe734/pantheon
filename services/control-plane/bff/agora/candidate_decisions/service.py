@@ -143,13 +143,15 @@ class CandidateDecisionService:
             now=now,
             expires_at=expires_at,
         )
+        # Fingerprint only the stable request/scope identity. ``expires_at`` is
+        # server-authored on every HTTP attempt, so including it would turn an
+        # otherwise identical network retry into an idempotency conflict.
         fingerprint = canonical_sha256(
             {
                 "command": command.model_dump(mode="json"),
                 "tenant_id": tenant_id,
                 "owner_user_id": owner_user_id,
                 "proposer_id": proposer_id,
-                "expires_at": expires_at.isoformat(),
             }
         )
         link = {
