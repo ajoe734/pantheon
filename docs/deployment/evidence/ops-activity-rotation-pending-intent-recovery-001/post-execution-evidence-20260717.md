@@ -292,14 +292,25 @@ SHA `c5592c1068...` failed closed after scanning the later source set with:
 Incident lineage broken at ai-activity-log.jsonl-2026-07-17T0404Z.gz
 ```
 
-That assertion is unchanged at the current evidence base and assumes the
-legacy timestamp overlap chain reaches the active file across the first
-post-recovery schema-v2 lineage boundary. Until the owning reader-hardening
-lane repairs or explicitly accepts this diagnostic boundary and reruns the
-inventory, no fresh product-level missing/duplicate claim is made here.
+The follow-up hash inventory proved that the stop occurs at an unregistered
+legacy-to-legacy disjoint transition, `0404Z -> 1754Z`. There is no exact
+999/1,000/1,001-line overlap between those two leaves. The first schema-v2
+lineage row separately authenticates `1754Z` as its boundary predecessor and
+proves the later `1754Z -> first content archive` conservation. It does not
+authenticate the earlier legacy gap. Filename order, mtime, and event
+timestamps cannot supply the missing authority.
 
-The owner also could not complete a fresh governed status smoke because the
-supervisor-issued `PANTHEON_COMMAND_RUNTIME_SHA` remained `b43d5a...` after
-the command root advanced to `c9560db5...`; the wrapper correctly rejected
-the mismatch. The pin must be refreshed by the supervisor, not overridden by
-this task worker.
+Draft PR #3820's generic "validated disjoint epoch" reporting change is not a
+safe resolution for this task: the shared reader can concatenate disjoint
+legacy sources in filename order without proving that no byte/event span was
+lost between them. No fresh product-level missing/duplicate claim is made
+without a pair-specific durable boundary record or planner data-reconciliation
+decision. Exact identities and a hermetic reproduction are in
+`current-closeout-stop-evidence-20260718.md`.
+
+The supervisor later refreshed the command binding: both
+`PANTHEON_COMMAND_RUNTIME_SHA` and command-root HEAD matched `c9560db5...`.
+A governed `progress` completed, but a subsequent read-only `show` returned a
+bounded `status_recovery_pending` diagnostic for an unrelated supervisor
+reassignment outbox. No retry or manual outbox edit was attempted. This proves
+the command no longer hangs; it does not prove the status lane fully healthy.

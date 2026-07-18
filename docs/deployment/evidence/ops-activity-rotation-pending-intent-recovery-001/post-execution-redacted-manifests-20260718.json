@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-ACTIVITY-ROTATION-PENDING-INTENT-RECOVERY-001",
+  "recorded_utc": "2026-07-18T03:25:11Z",
+  "scope": "redacted before/dry-run/execute/after manifest summary for the single 2026-07-17 dev recovery",
+  "source_location": "/tmp/oparpir-001/guard",
+  "redaction": "No raw activity payload, event body, token, personal data, unrestricted process environment, or full process command line is published.",
+  "validated_base_head": "86029affc0400f57367abeee2fdc6356c3af9131",
+  "raw_artifact_sha256": {
+    "pin.json": "bfbc2a837155b1783bed7d04605fa9cc855c3605048fa556b1e9e37b4cba3d9e",
+    "dry-run.json": "e924ac129819d2e6e4331df34a6e1dac00feb3e87fb9066722eb3ce4f336b06f",
+    "execute-report.json": "a8cd729c06f5f9aece681fc4045c01c48a5ff4db5fbff6efe8a906c2cec13d57",
+    "post-execute.json": "5eae6091b6e039313ed742451e1bb0cd61c8ccaa57ad1af646066e2216527a48",
+    "after.json": "1668d16b42e2695aa6910bb760168862dd9451f72e68c9194786869a2ce541bd"
+  },
+  "archive_listing": {
+    "source_count": 423,
+    "canonical_sha256_at_pin": "977ee0b432789bea0562787d6bd45f03911d27ffc8aca472483e491645afeda0",
+    "canonical_sha256_post_execute": "977ee0b432789bea0562787d6bd45f03911d27ffc8aca472483e491645afeda0",
+    "canonical_sha256_after_writers_resumed": "977ee0b432789bea0562787d6bd45f03911d27ffc8aca472483e491645afeda0",
+    "byte_identical_across_phases": true
+  },
+  "pin": {
+    "captured_utc": "2026-07-17T01:39:27Z",
+    "inventory_sha256": "36113cc1bda9403a609010f88e5bff384f3259060f6d1d03e58af037d9156d4c",
+    "incident_class": "schema-v1-pending-intent-superseded",
+    "intent_present": true,
+    "already_resolved": false,
+    "installed_equals_staged": true,
+    "active": {
+      "byte_count": 4205773,
+      "line_count": 1436,
+      "sha256": "d2ef0c413ba9cdbf1ccf16c6d214f381ef5091be19b2e126063e321fb2263841"
+    },
+    "incident_conservation": {
+      "logical_event_total": 3063,
+      "logical_event_distinct": 3063,
+      "missing_event_count": 0,
+      "duplicate_event_count": 0
+    },
+    "rotation_directory_canonical_sha256": "80814faa77273fb0f6803398405f7e17e3e4131e31822096745b4f19acf6a4c8",
+    "lock_inventory": "lstat metadata only; inventory did not open or lock the central lock"
+  },
+  "dry_run": {
+    "generated_utc": "2026-07-17T01:40:39Z",
+    "status": "resolvable",
+    "mutation_performed": false,
+    "pinned_inventory_sha256": "36113cc1bda9403a609010f88e5bff384f3259060f6d1d03e58af037d9156d4c",
+    "fresh_inventory_sha256": "69a1ab3ad10157d91f72a7c69fd1f9e1ebd2909896f1a7a87aa9770963d0ba4b",
+    "active_appended_bytes_since_pin": 0,
+    "missing_event_count": 0,
+    "duplicate_event_count": 0
+  },
+  "execute": {
+    "completed_utc": "2026-07-17T01:42:04Z",
+    "status": "resolved",
+    "mutation_performed": true,
+    "execute_invocation_count": 1,
+    "resolution_sequence": 1,
+    "resolution_id": "activity-intent-resolution-e5ed8528f6c7672db4a9a5b9b2e5a04a6673ad7eb011570d2ecb7eda19b43427",
+    "resolved_transaction_id": "activity-rotation-06bb785a56a33c4936a98df80b6aebbe2f8686ee35c052a10b59de39c7910188",
+    "active_sha256_after": "d2ef0c413ba9cdbf1ccf16c6d214f381ef5091be19b2e126063e321fb2263841",
+    "logical_source_count_after": 423
+  },
+  "post_execute": {
+    "captured_utc": "2026-07-17T01:43:09Z",
+    "inventory_sha256": "1376947c3458434e1603f8eb1c5a890a6a3556a36ebf8651de5fe698fe9cd4ff",
+    "intent_present": false,
+    "resolution_row_count": 1,
+    "resolutions_sha256": "7e2c42f2c014bdda2fda06ee9cf7e5abdbbba71af2b77ae14c8af2effabd42ca",
+    "active_sha256": "d2ef0c413ba9cdbf1ccf16c6d214f381ef5091be19b2e126063e321fb2263841",
+    "lineage_present": false,
+    "rotation_directory_canonical_sha256": "4a604d9fdf7ce7c81a46e4de5e7b6cdbe4894a5477fecdd7ffafc64ca58dcf47"
+  },
+  "after_writers_resumed": {
+    "captured_utc": "2026-07-17T02:09:51Z",
+    "inventory_sha256": "03913550364c32f59fef1a157021aec0c4e19bc70fda4c949be15ab7f3b47ba0",
+    "intent_present": false,
+    "resolution_row_count": 1,
+    "resolutions_sha256": "7e2c42f2c014bdda2fda06ee9cf7e5abdbbba71af2b77ae14c8af2effabd42ca",
+    "active": {
+      "byte_count": 4718273,
+      "line_count": 1703,
+      "sha256": "f6ea906d09579af6a7da051c6918775dee930fcfc682733e55b9cf9a0ca58ffd"
+    },
+    "lineage_present": false,
+    "rotation_directory_canonical_sha256": "4a604d9fdf7ce7c81a46e4de5e7b6cdbe4894a5477fecdd7ffafc64ca58dcf47"
+  },
+  "post_execute_logical_inventory": {
+    "scan_time": "2026-07-17T01:47:03Z",
+    "total_sources": 423,
+    "physical_lines": 1645006,
+    "logical_entries": 1404007,
+    "physical_event_id_lines": 861,
+    "unique_event_ids": 647,
+    "logical_event_id_lines": 647,
+    "unique_logical_event_ids": 647,
+    "duplicate_id_lines": 214,
+    "identical_payload_duplicate_lines": 214,
+    "payload_mismatch_duplicate_lines": 0,
+    "within_source_duplicates": 0,
+    "total_byte_identical_folds": 241,
+    "total_mismatch_folds": 0,
+    "fold_class_counts": {
+      "valid_legacy_rotation": 234,
+      "incident_lineage": 6,
+      "pinned_exception": 1
+    }
+  },
+  "claim_boundary": "All zero-missing/zero-duplicate values in this file are bound to the guarded 2026-07-17 recovery window. They are not a fresh current-history conservation claim."
+}

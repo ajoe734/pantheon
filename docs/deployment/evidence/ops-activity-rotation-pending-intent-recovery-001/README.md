@@ -4,7 +4,11 @@ Status at this snapshot: implementation + isolated validation complete; no
 live mutation had yet been performed. The guarded recovery was subsequently
 executed once on 2026-07-17. See
 `post-execution-evidence-20260717.md` and
-`post-execution-artifact-digests-20260718.json` for the post-execution record.
+`post-execution-artifact-digests-20260718.json` for the post-execution record,
+`post-execution-redacted-manifests-20260718.json` for the safe before/after
+manifest summary, `verification-matrix-20260718.md` for row-level fault and
+tamper results, and `current-closeout-stop-evidence-20260718.md` for the
+current fail-closed boundary and governed status readback.
 Statements below about work not yet performed describe this historical
 pre-review head and must not be read as current runtime state.
 
@@ -201,3 +205,13 @@ copies and full manifests remain in the operator-controlled work area
   recorded in `post-execution-evidence-20260717.md`.
 - No central status file, archive byte, or active log was modified while this
   pre-review evidence was captured.
+
+## Current closeout boundary
+
+The historical execution evidence is complete enough to preserve the exact
+recovery-window result, but the task is not ready for `done`. The current
+read-only audit found an unauthenticated legacy-to-legacy disjoint transition
+from `2026-07-17T0404Z.gz` to `2026-07-17T1754Z.gz`. The first schema-v2
+lineage row authenticates the later `1754Z -> content archive` boundary only.
+See `current-closeout-stop-evidence-20260718.md`; do not use a generic
+"disjoint epoch" relaxation or another recovery execute to clear this gate.
