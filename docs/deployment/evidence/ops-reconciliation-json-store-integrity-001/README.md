@@ -566,6 +566,48 @@ resulting pushed exact head supersedes the approval of `d5183516...` and must
 receive fresh Antigravity governed approval plus a GitHub approval review
 before manual merge. Auto-merge remains disabled.
 
+### Latest finalization compose revalidation
+
+The next owner-finalization dispatch found PR #3778 at governed-approved head
+`c1c699eb822fdb2195a348a7a570130389b81cbd`, but GitHub again reported the PR
+as `BEHIND`: `origin/dev` had advanced 33 commits from `7be97fa5c` to
+`332feddda122fef92240c637ff407fe960c2ba3f`. None of those commits changed the
+task's store, tests, review, or evidence paths. The branch composed the new tip
+without conflict, producing pre-evidence merge head
+`e5e33672d89a1764780ac3c53e2a0047b426974d`, and was revalidated at
+2026-07-18T01:23:56Z:
+
+```text
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py -q
+22 passed in 6.52s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py -q
+6 passed in 2.32s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py -q
+20 passed in 5.99s
+
+python3 -m pytest services/reconciliation-drift/tests/ -q
+79 passed in 28.16s
+
+python3 -m py_compile services/reconciliation-drift/store.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py
+(no output; passed)
+
+git diff --check origin/dev...HEAD
+(no output; clean)
+
+git show --check --oneline HEAD
+(no whitespace errors)
+
+python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge
+(no output; passed)
+```
+
+This evidence-only update does not alter store or test behavior. The resulting
+pushed exact head supersedes the approval of `c1c699eb...` and must receive a
+fresh Antigravity governed approval plus a GitHub approval review before manual
+merge. Auto-merge remains disabled.
+
 ### Push-event trailer check false positive
 
 The `Commit trailers` check's `push` event range (`f06027d02..b506dc93a`)
