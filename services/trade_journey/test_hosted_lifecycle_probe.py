@@ -10,7 +10,7 @@ import uuid
 import pytest
 
 from services.trade_journey import hosted_lifecycle_probe as probe
-from services.trade_journey.lifecycle_projector import LifecycleProjector
+from services.trade_journey.lifecycle_projector import LifecycleProjector, _fingerprint
 from services.trade_journey.test_lifecycle_projector import lifecycle_rows
 
 
@@ -257,6 +257,45 @@ def test_probe_correlates_committed_events_to_live_journey_and_loop(tmp_path):
     assert json.loads(raw) == artifact
     assert "postgresql://" not in raw
     assert artifact["redaction"] == {"dsn_included": False, "payloads_included": False}
+
+
+def test_probe_retries_projection_integrity_until_bundle_is_valid(tmp_path):
+    root, rows = _publish(tmp_path)
+    generation = (root / "current").resolve(strict=True)
+    manifest_path = generation / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["journey_sha256"] = "0" * 64
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    repairs = 0
+
+    async def repair_manifest(_delay: float) -> None:
+        nonlocal repairs
+        if repairs == 0:
+            journeys = json.loads(
+                (generation / "trade_journey_events.json").read_text(encoding="utf-8")
+            )
+            loops = json.loads((generation / "loop_runs.json").read_text(encoding="utf-8"))
+            manifest["journey_sha256"] = _fingerprint(journeys)
+            manifest["loop_runs_sha256"] = _fingerprint(loops)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        repairs += 1
+
+    code, artifact = asyncio.run(
+        probe.execute(
+            source=BaselineSource(len(rows), rows),
+            projection_root=root,
+            expected_sha="deployed-sha",
+            output=tmp_path / "retry-integrity.json",
+            timeout_seconds=1,
+            poll_seconds=0.001,
+            baseline_high_watermark=0,
+            sleeper=repair_manifest,
+        )
+    )
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert repairs == 1
 
 
 def test_probe_reads_only_rows_after_baseline_for_incremental_source(tmp_path):
