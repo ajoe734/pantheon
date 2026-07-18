@@ -530,25 +530,15 @@ class PlanningStateTests(unittest.TestCase):
         transitions = []
         for index, task_id in enumerate(authority.EXPECTED_TASK_IDS, start=1):
             gated = task_id in authority.EXPECTED_GATED_TASK_IDS
-            gate_marker = (
-                {
-                    "schema_version": 1,
-                    "gate_id": authority.RELEASE_GATE_ID,
-                    "release_predicate": authority.RELEASE_PREDICATE,
-                    "sequencing_overlay_sha256": authority.SEQUENCING_OVERLAY_SHA256,
-                    "state": "parked",
-                    "previous_status": "todo",
-                    "parked_at": "2026-07-16T00:00:00Z",
-                }
-                if gated
-                else None
-            )
+            gate_marker = None
             transitions.append(
                 {
                     "task_id": task_id,
                     "before_task_snapshot": None,
                     "before_task_snapshot_sha256": null_sha256,
-                    "after_task_snapshot_sha256": f"{index + 100:064x}",
+                    "after_task_snapshot_sha256": (
+                        null_sha256 if gated else f"{index + 100:064x}"
+                    ),
                     "before_task_contract_sha256": null_sha256,
                     "after_task_contract_sha256": "2" * 64,
                     "before_source_ref_sha256": null_sha256,
@@ -556,7 +546,7 @@ class PlanningStateTests(unittest.TestCase):
                         source_ref(task_id)
                     ),
                     "before_status": "absent",
-                    "after_status": "blocked" if gated else "todo",
+                    "after_status": "absent" if gated else "todo",
                     "acceptance_deferral_sha256": (
                         null_sha256 if gated else "4" * 64
                     ),
@@ -585,8 +575,38 @@ class PlanningStateTests(unittest.TestCase):
         task = {
             "id": "LOOP-PROD-000",
             "status": "todo",
-            "source_ref": source_ref("LOOP-PROD-000"),
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "completion_role": authority._expected_completion_role(
+                "LOOP-PROD-000"
+            ),
+            "acceptance_deferral": {"policy_id": "pre-g2-test"},
+            **authority.BASE_RUNTIME_AUTHORITY,
         }
+        task_contract_sha256 = authority._task_contract_sha256(task)
+        acceptance_deferral_sha256 = authority.canonical_sha256(
+            task["acceptance_deferral"]
+        )
+        task["source_ref"] = {
+            **source_ref(task["id"]),
+            "task_contract_sha256": task_contract_sha256,
+            "acceptance_deferral_sha256": acceptance_deferral_sha256,
+        }
+        task_transition = next(
+            transition
+            for transition in transitions
+            if transition["task_id"] == task["id"]
+        )
+        task_transition["after_task_contract_sha256"] = task_contract_sha256
+        task_transition["after_source_ref_sha256"] = authority.canonical_sha256(
+            task["source_ref"]
+        )
+        task_transition["acceptance_deferral_sha256"] = (
+            acceptance_deferral_sha256
+        )
+        epoch["task_transition_set_sha256"] = authority.canonical_sha256(
+            transitions
+        )
         state = {
             "tasks": [task],
             "program_sequencing_epochs": {authority.PROGRAM_ID: epoch},
@@ -610,7 +630,14 @@ class PlanningStateTests(unittest.TestCase):
                 materialization_ref={"session_id": "planning-session"},
             )
 
-        self.assertEqual(task["source_ref"], source_ref(task["id"]))
+        self.assertEqual(
+            task["source_ref"],
+            {
+                **source_ref(task["id"]),
+                "task_contract_sha256": task_contract_sha256,
+                "acceptance_deferral_sha256": acceptance_deferral_sha256,
+            },
+        )
 
     def test_materialize_preserves_existing_execution_truth_and_only_backfills_source_refs(self) -> None:
         with tempfile.TemporaryDirectory(prefix="planning-state-backfill-") as temp_dir:

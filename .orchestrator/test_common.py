@@ -1149,7 +1149,7 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 RuntimeError,
-                "duplicate activity audit event_id",
+                "activity event_id duplicate across sources",
             ):
                 common.read_activity_audit_records(log_path)
 
@@ -1166,7 +1166,7 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
                 log_path.write_text(row, encoding="utf-8")
                 with self.assertRaisesRegex(
                     RuntimeError,
-                    "Bad JSON|malformed|digest mismatch",
+                    "Bad JSON|duplicate JSON key|malformed|digest mismatch",
                 ):
                     common.read_activity_audit_records(log_path)
 
@@ -1395,7 +1395,7 @@ class LogicalActivityReaderTests(unittest.TestCase):
 
         with self.log_path.open("w", encoding="utf-8") as handle:
             handle.write('{"event_id":"event-2000","broken":1,"broken":2}\n')
-        with self.assertRaisesRegex(RuntimeError, "Bad JSON"):
+        with self.assertRaisesRegex(RuntimeError, "Bad JSON|duplicate JSON key"):
             common.find_activity_audit_records_unlocked(
                 self.log_path,
                 predicate=lambda entry: entry.get("event_id") == "event-1999",
