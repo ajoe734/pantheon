@@ -2332,6 +2332,10 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 changed = True
             continue
         record = queue_status(state, event_id)
+        event_key = str(event.get("event_key") or "")
+        if event_key and record.get("event_key") != event_key:
+            record["event_key"] = event_key
+            changed = True
         if record.get("status") in {"started", "manual_pending", "completed", "failed"}:
             continue
         if record.get("status") == "retry_backoff":
@@ -8276,6 +8280,11 @@ def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bo
         if record.get("status") != next_status:
             record["status"] = next_status
             record["processed_at"] = latest.get("last_event_at") or utc_now()
+            event_key = str(record.get("event_key") or "")
+            if event_key:
+                state.setdefault("seen_event_keys", {})[event_key] = record[
+                    "processed_at"
+                ]
             if next_status == "failed" and latest.get("last_error"):
                 record["error"] = latest.get("last_error")
             changed = True
@@ -9433,6 +9442,9 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
     record["status"] = status
     record["processed_at"] = utc_now()
     record["lease_released_at"] = record["processed_at"]
+    event_key = str(record.get("event_key") or "")
+    if event_key:
+        state.setdefault("seen_event_keys", {})[event_key] = record["processed_at"]
     if worker.get("run_id"):
         record["lease_owner"] = worker.get("run_id")
     if error:
@@ -9611,6 +9623,39 @@ def dispatch_priority_for_task(
     ):
         return 3
     return None
+
+
+def task_declared_priority_rank(task: dict[str, Any]) -> int:
+    """Return a stable lower-is-more-urgent rank for an optional P<n> field."""
+
+    raw_priority = task.get("priority")
+    if isinstance(raw_priority, bool) or raw_priority in (None, ""):
+        return 1_000_000
+    if isinstance(raw_priority, int):
+        return max(0, raw_priority)
+    match = re.fullmatch(r"P(\d+)", str(raw_priority).strip().upper())
+    if match is None:
+        return 1_000_000
+    return int(match.group(1))
+
+
+def dispatch_event_is_in_unchanged_cooldown(
+    seen_event_keys: dict[str, Any],
+    event_key: str,
+    *,
+    cooldown_seconds: float,
+    now: str | None = None,
+) -> bool:
+    """Suppress a recently served task signature until task truth changes."""
+
+    if cooldown_seconds <= 0:
+        return False
+    seen_at = _parse_iso_utc(str(seen_event_keys.get(event_key) or ""))
+    current_at = _parse_iso_utc(now or utc_now())
+    if seen_at is None or current_at is None:
+        return False
+    elapsed_seconds = (current_at - seen_at).total_seconds()
+    return 0 <= elapsed_seconds < cooldown_seconds
 
 
 def agent_dispatch_loads(
@@ -10036,6 +10081,14 @@ def dispatch_ready_tasks(
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     max_dispatches_per_tick = max(1, int(max_dispatches_override or settings.get("max_dispatches_per_tick", 4)))
+    try:
+        unchanged_cooldown_seconds = max(
+            0.0,
+            float(settings.get("unchanged_task_cooldown_seconds", 900)),
+        )
+    except (TypeError, ValueError):
+        unchanged_cooldown_seconds = 900.0
+    dispatch_started_at = utc_now()
 
     _active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
@@ -10133,7 +10186,7 @@ def dispatch_ready_tasks(
                 continue
         target_has_primary_work = agent_has_dispatchable_primary_work(config, status, target_agent, task_resolver)
 
-        candidates: list[tuple[int, int, dict[str, Any], str]] = []
+        candidates: list[tuple[int, int, int, dict[str, Any], str]] = []
         helper_candidates: list[tuple[int, int, dict[str, Any], str, str, str, bool]] = []
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
@@ -10240,15 +10293,30 @@ def dispatch_ready_tasks(
             event = build_dispatch_event(task, target_agent, reason, task_resolver)
             if event["key"] in pending_event_keys:
                 continue
-            candidates.append((priority, index, task, reason))
+            if dispatch_event_is_in_unchanged_cooldown(
+                seen,
+                event["key"],
+                cooldown_seconds=unchanged_cooldown_seconds,
+                now=dispatch_started_at,
+            ):
+                continue
+            candidates.append(
+                (
+                    priority,
+                    task_declared_priority_rank(task),
+                    index,
+                    task,
+                    reason,
+                )
+            )
 
-        candidates.sort(key=lambda item: (item[0], item[1]))
+        candidates.sort(key=lambda item: (item[0], item[1], item[2]))
         per_occurrence_limit = 1 if weighted_dispatch_enabled else available_agent_slots
         queued_for_agent = 0
-        for _, _, task, reason in candidates[:per_occurrence_limit]:
+        for _, _, _, task, reason in candidates[:per_occurrence_limit]:
             event = build_dispatch_event(task, target_agent, reason, task_resolver)
             if queue_delivery_event(config, event):
-                seen[event["key"]] = utc_now()
+                seen[event["key"]] = dispatch_started_at
                 pending_event_keys.add(event["key"])
                 pending_agents.add(agent_id)
                 pending_task_ids.add(str(task.get(task_id_field) or ""))

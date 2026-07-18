@@ -861,7 +861,10 @@ class ResolutionReaderContractTests(PendingIntentIncidentFixture):
         backup = archive.with_name(f"{archive.name}.bak")
         archive.replace(shadow)
         backup.symlink_to(shadow)
-        with self.assertRaisesRegex(RuntimeError, "regular file"):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "regular file|path contains a symlink",
+        ):
             common.activity_audit_source_paths_unlocked(self.log_path)
 
     def test_superseding_archive_tamper_fails_closed(self):
@@ -880,7 +883,10 @@ class ResolutionReaderContractTests(PendingIntentIncidentFixture):
         shadow = path.with_name(path.name + ".shadow")
         shutil.move(path, shadow)
         path.symlink_to(shadow)
-        with self.assertRaisesRegex(RuntimeError, "regular file"):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "regular file|path contains a symlink",
+        ):
             common.activity_audit_source_paths_unlocked(self.log_path)
 
     def test_rotation_rejects_publishing_onto_superseded_archive_path(self):

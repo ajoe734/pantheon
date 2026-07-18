@@ -6,7 +6,7 @@
 - **Target Branch**: `dev`
 - **Git Branch**: `task/OPS-WATCHDOG-LOCK-QUEUE-001`
 - **AI Name**: `Antigravity`
-- **Deployed Commit SHA**: `710958642a8b387e387fe5f6a9e144a9d68b6507` (HEAD of task branch)
+- **Deployed Commit SHA**: `4d7388c37f0145a3ab0f35dedfa5a5a5612ccb7d` (merge commit containing code fix)
 
 ---
 
@@ -34,7 +34,7 @@ All 43 tests passed, including the new lock contention, subprocess concurrency, 
 
 ## 2. Three-Cycle Live Scheduler Evidence
 
-We verified the live scheduler running the installed commit `6d833e4b0aa5e07d1b151f0064f82c2d3368ce06` (which successfully merged the lock contention implementation) at `/home/lupin/pantheon-ci-deploy/dev-root`. We observed three consecutive real scheduler watchdog cycles from the cron logs and metrics with no contention skips or manual overrides, each showing healthy operation under PID `3435869`.
+We verified the live scheduler running the installed commit `4d7388c37f0145a3ab0f35dedfa5a5a5612ccb7d` (which successfully merged the lock contention implementation) at `/home/lupin/pantheon-ci-deploy/dev-root`. We observed three consecutive real scheduler watchdog cycles from the cron logs and metrics with no contention skips or manual overrides, each showing healthy operation under PID `3435869`.
 
 ### Cycle 1 (2026-07-17T16:37:01Z)
 - **Watchdog Execution Result**:
