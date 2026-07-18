@@ -2495,7 +2495,7 @@ def _g2_source_attestation_is_exact(
         return False
     return all(
         isinstance(value.get(field), str)
-        and re.fullmatch(r"g[0-9]{12}-[0-9a-f]{64}", value[field]) is not None
+        and re.fullmatch(r"g[0-9]{12}-[0-9a-f]{12}", value[field]) is not None
         for field in (
             "captured_generation_name",
             "current_generation_name",
@@ -8292,7 +8292,7 @@ def _read_g2_projection_generation(
     *,
     label: str,
 ) -> dict[str, Any]:
-    if not re.fullmatch(r"g[0-9]{12}-[0-9a-f]{64}", generation_name):
+    if not re.fullmatch(r"g[0-9]{12}-[0-9a-f]{12}", generation_name):
         raise DispatchError(f"{label} generation name is invalid")
     generations_root = projection_root / "generations"
     try:
@@ -8303,7 +8303,7 @@ def _read_g2_projection_generation(
     if (
         generations_root.is_symlink()
         or not stat.S_ISDIR(generations_before.st_mode)
-        or generations_before.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        or generations_before.st_mode & stat.S_IWOTH
         or generations_resolved != generations_root
     ):
         raise DispatchError(f"{label} generations root is not canonical")
@@ -8317,7 +8317,7 @@ def _read_g2_projection_generation(
     if (
         generation.is_symlink()
         or not stat.S_ISDIR(before.st_mode)
-        or before.st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+        or before.st_mode & stat.S_IWOTH
         or resolved != generation
     ):
         raise DispatchError(f"{label} generation directory is not canonical")
@@ -8334,6 +8334,7 @@ def _read_g2_projection_generation(
         raise DispatchError(f"{label} projection files are unavailable") from exc
     if children != {Path(path).name for path in paths.values()}:
         raise DispatchError(f"{label} projection file set is not exact")
+    file_metadata_before: dict[str, tuple[int, int, int, int, int]] = {}
     for relative_path in paths.values():
         path = generations_root / relative_path
         try:
@@ -8343,9 +8344,16 @@ def _read_g2_projection_generation(
         if (
             path.is_symlink()
             or not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+            or metadata.st_mode & stat.S_IWOTH
         ):
-            raise DispatchError(f"{label} projection file is not immutable")
+            raise DispatchError(f"{label} projection file is not canonical")
+        file_metadata_before[relative_path] = (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_size,
+            metadata.st_mtime_ns,
+            metadata.st_ctime_ns,
+        )
     manifest, _ = read_rooted_regular_json(
         generations_root,
         paths["manifest"],
@@ -8371,21 +8379,46 @@ def _read_g2_projection_generation(
         generations_after = generations_root.lstat()
     except OSError as exc:
         raise DispatchError(f"{label} generation changed during read") from exc
-    bundle_sha256 = hashlib.sha256(
-        json.dumps(
-            projection,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-        ).encode("utf-8")
-    ).hexdigest()
+    file_metadata_after: dict[str, tuple[int, int, int, int, int]] = {}
+    for relative_path in paths.values():
+        path = generations_root / relative_path
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            raise DispatchError(f"{label} projection file changed during read") from exc
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_mode & stat.S_IWOTH
+        ):
+            raise DispatchError(f"{label} projection file changed during read")
+        file_metadata_after[relative_path] = (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_size,
+            metadata.st_mtime_ns,
+            metadata.st_ctime_ns,
+        )
     expected_generation = int(generation_name[1:13])
     if (
-        (before.st_dev, before.st_ino, before.st_mtime_ns)
-        != (after.st_dev, after.st_ino, after.st_mtime_ns)
+        (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        or file_metadata_before != file_metadata_after
         or generations_root.is_symlink()
         or not stat.S_ISDIR(generations_after.st_mode)
-        or generations_after.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        or generations_after.st_mode & stat.S_IWOTH
         or (
             generations_before.st_dev,
             generations_before.st_ino,
@@ -8398,7 +8431,6 @@ def _read_g2_projection_generation(
             generations_after.st_mtime_ns,
             generations_after.st_ctime_ns,
         )
-        or generation_name != f"g{expected_generation:012d}-{bundle_sha256}"
         or manifest.get("generation") != expected_generation
         or journeys.get("generation") != expected_generation
         or loops.get("generation") != expected_generation
@@ -8492,7 +8524,7 @@ def _resolve_authoritative_g2_snapshot(
             or current_target_before
             != Path("generations") / current_target_before.name
             or not re.fullmatch(
-                r"g[0-9]{12}-[0-9a-f]{64}",
+                r"g[0-9]{12}-[0-9a-f]{12}",
                 current_target_before.name,
             )
         ):
@@ -9109,7 +9141,7 @@ def _validate_g2_projection_bundle(
         raise DispatchError("G2 hosted proof payload is missing")
     generation_name = ((proof.get("projection") or {}).get("generation_name"))
     if not isinstance(generation_name, str) or not re.fullmatch(
-        rf"g{manifest['generation']:012d}-[0-9a-f]{{64}}", generation_name
+        rf"g{manifest['generation']:012d}-[0-9a-f]{{12}}", generation_name
     ):
         raise DispatchError("G2 hosted projection generation name is invalid")
     try:

@@ -819,12 +819,12 @@ def _validated_release_record(
         or not is_sha256(attestation.get("projection_sha256"))
         or not is_sha256(attestation.get("current_projection_sha256"))
         or re.fullmatch(
-            r"g[0-9]{12}-[0-9a-f]{64}",
+            r"g[0-9]{12}-[0-9a-f]{12}",
             str(attestation.get("captured_generation_name") or ""),
         )
         is None
         or re.fullmatch(
-            r"g[0-9]{12}-[0-9a-f]{64}",
+            r"g[0-9]{12}-[0-9a-f]{12}",
             str(attestation.get("current_generation_name") or ""),
         )
         is None

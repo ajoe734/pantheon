@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import runpy
+import stat
 import subprocess
 import sys
 import tempfile
@@ -3058,56 +3059,6 @@ def _write_json_artifact(path: Path, payload: object) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def _install_content_addressed_projection(
-    projection_root: Path,
-) -> tuple[str, dict, dict, dict]:
-    """Package runtime-shaped projection output as an immutable G2 fixture.
-
-    Product code owns publication semantics.  The sequencing verifier tests need
-    an independently constructed content-addressed snapshot without changing the
-    runtime producer merely to satisfy this task's evidence contract.
-    """
-
-    current = projection_root / "current"
-    manifest = json.loads((current / "manifest.json").read_text(encoding="utf-8"))
-    journeys = json.loads(
-        (current / "trade_journey_events.json").read_text(encoding="utf-8")
-    )
-    loops = json.loads((current / "loop_runs.json").read_text(encoding="utf-8"))
-    projection = {
-        "manifest": manifest,
-        "trade_journey_events": journeys,
-        "loop_runs": loops,
-    }
-    generation = manifest["generation"]
-    assert type(generation) is int
-    bundle_sha256 = hashlib.sha256(
-        json.dumps(
-            projection,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-        ).encode("utf-8")
-    ).hexdigest()
-    generation_name = f"g{generation:012d}-{bundle_sha256}"
-    generations_root = projection_root / "generations"
-    generations_root.chmod(0o755)
-    generation_path = generations_root / generation_name
-    generation_path.mkdir()
-    for filename, payload in {
-        "manifest.json": manifest,
-        "trade_journey_events.json": journeys,
-        "loop_runs.json": loops,
-    }.items():
-        path = generation_path / filename
-        _write_json_artifact(path, payload)
-        path.chmod(0o444)
-    generation_path.chmod(0o555)
-    current.unlink()
-    current.symlink_to(Path("generations") / generation_name)
-    return generation_name, manifest, journeys, loops
-
-
 def _overlay_payload() -> dict:
     return json.loads(SEQUENCING_OVERLAY.read_text(encoding="utf-8"))
 
@@ -3760,8 +3711,19 @@ def g2_v2_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     )
     projector.project_records(rows, mode="live", source_high_watermark=len(rows))
     projection_root.chmod(0o755)
-    _install_content_addressed_projection(projection_root)
     current = projection_root / "current"
+    runtime_generation = current.resolve()
+    assert re.fullmatch(r"g[0-9]{12}-[0-9a-f]{12}", runtime_generation.name)
+    assert runtime_generation.stat().st_mode & stat.S_IWUSR
+    assert not runtime_generation.stat().st_mode & stat.S_IWOTH
+    for filename in (
+        "manifest.json",
+        "trade_journey_events.json",
+        "loop_runs.json",
+    ):
+        mode = (runtime_generation / filename).stat().st_mode
+        assert mode & stat.S_IWUSR
+        assert not mode & stat.S_IWOTH
     manifest = json.loads((current / "manifest.json").read_text(encoding="utf-8"))
     journeys = json.loads(
         (current / "trade_journey_events.json").read_text(encoding="utf-8")
@@ -4304,7 +4266,7 @@ def test_g2_v4_production_resolver_fails_closed_without_source_configuration(
         )
 
 
-def test_g2_v4_production_resolver_reads_pinned_immutable_generation(
+def test_g2_v4_production_resolver_reads_pinned_canonical_generation(
     g2_v2_fixture: dict,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4387,6 +4349,39 @@ def test_g2_v4_rejects_symlinked_projection_generations_root(
         )
 
 
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        None,
+        "manifest.json",
+        "trade_journey_events.json",
+        "loop_runs.json",
+    ],
+)
+def test_g2_v4_rejects_world_writable_canonical_generation_paths(
+    g2_v2_fixture: dict,
+    relative_path: str | None,
+) -> None:
+    dispatcher = g2_v2_fixture["dispatcher"]
+    projection_root = g2_v2_fixture["projection_root"].resolve()
+    generation_name = _read_artifact(g2_v2_fixture["paths"]["probe"])[
+        "proof"
+    ]["projection"]["generation_name"]
+    generation = projection_root / "generations" / generation_name
+    target = generation if relative_path is None else generation / relative_path
+    original_mode = stat.S_IMODE(target.stat().st_mode)
+    target.chmod(original_mode | stat.S_IWOTH)
+    try:
+        with pytest.raises(dispatcher.DispatchError, match="not canonical"):
+            dispatcher._read_g2_projection_generation(
+                projection_root,
+                generation_name,
+                label="G2 captured canonical projection",
+            )
+    finally:
+        target.chmod(original_mode)
+
+
 def test_g2_v4_rejects_divergent_current_target_projection(
     g2_v2_fixture: dict,
     monkeypatch: pytest.MonkeyPatch,
@@ -4448,7 +4443,6 @@ def test_g2_v4_rejects_divergent_current_target_projection(
         journeys,
         loops,
     )
-    _install_content_addressed_projection(projection_root)
 
     with pytest.raises(
         dispatcher.DispatchError,
@@ -5969,7 +5963,6 @@ def test_g2_v4_rejects_bundle_with_a_second_complete_lifecycle(
         mode="live",
         source_high_watermark=len(combined_rows),
     )
-    _install_content_addressed_projection(projection_root)
     current = projection_root / "current"
     manifest = _read_artifact(current / "manifest.json")
     journeys = _read_artifact(current / "trade_journey_events.json")
