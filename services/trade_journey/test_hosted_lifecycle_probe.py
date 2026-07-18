@@ -39,6 +39,28 @@ class BrokenSource:
         raise RuntimeError("postgresql://secret-host/secret-database")
 
 
+class IncrementalSource:
+    def __init__(self, baseline: int, high: int, rows: list[dict]) -> None:
+        self.baseline = baseline
+        self.high = high
+        self.rows = rows
+        self.high_watermark_calls = 0
+        self.snapshot_after_baselines: list[int] = []
+        self.snapshot_calls = 0
+
+    async def high_watermark(self) -> int:
+        self.high_watermark_calls += 1
+        return self.baseline
+
+    async def snapshot_after(self, baseline: int):
+        self.snapshot_after_baselines.append(baseline)
+        return self.high, self.rows
+
+    async def snapshot(self):
+        self.snapshot_calls += 1
+        raise AssertionError("incremental source should not use full snapshot")
+
+
 def _natural_lifecycle_rows() -> list[dict]:
     by_type = {row["event_type"]: row for row in lifecycle_rows()}
     event_types = [*probe.REQUIRED_EVENT_TYPES, "reconciliation_completed"]
@@ -181,6 +203,38 @@ def test_probe_correlates_committed_events_to_live_journey_and_loop(tmp_path):
     assert json.loads(raw) == artifact
     assert "postgresql://" not in raw
     assert artifact["redaction"] == {"dsn_included": False, "payloads_included": False}
+
+
+def test_probe_reads_only_rows_after_baseline_for_incremental_source(tmp_path):
+    root = tmp_path / "projection"
+    shifted_rows = _natural_lifecycle_rows()
+    for row in shifted_rows:
+        row["ingested_seq"] += 100
+    LifecycleProjector(
+        state_path=root / "controller_state.json",
+        bundle_root=root,
+        deployment_sha="deployed-sha",
+    ).project_records(shifted_rows, mode="live", source_high_watermark=106)
+    source = IncrementalSource(baseline=100, high=106, rows=shifted_rows)
+
+    code, artifact = asyncio.run(
+        probe.execute(
+            source=source,
+            projection_root=root,
+            expected_sha="deployed-sha",
+            output=tmp_path / "incremental.json",
+            timeout_seconds=0.1,
+            poll_seconds=0.001,
+        )
+    )
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert source.high_watermark_calls == 1
+    assert source.snapshot_after_baselines == [100]
+    assert source.snapshot_calls == 0
+    assert artifact["proof"]["source"]["baseline_high_watermark"] == 100
+    assert artifact["proof"]["source"]["source_high_watermark"] == 106
 
 
 def test_probe_times_out_without_a_complete_natural_aggregate(tmp_path):

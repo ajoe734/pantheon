@@ -102,7 +102,27 @@ class AsyncpgTelemetrySource:
         self._dsn = dsn
         self._row_limit = row_limit
 
-    async def snapshot(self) -> tuple[int, list[dict[str, Any]]]:
+    async def high_watermark(self) -> int:
+        try:
+            import asyncpg  # type: ignore[import]
+
+            conn = await asyncpg.connect(self._dsn)
+            try:
+                async with conn.transaction(isolation="repeatable_read", readonly=True):
+                    return int(
+                        await conn.fetchval(
+                            "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events"
+                        )
+                        or 0
+                    )
+            finally:
+                await conn.close()
+        except Exception as exc:  # noqa: BLE001 - never include DSN/error text
+            raise ProbeError(
+                "source_query_error", "committed telemetry snapshot query failed"
+            ) from exc
+
+    async def snapshot_after(self, baseline_high_watermark: int) -> tuple[int, list[dict[str, Any]]]:
         try:
             import asyncpg  # type: ignore[import]
 
@@ -118,8 +138,9 @@ class AsyncpgTelemetrySource:
                     records = await conn.fetch(
                         "SELECT ingested_seq, ingested_at, event_id, event_type, "
                         "created_at, payload FROM telemetry_events "
-                        "WHERE event_type = ANY($1::text[]) "
-                        "ORDER BY ingested_seq DESC LIMIT $2",
+                        "WHERE ingested_seq > $1 AND event_type = ANY($2::text[]) "
+                        "ORDER BY ingested_seq ASC LIMIT $3",
+                        int(baseline_high_watermark),
                         list(QUERY_TYPES),
                         self._row_limit,
                     )
@@ -151,6 +172,32 @@ class AsyncpgTelemetrySource:
                 "source_decode_error", "committed telemetry snapshot could not be normalized"
             ) from exc
         return high, rows
+
+    async def snapshot(self) -> tuple[int, list[dict[str, Any]]]:
+        return await self.snapshot_after(0)
+
+
+async def _source_high_watermark(source: Any) -> int:
+    high_watermark = getattr(source, "high_watermark", None)
+    if callable(high_watermark):
+        return int(await high_watermark())
+    high, _rows = await source.snapshot()
+    return int(high)
+
+
+async def _source_snapshot_after(
+    source: Any, baseline_high_watermark: int
+) -> tuple[int, list[dict[str, Any]]]:
+    snapshot_after = getattr(source, "snapshot_after", None)
+    if callable(snapshot_after):
+        high, rows = await snapshot_after(baseline_high_watermark)
+        return int(high), list(rows)
+    high, rows = await source.snapshot()
+    return int(high), [
+        row
+        for row in rows
+        if int(row.get("ingested_seq") or 0) > baseline_high_watermark
+    ]
 
 
 def _complete_candidates(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -421,9 +468,16 @@ async def run_probe(
     while True:
         remaining = max(0.0, deadline - monotonic())
         try:
-            high, rows = await asyncio.wait_for(
-                source.snapshot(), timeout=max(0.05, remaining)
-            )
+            if baseline_high_watermark is None:
+                high = await asyncio.wait_for(
+                    _source_high_watermark(source), timeout=max(0.05, remaining)
+                )
+                rows: list[dict[str, Any]] = []
+            else:
+                high, rows = await asyncio.wait_for(
+                    _source_snapshot_after(source, baseline_high_watermark),
+                    timeout=max(0.05, remaining),
+                )
         except asyncio.TimeoutError as exc:
             raise ProbeError(
                 "source_query_timeout",
@@ -432,13 +486,6 @@ async def run_probe(
             ) from exc
         if baseline_high_watermark is None:
             baseline_high_watermark = high
-            rows = []
-        else:
-            rows = [
-                row
-                for row in rows
-                if int(row.get("ingested_seq") or 0) > baseline_high_watermark
-            ]
         candidates = _complete_candidates(rows)
         if candidates:
             journeys, loops, generation_name = _current_projection(projection_root)
