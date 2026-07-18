@@ -314,3 +314,6 @@ A governed `progress` completed, but a subsequent read-only `show` returned a
 bounded `status_recovery_pending` diagnostic for an unrelated supervisor
 reassignment outbox. No retry or manual outbox edit was attempted. This proves
 the command no longer hangs; it does not prove the status lane fully healthy.
+The command root then advanced again to `a6ef5059...` while this worker kept
+the supervisor-issued `c9560db5...` pin, so one governed `blocker` attempt was
+correctly rejected before state mutation. The owner did not override the pin.

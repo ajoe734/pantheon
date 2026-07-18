@@ -78,6 +78,15 @@ No retry or manual outbox edit was attempted. The bounded diagnostic proves
 the read-only command no longer hangs, but the status lane cannot be called
 fully healthy while recovery remains pending.
 
+At `2026-07-18T03:33Z`, the owner made one governed `blocker` attempt to record
+these stop conditions. It was rejected before state mutation because the
+command root had advanced to `a6ef5059a79f290470761b583312a5c654e4e5e3`
+while this worker's supervisor-issued `PANTHEON_COMMAND_RUNTIME_SHA` remained
+`c9560db5cba9583bd2dff70894e583cdca5d2a20`. The owner did not override the
+pin or retry. Canonical task state therefore remains `in_progress`; PR #3788
+comment `5009738073` and commit `1ceb334e3` are the durable blocker handoff
+until the supervisor issues a matching command-runtime pin.
+
 ## Required decisions before closeout
 
 1. Provide an immutable, hash-bound continuity record for the
@@ -88,7 +97,9 @@ fully healthy while recovery remains pending.
    and staged paths.
 4. Drain and read back the governed activity outbox through the owning writer
    path; do not hand-edit it.
-5. Only after those gates, recompose current `dev`, rerun the accepted
+5. Re-dispatch the owner with `PANTHEON_COMMAND_RUNTIME_SHA` matching the
+   governed command root so the blocker/review lifecycle can be recorded.
+6. Only after those gates, recompose current `dev`, rerun the accepted
    read-only inventory, and request exact-head Antigravity/planner review.
 
 Historical recovery-window `missing=0` and `duplicate=0` remain valid. This

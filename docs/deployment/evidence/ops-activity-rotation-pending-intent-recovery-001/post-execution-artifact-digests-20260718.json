@@ -46,7 +46,7 @@
     "pr-postmerge.json": "9a472b3b3cbe18e66f5d2ad463efee3d506d5f62d8dcab6b5ad7cb57fd3392f3",
     "post-execution-redacted-manifests-20260718.json": "a3bc6d1d1a7542b0692a6d6a508223d7db1dd0002a0f5147fced977cc399ddac",
     "verification-matrix-20260718.md": "3da474d9fafac54512bc17629e832f0eb9d4c2325bbe05d66c83007272e32508",
-    "current-closeout-stop-evidence-20260718.md": "2145c7377a19f1f5826ecbfec8aa5b21c41cad49ad2dfb939bf807525683eab0"
+    "current-closeout-stop-evidence-20260718.md": "641a562cae5816f409ec9993499ad574e91cccc19d3a2a7a289e732da72292c2"
   },
   "inventory_digests": {
     "pinned": "36113cc1bda9403a609010f88e5bff384f3259060f6d1d03e58af037d9156d4c",
@@ -82,6 +82,10 @@
     "governed_progress_exit": 0,
     "governed_show_exit": 2,
     "governed_show_invariant": "status_recovery_pending",
+    "governed_blocker_exit": 2,
+    "governed_blocker_rejection": "PANTHEON_COMMAND_RUNTIME_SHA mismatch: command root a6ef5059a79f290470761b583312a5c654e4e5e3, worker pin c9560db5cba9583bd2dff70894e583cdca5d2a20",
+    "governed_blocker_state_mutation_performed": false,
+    "canonical_task_status_after_blocker_attempt": "in_progress",
     "status_lane_fully_healthy": false,
     "planner_acceptance_required_for_recovery_time_empty_lineage": true,
     "planner_acceptance_required_for_preserve_then_unlink_semantics": true,
