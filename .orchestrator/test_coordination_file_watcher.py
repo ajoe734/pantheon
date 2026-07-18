@@ -16,11 +16,12 @@ class CoordinationWatcherTests(unittest.TestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         root = Path(self.tmpdir.name)
         self.pantheon = root / "pantheon"
-        self.front = root / "front-ai-trading-system"
+        self.front = root / "execute-plans"
         for repo_root in (self.pantheon, self.front):
             (repo_root / ".git").mkdir(parents=True, exist_ok=True)
             (repo_root / ".coordination" / "requests").mkdir(parents=True, exist_ok=True)
             (repo_root / ".coordination" / "responses").mkdir(parents=True, exist_ok=True)
+            (repo_root / ".orchestrator").mkdir(parents=True, exist_ok=True)
             (repo_root / "docs-site").mkdir(parents=True, exist_ok=True)
             (repo_root / "ai-status.json").write_text('{"tasks":[],"handoffs":[]}\n', encoding="utf-8")
             (repo_root / "current-work.md").write_text("# current work\n", encoding="utf-8")
@@ -58,11 +59,11 @@ class CoordinationWatcherTests(unittest.TestCase):
             encoding="utf-8",
         )
         (self.pantheon / ".coordination" / "requests" / "F-042-bff-gap.example.yaml").write_text(
-            "feature_id: F-042\nsource_repo: front-ai-trading-system\ntype: bff-gap\n",
+            "feature_id: F-042\nsource_repo: execute-plans\ntype: bff-gap\n",
             encoding="utf-8",
         )
         (self.pantheon / ".coordination" / "requests" / "F-042-ui-done.example.yaml").write_text(
-            "feature_id: F-042\nsource_repo: front-ai-trading-system\ntype: ui-done\n",
+            "feature_id: F-042\nsource_repo: execute-plans\ntype: ui-done\n",
             encoding="utf-8",
         )
 
@@ -83,8 +84,8 @@ class CoordinationWatcherTests(unittest.TestCase):
                 "enabled": True,
                 "repositories": {
                     "pantheon": {"repo": "ajoe734/pantheon", "local_path": str(self.pantheon)},
-                    "front_ai_trading_system": {
-                        "repo": "ajoe734/front-ai-trading-system",
+                    "execute_plans": {
+                        "repo": "ajoe734/execute-plans",
                         "local_path": str(self.front),
                     },
                 },
@@ -104,7 +105,7 @@ class CoordinationWatcherTests(unittest.TestCase):
 
     def _write_f042_backend_delivery_bundle(self) -> None:
         (self.front / ".coordination" / "requests" / "F-042-frontend-feedback.yaml").write_text(
-            "feature_id: F-042\nsource_repo: front-ai-trading-system\ntype: frontend-feedback\n",
+            "feature_id: F-042\nsource_repo: execute-plans\ntype: frontend-feedback\n",
             encoding="utf-8",
         )
         delivery_dir = self.pantheon / "docs" / "pantheon-delivery" / "F-042"
@@ -122,7 +123,7 @@ class CoordinationWatcherTests(unittest.TestCase):
                 [
                     "feature_id: F-042",
                     "type: backend-delivery",
-                    "target_repo: ajoe734/front-ai-trading-system",
+                    "target_repo: ajoe734/execute-plans",
                     "workbench: governance-workbench",
                     "screen_id: screen-governance-promotion-review",
                     "status: delivered",
@@ -144,7 +145,7 @@ class CoordinationWatcherTests(unittest.TestCase):
             "\n".join(
                 [
                     "feature_id: F-042",
-                    "source_repo: front-ai-trading-system",
+                    "source_repo: execute-plans",
                     "source_branch: ui/F-042-promotion-review",
                     "screen: promotion-review",
                     "type: bff-gap",
@@ -176,7 +177,7 @@ class CoordinationWatcherTests(unittest.TestCase):
                     "feature_id: F-042",
                     "type: contract-ready",
                     "source_repo: pantheon",
-                    "target_repo: front-ai-trading-system",
+                    "target_repo: execute-plans",
                     "screen: promotion-review",
                     "pantheon_pr: 128",
                     "base_url: https://pantheon-dev.example.com",
@@ -262,7 +263,7 @@ class CoordinationWatcherTests(unittest.TestCase):
                     "feature_id: F-042",
                     "type: contract-ready",
                     "source_repo: pantheon",
-                    "target_repo: front-ai-trading-system",
+                    "target_repo: execute-plans",
                     "screen: promotion-review",
                     "artifacts:",
                     "  bff_contract: docs/bff/F-042-promotion-review.md",
@@ -368,7 +369,7 @@ class CoordinationWatcherTests(unittest.TestCase):
                     "feature_id: PKT-003-lineage-view",
                     "type: contract-ready",
                     "source_repo: pantheon",
-                    "target_repo: front-ai-trading-system",
+                    "target_repo: execute-plans",
                     "screen: lineage-view",
                     "artifacts:",
                     "  bff_contract: docs/bff/PKT-003-lineage-view.md",
@@ -432,9 +433,7 @@ class CoordinationWatcherTests(unittest.TestCase):
         self.assertEqual(len(queue), 1)
         self.assertEqual(queue[0]["metadata"]["coordination"]["worker_kind"], "front-sync-worker")
 
-    def test_contract_ready_requires_valid_front_repo_checkout(self) -> None:
-        shutil.rmtree(self.front / ".git")
-
+    def test_legacy_frontend_target_is_recorded_without_mirror_or_dispatch(self) -> None:
         response = self.pantheon / ".coordination" / "responses" / "F-042-contract-ready.yaml"
         response.write_text(
             "\n".join(
@@ -446,6 +445,36 @@ class CoordinationWatcherTests(unittest.TestCase):
                     "screen: promotion-review",
                     "artifacts:",
                     "  bff_contract: docs/bff/F-042-promotion-review.md",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        state: dict[str, object] = {}
+        changed = sync_coordination_files(self.config, state)
+
+        self.assertTrue(changed)
+        feature = state["coordination"]["features"]["F-042"]
+        self.assertEqual(feature["coordination_skip"]["reason"], "legacy_frontend_target")
+        self.assertEqual(feature["coordination_skip"]["replacement_repo"], "ajoe734/execute-plans")
+        self.assertFalse((self.front / ".coordination" / "responses" / response.name).exists())
+        self.assertEqual(load_jsonl(Path(self.config["paths"]["event_queue"])), [])
+
+    def test_contract_ready_requires_valid_front_repo_checkout(self) -> None:
+        shutil.rmtree(self.front / ".git")
+
+        response = self.pantheon / ".coordination" / "responses" / "F-042-contract-ready.yaml"
+        response.write_text(
+            "\n".join(
+                [
+                    "feature_id: F-042",
+                    "type: contract-ready",
+                    "source_repo: pantheon",
+                    "target_repo: execute-plans",
+                    "screen: promotion-review",
+                    "artifacts:",
+                    "  bff_contract: docs/bff/F-042-promotion-review.md",
                     "  screen_spec: docs/screens/F-042-promotion-review.md",
                     "  example_payload: docs/examples/F-042-review-page.json",
                 ]
@@ -454,10 +483,14 @@ class CoordinationWatcherTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        with self.assertRaises(RuntimeError) as exc_info:
-            sync_coordination_files(self.config, {})
+        state: dict[str, object] = {}
+        changed = sync_coordination_files(self.config, state)
 
-        self.assertIn("front-ai-trading-system checkout is invalid", str(exc_info.exception))
+        self.assertTrue(changed)
+        error = state["coordination"]["features"]["F-042"]["coordination_error"]
+        self.assertEqual(error["reason"], "mirror_precondition_failed")
+        self.assertIn("execute-plans checkout is invalid", error["message"])
+        self.assertEqual(load_jsonl(Path(self.config["paths"]["event_queue"])), [])
 
     def test_ui_done_request_queues_front_sync_worker(self) -> None:
         request = self.front / ".coordination" / "requests" / "F-042-ui-done.yaml"
@@ -465,7 +498,7 @@ class CoordinationWatcherTests(unittest.TestCase):
             "\n".join(
                 [
                     "feature_id: F-042",
-                    "source_repo: front-ai-trading-system",
+                    "source_repo: execute-plans",
                     "source_branch: main",
                     "screen: promotion-review",
                     "type: ui-done",
@@ -500,7 +533,7 @@ class CoordinationWatcherTests(unittest.TestCase):
             "\n".join(
                 [
                     "feature_id: F-042",
-                    "source_repo: front-ai-trading-system",
+                    "source_repo: execute-plans",
                     "source_branch: main",
                     "screen: promotion-review",
                     "type: frontend-feedback",
@@ -532,7 +565,7 @@ class CoordinationWatcherTests(unittest.TestCase):
             "\n".join(
                 [
                     "feature_id: F-042",
-                    "source_repo: front-ai-trading-system",
+                    "source_repo: execute-plans",
                     "type: ui-done",
                     "summary: Example only",
                 ]
@@ -555,7 +588,7 @@ class CoordinationWatcherTests(unittest.TestCase):
             "\n".join(
                 [
                     "feature_id: F-042",
-                    "source_repo: front-ai-trading-system",
+                    "source_repo: execute-plans",
                     "source_branch: main",
                     "screen: promotion-review",
                     "type: bff-gap",

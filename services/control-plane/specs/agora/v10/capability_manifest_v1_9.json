@@ -23,9 +23,13 @@
       "routes": [
         "GET /bff/agora/interactions",
         "POST /bff/agora/interactions",
-        "GET /bff/agora/interactions/{interaction_id}"
+        "GET /bff/agora/interactions/{interaction_id}",
+        "GET /bff/agora/interactions/{interaction_id}/timeline",
+        "POST /bff/agora/interactions/{interaction_id}:retry",
+        "POST /bff/agora/interactions:recover",
+        "GET /bff/agora/interactions/{interaction_id}/stream"
       ],
-      "implementation_status": "contract_only"
+      "implementation_status": "implemented"
     },
     {
       "id": "persona_provider_content_contract",
@@ -36,7 +40,7 @@
       "routes": [
         "GET /bff/agora/interactions/{interaction_id}"
       ],
-      "implementation_status": "contract_only"
+      "implementation_status": "implemented"
     },
     {
       "id": "persona_recommended_measure_governance_contract",
@@ -54,12 +58,16 @@
       ],
       "routes": [
         "POST /bff/agora/interactions/{interaction_id}/recommended-measures/{measure_id}/candidates",
+        "GET /bff/agora/proposals/{proposal_id}/candidate",
         "GET /bff/agora/proposals/{proposal_id}/candidate-decisions",
         "POST /bff/agora/proposals/{proposal_id}/candidate-decisions",
         "POST /bff/agora/proposals/{proposal_id}/validations",
-        "GET /bff/agora/proposals/{proposal_id}/validations/{validation_receipt_id}"
+        "GET /bff/agora/proposals/{proposal_id}/validations/{validation_receipt_id}",
+        "GET /bff/agora/proposals/{proposal_id}/review-readiness",
+        "POST /bff/agora/proposals/{proposal_id}/formal-approvals/{approval_decision_id}:link",
+        "GET /bff/agora/proposals/{proposal_id}/formal-approvals/{approval_decision_id}"
       ],
-      "implementation_status": "contract_only"
+      "implementation_status": "implemented"
     }
   ],
   "required_definition_checksums": [
@@ -122,5 +130,5 @@
     "memory_mutation": false,
     "persona_self_approval": false
   },
-  "note": "All v1.9 routes are contract_only until PINT-012 through PINT-014 merge runtime implementation. This manifest must not be used to claim hosted availability. Existing v1.8 and historical PINT-010-R2 bytes remain unchanged."
+  "note": "PINT-013 implements the durable interaction and provider-content route family. Recommended-measure governance routes remain contract_only until their owning task merges. Hosted availability still requires deployment proof."
 }

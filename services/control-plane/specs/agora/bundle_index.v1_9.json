@@ -6,12 +6,12 @@
     "bundle_index_sha256": "8bedd60c2d0be4edf9d1c2c76d77e4771d6116cffb4e059092441a9b30dfe653"
   },
   "files": {
-    "specs/agora/v10/persona_interaction_daily.schema.json": "1c5eae77368b1c70cef790e7605efa5f1d5e18793e37b55a0e1df33dfcf70bba",
-    "specs/agora/v10/capability_manifest_v1_9.json": "5c3b4f68e5c9d31969a0a62510d49f3f2a957346743e7445708dca825c63dce6"
+    "specs/agora/v10/persona_interaction_daily.schema.json": "629c9cb145085b3cf4d00bfd2222fb096e06b46143fdb6001a2a23d95a2fd605",
+    "specs/agora/v10/capability_manifest_v1_9.json": "db88915b6af58e9805963a83a35c2df79f9850534734cda0f8e947a32aed4cf7"
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_9.openapi.yaml",
-    "sha256": "f67884a653d6aec0b62c2e2322fafaf040ce61fa4d58c84d84fd801e92d111fe"
+    "sha256": "bcac37d2cb674abe24f4e7d73b37302347bf4e2af14b6ce6c674acbe74798f86"
   },
   "required_definition_checksums": {
     "AuthorityBoundary": "65e3a1b8ff7cd9bfd033e92b22a62870e94e8903e17bbf5908d55063cc6d3f27",
@@ -21,15 +21,15 @@
     "PersonaParticipantSnapshot": "22bbf5c3e88a3ec55205ae8d256e4a0be8d401447c80b84bb21d195cd220f39e",
     "ProviderInvocation": "a0fa6812b949fe0f31c4787f2b309be90ab865071c8d6ba763b48c51340551f4",
     "ProductionContentProvenance": "8b58f13b9e0cc674771a53bfce5d245681ed6a3c4629e3eaba5c00f4fd5ba23c",
-    "RecommendedMeasure": "160911b0f2e863c5d7b1431573a45edf854b92564f60a50ce6565c7d4efc0925",
+    "RecommendedMeasure": "01a8b526601c94a7553f711485e63079ca9e6ee75498073fd506298803b7178d",
     "TypedPersonaOpinion": "c666c90140a0743af6bd4eca9e93d978074bbd86a1c160b96e91a36343f23c25",
     "InteractionSynthesis": "ff6389ad5a4be503ae2c9e001f2b76f085c3069b927963d1f72ab61c1a7620a6",
     "InteractionSubmitRequestV2": "4ce123dffccecac0ab074f4bf87ca5ae4960d0e303d965bd32454048530f3bd3",
-    "InteractionResource": "17336304139be7f2908298568d4520bdc95bbb56c3c5980caf548f10c36ff777",
-    "CandidateFromMeasureRequest": "01dbd965fc099f79139e6053896a381776c08d6dce58eba3a620a598e8c78f06",
+    "InteractionResource": "6631547be8e3140caae64528307d651f4cc26685c40831c5588b7f476a725ed5",
+    "CandidateFromMeasureRequest": "3079eb44644c573d5193ca28cf516ca0ae78a9979485704513450252432dff46",
     "CandidateDecisionRequest": "21a8616cdb7723c21eee8d59219caa1e335a1bf166242b657e54af41b93a2644",
-    "CandidateDecisionRecord": "99e1a9bed4cfd618568bf6c0db6a95fcbf1045b8e42ae220ee56873f37340dc5",
-    "AuthoritativeValidationRequest": "6f4806cb40d4f0a4c62d69ea2211224fa552caf8036af2da66ff4ca5e5c26352",
+    "CandidateDecisionRecord": "ec42f2d00b137338d7df45b2b1a411e062b53ce3606209ac0e72a56d8c8361be",
+    "AuthoritativeValidationRequest": "0903c9c2542d1b08a56545ec3007e4ede7ae20f5d56f46b5cec2bd3fd8824fb0",
     "AuthoritativeValidationReceipt": "471883731404d3f51ec5212c7c1b644b6d8aebcc9a728a5bf5419bbbb2480902",
     "FormalApprovalReceipt": "76f747b0a397f44c16a76b2e3264822c5f2a34907f6306b81fd30e83a49cc2a9"
   },
@@ -37,21 +37,29 @@
     "persona_interaction_daily_contract": [
       "GET /bff/agora/interactions",
       "POST /bff/agora/interactions",
-      "GET /bff/agora/interactions/{interaction_id}"
+      "GET /bff/agora/interactions/{interaction_id}",
+      "GET /bff/agora/interactions/{interaction_id}/timeline",
+      "POST /bff/agora/interactions/{interaction_id}:retry",
+      "POST /bff/agora/interactions:recover",
+      "GET /bff/agora/interactions/{interaction_id}/stream"
     ],
     "persona_recommended_measure_governance_contract": [
       "POST /bff/agora/interactions/{interaction_id}/recommended-measures/{measure_id}/candidates",
+      "GET /bff/agora/proposals/{proposal_id}/candidate",
       "GET /bff/agora/proposals/{proposal_id}/candidate-decisions",
       "POST /bff/agora/proposals/{proposal_id}/candidate-decisions",
       "POST /bff/agora/proposals/{proposal_id}/validations",
-      "GET /bff/agora/proposals/{proposal_id}/validations/{validation_receipt_id}"
+      "GET /bff/agora/proposals/{proposal_id}/validations/{validation_receipt_id}",
+      "GET /bff/agora/proposals/{proposal_id}/review-readiness",
+      "POST /bff/agora/proposals/{proposal_id}/formal-approvals/{approval_decision_id}:link",
+      "GET /bff/agora/proposals/{proposal_id}/formal-approvals/{approval_decision_id}"
     ]
   },
-  "implementation_status": "contract_only",
+  "implementation_status": "partially_implemented",
   "contract_refs": {
     "product_truth": "docs/bff/execution-tasks/2026-07-17-persona-daily-strict-operator/PINT-011-CONTRACT.md",
     "superseded_daily_interpretation": "docs/bff/execution-tasks/2026-07-12-persona-interaction/PINT-010-R2-EVIDENCE.md",
     "runtime_implementation_tasks": ["PINT-012", "PINT-013", "PINT-014"]
   },
-  "note": "Additive contract-only extension over exact v1.8 bytes. It does not claim the planned routes are live and grants no execution authority."
+  "note": "Additive extension over exact v1.8 bytes. PINT-013 implements the durable Persona interaction route family; remaining v1.9 governance routes retain their per-capability contract status. This does not claim hosted deployment and grants no execution authority."
 }

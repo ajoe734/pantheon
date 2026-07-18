@@ -90,7 +90,7 @@ def test_required_definition_checksums_are_complete_and_locked() -> None:
         assert actual == expected_hash, name
 
 
-def test_openapi_and_manifest_publish_the_same_contract_only_routes() -> None:
+def test_openapi_and_manifest_publish_the_same_route_statuses() -> None:
     spec = yaml.safe_load(OPENAPI_PATH.read_text(encoding="utf-8"))
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     openapi_routes = {
@@ -106,9 +106,15 @@ def test_openapi_and_manifest_publish_the_same_contract_only_routes() -> None:
     }
 
     assert openapi_routes == manifest_routes
-    assert spec["info"]["x-implementation-status"] == "contract_only"
-    assert {item["implementation_status"] for item in manifest["capabilities"]} == {
-        "contract_only"
+    assert spec["info"]["x-implementation-status"] == "partially_implemented"
+    assert {item["implementation_status"] for item in manifest["capabilities"]} == {"implemented"}
+    implemented = {
+        item["id"] for item in manifest["capabilities"]
+        if item["implementation_status"] == "implemented"
+    }
+    assert implemented == {
+        "persona_interaction_daily_contract", "persona_provider_content_contract",
+        "persona_recommended_measure_governance_contract",
     }
 
 
@@ -193,6 +199,7 @@ def test_every_typed_opinion_requires_provider_and_persona_provenance() -> None:
 def test_recommended_measure_is_structured_versioned_and_non_executing() -> None:
     measure = {
         "measure_id": "measure-risk-budget",
+        "measure_sha256": "a" * 64,
         "measure_type": "risk_limit_recommendation",
         "target": {
             "kind": "strategy",
@@ -242,7 +249,10 @@ def test_accept_for_review_is_not_formal_approval() -> None:
         "decision_id": "decision-1",
         "proposal_id": "proposal-1",
         "interaction_id": "interaction-1",
+        "opinion_id": "opinion-1",
+        "opinion_sha256": "b" * 64,
         "measure_id": "measure-1",
+        "measure_sha256": "c" * 64,
         "action": "accepted_for_review",
         "actor_id": "operator-1",
         "reason": "Ready for an independent risk review.",
@@ -297,10 +307,8 @@ def test_accept_for_review_is_not_formal_approval() -> None:
 
 def test_browser_cannot_supply_authoritative_validation_result() -> None:
     valid = {
-        "proposal_id": "proposal-1",
-        "revision": 3,
-        "proposal_digest": "d" * 64,
-        "validation_plan_ref": "validation-plan-1",
+        "expected_revision": 3,
+        "expected_proposal_digest": "d" * 64,
     }
     _assert_valid("AuthoritativeValidationRequest", valid)
     assert list(_validator("AuthoritativeValidationRequest").iter_errors({

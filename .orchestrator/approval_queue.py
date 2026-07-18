@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -70,9 +70,14 @@ def _stale_pending_seconds(config: dict[str, Any]) -> float:
 
 
 def _is_stale_pending(item: dict[str, Any], *, now: datetime, stale_after_seconds: float) -> bool:
+    # Applies to every pending item once it has waited past the configured
+    # threshold, including approvals bound to a task/worker. A live worker
+    # (even a resumable Claude session) must not be able to suspend forever
+    # just because it is still bound to a task; see
+    # OPS-APPROVAL-BROKER-RISK-CLASS-001 (2026-07-17 8.5h suspended_approval
+    # incident, where every stuck item had a task_id/worker_run_id and was
+    # therefore silently excluded from this check).
     if item.get("status") != "pending":
-        return False
-    if item.get("task_id") or item.get("worker_run_id"):
         return False
     created_at = _parse_utc(item.get("created_at"))
     if created_at is None:
@@ -163,7 +168,7 @@ def prune_stale_approvals(config: dict[str, Any]) -> list[dict[str, Any]]:
                 pruned.append(pruned_item)
                 continue
             if _is_stale_pending(item, now=now, stale_after_seconds=stale_after_seconds):
-                note = f"Auto-pruned stale approval after {int(stale_after_seconds)}s without task/worker binding."
+                note = f"Auto-pruned stale approval after {int(stale_after_seconds)}s without a broker decision."
                 pruned_item = _pruned_pending_item(item, note=note)
                 pruned_item["resolution_ref"] = write_approval_evidence(
                     config,
@@ -202,6 +207,14 @@ def prune_stale_approvals(config: dict[str, Any]) -> list[dict[str, Any]]:
                 },
             )
     return pruned
+
+
+def _default_expires_at(config: dict[str, Any], created_at: str) -> str | None:
+    created = _parse_utc(created_at)
+    if created is None:
+        return None
+    expires = created + timedelta(seconds=_stale_pending_seconds(config))
+    return expires.isoformat().replace("+00:00", "Z")
 
 
 def create_approval(config: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
@@ -249,6 +262,8 @@ def create_approval(config: dict[str, Any], item: dict[str, Any]) -> dict[str, A
         "evidence_ref": evidence_ref,
         "resolution_ref": None,
     }
+    if not approval.get("expires_at"):
+        approval["expires_at"] = _default_expires_at(config, approval["created_at"])
     with approval_lock(config):
         state = load_approval_state(config)
         state.setdefault("pending", []).append(approval)
