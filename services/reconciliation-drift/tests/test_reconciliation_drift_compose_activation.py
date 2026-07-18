@@ -27,6 +27,10 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
     assert drift["depends_on"]["runtime-manager"]["condition"] == "service_healthy"
     assert drift["depends_on"]["incidents"]["condition"] == "service_healthy"
     assert "healthcheck" in drift
+    assert "timeout=20" in drift["healthcheck"]["test"][-1]
+    assert drift["healthcheck"]["interval"] == "15s"
+    assert drift["healthcheck"]["timeout"] == "25s"
+    assert drift["healthcheck"]["start_period"] == "30s"
 
     consumer = services["reconciliation-drift-consumer"]
     assert "profiles" not in consumer

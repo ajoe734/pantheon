@@ -1734,12 +1734,12 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8102'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8102'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=20).read()\"",
         ]
-      interval: 10s
-      timeout: 5s
+      interval: 15s
+      timeout: 25s
       retries: 10
-      start_period: 5s
+      start_period: 30s
 
   reconciliation-drift-consumer:
     build:
