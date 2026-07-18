@@ -246,7 +246,7 @@ heartbeat_is_healthy() {
   kill -0 "${heartbeat_pid}" 2>/dev/null || return 1
   process_state="$(ps -o stat= -p "${heartbeat_pid}" 2>/dev/null | tr -d '[:space:]')"
   case "${process_state}" in
-    ""|T*|t*|Z*|X*|x*|D*) return 1 ;;
+    ""|T*|t*|Z*|X*|x*) return 1 ;;
   esac
   heartbeat_identity_matches
 }
