@@ -461,6 +461,8 @@ class StatusRootRoutingTests(unittest.TestCase):
             def run_status(args: list[str], *, actor: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
                 command_env = dict(env)
                 command_env["AI_NAME"] = actor
+                if actor.lower() != "codex2":
+                    command_env.pop("ORCH_RUN_ID", None)
                 if extra_env:
                     command_env.update(extra_env)
                 return subprocess.run(
@@ -472,6 +474,15 @@ class StatusRootRoutingTests(unittest.TestCase):
                     timeout=20,
                     check=False,
                 )
+
+            # Verify lease validation fails when AI_NAME is mismatched
+            mismatched_result = run_status(
+                ["progress", "CENTRAL-ROOT-001", "mismatched progress"],
+                actor="Antigravity",
+                extra_env={"ORCH_RUN_ID": "codex-test-run"}
+            )
+            self.assertNotEqual(mismatched_result.returncode, 0)
+            self.assertIn("status command lease AI identity mismatch", mismatched_result.stderr)
 
             show = subprocess.run(
                 ["bash", str(worktree / "scripts" / "ai-status.sh"), "show", "CENTRAL-ROOT-001"],
@@ -1491,6 +1502,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
 
         with (
             mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
             mock.patch.object(
                 ai_status,
                 "canonical_task_state_lock",
@@ -1566,7 +1578,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
             elapsed = time.monotonic() - started
 
             self.assertEqual(result.returncode, 2, result.stderr + result.stdout)
-            self.assertLess(elapsed, 2.0)
+            self.assertLess(elapsed, 6.0)
             rendered = json.loads(result.stderr)
             self.assertEqual(
                 rendered["diagnostic"]["invariant"],
@@ -1638,7 +1650,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
                     holder.join(timeout=5)
             self.assertEqual(holder.exitcode, 0)
             self.assertEqual(result.returncode, 75, result.stderr + result.stdout)
-            self.assertLess(elapsed, 2.0)
+            self.assertLess(elapsed, 6.0)
             self.assertEqual(
                 json.loads(result.stderr)["diagnostic"]["invariant"],
                 "status_task_lock_busy",

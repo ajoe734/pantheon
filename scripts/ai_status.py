@@ -518,11 +518,48 @@ def _find_worker_worktree_lease(
     return None
 
 
+def normalize_logical_actor(name: str | None) -> str:
+    if not name:
+        return ""
+    import re
+    trimmed = str(name).strip().lower()
+    base = re.sub(r'\d+$', '', trimmed)
+    base = base.split("-")[0]
+    return base.strip()
+
+
 def validate_active_status_command_lease(command: str, args: list[str]) -> None:
     """Validate the supervisor-issued worker lease before canonical mutation."""
 
     run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
+    actor = current_actor()
+
+    is_auto_worker = False
+    canonical_actor = canonical_agent_name(actor)
+    if canonical_actor and canonical_actor.lower() not in {"human", "human/ops", "ops"}:
+        is_auto_worker = True
+
     if not run_id:
+        if is_auto_worker:
+            task_id = args[0] if args else ""
+            is_reviewer = False
+            if task_id:
+                try:
+                    if STATUS_FILE.exists():
+                        status_data = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+                        tasks = status_data.get("tasks", [])
+                        for t in tasks:
+                            if t.get("id") == task_id:
+                                rev = str(t.get("reviewer") or "").strip()
+                                if rev and normalize_logical_actor(actor) == normalize_logical_actor(rev):
+                                    is_reviewer = True
+                                    break
+                except Exception:
+                    pass
+            if is_reviewer and command in {"reopen", "approve", "note"}:
+                pass
+            else:
+                raise RuntimeError(f"status command lease required for auto worker: {actor}")
         return
 
     config = load_config()
@@ -533,6 +570,16 @@ def validate_active_status_command_lease(command: str, args: list[str]) -> None:
     worker = workers.get(run_id)
     if not isinstance(worker, Mapping):
         raise RuntimeError(f"active status command lease not found for ORCH_RUN_ID={run_id}")
+
+    # Bind lease to normalized logical actor
+    worker_agent_id = str(worker.get("agent_id") or worker.get("provider") or "").strip()
+    if worker_agent_id:
+        normalized_actor = normalize_logical_actor(actor)
+        normalized_worker_agent = normalize_logical_actor(worker_agent_id)
+        if normalized_actor != normalized_worker_agent:
+            raise RuntimeError(
+                f"status command lease AI identity mismatch: actor {actor} (normalized: {normalized_actor}) != worker agent {worker_agent_id} (normalized: {normalized_worker_agent})"
+            )
 
     status = str(worker.get("status") or "").strip()
     if status not in ACTIVE_WORKER_LEASE_STATUSES:
@@ -708,6 +755,9 @@ def validate_status_root_binding() -> None:
         raise RuntimeError(
             f"PANTHEON_STATUS_ROOT is missing required ai-status.json: {STATUS_FILE}"
         )
+    symlink_comp_status = _first_symlink_component(STATUS_FILE)
+    if symlink_comp_status is not None:
+        raise RuntimeError(f"ai-status.json cannot be a symlink: {STATUS_FILE} (contains symlink component: {symlink_comp_status})")
     if _existing_path_is_symlink(STATUS_FILE):
         raise RuntimeError(f"ai-status.json cannot be a symlink: {STATUS_FILE}")
 
@@ -735,6 +785,11 @@ def validate_status_root_binding() -> None:
         if not _path_parent_under_root(Path(path), root):
             raise RuntimeError(
                 f"PANTHEON_STATUS_ROOT path binding for {label} escapes root: {path}"
+            )
+        symlink_comp = _first_symlink_component(Path(path))
+        if symlink_comp is not None:
+            raise RuntimeError(
+                f"PANTHEON_STATUS_ROOT path binding for {label} cannot be a symlink: {path} (contains symlink component: {symlink_comp})"
             )
         if _existing_path_is_symlink(Path(path)):
             raise RuntimeError(
@@ -1620,7 +1675,8 @@ def count_terminal_since(threshold_iso: str | None) -> tuple[int, int]:
         return (0, 0)
     for path in ARCHIVE_TASKS_DIR.glob("*.json"):
         try:
-            snapshot = json.loads(path.read_text(encoding="utf-8"))
+            text = task_archive_module.read_task_archive_file_safe(path)
+            snapshot = json.loads(text)
         except (OSError, json.JSONDecodeError):
             continue
         archived_at_raw = str(snapshot.get("archived_at") or "").strip()
@@ -4458,6 +4514,15 @@ def build_dashboard_bundle(
     bff_consol_archived_ids: list[str] = []
     if ARCHIVE_TASKS_DIR.exists():
         for path in ARCHIVE_TASKS_DIR.glob("BFF-CONSOL-*.json"):
+            try:
+                st = os.lstat(path)
+                import stat
+                if stat.S_ISLNK(st.st_mode):
+                    raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
+                if not stat.S_ISREG(st.st_mode):
+                    continue
+            except OSError:
+                continue
             stem = path.stem
             if stem.endswith("-SIDECAR-BFF-HANDOFF") or stem.endswith("-SIDECAR-ACCEPTANCE") or stem.endswith("-SIDECAR-REVIEW"):
                 continue

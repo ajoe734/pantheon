@@ -130,6 +130,8 @@ class JsonLoadResilienceTests(unittest.TestCase):
             ):
                 env.pop(env_name, None)
             env["PANTHEON_STATUS_ROOT"] = str(status_root)
+            env["AI_NAME"] = "Ops"
+
 
             result = subprocess.run(
                 [sys.executable, str(repo_root / "scripts" / "ai_status.py"), "sync"],

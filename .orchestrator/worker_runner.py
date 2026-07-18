@@ -246,10 +246,18 @@ def validate_coordination_root(
         root / "docs-site" / "planning-state.json",
         root / "docs-site" / "ai-activity-log.jsonl",
         root / "ai-task-archive",
+        root / "ai-task-archive" / "index.json",
         root / "ai-task-archive" / "tasks",
+        root / ".orchestrator" / "state.json",
+        root / ".orchestrator" / "approval-queue.json",
+        root / ".orchestrator" / "config.json",
+        root / ".orchestrator" / "planning-state.json",
         root / ".orchestrator" / "task-state.lock",
         root / ".orchestrator" / "activity-audit.lock",
     ):
+        symlink_comp = _first_symlink_component(path)
+        if symlink_comp is not None:
+            raise RuntimeError(f"coordination path cannot be a symlink: {path} (contains symlink component: {symlink_comp})")
         if path.is_symlink():
             raise RuntimeError(f"coordination path cannot be a symlink: {path}")
 
@@ -368,6 +376,26 @@ def derive_task_id(cmd):
     return m.group(1) if m else None
 
 
+def _get_task_roles(coordination_root: Path | None, task_id: str | None) -> dict[str, str]:
+    roles = {"owner": "", "reviewer": ""}
+    if not coordination_root or not task_id:
+        return roles
+    status_file = coordination_root / "ai-status.json"
+    if not status_file.exists():
+        return roles
+    try:
+        data = json.loads(status_file.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            for t in data.get("tasks", []):
+                if isinstance(t, dict) and t.get("id") == task_id:
+                    roles["owner"] = str(t.get("owner") or "").strip()
+                    roles["reviewer"] = str(t.get("reviewer") or "").strip()
+                    break
+    except Exception:
+        pass
+    return roles
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run an auto-worker command with heartbeat and terminal markers.")
     parser.add_argument("--run-id", required=True)
@@ -414,7 +442,7 @@ def main(argv: list[str] | None = None) -> int:
     workspace_path = pw or ow
     if workspace_path:
         workspace_path = Path(os.path.expanduser(workspace_path)).resolve()
-    validate_coordination_root(
+    coordination_root = validate_coordination_root(
         workspace_path if isinstance(workspace_path, Path) else None,
         heartbeat_path=raw_heartbeat_path,
         status_path=raw_status_path,
@@ -429,6 +457,18 @@ def main(argv: list[str] | None = None) -> int:
         except OSError as exc:
             print(f"worker_runner: failed to isolate working directory to {workspace_path}: {exc}", file=sys.stderr)
 
+    task_roles = _get_task_roles(coordination_root, task_id)
+    active_role = ""
+    if agent:
+        agent_lower = agent.lower()
+        normalized_agent = agent_lower.split("-")[0]
+        owner_lower = task_roles["owner"].lower() if task_roles["owner"] else ""
+        reviewer_lower = task_roles["reviewer"].lower() if task_roles["reviewer"] else ""
+        if normalized_agent == owner_lower.split("-")[0] or agent_lower == owner_lower:
+            active_role = "owner"
+        elif normalized_agent == reviewer_lower.split("-")[0] or agent_lower == reviewer_lower:
+            active_role = "reviewer"
+
     interval = max(1.0, float(args.heartbeat_interval_seconds or 15.0))
     started_at = utc_now()
     child: subprocess.Popen[str] | None = None
@@ -438,6 +478,9 @@ def main(argv: list[str] | None = None) -> int:
         "run_id": args.run_id,
         "agent": agent,
         "task_id": task_id,
+        "role": active_role,
+        "owner": task_roles["owner"],
+        "reviewer": task_roles["reviewer"],
         "status": "starting",
         "pid": os.getpid(),
         "child_pid": None,
@@ -458,6 +501,9 @@ def main(argv: list[str] | None = None) -> int:
             "run_id": args.run_id,
             "agent": agent,
             "task_id": task_id,
+            "role": active_role,
+            "owner": task_roles["owner"],
+            "reviewer": task_roles["reviewer"],
             "status": next_status,
             "pid": os.getpid(),
             "child_pid": status.get("child_pid"),
@@ -483,6 +529,8 @@ def main(argv: list[str] | None = None) -> int:
                 except OSError:
                     pass
 
+    orig_sigterm = signal.getsignal(signal.SIGTERM)
+    orig_sigint = signal.getsignal(signal.SIGINT)
     signal.signal(signal.SIGTERM, forward_signal)
     signal.signal(signal.SIGINT, forward_signal)
 
@@ -610,6 +658,9 @@ def main(argv: list[str] | None = None) -> int:
         except OSError:
             pass
         raise
+    finally:
+        signal.signal(signal.SIGTERM, orig_sigterm)
+        signal.signal(signal.SIGINT, orig_sigint)
 
 
 if __name__ == "__main__":

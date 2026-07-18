@@ -45,5 +45,14 @@
     }
   },
   "handoffs": [],
-  "blockers": []
+  "blockers": [],
+  "correction_context": {
+    "dry_gate_probe_event": {
+      "timestamp": "2026-07-16T15:56:59Z",
+      "branch": "task/fix-attribution-unresolved-pools",
+      "dirty_count": 494,
+      "push_status": "no_upstream",
+      "head": null
+    }
+  }
 }

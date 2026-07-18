@@ -251,6 +251,84 @@ class TestCoordinationRootValidation(unittest.TestCase):
             heartbeat_payload = json.loads(heartbeat.read_text(encoding="utf-8"))
             self.assertEqual(heartbeat_payload["status_command_runtime"]["command_root"], str(central.resolve()))
 
+    def test_heartbeat_binds_task_roles_and_run_id(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-roles-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            worktree = root / "task-worktree"
+            _init_repo(central)
+            _init_repo(worktree)
+
+            # Write ai-status.json with a task having Codex as owner and Claude as reviewer
+            task_id = "OPS-TEST-001"
+            status_data = {
+                "tasks": [
+                    {
+                        "id": task_id,
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                        "status": "in_progress",
+                    }
+                ],
+                "agents": [],
+                "handoffs": [],
+                "blockers": []
+            }
+            (central / "ai-status.json").write_text(json.dumps(status_data) + "\n", encoding="utf-8")
+            (central / ".orchestrator").mkdir(parents=True, exist_ok=True)
+            (central / ".orchestrator" / "state.json").write_text("{}", encoding="utf-8")
+            (central / ".orchestrator" / "approval-queue.json").write_text("[]", encoding="utf-8")
+            (central / ".orchestrator" / "config.json").write_text("{}", encoding="utf-8")
+
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+            env = os.environ.copy()
+            for key in list(env.keys()):
+                if key.startswith("PANTHEON_COMMAND_"):
+                    env.pop(key)
+            env.update(
+                {
+                    "PANTHEON_STATUS_ROOT": str(central),
+                    "PANTHEON_WORKTREE_ROOT": str(worktree),
+                    "ORCH_WORKSPACE_PATH": str(worktree),
+                }
+            )
+            env.update(_command_runtime_env(central))
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    _P,
+                    "--run-id",
+                    "codex-20260716T000000Z-test",
+                    "--heartbeat-path",
+                    str(heartbeat),
+                    "--status-path",
+                    str(status),
+                    "--",
+                    sys.executable,
+                    "-c",
+                    f"print('Task ID: {task_id}')",
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+
+            runner_status = json.loads(status.read_text(encoding="utf-8"))
+            self.assertEqual(runner_status["role"], "owner")
+            self.assertEqual(runner_status["owner"], "Codex")
+            self.assertEqual(runner_status["reviewer"], "Claude")
+            self.assertEqual(runner_status["run_id"], "codex-20260716T000000Z-test")
+
+            heartbeat_payload = json.loads(heartbeat.read_text(encoding="utf-8"))
+            self.assertEqual(heartbeat_payload["role"], "owner")
+            self.assertEqual(heartbeat_payload["owner"], "Codex")
+            self.assertEqual(heartbeat_payload["reviewer"], "Claude")
+            self.assertEqual(heartbeat_payload["run_id"], "codex-20260716T000000Z-test")
+
     def test_child_command_failure_writes_failed_status(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-failure-") as temp_dir:
             root = Path(temp_dir)
