@@ -401,7 +401,7 @@ class TestCronServiceAuthentication(unittest.TestCase):
             "enabled": True,
             "deleteAfterRun": False,
             "schedule": {"kind": "cron", "expr": contract["schedule"]},
-            "sessionTarget": persona_id,
+            "sessionTarget": "main",
             "wakeMode": "next-heartbeat",
             "payload": {
                 "kind": "systemEvent",
@@ -462,6 +462,13 @@ class TestCronServiceAuthentication(unittest.TestCase):
                 params.pop("id")
                 self.assertTrue(adapter_main._is_well_formed_persona_cron_job(params))
 
+    def test_cron_add_accepts_openclaw_normalized_no_delivery_readback_shape(self):
+        params = self._persona_job()
+        params.pop("id")
+        params.pop("delivery")
+
+        self.assertTrue(adapter_main._is_well_formed_persona_cron_job(params))
+
     def test_cron_add_rejects_noncanonical_persona_contract_fields(self):
         invalid_jobs = {}
 
@@ -478,7 +485,7 @@ class TestCronServiceAuthentication(unittest.TestCase):
         invalid_jobs["schedule"]["schedule"]["expr"] = "0 * * * *"
 
         invalid_jobs["session_target"] = copy.deepcopy(self._persona_job())
-        invalid_jobs["session_target"]["sessionTarget"] = "main"
+        invalid_jobs["session_target"]["sessionTarget"] = "persona-1"
 
         invalid_jobs["wake_mode"] = copy.deepcopy(self._persona_job())
         invalid_jobs["wake_mode"]["wakeMode"] = "now"

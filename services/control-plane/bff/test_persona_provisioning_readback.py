@@ -151,10 +151,9 @@ def _first_evaluation_job_fixture(
         "enabled": True,
         "deleteAfterRun": False,
         "schedule": {"kind": "cron", "expr": "*/15 * * * *"},
-        "sessionTarget": persona_id,
+        "sessionTarget": "main",
         "wakeMode": "next-heartbeat",
         "payload": {"kind": "systemEvent", "text": json.dumps(event)},
-        "delivery": {"mode": "none"},
     }
 
 
