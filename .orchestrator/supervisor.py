@@ -9613,6 +9613,20 @@ def dispatch_priority_for_task(
     return None
 
 
+def task_declared_priority_rank(task: dict[str, Any]) -> int:
+    """Return a stable lower-is-more-urgent rank for an optional P<n> field."""
+
+    raw_priority = task.get("priority")
+    if isinstance(raw_priority, bool) or raw_priority in (None, ""):
+        return 1_000_000
+    if isinstance(raw_priority, int):
+        return max(0, raw_priority)
+    match = re.fullmatch(r"P(\d+)", str(raw_priority).strip().upper())
+    if match is None:
+        return 1_000_000
+    return int(match.group(1))
+
+
 def agent_dispatch_loads(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -10133,7 +10147,7 @@ def dispatch_ready_tasks(
                 continue
         target_has_primary_work = agent_has_dispatchable_primary_work(config, status, target_agent, task_resolver)
 
-        candidates: list[tuple[int, int, dict[str, Any], str]] = []
+        candidates: list[tuple[int, int, int, dict[str, Any], str]] = []
         helper_candidates: list[tuple[int, int, dict[str, Any], str, str, str, bool]] = []
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
@@ -10240,12 +10254,20 @@ def dispatch_ready_tasks(
             event = build_dispatch_event(task, target_agent, reason, task_resolver)
             if event["key"] in pending_event_keys:
                 continue
-            candidates.append((priority, index, task, reason))
+            candidates.append(
+                (
+                    priority,
+                    task_declared_priority_rank(task),
+                    index,
+                    task,
+                    reason,
+                )
+            )
 
-        candidates.sort(key=lambda item: (item[0], item[1]))
+        candidates.sort(key=lambda item: (item[0], item[1], item[2]))
         per_occurrence_limit = 1 if weighted_dispatch_enabled else available_agent_slots
         queued_for_agent = 0
-        for _, _, task, reason in candidates[:per_occurrence_limit]:
+        for _, _, _, task, reason in candidates[:per_occurrence_limit]:
             event = build_dispatch_event(task, target_agent, reason, task_resolver)
             if queue_delivery_event(config, event):
                 seen[event["key"]] = utc_now()
