@@ -38,6 +38,41 @@ def iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def read_task_archive_file_safe(path: Path) -> str:
+    import stat
+    import errno
+    try:
+        st = os.lstat(path)
+        if stat.S_ISLNK(st.st_mode):
+            raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
+        if not stat.S_ISREG(st.st_mode):
+            raise RuntimeError(f"archive-leaf must be a regular file: {path}")
+    except FileNotFoundError:
+        raise
+    except OSError as e:
+        raise RuntimeError(f"Failed to lstat archive-leaf {path}: {e}")
+
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
+        raise
+
+    try:
+        fst = os.fstat(fd)
+        if not stat.S_ISREG(fst.st_mode):
+            raise RuntimeError(f"archive-leaf fd must be a regular file: {path}")
+        with open(fd, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise e
+
+
 def _archive_fault(point: str) -> None:
     if str(os.environ.get("LOOP_TEST_ARCHIVE_SIGKILL_AFTER") or "").strip() == point:
         os.kill(os.getpid(), 9)
@@ -250,16 +285,20 @@ def load_archived_snapshot(task_id: str | None) -> dict[str, Any] | None:
     if not normalized:
         return None
     path = archive_task_path(normalized)
-    if path.is_symlink():
-        raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
     with canonical_task_state_lock_file(
         STATUS_FILE,
         shared=True,
         nonblocking=False,
     ):
-        snapshot = load_json(path, default=None)
-    if snapshot is None:
-        return None
+        try:
+            text = read_task_archive_file_safe(path)
+            if not text.strip():
+                return None
+            snapshot = json.loads(text)
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            raise RuntimeError(f"Failed to load archive snapshot safely: {e}")
     return validate_archive_snapshot(snapshot, filename_task_id=normalized)
 
 
@@ -670,9 +709,14 @@ def _rebuild_archive_index_locked(
     # Process newly created / uncommitted local snapshots
     if allow_uncommitted and ARCHIVE_TASKS_DIR.exists():
         for path in ARCHIVE_TASKS_DIR.glob("*.json"):
-            if path.is_symlink():
-                raise RuntimeError(f"uncommitted snapshot cannot be a symlink: {path}")
-            if not path.is_file():
+            try:
+                st = os.lstat(path)
+                import stat
+                if stat.S_ISLNK(st.st_mode):
+                    raise RuntimeError(f"uncommitted snapshot cannot be a symlink: {path}")
+                if not stat.S_ISREG(st.st_mode):
+                    continue
+            except OSError:
                 continue
             try:
                 path.relative_to(ARCHIVE_TASKS_DIR)
@@ -682,7 +726,7 @@ def _rebuild_archive_index_locked(
             basename = path.name
             if basename not in committed_snapshots:
                 try:
-                    text = path.read_text(encoding="utf-8").strip()
+                    text = read_task_archive_file_safe(path).strip()
                     if not text:
                         raise RuntimeError(f"uncommitted snapshot is empty: {path}")
                     snapshot = json.loads(text)
@@ -920,11 +964,15 @@ class TaskResolver:
         if not normalized:
             return None
         path = archive_task_path_in_dir(normalized, self._archive_tasks_dir)
-        if path.is_symlink():
-            raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
-        snapshot = load_json(path, default=None)
-        if snapshot is None:
+        try:
+            text = read_task_archive_file_safe(path)
+            if not text.strip():
+                return None
+            snapshot = json.loads(text)
+        except FileNotFoundError:
             return None
+        except Exception as e:
+            raise RuntimeError(f"Failed to load archive snapshot safely: {e}")
         return validate_archive_snapshot(snapshot, filename_task_id=normalized)
 
     def _load_archived_task(self, task_id: str | None) -> dict[str, Any] | None:

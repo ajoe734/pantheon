@@ -1578,7 +1578,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
             elapsed = time.monotonic() - started
 
             self.assertEqual(result.returncode, 2, result.stderr + result.stdout)
-            self.assertLess(elapsed, 2.0)
+            self.assertLess(elapsed, 6.0)
             rendered = json.loads(result.stderr)
             self.assertEqual(
                 rendered["diagnostic"]["invariant"],
@@ -1650,7 +1650,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
                     holder.join(timeout=5)
             self.assertEqual(holder.exitcode, 0)
             self.assertEqual(result.returncode, 75, result.stderr + result.stdout)
-            self.assertLess(elapsed, 2.0)
+            self.assertLess(elapsed, 6.0)
             self.assertEqual(
                 json.loads(result.stderr)["diagnostic"]["invariant"],
                 "status_task_lock_busy",

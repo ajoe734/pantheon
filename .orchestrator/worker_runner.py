@@ -255,6 +255,9 @@ def validate_coordination_root(
         root / ".orchestrator" / "task-state.lock",
         root / ".orchestrator" / "activity-audit.lock",
     ):
+        symlink_comp = _first_symlink_component(path)
+        if symlink_comp is not None:
+            raise RuntimeError(f"coordination path cannot be a symlink: {path} (contains symlink component: {symlink_comp})")
         if path.is_symlink():
             raise RuntimeError(f"coordination path cannot be a symlink: {path}")
 
@@ -526,6 +529,8 @@ def main(argv: list[str] | None = None) -> int:
                 except OSError:
                     pass
 
+    orig_sigterm = signal.getsignal(signal.SIGTERM)
+    orig_sigint = signal.getsignal(signal.SIGINT)
     signal.signal(signal.SIGTERM, forward_signal)
     signal.signal(signal.SIGINT, forward_signal)
 
@@ -653,6 +658,9 @@ def main(argv: list[str] | None = None) -> int:
         except OSError:
             pass
         raise
+    finally:
+        signal.signal(signal.SIGTERM, orig_sigterm)
+        signal.signal(signal.SIGINT, orig_sigint)
 
 
 if __name__ == "__main__":

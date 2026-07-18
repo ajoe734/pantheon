@@ -258,7 +258,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
             worktree = root / "task-worktree"
             _init_repo(central)
             _init_repo(worktree)
-            
+
             # Write ai-status.json with a task having Codex as owner and Claude as reviewer
             task_id = "OPS-TEST-001"
             status_data = {
@@ -316,13 +316,13 @@ class TestCoordinationRootValidation(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
-            
+
             runner_status = json.loads(status.read_text(encoding="utf-8"))
             self.assertEqual(runner_status["role"], "owner")
             self.assertEqual(runner_status["owner"], "Codex")
             self.assertEqual(runner_status["reviewer"], "Claude")
             self.assertEqual(runner_status["run_id"], "codex-20260716T000000Z-test")
-            
+
             heartbeat_payload = json.loads(heartbeat.read_text(encoding="utf-8"))
             self.assertEqual(heartbeat_payload["role"], "owner")
             self.assertEqual(heartbeat_payload["owner"], "Codex")
