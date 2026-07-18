@@ -128,6 +128,51 @@ def request_json(
             "headers": response_headers(exc.headers),
             "json": parsed,
         }
+    except (TimeoutError, urllib.error.URLError, OSError) as exc:
+        reason = getattr(exc, "reason", None)
+        return {
+            "method": method,
+            "url": url,
+            "started_at": started,
+            "completed_at": utc_now(),
+            "status": None,
+            "ok": False,
+            "headers": {},
+            "json": {
+                "error": {
+                    "code": "request_failed",
+                    "message": str(reason or exc),
+                    "details": {
+                        "exception": exc.__class__.__name__,
+                        "timeout_seconds": timeout,
+                    },
+                }
+            },
+        }
+
+
+def is_retryable_transport_response(response: dict[str, Any]) -> bool:
+    return response.get("status") in {None, 408, 425, 429, 500, 502, 503, 504}
+
+
+def request_json_with_retries(
+    method: str,
+    url: str,
+    *,
+    attempts: int,
+    retry_delay_seconds: int,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    responses: list[dict[str, Any]] = []
+    for attempt in range(1, attempts + 1):
+        response = request_json(method, url, **kwargs)
+        response["attempt"] = attempt
+        responses.append(response)
+        if response.get("ok") or not is_retryable_transport_response(response) or attempt == attempts:
+            response["retry_attempts"] = responses
+            return response
+        time.sleep(retry_delay_seconds)
+    return responses[-1]
 
 
 def response_headers(headers: Any) -> dict[str, str]:
@@ -431,12 +476,14 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
     create = append_call(
         evidence,
         "persona_create",
-        request_json(
+        request_json_with_retries(
             "POST",
             create_url,
             token=token,
             body=payload,
             headers={"Idempotency-Key": idempotency_key},
+            attempts=2,
+            retry_delay_seconds=5,
             timeout=120,
         ),
     )
@@ -464,13 +511,15 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
     duplicate = append_call(
         evidence,
         "persona_create_idempotency_retry",
-        request_json(
+        request_json_with_retries(
             "POST",
             create_url,
             token=token,
             body=payload,
             headers={"Idempotency-Key": idempotency_key},
-            timeout=60,
+            attempts=2,
+            retry_delay_seconds=5,
+            timeout=120,
         ),
     )
     duplicate_data = body_data(duplicate)
