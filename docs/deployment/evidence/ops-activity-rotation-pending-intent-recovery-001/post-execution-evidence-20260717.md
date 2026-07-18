@@ -10,6 +10,14 @@ This is a redacted control-plane record. Full command outputs and manifests
 remain under `/tmp/oparpir-001/` on the operator host. No production system,
 secret, process environment, or raw activity payload is included here.
 
+Closeout status: this document is a factual execution record, not lifecycle
+approval. It originated at PR #3788 head
+`02861c351fcd6873f60f2c4340c114ad7f296256`, whose GitHub review state was
+`COMMENTED` despite approval text. The durable redacted file and inventory
+digests are in `post-execution-artifact-digests-20260718.json`. A new
+exact-head Antigravity review and governed approval remain required after the
+current-dev evidence composition.
+
 ## Reviewed identities and pre-gate
 
 - PR: `#3786`
@@ -25,6 +33,19 @@ secret, process environment, or raw activity payload is included here.
 
 The live pre-state was captured read-only before guarding. The central checkout
 was already dirty and was not used for code, install, or manual data changes.
+
+## PR #3782 composition reconciliation
+
+- PR #3782 exact head:
+  `577af8f9cd1cbf95256fb47f7aa2dca8f4738e6b`.
+- Composition commit on the recovery branch:
+  `6cbb6de539222a9805788b1cb76e628e7aade0c1`.
+- PR #3786 approved head `59c1376b...` contains that composition and merged to
+  `dev` as `b122d005...`; GitHub records PR #3782 merged at
+  `2026-07-17T01:37:32Z`.
+- The pre-review `README.md` maps the remaining #3782 planner findings to the
+  combined recovery tests and guard contract. The recovery branch did not
+  introduce a second schema-v2 rotation implementation.
 
 ## All-writer guard
 
@@ -171,6 +192,29 @@ After writers resumed, a fresh inventory at `2026-07-17T02:09:51Z` still
 showed the intent absent, the same one-row resolution, and an archive listing
 byte-identical to the pin. Active-log growth after resume was expected.
 
+## Contract deviations requiring explicit acceptance
+
+The execution followed the reviewed superseded-by-legacy implementation, but
+two differences from the incident plan remain governance decisions rather
+than facts this evidence can self-approve:
+
+1. The plan and original task brief required the recovery transaction itself
+   to publish ordered lineage and an active lineage-head control record. The
+   executed path instead published one hash-bound resolution row and left
+   lineage empty until the first later schema-v2 rotation. This avoided
+   enumerating the already-superseded content archive, but it is a deliberate
+   contract deviation that requires planner and reviewer acceptance or a
+   returned code change.
+2. The plan literally prohibited deleting the pending intent and staged
+   leaves. Execute first wrote byte-verified preserved copies under the
+   transaction's resolved directory, then unlinked the original pending and
+   staged paths so governed writers could resume. The original bytes remain
+   preserved, while the original paths do not. Planner and reviewer must
+   explicitly accept or reject that preserve-then-unlink interpretation.
+
+Neither deviation authorizes another live execute. The completed resolution
+must remain single-invocation unless a separate incident plan says otherwise.
+
 ## Restore and governed smoke
 
 ```bash
@@ -185,10 +229,11 @@ active watchdog line and zero guard markers. The supervisor respawned
 naturally as PID `405306`; a post-restore health sample at
 `2026-07-17T01:49:03Z` was fully healthy with no loop error.
 
-The recovery task ID itself is not retained as a governed task snapshot, so
-three governed `show`-class attempts against that ID ended in two bounded
-timeouts and an `Unknown task` result. The durable archived smoke target
-`PTJ-007` then
+At execution time the recovery task ID was not retained as a governed task
+snapshot, so three governed `show`-class attempts against that ID ended in two
+bounded timeouts and an `Unknown task` result. The task was materialized again
+on 2026-07-18; this sentence records only the 2026-07-17 smoke context. The
+durable archived smoke target `PTJ-007` then
 completed successfully with exit `0`, source `archive`, terminal status
 `done`, and empty stderr. It ran under the repository's normal governed
 outbox-recovery and locking semantics; no activity file was hand-edited.
@@ -227,3 +272,34 @@ recovery tool/common/runbook blobs continued to match the installed merge SHA.
 
 No central activity, archive, pending, staged, resolution, or preserved file
 was hand-edited at any point.
+
+## 2026-07-18 current-dev closeout audit
+
+The owner recomposed the evidence onto `origin/dev` at `c9560db5...` without
+changing recovery code or live state. Repo-external isolated verification on
+that code passed:
+
+- `.orchestrator/test_activity_pending_intent_recovery.py`: 37 tests;
+- `.orchestrator/test_common.py`: 90 tests; and
+- `scripts.test_activity_audit_logical_inventory`: 25 tests, 1 opt-in skip.
+
+The 423-source `missing=0` / `duplicate=0` result above remains exact evidence
+for the guarded recovery window, not a claim about all later appends and
+rotations. A fresh central read-only diagnostic inventory at command-runtime
+SHA `c5592c1068...` failed closed after scanning the later source set with:
+
+```text
+Incident lineage broken at ai-activity-log.jsonl-2026-07-17T0404Z.gz
+```
+
+That assertion is unchanged at the current evidence base and assumes the
+legacy timestamp overlap chain reaches the active file across the first
+post-recovery schema-v2 lineage boundary. Until the owning reader-hardening
+lane repairs or explicitly accepts this diagnostic boundary and reruns the
+inventory, no fresh product-level missing/duplicate claim is made here.
+
+The owner also could not complete a fresh governed status smoke because the
+supervisor-issued `PANTHEON_COMMAND_RUNTIME_SHA` remained `b43d5a...` after
+the command root advanced to `c9560db5...`; the wrapper correctly rejected
+the mismatch. The pin must be refreshed by the supervisor, not overridden by
+this task worker.

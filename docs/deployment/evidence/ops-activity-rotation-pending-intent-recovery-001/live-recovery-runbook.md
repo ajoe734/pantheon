@@ -1,12 +1,15 @@
 # Live guarded recovery runbook — pending-intent resolution
 
-Status: NOT executed. Requires planner acceptance of the merged PR, exact
-dev-root installation of the reviewed merge SHA, and independent review
-sign-off first. One approved execution only.
+Status: executed exactly once on 2026-07-17 under the recorded guard. Recovery
+returned `resolved`; this runbook is now a historical command record and must
+not be executed again. See `post-execution-evidence-20260717.md` and
+`post-execution-artifact-digests-20260718.json` for the durable redacted
+readback.
 
-Operator preconditions: merged PR head installed at the exact reviewed SHA
-in `/home/lupin/pantheon-ci-deploy/dev-root`; this runbook, the pinned
-inventory digest, and the attestation text approved by the planner.
+The execution preconditions were: merged PR head installed at the exact
+reviewed SHA in `/home/lupin/pantheon-ci-deploy/dev-root`; this runbook, the
+pinned inventory digest, and the guard attestation available for independent
+review.
 
 ## 0. Record state (read-only)
 
@@ -98,7 +101,10 @@ Record the printed `inventory_sha256`; the planner approves that exact
 digest. Dry-run must report `status: resolvable`. Any drift from the
 approved incident shape stops the procedure (report, restore, no mutation).
 
-## 4. Execute once (the only mutating step)
+## 4. Execute once (historical; completed, do not rerun)
+
+The command below records the one completed mutation. It is retained for
+auditability, not as authorization for a second invocation.
 
 ```bash
 PANTHEON_ACTIVITY_PENDING_INTENT_RECOVERY_EXECUTE=I-UNDERSTAND-LIVE-MUTATION \
@@ -113,8 +119,9 @@ python3 .orchestrator/activity_pending_intent_recovery.py execute \
 Execute takes the exclusive activity lock, re-verifies every pinned byte
 (including active sha/inode), preserves the intent + staged files, appends
 the resolution row, removes the pending marker, and reads everything back.
-On crash, re-run the same command with the SAME pin; the transaction is
-idempotent and converges (proven by the SIGKILL matrix).
+The reviewed crash contract allowed a retry with the same pin and was proven
+by the SIGKILL matrix. The live execution did not crash and was not retried;
+no second invocation is authorized after the successful resolution.
 
 ## 5. Post-recovery readback (read-only)
 
@@ -153,7 +160,7 @@ python3 .orchestrator/activity_pending_intent_recovery.py inventory \
 (The after-inventory reports `already_resolved` accounting; active appends
 after resume are expected and healthy.)
 
-## Window / abort
+## Window / abort contract used for the completed execution
 
 - Maximum guard window: 45 minutes from step 1. If step 4 has not STARTED
   by minute 30, abort.

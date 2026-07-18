@@ -1,9 +1,12 @@
-# OPS-ACTIVITY-ROTATION-PENDING-INTENT-RECOVERY-001 — Pre-review evidence
+# OPS-ACTIVITY-ROTATION-PENDING-INTENT-RECOVERY-001 — Historical pre-review evidence
 
-Status: implementation + isolated validation complete. No live mutation has
-been performed. Execute mode is gated and has never run against the central
-root. Live recovery requires planner acceptance, the all-writer guard, and
-the runbook in `live-recovery-runbook.md`.
+Status at this snapshot: implementation + isolated validation complete; no
+live mutation had yet been performed. The guarded recovery was subsequently
+executed once on 2026-07-17. See
+`post-execution-evidence-20260717.md` and
+`post-execution-artifact-digests-20260718.json` for the post-execution record.
+Statements below about work not yet performed describe this historical
+pre-review head and must not be read as current runtime state.
 
 ## Composition
 
@@ -188,11 +191,13 @@ personal data, and no process environments are published. Raw snapshot
 copies and full manifests remain in the operator-controlled work area
 `/tmp/oparpir-001/` on the host.
 
-## What is intentionally NOT done here
+## What was intentionally not done at this historical head
 
-- No merge, install, or live execute. Execute requires
+- At this pre-review snapshot there had been no merge, install, or live
+  execute. Execute required
   `PANTHEON_ACTIVITY_PENDING_INTENT_RECOVERY_EXECUTE=I-UNDERSTAND-LIVE-MUTATION`,
   the exact pinned digest, a non-empty writer-guard attestation, and the
-  exclusive activity lock — see `live-recovery-runbook.md`.
-- No central status file, archive byte, or active log was modified at any
-  point during this task.
+  exclusive activity lock. The later single execution and readback are
+  recorded in `post-execution-evidence-20260717.md`.
+- No central status file, archive byte, or active log was modified while this
+  pre-review evidence was captured.

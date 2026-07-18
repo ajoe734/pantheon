@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-ACTIVITY-ROTATION-PENDING-INTENT-RECOVERY-001",
+  "recorded_utc": "2026-07-18T02:52:32Z",
+  "scope": "redacted digest index for the 2026-07-17 guarded dev recovery",
+  "source_location": "/tmp/oparpir-001/guard",
+  "source_location_policy": "operator-host evidence; raw manifests and payload-bearing artifacts are not published",
+  "implementation": {
+    "pull_request": 3786,
+    "approved_head": "59c1376b02867da85691838ca061bed218fbd093",
+    "merge_commit": "b122d005bbee3884c77ce6dbe5f225b8f3fe6c1c",
+    "installed_commit": "b122d005bbee3884c77ce6dbe5f225b8f3fe6c1c"
+  },
+  "evidence_source": {
+    "pull_request": 3788,
+    "source_commit": "02861c351fcd6873f60f2c4340c114ad7f296256",
+    "review_state_at_source_commit": "COMMENTED",
+    "governed_exact_head_approval_required": true
+  },
+  "artifact_sha256": {
+    "pin.json": "bfbc2a837155b1783bed7d04605fa9cc855c3605048fa556b1e9e37b4cba3d9e",
+    "dry-run.json": "e924ac129819d2e6e4331df34a6e1dac00feb3e87fb9066722eb3ce4f336b06f",
+    "execute-report.json": "a8cd729c06f5f9aece681fc4045c01c48a5ff4db5fbff6efe8a906c2cec13d57",
+    "post-execute.json": "5eae6091b6e039313ed742451e1bb0cd61c8ccaa57ad1af646066e2216527a48",
+    "after.json": "1668d16b42e2695aa6910bb760168862dd9451f72e68c9194786869a2ce541bd",
+    "logical-post/summary.json": "73509ddf31a34cbc882c0ed5bcbcda614ca63dc529ac048ae7c80b09eca2213b",
+    "supervisor-runtime-health-final.json": "0c634ce3502d570e646d200ec52cb74429121f2f980bb02f9946513ef0289997",
+    "crontab-before.txt": "1a757c543e6e74c21b0e34af01b1158bacb15225c8f7570d169960db68351ec8",
+    "crontab-guarded.txt": "77da22bd5edc0c4489adab750dc767d12eb2fa0f541f048c2cd7a05ad3b01c12",
+    "crontab-restored-readback.txt": "1a757c543e6e74c21b0e34af01b1158bacb15225c8f7570d169960db68351ec8",
+    "pr-premerge.json": "20b0abf2c24edfe2e7975b78e40e11c6f42d2516410a67f00b4dfa425cb88a95",
+    "pr-postmerge.json": "9a472b3b3cbe18e66f5d2ad463efee3d506d5f62d8dcab6b5ad7cb57fd3392f3"
+  },
+  "inventory_digests": {
+    "pinned": "36113cc1bda9403a609010f88e5bff384f3259060f6d1d03e58af037d9156d4c",
+    "dry_run_fresh": "69a1ab3ad10157d91f72a7c69fd1f9e1ebd2909896f1a7a87aa9770963d0ba4b",
+    "post_execute": "1376947c3458434e1603f8eb1c5a890a6a3556a36ebf8651de5fe698fe9cd4ff",
+    "after_writers_resumed": "03913550364c32f59fef1a157021aec0c4e19bc70fda4c949be15ab7f3b47ba0"
+  },
+  "historical_execution_summary": {
+    "pin_captured_utc": "2026-07-17T01:39:27Z",
+    "execute_completed_utc": "2026-07-17T01:42:04Z",
+    "after_captured_utc": "2026-07-17T02:09:51Z",
+    "archive_source_count": 423,
+    "incident_logical_event_total": 3063,
+    "incident_logical_event_distinct": 3063,
+    "incident_missing_event_count": 0,
+    "incident_duplicate_event_count": 0,
+    "execute_invocation_count": 1,
+    "resolution_sequence": 1,
+    "resolution_id": "activity-intent-resolution-e5ed8528f6c7672db4a9a5b9b2e5a04a6673ad7eb011570d2ecb7eda19b43427",
+    "resolved_transaction_id": "activity-rotation-06bb785a56a33c4936a98df80b6aebbe2f8686ee35c052a10b59de39c7910188",
+    "active_sha256_before_and_immediately_after": "d2ef0c413ba9cdbf1ccf16c6d214f381ef5091be19b2e126063e321fb2263841",
+    "final_supervisor_healthy": true,
+    "final_supervisor_failed_check_count": 0,
+    "crontab_restored_byte_exact": true
+  },
+  "current_closeout_gates": {
+    "historical_counts_are_not_a_current_inventory_claim": true,
+    "fresh_current_inventory_result": "failed_closed_at_post_recovery_schema_v2_boundary",
+    "fresh_current_inventory_error": "Incident lineage broken at ai-activity-log.jsonl-2026-07-17T0404Z.gz",
+    "planner_acceptance_required_for_recovery_time_empty_lineage": true,
+    "planner_acceptance_required_for_preserve_then_unlink_semantics": true,
+    "second_recovery_execute_authorized": false
+  }
+}
