@@ -729,9 +729,12 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                     **binding_core,
                     "context_digest": binding_digest,
                 }
-                response["context_binding"] = lifecycle.save_context_binding(
-                    binding, owner_user_id=resolved.user_id,
-                )
+                # Keep the idempotency candidate pure.  ProposalStore.once()
+                # builds a candidate before it knows whether this command is a
+                # replay; persisting here would make a discarded candidate the
+                # canonical eligibility receipt while returning the original
+                # response to the caller.
+                response["context_binding"] = binding
                 response["environment"] = advice_environment
                 response["context_digest"] = binding_digest
                 response["context_refs"] = [
@@ -749,6 +752,14 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         except ProposalConflict as exc:
             raise HTTPException(409, detail=str(exc)) from exc
         data = result.data
+        # Persist only the exact response selected by the idempotency store.
+        # Re-saving the returned binding on replay is intentionally idempotent
+        # and can never publish the discarded candidate built by once().
+        context_binding = data.get("context_binding")
+        if isinstance(context_binding, dict):
+            data["context_binding"] = lifecycle.save_context_binding(
+                context_binding, owner_user_id=resolved.user_id,
+            )
         if result.run_side_effects:
             store.complete_side_effects(f"context:{resolved.tenant_id}:{resolved.user_id}", idempotency_key)
         return {"data": data, "meta": {"snapshot_at": utc_now(), "capability": "agora.persona.interaction.v1"}}

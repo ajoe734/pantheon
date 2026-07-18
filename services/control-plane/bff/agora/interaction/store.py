@@ -239,8 +239,9 @@ class InteractionLifecycleStore:
                 existing = self._context_bindings.get(binding_id)
                 if existing and existing != binding:
                     raise InteractionConflict("context binding identity reused with different content")
-                self._context_bindings[binding_id] = copy.deepcopy(binding)
-                self._context_binding_latest[scope] = binding_id
+                if existing is None:
+                    self._context_bindings[binding_id] = copy.deepcopy(binding)
+                    self._context_binding_latest[scope] = binding_id
                 return copy.deepcopy(binding)
         with self._connect() as conn:
             inserted = conn.execute(

@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "packet_type": "fleet_system_availability_task",
+  "task_id": "LOOP-PROD-SYSTEM-AVAILABILITY-001",
+  "title": "Restore existing dev-login transport without changing security policy",
+  "status": "ready_for_fleet_admission",
+  "program_id": "loop-product-level-remediation-2026-07-13",
+  "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-SYSTEM-AVAILABILITY-001.md",
+  "target_repos": ["execute-plans", "pantheon"],
+  "merge_targets": {"execute-plans": "main", "pantheon": "dev"},
+  "fleet_lane": "system-availability-readonly",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "depends_on": [],
+  "security_posture": "preserve_existing_contract; do_not_change_security_behavior",
+  "observed_evidence": {
+    "frontend_sha": "b86e6be9aeca33d15f699b3eaa308a6c81305871",
+    "bff_sha": "2fa94c888012f7ff42f6abdc4386b5121f8f5ae6",
+    "frontend_fallback": "strict",
+    "embedded_bearer": false,
+    "observed_failure": "401 AUTH_REQUIRED missing Bearer token"
+  },
+  "acceptance": [
+    "Existing dev-login endpoint and runtime bridge produce a short-lived session for the dev FE without embedding a bearer token.",
+    "Hosted read-only /bff/me, personas, dashboard summary, incidents, and assistant mode no longer fail solely because the browser has no session.",
+    "Strict fallback, write-disabled defaults, role/tenant/MFA/token policy, route authorization, CORS, and security task set are unchanged.",
+    "Exact FE/BFF/deployment identities, redacted smoke output, rollback path, checks, and independent review are archived."
+  ],
+  "non_goals": [
+    "No new security feature",
+    "No security backlog task execution",
+    "No embedded privileged token",
+    "No mock/seed fallback in hosted strict mode",
+    "No live writes or capital/broker side effects"
+  ],
+  "product_level_required": true,
+  "requires_human_ops_signoff": false,
+  "dispatch_rules": [
+    "Use clean task worktrees in both repositories.",
+    "Any diff that changes security policy is out of scope and must be rejected.",
+    "Owner and reviewer must be distinct fleet identities.",
+    "Only read-only dev deployment evidence is permitted."
+  ]
+}

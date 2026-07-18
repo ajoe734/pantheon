@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "packet_type": "fleet_corrective_task",
+  "task_id": "LOOP-PROD-RUNTIME-GATE-SEPARATION-001",
+  "title": "Separate runtime dispatch safety from final completion authority",
+  "status": "deferred_security_backlog",
+  "program_id": "loop-product-level-remediation-2026-07-13",
+  "plan": "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/REMEDIATION_RUNTIME_GATE_SEPARATION_2026-07-18.md",
+  "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-RUNTIME-GATE-SEPARATION-001.md",
+  "target_repo": "pantheon",
+  "merge_target": "dev",
+  "fleet_lane": "runtime-task-audit-sequencing-corrective",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "depends_on": [
+    "LOOP-PROD-RUNTIME-BOOT-001"
+  ],
+  "dependency_semantics": "runtime lock implementation and zero-write safety only; protected completion authority is not a prerequisite",
+  "artifacts": [
+    "scripts/dispatch_loop_product_level_remediation_2026-07-13.py",
+    "scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py",
+    "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/tasks.json",
+    "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/INDEX.md",
+    "docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-GATE-SEPARATION-001"
+  ],
+  "acceptance": [
+    "Pre-dispatch validation requires the exact merged runtime lock implementation, writer registry, lock order, source digests, and zero-write safety only.",
+    "A missing PANTHEON_RUNTIME_LOCK_VERIFIER_POLICY, completion.json, Ed25519 signature, revocation record, or ledger entry does not prevent primary catalog materialization.",
+    "LOOP-PROD-CLOSE-002 is the only task allowed to install and consume the protected completion authority.",
+    "Final closeout remains fail-closed for missing, wrong-head, revoked, replayed, stale, self-signed, or incorrectly bound verdicts.",
+    "The catalog remains 48 primary tasks with an acyclic dependency graph and exact digest rebinding.",
+    "The fleet PR has required checks, exact merged head, distinct reviewer evidence, and a checksummed evidence manifest."
+  ],
+  "proof_required": [
+    "pre-dispatch materialization test without final signing authority",
+    "final closeout negative matrix for policy and signature failures",
+    "zero-write before/after hashes",
+    "exact catalog and dispatcher digest rebinding",
+    "merged PR and independent exact-head review"
+  ],
+  "non_goals": [
+    "No product feature implementation",
+    "No direct live canonical-state edit",
+    "No fabricated completion evidence",
+    "No dispatcher apply or live-capital/broker side effect"
+  ],
+  "product_level_required": true,
+  "requires_human_ops_signoff": false,
+  "dispatch_rules": [
+    "Do not dispatch while security work is paused; future implementation is only in a clean fleet task worktree.",
+    "Owner and reviewer must be distinct admitted fleet identities.",
+    "Planner may inspect and accept evidence but may not implement declared artifacts.",
+    "Human/Ops authority is required only by LOOP-PROD-CLOSE-002, never by pre-dispatch materialization."
+  ]
+}
