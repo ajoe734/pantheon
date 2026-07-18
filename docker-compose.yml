@@ -1681,6 +1681,7 @@ services:
     command: ["python", "-m", "services.execution.lean_runtime.paper_signal_producer"]
     environment:
       SIGNAL_STORE_URL: redis://signal-store:6379
+      TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}

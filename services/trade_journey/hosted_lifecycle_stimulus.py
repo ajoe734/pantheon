@@ -10,6 +10,7 @@ read-only hosted probe can prove the committed aggregate.
 from __future__ import annotations
 
 import argparse
+import asyncio
 from datetime import datetime, timezone
 import json
 import os
@@ -45,6 +46,7 @@ StoreFactory = Callable[[Mapping[str, Any]], Any]
 Sleeper = Callable[[float], None]
 Clock = Callable[[], float]
 NowFactory = Callable[[], str]
+CommittedIdentityGetter = Callable[..., Mapping[str, Any] | None]
 
 
 class StimulusError(RuntimeError):
@@ -223,6 +225,146 @@ def _safe_identity_details(identity: Mapping[str, Any] | None) -> dict[str, Any]
         if value not in (None, "", [], {}):
             details[key] = value
     return details
+
+
+def _row_time(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return _clean(value)
+
+
+def _committed_lifecycle_identity_from_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    payload = row.get("payload")
+    event = dict(payload) if isinstance(payload, Mapping) else {}
+    metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
+    return {
+        "event_id": _clean(row.get("event_id") or event.get("event_id")),
+        "event_type": _clean(row.get("event_type") or event.get("event_type")),
+        "created_at": _row_time(row.get("created_at") or event.get("created_at")),
+        "binding_id": _clean(
+            event.get("binding_id")
+            or event.get("runtime_binding_id")
+            or metadata.get("binding_id")
+            or metadata.get("runtime_binding_id")
+        ),
+        "runtime_id": _clean(event.get("runtime_id") or metadata.get("runtime_id")),
+        "capital_pool_id": _clean(
+            event.get("capital_pool_id") or metadata.get("capital_pool_id")
+        ),
+        "run_id": _clean(event.get("run_id") or metadata.get("run_id")),
+        "signal_id": _clean(event.get("signal_id") or metadata.get("signal_id")),
+        "sequence_no": event.get("sequence_no") or metadata.get("sequence_no"),
+        "source_mode": _clean(event.get("source_mode") or metadata.get("source_mode")),
+        "environment": _clean(
+            event.get("environment")
+            or event.get("deployment_stage")
+            or metadata.get("environment")
+        ),
+        "execution_mode": _clean(
+            event.get("execution_mode") or metadata.get("execution_mode")
+        ),
+        "deployment_stage": _clean(
+            event.get("deployment_stage")
+            or event.get("environment")
+            or metadata.get("deployment_stage")
+            or metadata.get("environment")
+        ),
+    }
+
+
+def _identity_is_target_position(
+    identity: Mapping[str, Any],
+    *,
+    binding: Mapping[str, Any],
+    run_id: str,
+    require_identity_binding: bool,
+) -> bool:
+    binding_id = _clean(binding.get("binding_id"))
+    runtime_id = _clean(binding.get("runtime_id"))
+    sequence_no = identity.get("sequence_no")
+    if isinstance(sequence_no, bool) or not isinstance(sequence_no, int):
+        return False
+    if require_identity_binding:
+        if _clean(identity.get("binding_id")) != binding_id:
+            return False
+        if runtime_id and _clean(identity.get("runtime_id")) != runtime_id:
+            return False
+    return (
+        _clean(identity.get("run_id")) == run_id
+        and _clean(identity.get("event_type")) == "position_snapshot"
+        and sequence_no >= 5
+        and _clean(identity.get("environment")).lower() == "paper"
+        and _clean(identity.get("execution_mode")).lower() == "paper"
+        and _clean(identity.get("deployment_stage")).lower() == "paper"
+        and _clean(identity.get("source_mode")).lower() == "live"
+    )
+
+
+def fetch_committed_lifecycle_identity(
+    telemetry_db_dsn: str,
+    *,
+    binding: Mapping[str, Any],
+    run_id: str,
+) -> Mapping[str, Any] | None:
+    """Read the exact stimulus position snapshot from committed telemetry."""
+    binding_id = _clean(binding.get("binding_id"))
+    runtime_id = _clean(binding.get("runtime_id"))
+    if not _clean(telemetry_db_dsn) or not binding_id or not run_id:
+        return None
+
+    async def _query() -> Mapping[str, Any] | None:
+        try:
+            import asyncpg  # type: ignore[import]
+
+            conn = await asyncpg.connect(telemetry_db_dsn)
+            try:
+                row = await conn.fetchrow(
+                    """
+                    SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload
+                    FROM telemetry_events
+                    WHERE event_type = 'position_snapshot'
+                      AND (
+                        payload::jsonb ->> 'run_id' = $1
+                        OR payload::jsonb -> 'metadata' ->> 'run_id' = $1
+                      )
+                      AND (
+                        payload::jsonb ->> 'binding_id' = $2
+                        OR payload::jsonb ->> 'runtime_binding_id' = $2
+                        OR payload::jsonb -> 'metadata' ->> 'binding_id' = $2
+                        OR payload::jsonb -> 'metadata' ->> 'runtime_binding_id' = $2
+                      )
+                      AND (
+                        $3::text = ''
+                        OR payload::jsonb ->> 'runtime_id' = $3
+                        OR payload::jsonb -> 'metadata' ->> 'runtime_id' = $3
+                      )
+                    ORDER BY ingested_seq DESC
+                    LIMIT 1
+                    """,
+                    run_id,
+                    binding_id,
+                    runtime_id,
+                )
+            finally:
+                await conn.close()
+        except Exception as exc:  # noqa: BLE001 - never expose DSN or row content
+            raise StimulusError(
+                "telemetry_committed_query_failed",
+                "committed telemetry lifecycle query failed",
+            ) from exc
+        if row is None:
+            return None
+        identity = _committed_lifecycle_identity_from_row(dict(row))
+        if _identity_is_target_position(
+            identity,
+            binding=binding,
+            run_id=run_id,
+            require_identity_binding=True,
+        ):
+            return identity
+        return None
+
+    return asyncio.run(_query())
 
 
 def _is_ambiguous_reconciliation_receipt(receipt: Mapping[str, Any]) -> bool:
@@ -520,17 +662,11 @@ def _matching_lifecycle_identity(
         identity = summary.get("last_lifecycle_identity")
         if not isinstance(identity, Mapping):
             continue
-        sequence_no = identity.get("sequence_no")
-        if isinstance(sequence_no, bool) or not isinstance(sequence_no, int):
-            continue
-        if (
-            _clean(identity.get("run_id")) == run_id
-            and _clean(identity.get("event_type")) == "position_snapshot"
-            and sequence_no >= 5
-            and _clean(identity.get("environment")).lower() == "paper"
-            and _clean(identity.get("execution_mode")).lower() == "paper"
-            and _clean(identity.get("deployment_stage")).lower() == "paper"
-            and _clean(identity.get("source_mode")).lower() == "live"
+        if _identity_is_target_position(
+            identity,
+            binding=binding,
+            run_id=run_id,
+            require_identity_binding=False,
         ):
             return summary, identity
     return None
@@ -561,7 +697,9 @@ def wait_for_lifecycle_summary(
     run_id: str,
     timeout_seconds: float,
     poll_seconds: float,
+    telemetry_db_dsn: str | None = None,
     http_get_json: JsonGetter = _http_get_json,
+    committed_identity_getter: CommittedIdentityGetter = fetch_committed_lifecycle_identity,
     sleeper: Sleeper = time.sleep,
     monotonic: Clock = time.monotonic,
 ) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
@@ -569,6 +707,7 @@ def wait_for_lifecycle_summary(
     deadline = monotonic() + max(0.0, timeout_seconds)
     last_identity: Mapping[str, Any] | None = None
     summary_seen = False
+    committed_dsn = _clean(telemetry_db_dsn)
     while True:
         remaining = deadline - monotonic()
         if remaining <= 0:
@@ -582,11 +721,23 @@ def wait_for_lifecycle_summary(
                     "run_id": run_id,
                     "summary_seen": summary_seen,
                     "last_lifecycle_identity": _safe_identity_details(last_identity),
+                    "committed_telemetry_checked": bool(committed_dsn),
                 },
             )
+        if committed_dsn:
+            identity = committed_identity_getter(
+                committed_dsn,
+                binding=binding,
+                run_id=run_id,
+            )
+            if identity is not None:
+                return {"source": "telemetry_events"}, identity
         try:
             payload = http_get_json(endpoint, timeout=min(10.0, remaining))
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            if committed_dsn:
+                sleeper(min(max(0.05, poll_seconds), max(0.0, deadline - monotonic())))
+                continue
             raise _http_error(
                 "telemetry_unavailable",
                 "telemetry runtime summaries query failed",
@@ -606,7 +757,10 @@ def wait_for_lifecycle_summary(
             run_id=run_id,
         )
         if match is not None:
-            return match
+            summary, identity = match
+            confirmation = dict(summary)
+            confirmation.setdefault("source", "runtime_summaries")
+            return confirmation, identity
         sleeper(min(max(0.05, poll_seconds), max(0.0, deadline - monotonic())))
 
 
@@ -704,10 +858,12 @@ def run_stimulus(
     worker_heartbeat_max_age_seconds: float = 120.0,
     reconciliation_timeout_seconds: float = 60.0,
     allow_ambiguous_reconciliation: bool = False,
+    telemetry_db_dsn: str | None = None,
     quantity: float = 7.0,
     symbol: str = "AAPL.US",
     http_get_json: JsonGetter = _http_get_json,
     http_post_json: JsonPoster = _http_post_json,
+    committed_identity_getter: CommittedIdentityGetter = fetch_committed_lifecycle_identity,
     store_factory: StoreFactory | None = None,
     sleeper: Sleeper = time.sleep,
     monotonic: Clock = time.monotonic,
@@ -749,13 +905,15 @@ def run_stimulus(
         symbol=symbol,
     )
     try:
-        _summary, identity = wait_for_lifecycle_summary(
+        confirmation, identity = wait_for_lifecycle_summary(
             telemetry_url=telemetry_url,
             binding=binding,
             run_id=enqueued["run_id"],
             timeout_seconds=timeout_seconds,
             poll_seconds=poll_seconds,
+            telemetry_db_dsn=telemetry_db_dsn,
             http_get_json=http_get_json,
+            committed_identity_getter=committed_identity_getter,
             sleeper=sleeper,
             monotonic=monotonic,
         )
@@ -803,6 +961,7 @@ def run_stimulus(
             "queue_depth_after_enqueue": _safe_queue_depth(store),
             "lifecycle_summary_event_id": _clean(identity.get("event_id")),
             "lifecycle_sequence_no": identity.get("sequence_no"),
+            "lifecycle_confirmation_source": _clean(confirmation.get("source")),
             "tick_id": tick_id,
             "reconciliation_event_id": _clean(receipt.get("event_id")),
             "reconciliation_status": _clean(receipt.get("status")),
@@ -910,6 +1069,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=os.getenv("RECONCILIATION_DRIFT_URL", "http://reconciliation-drift-svc:8102"),
     )
     parser.add_argument("--signal-store-url", default=os.getenv("SIGNAL_STORE_URL", ""))
+    parser.add_argument(
+        "--telemetry-db-dsn",
+        default=os.getenv("TELEMETRY_DB_DSN", ""),
+        help="Optional committed telemetry DSN used for exact run-id confirmation.",
+    )
     parser.add_argument("--quantity", type=float, default=7.0)
     parser.add_argument("--symbol", default="AAPL.US")
     args = parser.parse_args(argv)
@@ -928,6 +1092,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         worker_heartbeat_max_age_seconds=args.worker_heartbeat_max_age_seconds,
         reconciliation_timeout_seconds=args.reconciliation_timeout_seconds,
         allow_ambiguous_reconciliation=args.allow_ambiguous_reconciliation,
+        telemetry_db_dsn=args.telemetry_db_dsn.strip() or None,
         quantity=args.quantity,
         symbol=args.symbol,
     )
