@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Auto-unblock stale `blocked` tasks whose formal dependencies are all satisfied.
 
-Guards: only status==blocked; ALL depends_on in done/archived; no live worker on
-it; blocked >= MIN_AGE_SECONDS; loop cap MAX_AUTO_REOPENS (then leave for human).
-Reopen via ai_status.py CLI impersonating the owner.
+Guards: only status==blocked; ALL depends_on in done/archived; no unresolved
+waiting_for target or open blocker; no live worker on it; blocked >=
+MIN_AGE_SECONDS; loop cap MAX_AUTO_REOPENS (then leave for human). Reopen via
+ai_status.py CLI impersonating the owner.
 """
 from __future__ import annotations
 import json, os, subprocess, sys, time, re
@@ -51,10 +52,35 @@ def _running_task_ids() -> set[str]:
     return ids
 
 
+def _waiting_targets(task: dict) -> list[str]:
+    value = task.get("waiting_for")
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
+def _has_unresolved_waiting_target(task: dict, done: set[str]) -> bool:
+    """Keep actor/external gates blocked; only completed task IDs are satisfied."""
+    return any(target not in done for target in _waiting_targets(task))
+
+
+def _open_blocker_task_ids(data: dict) -> set[str]:
+    return {
+        str(blocker.get("task_id") or "").strip()
+        for blocker in data.get("blockers", []) or []
+        if isinstance(blocker, dict)
+        and str(blocker.get("status") or "open").strip().lower() != "resolved"
+        and str(blocker.get("task_id") or "").strip()
+    }
+
+
 def main() -> int:
     data = json.loads(STATUS_FILE.read_text())
     tasks = data.get("tasks", [])
     done = {t["id"] for t in tasks if t.get("status") in DONE_STATUSES} | _archived_ids()
+    open_blocker_task_ids = _open_blocker_task_ids(data)
     running = _running_task_ids()
     now = time.time()
     try:
@@ -68,6 +94,8 @@ def main() -> int:
         tid = t["id"]
         deps = t.get("depends_on") or []
         if [d for d in deps if d not in done]:
+            continue
+        if tid in open_blocker_task_ids or _has_unresolved_waiting_target(t, done):
             continue
         if now - _parse_iso(t.get("last_update", "")) < MIN_AGE_SECONDS:
             continue

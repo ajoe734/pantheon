@@ -648,11 +648,27 @@ preserve_known_deploy_runtime_state() {
     ".orchestrator/watchdog-state.json"
     "trade_journey_events.json"
   )
+  local planning_pointer_path=".orchestrator/planning-session-pointer.json"
+  local planning_session_path=""
   local present_paths=()
   local path
   local runtime_status
   local stash_label
   local exclude_file
+
+  if [[ -e "$planning_pointer_path" || -L "$planning_pointer_path" ]]; then
+    # Resolve the session from the current runtime pointer before stashing or
+    # detaching. The validator is loaded from the exact target commit so this
+    # first deployment of a validator change does not depend on the old
+    # checkout containing the helper. It accepts only canonical repo-relative
+    # planning session paths and rejects traversal and symlink escapes.
+    planning_session_path="$({
+      git show "${PANTHEON_DEPLOY_SHA}:scripts/deploy_planning_runtime_paths.py" \
+        || error "target commit is missing the planning runtime path validator"
+    } | python3 - "$PWD" "$planning_pointer_path")" \
+      || error "canonical planning runtime pointer failed path validation"
+    known_paths+=("$planning_pointer_path" "$planning_session_path")
+  fi
 
   for path in "${known_paths[@]}"; do
     if [[ ! -e "$path" ]]; then

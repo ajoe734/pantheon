@@ -99,6 +99,30 @@ def check(name: str, ok: bool, detail: dict[str, Any] | None = None) -> dict[str
     return {"name": name, "ok": bool(ok), **(detail or {})}
 
 
+def resolved_coordinator_status_root(repo_root: Path, config: dict[str, Any]) -> Path:
+    env_val = os.environ.get("PANTHEON_STATUS_ROOT")
+    if env_val and env_val.strip():
+        return Path(os.path.expanduser(env_val.strip())).resolve()
+
+    paths = config.get("paths") if isinstance(config.get("paths"), dict) else {}
+    if "status_file" in paths:
+        try:
+            return config_path(repo_root, config, "status_file", "ai-status.json").parent.resolve()
+        except KeyError:
+            pass
+
+    if "state_file" in paths:
+        try:
+            state_path = config_path(repo_root, config, "state_file", ".orchestrator/state.json").resolve()
+            if state_path.parent.name == ".orchestrator":
+                return state_path.parent.parent.resolve()
+            return state_path.parent.resolve()
+        except KeyError:
+            pass
+
+    return repo_root.resolve()
+
+
 def evaluate_runtime_health(
     repo_root: Path,
     *,
@@ -121,7 +145,8 @@ def evaluate_runtime_health(
 
     state_dir = state_path.parent
     pid_path = state_dir / "supervisor.pid"
-    lock_path = state_dir / "supervisor.lock"
+    coord_root = resolved_coordinator_status_root(repo_root, config)
+    lock_path = coord_root / ".orchestrator" / "supervisor.lock"
     pid = read_pid(pid_path)
     process_alive = pid_matches_supervisor(pid, repo_root)
     singleton_lock_held = lock_held(lock_path)

@@ -90,6 +90,16 @@ def _participant() -> dict[str, Any]:
     }
 
 
+def _context_binding(name: str, resolved_at: str) -> dict[str, Any]:
+    return {
+        "binding_id": f"binding-{name}",
+        "tenant_id": "tenant-pint013",
+        "workshop_id": "workshop-pint013",
+        "context_digest": f"digest-{name}",
+        "resolved_at": resolved_at,
+    }
+
+
 def _invocation(interaction_id: str, *, status: str = "queued") -> dict[str, Any]:
     return {
         "invocation_id": f"invoke:{interaction_id}:risk-critic",
@@ -243,6 +253,34 @@ def test_restart_readback_preserves_committed_lifecycle_with_rpo_zero(
         "outbox-rpo0-final",
     ]
     assert all(item["state"] == "pending" for item in timeline)
+
+
+def test_postgres_context_binding_replay_does_not_add_rows_or_rewind_latest(
+    postgres_stores: tuple[InteractionLifecycleStore, InteractionLifecycleStore],
+) -> None:
+    first, restarted = postgres_stores
+    original = _context_binding("original", "2026-07-18T00:00:00Z")
+    later = _context_binding("later", "2026-07-18T00:00:02Z")
+
+    first.save_context_binding(original, owner_user_id="operator-pint013")
+    restarted.save_context_binding(original, owner_user_id="operator-pint013")
+    with first._connect() as conn:
+        assert conn.execute(
+            f"SELECT count(*) FROM {first._context_table}"
+        ).fetchone()[0] == 1
+    assert restarted.latest_context_binding(
+        "tenant-pint013", "operator-pint013", "workshop-pint013"
+    ) == original
+
+    first.save_context_binding(later, owner_user_id="operator-pint013")
+    restarted.save_context_binding(original, owner_user_id="operator-pint013")
+    with first._connect() as conn:
+        assert conn.execute(
+            f"SELECT count(*) FROM {first._context_table}"
+        ).fetchone()[0] == 2
+    assert restarted.latest_context_binding(
+        "tenant-pint013", "operator-pint013", "workshop-pint013"
+    ) == later
 
 
 def test_expired_invocation_lease_is_recovered_once_after_restart(

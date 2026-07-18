@@ -58,12 +58,16 @@
       ],
       "routes": [
         "POST /bff/agora/interactions/{interaction_id}/recommended-measures/{measure_id}/candidates",
+        "GET /bff/agora/proposals/{proposal_id}/candidate",
         "GET /bff/agora/proposals/{proposal_id}/candidate-decisions",
         "POST /bff/agora/proposals/{proposal_id}/candidate-decisions",
         "POST /bff/agora/proposals/{proposal_id}/validations",
-        "GET /bff/agora/proposals/{proposal_id}/validations/{validation_receipt_id}"
+        "GET /bff/agora/proposals/{proposal_id}/validations/{validation_receipt_id}",
+        "GET /bff/agora/proposals/{proposal_id}/review-readiness",
+        "POST /bff/agora/proposals/{proposal_id}/formal-approvals/{approval_decision_id}:link",
+        "GET /bff/agora/proposals/{proposal_id}/formal-approvals/{approval_decision_id}"
       ],
-      "implementation_status": "contract_only"
+      "implementation_status": "implemented"
     }
   ],
   "required_definition_checksums": [

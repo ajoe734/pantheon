@@ -427,6 +427,55 @@ EOF
 
         self.assertEqual(permission_broker.classify_command(command), "allow")
 
+    def test_auto_worker_stale_status_runtime_is_denied(self) -> None:
+        command = (
+            "cd /home/lupin/code/pantheon && AI_NAME=Claude timeout 30 "
+            "python3 scripts/ai_status.py note OPS-1 'review result' 2>&1"
+        )
+        env = {
+            "ORCH_RUN_ID": "claude-2-run",
+            "ORCH_TASK_ID": "OPS-1",
+            "PANTHEON_COMMAND_ROOT": "/home/lupin/pantheon-ci-deploy/dev-root",
+        }
+        with mock.patch.dict(os.environ, env, clear=True):
+            evaluation = permission_broker.evaluate_tool_request(
+                "Bash", {"command": command}, {}
+            )
+
+        self.assertEqual(evaluation["decision"], "deny")
+        self.assertEqual(
+            evaluation["risk_class"], "stale_status_command_runtime"
+        )
+        self.assertIn("PANTHEON_COMMAND_ROOT", evaluation["reason"])
+
+    def test_auto_worker_pinned_status_runtime_is_allowed(self) -> None:
+        command = (
+            "AI_NAME=Claude timeout 30 python3 "
+            "$PANTHEON_COMMAND_ROOT/scripts/ai_status.py note OPS-1 "
+            "'review result' 2>&1"
+        )
+        env = {
+            "ORCH_RUN_ID": "claude-2-run",
+            "ORCH_TASK_ID": "OPS-1",
+            "PANTHEON_COMMAND_ROOT": "/home/lupin/pantheon-ci-deploy/dev-root",
+        }
+        with mock.patch.dict(os.environ, env, clear=True):
+            evaluation = permission_broker.evaluate_tool_request(
+                "Bash", {"command": command}, {}
+            )
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "safe_bash")
+
+    def test_non_worker_status_command_remains_allowed(self) -> None:
+        command = "python3 scripts/ai_status.py note OPS-1 'local operator note'"
+        with mock.patch.dict(os.environ, {}, clear=True):
+            evaluation = permission_broker.evaluate_tool_request(
+                "Bash", {"command": command}, {}
+            )
+
+        self.assertEqual(evaluation["decision"], "allow")
+
     def test_permission_broker_uses_provider_specific_rule_default_mode(self) -> None:
         config = {
             "providers": {
