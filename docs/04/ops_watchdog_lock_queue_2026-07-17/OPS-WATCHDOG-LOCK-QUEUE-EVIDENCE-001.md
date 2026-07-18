@@ -34,7 +34,7 @@ All 43 tests passed, including the new lock contention, subprocess concurrency, 
 
 ## 2. Three-Cycle Live Scheduler Evidence
 
-We verified the live scheduler running the deployed `dev-root` at `/home/lupin/pantheon-ci-deploy/dev-root`. During the observed cycles at 16:37-16:39Z on 2026-07-17, the repository was checked out at the active mainline parent commit `835375918` (prior to the merge of PR #3823 at 23:02Z, which created the merge commit `4d7388c37f0145a3ab0f35dedfa5a5a5612ccb7d`). We observed three consecutive real scheduler watchdog cycles from the cron logs and metrics with no contention skips or manual overrides, each showing healthy operation under PID `3435869`.
+We verified the live scheduler running the deployed `dev-root` at `/home/lupin/pantheon-ci-deploy/dev-root`. During the observed cycles at 16:37-16:39Z on 2026-07-17, the repository was checked out at the active mainline parent commit `43033aa40` (prior to the merge of PR #3823 at 23:02Z, which created the merge commit `4d7388c37f0145a3ab0f35dedfa5a5a5612ccb7d`). We observed three consecutive real scheduler watchdog cycles from the cron logs and metrics with no contention skips or manual overrides, each showing healthy operation under PID `3435869`.
 
 ### Cycle 1 (2026-07-17T16:37:01Z)
 - **Watchdog Execution Result**:
