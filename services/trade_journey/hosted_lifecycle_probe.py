@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import time
 from typing import Any, Awaitable, Callable, Mapping, Sequence
@@ -457,26 +458,33 @@ async def run_probe(
     expected_sha: str,
     timeout_seconds: float,
     poll_seconds: float,
+    baseline_high_watermark: int | None = None,
     sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
     if not expected_sha or expected_sha == "unknown":
         raise ProbeError("invalid_expected_sha", "a concrete expected deployment SHA is required")
+    if baseline_high_watermark is not None and baseline_high_watermark < 0:
+        raise ProbeError("invalid_baseline_high_watermark", "baseline high watermark must be non-negative")
     deadline = monotonic() + max(0.0, timeout_seconds)
     last_error = ProbeError("no_complete_paper_aggregate", "no complete committed paper lifecycle aggregate matched")
-    baseline_high_watermark: int | None = None
+    observed_baseline_high_watermark = baseline_high_watermark
     while True:
-        remaining = max(0.0, deadline - monotonic())
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise ProbeError(
+                last_error.code, last_error.safe_message, timed_out=True
+            ) from last_error
         try:
-            if baseline_high_watermark is None:
+            if observed_baseline_high_watermark is None:
                 high = await asyncio.wait_for(
-                    _source_high_watermark(source), timeout=max(0.05, remaining)
+                    _source_high_watermark(source), timeout=remaining
                 )
                 rows: list[dict[str, Any]] = []
             else:
                 high, rows = await asyncio.wait_for(
-                    _source_snapshot_after(source, baseline_high_watermark),
-                    timeout=max(0.05, remaining),
+                    _source_snapshot_after(source, observed_baseline_high_watermark),
+                    timeout=remaining,
                 )
         except asyncio.TimeoutError as exc:
             raise ProbeError(
@@ -484,8 +492,8 @@ async def run_probe(
                 "committed telemetry snapshot exceeded the probe deadline",
                 timed_out=True,
             ) from exc
-        if baseline_high_watermark is None:
-            baseline_high_watermark = high
+        if observed_baseline_high_watermark is None:
+            observed_baseline_high_watermark = high
         candidates = _complete_candidates(rows)
         if candidates:
             journeys, loops, generation_name = _current_projection(projection_root)
@@ -493,7 +501,7 @@ async def run_probe(
             try:
                 proof = _correlate(
                     candidate=candidate,
-                    baseline_high_watermark=baseline_high_watermark,
+                    baseline_high_watermark=observed_baseline_high_watermark,
                     high_watermark=high,
                     journeys=journeys,
                     loops=loops,
@@ -564,6 +572,7 @@ async def execute(
     output: Path,
     timeout_seconds: float,
     poll_seconds: float,
+    baseline_high_watermark: int | None = None,
     sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[int, dict[str, Any]]:
@@ -574,6 +583,7 @@ async def execute(
             expected_sha=expected_sha,
             timeout_seconds=timeout_seconds,
             poll_seconds=poll_seconds,
+            baseline_high_watermark=baseline_high_watermark,
             sleeper=sleeper,
             monotonic=monotonic,
         )
@@ -600,7 +610,9 @@ async def execute(
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-sha", required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--baseline-high-watermark", type=int)
+    parser.add_argument("--print-high-watermark", action="store_true")
     parser.add_argument(
         "--timeout-seconds", "--timeout", dest="timeout", type=float, default=300.0
     )
@@ -610,6 +622,48 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     root = os.getenv("LIFECYCLE_PROJECTION_ROOT", "").strip()
+    if args.print_high_watermark:
+        if not dsn:
+            print(
+                json.dumps(
+                    {
+                        "outcome": "failed",
+                        "failure": {
+                            "code": "configuration_missing",
+                            "message": "telemetry DSN is required",
+                        },
+                        "redaction": {"dsn_included": False},
+                    },
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            high_watermark = asyncio.run(
+                _source_high_watermark(AsyncpgTelemetrySource(dsn))
+            )
+        except ProbeError as exc:
+            print(
+                json.dumps(
+                    {
+                        "outcome": "failed",
+                        "failure": {
+                            "code": exc.code,
+                            "message": exc.safe_message,
+                            "timed_out": exc.timed_out,
+                        },
+                        "redaction": {"dsn_included": False},
+                    },
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+            return 1
+        print(high_watermark)
+        return 0
+    if args.output is None:
+        parser.error("--output is required unless --print-high-watermark is used")
     if not dsn or not root:
         write_failure_artifact(
             args.output,
@@ -626,6 +680,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             output=args.output,
             timeout_seconds=args.timeout,
             poll_seconds=args.poll,
+            baseline_high_watermark=args.baseline_high_watermark,
         )
     )
     print(json.dumps({"outcome": artifact["outcome"], "output": str(args.output)}, sort_keys=True))
