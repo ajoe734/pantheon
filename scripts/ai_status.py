@@ -4955,7 +4955,7 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can progress {task_id}")
     timestamp = iso_now()
-    if task["status"] in {"todo", "review_approved"}:
+    if task["status"] == "todo":
         task["status"] = "in_progress"
     task["last_update"] = timestamp
     task["next"] = message
