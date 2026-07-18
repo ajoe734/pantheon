@@ -562,7 +562,8 @@ def test_guard_rejects_unsafe_heartbeat_states_and_cli_override() -> None:
     script = GUARD_SCRIPT.read_text(encoding="utf-8")
     assert 'LEASE_CLI="${SCRIPT_DIR}/dev_environment_lease.py"' in script
     assert "PANTHEON_DEV_ENVIRONMENT_LEASE_CLI:-" not in script
-    assert '""|T*|t*|Z*|X*|x*|D*' in script
+    assert '""|T*|t*|Z*|X*|x*) return 1 ;;' in script
+    assert 'D*) return 1 ;;' not in script
     assert "verify-heartbeat-identity" in script
     assert "REMOTE_VERIFY_INTERVAL_SECONDS" in script
     assert 'kill -TERM -- "-${pgid}"' in script
