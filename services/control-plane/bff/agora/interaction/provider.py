@@ -112,8 +112,27 @@ class ProviderOpinionPayload(BaseModel):
 
 def _canonical_sha(value: Any) -> str:
     return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+            default=str,
+        ).encode("utf-8")
     ).hexdigest()
+
+
+def recommended_measure_sha256(value: Dict[str, Any]) -> str:
+    """Hash the provider-validated measure before it crosses persistence.
+
+    The provider is not allowed to claim this binding.  The BFF appends it to
+    the validated payload so browser clients can reference, but never author,
+    the exact persisted recommendation.
+    """
+
+    payload = {key: item for key, item in value.items() if key != "measure_sha256"}
+    return _canonical_sha(payload)
 
 
 def _persona_version(persona: Dict[str, Any]) -> str:
@@ -264,6 +283,9 @@ def build_provider_prompt(
         "Do not call tools or read/write memory. Do not submit orders, call brokers, change capital, "
         "bind runtime, promote lifecycle, mutate policy, or claim execution. "
         f"Required output shape: {json.dumps(schema, separators=(',', ':'))}\n"
+        "For each recommended measure set validation_plan.validator to "
+        "pantheon_candidate_validation_v1 and choose required_checks only from "
+        "source_binding,evidence_freshness,target_version,authority_boundary,rollback_plan.\n"
         f"IMMUTABLE_TYPED_CONTEXT={exact_context}"
     )
     return prompt, context_pack
@@ -311,6 +333,8 @@ def validate_provider_opinion(
     except (TypeError, ValueError) as exc:
         raise ValueError("provider response is not valid JSON") from exc
     opinion = ProviderOpinionPayload.model_validate(raw).model_dump(mode="json")
+    for measure in opinion["recommended_measures"]:
+        measure["measure_sha256"] = recommended_measure_sha256(measure)
     return opinion, response_id, _canonical_sha(raw)
 
 

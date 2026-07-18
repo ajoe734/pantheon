@@ -37,8 +37,16 @@ from .personalization.router import create_personalization_router
 from .management_projection.router import create_management_projection_router
 from .dataset_extraction.router import create_dataset_extraction_router
 from .interaction.router import create_interaction_router
+from .interaction.store import InteractionLifecycleStore
 from .governance.router import create_governance_router
 from .governance.store import ProposalStore
+from .candidate_decisions.adapters import (
+    CandidateBindingValidationAdapter,
+    ReadStoreApprovalAdapter,
+)
+from .candidate_decisions.router import create_candidate_decision_router
+from .candidate_decisions.service import CandidateDecisionService
+from .candidate_decisions.store import CandidateDecisionStore
 
 
 _CAPABILITY_MANIFEST_PATH = os.path.join(
@@ -92,6 +100,14 @@ def create_agora_router(
         )
     )
     proposal_store = ProposalStore()
+    interaction_lifecycle = InteractionLifecycleStore.from_governance_store(proposal_store)
+    candidate_store = CandidateDecisionStore.from_governance_store(proposal_store)
+    candidate_service = CandidateDecisionService(
+        candidate_store,
+        interaction_store=interaction_lifecycle,
+        validation_adapter=CandidateBindingValidationAdapter(),
+        approval_store=ReadStoreApprovalAdapter(get_read_store),
+    )
 
     # ------------------------------------------------------------------ #
     # GET /bff/agora/me  — operator identity and capability scope (§18 envelope)
@@ -204,7 +220,13 @@ def create_agora_router(
         get_read_store=get_read_store,
         workshop_store=workshop_store,
         proposal_store=proposal_store,
+        interaction_store=interaction_lifecycle,
         canonical_context_ref_resolver=canonical_context_ref_resolver,
+    ))
+    router.include_router(create_candidate_decision_router(
+        **_kw,
+        require_write_role=require_write_role,
+        service=candidate_service,
     ))
     router.include_router(create_governance_router(
         **_kw,
