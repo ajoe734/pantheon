@@ -494,7 +494,9 @@ mutations, including raw `gh api` endpoint forms for the Pantheon and
 execute-plans repositories, before invoking the real GitHub CLI. Because a
 worker-local CLI cannot reliably prove which process dispatched a run, this
 guard intentionally rejects all such cancellations; ask Human/Ops for an
-explicit governed cancellation instead of bypassing it. The Branch CI smoke
+explicit governed cancellation instead of bypassing it. Auto workers also
+cannot create or import mutable `gh` aliases that would hide these operations
+from argument inspection. The Branch CI smoke
 gate also scans worker-facing guides, skills, task briefs, and templates for
 copy-pastable disable/cancel instructions. These are defense-in-depth controls
 and do not turn an otherwise forbidden mutation into an owned one.

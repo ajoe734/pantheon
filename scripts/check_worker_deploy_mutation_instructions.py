@@ -24,8 +24,8 @@ DEFAULT_PATHS = (
 )
 
 MUTATION_PATTERNS = (
-    re.compile(r"\bgh\s+workflow\s+disable\b", re.IGNORECASE),
-    re.compile(r"\bgh\s+run\s+(?:cancel\b|[^\s]+\s+force-cancel\b)", re.IGNORECASE),
+    re.compile(r"\bgh\s+workflow\b[^\n;&|]{0,160}\bdisable\b", re.IGNORECASE),
+    re.compile(r"\bgh\s+run\b[^\n;&|]{0,160}\b(?:cancel|force-cancel)\b", re.IGNORECASE),
     re.compile(
         r"actions/(?:workflows/[^\s/]+/disable|runs/[^\s/]+/(?:cancel|force-cancel))\b",
         re.IGNORECASE,

@@ -17,6 +17,9 @@ Anchor commit `625ceb21d` adds the missing durable controls:
 - The shared-workflow detector now fails closed for non-object JSON and any
   readable state other than `active`; only confirmed `disabled_manually` can
   be repaired by its operator-only `--enable` mode.
+- Guard parsing treats group-level flags between `run` / `workflow` and their
+  mutating action as equivalent syntax, and auto workers cannot create or
+  import mutable `gh` aliases to hide an operation from argument inspection.
 
 The worker-facing incident pseudocode was redacted. The governed historical
 evidence remains intact in earlier evidence packets.
@@ -25,7 +28,7 @@ evidence remains intact in earlier evidence packets.
 
 - `./scripts/run-acceptance.sh smoke` passed in an isolated Python virtual
   environment after composing current `dev`.
-- Shared deploy policy suite: `30 passed, 12 subtests passed`.
+- Shared deploy policy suite: `32 passed, 17 subtests passed`.
 - Orchestrator adapter fallback policy: `14 passed`.
 - Orchestrator common suite: `90 passed`.
 - Static worker-instruction scan, shell syntax, Python compilation, YAML

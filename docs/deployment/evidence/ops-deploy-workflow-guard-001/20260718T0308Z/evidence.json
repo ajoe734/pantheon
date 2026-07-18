@@ -13,7 +13,7 @@
   },
   "validation": {
     "isolated_smoke": "passed",
-    "shared_deploy_policy_suite": "30 passed, 12 subtests passed",
+    "shared_deploy_policy_suite": "32 passed, 17 subtests passed",
     "adapter_fallback_policy": "14 passed",
     "orchestrator_common": "90 passed",
     "instruction_scan": "passed",

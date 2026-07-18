@@ -23,12 +23,14 @@ PROTECTED_REPOSITORIES = {
 BLOCKED_EXIT_CODE = 77
 
 
-def _contains_command_pair(arguments: tuple[str, ...], command: str, actions: set[str]) -> bool:
+def _contains_ordered_command(arguments: tuple[str, ...], command: str, actions: set[str]) -> bool:
+    """Return true when an action follows its command, allowing flags between."""
+
     normalized = tuple(argument.lower() for argument in arguments)
-    return any(
-        normalized[index] == command and normalized[index + 1] in actions
-        for index in range(len(normalized) - 1)
-    )
+    for index, argument in enumerate(normalized):
+        if argument == command and any(candidate in actions for candidate in normalized[index + 1 :]):
+            return True
+    return False
 
 
 def _api_path_parts(candidate: str) -> tuple[str, ...]:
@@ -67,10 +69,12 @@ def _protected_mutation_endpoint(candidate: str) -> bool:
 def blocked_reason(arguments: tuple[str, ...]) -> str | None:
     """Explain why a GitHub CLI invocation is forbidden, if it is forbidden."""
 
-    if _contains_command_pair(arguments, "workflow", {"disable"}):
+    if _contains_ordered_command(arguments, "workflow", {"disable"}):
         return "auto workers may not disable GitHub Actions workflows"
-    if _contains_command_pair(arguments, "run", {"cancel", "force-cancel"}):
+    if _contains_ordered_command(arguments, "run", {"cancel", "force-cancel"}):
         return "auto workers may not cancel GitHub Actions runs"
+    if _contains_ordered_command(arguments, "alias", {"set", "import"}):
+        return "auto workers may not create GitHub CLI aliases that bypass command guards"
 
     if any(argument.lower() == "api" for argument in arguments):
         if any(_protected_mutation_endpoint(argument) for argument in arguments):

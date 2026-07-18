@@ -23,6 +23,12 @@ class WorkerInstructionScannerTests(unittest.TestCase):
         findings = self._scan("Run this now: gh run cancel 123 --repo owner/repo\n")
         self.assertEqual(len(findings), 1)
 
+    def test_rejects_mutation_with_group_flag_before_action(self) -> None:
+        findings = self._scan(
+            "```bash\ngh workflow --repo owner/repo disable 123\ngh run -R owner/repo cancel 456\n```\n"
+        )
+        self.assertEqual(len(findings), 2)
+
     def test_rejects_raw_actions_mutation_endpoint(self) -> None:
         findings = self._scan(
             "```bash\ngh api -X POST repos/ajoe734/pantheon/actions/runs/123/force-cancel\n```\n"

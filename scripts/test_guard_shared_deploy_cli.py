@@ -31,8 +31,20 @@ class SharedDeployCliGuardTests(unittest.TestCase):
     def test_shorthand_mutations_are_blocked(self) -> None:
         blocked = (
             ("workflow", "disable", "nonprod-deploy.yml"),
+            ("workflow", "--repo", "ajoe734/pantheon", "disable", "nonprod-deploy.yml"),
             ("--repo", "ajoe734/pantheon", "run", "cancel", "123"),
+            ("run", "--repo", "ajoe734/pantheon", "cancel", "123"),
             ("run", "force-cancel", "123", "--repo", "ajoe734/pantheon"),
+        )
+        for arguments in blocked:
+            with self.subTest(arguments=arguments):
+                self.assertIsNotNone(guard.blocked_reason(arguments))
+
+    def test_worker_cannot_create_or_import_cli_aliases(self) -> None:
+        blocked = (
+            ("alias", "set", "stop-run", "run cancel"),
+            ("alias", "--shell", "set", "stop-run", "gh api /repos/example/actions/runs/1/cancel"),
+            ("alias", "import", "aliases.yml"),
         )
         for arguments in blocked:
             with self.subTest(arguments=arguments):
