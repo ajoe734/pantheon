@@ -13,7 +13,10 @@
   },
   "validation": {
     "isolated_smoke": "passed",
-    "shared_deploy_policy_suite": "32 passed, 17 subtests passed",
+    "shared_deploy_policy_suite": "38 passed, 24 subtests passed",
+    "login_shell_guard_resolution": "passed",
+    "custom_home_real_gh_resolution": "passed",
+    "placeholder_and_numeric_rest_routes": "blocked before real CLI",
     "adapter_fallback_policy": "14 passed",
     "orchestrator_common": "90 passed",
     "instruction_scan": "passed",

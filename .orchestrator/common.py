@@ -538,6 +538,7 @@ LEGACY_STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
 LEGACY_STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
 LEGACY_STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
 LEGACY_STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_STATUS_COMMAND_BASE_REF"
+WORKER_REAL_GH_BIN_ENV = "PANTHEON_REAL_GH_BIN"
 
 
 def _git_stdout(cwd: Path, args: list[str]) -> str:
@@ -713,17 +714,46 @@ def status_command_runtime_env(
     }
 
 
+def pinned_github_cli_binary(home: Path | None = None) -> Path | None:
+    """Resolve the orchestrator-managed real ``gh`` before providers alter HOME."""
+
+    tools_root = (home or Path.home()) / ".local" / "share" / "pantheon-orchestrator-tools"
+    candidates = [
+        candidate.resolve()
+        for candidate in tools_root.glob("gh-*/bin/gh")
+        if candidate.is_file() and os.access(candidate, os.X_OK)
+    ]
+    if not candidates:
+        return None
+
+    def natural_version_key(path: Path) -> tuple[Any, ...]:
+        return tuple(
+            int(part) if part.isdigit() else part
+            for part in re.split(r"(\d+)", path.parent.parent.name)
+        )
+
+    return max(candidates, key=natural_version_key)
+
+
 def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> dict[str, str]:
     workspace_root = delivery_workspace_root(config, metadata)
     status_root = delivery_status_root(config, metadata)
     worker_bin = str(ORCHESTRATOR_DIR / "bin")
+    worker_shell_env = str(ORCHESTRATOR_DIR / "bin" / "worker-shell-env")
     inherited_path = os.environ.get("PATH", "")
     env = {
         "PANTHEON_WORKTREE_ROOT": str(workspace_root),
         "PANTHEON_STATUS_ROOT": str(status_root),
         "ORCH_WORKSPACE_PATH": str(workspace_root),
         "PATH": os.pathsep.join((worker_bin, inherited_path)) if inherited_path else worker_bin,
+        "BASH_ENV": worker_shell_env,
     }
+    inherited_bash_env = os.environ.get("BASH_ENV", "").strip()
+    if inherited_bash_env and inherited_bash_env != worker_shell_env:
+        env["PANTHEON_INHERITED_BASH_ENV"] = inherited_bash_env
+    real_gh = pinned_github_cli_binary()
+    if real_gh is not None:
+        env[WORKER_REAL_GH_BIN_ENV] = str(real_gh)
     env.update(status_command_runtime_env(config, metadata))
     return env
 

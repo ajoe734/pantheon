@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+# Non-interactive login shells can prepend user-local bins after the provider
+# process receives its environment. BASH_ENV is loaded after that login setup,
+# so restore the repository-owned worker shims as the first PATH entry here.
+if [[ -n "${PANTHEON_INHERITED_BASH_ENV:-}" && -r "${PANTHEON_INHERITED_BASH_ENV}" ]]; then
+  # shellcheck source=/dev/null
+  source "${PANTHEON_INHERITED_BASH_ENV}"
+fi
+
+pantheon_worker_bin="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+export PATH="${pantheon_worker_bin}:${PATH:-}"
+unset pantheon_worker_bin

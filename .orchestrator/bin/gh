@@ -2,8 +2,11 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-gh_bin="$(ls -d "$HOME"/.local/share/pantheon-orchestrator-tools/gh-*/bin/gh 2>/dev/null | sort -V | tail -n1)"
+gh_bin="${PANTHEON_REAL_GH_BIN:-}"
 if [[ -z "${gh_bin}" ]]; then
+  gh_bin="$(ls -d "$HOME"/.local/share/pantheon-orchestrator-tools/gh-*/bin/gh 2>/dev/null | sort -V | tail -n1 || true)"
+fi
+if [[ -z "${gh_bin}" || ! -x "${gh_bin}" ]]; then
   echo "GitHub CLI binary not found under ~/.local/share/pantheon-orchestrator-tools." >&2
   exit 1
 fi

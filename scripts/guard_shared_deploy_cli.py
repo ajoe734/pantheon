@@ -20,6 +20,8 @@ PROTECTED_REPOSITORIES = {
     ("ajoe734", "pantheon"),
     ("ajoe734", "execute-plans"),
 }
+PROTECTED_REPOSITORY_IDS = {"1201361718", "1230426594"}
+REPOSITORY_PLACEHOLDERS = {"{owner}", "{repo}"}
 BLOCKED_EXIT_CODE = 77
 
 
@@ -42,26 +44,31 @@ def _api_path_parts(candidate: str) -> tuple[str, ...]:
     return tuple(part.lower() for part in path.split("/") if part)
 
 
+def _is_actions_mutation_path(action_parts: tuple[str, ...]) -> bool:
+    if len(action_parts) != 4:
+        return False
+    resource = action_parts[:2]
+    mutation = action_parts[3]
+    if resource == ("actions", "runs"):
+        return mutation in {"cancel", "force-cancel"}
+    if resource == ("actions", "workflows"):
+        return mutation == "disable"
+    return False
+
+
 def _protected_mutation_endpoint(candidate: str) -> bool:
     parts = _api_path_parts(candidate)
     for index, part in enumerate(parts):
+        if part == "repositories" and len(parts) >= index + 6:
+            if parts[index + 1] in PROTECTED_REPOSITORY_IDS and _is_actions_mutation_path(parts[index + 2 :]):
+                return True
+            continue
         if part != "repos" or len(parts) < index + 7:
             continue
         owner, repository = parts[index + 1 : index + 3]
-        if (owner, repository) not in PROTECTED_REPOSITORIES:
-            continue
-        action_parts = parts[index + 3 :]
-        if (
-            len(action_parts) == 4
-            and action_parts[:2] == ("actions", "runs")
-            and action_parts[3] in {"cancel", "force-cancel"}
-        ):
-            return True
-        if (
-            len(action_parts) == 4
-            and action_parts[:2] == ("actions", "workflows")
-            and action_parts[3] == "disable"
-        ):
+        repo_is_protected = (owner, repository) in PROTECTED_REPOSITORIES
+        repo_is_deferred = owner in REPOSITORY_PLACEHOLDERS or repository in REPOSITORY_PLACEHOLDERS
+        if (repo_is_protected or repo_is_deferred) and _is_actions_mutation_path(parts[index + 3 :]):
             return True
     return False
 

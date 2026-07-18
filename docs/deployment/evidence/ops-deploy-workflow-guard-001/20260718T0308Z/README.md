@@ -20,6 +20,10 @@ Anchor commit `625ceb21d` adds the missing durable controls:
 - Guard parsing treats group-level flags between `run` / `workflow` and their
   mutating action as equivalent syntax, and auto workers cannot create or
   import mutable `gh` aliases to hide an operation from argument inspection.
+- Provider-specific `HOME` values no longer affect real-CLI discovery, and a
+  repository-owned `BASH_ENV` hook restores the guarded bin after login-shell
+  profile changes. Current-repository placeholders and protected numeric REST
+  repository routes fail closed.
 
 The worker-facing incident pseudocode was redacted. The governed historical
 evidence remains intact in earlier evidence packets.
@@ -28,11 +32,14 @@ evidence remains intact in earlier evidence packets.
 
 - `./scripts/run-acceptance.sh smoke` passed in an isolated Python virtual
   environment after composing current `dev`.
-- Shared deploy policy suite: `32 passed, 17 subtests passed`.
+- Shared deploy policy suite: `38 passed, 24 subtests passed`.
 - Orchestrator adapter fallback policy: `14 passed`.
 - Orchestrator common suite: `90 passed`.
 - Static worker-instruction scan, shell syntax, Python compilation, YAML
   contract parse, commit trailers, and `git diff --check` passed.
+- Real login-shell resolution selected the repository shim even after a
+  user-local PATH prepend; placeholder and numeric-route mutation probes
+  returned the guard's non-zero exit without invoking the fake real CLI.
 - GitHub run `29628222918` exposed a CI ordering error: the new pytest suite
   ran before Stage-0 installed pytest. `scripts/run-acceptance.sh` now keeps
   the dependency-free scan first and runs the executable suite after the

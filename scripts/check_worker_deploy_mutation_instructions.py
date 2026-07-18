@@ -32,8 +32,14 @@ MUTATION_PATTERNS = (
     ),
 )
 NEGATED_RULE = re.compile(
-    r"\b(?:do not|don't|must not|may not|never|forbidden|prohibited|rejects?|blocks?|"
+    r"\b(?:do not|don't|must not|may not|never|forbidden|prohibited|"
+    r"(?:guard|shim|scanner)\s+(?:rejects?|blocks?)|"
     r"no\s+(?:task|worker|agent)|remove every instance)\b",
+    re.IGNORECASE,
+)
+CLAUSE_BREAK = re.compile(
+    r"[;.!?]|,\s*(?:run|execute|invoke|call|use)\b|"
+    r"\b(?:but|however|instead|then)\b",
     re.IGNORECASE,
 )
 
@@ -61,16 +67,42 @@ def scan_paths(paths: Iterable[Path]) -> list[Finding]:
         except (OSError, UnicodeDecodeError):
             continue
         in_fence = False
+        pending = ""
+        pending_line_number = 0
+        pending_in_fence = False
         for line_number, line in enumerate(lines, start=1):
             stripped = line.lstrip()
-            if stripped.startswith("```") or stripped.startswith("~~~"):
+            if not pending and (stripped.startswith("```") or stripped.startswith("~~~")):
                 in_fence = not in_fence
                 continue
-            if not any(pattern.search(line) for pattern in MUTATION_PATTERNS):
+
+            logical_line = f"{pending} {stripped}" if pending else line
+            logical_line_number = pending_line_number or line_number
+            logical_in_fence = pending_in_fence if pending else in_fence
+            if logical_line.rstrip().endswith("\\"):
+                pending = logical_line.rstrip()[:-1]
+                pending_line_number = logical_line_number
+                pending_in_fence = logical_in_fence
                 continue
-            if not in_fence and NEGATED_RULE.search(line):
+
+            pending = ""
+            pending_line_number = 0
+            mutation_matches = [
+                match
+                for pattern in MUTATION_PATTERNS
+                if (match := pattern.search(logical_line)) is not None
+            ]
+            if not mutation_matches:
                 continue
-            findings.append(Finding(path=path, line_number=line_number, line=line.strip()))
+            mutation_start = min(match.start() for match in mutation_matches)
+            prefix = logical_line[:mutation_start]
+            negations = list(NEGATED_RULE.finditer(prefix))
+            directly_negated = bool(negations) and not CLAUSE_BREAK.search(prefix[negations[-1].end() :])
+            if not logical_in_fence and directly_negated:
+                continue
+            findings.append(
+                Finding(path=path, line_number=logical_line_number, line=logical_line.strip())
+            )
     return findings
 
 

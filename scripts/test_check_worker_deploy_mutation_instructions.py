@@ -29,6 +29,21 @@ class WorkerInstructionScannerTests(unittest.TestCase):
         )
         self.assertEqual(len(findings), 2)
 
+    def test_rejects_shell_line_continuation(self) -> None:
+        findings = self._scan(
+            "```bash\ngh workflow \\\n  --repo owner/repo \\\n  disable 123\n```\n"
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].line_number, 2)
+
+    def test_misleading_earlier_negation_does_not_exempt_command(self) -> None:
+        findings = self._scan("Do not wait; run gh workflow disable 123 now.\n")
+        self.assertEqual(len(findings), 1)
+
+    def test_misleading_comma_negation_does_not_exempt_command(self) -> None:
+        findings = self._scan("Do not wait, run gh workflow disable 123 now.\n")
+        self.assertEqual(len(findings), 1)
+
     def test_rejects_raw_actions_mutation_endpoint(self) -> None:
         findings = self._scan(
             "```bash\ngh api -X POST repos/ajoe734/pantheon/actions/runs/123/force-cancel\n```\n"

@@ -488,10 +488,17 @@ state (`success` / `failure` / `cancelled`) — never a fixed-duration sleep
 loop that keeps acting after the protected run is done.
 
 **Enforcement for auto workers:** the orchestrator prepends its repository
-owned `.orchestrator/bin` directory to every provider's delivery `PATH`. Its
+owned `.orchestrator/bin` directory to every provider's delivery `PATH` and
+sets a repository-owned `BASH_ENV` hook so non-interactive login shells
+reassert that order after user profile setup. It resolves the pinned real
+GitHub CLI before provider-specific `HOME` overrides and passes the resolved
+absolute path to the shim. Its
 `gh` shim rejects workflow-disable and Actions run cancel/force-cancel
 mutations, including raw `gh api` endpoint forms for the Pantheon and
-execute-plans repositories, before invoking the real GitHub CLI. Because a
+execute-plans repositories. Current-repository `{owner}/{repo}` placeholders
+and the protected repositories' numeric REST routes are treated as protected,
+not as unknown repositories. Allowed commands then invoke the pinned real CLI.
+Because a
 worker-local CLI cannot reliably prove which process dispatched a run, this
 guard intentionally rejects all such cancellations; ask Human/Ops for an
 explicit governed cancellation instead of bypassing it. Auto workers also
