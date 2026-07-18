@@ -1221,15 +1221,81 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
     }
 
 
+def _marker_pattern(marker: str) -> re.Pattern[str]:
+    normalized = re.escape(marker.strip()).replace(r"\ ", r"\s+")
+    return re.compile(rf"\b{normalized}\b")
+
+
 def _contains_marker(text: str, markers: tuple[str, ...]) -> bool:
     for marker in markers:
-        if re.search(rf"\b{re.escape(marker.strip())}\b", text):
+        if _marker_pattern(marker).search(text):
+            return True
+    return False
+
+
+def _unsafe_agent_marker_is_negated(text: str, marker_start: int) -> bool:
+    prefix = text[max(0, marker_start - 48) : marker_start]
+    return bool(
+        re.search(
+            (
+                r"(?:^|[\s.;:!?(\[])"
+                r"(?:do\s+not|don't|dont|never|must\s+not|should\s+not|cannot|can't|no\s+need\s+to|without|avoid)"
+                r"\s+(?:\w+\s+){0,3}$"
+            ),
+            prefix,
+        )
+    )
+
+
+def _unsafe_agent_marker_is_read_only_context(text: str, marker: str, start: int, end: int) -> bool:
+    prefix = text[max(0, start - 40) : start]
+    suffix = text[end : end + 40]
+    previous_word = re.search(r"\b([a-z]+)\W*$", prefix)
+    if marker == "change":
+        if previous_word and previous_word.group(1) in {
+            "approved",
+            "current",
+            "existing",
+            "implemented",
+            "merged",
+            "reviewed",
+        }:
+            return True
+        return bool(re.match(r"\s+(?:already\s+)?(?:in|under|being|is|was|has)\b", suffix))
+    if marker == "commit":
+        if previous_word and previous_word.group(1) in {
+            "base",
+            "current",
+            "exact",
+            "head",
+            "merged",
+            "relevant",
+            "reviewed",
+            "target",
+        }:
+            return True
+        return bool(re.match(r"[\s,]+(?:under|already|being|is|was|has|on|in)\b", suffix))
+    return False
+
+
+def _contains_unsafe_agent_action_marker(text: str, markers: tuple[str, ...]) -> bool:
+    for marker in markers:
+        normalized = marker.strip()
+        if not normalized:
+            continue
+        for match in _marker_pattern(normalized).finditer(text):
+            if _unsafe_agent_marker_is_negated(text, match.start()):
+                continue
+            if _unsafe_agent_marker_is_read_only_context(text, normalized, match.start(), match.end()):
+                continue
             return True
     return False
 
 
 def _contains_unsafe_agent_push_marker(text: str) -> bool:
     for match in re.finditer(r"\bpush\b", text):
+        if _unsafe_agent_marker_is_negated(text, match.start()):
+            continue
         after = text[match.end() : match.end() + 16]
         if re.match(r"[_\s-]*(status|state)\b", after):
             continue
@@ -1239,11 +1305,16 @@ def _contains_unsafe_agent_push_marker(text: str) -> bool:
 
 def _contains_unsafe_agent_marker(text: str) -> bool:
     non_run_markers = tuple(marker for marker in UNSAFE_AGENT_MARKERS if marker.strip() not in {"push", "run"})
-    if _contains_marker(text, non_run_markers):
+    if _contains_unsafe_agent_action_marker(text, non_run_markers):
         return True
     if _contains_unsafe_agent_push_marker(text):
         return True
-    if not _contains_marker(text, ("run",)):
+    unnegated_run_markers = [
+        match
+        for match in re.finditer(r"\brun\b", text)
+        if not _unsafe_agent_marker_is_negated(text, match.start())
+    ]
+    if not unnegated_run_markers:
         return False
     return not any(pattern.search(text) for pattern in SAFE_AGENT_RUN_PATTERNS)
 

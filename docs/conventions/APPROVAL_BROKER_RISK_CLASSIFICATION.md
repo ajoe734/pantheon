@@ -42,8 +42,11 @@ corresponding review of what damage a wrong auto-allow could do.
 ### Agent subagent_type matching
 
 `_evaluate_agent_request()` first rejects any request whose combined
-`description`/`prompt` text contains an unsafe marker (`edit`, `write`,
-`commit`, `push`, `implement`, ...). If none match, it allows the
+`description`/`prompt` text contains an unnegated unsafe action marker
+(`edit`, `write`, `commit`, `push`, `implement`, ...). Negated safety
+instructions such as `do not edit`, `do not fix`, or read-only noun
+contexts such as `merged change` / `relevant commit` do not count as
+mutation requests. If no unsafe action marker remains, it allows the
 request when either:
 
 - `subagent_type` normalizes (lowercase, `-`/`_` collapsed to spaces)
@@ -88,17 +91,35 @@ every path except manual resolution.
    `created_at` and the *current* config value, not from the stored
    `expires_at`.
 
-`prune_stale_approvals()` runs once per supervisor loop
-(`_run_once_locked()` in `.orchestrator/supervisor.py`, ~300s cadence
-— do not change that cadence as part of approval-broker work; it is a
-deliberate guardrail documented in `run-supervisor.sh`). A denied
-approval feeds back into `poll_workers()`: a `waiting_approval` /
-`suspended_approval` worker whose latest resolved approval is
-`decision: deny` is marked `failed`, which in turn makes it eligible
-for `maybe_reassign_tasks_from_failure_streaks()`. In other words, a
-stale-pruned approval does not just clear the queue entry — it also
-unblocks the worker (fails it, which allows reassignment/retry)
-instead of leaving the worker suspended forever.
+`prune_stale_approvals()` runs near the start of each supervisor loop
+(`_run_once_locked()` in `.orchestrator/supervisor.py`). The normal
+`scripts/run-supervisor.sh` watch cadence is 300s; do not change that
+cadence as part of approval-broker work because it is an intentional
+fleet guardrail. Under the normal loop, stale approvals are therefore
+bounded by `stale_pending_seconds` plus at most one poll interval.
+
+A denied approval feeds back into `poll_workers()`: a
+`waiting_approval` / `suspended_approval` worker whose latest resolved
+approval is `decision: deny` is marked `failed`, and its queue event is
+finalized as `failed`. This approval-deny branch does **not** record a
+task failure streak by itself. The redispatch path is:
+
+1. `prune_event_queue()` removes the failed event when the task is
+   still in a redispatchable status (`todo`, `in_progress`, `review`,
+   or `review_approved`, as configured).
+2. `dispatch_ready_tasks()` may enqueue a new event for the same task
+   once the task is eligible and either the dispatch signature changed
+   or `ready_dispatcher.unchanged_task_cooldown_seconds` has elapsed
+   (default 900s; tests may set it to `0` to prove immediate
+   redispatch).
+3. `maybe_reassign_tasks_from_failure_streaks()` only participates
+   when a separate worker-failure path has recorded a failure streak;
+   stale-pruned approval denial alone does not create that streak.
+
+In other words, a stale-pruned approval does not just clear the queue
+entry — it fails the suspended worker, releases the old queue event,
+and lets normal ready-dispatch/cooldown policy retry or later reassign
+without leaving the worker suspended forever.
 
 ## Tests
 
@@ -106,9 +127,13 @@ instead of leaving the worker suspended forever.
   `test_task_output_is_auto_allowed`,
   `test_harness_orchestration_read_tools_are_auto_allowed`,
   `test_mutating_orchestration_tools_still_require_review`,
-  `test_read_only_agent_code_review_subagent_type_is_auto_allowed`.
+  `test_read_only_agent_code_review_subagent_type_is_auto_allowed`,
+  `test_incident_general_purpose_read_only_agent_request_is_auto_allowed`,
+  `test_mutating_agent_request_with_negated_edit_still_requires_review`.
 - `.orchestrator/test_approval_queue.py`:
   `test_prunes_pending_approval_after_stale_window_despite_live_worker`,
   `test_prunes_pending_approval_after_stale_window_despite_resumable_claude_session`,
   plus the `expires_at` default assertion in
   `test_create_approval_writes_request_evidence_and_sanitizes_queue_state`.
+- `.orchestrator/test_supervisor.py`:
+  `test_stale_pruned_suspended_approval_fails_worker_for_cooldown_bounded_redispatch`.

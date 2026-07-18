@@ -7982,6 +7982,175 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         resolve_approval.assert_not_called()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_waiting_approval")
 
+    def test_stale_pruned_suspended_approval_fails_worker_for_cooldown_bounded_redispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            task = {
+                "id": "OPS-STALE-APPROVAL",
+                "status": "in_progress",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "depends_on": [],
+                "last_update": "2026-07-18T00:00:00Z",
+            }
+            config = {
+                "paths": {
+                    "approval_queue": str(root / "approval-queue.json"),
+                    "state_file": str(root / "state.json"),
+                    "event_queue": str(root / "event-queue.jsonl"),
+                    "activity_log": str(root / "activity-log.jsonl"),
+                    "evidence_dir": str(root / "evidence"),
+                    "status_file": str(root / "ai-status.json"),
+                },
+                "schema": {
+                    "tasks_path": "tasks",
+                    "task_id_field": "id",
+                    "assignee_field": "owner",
+                    "reviewer_field": "reviewer",
+                },
+                "approvals": {"stale_pending_seconds": 1800},
+                "supervisor": {"stall_after_seconds": 300},
+                "ready_dispatcher": {
+                    "enabled": True,
+                    "review_statuses": ["review"],
+                    "finalize_statuses": ["review_approved"],
+                    "owned_statuses": ["todo", "in_progress"],
+                    "dependency_done_statuses": ["done"],
+                    "active_worker_statuses": [
+                        "running",
+                        "waiting_approval",
+                        "suspended_approval",
+                        "manual_pending",
+                        "retry_backoff",
+                        "stalled",
+                    ],
+                    "max_dispatches_per_tick": 1,
+                    "max_tasks_per_agent": 1,
+                    "unchanged_task_cooldown_seconds": 900,
+                },
+                "providers": {"claude": {"delivery_mode": "claude_cli"}},
+                "agents": {
+                    "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                    "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                },
+            }
+            event = supervisor.build_dispatch_event(
+                task,
+                "Claude",
+                "owned_in_progress_dispatch",
+                {"OPS-STALE-APPROVAL": task},
+            )
+            event["event_id"] = "evt-stale-approval"
+            event["created_at"] = "2026-07-18T00:00:00Z"
+            state = {
+                "queue": {
+                    "events": {
+                        event["event_id"]: {
+                            "status": "manual_pending",
+                            "event_key": event["key"],
+                            "run_id": "run-stale-approval",
+                        }
+                    }
+                },
+                "workers": {
+                    "run-stale-approval": {
+                        "run_id": "run-stale-approval",
+                        "task_id": "OPS-STALE-APPROVAL",
+                        "provider": "claude",
+                        "agent_id": "claude",
+                        "status": "suspended_approval",
+                        "queue_event_id": event["event_id"],
+                        "pid": 999999,
+                        "session_id": "sess-stale",
+                        "resume_token": "sess-stale",
+                        "last_event_at": "2026-07-18T00:00:00Z",
+                    }
+                },
+            }
+            stale_created_at = (datetime.now(timezone.utc) - timedelta(seconds=7200)).isoformat().replace("+00:00", "Z")
+            (root / "approval-queue.json").write_text(
+                json.dumps(
+                    {
+                        "pending": [
+                            {
+                                "approval_id": "apr-stale-approval",
+                                "status": "pending",
+                                "created_at": stale_created_at,
+                                "provider": "claude",
+                                "task_id": "OPS-STALE-APPROVAL",
+                                "worker_run_id": "run-stale-approval",
+                                "tool_name": "Agent",
+                            }
+                        ],
+                        "history": [],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (root / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+            (root / "ai-status.json").write_text(json.dumps({"tasks": [task]}, indent=2) + "\n", encoding="utf-8")
+            (root / "event-queue.jsonl").write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+            pruned = supervisor.prune_stale_approvals(config)
+
+            self.assertEqual([item["approval_id"] for item in pruned], ["apr-stale-approval"])
+            self.assertEqual(pruned[0]["decision"], "deny")
+
+            with (
+                mock.patch.object(supervisor, "load_provider_report", return_value={}),
+                mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                changed = supervisor.poll_workers(config, state, provider_report={})
+
+            self.assertTrue(changed)
+            worker = state["workers"]["run-stale-approval"]
+            self.assertEqual(worker["status"], "failed")
+            self.assertEqual(state["queue"]["events"][event["event_id"]]["status"], "failed")
+            self.assertIn(event["key"], state.get("seen_event_keys", {}))
+            self.assertEqual(state.get("provider_guardrails", {}).get("task_failure_streaks", {}), {})
+
+            self.assertTrue(supervisor.prune_event_queue(config, state))
+            self.assertEqual(state["queue"]["events"], {})
+            self.assertEqual((root / "event-queue.jsonl").read_text(encoding="utf-8"), "")
+
+            queued: list[dict[str, object]] = []
+            with mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                side_effect=lambda _config, queued_event: queued.append(queued_event) or True,
+            ):
+                self.assertFalse(
+                    supervisor.dispatch_ready_tasks(
+                        config,
+                        state,
+                        provider_report={},
+                        agent_ids_override=["claude"],
+                        max_dispatches_override=1,
+                    )
+                )
+            self.assertEqual(queued, [])
+
+            config["ready_dispatcher"]["unchanged_task_cooldown_seconds"] = 0
+            with mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                side_effect=lambda _config, queued_event: queued.append(queued_event) or True,
+            ):
+                self.assertTrue(
+                    supervisor.dispatch_ready_tasks(
+                        config,
+                        state,
+                        provider_report={},
+                        agent_ids_override=["claude"],
+                        max_dispatches_override=1,
+                    )
+                )
+            self.assertEqual(queued[-1]["reason"], "owned_in_progress_dispatch")
+
     def test_dead_stale_worker_is_reaped_when_task_assignment_moved(self) -> None:
         config = {
             "schema": {
