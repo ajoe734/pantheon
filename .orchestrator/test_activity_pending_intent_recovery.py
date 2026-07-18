@@ -1064,6 +1064,214 @@ class LiveScaleEndToEndTests(PendingIntentIncidentFixture):
         )
 
 
+class SchemaV2SupersededIncidentTests(PendingIntentIncidentFixture):
+    class _PublishedArchiveFault(RuntimeError):
+        pass
+
+    def build_v2_incident(self) -> dict:
+        events = _entries(0, 80, prefix="v2")
+        self.log_path.write_bytes(_jsonl(events[:30]))
+        with common.activity_audit_lock_file(self.log_path, shared=False):
+            common.rotate_activity_log_unlocked(
+                self.log_path, max_bytes=1, keep_lines=10
+            )
+            common.append_activity_log_entries_unlocked(
+                self.log_path, events[30:40]
+            )
+            common.rotate_activity_log_unlocked(
+                self.log_path, max_bytes=1, keep_lines=10
+            )
+            common.append_activity_log_entries_unlocked(
+                self.log_path, events[40:60]
+            )
+
+        source = self.log_path.read_bytes()
+
+        def fault(point: str) -> None:
+            if point == "archive":
+                raise self._PublishedArchiveFault(point)
+
+        with mock.patch.object(common, "_activity_rotation_fault", side_effect=fault):
+            with self.assertRaises(self._PublishedArchiveFault):
+                with common.activity_audit_lock_file(self.log_path, shared=False):
+                    common.rotate_activity_log_unlocked(
+                        self.log_path, max_bytes=1, keep_lines=20
+                    )
+
+        intent_path = common.activity_rotation_intent_path(self.log_path)
+        intent = json.loads(intent_path.read_text())
+        transaction_id = intent["transaction_id"]
+        stage_archive, stage_tail = common._activity_rotation_stage_paths(
+            self.log_path, transaction_id
+        )
+        installed_archive = self.root / intent["archive_relative_path"]
+        self.assertTrue(installed_archive.exists())
+        self.assertEqual(self.log_path.read_bytes(), source)
+
+        with self.log_path.open("ab") as handle:
+            handle.write(_jsonl(events[60:65]))
+        superseding_payload = self.log_path.read_bytes()
+        superseding_path = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-07-18T0414Z.gz"
+        )
+        common._durable_write_gzip(superseding_path, superseding_payload)
+        retained = b"".join(
+            superseding_payload.splitlines(keepends=True)[-10:]
+        )
+        active = retained + _jsonl(events[65:73])
+        self.log_path.write_bytes(active)
+        return {
+            "events": events,
+            "source": source,
+            "intent": intent,
+            "intent_path": intent_path,
+            "transaction_id": transaction_id,
+            "stage_archive": stage_archive,
+            "stage_tail": stage_tail,
+            "installed_archive": installed_archive,
+            "superseding_payload": superseding_payload,
+            "superseding_path": superseding_path,
+            "active": active,
+        }
+
+    def test_inventory_proves_schema_v2_superseding_incident(self):
+        facts = self.build_v2_incident()
+        manifest, _digest = self._pin()
+        proof = manifest["proof"]
+        self.assertEqual(
+            proof["incident_class"], "schema-v2-pending-intent-superseded"
+        )
+        self.assertEqual(proof["retained_overlap_line_count"], 10)
+        self.assertEqual(proof["post_intent_suffix_line_count"], 5)
+        self.assertEqual(proof["post_rotation_suffix_line_count"], 8)
+        self.assertEqual(proof["missing_event_count"], 0)
+        self.assertEqual(proof["duplicate_event_count"], 0)
+        self.assertEqual(
+            proof["source_sha256"], facts["intent"]["source_sha256"]
+        )
+
+    def test_execute_completes_v2_rotation_and_excludes_legacy_archive(self):
+        facts = self.build_v2_incident()
+        manifest, digest = self._pin()
+        report = self._execute(manifest, digest)
+        self.assertEqual(report["status"], "resolved")
+        self.assertFalse(facts["intent_path"].exists())
+        self.assertFalse(facts["stage_archive"].exists())
+        self.assertFalse(facts["stage_tail"].exists())
+
+        sources = common.activity_audit_source_paths_unlocked(self.log_path)
+        resolved = [path.resolve() for path in sources]
+        self.assertIn(facts["installed_archive"].resolve(), resolved)
+        self.assertNotIn(facts["superseding_path"].resolve(), resolved)
+        logical_ids = [
+            entry["event_id"]
+            for entry, _source, _line_number in common.stream_logical_activity(
+                self.log_path
+            )
+        ]
+        self.assertEqual(
+            logical_ids, [f"v2-{index:05d}" for index in range(73)]
+        )
+        control, _line, payload = common._split_activity_lineage_head(
+            self.log_path.read_bytes(), source=self.log_path
+        )
+        self.assertEqual(control, facts["intent"]["active_control"])
+        self.assertTrue(payload.endswith(_jsonl(facts["events"][65:73])))
+
+        resolutions_path = common.activity_rotation_resolutions_path(self.log_path)
+        resolved_bytes = resolutions_path.read_bytes()
+        report2 = self._execute(manifest, digest)
+        self.assertEqual(report2["status"], "resolved")
+        self.assertEqual(resolutions_path.read_bytes(), resolved_bytes)
+
+    def test_schema_v2_lineage_tamper_fails_closed(self):
+        self.build_v2_incident()
+        lineage = common.activity_rotation_lineage_path(self.log_path)
+        lineage.write_bytes(lineage.read_bytes() + b"{}\n")
+        with self.assertRaisesRegex(RuntimeError, "lineage"):
+            recovery.capture_inventory(self.root)
+
+    def test_schema_v2_crash_after_active_reconstruct_converges(self):
+        self.build_v2_incident()
+        manifest, digest = self._pin()
+        manifest_path = self.root / "schema-v2-pin.json"
+        manifest_path.write_text(json.dumps(manifest))
+        env = dict(os.environ)
+        env.update(EXEC_ENV)
+        env[recovery.FAULT_ENV] = "v2-active"
+        crashed = subprocess.run(
+            [
+                sys.executable,
+                str(MODULE_PATH),
+                "execute",
+                "--status-root",
+                str(self.root),
+                "--inventory",
+                str(manifest_path),
+                "--expected-inventory-sha256",
+                digest,
+                "--writer-guard-attestation",
+                "schema-v2 fixture writers stopped",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=120,
+        )
+        self.assertEqual(crashed.returncode, -9, crashed.stderr)
+        self.assertTrue(common.activity_rotation_intent_path(self.log_path).exists())
+        with self.assertRaises(RuntimeError):
+            common.assert_activity_audit_stable_unlocked(self.log_path)
+        report = self._execute(manifest, digest)
+        self.assertEqual(report["status"], "resolved")
+        common.activity_audit_source_paths_unlocked(self.log_path)
+
+    def test_schema_v2_retry_preserves_append_after_pinned_resolution(self):
+        facts = self.build_v2_incident()
+        manifest, digest = self._pin()
+        manifest_path = self.root / "schema-v2-pin.json"
+        manifest_path.write_text(json.dumps(manifest))
+        env = dict(os.environ)
+        env.update(EXEC_ENV)
+        env[recovery.FAULT_ENV] = "resolution"
+        crashed = subprocess.run(
+            [
+                sys.executable,
+                str(MODULE_PATH),
+                "execute",
+                "--status-root",
+                str(self.root),
+                "--inventory",
+                str(manifest_path),
+                "--expected-inventory-sha256",
+                digest,
+                "--writer-guard-attestation",
+                "schema-v2 fixture writers stopped",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=120,
+        )
+        self.assertEqual(crashed.returncode, -9, crashed.stderr)
+        late = _entries(9000, 1, prefix="late")
+        with self.log_path.open("ab") as handle:
+            handle.write(_jsonl(late))
+
+        report = self._execute(manifest, digest)
+        self.assertEqual(report["post_pin_append_line_count"], 1)
+        logical_ids = [
+            entry["event_id"]
+            for entry, _source, _line_number in common.stream_logical_activity(
+                self.log_path
+            )
+        ]
+        self.assertEqual(
+            logical_ids,
+            [f"v2-{index:05d}" for index in range(73)] + ["late-09000"],
+        )
+
+
 class IsolationTests(PendingIntentIncidentFixture):
     def test_isolated_lock_paths_and_no_central_references(self):
         self.build_incident()

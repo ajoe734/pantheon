@@ -1805,6 +1805,190 @@ class TestGovernedServantAgentSync(unittest.TestCase):
             "traits": {"decision_style": "evidence-first"},
         }
 
+    def test_live_agent_visibility_waits_through_deterministic_reload_lag(self):
+        agent_id = self._opinion_payload()["agent_id"]
+        registries = [[], [], [{"id": agent_id}]]
+        elapsed = [0.0]
+        sleeps = []
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            elapsed[0] += seconds
+
+        with patch.object(
+            adapter_main._OPENCLAW_AGENT_PROVIDER,
+            "gateway_agents_list",
+            side_effect=registries,
+        ) as listing:
+            visible = adapter_main._wait_for_live_persona_opinion_agent(
+                agent_id,
+                timeout_seconds=1.0,
+                poll_seconds=0.1,
+                clock=lambda: elapsed[0],
+                sleeper=sleep,
+            )
+
+        self.assertEqual(visible["id"], agent_id)
+        self.assertEqual(listing.call_count, 3)
+        self.assertEqual(sleeps, [0.1, 0.1])
+
+    def test_live_agent_visibility_threads_remaining_total_budget(self):
+        agent_id = self._opinion_payload()["agent_id"]
+        elapsed = [0.0]
+        probe_budgets = []
+
+        def listing(*, timeout_seconds):
+            probe_budgets.append(timeout_seconds)
+            elapsed[0] += 0.2
+            return [{"id": agent_id}] if len(probe_budgets) == 2 else []
+
+        def sleep(seconds):
+            elapsed[0] += seconds
+
+        with patch.object(
+            adapter_main._OPENCLAW_AGENT_PROVIDER,
+            "gateway_agents_list",
+            side_effect=listing,
+        ):
+            visible = adapter_main._wait_for_live_persona_opinion_agent(
+                agent_id,
+                timeout_seconds=1.0,
+                poll_seconds=0.1,
+                clock=lambda: elapsed[0],
+                sleeper=sleep,
+            )
+
+        self.assertEqual(visible["id"], agent_id)
+        self.assertEqual(probe_budgets, [1.0, 0.7])
+
+    def test_persona_ensure_timeout_is_typed_fail_closed_without_replay(self):
+        payload = self._opinion_payload()
+        agent = {"status": "created", "agent_id": payload["agent_id"]}
+        timeout_error = adapter_main.GatewayOpenClawProviderError(
+            "agents.list subprocess exceeded the remaining budget",
+            status_code=504,
+            error_code="OPENCLAW_GATEWAY_TIMEOUT",
+        )
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent),
+            patch.object(adapter_main, "_PERSONA_OPINION_AGENT_READY_TIMEOUT_SECONDS", 0.01),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_agents_list",
+                side_effect=timeout_error,
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers={**self._HEADERS, "Idempotency-Key": "persona-never-live"},
+            )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error_code"], "PERSONA_OPINION_AGENT_NOT_READY")
+        self.assertTrue(response.json()["retryable"])
+        with adapter_main.sqlite3.connect(str(adapter_main._OPENCLAW_AGENT_IDEMPOTENCY_DB)) as connection:
+            replay_count = connection.execute(
+                "SELECT count(*) FROM agent_ensure_replays WHERE idempotency_key=?",
+                ("persona-never-live",),
+            ).fetchone()[0]
+            admission_table = connection.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='persona_opinion_admissions'"
+            ).fetchone()[0]
+            admission_count = (
+                connection.execute(
+                    "SELECT count(*) FROM persona_opinion_admissions WHERE agent_id=?",
+                    (payload["agent_id"],),
+                ).fetchone()[0]
+                if admission_table
+                else 0
+            )
+        self.assertEqual(replay_count, 0)
+        self.assertEqual(admission_count, 0)
+
+    def test_persona_ensure_cached_replay_still_requires_live_visibility(self):
+        payload = self._opinion_payload()
+        agent = {"status": "created", "agent_id": payload["agent_id"]}
+        calls = [0]
+
+        def live_registry(**_kwargs):
+            calls[0] += 1
+            if calls[0] == 1:
+                return [{"id": payload["agent_id"]}]
+            raise adapter_main.GatewayOpenClawProviderError(
+                "agents.list subprocess exceeded the remaining budget",
+                status_code=504,
+                error_code="OPENCLAW_GATEWAY_TIMEOUT",
+            )
+
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent) as sync,
+            patch.object(adapter_main, "_PERSONA_OPINION_AGENT_READY_TIMEOUT_SECONDS", 0.01),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_agents_list",
+                side_effect=live_registry,
+            ),
+        ):
+            headers = {**self._HEADERS, "Idempotency-Key": "persona-cached-visibility"}
+            first = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure", json=payload, headers=headers,
+            )
+            replay = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers={**headers, "X-Request-Id": "persona-cached-retry"},
+            )
+
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(replay.status_code, 503, replay.text)
+        self.assertEqual(replay.json()["error_code"], "PERSONA_OPINION_AGENT_NOT_READY")
+        sync.assert_called_once()
+        with adapter_main.sqlite3.connect(str(adapter_main._OPENCLAW_AGENT_IDEMPOTENCY_DB)) as connection:
+            replay_count = connection.execute(
+                "SELECT count(*) FROM agent_ensure_replays WHERE idempotency_key=?",
+                ("persona-cached-visibility",),
+            ).fetchone()[0]
+        self.assertEqual(replay_count, 1)
+
+    def test_persona_ensure_preserves_gateway_auth_error_without_replay(self):
+        payload = self._opinion_payload()
+        error = adapter_main.GatewayOpenClawProviderError(
+            "OpenClaw provider authorization expired.",
+            status_code=401,
+            error_code="OPENCLAW_OAUTH_EXPIRED",
+        )
+        with (
+            self._auth_config(),
+            patch.object(
+                adapter_main,
+                "_sync_persona_opinion_agent",
+                return_value={"status": "created", "agent_id": payload["agent_id"]},
+            ),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_agents_list",
+                side_effect=error,
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers={**self._HEADERS, "Idempotency-Key": "persona-auth-error"},
+            )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertEqual(response.json()["error_code"], "OPENCLAW_OAUTH_EXPIRED")
+        self.assertFalse(response.json()["retryable"])
+        with adapter_main.sqlite3.connect(str(adapter_main._OPENCLAW_AGENT_IDEMPOTENCY_DB)) as connection:
+            replay_count = connection.execute(
+                "SELECT count(*) FROM agent_ensure_replays WHERE idempotency_key=?",
+                ("persona-auth-error",),
+            ).fetchone()[0]
+        self.assertEqual(replay_count, 0)
+
     def test_persona_opinion_agent_requires_exact_frozen_admission(self):
         payload = self._opinion_payload()
         agent = {
@@ -1820,6 +2004,7 @@ class TestGovernedServantAgentSync(unittest.TestCase):
         with (
             self._auth_config(),
             patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent) as sync,
+            patch.object(adapter_main, "_wait_for_live_persona_opinion_agent", return_value={}),
         ):
             accepted = client.post(
                 "/api/openclaw-adapter/agents/persona-opinion/ensure",
@@ -1849,6 +2034,7 @@ class TestGovernedServantAgentSync(unittest.TestCase):
         with (
             self._auth_config(),
             patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent) as sync,
+            patch.object(adapter_main, "_wait_for_live_persona_opinion_agent", return_value={}),
         ):
             accepted = client.post(
                 "/api/openclaw-adapter/agents/persona-opinion/ensure",
@@ -1867,6 +2053,7 @@ class TestGovernedServantAgentSync(unittest.TestCase):
 
     def test_two_fresh_persona_agents_run_with_runtime_tools_and_memory_denied(self):
         runtime_agents = []
+        live_gateway_agents = []
         written_souls = {}
 
         def completed(*, stdout="", stderr="", returncode=0):
@@ -1890,6 +2077,10 @@ class TestGovernedServantAgentSync(unittest.TestCase):
             if args[1:3] == ["agents", "set-identity"]:
                 return completed(stdout="ok")
             return completed(returncode=1, stderr=f"unexpected command: {args}")
+
+        def fake_live_agents(**_kwargs):
+            live_gateway_agents[:] = copy.deepcopy(runtime_agents)
+            return copy.deepcopy(live_gateway_agents)
 
         alpha = self._opinion_payload()
         beta = {
@@ -1918,6 +2109,7 @@ class TestGovernedServantAgentSync(unittest.TestCase):
             self._auth_config(),
             patch.object(adapter_main, "_gateway_state_agent_runner", side_effect=fake_runtime),
             patch.object(adapter_main, "_gateway_state_soul_writer", side_effect=lambda workspace, soul: written_souls.__setitem__(workspace, soul)),
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "gateway_agents_list", side_effect=fake_live_agents),
             patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke", return_value=provider_result) as invoke,
         ):
             for index, payload in enumerate((alpha, beta), start=1):
@@ -2014,6 +2206,11 @@ class TestGovernedServantAgentSync(unittest.TestCase):
             self._auth_config(),
             patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent),
             patch.object(adapter_main, "_assert_persona_opinion_runtime_policy", return_value={}),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_agents_list",
+                return_value=[{"id": payload["agent_id"]}],
+            ),
             patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke", return_value=provider_result) as invoke,
         ):
             ensured = client.post(
@@ -2045,6 +2242,58 @@ class TestGovernedServantAgentSync(unittest.TestCase):
         self.assertEqual(invoke.call_args.kwargs["metadata"]["execution_authority"], "none")
         self.assertFalse(invoke.call_args.kwargs["metadata"]["persona_memory_mutated"])
         self.assertRegex(invoke.call_args.kwargs["session_id"], r"^pint-[0-9a-f]{32}$")
+
+    def test_persona_invoke_live_visibility_preflight_does_not_claim_ledger(self):
+        payload = self._opinion_payload()
+        agent = {"status": "created", "agent_id": payload["agent_id"]}
+        admission = {
+            key: payload[key]
+            for key in adapter_main.PersonaOpinionInvocationAdmission.model_fields
+        }
+        live_registries = [[{"id": payload["agent_id"]}], []]
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent),
+            patch.object(adapter_main, "_assert_persona_opinion_runtime_policy", return_value={}),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_agents_list",
+                side_effect=live_registries,
+            ) as listing,
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke") as invoke,
+        ):
+            ensured = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers={**self._HEADERS, "Idempotency-Key": "persona-preflight-ensure"},
+            )
+            denied = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                json={
+                    "mode": "user",
+                    "prompt": "Return opinion JSON",
+                    "metadata": {"allowed_tools": []},
+                    "agent_id": payload["agent_id"],
+                    "persona_admission": admission,
+                },
+                headers={
+                    "X-Pantheon-Service-Token": "adapter-secret",
+                    "X-Operator-Id": "operator-1",
+                    "Idempotency-Key": "persona-preflight-invoke",
+                },
+            )
+
+        self.assertEqual(ensured.status_code, 201, ensured.text)
+        self.assertEqual(denied.status_code, 503, denied.text)
+        self.assertEqual(denied.json()["error_code"], "PERSONA_OPINION_AGENT_NOT_READY")
+        self.assertEqual(listing.call_count, 2)
+        invoke.assert_not_called()
+        with adapter_main.sqlite3.connect(str(adapter_main._OPENCLAW_AGENT_IDEMPOTENCY_DB)) as connection:
+            table_count = connection.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' "
+                "AND name='persona_opinion_invocation_replays'"
+            ).fetchone()[0]
+        self.assertEqual(table_count, 0)
 
     def test_persona_invocation_replays_terminal_and_fences_restart_in_doubt(self):
         payload = self._opinion_payload()

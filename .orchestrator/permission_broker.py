@@ -1061,6 +1061,95 @@ def _finalize_git_decision(shell_command: str, config: dict[str, Any]) -> dict[s
     }
 
 
+def _worker_status_runtime_decision(shell_command: str) -> dict[str, str] | None:
+    """Reject governed status writes through a stale worker checkout.
+
+    Auto workers receive one installed command runtime. A relative
+    ``scripts/ai_status.py`` from their task or central status checkout can be
+    older than the live supervisor and can publish an incompatible legacy
+    rotation. Non-worker developer commands are intentionally unaffected.
+    """
+
+    if not (
+        str(os.environ.get("ORCH_RUN_ID") or "").strip()
+        or str(os.environ.get("ORCH_TASK_ID") or "").strip()
+    ):
+        return None
+    command_root_raw = str(os.environ.get("PANTHEON_COMMAND_ROOT") or "").strip()
+    command_root = Path(command_root_raw).expanduser().resolve() if command_root_raw else None
+    current_dir: str | None = None
+    saw_status_command = False
+    for segment_raw in _shell_command_segments_with_and(shell_command):
+        try:
+            tokens = shlex.split(segment_raw)
+        except ValueError:
+            continue
+        if not tokens:
+            continue
+        if tokens[0] == "cd" and len(tokens) == 2:
+            current_dir = tokens[1]
+            continue
+        index = 0
+        while index < len(tokens) and re.match(
+            r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[index]
+        ):
+            index += 1
+        if index < len(tokens) and tokens[index] == "timeout":
+            index += 1
+            while index < len(tokens) and tokens[index].startswith("-"):
+                index += 1
+            if index < len(tokens):
+                index += 1
+        if index >= len(tokens):
+            continue
+        if tokens[index] in {"python", "python3", "bash", "sh"}:
+            index += 1
+        if index >= len(tokens):
+            continue
+        script = tokens[index]
+        normalized = script.replace("\\", "/")
+        if not normalized.endswith(
+            ("scripts/ai_status.py", "scripts/ai-status.sh")
+        ):
+            continue
+        saw_status_command = True
+        if normalized.startswith(
+            ("$PANTHEON_COMMAND_ROOT/", "${PANTHEON_COMMAND_ROOT}/")
+        ):
+            continue
+        script_path = Path(script).expanduser()
+        if script_path.is_absolute() and command_root is not None:
+            try:
+                script_path.resolve().relative_to(command_root)
+                continue
+            except ValueError:
+                pass
+        if not script_path.is_absolute() and command_root is not None and current_dir:
+            if current_dir in ("$PANTHEON_COMMAND_ROOT", "${PANTHEON_COMMAND_ROOT}"):
+                continue
+            try:
+                if Path(current_dir).expanduser().resolve() == command_root:
+                    continue
+            except OSError:
+                pass
+        return {
+            "decision": "deny",
+            "reason": (
+                "Auto-worker status commands must run through "
+                "$PANTHEON_COMMAND_ROOT; the requested script resolves through "
+                "a stale checkout."
+            ),
+            "risk_class": "stale_status_command_runtime",
+        }
+    if saw_status_command and command_root is None:
+        return {
+            "decision": "deny",
+            "reason": "Auto-worker status command runtime is not pinned.",
+            "risk_class": "stale_status_command_runtime",
+        }
+    return None
+
+
 def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, config: dict[str, Any]) -> dict[str, Any]:
     tool_input = tool_input or {}
     decision = "defer"
@@ -1093,8 +1182,13 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
             risk_class = "out_of_workspace"
     elif tool_name == "Bash":
         shell_command = tool_input.get("command") or tool_input.get("cmd") or tool_input.get("raw_command") or ""
+        status_runtime_decision = _worker_status_runtime_decision(str(shell_command))
         finalize_decision = _finalize_git_decision(str(shell_command), config)
-        if finalize_decision is not None:
+        if status_runtime_decision is not None:
+            decision = status_runtime_decision["decision"]
+            risk_class = status_runtime_decision["risk_class"]
+            reason = status_runtime_decision["reason"]
+        elif finalize_decision is not None:
             decision = finalize_decision["decision"]
             risk_class = finalize_decision["risk_class"]
             reason = finalize_decision["reason"]
