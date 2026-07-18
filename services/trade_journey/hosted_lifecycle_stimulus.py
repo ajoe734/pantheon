@@ -396,6 +396,7 @@ def trigger_reconciliation(
                 "tick_id": tick_id,
                 "binding_id": binding_id,
                 "dispatch_incidents": False,
+                "lifecycle_only": True,
             },
             timeout=20.0,
         )
