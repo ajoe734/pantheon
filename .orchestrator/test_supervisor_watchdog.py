@@ -665,10 +665,12 @@ class SupervisorWatchdogTests(unittest.TestCase):
         import signal
         processes = []
         outputs = []
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("PANTHEON_")}
         try:
             for _ in range(12):
                 p = subprocess.Popen(
                     [sys.executable, str(Path(supervisor_watchdog.__file__).resolve()), "--config", str(config_path), "--json"],
+                    env=clean_env,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     start_new_session=True,
@@ -832,10 +834,12 @@ class SupervisorWatchdogTests(unittest.TestCase):
         import signal
         processes = []
         outputs = []
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("PANTHEON_")}
         try:
             for _ in range(5):
                 p = subprocess.Popen(
                     [sys.executable, str(Path(supervisor_watchdog.__file__).resolve()), "--config", str(config_path), "--json"],
+                    env=clean_env,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     start_new_session=True,
@@ -920,8 +924,10 @@ class SupervisorWatchdogTests(unittest.TestCase):
         import subprocess
         import signal
         health_script_path = Path(__file__).resolve().parent.parent / "scripts" / "supervisor_runtime_health.py"
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("PANTHEON_")}
         p = subprocess.Popen(
             [sys.executable, str(health_script_path), "--repo", str(self.root), "--require-watchdog", "--json"],
+            env=clean_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,

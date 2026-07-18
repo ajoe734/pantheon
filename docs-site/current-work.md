@@ -4,17 +4,18 @@ This file is generated from `ai-status.json` and `ai-activity-log.jsonl`.
 Do not treat this file as the machine-readable source of truth.
 Absolute times below use 台灣時間 (UTC+8).
 
-Last updated: 2026-05-18 10:01:03
+Last updated: 2026-07-13 05:15:39
 
 ## Objective
 
-跨進開發團隊 GAP master rebaseline (docs/04/pantheon_sa_supplemental_2026-05-15/GAP_dev_team_master_rebaseline_2026-05-15.md)，以 pantheon@master + execute-plans@main 為基準。並行 6 條 EPIC，按 P0→P3 階梯推進：(I) EPIC-BFF-P0 (P0 10 task / Sprint 1) — session trio (/bff/me, auth/refresh, logout) + /openapi.json + canonical action endpoint + approval decide + registry reads (strategies/personas/capital-pools/audit)，讓 execute-plans@main 在 VITE_BFF_FALLBACK=strict 下可 bootstrap 核心 Management flow 不再 fallback mock；(II) EPIC-GOV-DEPLOY (P1 5 task / Sprint 2) — ApprovalDecision first-class + DeploymentPlan contract/service + stage planner + deployment projection + pool/runtime compatibility 檢查；(III) EPIC-RUNTIME (P1 6 task / Sprint 3) — RuntimeBinding schema + Runtime Manager skeleton + /bff/runtimes + deploy/pause/replace/rollback actions + loader metadata migration (promotion_state → artifact_state + deployment_stage) + LEAN algorithm-level smoke；(IV) EPIC-TELEMETRY (P2 7 task / Sprint 4) — TelemetryEvent canonical schema + RuntimeHeartbeat ingest + AuditAction backend + /bff/alerts + /bff/incidents + reconciliation record + Postmortem schema/endpoint；(V) EPIC-RESEARCH (P3 28 task / Sprint 5) — Source Ingest (SRC) + StrategySpec (STRAT) + Experiment orchestrator (EXP) + Qlib/vectorbt adapters + Persona/Trainer (PER/TRN) + Imitation dataset (IMT) + Consult/Committee (ASK)；(VI) EPIC-EVOLUTION (P3 3 task / Sprint 6) — EvolutionDecision service + /bff/v5/loop-runs + /bff/v5/sentinel/findings。GAP § 10 最大阻塞：BFF live endpoints 不足 → EPIC-BFF-P0 必須最先收斂；Registry/Promotion canonical 已 implemented，DeploymentPlan/RuntimeBinding 是 governance→execution 缺口；Artifact Loader 仍寫 legacy promotion_state，EX-002 metadata migration 是 execution-side 技術債。fail-closed 鐵律延續：broker production live、capital binding live 仍禁止；canary 需 risk-owner + operator 雙閘；evidence 走 support/evidence/<epic>-<task>/。Track E 收尾備註：46 個 MGMT-* task 中 45 個 done+archive，僅 MGMT-BROKER-002 仍 blocked 等 Shioaji credentials (commit 22e5ca3b 已備 sidecar acceptance packet)；M7 canary readiness 因此未閉合；Track E objective 不在本 sprint 推進範圍，僅 carry-over 記錄。
+Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.
 
 ## Current Sprint
 
-- Sprint: `2026-05-16-pantheon-bff-p0-foundation`
+- Sprint: `2026-06-09-mpos-full-loop-gap-closure`
 - Canonical files: `AI_COLLABORATION_GUIDE.md`, `ai-status.json`, `ai-activity-log.jsonl`, `current-work.md`, `TARGET_ARCHITECTURE.md`, `OPENCLAW_RUNTIME_CONTRACT.md`, `PERSONA_RUNTIME_MODEL.md`, `BINDING_AND_DEPLOYMENT_SEMANTICS.md`, `PAPER_CANARY_LIVE_POLICY.md`, `ROLLBACK_AND_POSITION_SEMANTICS.md`, `LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md`, `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md`, `KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md`, `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md`, `TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md`, `DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md`, `EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md`, `EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md`, `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md`, `LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md`, `CANONICAL_DOCUMENT_MAP.md`, `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`, `ROADMAP.md`, `DEVELOPMENT_WORKBREAKDOWN.md`, `OSS_INTEGRATION_CHECKLIST.md`, `WORKBENCH_DELIVERY_BACKLOG.md`, `DELIVERY_CLOSURE_AND_LOOP_STATES.md`, `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`, `CANONICAL_CONTRACT_MIGRATION_DECISION.md`, `WORK_REBASELINE.md`, `Pantheon_總索引版系統分析文件.md`, `Pantheon_資料表_Schema_設計版.md`, `Pantheon_API_Service_Contract_設計版.md`
 - Canonical tiers: `L0 Collaboration & State`, `L0.5 Derived Narrative`, `L1 Platform Architecture & Policy`, `L2 Planning & Execution`, `L3 Supporting Design & Migration`
+- Planning mode: `docs/02-architecture/consensus/sessions/phase6-2026-05-01-pantheon-p0-paper-loop/README.md`
 - Canonical map: `CANONICAL_DOCUMENT_MAP.md`
 - Document boundary: `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`
 - Full backlog: `DEVELOPMENT_WORKBREAKDOWN.md`
@@ -23,15 +24,29 @@ Last updated: 2026-05-18 10:01:03
 - Execution proof: `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`
 - Dashboard: `docs-site/index.html`
 
+## Discussion Planning
+
+- Session: `phase6-2026-05-01-pantheon-p0-paper-loop`
+- Status: `accepted`
+- Baton owner: `Codex`
+- Current round: `0`
+- Consensus: `accepted`
+- Human gate: `approved`
+- Ready for human: `True`
+- Ready to materialize execution: `True`
+
 ## Active Slices
 
-- `Claude`: execution, control-plane, governance-review; next: Assignment created
-- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
-- `Codex`: integration, status-system, schema, acceptance; next: Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json.
-- `Codex2`: integration, status-system, schema, acceptance; next: Assignment created
-- `Copilot`: research-ingest, external-search, spec-review, critique; next: Assignment created
-- `Claude2`: execution, control-plane, governance-review; next: Assignment created
-- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: Assignment created
+- `Claude`: execution, control-plane, governance-review; next: No active assignment
+- `Gemini`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
+- `Codex`: integration, status-system, schema, acceptance; next: execute-plans task branch contains uncommitted PPL-ALLOC-006 nextAction adapter work plus unrelated hosted audit/test artifacts; durable task state also still assigns Antigravity/Codex2 todo, conflicting with Codex dispatch. Previous owner/supervisor must reconcile ownership and cleanly preserve or remove prior-task changes before redispatch.
+- `Codex2`: integration, status-system, schema, acceptance; next: No active assignment
+- `Copilot`: research-ingest, external-search, spec-review, critique; next: No active assignment
+- `Claude2`: execution, control-plane, governance-review; next: No active assignment
+- `Gemini2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
+- `Human/Ops`: human-gate, operations, signoff; next: No active assignment
+- `Antigravity`: gcp, ci-cd, runtime-packaging, worker-ops; next: Auto-reassigned TJ-E2E-012 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Claude.
+- `Antigravity2`: gcp, ci-cd, runtime-packaging, worker-ops; next: No active assignment
 
 ## Delivery Layers
 
@@ -39,97 +54,73 @@ Last updated: 2026-05-18 10:01:03
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `DEP-004` | Sprint 7 / EPIC-GOV-DEPLOY | Pool x runtime compatibility check before deployment advance | Codex | todo | `DEP-001`, `DEP-002`, `CAP-001`, `RT-001` | GAP P1 列為 DEP-004 但 sprint 7 沒派；grep 確認 services 與 governance 樹下沒有 pool/runtime compat check 實作。本任務在 DeploymentPlan 進入 RuntimeBinding 前增加 capital_pool 能力 × runtime 要求的相容性檢查，不通過則阻擋 advance。獨立 module，不修 DEP-001..003 公開 API。 |
-| `POST-EVO-BRIDGE` | Sprint 7 / EPIC-EVOLUTION-FOLLOWUP | Postmortem -> EvolutionDecisionProposal auto-trigger bridge | Claude2 | todo | `POST-001`, `EVO-001` | POST-001 + EVO-001 已落地為 schema/service，但 incident/postmortem publish → EvolutionDecisionProposal 自動觸發的 bridge 還沒實際 wire。本任務新增 postmortem_bridge module：訂閱 postmortem published 事件，按 severity 與 corrective_action_required 判斷是否產出 EvolutionDecisionProposal payload（不直接寫 governance store，僅 emit proposal）。獨立 module，不改 POST-001 / EVO-001 公開 API。 |
-| `LOVABLE-STRICT-PUBLISH` | Sprint 7 / EPIC-LOVABLE-INFRA | Lovable build-time strict env publish audit script | Gemini | todo | - | SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使用 strict env (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false) 重新發佈一次，並驗證發佈後的 bundle 不再含 seed fallback assets。本任務不直接動 execute-plans repo，而是寫一個 pantheon 端的 audit script + evidence packet，記錄 publish 條件、build env、bundle hash、verification probe 結果。 |
-| `OODA-E2E-001` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #1: source → StrategySpec transition test | Codex | todo | `SRC-001`, `STRAT-001`, `STRAT-003` | OODA Observe 階段第一步：實作整合測試證明「真實 SourceRecord → StrategySpec」這個 transition 可端到端走完。使用 SRC-* 與 STRAT-* 既有 service code，不重做。獨立 test 檔。 |
-| `OODA-E2E-003` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #3: ExperimentRun → CandidateArtifact admission test | Claude | todo | `EXP-005`, `REG-002` | OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → Registry admission」transition 可端到端走完。使用 EXP-005 writeback + Registry promotion service。獨立 test 檔。 |
-| `OODA-E2E-004` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #4: Admission → ApprovalDecision → DeploymentPlan(paper) test | Claude | todo | `GOV-001`, `DEP-001`, `DEP-002`, `DEP-004` | OODA Decide 階段：證明「CandidateArtifact → ApprovalDecision → DeploymentPlan(paper)」transition 可端到端走完。使用 GOV-001 ApprovalDecision + DEP-001 DeploymentPlan service。獨立 test 檔。 |
-| `OODA-E2E-007` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #7: full OodaLoopPacket closure + evidence chain | Codex | todo | `OODA-E2E-001`, `OODA-E2E-002`, `OODA-E2E-003`, `OODA-E2E-004`, `OODA-E2E-005`, `OODA-E2E-006` | OODA 全環收尾：把上述 6 個 transition test 串成單一 OodaLoopPacket 並驗證所有欄位齊全（observe/orient/decide/act/learn refs）。產出 evidence packet 與 closeout summary。獨立 test 檔。 |
-| `STRAT-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy spec distillation production smoke (real research note) | Copilot | todo | `STRAT-003`, `STRAT-004`, `SRC-001` | 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。 |
-| `EXP-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Experiment orchestrator parallel multi-backend dispatch | Codex | todo | `EXP-001`, `EXP-002`, `VBT-001`, `OSS-QLIB-002`, `OSS-STAT-001` | 升級 experiment orchestrator 支援平行多 backend：同一個 ExperimentTask 可以同時派給 vectorbt + Qlib + statsmodels 跑，回傳 N 個獨立 ExperimentRun 加上比較摘要。獨立 module，不改 EXP-001 公開 schema。 |
-| `EXP-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | ExperimentRun multi-artifact lineage tree | Codex2 | todo | `EXP-005`, `LIN-001` | 新增多 artifact-type lineage tree：ExperimentRun 可同時產 model_artifact + feature_set + signal_snapshot + optimizer_result，本任務確保 lineage edges 正確連接 N 個 artifact 而非單一。獨立 module。 |
-| `SPRINT-8-CLOSEOUT` | Sprint 8 / EPIC-CLOSEOUT | Sprint 8 retrospective + closeout + Sprint 9 candidate topics | Claude | todo | `OSS-QLIB-V2-001`, `OSS-STAT-V2-001`, `OSS-QUANTLIB-V2-001`, `OSS-RLLIB-V2-001`, `OSS-FINRL-V2-001`, `OODA-E2E-007`, `STRAT-V2-001`, `STRAT-V2-002`, `EXP-V2-001`, `EXP-V2-002` | Sprint 8 收尾：彙整 16 條子任務 evidence、產 sprint retrospective + 統計報告（哪些 EPIC 過、哪些 EPIC 殘留缺口）、產 sprint 9 候選議題 raw list（供下一輪 planning 用）。獨立 evidence packet。 |
+| `PPL-ALLOC-007` | Persona Promotion Allocation / Wave 2 IA and binding visibility | Binding visibility and route prune | Codex | blocked | `PPL-ALLOC-003`, `PPL-ALLOC-006` | 修 Persona Fleet / Capital 顯示不同 persona 綁定到不同 paper ledger 或 real sleeve；legacy/diagnostic 頁面不再搶主流程。 |
+| `PPL-ALLOC-009` | Persona Promotion Allocation / Wave 3 closeout | Closeout and dev publish | Antigravity | todo | `PPL-ALLOC-002`, `PPL-ALLOC-003`, `PPL-ALLOC-004`, `PPL-ALLOC-005`, `PPL-ALLOC-006`, `PPL-ALLOC-007`, `PPL-ALLOC-008` | 彙整所有任務 PR、測試、merge、dev publish 與 hosted smoke，證明 create->paper、paper->real review、real allocation、emergency containment 閉環。 |
+| `TJ-E2E-012` | Trade Journey E2E / Wave 5 | Hosted acceptance and closeout | Antigravity | todo | `TJ-E2E-001`, `TJ-E2E-002`, `TJ-E2E-003`, `TJ-E2E-004`, `TJ-E2E-005`, `TJ-E2E-006`, `TJ-E2E-007`, `TJ-E2E-008`, `TJ-E2E-009`, `TJ-E2E-010`, `TJ-E2E-011` | 依 Trade Journey E2E gap 規格執行：Hosted acceptance and closeout。 |
 
 ### External / Upstream Integration Work
 
 | ID | Phase | Task | Owner | Status | Depends On | 中文說明 |
 |---|---|---|---|---|---|---|
-| `OSS-QLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | Qlib production-scale rolling + registry admission | Codex | review | `OSS-QLIB-002`, `MGMT-QLIB-001` | 把 OSS-QLIB-002 的 rolling pipeline 升級到 production scale：使用 MGMT-QLIB-001 已建好的 TWSE OHLCV dataset（≥50 instruments × ≥2 years），跑完整 rolling-window 訓練，產 model_artifact 並提交 registry admission packet。獨立檔案路徑。 |
-| `OSS-STAT-V2-001` | Sprint 8 / EPIC-OSS-V2 | statsmodels production cointegration on TWSE pairs | Copilot | todo | `OSS-STAT-001`, `MGMT-QLIB-001` | 把 OSS-STAT-001 cointegration adapter 升級到 production：對 10 個 TWSE 大型股配對跑 2-year rolling Engle-Granger 檢定，輸出 signal_snapshot artifact 含 top-N cointegrated pairs，提交 registry admission packet。獨立檔案。 |
-| `OSS-QUANTLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | QuantLib production option chain pricer + greeks | Copilot | todo | `OSS-QUANTLIB-001` | 把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。 |
-| `OSS-RLLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | RLlib production PPO on TWSE trading env | Claude | todo | `OSS-RLLIB-001`, `MGMT-QLIB-001` | 把 OSS-RLLIB-001 PPO skeleton 升級到 production：用 TWSE OHLCV 作為環境的 observation/action space，跑 ≥100 iter PPO，輸出 model_artifact 含 trained_policy 與 evaluation_summary，提交 registry admission packet。CPU-only。獨立檔案。 |
-| `OSS-FINRL-V2-001` | Sprint 8 / EPIC-OSS-V2 | FinRL production DRL on TWSE stock env | Gemini2 | todo | `OSS-FINRL-001`, `MGMT-QLIB-001` | 把 OSS-FINRL-001 DRL skeleton 升級到 production：用 TWSE OHLCV 作為 FinRL StockTradingEnv，跑 ≥1000 steps DDPG 或 PPO，輸出 model_artifact 含 evaluation_summary（sharpe annual_return max_drawdown），提交 registry admission packet。CPU-only。 |
-| `OODA-E2E-002` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #2: StrategySpec → ExperimentRun transition test | Codex2 | todo | `STRAT-001`, `EXP-001`, `EXP-002`, `VBT-001` | OODA Observe→Orient 階段：證明「StrategySpec → ExperimentRun」transition 可端到端走完。使用 EXP-001..002 service + 一個 OSS adapter (vectorbt VBT-001) 跑 backtest。獨立 test 檔。 |
+| _(none)_ | - | - | - | - | - | - |
 
 ## Recently Executed Tasks
 
-- Archive updated: 2026-05-18 08:45:22
-- Terminal tasks archived: `1190` total, `1170` completed, `20` superseded
+- Archive updated: 2026-07-13 00:21:29
+- Terminal tasks archived: `2039` total, `1993` completed, `46` superseded
 
 | ID | Phase | Task | Owner | Outcome | Archived At | Snapshot |
 |---|---|---|---|---|---|---|
-| `STRAT-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy lineage tree backend read API | Claude | completed | 2026-05-18 04:36:15 | `ai-task-archive/tasks/STRAT-V2-002.json` |
-| `OODA-E2E-005` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #5: DeploymentPlan(paper) → RuntimeBinding → paper run test | Claude2 | completed | 2026-05-18 08:45:22 | `ai-task-archive/tasks/OODA-E2E-005.json` |
-| `EXP-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | EXP-V2-001: Claude stepped in as helper reviewer (Codex2 unresponsive) | Codex | completed | 2026-05-18 08:42:57 | `ai-task-archive/tasks/EXP-V2-001.json` |
-| `OODA-E2E-006` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #6: telemetry → Incident → Postmortem → EvolutionDecisionProposal test | Claude | completed | 2026-05-17 23:35:04 | `ai-task-archive/tasks/OODA-E2E-006.json` |
-| `M7-CANARY-CLOSEOUT` | Track E / EPIC-05 M7 Canary Readiness | M7 canary readiness packet final closure | Claude2 | completed | 2026-05-18 03:05:08 | `ai-task-archive/tasks/M7-CANARY-CLOSEOUT.json` |
-| `MGMT-BROKER-002` | Track E / EPIC-05 Shioaji Sandbox | Shioaji account readiness check | Gemini2 | completed | 2026-05-17 13:51:55 | `ai-task-archive/tasks/MGMT-BROKER-002.json` |
-| `OSS-FINRL-001-SIDECAR-ACCEPTANCE` | Sprint 7 / EPIC-OSS-RESEARCH | Prepare OSS-FINRL-001 acceptance packet and dependency map | Codex | completed | 2026-05-17 11:44:36 | `ai-task-archive/tasks/OSS-FINRL-001-SIDECAR-ACCEPTANCE.json` |
-| `OSS-FINRL-001` | Sprint 7 / EPIC-OSS-RESEARCH | FinRL DQN/PPO adapter skeleton | Codex | completed | 2026-05-17 11:35:33 | `ai-task-archive/tasks/OSS-FINRL-001.json` |
-| `IMT-007` | Sprint 7 / EPIC-IMITATION-TRAINING | Behavior-policy artifact validation gate | Claude | completed | 2026-05-17 11:33:13 | `ai-task-archive/tasks/IMT-007.json` |
-| `OPS-SIDECAR-CLEANUP-001` | Sprint 7 / EPIC-OPS-BACKLOG | Sidecar packet retention and cleanup policy | Codex | completed | 2026-05-17 11:14:11 | `ai-task-archive/tasks/OPS-SIDECAR-CLEANUP-001.json` |
-| `IMT-006` | Sprint 7 / EPIC-IMITATION-TRAINING | Imitation evaluation metrics: action-match + return-gap + KL | Codex | completed | 2026-05-17 11:12:35 | `ai-task-archive/tasks/IMT-006.json` |
-| `IMT-006-SIDECAR-REVIEW` | Sprint 7 / EPIC-IMITATION-TRAINING | Prepare IMT-006 review packet and evidence summary | Claude | completed | 2026-05-17 11:10:23 | `ai-task-archive/tasks/IMT-006-SIDECAR-REVIEW.json` |
-| `ASK-007-SIDECAR-REVIEW` | Sprint 7 / EPIC-CONSULT-ADVANCED | Prepare ASK-007 review packet and evidence summary | Codex | completed | 2026-05-17 11:01:54 | `ai-task-archive/tasks/ASK-007-SIDECAR-REVIEW.json` |
-| `OPS-REBASE-AUTO-001-SIDECAR-REVIEW` | Sprint 7 / EPIC-OPS-BACKLOG | Prepare OPS-REBASE-AUTO-001 review packet and evidence summary | Claude | completed | 2026-05-17 10:58:42 | `ai-task-archive/tasks/OPS-REBASE-AUTO-001-SIDECAR-REVIEW.json` |
-| `ASK-006-SIDECAR-REVIEW` | Sprint 7 / EPIC-CONSULT-ADVANCED | Prepare ASK-006 review packet and evidence summary | Claude | completed | 2026-05-17 10:57:18 | `ai-task-archive/tasks/ASK-006-SIDECAR-REVIEW.json` |
-| `OPS-REFACTOR-001` | Sprint 7 / EPIC-OPS-BACKLOG | Re-apply dispatch policy refactor on current master | Codex | completed | 2026-05-17 10:46:36 | `ai-task-archive/tasks/OPS-REFACTOR-001.json` |
-| `ASK-008` | Sprint 7 / EPIC-CONSULT-ADVANCED | Committee sponsor decision -> governance action bridge | Codex | completed | 2026-05-17 10:41:04 | `ai-task-archive/tasks/ASK-008.json` |
-| `IMT-008` | Sprint 7 / EPIC-IMITATION-TRAINING | TRL preference-pair dataset bridge | Codex | completed | 2026-05-17 10:24:08 | `ai-task-archive/tasks/IMT-008.json` |
-| `OSS-RLLIB-001` | Sprint 7 / EPIC-OSS-RESEARCH | RLlib PPO adapter skeleton | Codex | completed | 2026-05-17 10:19:40 | `ai-task-archive/tasks/OSS-RLLIB-001.json` |
-| `OSS-STAT-001` | Sprint 7 / EPIC-OSS-RESEARCH | statsmodels cointegration adapter skeleton | Codex | completed | 2026-05-17 10:17:33 | `ai-task-archive/tasks/OSS-STAT-001.json` |
+| `PTJ-007` | Persona Trade Journal / Wave 4 | Persona Trade Journal integration and hosted closeout | Codex | completed | 2026-07-13 00:21:29 | `ai-task-archive/tasks/PTJ-007.json` |
+| `PINT-007` | Persona Interaction / Wave 2 frontend | Trading Room contextual Persona consultation | Antigravity | completed | 2026-07-13 00:10:52 | `ai-task-archive/tasks/PINT-007.json` |
+| `TJ-E2E-007` | Trade Journey E2E / Wave 3 | Live SSE and attention model | Codex2 | completed | 2026-07-13 00:02:45 | `ai-task-archive/tasks/TJ-E2E-007.json` |
+| `TJ-E2E-008` | Trade Journey E2E / Wave 3 | Governed journey actions | Codex | completed | 2026-07-12 23:53:02 | `ai-task-archive/tasks/TJ-E2E-008.json` |
+| `PINT-005` | Persona Interaction / Wave 2 frontend | Strategy Workshop Persona interaction UX | Antigravity | completed | 2026-07-12 23:46:28 | `ai-task-archive/tasks/PINT-005.json` |
+| `AG-GAP-008` | Agora Gap Closure 2026-07-12 / Wave 1 | Implement typed Trading Room SSE stream | Codex2 | completed | 2026-07-12 23:33:30 | `ai-task-archive/tasks/AG-GAP-008.json` |
+| `TJ-E2E-006` | Trade Journey E2E / Wave 2 | Trade Journey frontend P0 workbench | Codex2 | completed | 2026-07-12 23:32:43 | `ai-task-archive/tasks/TJ-E2E-006.json` |
+| `AG-GAP-009` | Agora Gap Closure 2026-07-12 / Wave 1 | Real PrivateContentStore replacing priv-content-stub refs | Codex2 | completed | 2026-07-12 23:27:50 | `ai-task-archive/tasks/AG-GAP-009.json` |
+| `PINT-003` | Persona Interaction / Wave 1 BFF | Durable opinions, debate, synthesis, and streaming | Antigravity | completed | 2026-07-12 23:26:19 | `ai-task-archive/tasks/PINT-003.json` |
+| `AG-GAP-003` | Agora Gap Closure 2026-07-12 / Wave 0 | Durable Postgres store for research | Codex2 | completed | 2026-07-12 23:26:01 | `ai-task-archive/tasks/AG-GAP-003.json` |
+| `PINT-002` | Persona Interaction / Wave 1 BFF | BFF context eligibility and interaction commands | Codex | completed | 2026-07-12 23:10:48 | `ai-task-archive/tasks/PINT-002.json` |
+| `AG-GAP-004` | Agora Gap Closure 2026-07-12 / Wave 0 | Durable Postgres store for dashboard recipes | Codex2 | completed | 2026-07-12 23:06:06 | `ai-task-archive/tasks/AG-GAP-004.json` |
+| `AG-GAP-002` | Agora Gap Closure 2026-07-12 / Wave 0 | Durable Postgres store for trading_room | Codex2 | completed | 2026-07-12 22:57:59 | `ai-task-archive/tasks/AG-GAP-002.json` |
+| `AG-GAP-010` | Agora Gap Closure 2026-07-12 / Wave 2 | Declare design parity baseline (design zip lost) | Claude | completed | 2026-07-12 22:55:47 | `ai-task-archive/tasks/AG-GAP-010.json` |
+| `AG-GAP-011` | Agora Gap Closure 2026-07-12 / Wave 2 | Reconcile nested FE checkouts; enforce canonical execute-plans | Antigravity | completed | 2026-07-12 22:53:12 | `ai-task-archive/tasks/AG-GAP-011.json` |
+| `AG-GAP-006` | Agora Gap Closure 2026-07-12 / Wave 1 | Migrate identity/personalization/shadow routes out of main.py | Antigravity | completed | 2026-07-12 22:44:39 | `ai-task-archive/tasks/AG-GAP-006.json` |
+| `AG-GAP-012` | Agora Gap Closure 2026-07-12 / Wave 2 | 12-block completeness additive contract (bundle v1_6) | Antigravity | completed | 2026-07-12 22:41:42 | `ai-task-archive/tasks/AG-GAP-012.json` |
+| `MGMT-PERF-IA-008` | Management Performance Ranking IA / Wave 3 closeout | Hosted acceptance and closeout | Codex2 | completed | 2026-07-12 22:39:21 | `ai-task-archive/tasks/MGMT-PERF-IA-008.json` |
+| `AG-GAP-001` | Agora Gap Closure 2026-07-12 / Wave 0 | Enable and prove durable workshop Postgres backend on dev | Codex | completed | 2026-07-12 22:38:22 | `ai-task-archive/tasks/AG-GAP-001.json` |
+| `AG-GAP-007` | Agora Gap Closure 2026-07-12 / Wave 1 | Fix /bff/agora/capabilities mismatch + clean dev probe residue | Antigravity | completed | 2026-07-12 22:23:39 | `ai-task-archive/tasks/AG-GAP-007.json` |
 
 ## Task Board
 
 | ID | Phase | Task | 中文說明 | Owner | Reviewer | Status | Depends On | Last Update | Next |
 |---|---|---|---|---|---|---|---|---|---|
-| `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Sprint 7 / EPIC-OSS-RESEARCH | [Sidecar] [Auto] [Parent OSS-STAT-001] Prepare OSS-STAT-001 acceptance packet and dependency map | 平行支援 OSS-STAT-001，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。 | Gemini | Claude | done | - | 2026-05-17 11:45:00 | Owner finalized task and closed it. Sidecar acceptance packet is durable in support/sidecars/OSS-STAT-001/. |
-| `DEP-004` | Sprint 7 / EPIC-GOV-DEPLOY | Pool x runtime compatibility check before deployment advance | GAP P1 列為 DEP-004 但 sprint 7 沒派；grep 確認 services 與 governance 樹下沒有 pool/runtime compat check 實作。本任務在 DeploymentPlan 進入 RuntimeBinding 前增加 capital_pool 能力 × runtime 要求的相容性檢查，不通過則阻擋 advance。獨立 module，不修 DEP-001..003 公開 API。 | Codex | Codex2 | todo | `DEP-001`, `DEP-002`, `CAP-001`, `RT-001` | 2026-05-17 18:43:57 | Assignment created |
-| `POST-EVO-BRIDGE` | Sprint 7 / EPIC-EVOLUTION-FOLLOWUP | Postmortem -> EvolutionDecisionProposal auto-trigger bridge | POST-001 + EVO-001 已落地為 schema/service，但 incident/postmortem publish → EvolutionDecisionProposal 自動觸發的 bridge 還沒實際 wire。本任務新增 postmortem_bridge module：訂閱 postmortem published 事件，按 severity 與 corrective_action_required 判斷是否產出 EvolutionDecisionProposal payload（不直接寫 governance store，僅 emit proposal）。獨立 module，不改 POST-001 / EVO-001 公開 API。 | Claude2 | Codex2 | todo | `POST-001`, `EVO-001` | 2026-05-17 18:44:31 | Assignment created |
-| `LOVABLE-STRICT-PUBLISH` | Sprint 7 / EPIC-LOVABLE-INFRA | Lovable build-time strict env publish audit script | SA § 2.2 列為 non-blocking follow-up：execute-plans@main build-time 應使用 strict env (VITE_BFF_MODE=live VITE_BFF_FALLBACK=strict VITE_BFF_REAL_WRITES=false) 重新發佈一次，並驗證發佈後的 bundle 不再含 seed fallback assets。本任務不直接動 execute-plans repo，而是寫一個 pantheon 端的 audit script + evidence packet，記錄 publish 條件、build env、bundle hash、verification probe 結果。 | Gemini | Gemini2 | todo | - | 2026-05-17 18:44:50 | Assignment created |
-| `OSS-QLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | Qlib production-scale rolling + registry admission | 把 OSS-QLIB-002 的 rolling pipeline 升級到 production scale：使用 MGMT-QLIB-001 已建好的 TWSE OHLCV dataset（≥50 instruments × ≥2 years），跑完整 rolling-window 訓練，產 model_artifact 並提交 registry admission packet。獨立檔案路徑。 | Codex | Codex2 | review | `OSS-QLIB-002`, `MGMT-QLIB-001` | 2026-05-18 00:26:36 | Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json. |
-| `OSS-STAT-V2-001` | Sprint 8 / EPIC-OSS-V2 | statsmodels production cointegration on TWSE pairs | 把 OSS-STAT-001 cointegration adapter 升級到 production：對 10 個 TWSE 大型股配對跑 2-year rolling Engle-Granger 檢定，輸出 signal_snapshot artifact 含 top-N cointegrated pairs，提交 registry admission packet。獨立檔案。 | Copilot | Codex | todo | `OSS-STAT-001`, `MGMT-QLIB-001` | 2026-05-17 19:01:29 | Assignment created |
-| `OSS-QUANTLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | QuantLib production option chain pricer + greeks | 把 OSS-QUANTLIB-001 option pricer 升級為 production：對台指選擇權(TXO)鏈跨多檔履約價與多個到期日定價，輸出含 greeks 的 pricing_snapshot artifact，提交 registry admission packet。獨立檔案。 | Copilot | Codex2 | todo | `OSS-QUANTLIB-001` | 2026-05-17 19:01:36 | Assignment created |
-| `OSS-RLLIB-V2-001` | Sprint 8 / EPIC-OSS-V2 | RLlib production PPO on TWSE trading env | 把 OSS-RLLIB-001 PPO skeleton 升級到 production：用 TWSE OHLCV 作為環境的 observation/action space，跑 ≥100 iter PPO，輸出 model_artifact 含 trained_policy 與 evaluation_summary，提交 registry admission packet。CPU-only。獨立檔案。 | Claude | Codex | todo | `OSS-RLLIB-001`, `MGMT-QLIB-001` | 2026-05-17 19:01:43 | Assignment created |
-| `OSS-FINRL-V2-001` | Sprint 8 / EPIC-OSS-V2 | FinRL production DRL on TWSE stock env | 把 OSS-FINRL-001 DRL skeleton 升級到 production：用 TWSE OHLCV 作為 FinRL StockTradingEnv，跑 ≥1000 steps DDPG 或 PPO，輸出 model_artifact 含 evaluation_summary（sharpe annual_return max_drawdown），提交 registry admission packet。CPU-only。 | Gemini2 | Codex2 | todo | `OSS-FINRL-001`, `MGMT-QLIB-001` | 2026-05-17 19:01:50 | Assignment created |
-| `OODA-E2E-001` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #1: source → StrategySpec transition test | OODA Observe 階段第一步：實作整合測試證明「真實 SourceRecord → StrategySpec」這個 transition 可端到端走完。使用 SRC-* 與 STRAT-* 既有 service code，不重做。獨立 test 檔。 | Codex | Codex2 | todo | `SRC-001`, `STRAT-001`, `STRAT-003` | 2026-05-17 19:02:55 | Assignment created |
-| `OODA-E2E-002` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #2: StrategySpec → ExperimentRun transition test | OODA Observe→Orient 階段：證明「StrategySpec → ExperimentRun」transition 可端到端走完。使用 EXP-001..002 service + 一個 OSS adapter (vectorbt VBT-001) 跑 backtest。獨立 test 檔。 | Codex2 | Codex | todo | `STRAT-001`, `EXP-001`, `EXP-002`, `VBT-001` | 2026-05-17 19:03:09 | Assignment created |
-| `OODA-E2E-003` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #3: ExperimentRun → CandidateArtifact admission test | OODA Orient→Decide 階段：證明「ExperimentRun → CandidateArtifact → Registry admission」transition 可端到端走完。使用 EXP-005 writeback + Registry promotion service。獨立 test 檔。 | Claude | Codex | todo | `EXP-005`, `REG-002` | 2026-05-17 19:03:27 | Assignment created |
-| `OODA-E2E-004` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #4: Admission → ApprovalDecision → DeploymentPlan(paper) test | OODA Decide 階段：證明「CandidateArtifact → ApprovalDecision → DeploymentPlan(paper)」transition 可端到端走完。使用 GOV-001 ApprovalDecision + DEP-001 DeploymentPlan service。獨立 test 檔。 | Claude | Codex2 | todo | `GOV-001`, `DEP-001`, `DEP-002`, `DEP-004` | 2026-05-17 19:03:39 | Assignment created |
-| `OODA-E2E-007` | Sprint 8 / EPIC-OODA-E2E | OODA E2E #7: full OodaLoopPacket closure + evidence chain | OODA 全環收尾：把上述 6 個 transition test 串成單一 OodaLoopPacket 並驗證所有欄位齊全（observe/orient/decide/act/learn refs）。產出 evidence packet 與 closeout summary。獨立 test 檔。 | Codex | Claude | todo | `OODA-E2E-001`, `OODA-E2E-002`, `OODA-E2E-003`, `OODA-E2E-004`, `OODA-E2E-005`, `OODA-E2E-006` | 2026-05-17 19:04:11 | Assignment created |
-| `STRAT-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Strategy spec distillation production smoke (real research note) | 把 STRAT-003 source converter 升級到 production：吃真實 internal research note (docs/research/notes/*.md 或 fixture)，產出可進 registry 的 StrategySpec，含 evidence_refs + code_refs 完整 binding。獨立 module，不改 STRAT-001..004 公開 API。 | Copilot | Codex2 | todo | `STRAT-003`, `STRAT-004`, `SRC-001` | 2026-05-17 19:05:16 | Assignment created |
-| `EXP-V2-001` | Sprint 8 / EPIC-STRAT-EXP-DEEP | Experiment orchestrator parallel multi-backend dispatch | 升級 experiment orchestrator 支援平行多 backend：同一個 ExperimentTask 可以同時派給 vectorbt + Qlib + statsmodels 跑，回傳 N 個獨立 ExperimentRun 加上比較摘要。獨立 module，不改 EXP-001 公開 schema。 | Codex | Codex2 | todo | `EXP-001`, `EXP-002`, `VBT-001`, `OSS-QLIB-002`, `OSS-STAT-001` | 2026-05-17 19:05:38 | Assignment created |
-| `EXP-V2-002` | Sprint 8 / EPIC-STRAT-EXP-DEEP | ExperimentRun multi-artifact lineage tree | 新增多 artifact-type lineage tree：ExperimentRun 可同時產 model_artifact + feature_set + signal_snapshot + optimizer_result，本任務確保 lineage edges 正確連接 N 個 artifact 而非單一。獨立 module。 | Codex2 | Copilot | todo | `EXP-005`, `LIN-001` | 2026-05-17 19:05:48 | Assignment created |
-| `SPRINT-8-CLOSEOUT` | Sprint 8 / EPIC-CLOSEOUT | Sprint 8 retrospective + closeout + Sprint 9 candidate topics | Sprint 8 收尾：彙整 16 條子任務 evidence、產 sprint retrospective + 統計報告（哪些 EPIC 過、哪些 EPIC 殘留缺口）、產 sprint 9 候選議題 raw list（供下一輪 planning 用）。獨立 evidence packet。 | Claude | Codex | todo | `OSS-QLIB-V2-001`, `OSS-STAT-V2-001`, `OSS-QUANTLIB-V2-001`, `OSS-RLLIB-V2-001`, `OSS-FINRL-V2-001`, `OODA-E2E-007`, `STRAT-V2-001`, `STRAT-V2-002`, `EXP-V2-001`, `EXP-V2-002` | 2026-05-17 19:06:02 | Assignment created |
+| `MGMT-GAP-001` | MGMT Console Production Gap / Batch 1 route IA | Management route and IA cleanup | 清除 management console 真重複入口: control-room-legacy 不再 render 舊 ControlRoom; deployment/deployment/:id 改 canonical deployments redirect; 收斂一級 nav 中非 production 的 studios/empty registry/loop 子頁。 | Codex2 | Claude | done | - | 2026-06-30 22:45:55 | Closed by execute-plans PR #120; deployed commit 6218e67d4119bcfc663681935d2a98e5af73e55a verified on pantheon-dev-fe. |
+| `MGMT-GAP-003` | MGMT Console Production Gap / Batch 2 BFF contracts | BFF management DTO contract hardening | 為 /bff/management/data-sources、permissions、memory-governance、consult-rules、/bff/lineage、/bff/workflows、/bff/hooks、/bff/knowledge 補齊 DTO 契約、degraded envelope、OpenAPI schema 與 contract tests。 | Claude2 | Codex | done | - | 2026-07-01 08:49:18 | Closed by PR #2649; dev BFF deploy run 28485593169 and hosted authenticated curl prove OpenAPI schemas plus 200 envelopes for all eight endpoints. |
+| `MGMT-GAP-002` | MGMT Console Production Gap / Batch 2 FE canonical reads | Frontend canonical management read wiring | 將 Data Sources、permissions、memory、consult、lineage、workflows、hooks、ranking 改接 canonical management endpoints；移除 strict live seed/mock 偽裝。 | Claude | Codex | done | `MGMT-GAP-003` | 2026-07-01 12:56:00 | Closed by execute-plans PR #124 and PR #126; dev deploy 28490060564 and FE-BFF gate 28490060533 passed at 41551e32432c7a7963716f9f197ee31f5fdd48a8. |
+| `PPL-ALLOC-007` | Persona Promotion Allocation / Wave 2 IA and binding visibility | Binding visibility and route prune | 修 Persona Fleet / Capital 顯示不同 persona 綁定到不同 paper ledger 或 real sleeve；legacy/diagnostic 頁面不再搶主流程。 | Codex | Claude | blocked | `PPL-ALLOC-003`, `PPL-ALLOC-006` | 2026-07-12 00:13:16 | execute-plans task branch contains uncommitted PPL-ALLOC-006 nextAction adapter work plus unrelated hosted audit/test artifacts; durable task state also still assigns Antigravity/Codex2 todo, conflicting with Codex dispatch. Previous owner/supervisor must reconcile ownership and cleanly preserve or remove prior-task changes before redispatch. |
+| `PPL-ALLOC-009` | Persona Promotion Allocation / Wave 3 closeout | Closeout and dev publish | 彙整所有任務 PR、測試、merge、dev publish 與 hosted smoke，證明 create->paper、paper->real review、real allocation、emergency containment 閉環。 | Antigravity | Claude | todo | `PPL-ALLOC-002`, `PPL-ALLOC-003`, `PPL-ALLOC-004`, `PPL-ALLOC-005`, `PPL-ALLOC-006`, `PPL-ALLOC-007`, `PPL-ALLOC-008` | 2026-07-11 11:00:40 | Auto-reassigned PPL-ALLOC-009 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Antigravity. |
+| `TJ-E2E-012` | Trade Journey E2E / Wave 5 | Hosted acceptance and closeout | 依 Trade Journey E2E gap 規格執行：Hosted acceptance and closeout。 | Antigravity | Claude | todo | `TJ-E2E-001`, `TJ-E2E-002`, `TJ-E2E-003`, `TJ-E2E-004`, `TJ-E2E-005`, `TJ-E2E-006`, `TJ-E2E-007`, `TJ-E2E-008`, `TJ-E2E-009`, `TJ-E2E-010`, `TJ-E2E-011` | 2026-07-12 06:59:09 | Auto-reassigned TJ-E2E-012 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Claude. |
 
 ## Handoff Queue
 
 | Task | From | To | Message | Status | Created At |
 |---|---|---|---|---|---|
-| `OSS-QLIB-V2-001` | Codex | Codex2 | Ready for review: production Qlib rolling runner, registry admission packet emitter, tests, and admission_packet.json are merged via PR #70. Please review services/research/qlib/production_rolling_run.py, services/research/qlib/registry_admission_packet.py, services/research/qlib/test_production_rolling_run.py, and support/evidence/OSS-QLIB-V2-001/admission_packet.json. | pending | 2026-05-18 00:26:36 |
+| `PPL-ALLOC-009` | Codex | Antigravity | Auto-reassigned PPL-ALLOC-009 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Antigravity. | pending | 2026-07-11 11:00:40 |
+| `TJ-E2E-012` | Human/Ops | Claude | Auto-reassigned TJ-E2E-012 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Claude. | pending | 2026-07-12 06:59:09 |
 
 ## Blockers
 
 | Task | Owner | Waiting For | Message | Status |
 |---|---|---|---|---|
-| _(none)_ | - | - | - | - |
+| `PPL-ALLOC-007` | Codex | Antigravity | execute-plans task branch contains uncommitted PPL-ALLOC-006 nextAction adapter work plus unrelated hosted audit/test artifacts; durable task state also still assigns Antigravity/Codex2 todo, conflicting with Codex dispatch. Previous owner/supervisor must reconcile ownership and cleanly preserve or remove prior-task changes before redispatch. | open |
 
 ## Review Notes
 
 | Task | Reviewer | 修正重點 | Review File |
 |---|---|---|---|
-| `OSS-STAT-001-SIDECAR-ACCEPTANCE` | Claude | 審查通過：sidecar acceptance packet 文件完整，正確記錄 shadowing 問題解決與最終 artifact 形狀 | support/sidecars/OSS-STAT-001/OSS-STAT-001-SIDECAR-ACCEPTANCE.md |
+| `MGMT-GAP-002` | Codex | execute-plans PR #124 已合併 canonical management reads，PR #126 已補最終部署狀態。<br>dev FE deploy 28490060564 與 FE-BFF Integration Gate 28490060533 均為 success。<br>mock-mode 完整重盤點 70/70 management routes rendered；此任務只關閉 canonical read wiring，不關閉 durable writes 或 studios production depth。 | docs/04/pantheon_management_console_gap_2026-06-30/archive/MGMT-GAP-002-closeout-2026-07-01.md |
 
 ## Lovable Coordination
 
@@ -159,10 +150,6 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 
 ## Latest Checkpoints
 
-- 2026-05-16 01:52:26 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:52:26 Orchestrator: PostToolUse: Bash
-- 2026-05-16 01:52:28 Orchestrator: PreToolUse: Bash
-- 2026-05-16 01:52:31 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:32 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:52:37 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:52:38 Orchestrator: PostToolUse: Bash
@@ -179,3 +166,7 @@ Do not read those omitted modules as open Pantheon backlog purely because they a
 - 2026-05-16 01:53:08 Orchestrator: PreToolUse: Bash
 - 2026-05-16 01:53:08 Orchestrator: PostToolUse: Bash
 - 2026-05-16 01:53:13 Orchestrator: PreToolUse: Bash
+- 2026-07-11 19:20:34 Antigravity: `MGMT-OPS-003-GAP-001` Assigned MGMT-OPS-003-GAP-001 to Codex2 with reviewer Copilot
+- 2026-07-11 19:20:34 Antigravity: `MGMT-OPS-003-GAP-002` Assigned MGMT-OPS-003-GAP-002 to Copilot with reviewer Codex2
+- 2026-07-11 19:20:34 Antigravity: `MGMT-OPS-003-GAP-003` Assigned MGMT-OPS-003-GAP-003 to Codex with reviewer Copilot
+- 2026-07-11 19:20:34 Antigravity: `MGMT-OPS-003-GAP-004` Assigned MGMT-OPS-003-GAP-004 to Codex2 with reviewer Codex

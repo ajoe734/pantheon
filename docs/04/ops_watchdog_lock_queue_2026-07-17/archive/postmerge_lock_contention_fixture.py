@@ -126,50 +126,63 @@ def run_batch(
 
     before = {key: file_digest(paths[key]) for key in ("watchdog_state", "metrics", "contention")}
     started = time.monotonic()
-    processes = [
-        subprocess.Popen(
-            [
-                sys.executable,
-                str(repo / ".orchestrator" / "supervisor_watchdog.py"),
-                "--config",
-                str(config_path),
-                "--restart",
-                "--json",
-            ],
-            cwd=repo,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        for _ in range(count)
-    ]
-    # Wait for all processes to finish within the absolute batch deadline
-    batch_timeout = timeout
-    deadline = started + batch_timeout
-    while time.monotonic() < deadline:
-        if all(p.poll() is not None for p in processes):
-            break
-        time.sleep(0.05)
-
+    clean_env = {k: v for k, v in os.environ.items() if not k.startswith("PANTHEON_")}
+    processes: list[subprocess.Popen] = []
     outputs: list[dict[str, Any]] = []
-    for i, process in enumerate(processes):
-        if process.poll() is None:
-            raise TimeoutError(f"Process {i} did not exit within the absolute batch deadline of {batch_timeout} seconds.")
-        stdout, stderr = process.communicate()
-        outputs.append(
-            {
-                "returncode": process.returncode,
-                "stdout": json.loads(stdout.decode()) if stdout else None,
-                "stderr": stderr.decode(),
-            }
-        )
+    try:
+        processes = [
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    str(repo / ".orchestrator" / "supervisor_watchdog.py"),
+                    "--config",
+                    str(config_path),
+                    "--restart",
+                    "--json",
+                ],
+                cwd=repo,
+                env=clean_env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+            for _ in range(count)
+        ]
+        # Wait for all processes to finish within the absolute batch deadline
+        batch_timeout = timeout
+        deadline = started + batch_timeout
+        while time.monotonic() < deadline:
+            if all(p.poll() is not None for p in processes):
+                break
+            time.sleep(0.05)
+
+        for i, process in enumerate(processes):
+            if process.poll() is None:
+                raise TimeoutError(f"Process {i} did not exit within the absolute batch deadline of {batch_timeout} seconds.")
+            stdout, stderr = process.communicate()
+            outputs.append(
+                {
+                    "returncode": process.returncode,
+                    "stdout": json.loads(stdout.decode()) if stdout else None,
+                    "stderr": stderr.decode(),
+                }
+            )
+    finally:
+        import signal
+        for p in processes:
+            if p.poll() is None:
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                p.wait()
+        if metric_handle is not None:
+            fcntl.flock(metric_handle.fileno(), fcntl.LOCK_UN)
+            metric_handle.close()
+        fcntl.flock(runtime_handle.fileno(), fcntl.LOCK_UN)
+        runtime_handle.close()
+
     elapsed = time.monotonic() - started
-
-    if metric_handle is not None:
-        fcntl.flock(metric_handle.fileno(), fcntl.LOCK_UN)
-        metric_handle.close()
-    fcntl.flock(runtime_handle.fileno(), fcntl.LOCK_UN)
-    runtime_handle.close()
-
     after = {key: file_digest(paths[key]) for key in ("watchdog_state", "metrics", "contention")}
     decisions: dict[str, int] = {}
     reasons: dict[str, int] = {}
@@ -195,7 +208,7 @@ def run_batch(
         "probe_count": count,
         "elapsed_seconds": round(elapsed, 6),
         "all_returncode_zero": all(output["returncode"] == 0 for output in outputs),
-        "terminal_processes": sum(1 for process in processes if process.poll() is not None),
+        "terminal_processes": len(processes),
         "decisions": decisions,
         "reasons": reasons,
         "stderr_drop_count": drops,
@@ -221,6 +234,7 @@ def run_batch(
 
 def run_post_release_probe(repo: Path, root: Path, config_path: Path, paths: dict[str, Path]) -> dict[str, Any]:
     started = time.monotonic()
+    clean_env = {k: v for k, v in os.environ.items() if not k.startswith("PANTHEON_")}
     probe = subprocess.run(
         [
             sys.executable,
@@ -231,6 +245,7 @@ def run_post_release_probe(repo: Path, root: Path, config_path: Path, paths: dic
             "--json",
         ],
         cwd=repo,
+        env=clean_env,
         text=True,
         capture_output=True,
         timeout=5.0,
@@ -248,6 +263,7 @@ def run_post_release_probe(repo: Path, root: Path, config_path: Path, paths: dic
             "--json",
         ],
         cwd=repo,
+        env=clean_env,
         text=True,
         capture_output=True,
         timeout=5.0,
@@ -323,6 +339,11 @@ def main() -> int:
     finally:
         fcntl.flock(supervisor_handle.fileno(), fcntl.LOCK_UN)
         supervisor_handle.close()
+        import shutil
+        try:
+            shutil.rmtree(root)
+        except OSError:
+            pass
 
     print(
         json.dumps(
