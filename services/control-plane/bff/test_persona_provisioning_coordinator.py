@@ -17,6 +17,10 @@ from persona_provisioning_coordinator import (
     PersonaProvisioningCoordinator,
     deterministic_provisioning_ids,
 )
+from services.registry.strategy_artifact import (
+    strategy_artifact_checksum,
+    validate_strategy_artifact,
+)
 
 
 class TrackingStore(MemoryPersonaProvisioningStore):
@@ -106,6 +110,34 @@ class FakeOwnerTransport:
             return self._put(
                 owner,
                 f"/api/registry/strategy-specs/{body['registry_id']}",
+                {"entry": entry, "deployment_stage": "none"},
+            )
+
+        if owner == "registry" and path == "/api/registry/strategy-artifacts":
+            artifact = deepcopy(body["strategy_artifact"])
+            entry = {
+                "registry_id": body["registry_id"],
+                "artifact_type": "execution_bundle",
+                "strategy_id": artifact["strategy_id"],
+                "version": artifact["version"],
+                "artifact_state": body["artifact_state"],
+                "lineage": deepcopy(artifact["lineage"]),
+                "storage_ref": {
+                    "backend": "inline",
+                    "path": "$.entry.metadata.strategy_artifact",
+                },
+                "checksum": strategy_artifact_checksum(artifact),
+                "approval_decision_id": None,
+                "metadata": {
+                    **deepcopy(body.get("metadata") or {}),
+                    "strategy_artifact": artifact,
+                },
+                "evaluation_summary": deepcopy(body.get("evaluation_summary") or {}),
+                "rollback_target": body.get("rollback_target"),
+            }
+            return self._put(
+                owner,
+                f"/api/registry/strategy-artifacts/{body['registry_id']}",
                 {"entry": entry, "deployment_stage": "none"},
             )
 
@@ -328,11 +360,21 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
         "baseline_approval_reviewed_readback",
         "baseline_approval_decided_readback",
         "baseline_strategy_spec_approved_readback",
+        "baseline_strategy_artifact_candidate_readback",
+        "baseline_strategy_artifact_approval_proposed_readback",
+        "baseline_strategy_artifact_approval_reviewed_readback",
+        "baseline_strategy_artifact_approval_decided_readback",
+        "baseline_strategy_artifact_approved_readback",
         "strategy_spec_candidate_readback",
         "approval_proposed_readback",
         "approval_reviewed_readback",
         "approval_decided_readback",
         "strategy_spec_approved_readback",
+        "strategy_artifact_candidate_readback",
+        "strategy_artifact_approval_proposed_readback",
+        "strategy_artifact_approval_reviewed_readback",
+        "strategy_artifact_approval_decided_readback",
+        "strategy_artifact_approved_readback",
         "persona_capital_binding_created_readback",
         "persona_capital_binding_active_readback",
         "deployment_plan_readback",
@@ -367,6 +409,32 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
     assert baseline_approval["target_id"] == ids.baseline_registry_id
     assert baseline_approval["target_version"] == ids.baseline_version
 
+    baseline_artifact = _post_payload(
+        transport,
+        "/api/registry/strategy-artifacts",
+        identity=("registry_id", ids.baseline_strategy_artifact_id),
+    )
+    assert baseline_artifact["artifact_state"] == "candidate"
+    assert baseline_artifact["strategy_artifact"]["artifact_id"] == (
+        ids.baseline_strategy_artifact_id
+    )
+    assert baseline_artifact["strategy_artifact"]["strategy_id"] == ids.strategy_id
+    assert baseline_artifact["strategy_artifact"]["lineage"][
+        "source_strategy_spec_id"
+    ] == ids.baseline_registry_id
+    assert baseline_artifact["strategy_artifact"]["strategy_logic"][
+        "positive_action"
+    ] == "HOLD"
+    validate_strategy_artifact(baseline_artifact["strategy_artifact"])
+
+    baseline_artifact_approval = _post_payload(
+        transport,
+        "/api/governance/approvals",
+        identity=("decision_id", ids.baseline_strategy_artifact_approval_decision_id),
+    )
+    assert baseline_artifact_approval["target_id"] == ids.baseline_strategy_artifact_id
+    assert baseline_artifact_approval["target_version"] == ids.baseline_version
+
     candidate = _post_payload(
         transport,
         "/api/registry/strategy-specs",
@@ -387,6 +455,28 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
     assert approval["target_type"] == "registry_entry"
     assert approval["target_id"] == ids.registry_id
     assert approval["risk_level"] == "low"
+    artifact = _post_payload(
+        transport,
+        "/api/registry/strategy-artifacts",
+        identity=("registry_id", ids.strategy_artifact_id),
+    )
+    assert artifact["registry_id"] == ids.strategy_artifact_id
+    assert artifact["rollback_target"] == ids.baseline_strategy_artifact_id
+    assert artifact["strategy_artifact"]["artifact_id"] == ids.strategy_artifact_id
+    assert artifact["strategy_artifact"]["lineage"]["source_strategy_spec_id"] == ids.registry_id
+    assert artifact["strategy_artifact"]["lineage"]["parent_registry_ids"] == [
+        ids.baseline_strategy_artifact_id
+    ]
+    assert artifact["strategy_artifact"]["strategy_logic"]["positive_action"] == "BUY"
+    validate_strategy_artifact(artifact["strategy_artifact"])
+    artifact_approval = _post_payload(
+        transport,
+        "/api/governance/approvals",
+        identity=("decision_id", ids.strategy_artifact_approval_decision_id),
+    )
+    assert artifact_approval["target_type"] == "registry_entry"
+    assert artifact_approval["target_id"] == ids.strategy_artifact_id
+    assert artifact_approval["risk_level"] == "low"
     review = _post_payload(
         transport,
         f"/api/governance/approvals/{ids.approval_decision_id}/review",
@@ -407,6 +497,15 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
         "approver": "pantheon-persona-provisioner",
         "approval_decision_id": ids.approval_decision_id,
     }
+    artifact_advance = _post_payload(
+        transport,
+        f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}/advance",
+    )
+    assert artifact_advance == {
+        "target_state": "approved",
+        "approver": "pantheon-persona-provisioner",
+        "approval_decision_id": ids.strategy_artifact_approval_decision_id,
+    }
 
     binding = _post_payload(transport, "/api/bindings")
     assert binding["binding_id"] == ids.persona_capital_binding_id
@@ -417,12 +516,21 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
 
     plan = _post_payload(transport, "/api/deployment/plans")
     assert "binding_id" not in plan
+    assert plan["approval_decision_id"] == ids.strategy_artifact_approval_decision_id
+    assert plan["registry_id"] == ids.strategy_artifact_id
     assert plan["metadata"]["persona_capital_binding_id"] == (
         ids.persona_capital_binding_id
     )
+    assert plan["metadata"]["strategy_spec_registry_id"] == ids.registry_id
+    assert plan["metadata"]["strategy_artifact_id"] == ids.strategy_artifact_id
     assert plan["registry_entry"]["artifact_state"] == "approved"
+    assert plan["registry_entry"]["artifact_type"] == "execution_bundle"
+    assert plan["registry_entry"]["metadata"]["strategy_artifact"]["artifact_id"] == (
+        ids.strategy_artifact_id
+    )
     assert plan["approval_decision"]["decision"] == "approved"
-    assert plan["rollback"]["target_artifact_id"] == ids.baseline_registry_id
+    assert plan["approval_decision"]["target_id"] == ids.strategy_artifact_id
+    assert plan["rollback"]["target_artifact_id"] == ids.baseline_strategy_artifact_id
     assert plan["rollback"]["target_version"] == ids.baseline_version
     assert plan["rollback"]["action_type"] == "pause_then_replace"
 
@@ -430,6 +538,8 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
     dispatch = _post_payload(transport, dispatch_path)
     assert dispatch["saga_id"] == ids.deployment_saga_id
     assert dispatch["metadata"]["persona_capital_binding_id"] == ids.persona_capital_binding_id
+    assert dispatch["registry_entry"]["registry_id"] == ids.strategy_artifact_id
+    assert dispatch["registry_entry"]["artifact_type"] == "execution_bundle"
     assert "runtime_id" not in dispatch
     assert "runtime_binding_id" not in dispatch
     assert {call[1] for call in transport.calls} == {
@@ -451,6 +561,8 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
         read_path = create_read_paths.get(path, path)
         if path == "/api/registry/strategy-specs":
             read_path = f"/api/registry/strategy-specs/{payload['registry_id']}"
+        elif path == "/api/registry/strategy-artifacts":
+            read_path = f"/api/registry/strategy-artifacts/{payload['registry_id']}"
         elif path == "/api/governance/approvals":
             read_path = f"/api/governance/approvals/{payload['decision_id']}"
         if path.endswith("/review") or path.endswith("/decide") or path.endswith("/advance"):
@@ -480,7 +592,11 @@ def test_mutation_payloads_parse_with_authoritative_owner_wire_models() -> None:
         DecideRequest,
         ProposeApprovalRequest,
     )
-    from services.registry.service import AdvanceRequest, StrategySpecRegisterRequest
+    from services.registry.service import (
+        AdvanceRequest,
+        StrategyArtifactRegisterRequest,
+        StrategySpecRegisterRequest,
+    )
 
     store, record = _record_and_store()
     ids = deterministic_provisioning_ids(record)
@@ -511,9 +627,30 @@ def test_mutation_payloads_parse_with_authoritative_owner_wire_models() -> None:
             )
         )
 
+    for registry_id in (
+        ids.baseline_strategy_artifact_id,
+        ids.strategy_artifact_id,
+    ):
+        artifact_registration = StrategyArtifactRegisterRequest(
+            **_post_payload(
+                transport,
+                "/api/registry/strategy-artifacts",
+                identity=("registry_id", registry_id),
+            )
+        )
+        validate_strategy_artifact(artifact_registration.strategy_artifact)
+        AdvanceRequest(
+            **_post_payload(
+                transport,
+                f"/api/registry/strategy-artifacts/{registry_id}/advance",
+            )
+        )
+
     for decision_id in (
         ids.baseline_approval_decision_id,
+        ids.baseline_strategy_artifact_approval_decision_id,
         ids.approval_decision_id,
+        ids.strategy_artifact_approval_decision_id,
     ):
         ProposeApprovalRequest(
             **_post_payload(
@@ -547,9 +684,10 @@ def test_mutation_payloads_parse_with_authoritative_owner_wire_models() -> None:
         )
     )
     assert plan.rollback is not None
-    assert plan.rollback.target_artifact_id == ids.baseline_registry_id
+    assert plan.rollback.target_artifact_id == ids.baseline_strategy_artifact_id
     assert plan.rollback.target_version == ids.baseline_version
     assert plan.binding_id is None
+    assert plan.registry_entry["artifact_type"] == "execution_bundle"
     assert dispatch.saga_id == ids.deployment_saga_id
 
     governance_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "governance"))
@@ -591,8 +729,13 @@ def test_response_loss_restart_and_duplicate_converge_without_duplicate_mutation
         response_loss={
             "/api/capital-pools",
             "/api/registry/strategy-specs",
+            "/api/registry/strategy-artifacts",
             "/api/governance/approvals",
             f"/api/registry/strategy-specs/{ids.baseline_registry_id}/advance",
+            (
+                "/api/registry/strategy-artifacts/"
+                f"{ids.baseline_strategy_artifact_id}/advance"
+            ),
             "/api/bindings",
             dispatch_path,
         }
