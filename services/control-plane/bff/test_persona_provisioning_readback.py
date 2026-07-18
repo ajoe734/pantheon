@@ -1,6 +1,8 @@
 """Fail-closed tests for Persona provisioning authoritative readback."""
 from __future__ import annotations
 
+import json
+import sys
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -120,6 +122,39 @@ def _schedule_readback(
         "schedule": {"kind": "cron", "expr": "*/15 * * * *"},
         "session_target": persona_id,
         "observed_at": _now(),
+    }
+
+
+def _first_evaluation_job_fixture(
+    *,
+    persona_id: str = PERSONA_ID,
+    runtime_id: str = RUNTIME_ID,
+    runtime_binding_id: str = RUNTIME_BINDING_ID,
+    capital_pool_id: str = "pool-dynamic-alpha",
+    persona_capital_binding_id: str = PERSONA_CAPITAL_BINDING_ID,
+) -> dict[str, Any]:
+    event = {
+        "kind": "pantheon.workflow.dispatch",
+        "persona_id": persona_id,
+        "policy_id": "oc002.cron.persona-first-evaluation",
+        "request_id": f"persona-provisioning:{persona_id}:{FIRST_EVALUATION_WORKFLOW_ID}",
+        "upstream_entrypoint": "evaluation.persona.first",
+        "workflow_id": FIRST_EVALUATION_WORKFLOW_ID,
+        "runtime_id": runtime_id,
+        "runtime_binding_id": runtime_binding_id,
+        "capital_pool_id": capital_pool_id,
+        "persona_capital_binding_id": persona_capital_binding_id,
+    }
+    return {
+        "id": "job-first-evaluation-delayed",
+        "name": "pantheon-pantheon-persona-first-evaluation-persona-dynamic-alpha",
+        "enabled": True,
+        "deleteAfterRun": False,
+        "schedule": {"kind": "cron", "expr": "*/15 * * * *"},
+        "sessionTarget": persona_id,
+        "wakeMode": "next-heartbeat",
+        "payload": {"kind": "systemEvent", "text": json.dumps(event)},
+        "delivery": {"mode": "none"},
     }
 
 
@@ -280,6 +315,137 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
     monkeypatch.setenv("PANTHEON_PERSONA_HEARTBEAT_MAX_AGE_SECONDS", "90")
     monkeypatch.setenv("PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS", "600")
     return _Harness(read_store, provisioning_store, projection, runtime_client)
+
+
+def test_required_cron_registration_polls_until_authoritative_readback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = object()
+    attempts: list[dict[str, Any]] = []
+    sleeps: list[float] = []
+
+    class _RegistrationResult:
+        def to_dict(self) -> dict[str, Any]:
+            return {"mode": "gateway_rpc", "failed": [], "registered": []}
+
+    class _DelayedReadbackRegistrar:
+        def register_for_persona(
+            self,
+            persona_id: str,
+            capital_pool_id: str | None = None,
+            binding_id: str | None = None,
+            *,
+            workflow_ids: list[str] | None = None,
+            runtime_id: str | None = None,
+            runtime_binding_id: str | None = None,
+            persona_capital_binding_id: str | None = None,
+        ) -> _RegistrationResult:
+            assert persona_id == PERSONA_ID
+            assert capital_pool_id == "pool-dynamic-alpha"
+            assert binding_id is None
+            assert workflow_ids == [FIRST_EVALUATION_WORKFLOW_ID]
+            assert runtime_id == RUNTIME_ID
+            assert runtime_binding_id == RUNTIME_BINDING_ID
+            assert persona_capital_binding_id == PERSONA_CAPITAL_BINDING_ID
+            return _RegistrationResult()
+
+        def _get_runtime(self) -> object:
+            return runtime
+
+        def get_first_evaluation_registration(
+            self,
+            persona_id: str,
+            *,
+            runtime: object | None = None,
+            runtime_id: str | None = None,
+            runtime_binding_id: str | None = None,
+            capital_pool_id: str | None = None,
+            persona_capital_binding_id: str | None = None,
+        ) -> dict[str, Any] | None:
+            attempts.append(
+                {
+                    "persona_id": persona_id,
+                    "runtime": runtime,
+                    "runtime_id": runtime_id,
+                    "runtime_binding_id": runtime_binding_id,
+                    "capital_pool_id": capital_pool_id,
+                    "persona_capital_binding_id": persona_capital_binding_id,
+                }
+            )
+            if len(attempts) < 3:
+                return None
+            return _first_evaluation_job_fixture()
+
+        @staticmethod
+        def _decode_job_event(job: dict[str, Any]) -> dict[str, Any] | None:
+            return json.loads(str(job.get("payload", {}).get("text") or "{}"))
+
+    monkeypatch.setitem(
+        sys.modules,
+        "persona_cron_registrar",
+        SimpleNamespace(PersonaCronRegistrar=_DelayedReadbackRegistrar),
+    )
+    monkeypatch.setenv(
+        "PANTHEON_PERSONA_FIRST_EVALUATION_READBACK_TIMEOUT_SECONDS",
+        "5",
+    )
+    monkeypatch.setenv(
+        "PANTHEON_PERSONA_FIRST_EVALUATION_READBACK_POLL_SECONDS",
+        "0.1",
+    )
+    monkeypatch.setattr(bff_main.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    receipt = bff_main._register_persona_cron_required(
+        PERSONA_ID,
+        "pool-dynamic-alpha",
+        PERSONA_CAPITAL_BINDING_ID,
+        runtime_id=RUNTIME_ID,
+        runtime_binding_id=RUNTIME_BINDING_ID,
+    )
+
+    assert len(attempts) == 3
+    assert len(sleeps) == 2
+    assert all(call["runtime"] is runtime for call in attempts)
+    assert receipt["authoritative_readback"]["registered"] is True
+    assert receipt["authoritative_readback"]["job_id"] == "job-first-evaluation-delayed"
+    assert receipt["authoritative_readback"]["readback_attempts"] == 3
+
+
+def test_required_cron_registration_remains_fail_closed_after_bounded_readback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _RegistrationResult:
+        def to_dict(self) -> dict[str, Any]:
+            return {"mode": "gateway_rpc", "failed": [], "registered": []}
+
+    class _MissingReadbackRegistrar:
+        def register_for_persona(self, *_args: Any, **_kwargs: Any) -> _RegistrationResult:
+            return _RegistrationResult()
+
+        def _get_runtime(self) -> object:
+            return object()
+
+        def get_first_evaluation_registration(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
+
+    monkeypatch.setitem(
+        sys.modules,
+        "persona_cron_registrar",
+        SimpleNamespace(PersonaCronRegistrar=_MissingReadbackRegistrar),
+    )
+    monkeypatch.setenv(
+        "PANTHEON_PERSONA_FIRST_EVALUATION_READBACK_TIMEOUT_SECONDS",
+        "0",
+    )
+
+    with pytest.raises(RuntimeError, match="after 1 attempts"):
+        bff_main._register_persona_cron_required(
+            PERSONA_ID,
+            "pool-dynamic-alpha",
+            PERSONA_CAPITAL_BINDING_ID,
+            runtime_id=RUNTIME_ID,
+            runtime_binding_id=RUNTIME_BINDING_ID,
+        )
 
 
 def _evaluate(

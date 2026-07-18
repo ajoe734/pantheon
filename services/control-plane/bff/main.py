@@ -45199,6 +45199,28 @@ def _try_register_persona_cron(persona_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _persona_first_evaluation_readback_timeout_seconds() -> float:
+    raw = os.getenv(
+        "PANTHEON_PERSONA_FIRST_EVALUATION_READBACK_TIMEOUT_SECONDS",
+        "15",
+    ).strip()
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 15.0
+
+
+def _persona_first_evaluation_readback_poll_seconds() -> float:
+    raw = os.getenv(
+        "PANTHEON_PERSONA_FIRST_EVALUATION_READBACK_POLL_SECONDS",
+        "1",
+    ).strip()
+    try:
+        return max(0.05, float(raw))
+    except (TypeError, ValueError):
+        return 1.0
+
+
 def _register_persona_cron_required(
     persona_id: str,
     capital_pool_id: str,
@@ -45239,20 +45261,42 @@ def _register_persona_cron_required(
     if body.get("failed"):
         raise RuntimeError(f"cron registration failed: {body['failed']}")
     runtime = registrar._get_runtime()
-    authoritative_job = (
-        registrar.get_first_evaluation_registration(
-            persona_id,
-            runtime=runtime,
-            runtime_id=runtime_id,
-            runtime_binding_id=runtime_binding_id,
-            capital_pool_id=capital_pool_id,
-            persona_capital_binding_id=binding_id,
-        )
-        if runtime is not None
-        else None
-    )
+    authoritative_job = None
+    readback_attempts = 0
+    last_readback_error = ""
+    if runtime is not None:
+        timeout_seconds = _persona_first_evaluation_readback_timeout_seconds()
+        poll_seconds = _persona_first_evaluation_readback_poll_seconds()
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            readback_attempts += 1
+            try:
+                authoritative_job = registrar.get_first_evaluation_registration(
+                    persona_id,
+                    runtime=runtime,
+                    runtime_id=runtime_id,
+                    runtime_binding_id=runtime_binding_id,
+                    capital_pool_id=capital_pool_id,
+                    persona_capital_binding_id=binding_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                last_readback_error = str(exc) or exc.__class__.__name__
+                authoritative_job = None
+            if authoritative_job is not None:
+                break
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                break
+            time.sleep(min(poll_seconds, remaining_seconds))
+    else:
+        last_readback_error = "authoritative cron runtime unavailable"
     if authoritative_job is None:
-        raise RuntimeError("first-evaluation schedule failed authoritative readback")
+        suffix = f" after {readback_attempts} attempts"
+        if last_readback_error:
+            suffix = f"{suffix}: {last_readback_error}"
+        raise RuntimeError(
+            f"first-evaluation schedule failed authoritative readback{suffix}"
+        )
     authoritative_event = registrar._decode_job_event(authoritative_job) or {}
     body["authoritative_readback"] = {
         "persona_id": persona_id,
@@ -45267,6 +45311,7 @@ def _register_persona_cron_required(
         "request_id": authoritative_event.get("request_id"),
         "schedule": deepcopy(authoritative_job.get("schedule")),
         "session_target": authoritative_job.get("sessionTarget"),
+        "readback_attempts": readback_attempts,
         "observed_at": utc_now(),
     }
     return body
