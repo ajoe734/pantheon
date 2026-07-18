@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 import uuid
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer
 from unittest.mock import patch
@@ -1273,6 +1274,28 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             "2026-07-14T10:00:00Z",
         )
 
+    def test_runtime_telemetry_emitter_carries_persona_from_binding_metadata(self):
+        binding = self._binding()
+        binding["metadata"] = {
+            "persona_id": "persona-binding-authority",
+            "sponsor_persona_id": "persona-binding-authority",
+        }
+        identity = replace(self._identity(), persona_id=None)
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(binding))
+
+        event = emitter.build_event(
+            "heartbeat",
+            {"heartbeat": 1},
+            metadata={"persona_id": "persona-signal-heuristic"},
+        )
+
+        self.assertIsNotNone(event)
+        self.assertEqual(
+            event["authority_refs"]["persona_id"],
+            "persona-binding-authority",
+        )
+        self.assertEqual(event["metadata"]["persona_id"], "persona-binding-authority")
+
     def test_runtime_telemetry_emitter_build_event_propagates_correlation_envelope(self):
         from services.trade_journey.correlation_envelope import mint_trade_envelope
 
@@ -1433,6 +1456,7 @@ class PaperRuntimeServiceTest(unittest.TestCase):
 
         binding = self._binding()
         binding["tenant_id"] = "tenant-paper"
+        binding["metadata"] = {"persona_id": "persona-paper-ops"}
         now = self._signal()["timestamp"]
         [signal] = build_decision_signals(
             {
@@ -1534,6 +1558,8 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(len({event["event_id"] for event in lifecycle}), 5)
         for event in lifecycle:
             self.assertEqual(str(uuid.UUID(event["event_id"])), event["event_id"])
+            self.assertEqual(event["authority_refs"]["persona_id"], "persona-paper-ops")
+            self.assertEqual(event["metadata"]["persona_id"], "persona-paper-ops")
         self.assertEqual(
             {event["journey_id"] for event in lifecycle},
             {signal["journey_id"]},

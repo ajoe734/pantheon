@@ -103,6 +103,10 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
 def _finite_float(value: Any, *, field: str, positive: bool = False) -> float:
     try:
         result = float(value)
@@ -1768,6 +1772,11 @@ class RuntimeTelemetryEmitter:
         artifact_type = str(os.getenv("PANTHEON_ARTIFACT_TYPE", "execution_bundle"))
         event_metadata = self._base_metadata(binding)
         event_metadata.update(supplied_metadata)
+        authority_refs = self._identity.authority_refs()
+        persona_id = self._resolve_persona_id(binding, event_metadata)
+        if persona_id:
+            authority_refs["persona_id"] = persona_id
+            event_metadata["persona_id"] = persona_id
         incoming_envelope = event_metadata.get("correlation_envelope")
         event_metrics = dict(metrics)
         metric_as_of: str | None = None
@@ -1791,7 +1800,7 @@ class RuntimeTelemetryEmitter:
             "artifact_version": artifact_version,
             "plan_id": plan_id,
             "persona_capital_binding_id": persona_capital_binding_id,
-            "authority_refs": self._identity.authority_refs(),
+            "authority_refs": authority_refs,
             "target": {
                 "registry_id": artifact_id,
                 "strategy_id": strategy_id,
@@ -1889,6 +1898,30 @@ class RuntimeTelemetryEmitter:
                 if price is not None:
                     payload["price"] = price
         return payload
+
+    def _resolve_persona_id(
+        self,
+        binding: Mapping[str, Any],
+        event_metadata: Mapping[str, Any],
+    ) -> str:
+        binding_metadata = (
+            binding.get("metadata") if isinstance(binding.get("metadata"), Mapping) else {}
+        )
+        candidates = (
+            self._identity.persona_id,
+            binding.get("persona_id"),
+            binding.get("sponsor_persona_id"),
+            binding_metadata.get("persona_id"),
+            binding_metadata.get("sponsor_persona_id"),
+            event_metadata.get("persona_id"),
+            event_metadata.get("sponsor_persona_id"),
+            os.getenv("PANTHEON_PERSONA_ID"),
+        )
+        for candidate in candidates:
+            cleaned = _clean_text(candidate)
+            if cleaned:
+                return cleaned
+        return ""
 
     def emit(
         self,

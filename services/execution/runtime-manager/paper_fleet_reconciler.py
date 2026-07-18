@@ -100,6 +100,25 @@ def _binding_state_filename(binding_id: str) -> str:
     return f"{slug}-{digest}.json"
 
 
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _binding_persona_id(binding: Dict[str, Any]) -> str:
+    metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+    candidates = (
+        binding.get("persona_id"),
+        binding.get("sponsor_persona_id"),
+        metadata.get("persona_id"),
+        metadata.get("sponsor_persona_id"),
+    )
+    for candidate in candidates:
+        cleaned = _clean_text(candidate)
+        if cleaned:
+            return cleaned
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Worker entry
 # ---------------------------------------------------------------------------
@@ -391,6 +410,9 @@ class PaperFleetReconciler:
                 ),
             }
         )
+        persona_id = _binding_persona_id(binding)
+        if persona_id:
+            env["PANTHEON_PERSONA_ID"] = persona_id
         if self._url:
             env["PANTHEON_RUNTIME_MANAGER_URL"] = self._url
         if self._token:

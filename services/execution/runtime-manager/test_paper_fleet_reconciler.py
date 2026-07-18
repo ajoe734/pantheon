@@ -220,6 +220,7 @@ class TestPaperFleetReconcilerEnvBuilder(unittest.TestCase):
             artifact_version="2.0.0",
             plan_id="plan-x",
             persona_capital_binding_id="pcb-x",
+            metadata={"persona_id": "persona-x"},
         )
         env = recon._build_worker_env(binding)
         self.assertEqual(env["PANTHEON_RUNTIME_BINDING_ID"], "b-x")
@@ -231,6 +232,7 @@ class TestPaperFleetReconcilerEnvBuilder(unittest.TestCase):
         self.assertEqual(env["PANTHEON_ARTIFACT_VERSION"], "2.0.0")
         self.assertEqual(env["PANTHEON_DEPLOYMENT_PLAN_ID"], "plan-x")
         self.assertEqual(env["PANTHEON_PERSONA_CAPITAL_BINDING_ID"], "pcb-x")
+        self.assertEqual(env["PANTHEON_PERSONA_ID"], "persona-x")
         self.assertEqual(env["PANTHEON_RUNTIME_MANAGER_URL"], "http://rm:8081")
         self.assertEqual(env["PANTHEON_RUNTIME_MANAGER_TOKEN"], "tok")
 

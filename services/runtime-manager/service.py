@@ -839,6 +839,27 @@ class RuntimeManagerService:
                     "authoritative deploy strategy_id."
                 )
             binding_metadata["strategy_id"] = requested_strategy_id
+        sponsor_persona_id = str(request.get("sponsor_persona_id") or "").strip()
+        if sponsor_persona_id:
+            metadata_persona_id = str(binding_metadata.get("persona_id") or "").strip()
+            if metadata_persona_id and metadata_persona_id != sponsor_persona_id:
+                raise RuntimeManagerError(
+                    "RuntimeBinding metadata.persona_id conflicts with the "
+                    "authoritative deploy sponsor_persona_id."
+                )
+            metadata_sponsor_persona_id = str(
+                binding_metadata.get("sponsor_persona_id") or ""
+            ).strip()
+            if (
+                metadata_sponsor_persona_id
+                and metadata_sponsor_persona_id != sponsor_persona_id
+            ):
+                raise RuntimeManagerError(
+                    "RuntimeBinding metadata.sponsor_persona_id conflicts with "
+                    "the authoritative deploy sponsor_persona_id."
+                )
+            binding_metadata["persona_id"] = sponsor_persona_id
+            binding_metadata["sponsor_persona_id"] = sponsor_persona_id
 
         safe_mode = self._kill_switch.safe_mode_for(capital_pool_id).value
         if (
