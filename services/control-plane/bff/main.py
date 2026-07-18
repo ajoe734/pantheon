@@ -45541,6 +45541,7 @@ async def bff_reconcile_persona_provisioning(
         routed_strategies=_routed_strategies_for_persona(persona_id),
         evaluate_provisioning=False,
     )
+    authoritative_meta = _persona_provisioning_authoritative_meta(raw)
     return {
         "data": dto,
         "meta": {
@@ -45549,6 +45550,7 @@ async def bff_reconcile_persona_provisioning(
             "lifecycle_state": state,
             "status": "degraded" if diagnostics else "ok",
             "degraded_dependencies": sorted(set(diagnostics)),
+            "authoritative_readback": authoritative_meta,
         },
     }
 
@@ -46262,6 +46264,60 @@ def _persona_catalog_fallback_surface(snapshot_at: str) -> Dict[str, Any]:
         "coverage": 1.0,
         "missing_bindings": False,
     }
+
+
+def _persona_provisioning_authoritative_meta(raw: Mapping[str, Any]) -> Dict[str, Any]:
+    metadata = raw.get("metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    readback = metadata.get("provisioning_authoritative_readback")
+    readback = readback if isinstance(readback, Mapping) else {}
+    schedule = readback.get("first_evaluation_schedule")
+    schedule = schedule if isinstance(schedule, Mapping) else {}
+    runtime_binding = readback.get("runtime_binding")
+    runtime_binding = runtime_binding if isinstance(runtime_binding, Mapping) else {}
+    paper_worker = readback.get("paper_worker")
+    paper_worker = paper_worker if isinstance(paper_worker, Mapping) else {}
+
+    result: Dict[str, Any] = {
+        "available": bool(readback),
+        "observed_at": readback.get("observed_at"),
+    }
+    if runtime_binding:
+        result["runtime_binding"] = {
+            "runtime_binding_id": (
+                runtime_binding.get("runtime_binding_id")
+                or runtime_binding.get("binding_id")
+                or runtime_binding.get("id")
+            ),
+            "runtime_id": runtime_binding.get("runtime_id"),
+            "plan_id": runtime_binding.get("plan_id"),
+            "status": runtime_binding.get("status") or runtime_binding.get("state"),
+        }
+    if paper_worker:
+        result["paper_worker"] = {
+            "session_id": paper_worker.get("session_id") or paper_worker.get("id"),
+            "runtime_id": paper_worker.get("runtime_id"),
+            "runtime_binding_id": (
+                paper_worker.get("runtime_binding_id")
+                or paper_worker.get("binding_id")
+            ),
+            "status": paper_worker.get("status"),
+            "last_heartbeat_at": paper_worker.get("last_heartbeat_at"),
+        }
+    if schedule:
+        result["first_evaluation_schedule"] = {
+            "persona_id": schedule.get("persona_id"),
+            "workflow_id": schedule.get("workflow_id"),
+            "registered": schedule.get("registered"),
+            "job_id": schedule.get("job_id"),
+            "job_name": schedule.get("job_name"),
+            "request_id": schedule.get("request_id"),
+            "runtime_id": schedule.get("runtime_id"),
+            "runtime_binding_id": schedule.get("runtime_binding_id"),
+            "capital_pool_id": schedule.get("capital_pool_id"),
+            "persona_capital_binding_id": schedule.get("persona_capital_binding_id"),
+        }
+    return result
 
 
 @app.get("/bff/personas/{persona_id}")

@@ -207,6 +207,20 @@ def body_meta(response: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def reconcile_meta_ok(meta: dict[str, Any]) -> bool:
+    return (
+        meta.get("status") == "ok"
+        and not meta.get("degraded_dependencies")
+    )
+
+
+def first_evaluation_schedule_meta(meta: dict[str, Any]) -> dict[str, Any]:
+    readback = meta.get("authoritative_readback")
+    readback = readback if isinstance(readback, dict) else {}
+    schedule = readback.get("first_evaluation_schedule")
+    return schedule if isinstance(schedule, dict) else {}
+
+
 def error_reason(response: dict[str, Any]) -> str | None:
     payload = response.get("json")
     if not isinstance(payload, dict):
@@ -579,10 +593,49 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
     final_data = body_data(final_reconcile or {}) or body_data(final_detail or {})
     if final_detail is not None and body_data(final_detail).get("state") == "paper_running":
         final_data = body_data(final_detail)
+    final_meta = body_meta(final_reconcile or {})
+    if final_data.get("state") == "paper_running" and not reconcile_meta_ok(final_meta):
+        replay = append_call(
+            evidence,
+            "persona_terminal_reconcile_replay",
+            request_json_with_retries(
+                "POST",
+                f"{base_url}/bff/personas/{persona_id}/provisioning/reconcile",
+                token=token,
+                attempts=3,
+                retry_delay_seconds=5,
+                timeout=120,
+            ),
+        )
+        replay_data = body_data(replay)
+        replay_meta = body_meta(replay)
+        evidence["polls"].append(
+            {
+                "attempt": attempt + 1,
+                "phase": "terminal_reconcile_replay",
+                "reconcile_status": replay.get("status"),
+                "detail_status": (final_detail or {}).get("status"),
+                "state": replay_data.get("state") or final_data.get("state"),
+                "runtimeId": replay_data.get("runtimeId") or final_data.get("runtimeId"),
+                "runtimeBindingId": (
+                    replay_data.get("runtimeBindingId")
+                    or final_data.get("runtimeBindingId")
+                ),
+                "deploymentPlanId": (
+                    replay_data.get("deploymentPlanId")
+                    or final_data.get("deploymentPlanId")
+                ),
+                "reconcile_meta": replay_meta,
+                "observed_at": utc_now(),
+            }
+        )
+        if replay_data.get("state") == "paper_running" and reconcile_meta_ok(replay_meta):
+            final_reconcile = replay
+            final_data = replay_data
+            final_meta = replay_meta
     runtime_id = str(final_data.get("runtimeId") or "")
     runtime_binding_id = str(final_data.get("runtimeBindingId") or "")
     deployment_plan_id = str(final_data.get("deploymentPlanId") or "")
-    final_meta = body_meta(final_reconcile or {})
     check(
         evidence,
         "persona.reconcile_terminal_paper_running",
@@ -726,16 +779,24 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
     capability_data = body_data(capabilities)
     effective_workflows = capability_data.get("effectiveWorkflows") or []
     create_meta = body_meta(create)
+    schedule_meta = first_evaluation_schedule_meta(final_meta)
     check(
         evidence,
         "first_evaluation_schedule.readback_gated_final_state",
         final_data.get("state") == "paper_running"
-        and final_meta.get("status") == "ok"
-        and create_meta.get("first_evaluation_workflow_id") == FIRST_EVALUATION_WORKFLOW_ID,
+        and reconcile_meta_ok(final_meta)
+        and create_meta.get("first_evaluation_workflow_id") == FIRST_EVALUATION_WORKFLOW_ID
+        and schedule_meta.get("workflow_id") == FIRST_EVALUATION_WORKFLOW_ID
+        and schedule_meta.get("registered") is True
+        and isinstance(schedule_meta.get("job_id"), str)
+        and bool(schedule_meta["job_id"].strip())
+        and schedule_meta.get("runtime_id") == runtime_id
+        and schedule_meta.get("runtime_binding_id") == runtime_binding_id,
         {
             "workflow_id": FIRST_EVALUATION_WORKFLOW_ID,
             "create_meta_workflow_id": create_meta.get("first_evaluation_workflow_id"),
             "reconcile_meta": final_meta,
+            "schedule_meta": schedule_meta,
             "effective_workflows": effective_workflows,
             "evaluations_status": evaluations.get("status"),
             "runtime_profile_status": runtime_profile.get("status"),

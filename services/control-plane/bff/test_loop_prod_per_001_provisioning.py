@@ -228,7 +228,7 @@ def test_persona_provisioning_completes_upon_readback_success() -> None:
             persona_id = data["id"]
             assert "runtimeBindingId" not in data
             assert "runtimeId" not in data
-            _install_authoritative_readback(
+            runtime_binding_id, runtime_id = _install_authoritative_readback(
                 persona_id=persona_id,
                 plan_id=data["deploymentPlanId"],
                 saga_id=resp.json()["meta"]["deployment_saga_id"],
@@ -247,7 +247,15 @@ def test_persona_provisioning_completes_upon_readback_success() -> None:
                 headers=HEADERS,
             )
             assert reconciled.status_code == 200, reconciled.text
-            assert reconciled.json()["data"]["state"] == "paper_running"
+            reconciled_body = reconciled.json()
+            assert reconciled_body["data"]["state"] == "paper_running"
+            authoritative = reconciled_body["meta"]["authoritative_readback"]
+            assert authoritative["available"] is True
+            schedule = authoritative["first_evaluation_schedule"]
+            assert schedule["workflow_id"] == "pantheon.persona.first-evaluation"
+            assert schedule["registered"] is True
+            assert schedule["runtime_id"] == runtime_id
+            assert schedule["runtime_binding_id"] == runtime_binding_id
 
             # Check store to verify the status is persisted (restart-safe)
             persisted = bff_main.read_store.get_persona(persona_id)
