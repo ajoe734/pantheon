@@ -271,9 +271,9 @@ python3 scripts/ai_status.py show OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002
 
 **Result:** The command succeeded and printed the correct central task state (showing status `in_progress`), bypassing the stale local `ai-status.json` file completely.
 
-### 6c. Positive Binding & Write (progress) Path
+### 6c. Positive Binding & Write (progress & note) Paths
 
-Executed `scripts/ai_status.py progress` from the stale worktree:
+1. Executed `scripts/ai_status.py progress` from the stale worktree:
 ```bash
 AI_NAME=Antigravity \
 PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon \
@@ -284,6 +284,21 @@ python3 scripts/ai_status.py progress OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE
 ```
 
 **Result:** The command completed successfully.
+
+2. Executed `scripts/ai_status.py note` from the task worktree:
+```bash
+AI_NAME=Antigravity \
+PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon \
+PANTHEON_WORKTREE_ROOT=/tmp/pantheon-worker-worktrees/pantheon/ops-worktree-central-status-root-postmerge-002 \
+ORCH_RUN_ID=proof-test-antigravity-note-001 \
+python3 scripts/ai_status.py note OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002 \
+"Antigravity verified positive note path write isolation"
+```
+
+**Result:** The command completed successfully and was appended to the central activity log:
+```json
+{"ts": "2026-07-18T04:04:09Z", "agent": "Antigravity", "type": "note", "task_id": "OPS-WORKTREE-CENTRAL-STATUS-ROOT-POSTMERGE-002", "message": "Antigravity verified positive note path write isolation", "event_id": "ai-status-event-d718f27cf6e2655828bcfa4b2f6af49d59b6fa4c39cb7bf3a74b3e47b7df022c"}
+```
 
 ### 6d. Proof of Write Isolation
 
@@ -335,4 +350,3 @@ This proves that mutations from the isolated worktree are correctly routed to th
 git worktree remove --force /tmp/pantheon-disposable-worktrees/postmerge-002-proof-antigravity
 ```
 Verified that the worktree was cleanly removed from the repository metadata.
-
