@@ -54,6 +54,17 @@ def _success_getter(binding: dict, *, now_iso: str):
     def get_json(url: str, **_kwargs):
         if "desired-state" in url:
             return {"bindings": [binding]}
+        if "api/fleet/state" in url:
+            return {
+                "workers": [
+                    {
+                        "binding_id": binding["binding_id"],
+                        "runtime_id": binding["runtime_id"],
+                        "capital_pool_id": binding["capital_pool_id"],
+                        "status": "running",
+                    }
+                ]
+            }
         if "runtime-summaries" in url:
             return {"summaries": [_summary(binding, run_id=run_id)]}
         raise AssertionError(f"unexpected GET {url}")
@@ -94,6 +105,7 @@ def _run(
         output=tmp_path / "stimulus.json",
         runtime_manager_url="http://runtime-manager:8081",
         runtime_manager_token="test-token",
+        paper_fleet_reconciler_url="http://paper-fleet-reconciler:8011",
         telemetry_url="http://telemetry:8083",
         reconciliation_url="http://reconciliation-drift-svc:8102",
         signal_store_url="redis://signal-store:6379",
@@ -140,13 +152,47 @@ def test_stimulus_enqueues_waits_for_runtime_lifecycle_and_reconciles(tmp_path):
 
 def test_stimulus_fails_when_no_active_paper_binding_is_available(tmp_path):
     def get_json(url: str, **_kwargs):
-        assert "desired-state" in url
-        return {"bindings": [_binding(status="paused")]}
+        if "desired-state" in url:
+            return {"bindings": [_binding(status="paused")]}
+        if "api/fleet/state" in url:
+            return {"workers": []}
+        raise AssertionError(f"unexpected GET {url}")
 
     code, artifact, store, posts = _run(tmp_path, get_json=get_json)
 
     assert code == 1
     assert artifact["failure"]["code"] == "no_active_paper_binding"
+    assert store.enqueued == []
+    assert posts == []
+
+
+def test_stimulus_fails_when_no_running_worker_can_consume_the_binding(tmp_path):
+    binding = _binding()
+
+    def get_json(url: str, **_kwargs):
+        if "desired-state" in url:
+            return {"bindings": [binding]}
+        if "api/fleet/state" in url:
+            return {
+                "workers": [
+                    {
+                        "binding_id": binding["binding_id"],
+                        "runtime_id": binding["runtime_id"],
+                        "capital_pool_id": binding["capital_pool_id"],
+                        "status": "dead",
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected GET {url}")
+
+    code, artifact, store, posts = _run(
+        tmp_path,
+        binding=binding,
+        get_json=get_json,
+    )
+
+    assert code == 1
+    assert artifact["failure"]["code"] == "no_running_paper_worker"
     assert store.enqueued == []
     assert posts == []
 

@@ -154,6 +154,29 @@ def fetch_active_paper_bindings(
     return [dict(item) for item in bindings if isinstance(item, Mapping)]
 
 
+def fetch_running_paper_workers(
+    paper_fleet_reconciler_url: str,
+    *,
+    http_get_json: JsonGetter = _http_get_json,
+) -> list[dict[str, Any]]:
+    url = paper_fleet_reconciler_url.rstrip("/") + "/api/fleet/state"
+    try:
+        payload = http_get_json(url, timeout=10.0)
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        raise _http_error(
+            "paper_fleet_reconciler_unavailable",
+            "paper fleet reconciler state query failed",
+            exc,
+        )
+    workers = payload.get("workers")
+    if not isinstance(workers, list):
+        raise StimulusError(
+            "paper_fleet_reconciler_response_invalid",
+            "paper fleet reconciler state response was malformed",
+        )
+    return [dict(item) for item in workers if isinstance(item, Mapping)]
+
+
 def _binding_stage(binding: Mapping[str, Any]) -> str:
     metadata = binding.get("metadata") if isinstance(binding.get("metadata"), Mapping) else {}
     return _clean(
@@ -164,15 +187,53 @@ def _binding_stage(binding: Mapping[str, Any]) -> str:
     ).lower()
 
 
-def select_active_paper_binding(bindings: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def _running_worker_by_binding(
+    workers: Sequence[Mapping[str, Any]],
+) -> dict[str, Mapping[str, Any]]:
+    running: dict[str, Mapping[str, Any]] = {}
+    for worker in workers:
+        binding_id = _clean(worker.get("binding_id"))
+        if not binding_id:
+            continue
+        if _clean(worker.get("status")).lower() != "running":
+            continue
+        running[binding_id] = worker
+    return running
+
+
+def select_active_paper_binding(
+    bindings: Sequence[Mapping[str, Any]],
+    *,
+    running_workers: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    running_by_binding = (
+        _running_worker_by_binding(running_workers)
+        if running_workers is not None
+        else None
+    )
+    active_paper_binding_seen = False
     for binding in bindings:
         if _clean(binding.get("status")).lower() != "active":
             continue
         if _binding_stage(binding) != "paper":
             continue
+        active_paper_binding_seen = True
         if any(not _clean(binding.get(field)) for field in _REQUIRED_BINDING_FIELDS):
             continue
+        if running_by_binding is not None:
+            worker = running_by_binding.get(_clean(binding.get("binding_id")))
+            if worker is None:
+                continue
+            if _clean(worker.get("runtime_id")) != _clean(binding.get("runtime_id")):
+                continue
+            if _clean(worker.get("capital_pool_id")) != _clean(binding.get("capital_pool_id")):
+                continue
         return dict(binding)
+    if active_paper_binding_seen and running_by_binding is not None:
+        raise StimulusError(
+            "no_running_paper_worker",
+            "no active paper binding had a running paper runtime worker",
+        )
     raise StimulusError(
         "no_active_paper_binding",
         "no active paper binding with complete lifecycle identity was available",
@@ -363,6 +424,7 @@ def run_stimulus(
     *,
     runtime_manager_url: str,
     runtime_manager_token: str | None,
+    paper_fleet_reconciler_url: str,
     telemetry_url: str,
     reconciliation_url: str,
     signal_store_url: str,
@@ -382,7 +444,14 @@ def run_stimulus(
         runtime_manager_token,
         http_get_json=http_get_json,
     )
-    binding = select_active_paper_binding(bindings)
+    workers = fetch_running_paper_workers(
+        paper_fleet_reconciler_url,
+        http_get_json=http_get_json,
+    )
+    binding = select_active_paper_binding(
+        bindings,
+        running_workers=workers,
+    )
     if store_factory is None:
         store_factory = _default_store_factory(signal_store_url)
     now_iso = now_factory()
@@ -393,7 +462,7 @@ def run_stimulus(
         quantity=quantity,
         symbol=symbol,
     )
-    summary, identity = wait_for_lifecycle_summary(
+    _summary, identity = wait_for_lifecycle_summary(
         telemetry_url=telemetry_url,
         binding=binding,
         run_id=enqueued["run_id"],
@@ -501,6 +570,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--paper-fleet-reconciler-url",
+        default=os.getenv(
+            "PANTHEON_PAPER_FLEET_RECONCILER_URL",
+            "http://paper-fleet-reconciler:8011",
+        ),
+    )
+    parser.add_argument(
         "--reconciliation-url",
         default=os.getenv("RECONCILIATION_DRIFT_URL", "http://reconciliation-drift-svc:8102"),
     )
@@ -513,6 +589,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         output=args.output,
         runtime_manager_url=args.runtime_manager_url,
         runtime_manager_token=os.getenv("PANTHEON_RUNTIME_MANAGER_TOKEN", "").strip() or None,
+        paper_fleet_reconciler_url=args.paper_fleet_reconciler_url,
         telemetry_url=args.telemetry_url,
         reconciliation_url=args.reconciliation_url,
         signal_store_url=args.signal_store_url,
