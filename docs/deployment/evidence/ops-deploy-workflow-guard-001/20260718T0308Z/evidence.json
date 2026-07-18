@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-DEPLOY-WORKFLOW-GUARD-001",
+  "captured_at": "2026-07-18T03:08:00Z",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "pull_request": 3817,
+  "implementation_anchor": "625ceb21d524669aaf8a55c78c06422d85bb5185",
+  "composed_head_before_ci_order_fix": "3aa60ed15a1e72353ce882d6e00070ded0a7fa8c",
+  "shared_workflows": {
+    "ajoe734/pantheon#269991390": "active",
+    "ajoe734/execute-plans#292028803": "active"
+  },
+  "validation": {
+    "isolated_smoke": "passed",
+    "shared_deploy_policy_suite": "30 passed, 12 subtests passed",
+    "adapter_fallback_policy": "14 passed",
+    "orchestrator_common": "90 passed",
+    "instruction_scan": "passed",
+    "diff_check": "passed"
+  },
+  "ci_ordering_correction": {
+    "failed_runs": [
+      29628222918,
+      29628224179
+    ],
+    "root_cause": "shared deploy pytest suite ran before Stage-0 installed pytest",
+    "fix": "run dependency-free instruction scan first and executable policy tests after Stage-0 baseline",
+    "post_fix_isolated_smoke": "passed"
+  },
+  "stop_gate": {
+    "open": false,
+    "missing_corrective_review": {
+      "merge_commit": "f9875d6f87905e4900edfd4deb218fa65c3b1c3f",
+      "final_head_artifact_commit": "e07001009f6e4799b14721d083bba1416c82c38a"
+    },
+    "failed_pantheon_proof": 29626781890,
+    "failed_proof_reason": "managed dev checkout had unrelated dirty planning files; hosted probes skipped",
+    "preserved_execute_plans_success": 29500642299,
+    "next_proof": "Pantheon only, after exact corrective review and remote checkout reconciliation"
+  },
+  "mutations": {
+    "proof_dispatched": false,
+    "workflow_state_changed": false,
+    "run_cancelled": false,
+    "auto_merge_enabled": false
+  }
+}
