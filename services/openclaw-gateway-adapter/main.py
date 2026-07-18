@@ -47,6 +47,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import time
 import uuid
 import urllib.error
 import urllib.request
@@ -1578,6 +1579,11 @@ def invoke_openclaw_provider(
         try:
             _assert_persona_opinion_admitted(req.persona_admission)
             _assert_persona_opinion_runtime_policy(req.persona_admission.agent_id)
+            _require_live_persona_opinion_agent(req.persona_admission.agent_id)
+        except _PersonaOpinionAgentNotReady as exc:
+            return _persona_opinion_agent_not_ready_response(exc)
+        except GatewayOpenClawProviderError as exc:
+            return _persona_opinion_gateway_error_response(exc)
         except (ValueError, RuntimeError) as exc:
             return JSONResponse(
                 status_code=403,
@@ -2258,6 +2264,105 @@ _PERSONA_OPINION_RUNTIME_POLICY = {
 }
 
 
+def _bounded_float_env(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)).strip())
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+_PERSONA_OPINION_AGENT_READY_TIMEOUT_SECONDS = _bounded_float_env(
+    "PANTHEON_PERSONA_OPINION_AGENT_READY_TIMEOUT_SECONDS",
+    15.0,
+    minimum=0.1,
+    maximum=60.0,
+)
+_PERSONA_OPINION_AGENT_READY_POLL_SECONDS = _bounded_float_env(
+    "PANTHEON_PERSONA_OPINION_AGENT_READY_POLL_SECONDS",
+    0.25,
+    minimum=0.01,
+    maximum=1.0,
+)
+
+
+class _PersonaOpinionAgentNotReady(RuntimeError):
+    pass
+
+
+def _live_persona_opinion_agent(agent_id: str) -> Optional[Dict[str, Any]]:
+    return next(
+        (
+            item
+            for item in _OPENCLAW_AGENT_PROVIDER.gateway_agents_list()
+            if str(item.get("id") or "") == agent_id
+        ),
+        None,
+    )
+
+
+def _require_live_persona_opinion_agent(agent_id: str) -> Dict[str, Any]:
+    agent = _live_persona_opinion_agent(agent_id)
+    if agent is None:
+        raise _PersonaOpinionAgentNotReady(
+            f"Governed Persona agent {agent_id} is not visible in the live OpenClaw gateway registry."
+        )
+    return agent
+
+
+def _wait_for_live_persona_opinion_agent(
+    agent_id: str,
+    *,
+    timeout_seconds: Optional[float] = None,
+    poll_seconds: Optional[float] = None,
+    clock: Any = time.monotonic,
+    sleeper: Any = time.sleep,
+) -> Dict[str, Any]:
+    """Bound config reconciliation on the gateway's live agent registry."""
+
+    timeout = (
+        _PERSONA_OPINION_AGENT_READY_TIMEOUT_SECONDS
+        if timeout_seconds is None
+        else max(0.0, float(timeout_seconds))
+    )
+    poll = (
+        _PERSONA_OPINION_AGENT_READY_POLL_SECONDS
+        if poll_seconds is None
+        else max(0.001, float(poll_seconds))
+    )
+    deadline = clock() + timeout
+    while True:
+        agent = _live_persona_opinion_agent(agent_id)
+        if agent is not None:
+            return agent
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise _PersonaOpinionAgentNotReady(
+                f"Governed Persona agent {agent_id} was not visible in the live OpenClaw gateway "
+                f"registry within {timeout:g} seconds."
+            )
+        sleeper(min(poll, remaining))
+
+
+def _persona_opinion_agent_not_ready_response(exc: _PersonaOpinionAgentNotReady) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={
+            "status": "upstream_unavailable",
+            "error_code": "PERSONA_OPINION_AGENT_NOT_READY",
+            "message": str(exc),
+            "retryable": True,
+        },
+    )
+
+
+def _persona_opinion_gateway_error_response(exc: GatewayOpenClawProviderError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={**exc.to_payload(), "retryable": exc.status_code >= 500},
+    )
+
+
 def _persona_opinion_runtime_agent(agent_id: str) -> Dict[str, Any]:
     proc = _gateway_state_agent_runner(["openclaw", "config", "get", "agents.list", "--json"])
     if proc.returncode != 0:
@@ -2419,6 +2524,7 @@ def _ensure_agent_idempotently(
     sync_fn: Optional[Any] = None,
     preflight_fn: Optional[Any] = None,
     commit_fn: Optional[Any] = None,
+    postcondition_fn: Optional[Any] = None,
 ) -> tuple[int, Dict[str, Any]]:
     """Serialize reconciliation and durably replay an exact request.
 
@@ -2464,10 +2570,14 @@ def _ensure_agent_idempotently(
                     "Idempotency-Key was already used with a different agent request"
                 )
             payload = json.loads(str(replay_json))
+            if postcondition_fn is not None:
+                postcondition_fn(req)
             connection.commit()
             return int(replay_status), payload
 
         agent = (sync_fn or _sync_servant_agent)(req)
+        if postcondition_fn is not None:
+            postcondition_fn(req)
         status_code = 201 if agent.get("status") == "created" else 200
         payload = {
             "status": "ok",
@@ -2647,8 +2757,13 @@ def ensure_persona_opinion_agent(
             sync_fn=_sync_persona_opinion_agent,
             preflight_fn=_preflight_persona_opinion_admission,
             commit_fn=_commit_persona_opinion_admission,
+            postcondition_fn=lambda request: _wait_for_live_persona_opinion_agent(request.agent_id),
         )
         fingerprint = _persona_admission_fingerprint(req.model_dump(mode="json"))
+    except _PersonaOpinionAgentNotReady as exc:
+        return _persona_opinion_agent_not_ready_response(exc)
+    except GatewayOpenClawProviderError as exc:
+        return _persona_opinion_gateway_error_response(exc)
     except _AgentEnsureIdempotencyConflict as exc:
         return JSONResponse(
             status_code=409,

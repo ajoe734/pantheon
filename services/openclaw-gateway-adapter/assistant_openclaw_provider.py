@@ -366,6 +366,24 @@ class AssistantOpenClawProvider:
                 status_code=403,
                 error_code="OPENCLAW_GATEWAY_METHOD_FORBIDDEN",
             )
+        return self._gateway_call(method, params)
+
+    def gateway_agents_list(self) -> List[Dict[str, Any]]:
+        """Read the gateway's live agent registry without widening the cron proxy."""
+
+        payload = self._gateway_call("agents.list")
+        agents = payload.get("agents") if isinstance(payload, dict) else None
+        if not isinstance(agents, list) or any(not isinstance(item, dict) for item in agents):
+            raise OpenClawProviderError(
+                "openclaw gateway agents.list returned an invalid payload.",
+                status_code=502,
+                error_code="OPENCLAW_GATEWAY_SERIALIZATION_FAILURE",
+            )
+        return agents
+
+    def _gateway_call(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Call one adapter-owned gateway RPC after the public method allowlist."""
+
         binary = self._openclaw_bin()
         if not binary:
             raise OpenClawProviderError(

@@ -131,6 +131,42 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertIn("--token", cmd)
         self.assertIn("--params", cmd)
 
+    def test_gateway_agents_list_reads_only_the_live_registry(self) -> None:
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, **_kw):
+            captured.append(list(cmd))
+
+            class R:
+                returncode = 0
+                stdout = '{"agents":[{"id":"main"},{"id":"persona-opinion-a"}]}'
+                stderr = ""
+
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+
+        self.assertEqual(
+            provider.gateway_agents_list(),
+            [{"id": "main"}, {"id": "persona-opinion-a"}],
+        )
+        self.assertEqual(captured[0][1:4], ["gateway", "call", "agents.list"])
+        self.assertNotIn("--params", captured[0])
+
+    def test_gateway_agents_list_rejects_invalid_live_payload(self) -> None:
+        def fake_run(_cmd, **_kw):
+            class R:
+                returncode = 0
+                stdout = '{"agents":"not-a-list"}'
+                stderr = ""
+
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        with self.assertRaises(OpenClawProviderError) as ctx:
+            provider.gateway_agents_list()
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_SERIALIZATION_FAILURE")
+
     def test_gateway_cron_update_forwards_command_and_params_unchanged(self) -> None:
         captured: list[list[str]] = []
 
