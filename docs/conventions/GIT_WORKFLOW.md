@@ -489,7 +489,10 @@ reports (and, with `--enable`, restores) any watched workflow found in
 `disabled_manually` state. Wire it into cron the same way as
 `scripts/reap_hung_workers.py` (see the `pantheon-hung-worker-reap` cron
 line) so a stray disable cannot silently freeze the fleet's deploy path
-until a human happens to notice.
+until a human happens to notice. An unreadable workflow state (missing `gh`,
+timeout, API error, malformed response, or missing `state`) is also a non-zero
+observation failure; it is never treated as healthy, and `--enable` only acts
+on a confirmed `disabled_manually` response.
 
 ---
 

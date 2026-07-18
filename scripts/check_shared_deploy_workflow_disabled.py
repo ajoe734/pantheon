@@ -35,8 +35,8 @@ WATCHED_WORKFLOWS = (
 )
 
 
-def workflow_state(repo: str, workflow_id: str) -> str | None:
-    """Return the workflow's `state` field, or None if it cannot be read."""
+def workflow_state(repo: str, workflow_id: str) -> tuple[str | None, str | None]:
+    """Return ``(state, error)`` without treating an unreadable state as healthy."""
     try:
         out = subprocess.run(
             ["gh", "api", f"repos/{repo}/actions/workflows/{workflow_id}"],
@@ -44,16 +44,20 @@ def workflow_state(repo: str, workflow_id: str) -> str | None:
             text=True,
             timeout=30,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
+    except FileNotFoundError:
+        return None, "gh-cli-not-found"
+    except subprocess.TimeoutExpired:
+        return None, "api-timeout"
     if out.returncode != 0:
-        return None
+        return None, f"api-exit-{out.returncode}"
     try:
         payload = json.loads(out.stdout)
     except json.JSONDecodeError:
-        return None
+        return None, "invalid-json"
     state = payload.get("state")
-    return state if isinstance(state, str) else None
+    if not isinstance(state, str) or not state:
+        return None, "missing-state"
+    return state, None
 
 
 def enable_workflow(repo: str, workflow_id: str) -> bool:
@@ -70,12 +74,22 @@ def enable_workflow(repo: str, workflow_id: str) -> bool:
 
 
 def check(workflows=WATCHED_WORKFLOWS) -> list[dict]:
-    """Return one record per watched workflow currently `disabled_manually`."""
+    """Return disabled workflows and state-observation failures."""
     findings = []
     for repo, workflow_id, label in workflows:
-        state = workflow_state(repo, workflow_id)
+        state, error = workflow_state(repo, workflow_id)
         if state == "disabled_manually":
             findings.append({"repo": repo, "workflow_id": workflow_id, "label": label, "state": state})
+        elif error:
+            findings.append(
+                {
+                    "repo": repo,
+                    "workflow_id": workflow_id,
+                    "label": label,
+                    "state": None,
+                    "error": error,
+                }
+            )
     return findings
 
 
@@ -104,6 +118,13 @@ def main(argv: list[str] | None = None) -> int:
     findings = check()
 
     for finding in findings:
+        if finding["state"] != "disabled_manually":
+            log_line(
+                f"OBSERVATION_FAILED repo={finding['repo']} workflow_id={finding['workflow_id']} "
+                f"label=\"{finding['label']}\" error={finding['error']}",
+                log_path=log_path,
+            )
+            continue
         outcome = "report-only"
         if args.enable:
             outcome = "re-enabled" if enable_workflow(finding["repo"], finding["workflow_id"]) else "re-enable-failed"

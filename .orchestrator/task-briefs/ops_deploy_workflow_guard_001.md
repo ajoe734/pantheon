@@ -128,22 +128,21 @@ That is the sanctioned isolation mechanism. A proof run needing exclusivity shou
 
 有疑問一定要提出,不要自己亂做。若設計稿沒寫到、與既有 code 對不上、或無法重現,一律 STOP 並用 blocker 寫清楚問題等待澄清,不要臆測或繞過。不要為了讓自己的 proof 通過而重新引入任何形式的全域 disable/cancel。
 
-## Current planner authorization and remaining acceptance (2026-07-16)
+## Historical one-time cleanup authorization (consumed and revoked)
 
-Owner Codex2 is authorized to cancel or force-cancel **only** stale queued
-Pantheon run `29469158508` (`task/EVOCHAIN-011`, queued since
-`2026-07-16T03:31:02Z`). Capture its API state before and after and record
-the exact command. Do not cancel, force-cancel, disable, or otherwise mutate
-any other Pantheon or execute-plans run/workflow.
+On 2026-07-16 the planner temporarily authorized owner Codex2 to attempt an
+exact-run cancel and force-cancel of stale queued Pantheon run `29469158508`
+(`task/EVOCHAIN-011`). Both exact APIs returned HTTP 500, as recorded below.
+Those two attempts consumed the one-time authorization; it is no longer
+active. No worker may retry either mutation or cite this section as authority
+to cancel that run. The unconditional shared-workflow ownership rule above
+controls all further work.
 
-After the one allowed cleanup:
-
-1. dispatch task-owned Pantheon and execute-plans dev deploy proofs;
-2. prove both shared workflows remain `active` while the runs coexist;
-3. wait for both runs to reach terminal `success`;
-4. record run IDs, commit SHAs, timestamps, concurrency/lease evidence and
-   zero cross-cancellation;
-5. submit follow-up evidence through a PR for reviewer Codex.
+Current remaining acceptance is governed by the STOP gate and the later proof
+sections: preserve the valid execute-plans success, wait until both correctives
+are reviewed and merged, then rerun Pantheon only. Do not cancel, force-cancel,
+disable, or otherwise mutate any unrelated Pantheon or execute-plans run or
+workflow.
 
 PR #3740 is interim evidence only. Its formal planner review explicitly
 states that it cannot close this task.
