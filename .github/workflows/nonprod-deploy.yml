@@ -551,7 +551,7 @@ jobs:
             --zone "${DEV_ZONE}" \
             --project "${GCP_DEPLOY_PROJECT_ID}" \
             --ssh-flag=-T \
-            --command "set -uo pipefail; cd ${worktree_q} || exit 1; container_evidence=${container_evidence_q}; remote_evidence=${remote_evidence_q}; probe_status=0; docker compose -p pantheon -f docker-compose.yml exec -T loop-run-projector-scheduler python -m services.trade_journey.hosted_lifecycle_probe --expected-sha ${deploy_sha_q} --output \"\${container_evidence}\" --timeout-seconds 420 --poll-seconds 5 || probe_status=\$?; container_id=\$(docker compose -p pantheon -f docker-compose.yml ps -q loop-run-projector-scheduler) || exit 1; if [[ -z \"\${container_id}\" ]]; then exit 1; fi; docker cp \"\${container_id}:\${container_evidence}\" \"\${remote_evidence}\" || exit 1; exit \${probe_status}"
+            --command "set -uo pipefail; cd ${worktree_q} || exit 1; scripts/run_loop_prod_tel_002_hosted_probe.sh --expected-sha ${deploy_sha_q} --container-output ${container_evidence_q} --remote-output ${remote_evidence_q} --timeout-seconds 420 --poll-seconds 5"
           probe_status=$?
           scp_status=0
           gcloud compute scp \

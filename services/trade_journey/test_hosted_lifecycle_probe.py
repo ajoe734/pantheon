@@ -237,6 +237,56 @@ def test_probe_reads_only_rows_after_baseline_for_incremental_source(tmp_path):
     assert artifact["proof"]["source"]["source_high_watermark"] == 106
 
 
+def test_probe_uses_explicit_baseline_without_initial_high_watermark(tmp_path):
+    root = tmp_path / "projection"
+    shifted_rows = _natural_lifecycle_rows()
+    for row in shifted_rows:
+        row["ingested_seq"] += 200
+    LifecycleProjector(
+        state_path=root / "controller_state.json",
+        bundle_root=root,
+        deployment_sha="deployed-sha",
+    ).project_records(shifted_rows, mode="live", source_high_watermark=206)
+    source = IncrementalSource(baseline=999, high=206, rows=shifted_rows)
+
+    code, artifact = asyncio.run(
+        probe.execute(
+            source=source,
+            projection_root=root,
+            expected_sha="deployed-sha",
+            output=tmp_path / "explicit-baseline.json",
+            timeout_seconds=0.1,
+            poll_seconds=0.001,
+            baseline_high_watermark=200,
+        )
+    )
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert source.high_watermark_calls == 0
+    assert source.snapshot_after_baselines == [200]
+    assert source.snapshot_calls == 0
+    assert artifact["proof"]["source"]["baseline_high_watermark"] == 200
+    assert artifact["proof"]["source"]["source_high_watermark"] == 206
+
+
+def test_main_prints_high_watermark_without_projection_root_or_output(monkeypatch, capsys):
+    class Source:
+        async def high_watermark(self):
+            return 42
+
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://secret-host/secret-database")
+    monkeypatch.delenv("LIFECYCLE_PROJECTION_ROOT", raising=False)
+    monkeypatch.setattr(probe, "AsyncpgTelemetrySource", lambda _dsn: Source())
+
+    code = probe.main(["--expected-sha", "deployed-sha", "--print-high-watermark"])
+
+    assert code == 0
+    captured = capsys.readouterr()
+    assert captured.out == "42\n"
+    assert captured.err == ""
+
+
 def test_probe_times_out_without_a_complete_natural_aggregate(tmp_path):
     output = tmp_path / "timeout.json"
 
