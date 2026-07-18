@@ -349,12 +349,14 @@ Cross-repo FE task PRs (`ajoe734/execute-plans`):
 ### Shared Deploy Workflow Ownership
 
 Shared CI/CD workflows (`nonprod-deploy.yml` and its execute-plans
-counterpart) are fleet infrastructure, not something a task owns. No task
-may run `gh workflow disable` against one or `gh run cancel` against a run
-it did not dispatch, even to protect its own proof run. Use the workflow's
+counterpart) are fleet infrastructure, not something a task owns.
+No task may run `gh workflow disable` against one or `gh run cancel` against
+a run it did not dispatch, even to protect its own proof run. Use the workflow's
 `concurrency:` group or the dev environment lease
-(`scripts/dev_environment_lease.py`) instead. Full rule, rationale, and the
-`scripts/check_shared_deploy_workflow_disabled.py` detection guard:
+(`scripts/dev_environment_lease.py`) instead. Auto workers receive the
+repository-owned guarded `gh` shim in `PATH`, and Branch CI scans worker
+instructions for copy-pastable disable/cancel mutations. Full rule, rationale,
+and the `scripts/check_shared_deploy_workflow_disabled.py` detection guard:
 `docs/conventions/GIT_WORKFLOW.md` § 9.1.
 
 ### Discussion Planning Mode

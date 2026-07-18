@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 gh_bin="$(ls -d "$HOME"/.local/share/pantheon-orchestrator-tools/gh-*/bin/gh 2>/dev/null | sort -V | tail -n1)"
 if [[ -z "${gh_bin}" ]]; then
   echo "GitHub CLI binary not found under ~/.local/share/pantheon-orchestrator-tools." >&2
   exit 1
 fi
 
-exec "${gh_bin}" "$@"
+if [[ "$(readlink -f "${gh_bin}")" == "$(readlink -f "${BASH_SOURCE[0]}")" ]]; then
+  echo "GitHub CLI worker guard refused a recursive gh binary." >&2
+  exit 1
+fi
+
+exec python3 "${repo_root}/scripts/guard_shared_deploy_cli.py" --gh-bin "${gh_bin}" -- "$@"

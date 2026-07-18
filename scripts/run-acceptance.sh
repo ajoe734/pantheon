@@ -61,6 +61,12 @@ trailers_on_range() {
 
 case "$MODE" in
   smoke)
+    run_step "shared-deploy-instruction-policy" "$PYTHON" scripts/check_worker_deploy_mutation_instructions.py
+    run_step "shared-deploy-policy-tests" "$PYTHON" -m pytest -q \
+      scripts/test_check_worker_deploy_mutation_instructions.py \
+      scripts/test_check_shared_deploy_workflow_disabled.py \
+      scripts/test_guard_shared_deploy_cli.py \
+      scripts/test_nonprod_deploy_concurrency_contract.py
     run_step "stage0-validate" stage0_validate
     run_step "stage0-baseline" stage0_baseline
     ;;

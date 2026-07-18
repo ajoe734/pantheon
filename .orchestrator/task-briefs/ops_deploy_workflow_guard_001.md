@@ -46,12 +46,14 @@ This is a coordination defect, not a bug in any single task. Several tasks alrea
 A worker spawned this loop (captured live from `/proc/<pid>/cmdline`):
 
 ```bash
+# Redacted incident pseudocode: the original executable mutations are retained
+# in the governed evidence packet, not in a worker-facing task brief.
 end=$((SECONDS+2400)); allow_deploy=29466971724; allow_branch='task/PINT-010-R2-MOBILE-PROOF'
 while (( SECONDS < end )); do
   pstate=$(gh api repos/ajoe734/pantheon/actions/workflows/269991390 --jq .state)
   estate=$(gh api repos/ajoe734/execute-plans/actions/workflows/292028803 --jq .state)
-  if [ "$pstate" = active ]; then gh workflow disable 269991390 --repo ajoe734/pantheon; fi
-  if [ "$estate" = active ]; then gh workflow disable 292028803 --repo ajoe734/execute-plans; fi
+  if [ "$pstate" = active ]; then record_forbidden_mutation "disable Pantheon shared workflow"; fi
+  if [ "$estate" = active ]; then record_forbidden_mutation "disable execute-plans shared workflow"; fi
   for status in in_progress queued; do
     # cancel every pantheon deploy run except $allow_deploy
     # cancel every execute-plans deploy run, with no exception at all

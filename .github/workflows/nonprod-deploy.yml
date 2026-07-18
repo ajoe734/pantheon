@@ -65,13 +65,16 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pantheon-nonprod-deploy-${{ github.event_name == 'push' && (startsWith(github.ref_name, 'publish/') && 'dev-auto' || 'staging-auto') || inputs.environment }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  group: pantheon-nonprod-deploy-${{ github.event_name == 'workflow_dispatch' && inputs.environment || github.run_id }}
+  queue: max
 
 jobs:
   deploy-dev:
     name: Deploy dev under shared environment lease
     if: ${{ (github.event_name == 'push' && startsWith(github.ref_name, 'publish/')) || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev') }}
+    concurrency:
+      group: pantheon-nonprod-deploy-dev-${{ github.event_name == 'push' && 'dev-auto' || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment: dev
     env:
@@ -944,6 +947,9 @@ jobs:
   deploy-staging-live:
     name: Deploy staging-live (independent environment)
     if: ${{ (github.event_name == 'push' && github.ref_name == 'master') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging-live') }}
+    concurrency:
+      group: pantheon-nonprod-deploy-staging-live-${{ github.event_name == 'push' && 'staging-auto' || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment: staging-live
     env:

@@ -716,10 +716,13 @@ def status_command_runtime_env(
 def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> dict[str, str]:
     workspace_root = delivery_workspace_root(config, metadata)
     status_root = delivery_status_root(config, metadata)
+    worker_bin = str(ORCHESTRATOR_DIR / "bin")
+    inherited_path = os.environ.get("PATH", "")
     env = {
         "PANTHEON_WORKTREE_ROOT": str(workspace_root),
         "PANTHEON_STATUS_ROOT": str(status_root),
         "ORCH_WORKSPACE_PATH": str(workspace_root),
+        "PATH": os.pathsep.join((worker_bin, inherited_path)) if inherited_path else worker_bin,
     }
     env.update(status_command_runtime_env(config, metadata))
     return env

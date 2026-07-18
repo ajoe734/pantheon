@@ -54,6 +54,8 @@ def workflow_state(repo: str, workflow_id: str) -> tuple[str | None, str | None]
         payload = json.loads(out.stdout)
     except json.JSONDecodeError:
         return None, "invalid-json"
+    if not isinstance(payload, dict):
+        return None, "invalid-payload"
     state = payload.get("state")
     if not isinstance(state, str) or not state:
         return None, "missing-state"
@@ -90,6 +92,16 @@ def check(workflows=WATCHED_WORKFLOWS) -> list[dict]:
                     "error": error,
                 }
             )
+        elif state != "active":
+            findings.append(
+                {
+                    "repo": repo,
+                    "workflow_id": workflow_id,
+                    "label": label,
+                    "state": state,
+                    "error": "unexpected-state",
+                }
+            )
     return findings
 
 
@@ -118,10 +130,17 @@ def main(argv: list[str] | None = None) -> int:
     findings = check()
 
     for finding in findings:
-        if finding["state"] != "disabled_manually":
+        if finding["state"] is None:
             log_line(
                 f"OBSERVATION_FAILED repo={finding['repo']} workflow_id={finding['workflow_id']} "
                 f"label=\"{finding['label']}\" error={finding['error']}",
+                log_path=log_path,
+            )
+            continue
+        if finding["state"] != "disabled_manually":
+            log_line(
+                f"UNEXPECTED_STATE repo={finding['repo']} workflow_id={finding['workflow_id']} "
+                f"label=\"{finding['label']}\" state={finding['state']} -> report-only",
                 log_path=log_path,
             )
             continue

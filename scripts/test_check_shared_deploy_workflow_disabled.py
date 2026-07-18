@@ -75,6 +75,25 @@ class WorkflowStateTests(unittest.TestCase):
             findings = guard.check((("ajoe734/pantheon", "269991390", "Pantheon Nonprod Deploy"),))
         self.assertEqual(findings[0]["error"], "missing-state")
 
+    def test_non_object_json_is_an_observation_failure(self) -> None:
+        def _run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+        with mock.patch.object(guard.subprocess, "run", side_effect=_run):
+            findings = guard.check((("ajoe734/pantheon", "269991390", "Pantheon Nonprod Deploy"),))
+        self.assertEqual(findings[0]["error"], "invalid-payload")
+        self.assertIsNone(findings[0]["state"])
+
+    def test_unexpected_inactive_state_is_a_finding(self) -> None:
+        with mock.patch.object(
+            guard.subprocess,
+            "run",
+            side_effect=_fake_run({"269991390": "disabled_inactivity"}),
+        ):
+            findings = guard.check((("ajoe734/pantheon", "269991390", "Pantheon Nonprod Deploy"),))
+        self.assertEqual(findings[0]["error"], "unexpected-state")
+        self.assertEqual(findings[0]["state"], "disabled_inactivity")
+
     def test_multiple_watched_workflows_each_evaluated(self) -> None:
         workflows = (
             ("ajoe734/pantheon", "269991390", "Pantheon Nonprod Deploy"),
@@ -148,6 +167,29 @@ class MainTests(unittest.TestCase):
             log_path = root / ".orchestrator" / "logs" / "disabled-shared-workflow-guard.log"
             self.assertIn("OBSERVATION_FAILED", log_path.read_text())
             self.assertIn("error=api-timeout", log_path.read_text())
+
+    def test_main_reports_unexpected_state_without_trying_enable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(
+                guard,
+                "check",
+                return_value=[
+                    {
+                        "repo": "ajoe734/pantheon",
+                        "workflow_id": "269991390",
+                        "label": "Pantheon Nonprod Deploy",
+                        "state": "disabled_inactivity",
+                        "error": "unexpected-state",
+                    }
+                ],
+            ), mock.patch.object(guard, "enable_workflow") as enable_mock:
+                exit_code = guard.main(["--root", str(root), "--enable"])
+            enable_mock.assert_not_called()
+            self.assertEqual(exit_code, 1)
+            log_path = root / ".orchestrator" / "logs" / "disabled-shared-workflow-guard.log"
+            self.assertIn("UNEXPECTED_STATE", log_path.read_text())
+            self.assertIn("state=disabled_inactivity", log_path.read_text())
 
 
 if __name__ == "__main__":

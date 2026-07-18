@@ -450,24 +450,27 @@ protect.
   .../actions/workflows/<id>/disable`) against a shared deploy workflow.
   No task ever owns exclusivity over the workflow itself.
 - `gh run cancel` / `gh run ... force-cancel` against a run your task did
-  not itself dispatch. "Not the run I'm waiting on" is not the same as
-  "mine to cancel."
+  not itself dispatch, including the equivalent REST endpoints
+  `.../actions/runs/<id>/cancel` and `.../force-cancel`. "Not the run I'm
+  waiting on" is not the same as "mine to cancel."
 - Any loop that keeps re-applying either of the above on a timer. A guard
   script that outlives its own protected run and re-disables/re-cancels
   every few seconds is exactly the pattern this section exists to stop.
 
 **Sanctioned isolation, in order of preference:**
 
-1. **The workflow's own `concurrency:` group.** `nonprod-deploy.yml` keys
-   its group on `inputs.environment` for `workflow_dispatch` and on a
-   separate `dev-auto` / `staging-auto` key for push triggers, with
-   `cancel-in-progress` true only for push. A manual proof dispatch to
-   `dev` therefore already queues behind (never cancels, is never
-   cancelled by) any other manual `dev` dispatch, and runs independently
-   of automatic `publish/v*` / `master` push redeploys in their own
-   group. This is usually all a proof run needs: dispatch with the
-   `environment` input that matches what you're proving and let the
-   group serialize it.
+1. **The workflow's own two-level `concurrency:` contract.** At workflow
+   level, `workflow_dispatch` runs key on `inputs.environment` and use the
+   literal `queue: max`; push runs use a run-unique pass-through key. At job
+   level, push deploys retain the `dev-auto` / `staging-auto` groups with
+   `cancel-in-progress` true, while manual jobs use run-unique pass-through
+   keys. A manual proof dispatch therefore queues with other manual work for
+   the same environment without changing the existing latest-push behavior.
+   GitHub's `max` queue is bounded at 100 pending runs and orders them by when
+   they start waiting for the group; it is not an unlimited queue or a
+   guarantee of dispatch-order FIFO. This is usually all a proof run needs:
+   dispatch with the `environment` input that matches what you're proving and
+   let the workflow serialize it.
 2. **The dev environment lease** (`scripts/dev_environment_lease.py`,
    compare-and-swap state on the `ajoe734/execute-plans`
    `environment-coordination` branch). `nonprod-deploy.yml`'s `deploy-dev`
@@ -484,6 +487,18 @@ dispatched itself and must exit as soon as that run reaches a terminal
 state (`success` / `failure` / `cancelled`) — never a fixed-duration sleep
 loop that keeps acting after the protected run is done.
 
+**Enforcement for auto workers:** the orchestrator prepends its repository
+owned `.orchestrator/bin` directory to every provider's delivery `PATH`. Its
+`gh` shim rejects workflow-disable and Actions run cancel/force-cancel
+mutations, including raw `gh api` endpoint forms for the Pantheon and
+execute-plans repositories, before invoking the real GitHub CLI. Because a
+worker-local CLI cannot reliably prove which process dispatched a run, this
+guard intentionally rejects all such cancellations; ask Human/Ops for an
+explicit governed cancellation instead of bypassing it. The Branch CI smoke
+gate also scans worker-facing guides, skills, task briefs, and templates for
+copy-pastable disable/cancel instructions. These are defense-in-depth controls
+and do not turn an otherwise forbidden mutation into an owned one.
+
 **Detecting a stuck disabled workflow:** `scripts/check_shared_deploy_workflow_disabled.py`
 reports (and, with `--enable`, restores) any watched workflow found in
 `disabled_manually` state. Wire it into cron the same way as
@@ -491,8 +506,9 @@ reports (and, with `--enable`, restores) any watched workflow found in
 line) so a stray disable cannot silently freeze the fleet's deploy path
 until a human happens to notice. An unreadable workflow state (missing `gh`,
 timeout, API error, malformed response, or missing `state`) is also a non-zero
-observation failure; it is never treated as healthy, and `--enable` only acts
-on a confirmed `disabled_manually` response.
+observation failure. A readable state other than `active` or
+`disabled_manually` is likewise reported as unexpected rather than treated as
+healthy, and `--enable` only acts on a confirmed `disabled_manually` response.
 
 ---
 
