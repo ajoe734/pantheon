@@ -5,6 +5,11 @@ Task: `OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001`
 Status: current product-level acceptance withdrawn; corrective implementation
 and independent exact-head review required.
 
+Corrective reader/inventory implementation is anchored at
+`afb3b67d10ec55a2989bd54b3bc59f22e55b67f7`; see
+`p0-regression-receipt-20260718.md` for the exact central failure and test
+receipt.
+
 This document supersedes the acceptance conclusion of the following immutable
 rejected-run artifacts without modifying their bytes:
 
@@ -16,6 +21,8 @@ rejected-run artifacts without modifying their bytes:
 
 The counts and fold metrics in those files remain rejected-reader diagnostics,
 not proof of current global completeness, ordering, or conservation.
+The machine-readable superseding verdict is
+`p0-disjoint-edge-verdict-20260718.json`.
 
 ## Finding
 
@@ -38,6 +45,23 @@ lines. The first schema-v2 lineage row instead binds
 `0404Z -> 1754Z`. Filename order, mtime, directory enumeration, and event
 timestamps are not zero-loss authority for this incident chain.
 
+| Candidate lines | `0404Z` suffix SHA-256 | `1754Z` prefix SHA-256 | Equal |
+| ---: | :--- | :--- | :---: |
+| 999 | `99f7f700cfd30ecc322962fde4698472d2099a4307386df78ca28a81f41ecf5e` | `f68bcf63ff21795c48f13eb6eaf55b810549837e8e1d222cb5d36e70da9bd344` | no |
+| 1,000 | `df07b435169cc7609b68fef42b6824e60628b153b6707698f54adf4308be460a` | `ca8fd81af8078b24c9253466069174a95bee3c40161826fdaa3de25c34a3485f` | no |
+| 1,001 | `8dbcdc774f7de2f062289de3129f58460658004526ee6a0db5e1a48d7282efc5` | `e94df6869594fdbb878a0aa56369c8bea9b299d09d02d2edf31fbefe287321e9` | no |
+
+The current first schema-v2 row is sequence `1`, transaction
+`activity-rotation-e4b5bdca9e8d6c9ab5dde32eb18fbb0bfb25ad72323737fc25c8f87812c8f35a`,
+canonical row SHA-256
+`b4422d05669ce9bf225a4876909815d547ce5b9cb557e71573075140f0525daa`,
+and serialized-row SHA-256
+`89e8538354de9362d7239c12b9f76272f5446b780638a895608fe96d59c53a76`.
+It binds `1754Z` to the first content archive, whose gzip SHA-256 is
+`7aa60a618dece437dfdc463fb914491bf6f4e773c4c95e136937320bbad5b94b`
+and payload SHA-256 is
+`f2dae488b47ea9f0cff778a701edbffe3cbafaa6cac51ad1e2a7e1a42a2677bc`.
+
 ## Required reader contract
 
 - The exact `1450Z -> ... -> 0404Z -> 1754Z` shape must fail closed at the
@@ -50,6 +74,8 @@ timestamps are not zero-loss authority for this incident chain.
   overlap remain rejected.
 - Failure must be structured, must expose no partially validated logical rows,
   and must leave existing evidence and status bytes unchanged.
+- The first schema-v2 writer transition must not create a content archive when
+  legacy history exists but no byte-proven boundary can be recorded.
 
 ## Governed readback
 

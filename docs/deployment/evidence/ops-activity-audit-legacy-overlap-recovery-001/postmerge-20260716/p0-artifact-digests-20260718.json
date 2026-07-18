@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001",
+  "generated_at": "2026-07-18T15:15:45Z",
+  "implementation_sha": "afb3b67d10ec55a2989bd54b3bc59f22e55b67f7",
+  "artifacts": [
+    {
+      "path": "p0-disjoint-edge-fail-closed-20260718.md",
+      "byte_count": 5912,
+      "sha256": "ad8a662f1198f3dfaa7ba6ef87f5bd7fbb9a2f66275f3dc3e5ebc011ddabc49e",
+      "role": "superseding_acceptance_boundary"
+    },
+    {
+      "path": "p0-disjoint-edge-verdict-20260718.json",
+      "byte_count": 6044,
+      "sha256": "11ec5a08c19afe8f509a12c6dfdbc8a1252aba1f83b146b104ee4b338b4fb52b",
+      "role": "machine_readable_verdict"
+    },
+    {
+      "path": "p0-regression-receipt-20260718.md",
+      "byte_count": 4811,
+      "sha256": "c662d919d8805ca34bdd66c5893cb8465d8204121c6ca536a22ed2e3fc6b96bc",
+      "role": "candidate_test_and_probe_receipt"
+    },
+    {
+      "path": "installed-runtime-20260717/evidence.md",
+      "byte_count": 61545,
+      "sha256": "4ad6bf94fa9473df9104c0a0e3a5fa44061e0dab83229825a6c2d79de1f1374a",
+      "role": "immutable_rejected_run"
+    },
+    {
+      "path": "installed-runtime-20260717/summary.json",
+      "byte_count": 130927,
+      "sha256": "dea7dacce6e0941499f8f5b98aaa1f473ef6b69ab0ac4b16da9627aae43b2a5d",
+      "role": "immutable_rejected_run"
+    },
+    {
+      "path": "installed-runtime-20260717/manifest.json",
+      "byte_count": 313911,
+      "sha256": "8ddca2fd9a0c11bd0243d971fc56c06d9715048e68c13d61fe4df147f9daa9f6",
+      "role": "immutable_rejected_run"
+    }
+  ]
+}

@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-ACTIVITY-AUDIT-LEGACY-OVERLAP-RECOVERY-001",
+  "verdict": {
+    "status": "rejected_p0",
+    "reason": "unregistered_legacy_to_legacy_disjoint_edge",
+    "reader_acceptance": false,
+    "conservation_proven": false,
+    "logical_metrics_scope": "rejected_reader_diagnostic"
+  },
+  "corrective_candidate": {
+    "implementation_sha": "afb3b67d10ec55a2989bd54b3bc59f22e55b67f7",
+    "validated_at": "2026-07-18T15:15:45Z",
+    "central_read_only_probe": {
+      "exit_code": 1,
+      "invariant": "activity_unregistered_disjoint_edge",
+      "evidence_sha256": "dc726f4e5bd122224e642d080c7c537745e1ba4fae085437ec07847ee2857abb",
+      "source_index": 424,
+      "partial_evidence_files": 0,
+      "source_hashes_unchanged": true
+    },
+    "acceptance_status": "awaiting_independent_exact_head_review"
+  },
+  "rejected_candidate": {
+    "head_sha": "306ed10c5d429a19a2f62d76241d49d3547e220b",
+    "artifacts": [
+      {
+        "path": "installed-runtime-20260717/evidence.md",
+        "byte_count": 61545,
+        "sha256": "4ad6bf94fa9473df9104c0a0e3a5fa44061e0dab83229825a6c2d79de1f1374a"
+      },
+      {
+        "path": "installed-runtime-20260717/summary.json",
+        "byte_count": 130927,
+        "sha256": "dea7dacce6e0941499f8f5b98aaa1f473ef6b69ab0ac4b16da9627aae43b2a5d"
+      },
+      {
+        "path": "installed-runtime-20260717/manifest.json",
+        "byte_count": 313911,
+        "sha256": "8ddca2fd9a0c11bd0243d971fc56c06d9715048e68c13d61fe4df147f9daa9f6"
+      }
+    ]
+  },
+  "continuity_anchor": {
+    "relative_path": "archive/logs/ai-activity-log.jsonl-2026-07-16T1450Z.gz",
+    "source_class": "legacy_ts_std",
+    "gzip_byte_count": 744328,
+    "gzip_sha256": "f4c09816106783bde90463df6a1a8b227384cf088e1ab05d299c3caa1398e9cc",
+    "payload_byte_count": 5278061,
+    "payload_line_count": 1981,
+    "payload_sha256": "0606251610b53ff3427fb9cd71eb01250ca806a0e2010b5550482f2dc1a49d2b"
+  },
+  "rejected_manifest_observation": {
+    "scan_timestamp": "2026-07-17T20:10:37Z",
+    "source_stats_stable_before_after": true,
+    "sources": [
+      {
+        "relative_path": "archive/logs/ai-activity-log.jsonl-2026-07-16T1450Z.gz",
+        "st_dev": 2049,
+        "st_ino": 1348677,
+        "st_mtime_ns": 1784213457289794763,
+        "st_size": 744328
+      },
+      {
+        "relative_path": "archive/logs/ai-activity-log.jsonl-2026-07-17T0404Z.gz",
+        "st_dev": 2049,
+        "st_ino": 1349787,
+        "st_mtime_ns": 1784261052827822639,
+        "st_size": 720587
+      },
+      {
+        "relative_path": "archive/logs/ai-activity-log.jsonl-2026-07-17T1754Z.gz",
+        "st_dev": 2049,
+        "st_ino": 1351088,
+        "st_mtime_ns": 1784310857692145307,
+        "st_size": 795713
+      }
+    ]
+  },
+  "rejected_edge": {
+    "edge_type": "legacy_to_legacy_disjoint",
+    "edge_authority": null,
+    "predecessor": {
+      "relative_path": "archive/logs/ai-activity-log.jsonl-2026-07-17T0404Z.gz",
+      "source_class": "legacy_ts_std",
+      "gzip_byte_count": 720587,
+      "gzip_sha256": "9aad2a2e5eb40b8233aaf91f02a429142084eef09c33cf36f8fa9076a1c3e65b",
+      "payload_byte_count": 5266919,
+      "payload_line_count": 1727,
+      "payload_sha256": "3f137f4c7707d197c130d3b646ad4e46b9aba8f0a9e94b5809697844229d93f8"
+    },
+    "next_sorted_source": {
+      "relative_path": "archive/logs/ai-activity-log.jsonl-2026-07-17T1754Z.gz",
+      "source_class": "legacy_ts_std",
+      "gzip_byte_count": 795713,
+      "gzip_sha256": "5c9a4f97af7e69beb3dd6b547452fad3f56f9e57442d61c49e94d4552c7d6bd2",
+      "payload_byte_count": 5398155,
+      "payload_line_count": 2194,
+      "payload_sha256": "9734b2e4c6d8041e4c5daf0548f873ef0dff41572c2696dc8542a6c0c94fe766"
+    },
+    "overlap_candidates": [
+      {
+        "line_count": 999,
+        "predecessor_suffix_sha256": "99f7f700cfd30ecc322962fde4698472d2099a4307386df78ca28a81f41ecf5e",
+        "successor_prefix_sha256": "f68bcf63ff21795c48f13eb6eaf55b810549837e8e1d222cb5d36e70da9bd344",
+        "equal": false
+      },
+      {
+        "line_count": 1000,
+        "predecessor_suffix_sha256": "df07b435169cc7609b68fef42b6824e60628b153b6707698f54adf4308be460a",
+        "successor_prefix_sha256": "ca8fd81af8078b24c9253466069174a95bee3c40161826fdaa3de25c34a3485f",
+        "equal": false
+      },
+      {
+        "line_count": 1001,
+        "predecessor_suffix_sha256": "8dbcdc774f7de2f062289de3129f58460658004526ee6a0db5e1a48d7282efc5",
+        "successor_prefix_sha256": "e94df6869594fdbb878a0aa56369c8bea9b299d09d02d2edf31fbefe287321e9",
+        "equal": false
+      }
+    ]
+  },
+  "first_schema_v2_lineage_edge": {
+    "lineage_relative_path": ".orchestrator/logs/activity-rotation/ai-activity-log.jsonl.lineage.jsonl",
+    "observed_row_count": 4,
+    "sequence": 1,
+    "transaction_id": "activity-rotation-e4b5bdca9e8d6c9ab5dde32eb18fbb0bfb25ad72323737fc25c8f87812c8f35a",
+    "canonical_row_sha256": "b4422d05669ce9bf225a4876909815d547ce5b9cb557e71573075140f0525daa",
+    "serialized_row_byte_count": 1644,
+    "serialized_row_sha256": "89e8538354de9362d7239c12b9f76272f5446b780638a895608fe96d59c53a76",
+    "boundary_predecessor_relative_path": "archive/logs/ai-activity-log.jsonl-2026-07-17T1754Z.gz",
+    "authority_scope": "1754Z_to_first_content_archive_only",
+    "successor": {
+      "relative_path": "archive/logs/ai-activity-log.jsonl-f2dae488b47ea9f0cff778a701edbffe3cbafaa6cac51ad1e2a7e1a42a2677bc.gz",
+      "source_class": "content_addressed",
+      "gzip_byte_count": 369218,
+      "gzip_sha256": "7aa60a618dece437dfdc463fb914491bf6f4e773c4c95e136937320bbad5b94b",
+      "payload_byte_count": 2177235,
+      "payload_line_count": 1017,
+      "payload_sha256": "f2dae488b47ea9f0cff778a701edbffe3cbafaa6cac51ad1e2a7e1a42a2677bc"
+    }
+  },
+  "acceptance_paths": {
+    "accept_current_inventory": "immutable_hash_bound_lineage_authority_required",
+    "safe_reconciliation": "planner_may_record_global_conservation_unproved_while_reader_remains_fail_closed",
+    "filename_order_authority": false
+  }
+}
