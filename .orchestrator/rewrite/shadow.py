@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import supervisor  # noqa: E402  (comparison oracle only)
 
 from rewrite import concurrency  # noqa: E402
+from rewrite import task_machine  # noqa: E402
 
 
 def compare_capacity(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -43,24 +44,76 @@ def compare_capacity(config: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def compare_dispatch_reason(config: dict[str, Any], tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One row per (task, candidate-agent): incumbent dispatch_priority_for_task
+    vs the clean task_machine.dispatch_priority, on the real board.
+
+    Only the task's own owner and reviewer can yield a non-None priority (any
+    other agent is None for both by construction), so those are the candidates
+    checked. deps_satisfied is computed exactly as the incumbent does inside
+    dispatch_priority_for_task (single-task lookup), so the only thing under test
+    is that the state machine reproduces the ladder.
+    """
+    settings = supervisor.ready_dispatch_settings(config)
+    done_statuses = supervisor.normalized_status_set(
+        settings.get("dependency_done_statuses"), ["done"]
+    )
+    schema = config.get("schema", {})
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+
+    rows: list[dict[str, Any]] = []
+    for task in tasks:
+        tid = str(task.get("id") or "")
+        candidates = {task.get(owner_field), task.get(reviewer_field)}
+        candidates.discard(None)
+        deps_ok = supervisor.dependencies_satisfied(task, {tid: task}, done_statuses)
+        for agent in candidates:
+            old = supervisor.dispatch_priority_for_task(config, task, agent)
+            new = task_machine.dispatch_priority(
+                task.get("status"),
+                is_owner=task.get(owner_field) == agent,
+                is_reviewer=task.get(reviewer_field) == agent,
+                deps_satisfied=deps_ok,
+            )
+            rows.append({"task": tid, "agent": agent, "old": old, "new": new, "agree": old == new})
+    return rows
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, help="Path to a supervisor config JSON.")
+    parser.add_argument("--board", help="Path to ai-status.json (enables dispatch-reason shadow).")
     parser.add_argument("--quiet", action="store_true", help="Only print mismatches + summary.")
     args = parser.parse_args(argv)
 
     config = json.loads(Path(args.config).read_text())
-    rows = compare_capacity(config)
-    mismatches = [r for r in rows if not r["agree"]]
+    exit_code = 0
 
-    for r in rows:
+    cap_rows = compare_capacity(config)
+    cap_mismatch = [r for r in cap_rows if not r["agree"]]
+    for r in cap_rows:
         if r["agree"] and args.quiet:
             continue
-        tag = "OK      " if r["agree"] else "MISMATCH"
-        print(f"  {tag} {r['agent']}: old={r['old']} new={r['new']}")
+        print(f"  {'OK      ' if r['agree'] else 'MISMATCH'} {r['agent']}: old={r['old']} new={r['new']}")
+    print(f"\nmax_parallel shadow: {len(cap_rows)} agents, {len(cap_mismatch)} mismatch")
+    if cap_mismatch:
+        exit_code = 1
 
-    print(f"\nmax_parallel shadow: {len(rows)} agents, {len(mismatches)} mismatch")
-    return 1 if mismatches else 0
+    if args.board:
+        board = json.loads(Path(args.board).read_text())
+        tasks = board.get("tasks", [])
+        if isinstance(tasks, dict):
+            tasks = list(tasks.values())
+        dr_rows = compare_dispatch_reason(config, tasks)
+        dr_mismatch = [r for r in dr_rows if not r["agree"]]
+        for r in dr_mismatch:
+            print(f"  MISMATCH {r['task']} / {r['agent']}: old={r['old']} new={r['new']}")
+        print(f"dispatch_reason shadow: {len(dr_rows)} (task,agent) pairs, {len(dr_mismatch)} mismatch")
+        if dr_mismatch:
+            exit_code = 1
+
+    return exit_code
 
 
 if __name__ == "__main__":
