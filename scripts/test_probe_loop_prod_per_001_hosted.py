@@ -81,3 +81,10 @@ def test_request_json_with_retries_returns_success_after_retryable_failure(monke
     assert response["status"] == 201
     assert len(response["retry_attempts"]) == 2
     assert [attempt["attempt"] for attempt in response["retry_attempts"]] == [1, 2]
+    assert json_round_trips(response)["retry_attempts"][1]["status"] == 201
+
+
+def json_round_trips(value):
+    import json
+
+    return json.loads(json.dumps(value))

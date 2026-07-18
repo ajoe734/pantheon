@@ -165,12 +165,16 @@ def request_json_with_retries(
 ) -> dict[str, Any]:
     responses: list[dict[str, Any]] = []
     for attempt in range(1, attempts + 1):
-        response = request_json(method, url, **kwargs)
-        response["attempt"] = attempt
+        response = {
+            **request_json(method, url, **kwargs),
+            "attempt": attempt,
+        }
         responses.append(response)
         if response.get("ok") or not is_retryable_transport_response(response) or attempt == attempts:
-            response["retry_attempts"] = responses
-            return response
+            return {
+                **response,
+                "retry_attempts": responses,
+            }
         time.sleep(retry_delay_seconds)
     return responses[-1]
 
