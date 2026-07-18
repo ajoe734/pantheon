@@ -10884,6 +10884,30 @@ def run_once(
         )
 
 
+def _safe_phase(name: str, fn, *args, quiet: bool = False, **kwargs):
+    """Run one supervisor cycle phase in isolation.
+
+    Phase 0 of the rewrite (docs/02-architecture/SUPERVISOR_REWRITE_PLAN.md): a
+    failure in one phase must degrade only that phase, never abort the whole
+    cycle. Historically the cycle body was a single flat ``try`` over ~30
+    independent phases, so one raise (e.g. a missing activity-log archive)
+    short-circuited dispatch/finalize/archive and crash-looped the supervisor
+    for hours. Wrapping each phase turns that total outage into a one-line,
+    self-describing degradation of a single subsystem.
+
+    Returns the phase result, or ``None`` if the phase raised.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 - deliberate per-phase isolation
+        console_log(
+            f"cycle phase '{name}' failed: {type(exc).__name__}: {exc}; "
+            "other phases continue",
+            quiet=quiet,
+        )
+        return None
+
+
 def _run_once_locked(
     config: dict[str, Any],
     *,
@@ -10909,23 +10933,29 @@ def _run_once_locked(
     save_runtime_state(config, state)
     changed = False
     try:
-        changed = reconcile_runtime_on_boot(config, state) or changed
+        # Phase 0 (SUPERVISOR_REWRITE_PLAN.md): every phase runs isolated via
+        # _safe_phase, so one failing subsystem degrades only itself. The outer
+        # try/except below remains a last resort for the scaffold (state load/
+        # save, branch predicates), which per-phase isolation should keep rare.
+        changed = _safe_phase("reconcile_runtime_on_boot", reconcile_runtime_on_boot, config, state, quiet=quiet) or changed
         if changed:
             save_runtime_state(config, state)
-        continue_or_skip_empty(THIS_DIR.parent)
-        changed = expire_provider_dispatch_pauses(config, state) or changed
-        pruned = prune_stale_approvals(config)
+        _safe_phase("continue_or_skip_empty", continue_or_skip_empty, THIS_DIR.parent, quiet=quiet)
+        changed = _safe_phase("expire_provider_dispatch_pauses", expire_provider_dispatch_pauses, config, state, quiet=quiet) or changed
+        pruned = _safe_phase("prune_stale_approvals", prune_stale_approvals, config, quiet=quiet)
         if pruned:
             changed = True
         try:
             previous_provider_report = load_json(config_path(config, "provider_capabilities"), default={}) or {}
         except KeyError:
             previous_provider_report = {}
-        provider_report = load_provider_report(config)
-        changed = reconcile_provider_auth_recovery(config, state, previous_provider_report, provider_report) or changed
-        changed = drain_assistant_dev_packet_inbox(config, state) or changed
+        provider_report = _safe_phase("load_provider_report", load_provider_report, config, quiet=quiet)
+        if provider_report is None:
+            provider_report = previous_provider_report or {}
+        changed = _safe_phase("reconcile_provider_auth_recovery", reconcile_provider_auth_recovery, config, state, previous_provider_report, provider_report, quiet=quiet) or changed
+        changed = _safe_phase("drain_assistant_dev_packet_inbox", drain_assistant_dev_packet_inbox, config, state, quiet=quiet) or changed
         if watch:
-            changed = run_scan(config, state, replay=replay, provider_capabilities=provider_report) or changed
+            changed = _safe_phase("run_scan", run_scan, config, state, replay=replay, provider_capabilities=provider_report, quiet=quiet) or changed
             state = load_runtime_state(config)
             stamp_supervisor_runtime_state(
                 config,
@@ -10935,40 +10965,39 @@ def _run_once_locked(
                 lifecycle="running",
                 loop_started_at=loop_started_at,
             )
-        changed = sync_coordination_files(config, state) or changed
-        changed = poll_workers(config, state, provider_report=provider_report) or changed
-        changed = maybe_reassign_tasks_from_failure_streaks(config, state) or changed
-        changed = reconcile_queue_records(config, state) or changed
-        changed = prune_event_queue(config, state) or changed
-        changed = refresh_chair_review_state(config, state) or changed
+        changed = _safe_phase("sync_coordination_files", sync_coordination_files, config, state, quiet=quiet) or changed
+        changed = _safe_phase("poll_workers", poll_workers, config, state, provider_report=provider_report, quiet=quiet) or changed
+        changed = _safe_phase("maybe_reassign_tasks_from_failure_streaks", maybe_reassign_tasks_from_failure_streaks, config, state, quiet=quiet) or changed
+        changed = _safe_phase("reconcile_queue_records", reconcile_queue_records, config, state, quiet=quiet) or changed
+        changed = _safe_phase("prune_event_queue", prune_event_queue, config, state, quiet=quiet) or changed
+        changed = _safe_phase("refresh_chair_review_state", refresh_chair_review_state, config, state, quiet=quiet) or changed
         planning_state = load_discussion_planning_state()
-        changed = auto_materialize_discussion_planning(config, planning_state) or changed
+        changed = _safe_phase("auto_materialize_discussion_planning", auto_materialize_discussion_planning, config, planning_state, quiet=quiet) or changed
         planning_state = load_discussion_planning_state()
         dispatch_suppressed_by_watchdog = watchdog_safe_mode_active(state)
         if dispatch_suppressed_by_watchdog:
-            changed = record_watchdog_safe_mode_observed(config, state, loop_started_at) or changed
+            changed = _safe_phase("record_watchdog_safe_mode_observed", record_watchdog_safe_mode_observed, config, state, loop_started_at, quiet=quiet) or changed
         elif discussion_planning_is_active(planning_state):
-            changed = dispatch_discussion_planning(config, state, planning_state, provider_report=provider_report) or changed
+            changed = _safe_phase("dispatch_discussion_planning", dispatch_discussion_planning, config, state, planning_state, provider_report=provider_report, quiet=quiet) or changed
         else:
             if chair_review_failure_loop_details(config, state):
-                chair_dispatched = dispatch_chair_review(config, state, planning_state, provider_report=provider_report)
-                changed = chair_dispatched or changed
-                changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
+                changed = _safe_phase("dispatch_chair_review", dispatch_chair_review, config, state, planning_state, provider_report=provider_report, quiet=quiet) or changed
+                changed = _safe_phase("dispatch_ready_tasks", dispatch_ready_tasks, config, state, provider_report=provider_report, quiet=quiet) or changed
             else:
-                changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
-                changed = dispatch_chair_review(config, state, planning_state, provider_report=provider_report) or changed
-            changed = dispatch_underutilization_sidecars(config, state, provider_report=provider_report) or changed
+                changed = _safe_phase("dispatch_ready_tasks", dispatch_ready_tasks, config, state, provider_report=provider_report, quiet=quiet) or changed
+                changed = _safe_phase("dispatch_chair_review", dispatch_chair_review, config, state, planning_state, provider_report=provider_report, quiet=quiet) or changed
+            changed = _safe_phase("dispatch_underutilization_sidecars", dispatch_underutilization_sidecars, config, state, provider_report=provider_report, quiet=quiet) or changed
         if not dispatch_suppressed_by_watchdog:
-            changed = process_queue(config, state, provider_report) or changed
-        changed = poll_workers(config, state, provider_report=provider_report) or changed
-        changed = reconcile_queue_records(config, state) or changed
-        changed = prune_event_queue(config, state) or changed
-        changed = sync_github_bus(config, state) or changed
-        trim_worker_history(state, int(config.get("supervisor", {}).get("max_worker_history", 200)))
-        trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
-        changed = prune_orphan_worktrees(config, state) or changed
-        changed = prune_chair_review_worktrees(config, state) or changed
-        changed = maybe_auto_commit_archive(config, state) or changed
+            changed = _safe_phase("process_queue", process_queue, config, state, provider_report, quiet=quiet) or changed
+        changed = _safe_phase("poll_workers", poll_workers, config, state, provider_report=provider_report, quiet=quiet) or changed
+        changed = _safe_phase("reconcile_queue_records", reconcile_queue_records, config, state, quiet=quiet) or changed
+        changed = _safe_phase("prune_event_queue", prune_event_queue, config, state, quiet=quiet) or changed
+        changed = _safe_phase("sync_github_bus", sync_github_bus, config, state, quiet=quiet) or changed
+        _safe_phase("trim_worker_history", trim_worker_history, state, int(config.get("supervisor", {}).get("max_worker_history", 200)), quiet=quiet)
+        _safe_phase("trim_seen_events", trim_seen_events, state, int(config.get("watcher", {}).get("max_seen_events", 2000)), quiet=quiet)
+        changed = _safe_phase("prune_orphan_worktrees", prune_orphan_worktrees, config, state, quiet=quiet) or changed
+        changed = _safe_phase("prune_chair_review_worktrees", prune_chair_review_worktrees, config, state, quiet=quiet) or changed
+        changed = _safe_phase("maybe_auto_commit_archive", maybe_auto_commit_archive, config, state, quiet=quiet) or changed
 
         loop_finished_at = utc_now()
         stamp_supervisor_runtime_state(

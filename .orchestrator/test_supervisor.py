@@ -4628,6 +4628,77 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
         dispatch_ready_tasks.assert_called_once()
         dispatch_underutilization_sidecars.assert_called_once()
 
+    def test_run_once_isolates_failing_phase_and_still_dispatches(self) -> None:
+        """Phase 0: a phase that raises degrades only itself; the cycle does not
+        abort and later phases (dispatch) still run. Before per-phase isolation a
+        single raise (e.g. a missing activity-log archive) short-circuited every
+        later phase and crash-looped the supervisor."""
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "supervisor": {},
+            "watcher": {},
+            "ready_dispatcher": {},
+            "providers": {},
+            "agents": {},
+        }
+        initial_state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "approvals": {},
+            "supervisor": {
+                "pid": 61209,
+                "started_at": "2026-04-05T12:44:57Z",
+                "last_heartbeat_at": "2026-04-06T04:17:26Z",
+            },
+        }
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(supervisor, "write_supervisor_pid"))
+            stack.enter_context(mock.patch.object(supervisor, "load_runtime_state", return_value=dict(initial_state)))
+            stack.enter_context(mock.patch.object(supervisor, "continue_or_skip_empty"))
+            stack.enter_context(mock.patch.object(supervisor, "expire_provider_dispatch_pauses", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "prune_stale_approvals", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "load_provider_report", return_value={}))
+            # An early phase raises — this must NOT abort the cycle.
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "sync_coordination_files",
+                    side_effect=RuntimeError("simulated activity resolution superseded archive is missing"),
+                )
+            )
+            stack.enter_context(mock.patch.object(supervisor, "poll_workers", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_queue_records", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "prune_event_queue", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "refresh_chair_review_state", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "load_discussion_planning_state", return_value=None))
+            stack.enter_context(mock.patch.object(supervisor, "auto_materialize_discussion_planning", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "watchdog_safe_mode_active", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "chair_review_failure_loop_details", return_value=[]))
+            stack.enter_context(mock.patch.object(supervisor, "dispatch_chair_review", return_value=False))
+            dispatch_ready_tasks = stack.enter_context(mock.patch.object(supervisor, "dispatch_ready_tasks", return_value=True))
+            stack.enter_context(mock.patch.object(supervisor, "dispatch_underutilization_sidecars", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "process_queue", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "sync_github_bus", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "trim_worker_history"))
+            stack.enter_context(mock.patch.object(supervisor, "trim_seen_events"))
+            stack.enter_context(mock.patch.object(supervisor, "prune_orphan_worktrees", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "prune_chair_review_worktrees", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "maybe_auto_commit_archive", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"))
+            stack.enter_context(mock.patch.object(supervisor, "log_runtime_summary"))
+            stack.enter_context(mock.patch.object(supervisor, "save_runtime_state"))
+            # Must return normally despite the failing phase (no raise escapes).
+            supervisor.run_once(config, watch=False, replay=False)
+
+        # The later dispatch phase still ran — the failure was isolated.
+        dispatch_ready_tasks.assert_called_once()
+
     def test_run_once_watchdog_safe_mode_suppresses_new_dispatch(self) -> None:
         config = {
             "schema": {
