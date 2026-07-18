@@ -396,7 +396,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
             token=token,
             body=payload,
             headers={"Idempotency-Key": idempotency_key},
-            timeout=60,
+            timeout=120,
         ),
     )
     create_data = body_data(create)
