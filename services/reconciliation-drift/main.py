@@ -1244,6 +1244,7 @@ class ScheduledReconcileBody(BaseModel):
     tick_id: Optional[str] = None
     binding_id: Optional[str] = None
     dispatch_incidents: bool = True
+    lifecycle_only: bool = False
 
 
 class IncidentTriggerBody(BaseModel):
@@ -1877,6 +1878,156 @@ def _lifecycle_append_receipt(binding_id: str, state: Dict[str, Any]) -> Dict[st
     }
 
 
+def _summary_binding_id(summary: Dict[str, Any]) -> str:
+    return str(
+        summary.get("binding_id") or summary.get("runtime_binding_id") or summary.get("id") or ""
+    ).strip()
+
+
+def _scheduled_lifecycle_only_reconcile(
+    *,
+    summaries: List[Dict[str, Any]],
+    tick_id: str,
+    timestamp: str,
+    telemetry_url: str,
+) -> Dict[str, Any]:
+    evaluation_ids: List[str] = []
+    evaluation_statuses: List[str] = []
+    lifecycle_append_results: List[Dict[str, Any]] = []
+    lifecycle_accepted_event_ids: List[str] = []
+    lifecycle_retryable_errors: List[Dict[str, Any]] = []
+    lifecycle_terminal_rejections: List[Dict[str, Any]] = []
+    lifecycle_ineligible_binding_ids: List[str] = []
+
+    for summary in summaries:
+        binding_id = _summary_binding_id(summary)
+        runtime_id = str(summary.get("runtime_id") or "").strip()
+        if not binding_id:
+            continue
+
+        evaluation_id = _tick_evaluation_id(tick_id, binding_id)
+        telemetry_event_ids = _summary_telemetry_event_ids(summary)
+        observed_metrics = _summary_observed_metrics(summary)
+        raw_baseline_metrics = summary.get("baseline_metrics") or {}
+        baseline_metrics: Dict[str, Any] = (
+            raw_baseline_metrics if isinstance(raw_baseline_metrics, dict) else {}
+        )
+        raw_thresholds = summary.get("thresholds") or summary.get("drift_thresholds") or {}
+        thresholds: Dict[str, Any] = raw_thresholds if isinstance(raw_thresholds, dict) else {}
+        drift_checks = _drift_checks(baseline_metrics, observed_metrics, thresholds)
+        reconciliation_checks = _summary_actual_state_checks(
+            summary,
+            binding_id=binding_id,
+            runtime_id=runtime_id,
+            telemetry_event_ids=telemetry_event_ids,
+            observed_metrics=observed_metrics,
+        )
+        status = _worst_status(
+            [
+                str(check.get("status") or "degraded")
+                for check in [*drift_checks, *reconciliation_checks]
+            ]
+        )
+        evaluation = {
+            "id": evaluation_id,
+            "evaluation_id": evaluation_id,
+            "binding_id": binding_id,
+            "runtime_id": runtime_id or None,
+            "status": status,
+            "tick_id": tick_id,
+            "trigger": "scheduled",
+            "drift_checks": drift_checks,
+            "reconciliation_checks": reconciliation_checks,
+            "evaluated_at": timestamp,
+        }
+        event, reason = _scheduled_lifecycle_event(
+            summary=summary,
+            evaluation=evaluation,
+            timestamp=timestamp,
+        )
+        if event is None:
+            state: Dict[str, Any] = {
+                "status": "not_eligible",
+                "terminal": True,
+                "retryable": False,
+                "outcome": "not_eligible",
+                "reason": reason,
+                "attempt_count": 0,
+                "event_id": None,
+                "updated_at": timestamp,
+            }
+        else:
+            try:
+                delivery = _append_telemetry_lifecycle_event(telemetry_url, event)
+            except Exception as exc:  # noqa: BLE001 - preserve retryable ambiguity
+                delivery = {
+                    "status": "retryable_error",
+                    "terminal": False,
+                    "retryable": True,
+                    "outcome": "ambiguous",
+                    "http_status": None,
+                    "response": None,
+                    "error": str(exc),
+                }
+            state = {
+                "status": "pending",
+                "terminal": False,
+                "retryable": True,
+                "reason": None,
+                "attempt_count": 1,
+                "event_id": event["event_id"],
+                "upstream_event_id": event["causal_parent_id"],
+                "event": event,
+                "created_at": timestamp,
+                "attempted_at": timestamp,
+                "updated_at": timestamp,
+                **delivery,
+            }
+            if state.get("status") == "accepted":
+                state["accepted_at"] = timestamp
+
+        evaluation_ids.append(evaluation_id)
+        evaluation_statuses.append(status)
+        receipt = _lifecycle_append_receipt(binding_id, state)
+        lifecycle_append_results.append(receipt)
+        if receipt["status"] == "accepted" and receipt["event_id"]:
+            lifecycle_accepted_event_ids.append(str(receipt["event_id"]))
+        elif receipt["status"] == "retryable_error":
+            lifecycle_retryable_errors.append(receipt)
+        elif receipt["status"] == "terminal_rejected":
+            lifecycle_terminal_rejections.append(receipt)
+        elif receipt["status"] == "not_eligible":
+            lifecycle_ineligible_binding_ids.append(binding_id)
+
+    tick_status = _worst_status(evaluation_statuses)
+    if lifecycle_retryable_errors or lifecycle_terminal_rejections:
+        tick_status = "failure"
+    elif not evaluation_ids:
+        tick_status = "degraded"
+
+    return {
+        "status": tick_status,
+        "tick_id": tick_id,
+        "trigger": "scheduled",
+        "evaluated_binding_count": len(evaluation_ids),
+        "skipped_binding_count": 0,
+        "evaluation_ids": evaluation_ids,
+        "skipped_binding_ids": [],
+        "drift_report_ids": [],
+        "incident_ids": [],
+        "incident_delivery_errors": [],
+        "lifecycle_append_results": lifecycle_append_results,
+        "lifecycle_accepted_event_ids": list(dict.fromkeys(lifecycle_accepted_event_ids)),
+        "lifecycle_retryable_errors": lifecycle_retryable_errors,
+        "lifecycle_terminal_rejections": lifecycle_terminal_rejections,
+        "lifecycle_ineligible_binding_ids": list(dict.fromkeys(lifecycle_ineligible_binding_ids)),
+        "incident_dispatch_enabled": False,
+        "lifecycle_only": True,
+        "telemetry_summaries_fetched": len(summaries),
+        "triggered_at": timestamp,
+    }
+
+
 def _lag_check(metric: str, value: float | None, *, warning: float, critical: float) -> Dict[str, Any]:
     if value is None:
         return {
@@ -2202,17 +2353,16 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
         }
 
     requested_binding_id = str(body.binding_id or "").strip()
+    if body.lifecycle_only and not requested_binding_id:
+        raise HTTPException(
+            status_code=400,
+            detail="lifecycle_only scheduled reconciliation requires binding_id",
+        )
     if requested_binding_id:
         summaries = [
             summary
             for summary in summaries
-            if str(
-                summary.get("binding_id")
-                or summary.get("runtime_binding_id")
-                or summary.get("id")
-                or ""
-            ).strip()
-            == requested_binding_id
+            if _summary_binding_id(summary) == requested_binding_id
         ]
 
     if not summaries:
@@ -2228,6 +2378,14 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
             "triggered_at": timestamp,
             "detail": "telemetry summaries empty",
         }
+
+    if body.lifecycle_only:
+        return _scheduled_lifecycle_only_reconcile(
+            summaries=summaries,
+            tick_id=tick_id,
+            timestamp=timestamp,
+            telemetry_url=telemetry_url,
+        )
 
     existing_evaluation_ids = {str(item.get("evaluation_id") or "") for item in store.list_evaluations()}
 
@@ -2257,9 +2415,7 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
             lifecycle_ineligible_binding_ids.append(binding_id)
 
     for summary in summaries:
-        binding_id = str(
-            summary.get("binding_id") or summary.get("runtime_binding_id") or summary.get("id") or ""
-        ).strip()
+        binding_id = _summary_binding_id(summary)
         runtime_id = str(summary.get("runtime_id") or "").strip()
         if not binding_id:
             continue

@@ -409,6 +409,66 @@ def test_scheduled_reconcile_can_skip_incident_dispatch_for_targeted_probe() -> 
         assert classify.call_count == 0
 
 
+def test_scheduled_reconcile_lifecycle_only_appends_without_evaluation_store() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _paper_lifecycle_summary()
+        binding_id = summary["binding_id"]
+        tick_id = "tick-target-lifecycle-only-001"
+        evaluation_id = svc._tick_evaluation_id(tick_id, binding_id)
+
+        with (
+            mock.patch.object(
+                svc,
+                "_fetch_telemetry_runtime_summaries",
+                return_value=[summary],
+            ),
+            mock.patch.object(
+                svc,
+                "_append_telemetry_lifecycle_event",
+                return_value={
+                    "status": "accepted",
+                    "terminal": True,
+                    "retryable": False,
+                    "outcome": "accepted",
+                    "http_status": 202,
+                    "response": {"status": "accepted"},
+                    "error": None,
+                },
+            ) as append,
+            mock.patch.object(
+                svc,
+                "_classify_drift_report_incident",
+                side_effect=AssertionError("incident dispatch should be skipped"),
+            ),
+        ):
+            response = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={
+                    "tick_id": tick_id,
+                    "binding_id": binding_id,
+                    "dispatch_incidents": False,
+                    "lifecycle_only": True,
+                },
+            )
+
+        assert response.status_code == 201
+        payload = response.json()
+        assert payload["lifecycle_only"] is True
+        assert payload["incident_dispatch_enabled"] is False
+        assert payload["evaluation_ids"] == [evaluation_id]
+        assert payload["lifecycle_append_results"][0]["binding_id"] == binding_id
+        assert payload["lifecycle_append_results"][0]["status"] == "accepted"
+        assert payload["lifecycle_accepted_event_ids"] == [
+            payload["lifecycle_append_results"][0]["event_id"]
+        ]
+        assert svc.store.get_evaluation(evaluation_id) is None
+        append.assert_called_once()
+
+
 def test_scheduled_lag_breach_creates_deterministic_report_and_dedup_incident() -> None:
     from fastapi.testclient import TestClient
 
