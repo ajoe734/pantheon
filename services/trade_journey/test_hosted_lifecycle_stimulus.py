@@ -151,6 +151,7 @@ def test_stimulus_enqueues_waits_for_runtime_lifecycle_and_reconciles(tmp_path):
     assert artifact["stimulus"]["lifecycle_summary_event_id"] == (
         "event-position-loop-prod-tel-002"
     )
+    assert artifact["stimulus"]["lifecycle_confirmation_source"] == "runtime_summaries"
     assert artifact["stimulus"]["reconciliation_event_id"] == (
         "event-reconciliation-loop-prod-tel-002"
     )
@@ -211,6 +212,76 @@ def test_stimulus_waits_for_fresh_worker_heartbeat_before_enqueue(tmp_path):
     assert artifact["outcome"] == "passed"
     assert len(store.enqueued) == 1
     assert fleet_calls >= 2
+
+
+def test_stimulus_uses_committed_telemetry_when_latest_summary_has_advanced(tmp_path):
+    binding = _binding()
+    now_iso = "2026-07-18T14:00:00Z"
+    queried: list[tuple[str, str]] = []
+
+    def get_json(url: str, **_kwargs):
+        if "desired-state" in url:
+            return {"bindings": [binding]}
+        if "api/fleet/state" in url:
+            heartbeat_at = stimulus._utc_now()
+            return {
+                "workers": [
+                    {
+                        "binding_id": binding["binding_id"],
+                        "runtime_id": binding["runtime_id"],
+                        "capital_pool_id": binding["capital_pool_id"],
+                        "status": "running",
+                        "started_at": heartbeat_at,
+                        "last_heartbeat_at": heartbeat_at,
+                        "heartbeat_status": "active",
+                    }
+                ]
+            }
+        if "runtime-summaries" in url:
+            return {"summaries": [_summary(binding, run_id="newer-different-run")]}
+        raise AssertionError(f"unexpected GET {url}")
+
+    def committed_identity_getter(_dsn: str, *, binding: dict, run_id: str):
+        queried.append((binding["binding_id"], run_id))
+        return {
+            "event_id": "event-committed-position-loop-prod-tel-002",
+            "event_type": "position_snapshot",
+            "run_id": run_id,
+            "sequence_no": 5,
+            "environment": "paper",
+            "execution_mode": "paper",
+            "deployment_stage": "paper",
+            "source_mode": "live",
+            "binding_id": binding["binding_id"],
+            "runtime_id": binding["runtime_id"],
+            "capital_pool_id": binding["capital_pool_id"],
+        }
+
+    code, artifact, store, posts = _run(
+        tmp_path,
+        binding=binding,
+        get_json=get_json,
+        execute_kwargs={
+            "now_factory": lambda: now_iso,
+            "telemetry_db_dsn": "postgresql://unit-test-redacted",
+            "committed_identity_getter": committed_identity_getter,
+        },
+    )
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert queried == [
+        (
+            binding["binding_id"],
+            f"run-{binding['binding_id']}-{now_iso}-1",
+        )
+    ]
+    assert artifact["stimulus"]["lifecycle_summary_event_id"] == (
+        "event-committed-position-loop-prod-tel-002"
+    )
+    assert artifact["stimulus"]["lifecycle_confirmation_source"] == "telemetry_events"
+    assert len(store.enqueued) == 1
+    assert len(posts) == 1
 
 
 def test_stimulus_fails_before_enqueue_when_worker_heartbeat_is_not_fresh(tmp_path):

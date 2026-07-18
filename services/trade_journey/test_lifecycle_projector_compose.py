@@ -73,6 +73,7 @@ def test_legacy_snapshot_projector_can_only_write_backfill_truth():
 def test_default_paper_signal_producer_uses_package_safe_module_entrypoint():
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     producer = compose["services"]["paper-signal-producer"]
+    environment = producer["environment"]
 
     assert "profiles" not in producer
     assert producer["restart"] == "unless-stopped"
@@ -81,3 +82,6 @@ def test_default_paper_signal_producer_uses_package_safe_module_entrypoint():
         "-m",
         "services.execution.lean_runtime.paper_signal_producer",
     ]
+    assert environment["TELEMETRY_DB_DSN"].startswith(
+        "${TELEMETRY_DB_DSN:-postgresql://"
+    )
