@@ -507,29 +507,33 @@ async def run_probe(
             observed_baseline_high_watermark = high
         candidates = _complete_candidates(rows)
         if candidates:
-            journeys, loops, generation_name = _current_projection(projection_root)
-        for candidate in candidates:
             try:
-                proof = _correlate(
-                    candidate=candidate,
-                    baseline_high_watermark=observed_baseline_high_watermark,
-                    high_watermark=high,
-                    journeys=journeys,
-                    loops=loops,
-                    generation_name=generation_name,
-                    expected_sha=expected_sha,
-                )
-                return {
-                    "schema_version": SCHEMA_VERSION,
-                    "task_id": TASK_ID,
-                    "outcome": "passed",
-                    "observed_at": _utc_now(),
-                    "expected_deployment_sha": expected_sha,
-                    "proof": proof,
-                    "redaction": {"dsn_included": False, "payloads_included": False},
-                }
+                journeys, loops, generation_name = _current_projection(projection_root)
             except ProbeError as exc:
                 last_error = exc
+            else:
+                for candidate in candidates:
+                    try:
+                        proof = _correlate(
+                            candidate=candidate,
+                            baseline_high_watermark=observed_baseline_high_watermark,
+                            high_watermark=high,
+                            journeys=journeys,
+                            loops=loops,
+                            generation_name=generation_name,
+                            expected_sha=expected_sha,
+                        )
+                        return {
+                            "schema_version": SCHEMA_VERSION,
+                            "task_id": TASK_ID,
+                            "outcome": "passed",
+                            "observed_at": _utc_now(),
+                            "expected_deployment_sha": expected_sha,
+                            "proof": proof,
+                            "redaction": {"dsn_included": False, "payloads_included": False},
+                        }
+                    except ProbeError as exc:
+                        last_error = exc
         if monotonic() >= deadline:
             raise ProbeError(
                 last_error.code, last_error.safe_message, timed_out=True
