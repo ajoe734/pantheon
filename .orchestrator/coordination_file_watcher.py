@@ -16,7 +16,7 @@ from common import (
     utc_now,
     write_activity_log,
 )
-from coordination_repo_mirror import mirror_backend_delivery_bundle, mirror_contract_ready_bundle
+from coordination_repo_mirror import CoordinationMirrorError, mirror_backend_delivery_bundle, mirror_contract_ready_bundle
 from lovable_task_publisher import publish_lovable_task_packet
 from multi_repo_registry import (
     coordination_enabled,
@@ -57,6 +57,13 @@ TYPE_TO_WORKER = {
 
 
 ENGINE_MANUAL_TYPES = {"needs-engine"}
+ACTIVE_FRONTEND_REPO_ID = "execute_plans"
+LEGACY_FRONTEND_REPO_ID = "front_ai_trading_system"
+
+
+def _targets_legacy_frontend(config: dict[str, Any], payload: dict[str, Any]) -> bool:
+    target = str(payload.get("target_repo") or "").strip()
+    return bool(target) and matching_repo_id(config, target) == LEGACY_FRONTEND_REPO_ID
 
 
 def _default_coordination_state() -> dict[str, Any]:
@@ -126,7 +133,7 @@ def _target_repo_ids(config: dict[str, Any], repo_id: str, payload: dict[str, An
     if current_type == "ui-done":
         return [source_repo_id, "pantheon"]
     if current_type in {"contract-ready", "lovable-ui-task"}:
-        return ["pantheon", target_repo_id or "front_ai_trading_system"]
+        return ["pantheon", target_repo_id or ACTIVE_FRONTEND_REPO_ID]
     if current_type == "needs-runtime":
         return [source_repo_id, "runtime_platform"]
     if current_type == "needs-engine":
@@ -357,6 +364,15 @@ def sync_coordination_files(config: dict[str, Any], state: dict[str, Any]) -> bo
 
                 current_type = str(payload.get("type") or "").strip()
                 mirror_only = to_bool(payload.get("mirror_only"))
+                if current_type in {"contract-ready", "backend-delivery"} and _targets_legacy_frontend(config, payload):
+                    skip = {
+                        "reason": "legacy_frontend_target",
+                        "target_repo": str(payload.get("target_repo") or ""),
+                        "replacement_repo": repository_slug(config, ACTIVE_FRONTEND_REPO_ID) or "ajoe734/execute-plans",
+                    }
+                    record["coordination_skip"] = skip
+                    files_state[key]["coordination_skip"] = skip
+                    continue
                 if current_type == "contract-ready":
                     published = publish_lovable_task_packet(config, payload) if not mirror_only else None
                     if published:
@@ -380,7 +396,13 @@ def sync_coordination_files(config: dict[str, Any], state: dict[str, Any]) -> bo
                                 "message": f"Published Lovable task packet for {record['feature_id']}.",
                             },
                         )
-                    mirrored = mirror_contract_ready_bundle(config, payload, published) if not mirror_only else None
+                    try:
+                        mirrored = mirror_contract_ready_bundle(config, payload, published) if not mirror_only else None
+                    except CoordinationMirrorError as exc:
+                        error = {"reason": "mirror_precondition_failed", "message": str(exc)}
+                        record["coordination_error"] = error
+                        files_state[key]["coordination_error"] = error
+                        continue
                     if mirrored:
                         record["mirrored_to_target_repo"] = mirrored
                         write_activity_log(
@@ -392,7 +414,13 @@ def sync_coordination_files(config: dict[str, Any], state: dict[str, Any]) -> bo
                             },
                         )
                 elif current_type == "backend-delivery":
-                    mirrored = mirror_backend_delivery_bundle(config, payload) if not mirror_only else None
+                    try:
+                        mirrored = mirror_backend_delivery_bundle(config, payload) if not mirror_only else None
+                    except CoordinationMirrorError as exc:
+                        error = {"reason": "mirror_precondition_failed", "message": str(exc)}
+                        record["coordination_error"] = error
+                        files_state[key]["coordination_error"] = error
+                        continue
                     if mirrored:
                         record["mirrored_to_target_repo"] = mirrored
                         write_activity_log(

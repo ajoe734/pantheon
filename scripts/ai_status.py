@@ -88,7 +88,9 @@ from runtime_state import (
     runtime_state_lock,
 )
 from common import (
+    ActivityAuditInvariantError,
     DuplicateActivityJSONKeyError,
+    activity_audit_invariant_error,
     activity_audit_lock_path,
     activity_audit_source_paths_unlocked,
     append_activity_log_entries_unlocked,
@@ -96,6 +98,7 @@ from common import (
     durable_write_bytes,
     prepare_activity_audit_unlocked,
     read_activity_log_tail_bytes,
+    read_regular_file_bytes,
     rotate_activity_log_unlocked,
     strict_activity_json_loads,
     validated_activity_event_digests_unlocked,
@@ -191,6 +194,8 @@ def _worker_workspace_root() -> Path | None:
 
 
 def _first_symlink_component(path: Path) -> Path | None:
+    if ".." in path.parts:
+        raise RuntimeError(f"Path contains parent directory references (..): {path}")
     current = Path(path.anchor)
     parts = path.parts[1:] if path.is_absolute() else path.parts
     for part in parts:
@@ -198,17 +203,23 @@ def _first_symlink_component(path: Path) -> Path | None:
         try:
             if current.is_symlink():
                 return current
-            if not current.exists():
+            if not current.exists() and not current.is_symlink():
                 return None
         except OSError:
             return current
     return None
 
 
+
 def _status_root_from_runtime_path(raw: str, *, label: str) -> Path:
     path = Path(os.path.expanduser(raw))
     if not path.is_absolute():
         raise RuntimeError(f"{label} must be absolute when set")
+    symlink_comp = _first_symlink_component(path)
+    if symlink_comp is not None:
+        raise RuntimeError(f"{label} path contains a symlink component: {symlink_comp}")
+    if path.is_symlink():
+        raise RuntimeError(f"{label} cannot be a symlink: {path}")
     resolved = path.resolve()
     parent = resolved.parent
     if (
@@ -629,6 +640,22 @@ def _existing_path_is_symlink(path: Path) -> bool:
         return True
 
 
+def _validate_directory_no_symlinks_recursive(directory: Path, label: str) -> None:
+    if directory.is_symlink():
+        raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} directory cannot be a symlink: {directory}")
+    if not directory.exists() or not directory.is_dir():
+        return
+    for dirpath, dirnames, filenames in os.walk(directory):
+        for dirname in dirnames:
+            p = Path(dirpath) / dirname
+            if p.is_symlink():
+                raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} component cannot be a symlink: {p}")
+        for filename in filenames:
+            p = Path(dirpath) / filename
+            if p.is_symlink():
+                raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} leaf cannot be a symlink: {p}")
+
+
 def validate_status_root_binding() -> None:
     """Fail closed before any governed status command can hit a stale worktree."""
 
@@ -697,15 +724,34 @@ def validate_status_root_binding() -> None:
         "archive_index": task_archive_module.ARCHIVE_INDEX_FILE,
         "task_state_lock": canonical_task_state_lock_path(STATUS_FILE),
         "activity_audit_lock": activity_audit_lock_path(LOG_FILE),
+        "docs_site_ai_status": DOCS_SITE_DIR / "ai-status.json",
+        "docs_site_current_work": DOCS_SITE_DIR / "current-work.md",
+        "docs_site_dashboard_bundle": DOCS_SITE_DIR / "dashboard-bundle.json",
+        "docs_site_orchestrator_state": DOCS_SITE_DIR / "orchestrator-state.json",
+        "docs_site_approval_queue": DOCS_SITE_DIR / "approval-queue.json",
+        "docs_site_planning_state": DOCS_SITE_DIR / "planning-state.json",
+        "docs_site_ai_activity_log": DOCS_SITE_DIR / "ai-activity-log.jsonl",
     }.items():
         if not _path_parent_under_root(Path(path), root):
             raise RuntimeError(
                 f"PANTHEON_STATUS_ROOT path binding for {label} escapes root: {path}"
             )
-        if Path(path).exists() and _existing_path_is_symlink(Path(path)):
+        if _existing_path_is_symlink(Path(path)):
             raise RuntimeError(
                 f"PANTHEON_STATUS_ROOT path binding for {label} cannot be a symlink: {path}"
             )
+
+    for path, label in (
+        (root / "ai-task-archive", "task archive"),
+        (root / "archive" / "logs", "activity rotation archive"),
+        (root / ".orchestrator" / "logs" / "activity-log-archive", "legacy activity archive"),
+        (root / ".orchestrator" / "logs" / "activity-rotation", "activity rotation"),
+        (root / ".orchestrator" / "worker-runtime", "worker runtime"),
+    ):
+        symlink_comp = _first_symlink_component(path)
+        if symlink_comp is not None:
+            raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} component cannot be a symlink: {symlink_comp}")
+        _validate_directory_no_symlinks_recursive(path, label)
 
     assert_task_archive_root_binding()
 
@@ -1221,11 +1267,16 @@ def default_state() -> dict[str, Any]:
 
 
 def load_state() -> dict[str, Any]:
-    if not STATUS_FILE.exists():
+    try:
+        payload = read_regular_file_bytes(
+            STATUS_FILE,
+            source="canonical status state",
+        )
+    except FileNotFoundError:
         return default_state()
-    if STATUS_FILE.read_text(encoding="utf-8").strip() == "":
+    if not payload.strip():
         raise SystemExit(f"Refusing to initialize from empty status file: {STATUS_FILE}")
-    state = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+    state = json.loads(payload.decode("utf-8", errors="strict"))
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
     return state
@@ -1649,10 +1700,11 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
     _validate_status_archive_snapshot(snapshot)
     if existing is not None:
         _validate_status_archive_snapshot(existing)
-        if _canonical_json_sha256(existing) != _canonical_json_sha256(snapshot):
-            raise RuntimeError(
-                f"existing archive snapshot conflicts with terminal task: {task_id}"
-            )
+        if is_terminal_task(task):
+            if _canonical_json_sha256(existing) != _canonical_json_sha256(snapshot):
+                raise RuntimeError(
+                    f"existing archive snapshot conflicts with terminal task: {task_id}"
+                )
         snapshot = deepcopy(existing)
 
     pending = state.get(STATUS_ARCHIVE_OUTBOX_KEY)
@@ -1802,8 +1854,68 @@ def _activity_audit_sources() -> list[Path]:
 
 
 def _activity_event_index_unlocked(event_ids: set[str]) -> dict[str, str]:
-    prepare_activity_audit_unlocked(LOG_FILE)
-    return validated_activity_event_digests_unlocked(LOG_FILE, event_ids)
+    try:
+        prepare_activity_audit_unlocked(LOG_FILE)
+        return validated_activity_event_digests_unlocked(LOG_FILE, event_ids)
+    except ActivityAuditInvariantError:
+        raise
+    except RuntimeError as exc:
+        raise activity_audit_invariant_error(
+            exc,
+            log_path=LOG_FILE,
+            operation="status_outbox_recovery",
+        ) from exc
+
+
+def _active_activity_event_digests_unlocked(
+    event_ids: set[str],
+) -> dict[str, str]:
+    """Look for a just-appended outbox transaction in a bounded active tail."""
+
+    payload = read_activity_log_tail_bytes(
+        LOG_FILE,
+        max_lines=max(64, len(event_ids) * 8),
+    )
+    result: dict[str, str] = {}
+    for line_number, raw_line in enumerate((payload or b"").splitlines(), start=1):
+        if not raw_line.strip():
+            continue
+        try:
+            entry = strict_activity_json_loads(
+                raw_line.decode("utf-8", errors="strict")
+            )
+        except (
+            UnicodeError,
+            json.JSONDecodeError,
+            DuplicateActivityJSONKeyError,
+        ) as exc:
+            raise ActivityAuditInvariantError(
+                "active activity tail is unreadable",
+                invariant="activity_tail_json",
+                evidence={
+                    "log_path": str(LOG_FILE),
+                    "tail_line_number": line_number,
+                    "error_type": type(exc).__name__,
+                },
+            ) from exc
+        if not isinstance(entry, dict):
+            raise ActivityAuditInvariantError(
+                "active activity tail row is not an object",
+                invariant="activity_tail_json",
+                evidence={
+                    "log_path": str(LOG_FILE),
+                    "tail_line_number": line_number,
+                },
+            )
+        event_id = str(entry.get("event_id") or "")
+        if event_id not in event_ids:
+            continue
+        digest = _canonical_json_sha256(entry)
+        existing = result.get(event_id)
+        if existing is not None and existing != digest:
+            raise RuntimeError(f"activity outbox payload conflict: {event_id}")
+        result[event_id] = digest
+    return result
 
 
 def _validate_status_archive_outbox(value: Any) -> dict[str, Any]:
@@ -1950,14 +2062,22 @@ def _validate_status_activity_outbox(value: Any) -> dict[str, Any]:
     return value
 
 
-def recover_status_activity_outbox(state: dict[str, Any]) -> bool:
+def recover_status_activity_outbox(
+    state: dict[str, Any],
+    *,
+    known_unappended: bool = False,
+) -> bool:
     pending = state.get(STATUS_ACTIVITY_OUTBOX_KEY)
     if pending in (None, {}, []):
         return False
     pending = _validate_status_activity_outbox(pending)
     pending_event_ids = {str(event["event_id"]) for event in pending["events"]}
     with activity_audit_lock_file(LOG_FILE, shared=False, nonblocking=False):
-        existing = _activity_event_index_unlocked(pending_event_ids)
+        existing = (
+            {}
+            if known_unappended
+            else _activity_event_index_unlocked(pending_event_ids)
+        )
         missing: list[dict[str, Any]] = []
         for event in pending["events"]:
             event_id = str(event["event_id"])
@@ -1971,7 +2091,9 @@ def recover_status_activity_outbox(state: dict[str, Any]) -> bool:
             missing.append(event)
             existing[event_id] = digest
         _append_logs_unlocked(missing)
-        final = _activity_event_index_unlocked(pending_event_ids)
+        final = _active_activity_event_digests_unlocked(pending_event_ids)
+        if set(final) != pending_event_ids:
+            final = _activity_event_index_unlocked(pending_event_ids)
         if any(
             final.get(str(event["event_id"])) != _canonical_json_sha256(event)
             for event in pending["events"]
@@ -1997,7 +2119,7 @@ def commit_state_with_activity_outbox(
         _status_archive_fault("pending_status")
     recover_status_archive_outbox(state)
     if events:
-        recover_status_activity_outbox(state)
+        recover_status_activity_outbox(state, known_unappended=True)
 
 
 def ensure_agent(name: str) -> dict[str, Any]:
@@ -4833,7 +4955,7 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can progress {task_id}")
     timestamp = iso_now()
-    if task["status"] in {"todo", "review_approved"}:
+    if task["status"] == "todo":
         task["status"] = "in_progress"
     task["last_update"] = timestamp
     task["next"] = message
@@ -5175,6 +5297,21 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def _emit_fail_closed(error: ActivityAuditInvariantError) -> None:
+    print(
+        json.dumps(
+            {
+                "status": "fail_closed",
+                "diagnostic": error.diagnostic,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ),
+        file=sys.stderr,
+    )
+
+
 def command_wave(state: dict[str, Any], args: list[str]) -> None:
     """wave open <wave-id> | wave close | wave freeze"""
     from wave_guards import (  # lazy: only needed for this command
@@ -5272,16 +5409,42 @@ def main(argv: list[str]) -> int:
     }
 
     if command in read_only_commands:
-        # A killed terminal transition may leave durable archive/activity
-        # outboxes. Complete those writer transactions under EX before taking
-        # the normal shared read snapshot.
-        with canonical_task_state_lock(shared=False):
-            recovery_state = load_state()
-            recover_status_archive_outbox(recovery_state)
-            recover_status_activity_outbox(recovery_state)
-        with canonical_task_state_lock(shared=True):
-            state = load_state()
-            read_only_commands[command](state, args)
+        # Read-only commands must never join the writer convoy or mutate
+        # recovery state. Writers/supervisor own outbox recovery; a reader
+        # reports a bounded fail-closed diagnostic instead.
+        try:
+            with canonical_task_state_lock(shared=True, nonblocking=True):
+                state = load_state()
+                pending_planes = [
+                    key
+                    for key in (
+                        STATUS_ARCHIVE_OUTBOX_KEY,
+                        STATUS_ACTIVITY_OUTBOX_KEY,
+                    )
+                    if state.get(key) not in (None, {}, [])
+                ]
+                if pending_planes:
+                    raise ActivityAuditInvariantError(
+                        "canonical status recovery is pending",
+                        invariant="status_recovery_pending",
+                        evidence={"pending_planes": pending_planes},
+                    )
+                read_only_commands[command](state, args)
+        except BlockingIOError as exc:
+            _emit_fail_closed(
+                ActivityAuditInvariantError(
+                    "canonical task-state lock is busy",
+                    invariant="status_task_lock_busy",
+                    evidence={
+                        "command": command,
+                        "lock_path": str(canonical_task_state_lock_path(STATUS_FILE)),
+                    },
+                )
+            )
+            return 75
+        except ActivityAuditInvariantError as exc:
+            _emit_fail_closed(exc)
+            return 2
         return 0
 
     if command not in commands:

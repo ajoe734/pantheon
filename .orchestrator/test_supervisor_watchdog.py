@@ -852,6 +852,113 @@ class SupervisorWatchdogTests(unittest.TestCase):
                 )
             self.assertEqual(ctx.exception.errno, errno.EACCES)
 
+    def test_watchdog_success_releases_lock_exactly_once(self) -> None:
+        """Verify that on normal success, the lock is released exactly once."""
+        self.write_pid(123)
+        now = datetime.now(timezone.utc)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": supervisor_watchdog.isoformat_utc(now),
+                "lifecycle": "running"
+            }
+        })
+
+        enter_calls = 0
+        exit_calls = 0
+        real_lock = supervisor_watchdog.runtime_state_lock
+
+        class LockManagerWrapper:
+            def __init__(self, target):
+                self.target = target
+            def __enter__(self):
+                nonlocal enter_calls
+                enter_calls += 1
+                return self.target.__enter__()
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                nonlocal exit_calls
+                exit_calls += 1
+                return self.target.__exit__(exc_type, exc_val, exc_tb)
+
+        def fake_lock_manager(*args, **kwargs):
+            if kwargs.get("nonblocking") is True:
+                return LockManagerWrapper(real_lock(*args, **kwargs))
+            return real_lock(*args, **kwargs)
+
+        with (
+            mock.patch.object(supervisor_watchdog, "runtime_state_lock", fake_lock_manager),
+            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result["decision"], "observe_only")
+        self.assertEqual(enter_calls, 1, "Lock manager enter should have been called exactly once.")
+        self.assertEqual(exit_calls, 1, "Lock manager exit should have been called exactly once on success.")
+
+    def test_contention_metric_error_surfaced_in_wrapper(self) -> None:
+        """Verify that when run_watchdog hits contention and append_watchdog_contention_metric raises an exception, it is surfaced to stderr and skip is returned."""
+        import io
+        import errno
+
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lock_handle.close)
+
+        self.write_pid(123)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": "2026-05-18T13:00:00Z",
+                "lifecycle": "running"
+            }
+        })
+
+        orig_stderr = sys.stderr
+        sys.stderr = io.StringIO()
+        try:
+            def fake_append(*args, **kwargs):
+                raise OSError(errno.EACCES, "Permission denied")
+
+            with (
+                mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+                mock.patch.object(supervisor_watchdog, "append_watchdog_contention_metric", fake_append),
+            ):
+                result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+            self.assertEqual(result["decision"], "skip")
+            self.assertEqual(result["reason"], "lock_contention")
+            
+            output = sys.stderr.getvalue()
+            self.assertIn("watchdog contention metric write failed", output)
+            self.assertIn("Permission denied", output)
+        finally:
+            sys.stderr = orig_stderr
+
+    def test_non_flock_eagain_is_propagated(self) -> None:
+        """Verify that a non-flock EAGAIN (e.g. from validation I/O or open) is propagated and NOT treated as lock contention."""
+        import errno
+
+        # We mock __enter__ to raise EAGAIN, but we DO NOT patch fcntl.flock to fail,
+        # so flock_contention_hit remains False.
+        def fake_lock_manager(*args, **kwargs):
+            class BadLock:
+                def __enter__(self):
+                    raise OSError(errno.EAGAIN, "Non-flock EAGAIN error")
+                def __exit__(self, exc_type, exc_val, exc_tb):
+                    pass
+            return BadLock()
+
+        with mock.patch.object(supervisor_watchdog, "runtime_state_lock", fake_lock_manager):
+            with self.assertRaises(OSError) as ctx:
+                supervisor_watchdog.run_watchdog(self.config, restart=True)
+            self.assertEqual(ctx.exception.errno, errno.EAGAIN)
+            self.assertIn("Non-flock EAGAIN error", str(ctx.exception))
+
     def test_watchdog_dry_run(self) -> None:
         """Verify that when dry_run=True is set, the decision is to restart but Popen is not called."""
         self.write_pid(123)
@@ -903,6 +1010,66 @@ class SupervisorWatchdogTests(unittest.TestCase):
                 supervisor_watchdog.run_watchdog(self.config, restart=True)
 
         self.assertEqual(exit_calls, 1, "Lock manager exit should have been called exactly once to clean up lock.")
+
+    def test_watchdog_locked_body_contention_propagates(self) -> None:
+        """Verify that a LockContentionError raised inside the locked body (e.g. from a nested lock attempt)
+        is propagated and NOT caught or converted to a benign skip by run_watchdog."""
+        import errno
+        self.write_pid(123)
+        self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}})
+
+        def nested_contention_run(*args, **kwargs):
+            from common import LockContentionError
+            import errno
+            raise LockContentionError(errno.EAGAIN, "Nested lock contention", "dummy.lock")
+
+        with mock.patch.object(supervisor_watchdog, "_run_watchdog_locked", nested_contention_run):
+            from common import LockContentionError
+            with self.assertRaises(LockContentionError) as ctx:
+                supervisor_watchdog.run_watchdog(self.config, restart=True)
+            self.assertEqual(ctx.exception.errno, errno.EAGAIN)
+            self.assertIn("Nested lock contention", str(ctx.exception))
+
+    def test_contention_metric_open_eacces_propagates(self) -> None:
+        """Verify that when the metrics-lock os.open raises EACCES, the original OSError is propagated without UnboundLocalError."""
+        import errno
+
+        def fake_open(path, flags, mode=0o777):
+            if str(path).endswith(".lock"):
+                raise OSError(errno.EACCES, "Permission denied")
+            return os_open(path, flags, mode)
+
+        os_open = os.open
+        with mock.patch("os.open", fake_open):
+            with self.assertRaises(OSError) as ctx:
+                supervisor_watchdog.append_watchdog_contention_metric(
+                    self.config,
+                    {"decision": "skip", "reason": "lock_contention"},
+                    self.config["watchdog"],
+                )
+            self.assertEqual(ctx.exception.errno, errno.EACCES)
+            self.assertNotIsInstance(ctx.exception, UnboundLocalError)
+
+    def test_watchdog_overlap_contention_coverage(self) -> None:
+        """Verify that overlapping lock attempts classify contention correctly without out-of-order fcntl.flock wrapper corruption."""
+        from common import LockContentionError, canonical_task_state_lock_file
+        
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+        raw_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(raw_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(raw_handle.close)
+
+        lm = supervisor_watchdog.runtime_state_lock(self.config, shared=False, nonblocking=True)
+        status_file = self.root / "state.json"
+
+        with self.assertRaises(LockContentionError):
+            with lm:
+                self.fail("lm shouldn't be acquired under contention")
+        
+        with canonical_task_state_lock_file(status_file, shared=False, nonblocking=True):
+            pass
 
 
 class ActiveWorkerCountDedupeTests(unittest.TestCase):

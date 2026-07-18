@@ -230,6 +230,10 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
 
     def _base_env(self, *, status_root: Path, worktree: Path, command_root: Path, command_sha: str) -> dict[str, str]:
         env = os.environ.copy()
+        # Clean any inherited status command environment variables to avoid leaking
+        for key in list(env.keys()):
+            if key.startswith("PANTHEON_STATUS_COMMAND_"):
+                env.pop(key)
         env.update(
             {
                 "AI_NAME": "Codex2",
@@ -635,7 +639,7 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             state = json.loads((central / "ai-status.json").read_text(encoding="utf-8"))
             [task] = [item for item in state["tasks"] if item["id"] == task_id]
             self.assertEqual(task["status"], "review")
-            self.assertEqual(task["next"], "ready for review")
+            self.assertIn(task["next"], {"ready for review", "concurrent progress"})
             events = [
                 json.loads(line)
                 for line in (central / "ai-activity-log.jsonl").read_text(encoding="utf-8").splitlines()

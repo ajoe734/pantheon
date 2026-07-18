@@ -186,7 +186,7 @@ def render_lovable_prompt(machine_packet: dict[str, Any]) -> str:
     required_feedback = list(machine_packet.get("required_feedback") or [])
     delivery_dependencies = list(machine_packet.get("delivery_dependencies") or [])
     prompt_lines = [
-        f"Build the `{machine_packet.get('feature_id')}` UI flow in `front-ai-trading-system` using only Pantheon APIs.",
+        f"Build the `{machine_packet.get('feature_id')}` UI flow in `execute-plans` using only Pantheon APIs.",
         "Pantheon has already published the contract-ready handoff for this feature.",
     ]
     if gap_handoff_path:
@@ -275,7 +275,7 @@ def publish_lovable_task_packet(config: dict[str, Any], contract_payload: dict[s
     machine_packet = {
         "feature_id": feature_id,
         "type": "lovable-ui-task",
-        "project": str(contract_payload.get("target_repo") or repository_slug(config, "front_ai_trading_system") or "front-ai-trading-system"),
+        "project": str(contract_payload.get("target_repo") or repository_slug(config, "execute_plans") or "ajoe734/execute-plans"),
         "status": "ready",
         "pantheon_pr": contract_payload.get("pantheon_pr"),
         "base_url": contract_payload.get("base_url") or contract_payload.get("env"),

@@ -19,7 +19,7 @@ ROOT = THIS_DIR.parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from common import config_path, durable_write_bytes, load_config, repo_root_for_config, utc_now, write_activity_log
+from common import config_path, durable_write_bytes, load_config, repo_root_for_config, utc_now, write_activity_log, LockContentionError
 from runtime_state import runtime_state_lock, save_runtime_state
 
 
@@ -389,12 +389,13 @@ def append_watchdog_contention_metric(config: dict[str, Any], payload: dict[str,
     lock_path = path.with_suffix(".lock")
     flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 
+    lock_descriptor = None
     try:
         lock_descriptor = os.open(lock_path, flags, 0o600)
         try:
             fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except (BlockingIOError, OSError) as exc:
-            if isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK):
+            if getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK):
                 sys.stderr.write("watchdog contention metric write dropped due to lock contention\n")
                 sys.stderr.flush()
                 return
@@ -428,7 +429,8 @@ def append_watchdog_contention_metric(config: dict[str, Any], payload: dict[str,
 
         fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
     finally:
-        os.close(lock_descriptor)
+        if lock_descriptor is not None:
+            os.close(lock_descriptor)
 
 
 def load_runtime_state_file(config: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
@@ -709,13 +711,11 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
         shared=False,
         nonblocking=True,
     )
-    lock_acquired = False
+    acquired = False
     try:
         lock_manager.__enter__()
-        lock_acquired = True
-    except (BlockingIOError, OSError) as exc:
-        if not (isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK)):
-            raise
+        acquired = True
+    except LockContentionError:
         # We hit lock contention.
         # Construct a skip/contention result without writing to the locked state files.
         now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -741,18 +741,20 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
 
         try:
             append_watchdog_contention_metric(config, result, settings)
-        except Exception:
-            pass
+        except Exception as metric_exc:
+            sys.stderr.write(f"watchdog contention metric write failed: {metric_exc}\n")
+            sys.stderr.flush()
 
         return result
 
     try:
-        return _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
+        result = _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
     except BaseException:
         lock_manager.__exit__(*sys.exc_info())
         raise
     else:
         lock_manager.__exit__(None, None, None)
+    return result
 
 
 def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:

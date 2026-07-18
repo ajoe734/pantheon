@@ -13,10 +13,10 @@ Two failure modes this guards against, both seen in production:
    (the deploy sync stops), so merged code never goes live.
 
 NOT every live != repo difference is drift. Some live overrides are
-legitimate and environment-specific (e.g. `coordination.enabled` is off
-because this host has no `front-ai-trading-system` sibling checkout that the
-coordination mirror requires). Those live on an allowlist and are reported as
-informational, never auto-fixed.
+legitimate and environment-specific. Those live on an allowlist and are
+reported as informational, never auto-fixed. Coordination is intentionally
+not allowlisted: its active mirror uses `execute-plans`, while stale legacy
+frontend packets are packet-local skips and cannot stop the supervisor loop.
 """
 from __future__ import annotations
 
@@ -41,10 +41,6 @@ CRITICAL_FLAGS: tuple[str, ...] = (
 # environment reasons. Reported as info, never counted as drift, never fixed.
 DEFAULT_INTENTIONAL_OVERRIDES: frozenset[str] = frozenset(
     {
-        # coordination mirror requires a sibling front-ai-trading-system
-        # checkout that is absent on supervisor-only hosts; enabling it there
-        # crashes every scan.
-        "coordination.enabled",
         # GitHub event bus is intentionally off on hosts without the relay
         # wired up.
         "github_bus.enabled",
