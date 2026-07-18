@@ -1,7 +1,7 @@
 # OPS-ACTIVITY-ROTATION-OVERLAP-PREVENTION-001 Evidence
 
 Status: exact-head owner evidence after composing current `origin/dev`
-`deab7fc14686f428dbdfa5745288db998a0e7f2d`. Auto-merge remains disabled;
+`ed98b280305fb28f4f283c78b86626958b026427`. Auto-merge remains disabled;
 independent exact-head review is still required.
 
 ## Scope
@@ -224,7 +224,7 @@ Results before the final evidence-only commit:
 - runtime state: passed;
 - supervisor watchdog: 43 passed;
 - worker runner: 22 passed;
-- supervisor: 277 passed;
+- supervisor: 279 passed;
 - status-command runtime pin: 6 passed;
 - task archive index: passed;
 - `py_compile` and `git diff --check`: passed.
