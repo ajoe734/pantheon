@@ -35,13 +35,11 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
     assert projector["depends_on"]["postgres"]["condition"] == "service_healthy"
     assert projector["depends_on"]["telemetry"]["condition"] == "service_healthy"
     assert "operator-bff" not in projector["depends_on"]
-    assert projector["healthcheck"]["test"] == [
-        "CMD",
-        "python",
-        "-m",
-        "services.trade_journey.lifecycle_projector",
-        "healthcheck",
-    ]
+    healthcheck = projector["healthcheck"]["test"]
+    assert healthcheck[0] == "CMD-SHELL"
+    assert "controller_state.json" in healthcheck[1]
+    assert "last_error" in healthcheck[1]
+    assert "age < 600" in healthcheck[1]
 
     bff = services["operator-bff"]
     bff_environment = bff["environment"]

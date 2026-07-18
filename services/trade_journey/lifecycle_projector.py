@@ -68,6 +68,7 @@ LIFECYCLE_EVENT_TYPES = frozenset(
         "reconciliation_failed",
     }
 )
+LIFECYCLE_EVENT_TYPE_QUERY = tuple(sorted(LIFECYCLE_EVENT_TYPES))
 
 STABLE_IDENTITY_FIELDS = (
     "tenant_id",
@@ -880,6 +881,8 @@ class PostgresLifecycleSource:
                     OWNED BY telemetry_events.ingested_seq;
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_telemetry_events_ingested_seq
                     ON telemetry_events (ingested_seq);
+                CREATE INDEX IF NOT EXISTS idx_telemetry_events_event_type_ingested_seq
+                    ON telemetry_events (event_type, ingested_seq);
                 CREATE INDEX IF NOT EXISTS idx_telemetry_events_ingested_at
                     ON telemetry_events (ingested_at DESC);
                 """
@@ -892,7 +895,14 @@ class PostgresLifecycleSource:
 
         conn = await asyncpg.connect(self.dsn)
         try:
-            return int(await conn.fetchval("SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events") or 0)
+            return int(
+                await conn.fetchval(
+                    "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
+                    "WHERE event_type = ANY($1::text[])",
+                    list(LIFECYCLE_EVENT_TYPE_QUERY),
+                )
+                or 0
+            )
         finally:
             await conn.close()
 
@@ -904,8 +914,10 @@ class PostgresLifecycleSource:
             rows = await conn.fetch(
                 "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
                 "FROM telemetry_events WHERE ingested_seq > $1 "
-                "ORDER BY ingested_seq ASC LIMIT $2",
+                "AND event_type = ANY($2::text[]) "
+                "ORDER BY ingested_seq ASC LIMIT $3",
                 int(checkpoint),
+                list(LIFECYCLE_EVENT_TYPE_QUERY),
                 int(limit),
             )
         finally:

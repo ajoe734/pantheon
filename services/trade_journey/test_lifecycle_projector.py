@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
+import sys
+import types
 import uuid
 
 import pytest
@@ -13,7 +16,9 @@ from services.trade_journey.correlation_envelope import (
 from services.trade_journey.lifecycle_projector import (
     AtomicProjectionBundle,
     ConflictingLifecycleEvent,
+    LIFECYCLE_EVENT_TYPE_QUERY,
     LifecycleProjector,
+    PostgresLifecycleSource,
 )
 
 
@@ -136,6 +141,48 @@ def _projector(tmp_path: Path, **kwargs) -> LifecycleProjector:
 
 def _current_json(tmp_path: Path, filename: str) -> dict:
     return json.loads((tmp_path / "current" / filename).read_text(encoding="utf-8"))
+
+
+def test_postgres_lifecycle_source_filters_watermark_and_fetch(monkeypatch):
+    calls: list[tuple] = []
+
+    class Connection:
+        async def fetchval(self, query: str, event_types: list[str]) -> int:
+            calls.append(("fetchval", query, tuple(event_types)))
+            return 44
+
+        async def fetch(
+            self,
+            query: str,
+            checkpoint: int,
+            event_types: list[str],
+            limit: int,
+        ) -> list[dict]:
+            calls.append(("fetch", query, checkpoint, tuple(event_types), limit))
+            return []
+
+        async def close(self) -> None:
+            calls.append(("close",))
+
+    async def connect(dsn: str) -> Connection:
+        calls.append(("connect", dsn))
+        return Connection()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+    source = PostgresLifecycleSource("postgresql://unit")
+
+    assert asyncio.run(source.high_watermark()) == 44
+    assert asyncio.run(source.fetch_after(7, limit=9)) == []
+
+    fetchval = next(call for call in calls if call[0] == "fetchval")
+    fetch = next(call for call in calls if call[0] == "fetch")
+    assert "event_type = ANY" in fetchval[1]
+    assert "event_type = ANY" in fetch[1]
+    assert fetchval[2] == LIFECYCLE_EVENT_TYPE_QUERY
+    assert fetch[2] == 7
+    assert fetch[3] == LIFECYCLE_EVENT_TYPE_QUERY
+    assert fetch[4] == 9
+    assert "heartbeat" not in fetchval[2]
 
 
 def test_full_canonical_lifecycle_projects_one_identity_consistent_journey_and_loop(tmp_path):
