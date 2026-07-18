@@ -943,6 +943,26 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["to"], "Codex")
         self.assertIn("finalize", pending[0]["message"].lower())
 
+    def test_progress_promotes_todo_to_in_progress(self) -> None:
+        self.state["tasks"][0]["status"] = "todo"
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_progress(self.state, ["REG-002", "Implementation started"])
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["next"], "Implementation started")
+
+    def test_progress_preserves_review_approved_for_owner_finalize(self) -> None:
+        self.state["tasks"][0]["status"] = "review_approved"
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_progress(self.state, ["REG-002", "Checking status before finalization"])
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["next"], "Checking status before finalization")
+
     def test_done_requires_owner_and_review_approved(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
             with self.assertRaises(SystemExit):
