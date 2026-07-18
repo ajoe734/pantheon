@@ -115,12 +115,15 @@ def _ws_publish(
     data: dict,
     *,
     utc_now_fn: Optional[Callable[[], str]] = None,
+    event_id: Optional[str] = None,
 ) -> str:
     """Publish an SSE event to the workshop buffer and all live subscribers.
 
     Safe to call from sync route handlers. Returns the new event_id.
     """
-    event_id = _ws_event_id()
+    event_id = event_id or _ws_event_id()
+    if any(existing_id == event_id for existing_id, _ in _ws_get_buffer(workshop_id)):
+        return event_id
     timestamp = utc_now_fn() if utc_now_fn else _ws_utc_now()
     event: Dict[str, Any] = {
         "id": event_id,

@@ -45,12 +45,16 @@ from common import (
     normalize_agent_id,
     is_github_cli_auth_failure,
     preserve_github_cli_auth_env,
+    resolved_coordinator_status_root,
+    config_status_root,
     relpath,
     read_activity_audit_records,
     selected_shared_files,
     shell_quote,
+    status_command_runtime_record_from_env,
     snapshot_task,
     spawn_background_process,
+    status_command_runtime_env,
     summarize_failure_reason,
     utc_now,
     write_failure_evidence,
@@ -210,7 +214,8 @@ def supervisor_pid_path(config: dict[str, Any]) -> Path:
 
 
 def supervisor_lock_path(config: dict[str, Any]) -> Path:
-    return config_path(config, "state_file").parent / "supervisor.lock"
+    coord_root = resolved_coordinator_status_root(config)
+    return coord_root / ".orchestrator" / "supervisor.lock"
 
 
 # Held open for the lifetime of the winning supervisor process. The advisory
@@ -247,6 +252,30 @@ def acquire_singleton_lock(config: dict[str, Any]) -> bool:
     except OSError:
         pass
     return True
+
+
+
+def check_status_root_consistency(config: dict[str, Any], allow_isolated: bool = False) -> None:
+    env_val = os.environ.get("PANTHEON_STATUS_ROOT")
+    if not env_val or not env_val.strip():
+        # 完全清空的 env -> 不檢查
+        return
+
+    env_status_root = Path(os.path.expanduser(env_val.strip())).resolve()
+    cfg_status_root = config_status_root(config)
+
+    if env_status_root != cfg_status_root:
+        if allow_isolated:
+            return
+        msg = (
+            f"ERROR: PANTHEON_STATUS_ROOT consistency gate failed!\n"
+            f"  Environment PANTHEON_STATUS_ROOT = {env_status_root}\n"
+            f"  Config resolved status root     = {cfg_status_root}\n"
+            f"Paths do not match. To run supervisor in this configuration, "
+            f"either unset PANTHEON_STATUS_ROOT, align the config paths, or pass --allow-isolated-status-root."
+        )
+        print(msg, file=sys.stderr)
+        sys.exit(1)
 
 
 def write_supervisor_pid(config: dict[str, Any]) -> None:
@@ -385,6 +414,14 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Authorize --poll-interval below the configured value. Reserved for "
             "ad-hoc incident debugging; do not use for steady-state runs."
+        ),
+    )
+    parser.add_argument(
+        "--allow-isolated-status-root",
+        action="store_true",
+        help=(
+            "Allow supervisor to start when environment PANTHEON_STATUS_ROOT "
+            "does not match config resolved status root."
         ),
     )
     parser.add_argument("--quiet", action="store_true", help="Suppress terminal heartbeat output.")
@@ -1851,8 +1888,8 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
                 "Generated in the worker workspace because the supervisor root did not have a task brief file.",
                 "",
                 "## Coordination Root",
-                "- Auto workers inherit `PANTHEON_STATUS_ROOT` from the supervisor.",
-                "- Run `./scripts/ai-status.sh` normally from this worktree; governed status, activity, archive and lock writes are routed to the validated central root.",
+                "- Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.",
+                "- Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.",
                 "",
             ]
         )
@@ -1873,8 +1910,8 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
             str(task.get("summary_zh") or "-"),
             "",
             "## Coordination Root",
-            "- Auto workers inherit `PANTHEON_STATUS_ROOT` from the supervisor.",
-            "- Run `./scripts/ai-status.sh` normally from this worktree; governed status, activity, archive and lock writes are routed to the validated central root.",
+            "- Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.",
+            "- Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.",
             "",
         ]
     )
@@ -2215,6 +2252,9 @@ def start_worker_for_request(
     agent = agent_config_for(config, request.agent_id)
     adapter_name = delivery_mode_override or agent.get("adapter", "file_inbox")
     adapter = build_adapter(adapter_name, config=config, provider_capabilities=provider_report)
+    issued_command_env = status_command_runtime_env(config)
+    issued_command_runtime = status_command_runtime_record_from_env(issued_command_env)
+    request.metadata["status_command_runtime"] = issued_command_runtime
     result = adapter.deliver(request)
     if not result.ok:
         failure_worker = {
@@ -2282,6 +2322,7 @@ def start_worker_for_request(
         "workspace_path": request.metadata.get("workspace_path"),
         "workspace_branch": request.metadata.get("workspace_branch"),
         "status_root": request.metadata.get("status_root"),
+        "status_command_runtime": issued_command_runtime,
         "pid": result.pid,
         "heartbeat_path": result_metadata.get("heartbeat_path"),
         "runner_status_path": result_metadata.get("runner_status_path"),
@@ -2405,6 +2446,10 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 changed = True
             continue
         record = queue_status(state, event_id)
+        event_key = str(event.get("event_key") or "")
+        if event_key and record.get("event_key") != event_key:
+            record["event_key"] = event_key
+            changed = True
         if record.get("status") in {"started", "manual_pending", "completed", "failed"}:
             continue
         if record.get("status") == "retry_backoff":
@@ -5422,6 +5467,25 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
     return bool(expired)
 
 
+def worker_failure_streak_provider_id(worker: dict[str, Any]) -> str:
+    """Collapse dispatch slots into their logical agent for churn detection."""
+    request_metadata = (
+        (worker.get("request_snapshot") or {}).get("metadata", {})
+        if isinstance(worker.get("request_snapshot"), dict)
+        else {}
+    )
+    worker_metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    logical_agent_id = str(
+        request_metadata.get("logical_agent_id")
+        or worker_metadata.get("logical_agent_id")
+        or ""
+    ).strip()
+    return normalize_agent_id(
+        logical_agent_id
+        or str(worker.get("provider") or worker.get("agent_id") or "")
+    )
+
+
 def record_task_failure_streak(
     state: dict[str, Any],
     worker: dict[str, Any],
@@ -5430,7 +5494,7 @@ def record_task_failure_streak(
     failure_kind: str | None = None,
 ) -> int:
     task_id = str(worker.get("task_id") or "").strip()
-    provider_id = normalize_agent_id(str(worker.get("provider") or worker.get("agent_id") or ""))
+    provider_id = worker_failure_streak_provider_id(worker)
     if not task_id or not provider_id:
         return 0
     bucket = _task_failure_streak_bucket(state)
@@ -5460,7 +5524,7 @@ def clear_task_failure_streak(
 ) -> None:
     if worker is not None:
         task_id = str(worker.get("task_id") or task_id or "")
-        provider = str(worker.get("provider") or worker.get("agent_id") or provider or "")
+        provider = worker_failure_streak_provider_id(worker) or provider
     task_id = str(task_id or "").strip()
     provider_id = normalize_agent_id(provider or "")
     if not task_id or not provider_id:
@@ -6068,8 +6132,18 @@ def auto_dispatch_block_is_temporary_capacity(reason: str | None) -> bool:
     )
 
 
+def status_command_subprocess_context(config: dict[str, Any]) -> tuple[Path, dict[str, str]]:
+    status_root = config_path(config, "status_file").parent
+    issued_env = status_command_runtime_env(config)
+    command_root = Path(str(issued_env["PANTHEON_COMMAND_ROOT"])).resolve()
+    env = os.environ.copy()
+    env.update(issued_env)
+    env["PANTHEON_STATUS_ROOT"] = str(status_root)
+    return command_root / "scripts" / "ai_status.py", env
+
+
 def sync_status_pipeline(config: dict[str, Any]) -> bool:
-    script = config_path(config, "status_file").parent / "scripts" / "ai_status.py"
+    script, env = status_command_subprocess_context(config)
     if not script.exists():
         write_activity_log(
             config,
@@ -6084,6 +6158,7 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
         cwd=str(config_path(config, "status_file").parent),
         capture_output=True,
         text=True,
+        env=env,
     )
     if result.returncode == 0:
         return True
@@ -6119,7 +6194,7 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     if not config.get("paths", {}).get("status_file"):
         return False
 
-    script = config_path(config, "status_file").parent / "scripts" / "ai_status.py"
+    script, env = status_command_subprocess_context(config)
     if not script.exists():
         write_activity_log(
             config,
@@ -6153,7 +6228,6 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
         REASON_OWNED_FINALIZE: f"Supervisor resumed {task_id} for finalize after successful dispatch.",
         REASON_OWNED_IN_PROGRESS: f"Supervisor re-dispatched {task_id}; task remains in progress.",
     }[reason]
-    env = os.environ.copy()
     env["AI_NAME"] = target_agent
     result = subprocess.run(
         [sys.executable, str(script), command_name, task_id, message],
@@ -6547,10 +6621,10 @@ def maybe_reassign_tasks_from_failure_streaks(config: dict[str, Any], state: dic
         task_id = str(record.get("task_id") or "").strip()
         provider = str(record.get("provider") or "").strip()
         count = int(record.get("count") or 0)
-        if not task_id or not provider or count < threshold:
+        terminal_quota = is_terminal_quota_failure_kind(record.get("last_failure_kind"))
+        if not task_id or not provider or (count < threshold and not terminal_quota):
             continue
         reason = str(record.get("last_reason") or GENERIC_WORKER_EXIT_REASON)
-        failure_kind = str(record.get("last_failure_kind") or "")
         worker = {
             "task_id": task_id,
             "provider": provider,
@@ -6564,7 +6638,7 @@ def maybe_reassign_tasks_from_failure_streaks(config: dict[str, Any], state: dic
             worker,
             reason,
             terminal=True,
-            force=is_terminal_quota_failure_kind(failure_kind),
+            force=terminal_quota,
             failure_count=count,
         )
         if reassigned_to:
@@ -6959,6 +7033,9 @@ def resume_claude_worker(
             "ORCH_WORKSPACE_PATH": str(workspace_root),
         }
     )
+    issued_command_env = status_command_runtime_env(config)
+    issued_command_runtime = status_command_runtime_record_from_env(issued_command_env)
+    env.update(issued_command_env)
     runtime_paths = worker_runtime_paths(config, worker["run_id"])
     process, _ = spawn_background_process(
         command,
@@ -6984,10 +7061,12 @@ def resume_claude_worker(
     worker["heartbeat_path"] = str(runtime_paths["heartbeat_path"])
     worker["runner_status_path"] = str(runtime_paths["status_path"])
     worker["log_path"] = str(log_path)
+    worker["status_command_runtime"] = issued_command_runtime
     worker["resume_count"] = int(worker.get("resume_count", 0)) + 1
     worker["last_resumed_session_id"] = str(session_id)
     worker["command"] = command
     worker.setdefault("metadata", {})["shell_command"] = shell_quote(command)
+    worker["metadata"]["status_command_runtime"] = issued_command_runtime
     worker["metadata"]["resume_permission_mode"] = resume_permission_mode if worker.get("last_approval_id") else None
     worker["metadata"]["resume_allowed_tools"] = allowed_tools
     worker["metadata"]["heartbeat_path"] = str(runtime_paths["heartbeat_path"])
@@ -8459,6 +8538,11 @@ def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bo
         if record.get("status") != next_status:
             record["status"] = next_status
             record["processed_at"] = latest.get("last_event_at") or utc_now()
+            event_key = str(record.get("event_key") or "")
+            if event_key:
+                state.setdefault("seen_event_keys", {})[event_key] = record[
+                    "processed_at"
+                ]
             if next_status == "failed" and latest.get("last_error"):
                 record["error"] = latest.get("last_error")
             changed = True
@@ -9687,6 +9771,9 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
     record["status"] = status
     record["processed_at"] = utc_now()
     record["lease_released_at"] = record["processed_at"]
+    event_key = str(record.get("event_key") or "")
+    if event_key:
+        state.setdefault("seen_event_keys", {})[event_key] = record["processed_at"]
     if worker.get("run_id"):
         record["lease_owner"] = worker.get("run_id")
     if error:
@@ -9878,6 +9965,39 @@ def dispatch_priority_for_task(
     ):
         return 3
     return None
+
+
+def task_declared_priority_rank(task: dict[str, Any]) -> int:
+    """Return a stable lower-is-more-urgent rank for an optional P<n> field."""
+
+    raw_priority = task.get("priority")
+    if isinstance(raw_priority, bool) or raw_priority in (None, ""):
+        return 1_000_000
+    if isinstance(raw_priority, int):
+        return max(0, raw_priority)
+    match = re.fullmatch(r"P(\d+)", str(raw_priority).strip().upper())
+    if match is None:
+        return 1_000_000
+    return int(match.group(1))
+
+
+def dispatch_event_is_in_unchanged_cooldown(
+    seen_event_keys: dict[str, Any],
+    event_key: str,
+    *,
+    cooldown_seconds: float,
+    now: str | None = None,
+) -> bool:
+    """Suppress a recently served task signature until task truth changes."""
+
+    if cooldown_seconds <= 0:
+        return False
+    seen_at = _parse_iso_utc(str(seen_event_keys.get(event_key) or ""))
+    current_at = _parse_iso_utc(now or utc_now())
+    if seen_at is None or current_at is None:
+        return False
+    elapsed_seconds = (current_at - seen_at).total_seconds()
+    return 0 <= elapsed_seconds < cooldown_seconds
 
 
 def agent_dispatch_loads(
@@ -10316,6 +10436,14 @@ def dispatch_ready_tasks(
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     max_dispatches_per_tick = max(1, int(max_dispatches_override or settings.get("max_dispatches_per_tick", 4)))
+    try:
+        unchanged_cooldown_seconds = max(
+            0.0,
+            float(settings.get("unchanged_task_cooldown_seconds", 900)),
+        )
+    except (TypeError, ValueError):
+        unchanged_cooldown_seconds = 900.0
+    dispatch_started_at = utc_now()
 
     _active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
@@ -10418,7 +10546,7 @@ def dispatch_ready_tasks(
                 continue
         target_has_primary_work = agent_has_dispatchable_primary_work(config, status, target_agent, task_resolver)
 
-        candidates: list[tuple[int, int, dict[str, Any], str]] = []
+        candidates: list[tuple[int, int, int, dict[str, Any], str]] = []
         helper_candidates: list[tuple[int, int, dict[str, Any], str, str, str, bool]] = []
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
@@ -10526,15 +10654,30 @@ def dispatch_ready_tasks(
             event = build_dispatch_event(task, target_agent, reason, task_resolver)
             if event["key"] in pending_event_keys:
                 continue
-            candidates.append((priority, index, task, reason))
+            if dispatch_event_is_in_unchanged_cooldown(
+                seen,
+                event["key"],
+                cooldown_seconds=unchanged_cooldown_seconds,
+                now=dispatch_started_at,
+            ):
+                continue
+            candidates.append(
+                (
+                    priority,
+                    task_declared_priority_rank(task),
+                    index,
+                    task,
+                    reason,
+                )
+            )
 
-        candidates.sort(key=lambda item: (item[0], item[1]))
+        candidates.sort(key=lambda item: (item[0], item[1], item[2]))
         per_occurrence_limit = 1 if weighted_dispatch_enabled else available_agent_slots
         queued_for_agent = 0
-        for _, _, task, reason in candidates[:per_occurrence_limit]:
+        for _, _, _, task, reason in candidates[:per_occurrence_limit]:
             event = build_dispatch_event(task, target_agent, reason, task_resolver)
             if queue_delivery_event(config, event):
-                seen[event["key"]] = utc_now()
+                seen[event["key"]] = dispatch_started_at
                 pending_event_keys.add(event["key"])
                 pending_agents.add(agent_id)
                 pending_task_ids.add(str(task.get(task_id_field) or ""))
@@ -11256,6 +11399,7 @@ def main() -> int:
     args = parse_args()
     SUPERVISOR_LOG_QUIET = args.quiet
     config = load_config(args.config)
+    check_status_root_consistency(config, allow_isolated=args.allow_isolated_status_root)
     if args.clear_provider_pause:
         with runtime_state_lock(config, shared=False, nonblocking=False):
             state = load_runtime_state(config)

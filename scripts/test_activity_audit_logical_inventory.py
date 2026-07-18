@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 import unittest
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
@@ -39,7 +40,61 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         inventory.LOG_FILE_DEFAULT = self.log_path
         inventory.EVIDENCE_DIR_DEFAULT = self.status_root / "evidence"
 
+        self.production_pinned_registry = (
+            common.HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS
+        )
+        overlap = [
+            {
+                "event_id": f"redacted-pinned-overlap-{index:04d}",
+                "message": "hermetic fixture",
+            }
+            for index in range(999)
+        ]
+        predecessor_entries = [
+            {"event_id": "redacted-pinned-predecessor-0"},
+            {"event_id": "redacted-pinned-predecessor-1"},
+            *overlap,
+        ]
+        successor_entries = [
+            *overlap,
+            {"event_id": "redacted-pinned-successor-0"},
+            {"event_id": "redacted-pinned-successor-1"},
+        ]
+        self.pinned_predecessor_payload = self._jsonl(predecessor_entries)
+        self.pinned_successor_payload = self._jsonl(successor_entries)
+        predecessor_gzip = self._gzip_bytes(self.pinned_predecessor_payload)
+        successor_gzip = self._gzip_bytes(self.pinned_successor_payload)
+        overlap_payload = self._jsonl(overlap)
+        self.pinned_exception = common.HistoricalActivityOverlapException(
+            predecessor_name="ai-activity-log.jsonl-2026-05-24T1237Z.gz",
+            predecessor_gzip_sha256=hashlib.sha256(predecessor_gzip).hexdigest(),
+            predecessor_gzip_byte_count=len(predecessor_gzip),
+            predecessor_payload_sha256=hashlib.sha256(
+                self.pinned_predecessor_payload
+            ).hexdigest(),
+            predecessor_payload_byte_count=len(self.pinned_predecessor_payload),
+            predecessor_line_count=1001,
+            successor_name="ai-activity-log.jsonl-2026-05-24T1239Z.gz",
+            successor_gzip_sha256=hashlib.sha256(successor_gzip).hexdigest(),
+            successor_gzip_byte_count=len(successor_gzip),
+            successor_payload_sha256=hashlib.sha256(
+                self.pinned_successor_payload
+            ).hexdigest(),
+            successor_payload_byte_count=len(self.pinned_successor_payload),
+            successor_line_count=1001,
+            overlap_sha256=hashlib.sha256(overlap_payload).hexdigest(),
+            overlap_byte_count=len(overlap_payload),
+            overlap_line_count=999,
+        )
+        self.pinned_registry_patch = mock.patch.object(
+            common,
+            "HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS",
+            (self.pinned_exception,),
+        )
+        self.pinned_registry_patch.start()
+
     def tearDown(self):
+        self.pinned_registry_patch.stop()
         inventory.STATUS_ROOT_DEFAULT = self.original_status_root
         inventory.LOG_FILE_DEFAULT = self.original_log_file
         inventory.EVIDENCE_DIR_DEFAULT = self.original_evidence_dir
@@ -50,21 +105,27 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         with gzip.open(path, "wt", encoding="utf-8") as f:
             f.write(payload)
 
+    @staticmethod
+    def _jsonl(entries: list[dict]) -> bytes:
+        return b"".join(
+            json.dumps(
+                entry,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            + b"\n"
+            for entry in entries
+        )
+
+    @staticmethod
+    def _gzip_bytes(payload: bytes) -> bytes:
+        return gzip.compress(payload, mtime=0)
+
     def _write_gz_raw(self, path: Path, content: bytes):
-        with gzip.open(path, "wb") as f:
-            f.write(content)
+        path.write_bytes(self._gzip_bytes(content))
 
-    def _get_real_pinned_bytes(self):
-        t1237_src = Path("/home/lupin/code/pantheon/archive/logs/ai-activity-log.jsonl-2026-05-24T1237Z.gz")
-        t1239_src = Path("/home/lupin/code/pantheon/archive/logs/ai-activity-log.jsonl-2026-05-24T1239Z.gz")
-        if not t1237_src.exists() or not t1239_src.exists():
-            raise unittest.SkipTest("Real central logs not available for pinned exception test")
-
-        with gzip.open(t1237_src, "rb") as f:
-            b1 = f.read()
-        with gzip.open(t1239_src, "rb") as f:
-            b2 = f.read()
-        return b1, b2
+    def _get_hermetic_pinned_bytes(self):
+        return self.pinned_predecessor_payload, self.pinned_successor_payload
 
     def _setup_all_four_incident_pairs(self):
         """Helper to create files that trigger the four expected incident folds
@@ -183,6 +244,37 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             inventory.generate_inventory(status_root=self.status_root, evidence_dir=self.status_root / "evidence")
+
+    def test_physical_inventory_rejects_duplicate_json_keys(self):
+        ambiguous = (
+            '{"event_id":"inventory-a","event_id":"inventory-b",'
+            '"metadata":{"role":"a","role":"b"}}\n'
+        )
+        for source_kind in ("active", "archive"):
+            with self.subTest(source=source_kind):
+                self.log_path.unlink(missing_ok=True)
+                for archive in self.archive_dir.glob("*.gz"):
+                    archive.unlink()
+                if source_kind == "active":
+                    source = self.log_path
+                    source.write_text(ambiguous, encoding="utf-8")
+                else:
+                    source = (
+                        self.archive_dir
+                        / "ai-activity-log.jsonl-2026-07-15T0000Z.gz"
+                    )
+                    with gzip.open(source, "wt", encoding="utf-8") as handle:
+                        handle.write(ambiguous)
+                before = source.read_bytes()
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "duplicate JSON key.*" + str(source),
+                ):
+                    inventory.generate_inventory(
+                        status_root=self.status_root,
+                        evidence_dir=self.status_root / "evidence",
+                    )
+                self.assertEqual(source.read_bytes(), before)
 
     def test_fails_on_bad_gzip(self):
         self._setup_all_four_incident_pairs()
@@ -445,8 +537,35 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         self.assertEqual((self.status_root / "evidence" / "summary.json").read_bytes(), summary_before)
         self.assertEqual((self.status_root / "evidence" / "evidence.md").read_bytes(), evidence_before)
 
+    def test_source_insertion_between_physical_and_logical_passes_fails(self):
+        self.log_path.write_text(
+            json.dumps({"event_id": "initial-active"}) + "\n",
+            encoding="utf-8",
+        )
+        inserted = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-07-17T1700Z.gz"
+        )
+        real_stream = common.stream_logical_activity
+
+        def stream_after_insertion(*args, **kwargs):
+            self._write_gz(inserted, [{"event_id": "inserted-archive"}])
+            return real_stream(*args, **kwargs)
+
+        with mock.patch(
+            "scripts.activity_audit_logical_inventory.stream_logical_activity",
+            side_effect=stream_after_insertion,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "source set changed between physical and logical passes",
+            ):
+                inventory.generate_inventory(
+                    status_root=self.status_root,
+                    evidence_dir=self.status_root / "evidence",
+                )
+
     def test_pinned_pair_success(self):
-        b1, b2 = self._get_real_pinned_bytes()
+        b1, b2 = self._get_hermetic_pinned_bytes()
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
         f2 = self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1239Z.gz"
         self._write_gz_raw(f1, b1)
@@ -458,9 +577,166 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         res = list(common.stream_logical_activity(self.log_path))
         # Total logic entries: 1001 (f1) + 1001 (f2) - 999 (collapsed) + 1 (active) = 1004 entries!
         self.assertEqual(len(res), 1004)
+        self.assertEqual(res[0][0]["event_id"], "redacted-pinned-predecessor-0")
+        self.assertEqual(res[1][0]["event_id"], "redacted-pinned-predecessor-1")
+        self.assertEqual(res[-3][0]["event_id"], "redacted-pinned-successor-0")
+        self.assertEqual(res[-2][0]["event_id"], "redacted-pinned-successor-1")
+        self.assertEqual(res[-1][0]["event_id"], "evt_active")
+
+    def test_production_pinned_registry_metadata_is_exact(self):
+        self.assertEqual(len(self.production_pinned_registry), 1)
+        exception = self.production_pinned_registry[0]
+        self.assertEqual(
+            exception,
+            common.HistoricalActivityOverlapException(
+                predecessor_name=(
+                    "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
+                ),
+                predecessor_gzip_sha256=(
+                    "ad7dd174e0278a3c21b10024cd227f0d138052dd0945bc3b24159538d87ed6c5"
+                ),
+                predecessor_gzip_byte_count=772038,
+                predecessor_payload_sha256=(
+                    "8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57"
+                ),
+                predecessor_payload_byte_count=5326818,
+                predecessor_line_count=1001,
+                successor_name=(
+                    "ai-activity-log.jsonl-2026-05-24T1239Z.gz"
+                ),
+                successor_gzip_sha256=(
+                    "d211e27bc5337c8eff200e14d48800f949658e6c8b43d9fd22e54ea8c77061da"
+                ),
+                successor_gzip_byte_count=771941,
+                successor_payload_sha256=(
+                    "da6a102178c82fb4eca8d0794ed5b419f0c97770e0ad63542dde0033e7efa3ff"
+                ),
+                successor_payload_byte_count=5326326,
+                successor_line_count=1001,
+                overlap_sha256=(
+                    "0a3b56f720a5aa493d8968edfff8e32e0df98e410f6334d6790f10a06019f247"
+                ),
+                overlap_byte_count=5325808,
+                overlap_line_count=999,
+            ),
+        )
+
+    def test_pinned_pair_same_payload_with_different_gzip_fails(self):
+        predecessor_payload, successor_payload = self._get_hermetic_pinned_bytes()
+        predecessor = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
+        )
+        successor = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1239Z.gz"
+        )
+        predecessor.write_bytes(gzip.compress(predecessor_payload, mtime=1))
+        self._write_gz_raw(successor, successor_payload)
+        self.log_path.write_text(
+            json.dumps({"event_id": "active"}) + "\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Invalid predecessor gzip hash"):
+            list(common.stream_logical_activity(self.log_path))
+
+    def test_pinned_registry_count_mismatches_fail_closed(self):
+        predecessor_payload, successor_payload = self._get_hermetic_pinned_bytes()
+        predecessor = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
+        )
+        successor = (
+            self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1239Z.gz"
+        )
+        self._write_gz_raw(predecessor, predecessor_payload)
+        self._write_gz_raw(successor, successor_payload)
+        self.log_path.write_text(
+            json.dumps({"event_id": "active"}) + "\n",
+            encoding="utf-8",
+        )
+
+        cases = (
+            (
+                "predecessor_payload_byte_count",
+                self.pinned_exception.predecessor_payload_byte_count + 1,
+                "Invalid predecessor byte count",
+            ),
+            (
+                "predecessor_line_count",
+                self.pinned_exception.predecessor_line_count + 1,
+                "Invalid predecessor line count",
+            ),
+            (
+                "predecessor_gzip_byte_count",
+                self.pinned_exception.predecessor_gzip_byte_count + 1,
+                "Invalid predecessor gzip byte count",
+            ),
+            (
+                "successor_payload_byte_count",
+                self.pinned_exception.successor_payload_byte_count + 1,
+                "Invalid successor byte count",
+            ),
+            (
+                "successor_line_count",
+                self.pinned_exception.successor_line_count + 1,
+                "Invalid successor line count",
+            ),
+            (
+                "successor_gzip_byte_count",
+                self.pinned_exception.successor_gzip_byte_count + 1,
+                "Invalid successor gzip byte count",
+            ),
+            (
+                "overlap_byte_count",
+                self.pinned_exception.overlap_byte_count + 1,
+                "Invalid overlap bytes length",
+            ),
+            (
+                "overlap_line_count",
+                self.pinned_exception.overlap_line_count + 1,
+                "Invalid overlap length",
+            ),
+        )
+        for field, value, expected in cases:
+            with self.subTest(field=field), mock.patch.object(
+                common,
+                "HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS",
+                (replace(self.pinned_exception, **{field: value}),),
+            ):
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    list(common.stream_logical_activity(self.log_path))
+
+    @unittest.skipUnless(
+        os.environ.get("PANTHEON_RUN_CENTRAL_ACTIVITY_INTEGRATION") == "1",
+        "optional central read-only pinned-pair integration is disabled",
+    )
+    def test_optional_central_pinned_pair_read_only_integration(self):
+        central = Path("/home/lupin/code/pantheon/archive/logs")
+        predecessor_source = (
+            central / "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
+        )
+        successor_source = (
+            central / "ai-activity-log.jsonl-2026-05-24T1239Z.gz"
+        )
+        if not predecessor_source.is_file() or not successor_source.is_file():
+            self.fail("opt-in central pinned archives are unavailable")
+        predecessor = self.archive_dir / predecessor_source.name
+        successor = self.archive_dir / successor_source.name
+        predecessor.write_bytes(predecessor_source.read_bytes())
+        successor.write_bytes(successor_source.read_bytes())
+        self.log_path.write_text(
+            json.dumps({"event_id": "optional-central-active"}) + "\n",
+            encoding="utf-8",
+        )
+        with mock.patch.object(
+            common,
+            "HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS",
+            self.production_pinned_registry,
+        ):
+            result = list(common.stream_logical_activity(self.log_path))
+        self.assertEqual(len(result), 1004)
 
     def test_pinned_pair_bad_predecessor_hash_fails(self):
-        b1, b2 = self._get_real_pinned_bytes()
+        b1, b2 = self._get_hermetic_pinned_bytes()
         # Mutate predecessor first line (keep it valid JSON but change hash)
         lines1 = b1.splitlines()
         obj = json.loads(lines1[0].decode("utf-8"))
@@ -479,7 +755,7 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         self.assertIn("Invalid predecessor hash", str(ctx.exception))
 
     def test_pinned_pair_bad_successor_hash_fails(self):
-        b1, b2 = self._get_real_pinned_bytes()
+        b1, b2 = self._get_hermetic_pinned_bytes()
         # Mutate successor last line (outside the prefix overlap, keep valid JSON)
         lines = b2.splitlines()
         obj = json.loads(lines[-1].decode("utf-8"))
@@ -498,7 +774,7 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         self.assertIn("Invalid successor hash", str(ctx.exception))
 
     def test_pinned_pair_bad_overlap_hash_fails(self):
-        b1, b2 = self._get_real_pinned_bytes()
+        b1, b2 = self._get_hermetic_pinned_bytes()
         # Mutate a line in the overlap region of both files (so overlap matches but has different hash)
         lines1 = b1.splitlines()
         lines2 = b2.splitlines()
@@ -518,38 +794,34 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         b1_mut = b"\n".join(lines1) + b"\n"
         b2_mut = b"\n".join(lines2) + b"\n"
 
-        h1_mut = hashlib.sha256(b1_mut).hexdigest()
-        h2_mut = hashlib.sha256(b2_mut).hexdigest()
-
-        original_sha256 = hashlib.sha256
-
-        # Custom Hasher to return valid predecessor/successor hashes but mutated overlap hash
-        class FakeHasher:
-            def __init__(self, data=b""):
-                self.hasher = original_sha256(data)
-            def update(self, data):
-                self.hasher.update(data)
-            def hexdigest(self):
-                h = self.hasher.hexdigest()
-                if h == h1_mut:
-                    return "8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57"
-                if h == h2_mut:
-                    return "da6a102178c82fb4eca8d0794ed5b419f0c97770e0ad63542dde0033e7efa3ff"
-                return h
-
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
         f2 = self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1239Z.gz"
         self._write_gz_raw(f1, b1_mut)
         self._write_gz_raw(f2, b2_mut)
         self.log_path.write_text(json.dumps({"event_id": "evt_active"}) + "\n", encoding="utf-8")
 
-        with mock.patch("hashlib.sha256", FakeHasher):
+        mutated_exception = replace(
+            self.pinned_exception,
+            predecessor_gzip_sha256=hashlib.sha256(f1.read_bytes()).hexdigest(),
+            predecessor_gzip_byte_count=f1.stat().st_size,
+            predecessor_payload_sha256=hashlib.sha256(b1_mut).hexdigest(),
+            predecessor_payload_byte_count=len(b1_mut),
+            successor_gzip_sha256=hashlib.sha256(f2.read_bytes()).hexdigest(),
+            successor_gzip_byte_count=f2.stat().st_size,
+            successor_payload_sha256=hashlib.sha256(b2_mut).hexdigest(),
+            successor_payload_byte_count=len(b2_mut),
+        )
+        with mock.patch.object(
+            common,
+            "HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS",
+            (mutated_exception,),
+        ):
             with self.assertRaises(RuntimeError) as ctx:
                 list(common.stream_logical_activity(self.log_path))
             self.assertIn("Invalid overlap SHA-256", str(ctx.exception))
 
     def test_pinned_pair_bad_filename_fails(self):
-        b1, b2 = self._get_real_pinned_bytes()
+        b1, b2 = self._get_hermetic_pinned_bytes()
         # Write pinned content to regular timestamp files
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
         f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
@@ -561,7 +833,7 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
             list(common.stream_logical_activity(self.log_path))
 
     def test_pinned_pair_reversed_order_fails(self):
-        b1, b2 = self._get_real_pinned_bytes()
+        b1, b2 = self._get_hermetic_pinned_bytes()
         # Reverse filenames for content
         f1 = self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
         f2 = self.archive_dir / "ai-activity-log.jsonl-2026-05-24T1239Z.gz"

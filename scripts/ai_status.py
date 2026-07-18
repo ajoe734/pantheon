@@ -15,7 +15,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import local
-from typing import Any
+from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 try:
@@ -27,6 +27,14 @@ YAML_ERROR_TYPES = (yaml.YAMLError,) if yaml is not None else ()
 
 ROOT = Path(__file__).resolve().parents[1]
 STATUS_ROOT_ENV = "PANTHEON_STATUS_ROOT"
+STATUS_COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
+STATUS_COMMAND_SHA_ENV = "PANTHEON_COMMAND_RUNTIME_SHA"
+STATUS_COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
+STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
+LEGACY_STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
+LEGACY_STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
+LEGACY_STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
+LEGACY_STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_STATUS_COMMAND_BASE_REF"
 AUTO_WORKER_ENV_MARKERS = (
     "ORCH_RUN_ID",
     "PANTHEON_WORKTREE_ROOT",
@@ -78,9 +86,13 @@ from runtime_state import (
     activity_audit_lock_file,
     canonical_task_state_lock_file,
     load_runtime_state_snapshot,
+    runtime_state_lock,
 )
 from sequencing_gate import task_is_sequencing_parked
 from common import (
+    ActivityAuditInvariantError,
+    DuplicateActivityJSONKeyError,
+    activity_audit_invariant_error,
     activity_audit_lock_path,
     activity_audit_source_paths_unlocked,
     append_activity_log_entries_unlocked,
@@ -89,8 +101,10 @@ from common import (
     prepare_activity_audit_unlocked,
     read_activity_audit_records,
     read_activity_log_tail_bytes,
+    read_regular_file_bytes,
     rotate_activity_log_unlocked,
-    stream_logical_activity,
+    strict_activity_json_loads,
+    validated_activity_event_digests_unlocked,
 )
 
 # Derived dashboard rendering intentionally uses an atomic projection-only
@@ -157,17 +171,35 @@ def _auto_worker_requires_explicit_status_root() -> bool:
 
 
 def _worker_workspace_root() -> Path | None:
-    raw = str(
-        os.environ.get("PANTHEON_WORKTREE_ROOT")
-        or os.environ.get("ORCH_WORKSPACE_PATH")
-        or ""
-    ).strip()
-    if not raw:
+    roots: list[tuple[str, Path]] = []
+    for env_name in ("PANTHEON_WORKTREE_ROOT", "ORCH_WORKSPACE_PATH"):
+        raw = str(os.environ.get(env_name) or "").strip()
+        if not raw:
+            continue
+        expanded = Path(os.path.expanduser(raw))
+        if not expanded.is_absolute():
+            raise RuntimeError(f"{env_name} must be an absolute path when set")
+        symlink_component = _first_symlink_component(expanded)
+        if symlink_component is not None:
+            raise RuntimeError(
+                f"{env_name} cannot include a symlink component: {symlink_component}"
+            )
+        roots.append((env_name, expanded.resolve()))
+    if not roots:
         return None
-    return Path(os.path.expanduser(raw)).resolve()
+    first_name, first_root = roots[0]
+    for env_name, root in roots[1:]:
+        if root != first_root:
+            raise RuntimeError(
+                f"{first_name} and {env_name} disagree on delivery worktree root: "
+                f"{first_root} != {root}"
+            )
+    return first_root
 
 
 def _first_symlink_component(path: Path) -> Path | None:
+    if ".." in path.parts:
+        raise RuntimeError(f"Path contains parent directory references (..): {path}")
     current = Path(path.anchor)
     parts = path.parts[1:] if path.is_absolute() else path.parts
     for part in parts:
@@ -175,17 +207,23 @@ def _first_symlink_component(path: Path) -> Path | None:
         try:
             if current.is_symlink():
                 return current
-            if not current.exists():
+            if not current.exists() and not current.is_symlink():
                 return None
         except OSError:
             return current
     return None
 
 
+
 def _status_root_from_runtime_path(raw: str, *, label: str) -> Path:
     path = Path(os.path.expanduser(raw))
     if not path.is_absolute():
         raise RuntimeError(f"{label} must be absolute when set")
+    symlink_comp = _first_symlink_component(path)
+    if symlink_comp is not None:
+        raise RuntimeError(f"{label} path contains a symlink component: {symlink_comp}")
+    if path.is_symlink():
+        raise RuntimeError(f"{label} cannot be a symlink: {path}")
     resolved = path.resolve()
     parent = resolved.parent
     if (
@@ -231,6 +269,366 @@ def _git_toplevel(path: Path) -> Path | None:
     return Path(top).resolve()
 
 
+def _git_stdout(path: Path, args: list[str]) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(path), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "git command failed").strip()
+        raise RuntimeError(detail)
+    return proc.stdout.strip()
+
+
+def _normalize_github_repo_slug(value: str | None) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    if candidate.endswith(".git"):
+        candidate = candidate[:-4]
+    for prefix in (
+        "git@github.com:",
+        "ssh://git@github.com/",
+        "https://github.com/",
+        "http://github.com/",
+    ):
+        if candidate.startswith(prefix):
+            candidate = candidate[len(prefix) :]
+            break
+    return candidate.strip("/")
+
+
+def _command_env(primary: str, legacy: str, default: str = "") -> str:
+    return str(os.environ.get(primary) or os.environ.get(legacy) or default).strip()
+
+
+def validate_status_command_runtime_binding() -> None:
+    """Ensure auto-worker status commands run from the installed command root."""
+
+    raw_root = _command_env(STATUS_COMMAND_ROOT_ENV, LEGACY_STATUS_COMMAND_ROOT_ENV)
+    if not raw_root:
+        if _auto_worker_requires_explicit_status_root():
+            raise RuntimeError(
+                "PANTHEON_COMMAND_ROOT is required for auto-worker status commands"
+            )
+        return
+
+    expanded_root = Path(os.path.expanduser(raw_root))
+    if not expanded_root.is_absolute():
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be an absolute path")
+    symlink_component = _first_symlink_component(expanded_root)
+    if symlink_component is not None:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} cannot include a symlink component: {symlink_component}"
+        )
+    command_root = expanded_root.resolve()
+    if not command_root.exists() or not command_root.is_dir():
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} does not exist or is not a directory: {command_root}"
+        )
+    if _git_toplevel(command_root) != command_root:
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be a git repository root: {command_root}")
+
+    source_sha = _git_stdout(command_root, ["rev-parse", "HEAD"])
+    expected_sha = _command_env(STATUS_COMMAND_SHA_ENV, LEGACY_STATUS_COMMAND_SHA_ENV)
+    if not expected_sha:
+        raise RuntimeError("PANTHEON_COMMAND_RUNTIME_SHA is required for auto-worker status commands")
+    if source_sha != expected_sha:
+        raise RuntimeError(
+            f"PANTHEON_COMMAND_RUNTIME_SHA mismatch: command root is {source_sha}, expected {expected_sha}"
+        )
+
+    current_root = ROOT.resolve()
+    if current_root != command_root:
+        raise RuntimeError(
+            "auto-worker status command must execute the installed command runtime: "
+            f"running {current_root}, expected {command_root}"
+        )
+
+    expected_remote = _normalize_github_repo_slug(
+        _command_env(STATUS_COMMAND_REMOTE_ENV, LEGACY_STATUS_COMMAND_REMOTE_ENV, "ajoe734/pantheon")
+    )
+    remote_url = _git_stdout(command_root, ["remote", "get-url", "origin"])
+    actual_remote = _normalize_github_repo_slug(remote_url)
+    if expected_remote and actual_remote != expected_remote:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} remote mismatch: {actual_remote or remote_url} != {expected_remote}"
+        )
+
+    base_ref = _command_env(STATUS_COMMAND_BASE_REF_ENV, LEGACY_STATUS_COMMAND_BASE_REF_ENV, "origin/dev") or "origin/dev"
+    _git_stdout(command_root, ["rev-parse", "--verify", base_ref])
+    proc = subprocess.run(
+        ["git", "-C", str(command_root), "merge-base", "--is-ancestor", source_sha, base_ref],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} source SHA {source_sha} is not merged into {base_ref}{suffix}"
+        )
+
+
+def status_command_metadata() -> dict[str, Any] | None:
+    raw_root = _command_env(STATUS_COMMAND_ROOT_ENV, LEGACY_STATUS_COMMAND_ROOT_ENV)
+    raw_sha = _command_env(STATUS_COMMAND_SHA_ENV, LEGACY_STATUS_COMMAND_SHA_ENV)
+    if not raw_root and not raw_sha:
+        return None
+    delivery_root = _worker_workspace_root()
+    payload: dict[str, Any] = {
+        "command_root": str(Path(os.path.expanduser(raw_root)).resolve()) if raw_root else None,
+        "source_sha": raw_sha or None,
+        "base_ref": _command_env(STATUS_COMMAND_BASE_REF_ENV, LEGACY_STATUS_COMMAND_BASE_REF_ENV) or None,
+        "remote": _normalize_github_repo_slug(
+            _command_env(STATUS_COMMAND_REMOTE_ENV, LEGACY_STATUS_COMMAND_REMOTE_ENV)
+        ),
+        "status_root": str(STATUS_ROOT),
+        "delivery_root": str(delivery_root) if delivery_root is not None else None,
+        "wrapper_root": str(os.environ.get("PANTHEON_STATUS_COMMAND_WRAPPER_ROOT") or "").strip() or None,
+    }
+    return {key: value for key, value in payload.items() if value not in (None, "")}
+
+
+TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
+    "assign": 0,
+    "start": 0,
+    "progress": 0,
+    "note": 0,
+    "reopen": 0,
+    "handoff": 0,
+    "blocker": 0,
+    "done": 0,
+    "restore_approved": 0,
+    "supersede": 0,
+    "approve": 0,
+}
+ACTIVE_WORKER_LEASE_STATUSES = {
+    "running",
+    "started",
+    "waiting_approval",
+    "suspended_approval",
+    "manual_pending",
+    "retry_backoff",
+    "stalled",
+    "fallback",
+}
+
+
+def _parse_utc_timestamp(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _metadata_path(value: Any, *, label: str) -> Path:
+    text = str(value or "").strip()
+    if not text:
+        raise RuntimeError(f"{label} is required for active status command lease validation")
+    path = Path(os.path.expanduser(text))
+    if not path.is_absolute():
+        raise RuntimeError(f"{label} must be an absolute path")
+    symlink_component = _first_symlink_component(path)
+    if symlink_component is not None:
+        raise RuntimeError(f"{label} cannot include a symlink component: {symlink_component}")
+    return path.resolve()
+
+
+def _worker_status_command_runtime(worker: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    direct = worker.get("status_command_runtime")
+    if isinstance(direct, Mapping):
+        return direct
+    metadata = worker.get("metadata")
+    if isinstance(metadata, Mapping) and isinstance(metadata.get("status_command_runtime"), Mapping):
+        return metadata["status_command_runtime"]
+    snapshot = worker.get("request_snapshot")
+    if isinstance(snapshot, Mapping):
+        snapshot_metadata = snapshot.get("metadata")
+        if isinstance(snapshot_metadata, Mapping) and isinstance(snapshot_metadata.get("status_command_runtime"), Mapping):
+            return snapshot_metadata["status_command_runtime"]
+    return None
+
+
+def _worker_metadata_value(worker: Mapping[str, Any], key: str) -> Any:
+    value = worker.get(key)
+    if value not in (None, ""):
+        return value
+    snapshot = worker.get("request_snapshot")
+    if isinstance(snapshot, Mapping):
+        metadata = snapshot.get("metadata")
+        if isinstance(metadata, Mapping):
+            value = metadata.get(key)
+            if value not in (None, ""):
+                return value
+    return None
+
+
+def _command_task_id(command: str, args: list[str]) -> str | None:
+    index = TASK_ID_COMMAND_ARG_INDEX.get(command)
+    if index is None or len(args) <= index:
+        return None
+    return str(args[index] or "").strip() or None
+
+
+def _find_worker_worktree_lease(
+    runtime_state: Mapping[str, Any],
+    *,
+    worker: Mapping[str, Any],
+    task_id: str | None,
+    workspace_root: Path | None,
+    status_root: Path,
+) -> tuple[str, Mapping[str, Any]] | None:
+    raw_leases = (
+        runtime_state.get("worker_worktrees", {})
+        if isinstance(runtime_state.get("worker_worktrees"), Mapping)
+        else {}
+    ).get("leases", {})
+    if not isinstance(raw_leases, Mapping):
+        return None
+    snapshot = worker.get("request_snapshot")
+    metadata = snapshot.get("metadata") if isinstance(snapshot, Mapping) else None
+    workspace_task_id = ""
+    if isinstance(metadata, Mapping):
+        workspace_task_id = str(metadata.get("workspace_task_id") or "").strip()
+    workspace_task_id = workspace_task_id or str(task_id or "").strip()
+    if workspace_task_id and isinstance(raw_leases.get(workspace_task_id), Mapping):
+        return workspace_task_id, raw_leases[workspace_task_id]
+    for key, candidate in raw_leases.items():
+        if not isinstance(candidate, Mapping):
+            continue
+        if task_id and str(candidate.get("task_id") or "").strip() not in {"", task_id}:
+            continue
+        try:
+            candidate_status_root = _metadata_path(candidate.get("status_root"), label="worker_worktrees lease status_root")
+        except RuntimeError:
+            continue
+        if candidate_status_root != status_root:
+            continue
+        if workspace_root is not None:
+            try:
+                candidate_path = _metadata_path(candidate.get("path"), label="worker_worktrees lease path")
+            except RuntimeError:
+                continue
+            if candidate_path != workspace_root:
+                continue
+        return str(key), candidate
+    return None
+
+
+def validate_active_status_command_lease(command: str, args: list[str]) -> None:
+    """Validate the supervisor-issued worker lease before canonical mutation."""
+
+    run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
+    if not run_id:
+        return
+
+    config = load_config()
+    runtime_state = load_runtime_state_snapshot(config)
+    workers = runtime_state.get("workers", {})
+    if not isinstance(workers, Mapping):
+        raise RuntimeError("central runtime state has no worker records")
+    worker = workers.get(run_id)
+    if not isinstance(worker, Mapping):
+        raise RuntimeError(f"active status command lease not found for ORCH_RUN_ID={run_id}")
+
+    status = str(worker.get("status") or "").strip()
+    if status not in ACTIVE_WORKER_LEASE_STATUSES:
+        raise RuntimeError(
+            f"active status command lease for ORCH_RUN_ID={run_id} is not running: {status or 'missing'}"
+        )
+    expires_at = _parse_utc_timestamp(worker.get("lease_expires_at"))
+    if expires_at is None:
+        raise RuntimeError(f"active status command lease for ORCH_RUN_ID={run_id} has no lease_expires_at")
+    if datetime.now(timezone.utc) > expires_at:
+        raise RuntimeError(f"active status command lease for ORCH_RUN_ID={run_id} is expired")
+
+    command_task_id = _command_task_id(command, args)
+    env_task_id = str(os.environ.get("ORCH_TASK_ID") or "").strip()
+    worker_task_id = str(worker.get("task_id") or "").strip()
+    expected_task_id = command_task_id or env_task_id
+    if command_task_id and env_task_id and command_task_id != env_task_id:
+        raise RuntimeError(
+            f"status command task mismatch: argv task {command_task_id} != ORCH_TASK_ID {env_task_id}"
+        )
+    if worker_task_id and expected_task_id and worker_task_id != expected_task_id:
+        raise RuntimeError(
+            f"status command task mismatch: worker task {worker_task_id} != command task {expected_task_id}"
+        )
+    if worker_task_id and not expected_task_id:
+        raise RuntimeError(
+            f"status command task identity is required for worker task {worker_task_id}"
+        )
+
+    status_root = STATUS_ROOT.resolve()
+    worker_status_root = _metadata_path(
+        _worker_metadata_value(worker, "status_root"),
+        label="worker status_root",
+    )
+    if worker_status_root != status_root:
+        raise RuntimeError(
+            f"status command root mismatch: worker status_root {worker_status_root} != {status_root}"
+        )
+
+    workspace_root = _worker_workspace_root()
+    worker_workspace_raw = _worker_metadata_value(worker, "workspace_path")
+    if workspace_root is not None:
+        worker_workspace = _metadata_path(worker_workspace_raw, label="worker workspace_path")
+        if worker_workspace != workspace_root:
+            raise RuntimeError(
+                f"status command workspace mismatch: worker workspace {worker_workspace} != {workspace_root}"
+            )
+
+    runtime_metadata = status_command_metadata() or {}
+    issued_runtime = _worker_status_command_runtime(worker)
+    if not isinstance(issued_runtime, Mapping):
+        raise RuntimeError(f"active status command lease for ORCH_RUN_ID={run_id} has no issued command runtime")
+    issued_root = _metadata_path(issued_runtime.get("command_root"), label="issued command_root")
+    running_root = _metadata_path(runtime_metadata.get("command_root"), label="running command_root")
+    if issued_root != running_root:
+        raise RuntimeError(
+            f"status command runtime root mismatch: issued {issued_root} != running {running_root}"
+        )
+    issued_sha = str(issued_runtime.get("source_sha") or "").strip()
+    running_sha = str(runtime_metadata.get("source_sha") or "").strip()
+    if not issued_sha or issued_sha != running_sha:
+        raise RuntimeError(
+            f"status command runtime SHA mismatch: issued {issued_sha or 'missing'} != running {running_sha or 'missing'}"
+        )
+
+    lease_match = _find_worker_worktree_lease(
+        runtime_state,
+        worker=worker,
+        task_id=worker_task_id or expected_task_id,
+        workspace_root=workspace_root,
+        status_root=status_root,
+    )
+    if lease_match is None:
+        raise RuntimeError(f"active worktree lease not found for ORCH_RUN_ID={run_id}")
+    lease_key, lease = lease_match
+    if worker_task_id and str(lease.get("task_id") or "").strip() not in {"", worker_task_id}:
+        raise RuntimeError(
+            f"worktree lease task mismatch for {lease_key}: {lease.get('task_id')} != {worker_task_id}"
+        )
+    lease_status_root = _metadata_path(lease.get("status_root"), label="worktree lease status_root")
+    if lease_status_root != status_root:
+        raise RuntimeError(
+            f"worktree lease status root mismatch for {lease_key}: {lease_status_root} != {status_root}"
+        )
+    if workspace_root is not None:
+        lease_path = _metadata_path(lease.get("path"), label="worktree lease path")
+        if lease_path != workspace_root:
+            raise RuntimeError(
+                f"worktree lease path mismatch for {lease_key}: {lease_path} != {workspace_root}"
+            )
+
+
 def _path_parent_under_root(path: Path, root: Path) -> bool:
     try:
         path.parent.resolve().relative_to(root)
@@ -244,6 +642,22 @@ def _existing_path_is_symlink(path: Path) -> bool:
         return path.is_symlink()
     except OSError:
         return True
+
+
+def _validate_directory_no_symlinks_recursive(directory: Path, label: str) -> None:
+    if directory.is_symlink():
+        raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} directory cannot be a symlink: {directory}")
+    if not directory.exists() or not directory.is_dir():
+        return
+    for dirpath, dirnames, filenames in os.walk(directory):
+        for dirname in dirnames:
+            p = Path(dirpath) / dirname
+            if p.is_symlink():
+                raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} component cannot be a symlink: {p}")
+        for filename in filenames:
+            p = Path(dirpath) / filename
+            if p.is_symlink():
+                raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} leaf cannot be a symlink: {p}")
 
 
 def validate_status_root_binding() -> None:
@@ -314,15 +728,34 @@ def validate_status_root_binding() -> None:
         "archive_index": task_archive_module.ARCHIVE_INDEX_FILE,
         "task_state_lock": canonical_task_state_lock_path(STATUS_FILE),
         "activity_audit_lock": activity_audit_lock_path(LOG_FILE),
+        "docs_site_ai_status": DOCS_SITE_DIR / "ai-status.json",
+        "docs_site_current_work": DOCS_SITE_DIR / "current-work.md",
+        "docs_site_dashboard_bundle": DOCS_SITE_DIR / "dashboard-bundle.json",
+        "docs_site_orchestrator_state": DOCS_SITE_DIR / "orchestrator-state.json",
+        "docs_site_approval_queue": DOCS_SITE_DIR / "approval-queue.json",
+        "docs_site_planning_state": DOCS_SITE_DIR / "planning-state.json",
+        "docs_site_ai_activity_log": DOCS_SITE_DIR / "ai-activity-log.jsonl",
     }.items():
         if not _path_parent_under_root(Path(path), root):
             raise RuntimeError(
                 f"PANTHEON_STATUS_ROOT path binding for {label} escapes root: {path}"
             )
-        if Path(path).exists() and _existing_path_is_symlink(Path(path)):
+        if _existing_path_is_symlink(Path(path)):
             raise RuntimeError(
                 f"PANTHEON_STATUS_ROOT path binding for {label} cannot be a symlink: {path}"
             )
+
+    for path, label in (
+        (root / "ai-task-archive", "task archive"),
+        (root / "archive" / "logs", "activity rotation archive"),
+        (root / ".orchestrator" / "logs" / "activity-log-archive", "legacy activity archive"),
+        (root / ".orchestrator" / "logs" / "activity-rotation", "activity rotation"),
+        (root / ".orchestrator" / "worker-runtime", "worker runtime"),
+    ):
+        symlink_comp = _first_symlink_component(path)
+        if symlink_comp is not None:
+            raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} component cannot be a symlink: {symlink_comp}")
+        _validate_directory_no_symlinks_recursive(path, label)
 
     assert_task_archive_root_binding()
 
@@ -838,11 +1271,16 @@ def default_state() -> dict[str, Any]:
 
 
 def load_state() -> dict[str, Any]:
-    if not STATUS_FILE.exists():
+    try:
+        payload = read_regular_file_bytes(
+            STATUS_FILE,
+            source="canonical status state",
+        )
+    except FileNotFoundError:
         return default_state()
-    if STATUS_FILE.read_text(encoding="utf-8").strip() == "":
+    if not payload.strip():
         raise SystemExit(f"Refusing to initialize from empty status file: {STATUS_FILE}")
-    state = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+    state = json.loads(payload.decode("utf-8", errors="strict"))
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
     return state
@@ -928,12 +1366,22 @@ def load_logs() -> list[dict[str, Any]]:
         if not line:
             continue
         try:
-            logs.append(json.loads(line))
+            entry = strict_activity_json_loads(line)
+        except DuplicateActivityJSONKeyError as exc:
+            raise RuntimeError(
+                f"ai-activity-log.jsonl line {line_no} contains {exc}"
+            ) from exc
         except json.JSONDecodeError as exc:
             print(
                 f"Warning: skipping malformed ai-activity-log.jsonl line {line_no}: {exc}",
                 file=sys.stderr,
             )
+            continue
+        if not isinstance(entry, dict):
+            raise RuntimeError(
+                f"ai-activity-log.jsonl line {line_no} is not an object row"
+            )
+        logs.append(entry)
     return logs
 
 
@@ -993,6 +1441,19 @@ def load_config() -> dict[str, Any]:
                 "provider_capabilities": str(STATUS_ROOT / ".orchestrator" / "provider_capabilities.json"),
             }
         )
+    delivery_root = _worker_workspace_root()
+    if delivery_root is not None:
+        coordination = payload.setdefault("coordination", {})
+        if isinstance(coordination, dict):
+            repositories = coordination.setdefault("repositories", {})
+            if isinstance(repositories, dict):
+                pantheon_repo = repositories.setdefault("pantheon", {})
+                if isinstance(pantheon_repo, dict):
+                    pantheon_repo["local_path"] = str(delivery_root)
+                    pantheon_repo.setdefault(
+                        "repo",
+                        str(((payload.get("github_bus") or {}).get("repo")) or "ajoe734/pantheon"),
+                    )
     return payload
 
 
@@ -1132,13 +1593,22 @@ def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dic
         if not stripped:
             continue
         try:
-            entry = json.loads(stripped)
+            entry = strict_activity_json_loads(stripped)
+        except DuplicateActivityJSONKeyError as exc:
+            raise RuntimeError(
+                "ai-activity-log.jsonl tail line "
+                f"-{line_no} contains {exc}"
+            ) from exc
         except json.JSONDecodeError as exc:
             print(
                 f"Warning: skipping malformed ai-activity-log.jsonl tail line -{line_no}: {exc}",
                 file=sys.stderr,
             )
             continue
+        if not isinstance(entry, dict):
+            raise RuntimeError(
+                f"ai-activity-log.jsonl tail line -{line_no} is not an object row"
+            )
         if str(entry.get("type") or "") != "task_helper_claimed":
             continue
         claims.append(
@@ -1291,10 +1761,11 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
     _validate_status_archive_snapshot(snapshot)
     if existing is not None:
         _validate_status_archive_snapshot(existing)
-        if _canonical_json_sha256(existing) != _canonical_json_sha256(snapshot):
-            raise RuntimeError(
-                f"existing archive snapshot conflicts with terminal task: {task_id}"
-            )
+        if is_terminal_task(task):
+            if _canonical_json_sha256(existing) != _canonical_json_sha256(snapshot):
+                raise RuntimeError(
+                    f"existing archive snapshot conflicts with terminal task: {task_id}"
+                )
         snapshot = deepcopy(existing)
 
     pending = state.get(STATUS_ARCHIVE_OUTBOX_KEY)
@@ -1374,6 +1845,9 @@ def _canonical_json_sha256(value: Any) -> str:
 
 def _activity_event(entry: dict[str, Any]) -> dict[str, Any]:
     event = deepcopy(entry)
+    command_metadata = status_command_metadata()
+    if command_metadata and "status_command" not in event:
+        event["status_command"] = command_metadata
     if not str(event.get("event_id") or "").strip():
         event["event_id"] = "ai-status-event-" + _canonical_json_sha256(event)
     return event
@@ -1440,14 +1914,67 @@ def _activity_audit_sources() -> list[Path]:
     return activity_audit_source_paths_unlocked(LOG_FILE)
 
 
-def _activity_event_index_unlocked() -> dict[str, str]:
-    prepare_activity_audit_unlocked(LOG_FILE)
+def _activity_event_index_unlocked(event_ids: set[str]) -> dict[str, str]:
+    try:
+        prepare_activity_audit_unlocked(LOG_FILE)
+        return validated_activity_event_digests_unlocked(LOG_FILE, event_ids)
+    except ActivityAuditInvariantError:
+        raise
+    except RuntimeError as exc:
+        raise activity_audit_invariant_error(
+            exc,
+            log_path=LOG_FILE,
+            operation="status_outbox_recovery",
+        ) from exc
+
+
+def _active_activity_event_digests_unlocked(
+    event_ids: set[str],
+) -> dict[str, str]:
+    """Look for a just-appended outbox transaction in a bounded active tail."""
+
+    payload = read_activity_log_tail_bytes(
+        LOG_FILE,
+        max_lines=max(64, len(event_ids) * 8),
+    )
     result: dict[str, str] = {}
-    for entry, source, line_number in stream_logical_activity(LOG_FILE):
-        event_id = str(entry.get("event_id") or "").strip()
-        if not event_id:
+    for line_number, raw_line in enumerate((payload or b"").splitlines(), start=1):
+        if not raw_line.strip():
+            continue
+        try:
+            entry = strict_activity_json_loads(
+                raw_line.decode("utf-8", errors="strict")
+            )
+        except (
+            UnicodeError,
+            json.JSONDecodeError,
+            DuplicateActivityJSONKeyError,
+        ) as exc:
+            raise ActivityAuditInvariantError(
+                "active activity tail is unreadable",
+                invariant="activity_tail_json",
+                evidence={
+                    "log_path": str(LOG_FILE),
+                    "tail_line_number": line_number,
+                    "error_type": type(exc).__name__,
+                },
+            ) from exc
+        if not isinstance(entry, dict):
+            raise ActivityAuditInvariantError(
+                "active activity tail row is not an object",
+                invariant="activity_tail_json",
+                evidence={
+                    "log_path": str(LOG_FILE),
+                    "tail_line_number": line_number,
+                },
+            )
+        event_id = str(entry.get("event_id") or "")
+        if event_id not in event_ids:
             continue
         digest = _canonical_json_sha256(entry)
+        existing = result.get(event_id)
+        if existing is not None and existing != digest:
+            raise RuntimeError(f"activity outbox payload conflict: {event_id}")
         result[event_id] = digest
     return result
 
@@ -1582,7 +2109,9 @@ def _validate_status_activity_outbox(value: Any) -> dict[str, Any]:
         or not events
         or any(
             not isinstance(event, dict)
-            or not str(event.get("event_id") or "").strip()
+            or not isinstance(event.get("event_id"), str)
+            or not event["event_id"]
+            or event["event_id"] != event["event_id"].strip()
             for event in events
         )
         or len({str(event["event_id"]) for event in events}) != len(events)
@@ -1594,13 +2123,22 @@ def _validate_status_activity_outbox(value: Any) -> dict[str, Any]:
     return value
 
 
-def recover_status_activity_outbox(state: dict[str, Any]) -> bool:
+def recover_status_activity_outbox(
+    state: dict[str, Any],
+    *,
+    known_unappended: bool = False,
+) -> bool:
     pending = state.get(STATUS_ACTIVITY_OUTBOX_KEY)
     if pending in (None, {}, []):
         return False
     pending = _validate_status_activity_outbox(pending)
+    pending_event_ids = {str(event["event_id"]) for event in pending["events"]}
     with activity_audit_lock_file(LOG_FILE, shared=False, nonblocking=False):
-        existing = _activity_event_index_unlocked()
+        existing = (
+            {}
+            if known_unappended
+            else _activity_event_index_unlocked(pending_event_ids)
+        )
         missing: list[dict[str, Any]] = []
         for event in pending["events"]:
             event_id = str(event["event_id"])
@@ -1614,7 +2152,9 @@ def recover_status_activity_outbox(state: dict[str, Any]) -> bool:
             missing.append(event)
             existing[event_id] = digest
         _append_logs_unlocked(missing)
-        final = _activity_event_index_unlocked()
+        final = _active_activity_event_digests_unlocked(pending_event_ids)
+        if set(final) != pending_event_ids:
+            final = _activity_event_index_unlocked(pending_event_ids)
         if any(
             final.get(str(event["event_id"])) != _canonical_json_sha256(event)
             for event in pending["events"]
@@ -1640,7 +2180,7 @@ def commit_state_with_activity_outbox(
         _status_archive_fault("pending_status")
     recover_status_archive_outbox(state)
     if events:
-        recover_status_activity_outbox(state)
+        recover_status_activity_outbox(state, known_unappended=True)
 
 
 def ensure_agent(name: str) -> dict[str, Any]:
@@ -2136,6 +2676,9 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
         "branch": branch,
         "git_clean_required": settings["require_git_clean"],
     }
+    command_metadata = status_command_metadata()
+    if command_metadata:
+        delivery["status_command_runtime"] = command_metadata
     if repository_fallback is not None:
         delivery["repository_fallback"] = repository_fallback
 
@@ -4626,7 +5169,7 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can progress {task_id}")
     timestamp = iso_now()
-    if task["status"] in {"todo", "review_approved"}:
+    if task["status"] == "todo":
         task["status"] = "in_progress"
     task["last_update"] = timestamp
     task["next"] = message
@@ -4998,6 +5541,21 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def _emit_fail_closed(error: ActivityAuditInvariantError) -> None:
+    print(
+        json.dumps(
+            {
+                "status": "fail_closed",
+                "diagnostic": error.diagnostic,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ),
+        file=sys.stderr,
+    )
+
+
 def command_wave(state: dict[str, Any], args: list[str]) -> None:
     """wave open <wave-id> | wave close | wave freeze"""
     from wave_guards import (  # lazy: only needed for this command
@@ -5066,6 +5624,7 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
 
 
 def main(argv: list[str]) -> int:
+    validate_status_command_runtime_binding()
     validate_status_root_binding()
 
     command = argv[1] if len(argv) > 1 else "sync"
@@ -5094,24 +5653,48 @@ def main(argv: list[str]) -> int:
     }
 
     if command in read_only_commands:
-        # A killed terminal transition may leave durable archive/activity
-        # outboxes. Complete those writer transactions under EX before taking
-        # the normal shared read snapshot. A dispatcher-owned program outbox
-        # suspends even these recovery writes, while diagnostics stay readable.
-        with canonical_task_state_lock(shared=False):
-            recovery_state = load_state()
-            if recovery_state.get(PROGRAM_ACTIVITY_OUTBOX_KEY) is None:
-                recover_status_archive_outbox(recovery_state)
-                recover_status_activity_outbox(recovery_state)
-        with canonical_task_state_lock(shared=True):
-            state = load_state()
-            read_only_commands[command](state, args)
+        # Read-only commands must never join the writer convoy or mutate
+        # recovery state. Writers/supervisor own outbox recovery; a reader
+        # reports a bounded fail-closed diagnostic instead.
+        try:
+            with canonical_task_state_lock(shared=True, nonblocking=True):
+                state = load_state()
+                pending_planes = [
+                    key
+                    for key in (
+                        STATUS_ARCHIVE_OUTBOX_KEY,
+                        STATUS_ACTIVITY_OUTBOX_KEY,
+                    )
+                    if state.get(key) not in (None, {}, [])
+                ]
+                if pending_planes:
+                    raise ActivityAuditInvariantError(
+                        "canonical status recovery is pending",
+                        invariant="status_recovery_pending",
+                        evidence={"pending_planes": pending_planes},
+                    )
+                read_only_commands[command](state, args)
+        except BlockingIOError as exc:
+            _emit_fail_closed(
+                ActivityAuditInvariantError(
+                    "canonical task-state lock is busy",
+                    invariant="status_task_lock_busy",
+                    evidence={
+                        "command": command,
+                        "lock_path": str(canonical_task_state_lock_path(STATUS_FILE)),
+                    },
+                )
+            )
+            return 75
+        except ActivityAuditInvariantError as exc:
+            _emit_fail_closed(exc)
+            return 2
         return 0
 
     if command not in commands:
         raise SystemExit(f"Unknown command: {command}")
 
-    with canonical_task_state_lock(shared=False):
+    def run_mutation() -> None:
         state = load_state()
         assert_program_activity_outbox_clear(state)
         recover_status_archive_outbox(state)
@@ -5119,8 +5702,20 @@ def main(argv: list[str]) -> int:
         with buffer_activity_events():
             command_result = commands[command](state, args)
             if command_result is False:
-                return 0
+                return
             sync_all(state)
+
+    if str(os.environ.get("ORCH_RUN_ID") or "").strip():
+        config = load_config()
+        with runtime_state_lock(config, shared=True):
+            validate_active_status_command_lease(command, args)
+            with canonical_task_state_lock(shared=False):
+                run_mutation()
+        return 0
+
+    with canonical_task_state_lock(shared=False):
+        validate_active_status_command_lease(command, args)
+        run_mutation()
     return 0
 
 

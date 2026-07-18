@@ -21,10 +21,11 @@ from datetime import datetime, timedelta, timezone
 from functools import partial, wraps
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
-from urllib.parse import quote, urlencode
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
+from jsonschema import Draft7Validator
 from fastapi import Body, Cookie, FastAPI, HTTPException, BackgroundTasks, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -607,6 +608,37 @@ async def _management_rejects_agora_scope(request: Request, call_next):
 
 def _bff_session_contract_exempt(path: str) -> bool:
     return path in {"/bff/auth/dev-login", "/bff/auth/refresh", "/bff/logout"}
+
+
+@app.middleware("http")
+async def _cookie_session_mutation_origin_guard(request: Request, call_next):
+    """Reject ambient cookie mutations that do not come from an allowed FE.
+
+    Bearer sessions are not ambient browser credentials and are unaffected.
+    A ``pantheon_session`` cookie, however, is sent by the browser implicitly;
+    accepting a mutating request without an allowed ``Origin`` would turn the
+    cookie compatibility path into a CSRF bypass.  The guard deliberately runs
+    before route handlers, including refresh/logout, and uses the same exact
+    allowlist as credentialed CORS.
+    """
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        authorization = request.headers.get("authorization")
+        pantheon_session = request.cookies.get("pantheon_session")
+        if pantheon_session and not authorization:
+            origin = request.headers.get("origin")
+            if not origin or not _cors_origin_allowed(origin):
+                correlation_id = _error_response_correlation_id(request)
+                return _pack_d_error_response(
+                    status_code=403,
+                    code=ErrorCode.FORBIDDEN,
+                    message="Cookie session mutation origin is not allowed",
+                    correlation_id=correlation_id,
+                    details={
+                        "reason": "COOKIE_SESSION_ORIGIN_DENIED",
+                        "precondition_failed": "origin",
+                    },
+                )
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -1537,6 +1569,29 @@ def _extract_identity_jwt(
         "PANTHEON_RUNTIME_MFA_CLAIMS": os.getenv("PANTHEON_BFF_MFA_CLAIMS", ""),
         "PANTHEON_RUNTIME_MFA_VALUES": os.getenv("PANTHEON_BFF_MFA_VALUES", ""),
     }
+    # External browser JWTs use the configured OIDC/JWKS verifier, while the
+    # server-side dev-login exchange deliberately issues a short-lived HS256
+    # BFF token.  Select the verifier from the signed token algorithm family so
+    # enabling product OIDC does not disable governed CI/dev-login sessions.
+    # This is only routing: issuer, audience and signature are still validated
+    # by ``validate_request_auth`` before any claim is trusted.
+    try:
+        raw_token = str(authorization or "").split(None, 1)[1]
+        header_segment = raw_token.split(".", 1)[0]
+        header_segment += "=" * (-len(header_segment) % 4)
+        unverified_alg = str(
+            json.loads(base64.urlsafe_b64decode(header_segment).decode("utf-8")).get("alg")
+            or ""
+        ).upper()
+    except Exception:
+        unverified_alg = ""
+    if unverified_alg == "HS256":
+        bff_env["PANTHEON_RUNTIME_JWKS_URI"] = ""
+        bff_env["PANTHEON_RUNTIME_OIDC_DISCOVERY_URL"] = ""
+        bff_env["PANTHEON_RUNTIME_ROLE_CLAIMS"] = "roles,role"
+        bff_env["PANTHEON_RUNTIME_ROLE_MAP"] = ""
+        bff_env["PANTHEON_RUNTIME_ROLE_MAP_MODE"] = "passthrough"
+
     mfa_required = bff_env["PANTHEON_RUNTIME_MFA_REQUIRED"].lower() == "true"
     try:
         ctx = validate_request_auth(
@@ -6945,6 +7000,178 @@ async def bff_me(
             "contract": "BFF-LUV-GAP-009",
             "correlationId": correlation_id,
             "snapshot_at": snapshot_at,
+        },
+    }
+
+
+def _bff_auth_verifier_readiness() -> Dict[str, Any]:
+    """Return non-secret verifier configuration truth for product probes."""
+    jwks_uri_configured = bool(os.getenv("PANTHEON_BFF_JWKS_URI", "").strip())
+    discovery_configured = bool(os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", "").strip())
+    asymmetric = jwks_uri_configured or discovery_configured
+    shared_secret_configured = bool(os.getenv("PANTHEON_BFF_JWT_SECRET", "").strip())
+    issuer_configured = bool(
+        _first_nonblank(
+            os.getenv("PANTHEON_BFF_OIDC_ISSUER"),
+            os.getenv("PANTHEON_BFF_JWT_ISSUER"),
+        )
+    )
+    audience_configured = bool(
+        _first_nonblank(
+            os.getenv("PANTHEON_BFF_OIDC_AUDIENCE"),
+            os.getenv("PANTHEON_BFF_JWT_AUDIENCE"),
+        )
+    )
+    role_claims = _env_csv("PANTHEON_BFF_ROLE_CLAIMS") or ["roles", "role"]
+    role_map_mode = os.getenv("PANTHEON_BFF_ROLE_MAP_MODE", "passthrough").strip().lower()
+    if role_map_mode not in {"strict", "passthrough"}:
+        role_map_mode = "strict"
+    return {
+        "kind": "oidc_jwks" if asymmetric else "hs256",
+        "configured": asymmetric or shared_secret_configured,
+        "jwksConfigured": jwks_uri_configured,
+        "discoveryConfigured": discovery_configured,
+        "sharedSecretConfigured": shared_secret_configured,
+        "issuerConfigured": issuer_configured,
+        "audienceConfigured": audience_configured,
+        "roleClaimsConfigured": bool(role_claims),
+        "roleClaimPaths": role_claims,
+        "roleMapConfigured": bool(os.getenv("PANTHEON_BFF_ROLE_MAP", "").strip()),
+        "roleMapMode": role_map_mode,
+    }
+
+
+def _safe_provider_readiness() -> Dict[str, Any]:
+    """Normalize provider readiness without returning endpoint or credential data."""
+    try:
+        raw = _assistant_provider_readiness()
+    except Exception as exc:  # readiness must degrade instead of becoming a 500
+        return {
+            "provider": _mgmt_nl_provider_name(),
+            "ready": False,
+            "status": "unavailable",
+            "reason": type(exc).__name__,
+        }
+    provider = str(raw.get("provider") or _mgmt_nl_provider_name())
+    status = str(raw.get("status") or ("ready" if raw.get("ready") else "unavailable"))
+    result = {
+        "provider": provider,
+        "ready": bool(raw.get("ready")),
+        "status": status,
+    }
+    reason = str(raw.get("reason") or "").strip()
+    if reason:
+        result["reason"] = reason
+    auth_status = str(raw.get("authStatus") or raw.get("auth_status") or "").strip()
+    if auth_status:
+        result["authStatus"] = auth_status
+    return result
+
+
+@app.get("/bff/auth/readiness")
+async def bff_auth_readiness(
+    authorization: Optional[str] = Header(default=None),
+    pantheon_session: Optional[str] = Cookie(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+):
+    """Strict browser-session and provider readiness for operator-live.
+
+    This endpoint never issues credentials and never returns secret values.  A
+    browser proves its existing short-lived bearer or cookie session; the BFF
+    remains authoritative for roles, tenant scope, and Agora capabilities.
+    """
+    identity = _extract_identity(
+        authorization,
+        mfa_token=x_mfa_token,
+        session_cookie=pantheon_session,
+    )
+    _require_read_role(identity)
+    _raise_if_session_logged_out(identity)
+    session_kind = _resolve_session_kind(identity)
+    if session_kind == "stub":
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Stub sessions cannot satisfy strict browser readiness",
+            "AUTH_STUB_SESSION_REJECTED",
+            precondition_failed="session_kind",
+            suggestion="Authenticate with a BFF-verifiable short-lived bearer or cookie session",
+        )
+
+    tenant = _bff_me_tenant_payload(identity, requested_tenant=x_tenant_id)
+    user = _bff_me_user_payload(identity)
+    roles = set(identity.roles)
+    capabilities = set(user["capabilities"])
+    # Agora role-to-capability resolution is backend-owned; do not rely only on
+    # arbitrary browser-supplied capability claims.
+    try:
+        from agora.identity.scope import resolve_agora_user_scope
+
+        agora_scope = resolve_agora_user_scope(
+            identity,
+            utc_now=utc_now,
+            requested_tenant_id=tenant["id"],
+        )
+        capabilities.update(agora_scope.granted_capabilities)
+    except Exception:
+        pass
+
+    verifier = _bff_auth_verifier_readiness()
+    strict_auth = _bff_auth_mode() == "strict" and not _bff_auth_stub_enabled()
+    session_ready = session_kind in {"bearer", "cookie"}
+    operator_role_ready = bool(_WRITE_ROLES.intersection(roles))
+    interaction_capability_ready = "agora.workshop.v1" in capabilities
+    verifier_ready = bool(
+        verifier["configured"]
+        and verifier["issuerConfigured"]
+        and verifier["audienceConfigured"]
+        and verifier["roleClaimsConfigured"]
+    )
+    auth_ready = bool(
+        strict_auth
+        and session_ready
+        and operator_role_ready
+        and interaction_capability_ready
+        and verifier_ready
+    )
+    provider = _safe_provider_readiness()
+    provider_ready = bool(provider["ready"])
+    return {
+        "data": {
+            "ready": auth_ready and provider_ready,
+            "authReady": auth_ready,
+            "providerReady": provider_ready,
+            "sourceCommitSha": _bff_source_commit(),
+            "auth": {
+                "mode": _bff_auth_mode(),
+                "stub": _bff_auth_stub_enabled(),
+                "strict": strict_auth,
+                "sessionKind": session_kind,
+                "sessionReady": session_ready,
+                "operatorRoleReady": operator_role_ready,
+                "interactionCapabilityReady": interaction_capability_ready,
+                "verifierReady": verifier_ready,
+                "verifier": verifier,
+            },
+            "identity": {
+                "operatorId": identity.operator_id,
+                "roles": sorted(roles),
+                "tenantId": tenant["id"],
+                "capabilities": sorted(capabilities),
+            },
+            "provider": provider,
+            "authority": {
+                "interaction": "advisory",
+                "execution": "none",
+                "broker": "none",
+                "capital": "none",
+            },
+        },
+        "meta": {
+            "route": "GET /bff/auth/readiness",
+            "contract": "PINT-016-STRICT-BROWSER-READINESS",
+            "snapshot_at": utc_now(),
         },
     }
 
@@ -66685,6 +66912,161 @@ def _ensure_agora_servant_openclaw_agent(persona: Dict[str, Any]) -> Dict[str, A
     return OpenClawOpsClient().ensure_agora_servant_agent(persona)
 
 
+def _resolve_agora_interaction_context_ref(
+    *,
+    kind: str,
+    ref_id: str,
+    ref_version: Optional[str],
+    resolved: Any,
+    session: Dict[str, Any],
+    context_refs: List[Dict[str, Any]],
+    authorization: Optional[str],
+    source_route: Optional[str],
+    focused_object: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Resolve only context kinds whose existing owner can prove audience scope.
+
+    Management positions, performance windows, and Human Inbox rows currently
+    have no canonical per-user ownership contract.  They remain explicit
+    dependency-unavailable sources instead of being promoted from a global
+    read-model row into a user-scoped interaction receipt.
+    """
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+
+    if kind in {"position", "performance_window", "human_inbox_item"}:
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            f"Canonical {kind} interaction scope is unavailable",
+            f"{kind} does not yet expose a tenant-and-user-scoped ownership receipt",
+            precondition_failed=f"{kind}_scope_unavailable",
+        )
+
+    if kind == "decision_event":
+        if (
+            focused_object.get("kind") == "decision_event"
+            and str(focused_object.get("id") or "") == ref_id
+        ):
+            raise _bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Focused Decision Event interaction source is unavailable",
+                "No canonical frontend Decision Event source-route owner is registered yet",
+                precondition_failed="decision_event_source_route_unavailable",
+            )
+        from agora.trading_room.router import _get_store as _get_trading_room_store
+
+        event = _get_trading_room_store().get_decision_event(ref_id)
+        if not isinstance(event, dict):
+            return {"row": None, "audience_verified": False}
+        event_strategy = str(event.get("strategy_id") or "")
+        event_version = str(event.get("strategy_spec_registry_id") or "")
+        scoped_strategy = str(session.get("strategy_id") or "")
+        scoped_version = str(session.get("active_strategy_spec_registry_id") or "")
+        audience_verified = bool(
+            event_strategy
+            and event_strategy == scoped_strategy
+            and (not event_version or event_version == scoped_version)
+        )
+        return {"row": event, "audience_verified": audience_verified}
+
+    if kind == "journal_entry":
+        from trade_journal import _allowed as _trade_journal_allowed
+        from trade_journal import _load as _load_trade_journal
+
+        episodes = _load_trade_journal("PANTHEON_BFF_TRADE_EPISODES_STORE")
+        matches = [
+            row for row in (episodes or [])
+            if str(row.get("trade_episode_id") or "") == ref_id
+        ]
+        if len(matches) == 1:
+            episode = matches[0]
+            schema_path = (
+                Path(__file__).resolve().parents[2]
+                / "telemetry"
+                / "trade_episode_projection.schema.json"
+            )
+            try:
+                projection_schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                projection_valid = Draft7Validator(projection_schema).is_valid(episode)
+            except (OSError, TypeError, ValueError):
+                projection_valid = False
+            persona_id = str(episode.get("persona_id") or "")
+            referenced_personas = {
+                str(item.get("id") or "")
+                for item in context_refs
+                if item.get("kind") == "persona"
+            }
+            persona = read_store.get_persona(persona_id)
+            if persona is None:
+                persona = next(
+                    (
+                        row for row in read_store.list_personas(include_market_persona_defaults=True)
+                        if str(row.get("persona_id") or row.get("id") or "") == persona_id
+                    ),
+                    None,
+                )
+            episode_strategy = str(episode.get("strategy_id") or "")
+            artifact_id = str(episode.get("artifact_id") or "")
+            artifact_version = str(episode.get("artifact_version") or "")
+            episode_strategy_version = str(episode.get("strategy_spec_registry_id") or "")
+            scoped_strategy = str(session.get("strategy_id") or "")
+            scoped_version = str(session.get("active_strategy_spec_registry_id") or "")
+            source = urlsplit(str(source_route or ""))
+            source_path = unquote(source.path).rstrip("/")
+            source_query = parse_qs(source.query, keep_blank_values=True)
+            focused_is_episode = (
+                focused_object.get("kind") == "journal_entry"
+                and str(focused_object.get("id") or "") == ref_id
+            )
+            canonical_persona_journal_route = bool(
+                source_path == f"/management/personas/{persona_id}"
+                and source_query.get("tab") == ["tradeJournal"]
+                and not source.fragment
+            )
+            canonical_workshop_route = bool(
+                not focused_is_episode
+                and source_path == f"/agora/strategy-workshop/{session.get('workshop_id')}"
+                and not source.fragment
+            )
+            audience_verified = bool(
+                projection_valid
+                and persona_id
+                and episode_strategy
+                and artifact_id
+                and artifact_version
+                and persona_id in referenced_personas
+                and isinstance(persona, dict)
+                and persona.get("tenant_id") == resolved.tenant_id
+                and _trade_journal_allowed(identity, persona_id)
+                and episode_strategy == scoped_strategy
+                and (not episode_strategy_version or episode_strategy_version == scoped_version)
+                and (canonical_persona_journal_route or canonical_workshop_route)
+            )
+            return {"row": episode, "audience_verified": audience_verified}
+
+        journal_rows = _agora_filter_private_records(
+            read_store.list_decision_journal_entries(), identity,
+        )
+        journal = next(
+            (row for row in journal_rows if str(row.get("id") or row.get("entry_id") or "") == ref_id),
+            None,
+        )
+        # Legacy Decision Journal rows are returned for exact not-found/error
+        # semantics, but without explicit scope they are intentionally not
+        # elevated to an audience-verified receipt.
+        return {"row": journal, "audience_verified": False}
+
+    raise _bff_error(
+        503,
+        ErrorCode.DEPENDENCY_UNAVAILABLE,
+        f"Canonical {kind} readback is unavailable",
+        f"{kind}_store_unavailable",
+        precondition_failed=f"{kind}_store_unavailable",
+    )
+
+
 # AG-BE-000: Agora BFF package router (must stay last to avoid route conflicts)
 from agora.router import create_agora_router as _create_agora_router  # noqa: E402
 app.include_router(
@@ -66696,6 +67078,7 @@ app.include_router(
         utc_now=utc_now,
         get_read_store=lambda: read_store,
         sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
+        canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
     )
 )
 

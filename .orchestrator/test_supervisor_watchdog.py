@@ -16,6 +16,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import supervisor_watchdog  # noqa: E402
 
 
+_OLD_ENV = {}
+
+
+def setUpModule() -> None:
+    global _OLD_ENV
+    _OLD_ENV = dict(os.environ)
+    for k in list(os.environ.keys()):
+        if k.startswith("PANTHEON_"):
+            del os.environ[k]
+
+
+def tearDownModule() -> None:
+    os.environ.clear()
+    os.environ.update(_OLD_ENV)
+
+
 class SupervisorWatchdogTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = tempfile.TemporaryDirectory()
@@ -31,6 +47,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
             "watchdog": {
                 "state_file": str(self.root / "watchdog-state.json"),
                 "metrics_file": str(self.root / "metrics.jsonl"),
+                "contention_metrics_file": str(self.root / "metrics-contention.jsonl"),
                 "heartbeat_stale_seconds": 900,
                 "restart_budget_window_seconds": 900,
                 "max_restarts_per_window": 2,
@@ -470,7 +487,8 @@ class SupervisorWatchdogTests(unittest.TestCase):
 
     def hold_lock(self, pid: int = 999):
         """Create supervisor.lock and hold an exclusive flock for the test's lifetime."""
-        lock_path = self.state_file.parent / "supervisor.lock"
+        lock_path = supervisor_watchdog.supervisor_lock_path(self.config)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
         lock_path.write_text(f"{pid}\n", encoding="utf-8")
         handle = open(lock_path, "a+", encoding="utf-8")
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -513,7 +531,9 @@ class SupervisorWatchdogTests(unittest.TestCase):
         # No lock file at all.
         self.assertFalse(supervisor_watchdog.supervisor_lock_held(self.config))
         # File present but nobody holds the flock.
-        (self.state_file.parent / "supervisor.lock").write_text("0\n", encoding="utf-8")
+        lock_path = supervisor_watchdog.supervisor_lock_path(self.config)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path.write_text("0\n", encoding="utf-8")
         self.assertFalse(supervisor_watchdog.supervisor_lock_held(self.config))
 
     def test_lock_held_with_missing_pid_observes_only(self) -> None:
@@ -551,6 +571,677 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.assertEqual(result["decision"], "restart_supervisor")
         self.assertEqual(result["reason"], "missing_pid")
         self.assertFalse(result["lock_held"])
+
+    def test_lock_contention_returns_skip_immediately(self) -> None:
+        """When the runtime-admission lock is held, run_watchdog returns skip/lock_contention immediately without blocking or modifying files."""
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lock_handle.close)
+
+        self.write_pid(123)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": "2026-05-18T13:00:00Z",
+                "lifecycle": "running"
+            }
+        })
+
+        with mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result["decision"], "skip")
+        self.assertEqual(result["reason"], "lock_contention")
+        self.assertEqual(result["pid"], 123)
+
+        watchdog_state_file = self.root / "watchdog-state.json"
+        self.assertFalse(watchdog_state_file.exists())
+
+        # Verify contention metric write
+        contention_file = self.root / "metrics-contention.jsonl"
+        self.assertTrue(contention_file.exists())
+        lines = contention_file.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 1)
+        event = json.loads(lines[0])
+        self.assertEqual(event["decision"], "skip")
+        self.assertEqual(event["reason"], "lock_contention")
+
+    def test_lock_contention_multi_tick_bounded(self) -> None:
+        """Simulate 10+ cron ticks under contention: all exit immediately with skip, leaving the lock untouched."""
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lock_handle.close)
+
+        self.write_pid(123)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": "2026-05-18T13:00:00Z",
+                "lifecycle": "running"
+            }
+        })
+
+        for _ in range(12):
+            with mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()):
+                result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+            self.assertEqual(result["decision"], "skip")
+            self.assertEqual(result["reason"], "lock_contention")
+
+    def test_lock_contention_subprocess_launches(self) -> None:
+        """Spawn 12 concurrent watchdog processes via subprocess while the lock is held,
+        proving they all exit immediately with exit code 0, do not accumulate, and write to contention metrics."""
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lock_handle.close)
+
+        # Write config.json under self.root/.orchestrator so scripts can find it
+        config_path = self.root / ".orchestrator" / "config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(self.config, f)
+
+        self.write_pid(123)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": "2026-05-18T13:00:00Z",
+                "lifecycle": "running"
+            }
+        })
+
+        import subprocess
+        import signal
+        processes = []
+        outputs = []
+        try:
+            for _ in range(12):
+                p = subprocess.Popen(
+                    [sys.executable, str(Path(supervisor_watchdog.__file__).resolve()), "--config", str(config_path), "--json"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    start_new_session=True,
+                )
+                processes.append(p)
+
+            for p in processes:
+                stdout, stderr = p.communicate(timeout=5.0)
+                outputs.append((p.returncode, stdout, stderr))
+        finally:
+            for p in processes:
+                if p.poll() is None:
+                    try:
+                        os.killpg(p.pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+                    p.wait()
+
+        for code, stdout, stderr in outputs:
+            self.assertEqual(code, 0, f"Subprocess failed with stderr: {stderr.decode()}")
+            data = json.loads(stdout.decode())
+            self.assertEqual(data["decision"], "skip")
+            self.assertEqual(data["reason"], "lock_contention")
+
+        # Contention metrics file should contain the events that were not dropped
+        contention_file = self.root / "metrics-contention.jsonl"
+        lines = []
+        if contention_file.exists():
+            lines = contention_file.read_text(encoding="utf-8").splitlines()
+
+        dropped_count = sum(
+            1 for _, _, stderr in outputs
+            if "watchdog contention metric write dropped due to lock contention" in stderr.decode()
+        )
+        self.assertEqual(len(lines) + dropped_count, 12, "Total metric events (written + dropped) should equal 12")
+
+        for line in lines:
+            event = json.loads(line)
+            self.assertEqual(event["decision"], "skip")
+            self.assertEqual(event["reason"], "lock_contention")
+
+    def test_initially_free_concurrent_probes_max_one_owner(self) -> None:
+        """Proves that when the lock is initially free and multiple concurrent probes execute,
+        at most one active probe can own the critical section while others immediately skip."""
+        import threading
+        import time
+
+        self.write_pid(123)
+        now = datetime.now(timezone.utc)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": supervisor_watchdog.isoformat_utc(now),
+                "lifecycle": "running"
+            }
+        })
+
+        active_owners = 0
+        max_seen_owners = 0
+        owner_lock = threading.Lock()
+        
+        entered_event = threading.Event()
+        continue_event = threading.Event()
+
+        orig_run_locked = supervisor_watchdog._run_watchdog_locked
+
+        def mock_run_locked(*args, **kwargs):
+            nonlocal active_owners, max_seen_owners
+            with owner_lock:
+                active_owners += 1
+                if active_owners > max_seen_owners:
+                    max_seen_owners = active_owners
+            
+            entered_event.set()
+            continue_event.wait(timeout=5.0)
+            
+            try:
+                res = orig_run_locked(*args, **kwargs)
+            finally:
+                with owner_lock:
+                    active_owners -= 1
+            return res
+
+        with mock.patch.object(supervisor_watchdog, "_run_watchdog_locked", side_effect=mock_run_locked), \
+             mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()):
+            
+            results = []
+            threads = []
+            
+            def worker():
+                res = supervisor_watchdog.run_watchdog(self.config, restart=True)
+                results.append(res)
+
+            t1 = threading.Thread(target=worker)
+            threads.append(t1)
+            t1.start()
+
+            self.assertTrue(entered_event.wait(timeout=5.0))
+
+            for _ in range(4):
+                t = threading.Thread(target=worker)
+                threads.append(t)
+                t.start()
+
+            for t in threads[1:]:
+                t.join(timeout=5.0)
+
+            continue_event.set()
+            t1.join(timeout=5.0)
+
+            decisions = [r["decision"] for r in results]
+            reasons = [r["reason"] for r in results]
+            
+            self.assertEqual(decisions.count("observe_only"), 1)
+            self.assertEqual(decisions.count("skip"), 4)
+            self.assertEqual(reasons.count("lock_contention"), 4)
+
+            for r in results:
+                if r["decision"] == "skip":
+                    self.assertIsNone(r["restart_count_window"])
+                    self.assertIsNone(r["restart_count_hour"])
+
+            self.assertEqual(max_seen_owners, 1)
+            self.assertEqual(active_owners, 0)
+
+    def test_metric_lock_contention_subprocess_launches(self) -> None:
+        """Spawn concurrent watchdog processes via subprocess while BOTH the primary lock and the metric lock are held,
+        proving they all exit immediately within a deadline, do not block, and their metric writes are dropped."""
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+
+        # Hold primary lock
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lock_handle.close)
+
+        # Hold secondary metric lock
+        metric_lock_path = self.root / "metrics-contention.lock"
+        metric_lock_path.parent.mkdir(parents=True, exist_ok=True)
+        metric_lock_handle = open(metric_lock_path, "w", encoding="utf-8")
+        fcntl.flock(metric_lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(metric_lock_handle.close)
+
+        # Write config.json under self.root/.orchestrator so scripts can find it
+        config_path = self.root / ".orchestrator" / "config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(self.config, f)
+
+        self.write_pid(123)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": "2026-05-18T13:00:00Z",
+                "lifecycle": "running"
+            }
+        })
+
+        import subprocess
+        import signal
+        processes = []
+        outputs = []
+        try:
+            for _ in range(5):
+                p = subprocess.Popen(
+                    [sys.executable, str(Path(supervisor_watchdog.__file__).resolve()), "--config", str(config_path), "--json"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    start_new_session=True,
+                )
+                processes.append(p)
+
+            for p in processes:
+                # Enforce a strict timeout deadline of 2.0 seconds
+                stdout, stderr = p.communicate(timeout=2.0)
+                outputs.append((p.returncode, stdout, stderr))
+        finally:
+            for p in processes:
+                if p.poll() is None:
+                    try:
+                        os.killpg(p.pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+                    p.wait()
+
+        for code, stdout, stderr in outputs:
+            self.assertEqual(code, 0, f"Subprocess failed with stderr: {stderr.decode()}")
+            data = json.loads(stdout.decode())
+            self.assertEqual(data["decision"], "skip")
+            self.assertEqual(data["reason"], "lock_contention")
+            self.assertIn("watchdog contention metric write dropped due to lock contention", stderr.decode())
+
+        # Contention metrics file should remain empty or nonexistent because all writes were dropped
+        contention_file = self.root / "metrics-contention.jsonl"
+        if contention_file.exists():
+            self.assertEqual(contention_file.read_text(encoding="utf-8"), "")
+
+    def test_lock_release_and_probe_updates_state(self) -> None:
+        """After releasing the lock, a subsequent probe succeeds, updates the state files, and is healthy."""
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        with mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()):
+            result1 = supervisor_watchdog.run_watchdog(self.config, restart=True)
+        self.assertEqual(result1["decision"], "skip")
+
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+        lock_handle.close()
+
+        now = datetime.now(timezone.utc)
+        self.write_pid(123)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": supervisor_watchdog.isoformat_utc(now),
+                "lifecycle": "running"
+            }
+        })
+
+        with (
+            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+        ):
+            result2 = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result2["decision"], "observe_only")
+        self.assertEqual(result2["reason"], "supervisor_healthy")
+
+        watchdog_state_file = self.root / "watchdog-state.json"
+        self.assertTrue(watchdog_state_file.exists())
+
+        # Validate with supervisor_runtime_health.py --require-watchdog --json
+        # We lock supervisor.lock to simulate that the supervisor process is alive
+        sup_lock_path = supervisor_watchdog.supervisor_lock_path(self.config)
+        sup_lock_path.parent.mkdir(parents=True, exist_ok=True)
+        sup_lock_handle = open(sup_lock_path, "w", encoding="utf-8")
+        fcntl.flock(sup_lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        config_path = self.root / ".orchestrator" / "config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(self.config, f)
+
+        import subprocess
+        import signal
+        health_script_path = Path(__file__).resolve().parent.parent / "scripts" / "supervisor_runtime_health.py"
+        p = subprocess.Popen(
+            [sys.executable, str(health_script_path), "--repo", str(self.root), "--require-watchdog", "--json"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = p.communicate(timeout=5.0)
+        finally:
+            if p.poll() is None:
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                p.wait()
+
+        fcntl.flock(sup_lock_handle.fileno(), fcntl.LOCK_UN)
+        sup_lock_handle.close()
+
+        self.assertEqual(p.returncode, 0, f"Health check failed with stderr: {stderr.decode()}")
+        health_report = json.loads(stdout.decode())
+        self.assertTrue(health_report["healthy"])
+
+    def test_contention_metric_dropped_on_eagain(self) -> None:
+        """Verify that when the contention metrics file lock raises EAGAIN, the metric write is dropped and warning is printed to stderr."""
+        import io
+        import errno
+
+        orig_stderr = sys.stderr
+        sys.stderr = io.StringIO()
+        try:
+            # Mock flock on the contention metrics lock descriptor to raise EAGAIN
+            real_flock = fcntl.flock
+            def fake_flock(fd, op):
+                # When attempting LOCK_EX | LOCK_NB on the metrics-contention lock
+                if op & fcntl.LOCK_NB:
+                    raise OSError(errno.EAGAIN, "Resource temporarily unavailable")
+                return real_flock(fd, op)
+
+            with mock.patch("fcntl.flock", fake_flock):
+                # Call append_watchdog_contention_metric
+                supervisor_watchdog.append_watchdog_contention_metric(
+                    self.config,
+                    {"decision": "skip", "reason": "lock_contention"},
+                    self.config["watchdog"],
+                )
+            
+            output = sys.stderr.getvalue()
+            self.assertIn("watchdog contention metric write dropped due to lock contention", output)
+        finally:
+            sys.stderr = orig_stderr
+
+    def test_contention_metric_raises_on_other_oserror(self) -> None:
+        """Verify that when the contention metrics lock raises a non-EAGAIN OSError, it propagates."""
+        import errno
+
+        def fake_flock(fd, op):
+            raise OSError(errno.EACCES, "Permission denied")
+
+        with mock.patch("fcntl.flock", fake_flock):
+            with self.assertRaises(OSError) as ctx:
+                supervisor_watchdog.append_watchdog_contention_metric(
+                    self.config,
+                    {"decision": "skip", "reason": "lock_contention"},
+                    self.config["watchdog"],
+                )
+            self.assertEqual(ctx.exception.errno, errno.EACCES)
+
+    def test_watchdog_success_releases_lock_exactly_once(self) -> None:
+        """Verify that on normal success, the lock is released exactly once."""
+        self.write_pid(123)
+        now = datetime.now(timezone.utc)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": supervisor_watchdog.isoformat_utc(now),
+                "lifecycle": "running"
+            }
+        })
+
+        enter_calls = 0
+        exit_calls = 0
+        real_lock = supervisor_watchdog.runtime_state_lock
+
+        class LockManagerWrapper:
+            def __init__(self, target):
+                self.target = target
+            def __enter__(self):
+                nonlocal enter_calls
+                enter_calls += 1
+                return self.target.__enter__()
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                nonlocal exit_calls
+                exit_calls += 1
+                return self.target.__exit__(exc_type, exc_val, exc_tb)
+
+        def fake_lock_manager(*args, **kwargs):
+            if kwargs.get("nonblocking") is True:
+                return LockManagerWrapper(real_lock(*args, **kwargs))
+            return real_lock(*args, **kwargs)
+
+        with (
+            mock.patch.object(supervisor_watchdog, "runtime_state_lock", fake_lock_manager),
+            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result["decision"], "observe_only")
+        self.assertEqual(enter_calls, 1, "Lock manager enter should have been called exactly once.")
+        self.assertEqual(exit_calls, 1, "Lock manager exit should have been called exactly once on success.")
+
+    def test_contention_metric_error_surfaced_in_wrapper(self) -> None:
+        """Verify that when run_watchdog hits contention and append_watchdog_contention_metric raises an exception, it is surfaced to stderr and skip is returned."""
+        import io
+        import errno
+
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lock_handle.close)
+
+        self.write_pid(123)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": "2026-05-18T13:00:00Z",
+                "lifecycle": "running"
+            }
+        })
+
+        orig_stderr = sys.stderr
+        sys.stderr = io.StringIO()
+        try:
+            def fake_append(*args, **kwargs):
+                raise OSError(errno.EACCES, "Permission denied")
+
+            with (
+                mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+                mock.patch.object(supervisor_watchdog, "append_watchdog_contention_metric", fake_append),
+            ):
+                result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+            self.assertEqual(result["decision"], "skip")
+            self.assertEqual(result["reason"], "lock_contention")
+            
+            output = sys.stderr.getvalue()
+            self.assertIn("watchdog contention metric write failed", output)
+            self.assertIn("Permission denied", output)
+        finally:
+            sys.stderr = orig_stderr
+
+    def test_non_flock_eagain_is_propagated(self) -> None:
+        """Verify that a non-flock EAGAIN (e.g. from validation I/O or open) is propagated and NOT treated as lock contention."""
+        import errno
+
+        # We mock __enter__ to raise EAGAIN, but we DO NOT patch fcntl.flock to fail,
+        # so flock_contention_hit remains False.
+        def fake_lock_manager(*args, **kwargs):
+            class BadLock:
+                def __enter__(self):
+                    raise OSError(errno.EAGAIN, "Non-flock EAGAIN error")
+                def __exit__(self, exc_type, exc_val, exc_tb):
+                    pass
+            return BadLock()
+
+        with mock.patch.object(supervisor_watchdog, "runtime_state_lock", fake_lock_manager):
+            with self.assertRaises(OSError) as ctx:
+                supervisor_watchdog.run_watchdog(self.config, restart=True)
+            self.assertEqual(ctx.exception.errno, errno.EAGAIN)
+            self.assertIn("Non-flock EAGAIN error", str(ctx.exception))
+
+    def test_watchdog_dry_run(self) -> None:
+        """Verify that when dry_run=True is set, the decision is to restart but Popen is not called."""
+        self.write_pid(123)
+        self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}})
+        
+        with (
+            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+            mock.patch.object(supervisor_watchdog.subprocess, "Popen") as mock_popen,
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True, dry_run=True)
+            
+        self.assertEqual(result["decision"], "restart_supervisor")
+        self.assertIn("dry_run", result["reason"])
+        mock_popen.assert_not_called()
+
+    def test_watchdog_owner_crash_releases_lock(self) -> None:
+        """Verify that when the watchdog logic raises an unexpected exception (crash), the lock is released exactly once."""
+        self.write_pid(123)
+        self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}})
+
+        # We will mock _run_watchdog_locked to raise an unexpected Exception
+        def crashing_run(*args, **kwargs):
+            raise ValueError("Unexpected owner crash")
+
+        # Let's count how many times lock_manager.__exit__ is called
+        exit_calls = 0
+        real_lock = supervisor_watchdog.runtime_state_lock
+        
+        # We wrapper the context manager to intercept exit
+        class LockManagerWrapper:
+            def __init__(self, target):
+                self.target = target
+            def __enter__(self):
+                return self.target.__enter__()
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                nonlocal exit_calls
+                exit_calls += 1
+                return self.target.__exit__(exc_type, exc_val, exc_tb)
+
+        def fake_lock_manager(*args, **kwargs):
+            return LockManagerWrapper(real_lock(*args, **kwargs))
+
+        with (
+            mock.patch.object(supervisor_watchdog, "runtime_state_lock", fake_lock_manager),
+            mock.patch.object(supervisor_watchdog, "_run_watchdog_locked", crashing_run),
+        ):
+            with self.assertRaisesRegex(ValueError, "Unexpected owner crash"):
+                supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(exit_calls, 1, "Lock manager exit should have been called exactly once to clean up lock.")
+
+    def test_watchdog_locked_body_contention_propagates(self) -> None:
+        """Verify that a LockContentionError raised inside the locked body (e.g. from a nested lock attempt)
+        is propagated and NOT caught or converted to a benign skip by run_watchdog."""
+        import errno
+        self.write_pid(123)
+        self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}})
+
+        def nested_contention_run(*args, **kwargs):
+            from common import LockContentionError
+            import errno
+            raise LockContentionError(errno.EAGAIN, "Nested lock contention", "dummy.lock")
+
+        with mock.patch.object(supervisor_watchdog, "_run_watchdog_locked", nested_contention_run):
+            from common import LockContentionError
+            with self.assertRaises(LockContentionError) as ctx:
+                supervisor_watchdog.run_watchdog(self.config, restart=True)
+            self.assertEqual(ctx.exception.errno, errno.EAGAIN)
+            self.assertIn("Nested lock contention", str(ctx.exception))
+
+    def test_contention_metric_open_eacces_propagates(self) -> None:
+        """Verify that when the metrics-lock os.open raises EACCES, the original OSError is propagated without UnboundLocalError."""
+        import errno
+
+        def fake_open(path, flags, mode=0o777):
+            if str(path).endswith(".lock"):
+                raise OSError(errno.EACCES, "Permission denied")
+            return os_open(path, flags, mode)
+
+        os_open = os.open
+        with mock.patch("os.open", fake_open):
+            with self.assertRaises(OSError) as ctx:
+                supervisor_watchdog.append_watchdog_contention_metric(
+                    self.config,
+                    {"decision": "skip", "reason": "lock_contention"},
+                    self.config["watchdog"],
+                )
+            self.assertEqual(ctx.exception.errno, errno.EACCES)
+            self.assertNotIsInstance(ctx.exception, UnboundLocalError)
+
+    def test_watchdog_overlap_contention_coverage(self) -> None:
+        """Verify that overlapping lock attempts classify contention correctly without out-of-order fcntl.flock wrapper corruption."""
+        from common import LockContentionError, canonical_task_state_lock_file
+        
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+        raw_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(raw_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(raw_handle.close)
+
+        lm = supervisor_watchdog.runtime_state_lock(self.config, shared=False, nonblocking=True)
+        status_file = self.root / "state.json"
+
+        with self.assertRaises(LockContentionError):
+            with lm:
+                self.fail("lm shouldn't be acquired under contention")
+        
+        with canonical_task_state_lock_file(status_file, shared=False, nonblocking=True):
+            pass
+
+    def test_lock_contention_timeout_decouples_and_returns_fallback(self) -> None:
+        """Verify that when operations in the contention path hang/timeout,
+        run_watchdog returns lock_contention_timeout fallback without blocking indefinitely."""
+        import time
+        from common import LockContentionError
+
+        # Set a short timeout deadline in configuration
+        config = dict(self.config)
+        config["watchdog"] = dict(config["watchdog"])
+        config["watchdog"]["contention_deadline_seconds"] = 0.1
+
+        # Hold the runtime lock to trigger LockContentionError
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lock_handle.close)
+
+        # Mock supervisor_lock_held to block/sleep longer than the deadline
+        def slow_lock_held(*args, **kwargs):
+            time.sleep(0.5)
+            return True
+
+        with mock.patch.object(supervisor_watchdog, "supervisor_lock_held", slow_lock_held):
+            start = time.monotonic()
+            result = supervisor_watchdog.run_watchdog(config, restart=True)
+            elapsed = time.monotonic() - start
+
+        # Check that it timed out and returned within a reasonable window (less than 0.4s, since timeout is 0.1)
+        self.assertLess(elapsed, 0.4)
+        self.assertEqual(result["decision"], "skip")
+        self.assertEqual(result["reason"], "lock_contention_timeout")
+        self.assertEqual(result["resource"]["active_worker_count_source"], "skipped_due_to_timeout")
+        self.assertEqual(result["resource"]["active_worker_scan_error"], "timeout")
 
 
 class ActiveWorkerCountDedupeTests(unittest.TestCase):
@@ -663,6 +1354,34 @@ class ActiveWorkerCountDedupeTests(unittest.TestCase):
         }
         reasons = supervisor_watchdog.resource_pressure_reasons(snapshot, settings)
         self.assertIn("active_worker_count_above_threshold", reasons)
+
+    def test_harness_cleanup_leaves_no_lingering_processes(self) -> None:
+        """Verify that when a process is spawned under start_new_session=True, 
+        our cleanup wrapper successfully kills the process group and leaves no lingering processes."""
+        import subprocess
+        import signal
+
+        # Spawn a process that runs sleep
+        p = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(10)"],
+            start_new_session=True,
+        )
+        self.addCleanup(p.wait) # backup
+
+        pid = p.pid
+        # Verify it's alive
+        self.assertTrue(supervisor_watchdog.pid_is_alive(pid))
+
+        # Kill the process group
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except OSError:
+            pass
+        p.wait()
+
+        # Verify it is now dead
+        self.assertFalse(supervisor_watchdog.pid_is_alive(pid))
+
 
 
 if __name__ == "__main__":

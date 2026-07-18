@@ -11,6 +11,7 @@ import unittest
 import os
 import json
 import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -295,6 +296,22 @@ def _load_loop_product_dispatcher_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+_OLD_ENV = {}
+
+
+def setUpModule() -> None:
+    global _OLD_ENV
+    _OLD_ENV = dict(os.environ)
+    for k in list(os.environ.keys()):
+        if k.startswith("PANTHEON_"):
+            del os.environ[k]
+
+
+def tearDownModule() -> None:
+    os.environ.clear()
+    os.environ.update(_OLD_ENV)
 
 
 def _run_supervisor_writer_transaction_until_released(
@@ -2402,7 +2419,9 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             )
 
         self.assertIn("PANTHEON_STATUS_ROOT", brief)
-        self.assertIn("./scripts/ai-status.sh", brief)
+        self.assertIn("PANTHEON_COMMAND_ROOT", brief)
+        self.assertIn("$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh", brief)
+        self.assertNotIn("./scripts/ai-status.sh", brief)
 
     def test_prepare_worker_workspace_allocates_chair_review_worktree_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3199,6 +3218,156 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["task_id"], "REG-002")
         self.assertEqual(queued_event["target_agent"], "Codex")
         self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
+
+    def test_dispatcher_prioritizes_declared_p0_review(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "OLDER-REVIEW",
+                    "status": "review",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                    "last_update": "2026-07-17T16:00:00Z",
+                },
+                {
+                    "id": "INCIDENT-P0",
+                    "status": "review",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "priority": "P0",
+                    "depends_on": [],
+                    "last_update": "2026-07-17T17:00:00Z",
+                },
+            ]
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+        config = json.loads(json.dumps(self.config))
+        config["ready_dispatcher"]["max_dispatches_per_tick"] = 1
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                return_value=True,
+            ) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        queue_delivery_event.assert_called_once()
+        self.assertEqual(
+            queue_delivery_event.call_args.args[1]["task_id"],
+            "INCIDENT-P0",
+        )
+
+    def test_task_declared_priority_rank_is_fail_safe(self) -> None:
+        self.assertEqual(supervisor.task_declared_priority_rank({"priority": "P0"}), 0)
+        self.assertEqual(supervisor.task_declared_priority_rank({"priority": "p12"}), 12)
+        self.assertEqual(supervisor.task_declared_priority_rank({"priority": 3}), 3)
+        self.assertGreater(
+            supervisor.task_declared_priority_rank({"priority": "urgent"}),
+            supervisor.task_declared_priority_rank({"priority": "P99"}),
+        )
+
+    def test_dispatcher_cools_down_only_an_unchanged_task_signature(self) -> None:
+        previous_task = {
+            "id": "NO-PROGRESS-REVIEW",
+            "status": "review",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "priority": "P0",
+            "depends_on": [],
+            "last_update": "2026-07-17T17:00:00Z",
+        }
+        previous_event = supervisor.build_dispatch_event(
+            previous_task,
+            "Codex",
+            "review_ready_dispatch",
+            {previous_task["id"]: previous_task},
+        )
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "seen_event_keys": {previous_event["key"]: supervisor.utc_now()},
+        }
+        config = json.loads(json.dumps(self.config))
+        config["ready_dispatcher"]["unchanged_task_cooldown_seconds"] = 900
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [previous_task]},
+            ),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                return_value=True,
+            ) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertFalse(changed)
+        queue_delivery_event.assert_not_called()
+
+        updated_task = dict(previous_task)
+        updated_task["last_update"] = "2026-07-17T17:01:00Z"
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [updated_task]},
+            ),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                return_value=True,
+            ) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        queue_delivery_event.assert_called_once()
+        self.assertNotEqual(
+            queue_delivery_event.call_args.args[1]["key"],
+            previous_event["key"],
+        )
+
+    def test_queue_completion_starts_unchanged_signature_cooldown(self) -> None:
+        state = {
+            "queue": {
+                "events": {
+                    "evt-complete": {
+                        "status": "started",
+                        "event_key": "dispatcher:Codex:TASK:review:same-signature",
+                    }
+                }
+            },
+            "workers": {},
+        }
+        worker = {
+            "run_id": "run-complete",
+            "queue_event_id": "evt-complete",
+        }
+
+        supervisor.finalize_queue_event_record(
+            self.config,
+            state,
+            worker,
+            "completed",
+        )
+
+        record = state["queue"]["events"]["evt-complete"]
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(
+            state["seen_event_keys"][record["event_key"]],
+            record["processed_at"],
+        )
 
     def test_dispatcher_queues_multiple_codex_tasks_up_to_worker_slot_capacity(self) -> None:
         config = json.loads(json.dumps(self.config))
@@ -5031,7 +5200,14 @@ class DispatchStatusSyncTests(unittest.TestCase):
             "reason": "owned_ready_dispatch",
         }
 
-        with mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock:
+        command_env = {
+            "PANTHEON_COMMAND_ROOT": str(self.root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
+        }
+        with (
+            mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
+            mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock,
+        ):
             changed = supervisor.sync_dispatched_task_status(self.config, event)
 
         self.assertTrue(changed)
@@ -5040,6 +5216,29 @@ class DispatchStatusSyncTests(unittest.TestCase):
         self.assertEqual(command[3], "APP-002-W1-FRONT-HANDOFF")
         self.assertIn("Supervisor auto-started", command[4])
         self.assertEqual(run_mock.call_args.kwargs["env"]["AI_NAME"], "Copilot")
+        self.assertEqual(run_mock.call_args.kwargs["env"]["PANTHEON_STATUS_ROOT"], str(self.root))
+
+    def test_sync_status_pipeline_uses_installed_command_runtime(self) -> None:
+        command_env = {
+            "PANTHEON_COMMAND_ROOT": str(self.root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
+        }
+
+        with (
+            mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
+            mock.patch.object(
+                supervisor.subprocess,
+                "run",
+                return_value=mock.Mock(returncode=0, stderr="", stdout=""),
+            ) as run_mock,
+        ):
+            changed = supervisor.sync_status_pipeline(self.config)
+
+        self.assertTrue(changed)
+        command = run_mock.call_args.args[0]
+        self.assertEqual(command[:3], [sys.executable, str(self.root / "scripts" / "ai_status.py"), "sync"])
+        self.assertEqual(run_mock.call_args.kwargs["cwd"], str(self.root))
+        self.assertEqual(run_mock.call_args.kwargs["env"]["PANTHEON_STATUS_ROOT"], str(self.root))
 
     def test_sync_dispatched_task_status_skips_review_dispatch(self) -> None:
         event = {
@@ -9055,6 +9254,69 @@ class SingleSupervisorGuardTests(unittest.TestCase):
                 _fcntl.flock(regained.fileno(), _fcntl.LOCK_UN)
                 regained.close()
 
+    def test_status_root_consistency_gate_fail_fast(self) -> None:
+        """Verify that when PANTHEON_STATUS_ROOT environment variable does not match
+        the config-derived status root, check_status_root_consistency raises SystemExit."""
+        config = {"paths": {"state_file": "/tmp/test-worktree/.orchestrator/state.json"}}
+        # When environment has a mismatched status root, it should fail-fast
+        with (
+            mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": "/home/lupin/code/pantheon"}),
+            self.assertRaises(SystemExit) as cm
+        ):
+            supervisor.check_status_root_consistency(config, allow_isolated=False)
+        self.assertEqual(cm.exception.code, 1)
+
+        # Bypassed when --allow-isolated-status-root is set
+        try:
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": "/home/lupin/code/pantheon"}):
+                supervisor.check_status_root_consistency(config, allow_isolated=True)
+        except SystemExit:
+            self.fail("check_status_root_consistency exited unexpectedly when allow_isolated=True")
+
+        # Bypassed when env variable is not set or empty
+        try:
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": ""}):
+                supervisor.check_status_root_consistency(config, allow_isolated=False)
+        except SystemExit:
+            self.fail("check_status_root_consistency exited unexpectedly when env is empty")
+
+    def test_multiple_supervisors_same_status_root_collision(self) -> None:
+        """Verify that two supervisors pointing to the same status root (but different state file folders / cwds)
+        will collide on the authoritative status root lock."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp1, tempfile.TemporaryDirectory() as tmp2:
+            status_root = Path(tmp1)
+            # Setup configs for two instances sharing same status_root
+            config1 = {
+                "paths": {
+                    "status_file": str(status_root / "ai-status.json"),
+                    "state_file": str(Path(tmp1) / ".orchestrator" / "state.json")
+                }
+            }
+            config2 = {
+                "paths": {
+                    "status_file": str(status_root / "ai-status.json"),
+                    "state_file": str(Path(tmp2) / ".orchestrator" / "state.json")
+                }
+            }
+
+            # Acquire first lock
+            self.assertTrue(supervisor.acquire_singleton_lock(config1))
+            first_handle = supervisor._SINGLETON_LOCK_HANDLE
+            self.assertIsNotNone(first_handle)
+
+            # Second contender fails to acquire
+            self.assertFalse(supervisor.acquire_singleton_lock(config2))
+
+            # Clean up first lock
+            first_handle.close()
+            supervisor._SINGLETON_LOCK_HANDLE = None
+
+            # Now second contender succeeds
+            self.assertTrue(supervisor.acquire_singleton_lock(config2))
+            second_handle = supervisor._SINGLETON_LOCK_HANDLE
+            self.addCleanup(second_handle.close)
+
 
 class WorktreeDirtClassificationTests(unittest.TestCase):
     def _init_git_repo(self, tmpdir: str) -> Path:
@@ -9492,6 +9754,93 @@ class WorkerReassignmentTests(unittest.TestCase):
 
         self.assertFalse(changed)
         persist.assert_not_called()
+
+    def test_failure_streak_sweep_reassigns_first_terminal_quota_failure(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "owner_fallbacks": {"Codex2": ["Antigravity", "Claude", "Codex"]},
+                "reviewer_fallbacks": {"Codex2": ["Codex", "Claude"]},
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+            "agents": {
+                "codex2": {"display_name": "Codex2", "provider": "codex2"},
+                "codex2_1": {
+                    "display_name": "Codex2",
+                    "provider": "codex2-1",
+                    "dispatch_slot_for": "codex2",
+                },
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+            },
+        }
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "OPS-QUOTA-001:codex2_1": {
+                        "task_id": "OPS-QUOTA-001",
+                        "provider": "codex2_1",
+                        "count": 1,
+                        "last_failure_kind": "quota_terminal",
+                        "last_reason": "You've hit your usage limit",
+                    }
+                }
+            }
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "OPS-QUOTA-001",
+                    "status": "in_progress",
+                    "owner": "Codex2",
+                    "reviewer": "Codex",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.maybe_reassign_tasks_from_failure_streaks(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Antigravity")
+        self.assertEqual(persist.call_args.kwargs["new_status"], "todo")
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+
+    def test_failure_streaks_aggregate_dispatch_slots_by_logical_agent(self) -> None:
+        state: dict = {}
+        worker_one = {
+            "task_id": "OPS-CHURN-001",
+            "provider": "codex1-1",
+            "request_snapshot": {"metadata": {"logical_agent_id": "codex"}},
+        }
+        worker_two = {
+            "task_id": "OPS-CHURN-001",
+            "provider": "codex1-2",
+            "request_snapshot": {"metadata": {"logical_agent_id": "codex"}},
+        }
+
+        self.assertEqual(
+            supervisor.record_task_failure_streak(state, worker_one, "no progress", failure_kind="generic_exit"),
+            1,
+        )
+        self.assertEqual(
+            supervisor.record_task_failure_streak(state, worker_two, "no progress", failure_kind="generic_exit"),
+            2,
+        )
+        self.assertEqual(
+            list(state["provider_guardrails"]["task_failure_streaks"]),
+            ["OPS-CHURN-001:codex"],
+        )
+
+        supervisor.clear_task_failure_streak(state, worker=worker_two)
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
 
     def test_reassigns_owned_task_to_new_owner_after_repeated_failure(self) -> None:
         worker = {

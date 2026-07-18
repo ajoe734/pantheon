@@ -1,12 +1,15 @@
 {
   "version": 1,
-  "updated_at": "2026-07-12T16:21:29Z",
+  "updated_at": "2026-07-16T15:56:59Z",
   "counts": {
-    "total": 2039,
-    "completed": 1993,
-    "superseded": 46
+    "total": 2307,
+    "completed": 2255,
+    "superseded": 52
   },
   "recent_terminal_ids": [
+    "OPS-WORKTREE-CENTRAL-STATUS-ROOT-CORRECTIVE-001",
+    "TJ-E2E-009",
+    "TJ-E2E-011",
     "PTJ-007",
     "PINT-007",
     "TJ-E2E-007",
@@ -23,9 +26,6 @@
     "AG-GAP-010",
     "AG-GAP-011",
     "AG-GAP-006",
-    "AG-GAP-012",
-    "MGMT-PERF-IA-008",
-    "AG-GAP-001",
-    "AG-GAP-007"
+    "AG-GAP-012"
   ]
 }

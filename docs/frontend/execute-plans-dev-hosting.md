@@ -1,6 +1,6 @@
 # Execute-Plans Dev Frontend Hosting
 
-Last updated: 2026-07-13
+Last updated: 2026-07-17
 
 This is the canonical frontend hosting rule for Pantheon dev.
 
@@ -120,9 +120,81 @@ specific write-path test and the corresponding BFF governance gates are ready.
 The release evidence must record that override and its expiry.
 
 Do not compile a bearer token, client secret, or all-role development identity
-into the browser bundle. Dev authentication must use the governed
-`/bff/auth/dev-login` flow with `AUTH_STUB=false`, short-lived tenant- and
-role-scoped identities, and distinct actors for two-person acceptance.
+into the browser bundle. `/bff/auth/dev-login` is a server-side CI credential
+exchange only: its client secret belongs in the workflow/secret store and must
+never be called from browser code.
+
+## Strict browser session contract
+
+The product login remains the existing Supabase/OIDC login. After Supabase
+authenticates the human, `execute-plans` registers the current short-lived
+`session.access_token` with the BFF request header provider and sends it as
+`Authorization: Bearer <access_token>`. It must not copy that token into a
+build variable, a deployment manifest, `localStorage`, or the static bundle.
+`credentials: include` remains enabled for the optional HttpOnly cookie path,
+but it is not a substitute for registering the current Supabase bearer.
+
+The dev BFF validates that JWT directly. A Supabase-style external IdP setup
+must configure all of the following on the server:
+
+```sh
+PANTHEON_BFF_AUTH_MODE=strict
+PANTHEON_BFF_AUTH_STUB=false
+PANTHEON_BFF_JWKS_URI=<idp-jwks-uri>
+# Or set PANTHEON_BFF_OIDC_DISCOVERY_URL instead of a direct JWKS URI.
+PANTHEON_BFF_OIDC_ISSUER=<exact-token-issuer>
+PANTHEON_BFF_OIDC_AUDIENCE=<exact-bff-audience>
+PANTHEON_BFF_ROLE_CLAIMS=app_metadata.roles,roles
+PANTHEON_BFF_ROLE_MAP_MODE=strict
+PANTHEON_BFF_ROLE_MAP=<external-operator=operator;external-viewer=viewer;...>
+PANTHEON_BFF_DEFAULT_ROLE=viewer
+```
+
+The current Pantheon dev Supabase verifier uses public, non-secret metadata:
+
+```sh
+PANTHEON_BFF_OIDC_DISCOVERY_URL=https://kwjtcynauaulrxngyetk.supabase.co/auth/v1/.well-known/openid-configuration
+PANTHEON_BFF_OIDC_ISSUER=https://kwjtcynauaulrxngyetk.supabase.co/auth/v1
+PANTHEON_BFF_OIDC_AUDIENCE=authenticated
+```
+
+The standard Supabase `role=authenticated` claim is deliberately not a
+Pantheon operator grant. An authenticated user without an allowlisted
+`app_metadata.roles` value resolves to the fail-closed `viewer` default and
+cannot mutate Persona interactions. `user_metadata.roles` is excluded because
+it is browser/user editable.
+
+The IdP must assign the Pantheon role in a signed server-owned claim (for
+example `app_metadata.roles`). Browser-editable user metadata is not
+an authorization source. Tenant and allowed-tenant claims are likewise signed
+IdP claims or server-owned BFF configuration. `/bff/me` is the frontend's
+authority for effective user, roles, tenant, capabilities and session kind.
+
+The operator-live readiness sequence is:
+
+1. Supabase login/refresh produces a short-lived access JWT.
+2. The frontend registers that in-memory JWT with the shared BFF auth provider.
+3. `GET /bff/me` must report `authenticated=true`, `session_kind=bearer` (or
+   `cookie`), an operator-level role, the exact tenant and Agora capability.
+4. `GET /bff/auth/readiness` must report `authReady=true` and expose safe
+   provider readiness for the exact `sourceCommitSha`; it never returns issuer,
+   audience, key, endpoint, credential or token values.
+5. Persona mutations carry the same bearer and `Idempotency-Key`. Viewer
+   sessions remain readable but receive direct `403` on mutations; missing
+   sessions receive `401`; stub sessions cannot satisfy readiness.
+
+On token refresh, update the in-memory BFF provider before retrying a request,
+then call `/bff/auth/refresh` with the refreshed bearer if session lifecycle
+readback is needed. On sign-out, call `/bff/logout` with the current bearer and
+then clear the Supabase session and the in-memory BFF provider. A cookie-only
+mutation must include an allowed `Origin`; the BFF rejects a missing or
+unlisted origin before route execution.
+
+Hosted CI may obtain short-lived operator/viewer/reviewer credentials through
+`/bff/auth/dev-login`, but only from an authorized server-side workflow step.
+Each identity remains bound to its own client id/secret, role, subject and
+tenant. The workflow may pass the returned short-lived bearer to Playwright at
+runtime; neither the credential pair nor token may enter the frontend artifact.
 
 ## Required BFF CORS Env
 
@@ -133,7 +205,6 @@ origin and use the same tenant scope as the FE dev gate:
 PANTHEON_BFF_CORS_ORIGINS=...,https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
 PANTHEON_BFF_TENANT_ID=tenant-dev
 PANTHEON_BFF_ALLOWED_TENANTS=tenant-dev,pantheon-dev
-PANTHEON_BFF_DEV_LOGIN_ROLES=operator,reviewer,approver
 ```
 
 Do not rely on Lovable origins to validate the Pantheon dev FE. A local or

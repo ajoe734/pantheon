@@ -1778,6 +1778,318 @@ class TestGovernedServantAgentSync(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["group"], 1000)
         self.assertEqual(run.call_args.kwargs["env"]["HOME"], "/home/node")
 
+    def _opinion_payload(self):
+        tenant_id = "tenant-alpha"
+        persona_id = "persona-alpha"
+        persona_version = "persona-alpha-v4"
+        snapshot_id = "snapshot-alpha-v9"
+        requested_environment = "paper"
+        agent_id = adapter_main._persona_opinion_agent_id(
+            tenant_id, persona_id, persona_version, snapshot_id, requested_environment
+        )
+        return {
+            "persona_id": persona_id,
+            "tenant_id": tenant_id,
+            "persona_version": persona_version,
+            "agent_id": agent_id,
+            "workspace_ref": f"/home/node/.openclaw/workspaces/{agent_id}",
+            "capability_snapshot_id": snapshot_id,
+            "allowed_capabilities": ["persona_opinion"],
+            "environment_ceiling": "paper",
+            "requested_environment": requested_environment,
+            "execution_authority": "none",
+            "display_name": "Alpha",
+            "mandate": "trend",
+            "archetype": "challenger",
+            "strategy_family": "momentum",
+            "traits": {"decision_style": "evidence-first"},
+        }
+
+    def test_persona_opinion_agent_requires_exact_frozen_admission(self):
+        payload = self._opinion_payload()
+        agent = {
+            "status": "created",
+            "agent_id": payload["agent_id"],
+            "workspace_ref": payload["workspace_ref"],
+        }
+        headers = {
+            **self._HEADERS,
+            "Idempotency-Key": "persona-opinion-agent-1",
+            "X-Request-Id": "persona-opinion-request-1",
+        }
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent) as sync,
+        ):
+            accepted = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers=headers,
+            )
+            changed = {**payload, "workspace_ref": "/home/node/.openclaw/workspaces/main"}
+            denied = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=changed,
+                headers={**headers, "Idempotency-Key": "persona-opinion-agent-2"},
+            )
+
+        self.assertEqual(accepted.status_code, 201, accepted.text)
+        self.assertEqual(accepted.json()["execution_authority"], "none")
+        self.assertEqual(len(accepted.json()["admission_fingerprint"]), 64)
+        self.assertEqual(denied.status_code, 422, denied.text)
+        sync.assert_called_once()
+
+    def test_persona_identity_drift_conflicts_before_soul_reconciliation(self):
+        payload = self._opinion_payload()
+        agent = {
+            "status": "created",
+            "agent_id": payload["agent_id"],
+            "workspace_ref": payload["workspace_ref"],
+        }
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent) as sync,
+        ):
+            accepted = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers={**self._HEADERS, "Idempotency-Key": "identity-original"},
+            )
+            drifted = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json={**payload, "mandate": "silently changed mandate", "traits": {"risk": "changed"}},
+                headers={**self._HEADERS, "Idempotency-Key": "identity-drifted"},
+            )
+
+        self.assertEqual(accepted.status_code, 201, accepted.text)
+        self.assertEqual(drifted.status_code, 409, drifted.text)
+        sync.assert_called_once()
+
+    def test_two_fresh_persona_agents_run_with_runtime_tools_and_memory_denied(self):
+        runtime_agents = []
+        written_souls = {}
+
+        def completed(*, stdout="", stderr="", returncode=0):
+            return MagicMock(stdout=stdout, stderr=stderr, returncode=returncode)
+
+        def fake_runtime(args):
+            if args[1:4] == ["agents", "list", "--json"]:
+                return completed(stdout=json.dumps({"agents": runtime_agents}))
+            if args[1:3] == ["agents", "add"]:
+                runtime_agents.append({
+                    "id": args[3],
+                    "workspace": args[args.index("--workspace") + 1],
+                    "model": args[args.index("--model") + 1],
+                })
+                return completed(stdout="{}")
+            if args[1:5] == ["config", "get", "agents.list", "--json"]:
+                return completed(stdout=json.dumps(runtime_agents))
+            if args[1:4] == ["config", "set", "agents.list"]:
+                runtime_agents[:] = json.loads(args[4])
+                return completed(stdout="ok")
+            if args[1:3] == ["agents", "set-identity"]:
+                return completed(stdout="ok")
+            return completed(returncode=1, stderr=f"unexpected command: {args}")
+
+        alpha = self._opinion_payload()
+        beta = {
+            **alpha,
+            "persona_id": "persona-beta",
+            "persona_version": "persona-beta-v2",
+            "capability_snapshot_id": "snapshot-beta-v2",
+            "display_name": "Beta",
+            "mandate": "mean reversion",
+            "archetype": "skeptic",
+            "strategy_family": "reversion",
+            "traits": {"decision_style": "contrarian"},
+        }
+        beta["agent_id"] = adapter_main._persona_opinion_agent_id(
+            beta["tenant_id"], beta["persona_id"], beta["persona_version"],
+            beta["capability_snapshot_id"], beta["requested_environment"],
+        )
+        beta["workspace_ref"] = f"/home/node/.openclaw/workspaces/{beta['agent_id']}"
+        provider_result = MagicMock()
+        provider_result.to_dict.return_value = {
+            "provider": "openclaw", "mode": "user", "status": "completed",
+            "output": {"json_events": []},
+        }
+
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_gateway_state_agent_runner", side_effect=fake_runtime),
+            patch.object(adapter_main, "_gateway_state_soul_writer", side_effect=lambda workspace, soul: written_souls.__setitem__(workspace, soul)),
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke", return_value=provider_result) as invoke,
+        ):
+            for index, payload in enumerate((alpha, beta), start=1):
+                ensured = client.post(
+                    "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                    json=payload,
+                    headers={**self._HEADERS, "Idempotency-Key": f"fresh-persona-{index}"},
+                )
+                self.assertEqual(ensured.status_code, 201, ensured.text)
+                admission = {
+                    key: payload[key]
+                    for key in adapter_main.PersonaOpinionInvocationAdmission.model_fields
+                }
+                invoked = client.post(
+                    "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                    json={
+                        "mode": "user", "prompt": "Return governed opinion JSON",
+                        "metadata": {"allowed_tools": []}, "agent_id": payload["agent_id"],
+                        "persona_admission": admission,
+                    },
+                    headers={"X-Pantheon-Service-Token": "adapter-secret", "X-Operator-Id": "operator-1",
+                             "Idempotency-Key": f"persona-invoke-{index}"},
+                )
+                self.assertEqual(invoked.status_code, 200, invoked.text)
+
+            # Runtime config is the enforcement boundary.  If either tool or
+            # memory policy drifts after ensure, invocation must fail before
+            # the provider CLI is reached.
+            runtime_agents[0]["tools"]["deny"] = []
+            runtime_agents[0]["memorySearch"]["enabled"] = True
+            alpha_admission = {
+                key: alpha[key]
+                for key in adapter_main.PersonaOpinionInvocationAdmission.model_fields
+            }
+            denied = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                json={
+                    "mode": "user", "prompt": "Attempt after policy drift",
+                    "metadata": {"allowed_tools": []}, "agent_id": alpha["agent_id"],
+                    "persona_admission": alpha_admission,
+                },
+                headers={"X-Pantheon-Service-Token": "adapter-secret", "X-Operator-Id": "operator-1",
+                         "Idempotency-Key": "persona-policy-drift"},
+            )
+            self.assertEqual(denied.status_code, 403, denied.text)
+
+        self.assertEqual({agent["id"] for agent in runtime_agents}, {alpha["agent_id"], beta["agent_id"]})
+        self.assertEqual(set(written_souls), {alpha["workspace_ref"], beta["workspace_ref"]})
+        # Restore the deliberate test drift before checking both ensured
+        # runtime projections.
+        runtime_agents[0].update(json.loads(json.dumps(adapter_main._PERSONA_OPINION_RUNTIME_POLICY)))
+        for agent in runtime_agents:
+            self.assertEqual(agent["tools"], {"allow": [], "deny": ["*"]})
+            self.assertEqual(agent["skills"], [])
+            self.assertFalse(agent["memorySearch"]["enabled"])
+            self.assertEqual(agent["memorySearch"]["sources"], [])
+            self.assertFalse(agent["memorySearch"]["experimental"]["sessionMemory"])
+            self.assertEqual(agent["contextInjection"], "never")
+        self.assertEqual(invoke.call_count, 2)
+        self.assertEqual(len({call.kwargs["session_id"] for call in invoke.call_args_list}), 2)
+        for call in invoke.call_args_list:
+            self.assertEqual(call.kwargs["metadata"]["allowed_tools"], [])
+            self.assertFalse(call.kwargs["metadata"]["persona_memory_mutated"])
+
+    def test_persona_provider_invocation_uses_only_previously_admitted_exact_agent(self):
+        payload = self._opinion_payload()
+        agent = {
+            "status": "created",
+            "agent_id": payload["agent_id"],
+            "workspace_ref": payload["workspace_ref"],
+        }
+        ensure_headers = {
+            **self._HEADERS,
+            "Idempotency-Key": "persona-opinion-agent-invoke",
+            "X-Request-Id": "persona-opinion-request-invoke",
+        }
+        invocation_admission = {
+            key: payload[key]
+            for key in (
+                "persona_id", "tenant_id", "persona_version", "agent_id", "workspace_ref",
+                "capability_snapshot_id", "allowed_capabilities",
+                "environment_ceiling", "requested_environment", "execution_authority",
+                "display_name", "mandate", "archetype", "strategy_family", "traits",
+            )
+        }
+        provider_result = MagicMock()
+        provider_result.to_dict.return_value = {
+            "provider": "openclaw",
+            "mode": "user",
+            "status": "completed",
+            "output": {"agent_id": payload["agent_id"], "json_events": []},
+        }
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent),
+            patch.object(adapter_main, "_assert_persona_opinion_runtime_policy", return_value={}),
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke", return_value=provider_result) as invoke,
+        ):
+            ensured = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers=ensure_headers,
+            )
+            invoked = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                json={
+                    "mode": "user",
+                    "prompt": "Return opinion JSON",
+                    "context_pack": {},
+                    "metadata": {"allowed_tools": []},
+                    "agent_id": payload["agent_id"],
+                    "persona_admission": invocation_admission,
+                },
+                headers={
+                    "X-Pantheon-Service-Token": "adapter-secret",
+                    "X-Operator-Id": "operator-1",
+                    "Idempotency-Key": "persona-opinion-provider-invoke",
+                },
+            )
+
+        self.assertEqual(ensured.status_code, 201, ensured.text)
+        self.assertEqual(invoked.status_code, 200, invoked.text)
+        self.assertEqual(invoke.call_args.kwargs["agent_id"], payload["agent_id"])
+        self.assertEqual(invoke.call_args.kwargs["metadata"]["allowed_tools"], [])
+        self.assertEqual(invoke.call_args.kwargs["metadata"]["execution_authority"], "none")
+        self.assertFalse(invoke.call_args.kwargs["metadata"]["persona_memory_mutated"])
+        self.assertRegex(invoke.call_args.kwargs["session_id"], r"^pint-[0-9a-f]{32}$")
+
+    def test_persona_invocation_replays_terminal_and_fences_restart_in_doubt(self):
+        payload = self._opinion_payload()
+        admission = {
+            key: payload[key]
+            for key in adapter_main.PersonaOpinionInvocationAdmission.model_fields
+        }
+        request = adapter_main.AssistantProviderInvokeRequest(
+            mode="user",
+            prompt="Return the exact opinion",
+            agent_id=payload["agent_id"],
+            persona_admission=admission,
+            metadata={"allowed_tools": []},
+        )
+        calls = []
+
+        def completed():
+            calls.append("completed")
+            return {"status": "ok", "data": {"status": "completed", "output": {"request_id": "r1"}}}
+
+        first = adapter_main._invoke_persona_opinion_idempotently(
+            request, idempotency_key="invocation-terminal", invoke_fn=completed,
+        )
+        second = adapter_main._invoke_persona_opinion_idempotently(
+            request, idempotency_key="invocation-terminal", invoke_fn=completed,
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(calls, ["completed"])
+
+        def crash_after_claim():
+            calls.append("crashed")
+            raise RuntimeError("adapter process died after upstream acceptance")
+
+        with self.assertRaises(RuntimeError):
+            adapter_main._invoke_persona_opinion_idempotently(
+                request, idempotency_key="invocation-in-doubt", invoke_fn=crash_after_claim,
+            )
+        with self.assertRaises(adapter_main._PersonaOpinionInvocationInDoubt):
+            adapter_main._invoke_persona_opinion_idempotently(
+                request,
+                idempotency_key="invocation-in-doubt",
+                invoke_fn=lambda: calls.append("must-not-run"),
+            )
+        self.assertNotIn("must-not-run", calls)
+
 
 class TestSessions(unittest.TestCase):
     def test_list_sessions_degraded_when_upstream_absent(self):

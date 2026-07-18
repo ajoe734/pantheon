@@ -5,6 +5,7 @@ import types
 from pathlib import Path
 
 from check_config_drift import (
+    DEFAULT_INTENTIONAL_OVERRIDES,
     find_drift,
     get_dotted,
     set_dotted,
@@ -30,6 +31,23 @@ def test_find_drift_allowlisted_override_is_not_drift() -> None:
     assert report["drift"] == []
     assert len(report["intentional"]) == 1
     assert report["intentional"][0]["path"] == "coordination.enabled"
+
+
+def test_coordination_disable_is_actionable_with_default_overrides() -> None:
+    repo = {"coordination": {"enabled": True}}
+    live = {"coordination": {"enabled": False}}
+
+    report = find_drift(
+        repo,
+        live,
+        critical_flags=("coordination.enabled",),
+        overrides=DEFAULT_INTENTIONAL_OVERRIDES,
+    )
+
+    assert report["intentional"] == []
+    assert report["drift"] == [
+        {"path": "coordination.enabled", "repo": True, "live": False}
+    ]
 
 
 def test_find_drift_missing_flag_is_reported_not_drift() -> None:

@@ -646,8 +646,10 @@ def write_bootstrap_files(target_root: Path, project_name: str, objective: str) 
     write_text(target_root / "LLM_ONBOARDING.md", llm_onboarding_doc(project_name))
     write_text(target_root / "ORCHESTRATOR_QUICKSTART.md", quickstart_doc(project_name))
     write_json(target_root / ".orchestrator" / "bundle-manifest.json", portable_manifest(project_name))
+    subprocess.run(["git", "init"], cwd=str(target_root), check=True, capture_output=True)
 
     sync_env = os.environ.copy()
+
     # Portable generation must be self-contained even when the parent worker
     # is pointed at Pantheon's canonical status root.
     sync_env["PANTHEON_STATUS_ROOT"] = str(target_root)

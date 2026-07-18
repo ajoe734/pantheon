@@ -3,12 +3,16 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import json
+import math
 import os
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+
+
+_JSON_WHITESPACE = " \t\r\n"
 
 
 class ReconciliationStoreError(RuntimeError):
@@ -64,6 +68,47 @@ class ReconciliationDriftStore:
             records[str(key)] = value
         return records
 
+    @staticmethod
+    def _json_decoder(path: Path) -> json.JSONDecoder:
+        """Return a strict decoder for durable store documents.
+
+        Python's JSON defaults accept non-standard ``NaN``/``Infinity``
+        constants and silently keep the last occurrence of a duplicate
+        object key. Both can hide source corruption or discard a record, so
+        store documents reject them explicitly. Later *complete* documents
+        in a historical concatenated source are still merged in order by
+        ``_read_concatenated_maps``.
+        """
+
+        def reject_constant(value: str) -> None:
+            raise ReconciliationStoreError(
+                f"{path}: non-standard JSON constant {value!r} is not allowed"
+            )
+
+        def parse_finite_float(value: str) -> float:
+            parsed = float(value)
+            if not math.isfinite(parsed):
+                raise ReconciliationStoreError(
+                    f"{path}: JSON number {value!r} is outside the finite float range"
+                )
+            return parsed
+
+        def reject_duplicate_keys(pairs):
+            payload: Dict[str, Any] = {}
+            for key, value in pairs:
+                if key in payload:
+                    raise ReconciliationStoreError(
+                        f"{path}: duplicate JSON object key {key!r} is not allowed"
+                    )
+                payload[key] = value
+            return payload
+
+        return json.JSONDecoder(
+            parse_constant=reject_constant,
+            parse_float=parse_finite_float,
+            object_pairs_hook=reject_duplicate_keys,
+        )
+
     def _read_concatenated_maps(self, path: Path, text: str) -> Dict[str, Dict[str, Any]]:
         """Recover a historical concatenated-map source file.
 
@@ -74,12 +119,12 @@ class ReconciliationDriftStore:
         the same id appears in more than one document, the later document
         wins.
         """
-        decoder = json.JSONDecoder()
+        decoder = self._json_decoder(path)
         documents: List[Any] = []
         offset = 0
         length = len(text)
         while offset < length:
-            while offset < length and text[offset].isspace():
+            while offset < length and text[offset] in _JSON_WHITESPACE:
                 offset += 1
             if offset >= length:
                 break
@@ -98,23 +143,21 @@ class ReconciliationDriftStore:
         return records
 
     def _read_map_locked(self, path: Path) -> Dict[str, Dict[str, Any]]:
-        if not path.exists():
-            return {}
         try:
             raw = path.read_bytes()
+        except FileNotFoundError:
+            return {}
         except OSError as exc:
             raise ReconciliationStoreError(f"{path}: failed to read: {exc}") from exc
-        if not raw.strip():
-            return {}
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise ReconciliationStoreError(f"{path}: not valid UTF-8: {exc}") from exc
-        text = text.strip()
-        if not text:
-            return {}
+        if not text.strip(_JSON_WHITESPACE):
+            raise ReconciliationStoreError(f"{path}: no complete JSON object found")
+        decoder = self._json_decoder(path)
         try:
-            payload = json.loads(text)
+            payload = decoder.decode(text)
         except json.JSONDecodeError:
             return self._read_concatenated_maps(path, text)
         return self._validate_map(path, payload)
@@ -149,7 +192,7 @@ class ReconciliationDriftStore:
                 delete=False,
             ) as handle:
                 tmp_name = handle.name
-                json.dump(payload, handle, indent=2, ensure_ascii=True)
+                json.dump(payload, handle, indent=2, ensure_ascii=True, allow_nan=False)
                 handle.write("\n")
                 handle.flush()
                 os.fsync(handle.fileno())
@@ -164,7 +207,7 @@ class ReconciliationDriftStore:
     def _put_record(self, path: Path, record_id: str, record: Dict[str, Any]) -> Dict[str, Any]:
         if not record_id:
             raise ValueError("record_id is required")
-        serializable = json.loads(json.dumps(record))
+        serializable = json.loads(json.dumps(record, allow_nan=False))
         with self._locked(path):
             records = self._read_map_locked(path)
             records[record_id] = serializable
