@@ -165,6 +165,24 @@ class TestPaperFleetReconcilerBasic(unittest.TestCase):
         self.assertEqual(snap1["cycle_count"], 1)
         self.assertEqual(snap2["cycle_count"], 2)
 
+    def test_worker_spawn_does_not_use_undrained_stdio_pipes(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        recon = PaperFleetReconciler(
+            runtime_manager_url="http://rm:8081",
+            runtime_manager_token="tok",
+            poll_interval_seconds=999,
+            worker_script_path="/tmp/paper_runtime.py",
+        )
+
+        with patch("paper_fleet_reconciler.subprocess.Popen", return_value=_FakeProcess()) as popen:
+            recon._spawn("b-stdio-001", 8123, {"PATH": "/usr/bin", "PORT": "8123"})
+
+        _args, kwargs = popen.call_args
+        self.assertNotIn("stdout", kwargs)
+        self.assertNotIn("stderr", kwargs)
+        self.assertTrue(kwargs["close_fds"])
+
 
 class TestPaperFleetReconcilerRestarts(unittest.TestCase):
     def setUp(self) -> None:

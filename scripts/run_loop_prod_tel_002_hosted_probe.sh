@@ -9,6 +9,8 @@ Usage: scripts/run_loop_prod_tel_002_hosted_probe.sh \
   --remote-output /tmp/evidence.json \
   [--timeout-seconds 420] \
   [--stimulus-timeout-seconds 180] \
+  [--worker-ready-timeout-seconds 120] \
+  [--worker-heartbeat-max-age-seconds 120] \
   [--poll-seconds 5]
 EOF
 }
@@ -18,6 +20,8 @@ container_output=""
 remote_output=""
 timeout_seconds="420"
 stimulus_timeout_seconds="180"
+worker_ready_timeout_seconds="120"
+worker_heartbeat_max_age_seconds="120"
 poll_seconds="5"
 
 while [[ $# -gt 0 ]]; do
@@ -40,6 +44,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --stimulus-timeout-seconds)
       stimulus_timeout_seconds="${2:-}"
+      shift 2
+      ;;
+    --worker-ready-timeout-seconds)
+      worker_ready_timeout_seconds="${2:-}"
+      shift 2
+      ;;
+    --worker-heartbeat-max-age-seconds)
+      worker_heartbeat_max_age_seconds="${2:-}"
       shift 2
       ;;
     --poll-seconds)
@@ -108,6 +120,8 @@ set +e
 "${compose[@]}" exec -T paper-signal-producer \
   python -m services.trade_journey.hosted_lifecycle_stimulus \
     --timeout-seconds "${stimulus_timeout_seconds}" \
+    --worker-ready-timeout-seconds "${worker_ready_timeout_seconds}" \
+    --worker-heartbeat-max-age-seconds "${worker_heartbeat_max_age_seconds}" \
     --poll-seconds "${poll_seconds}" \
     --allow-ambiguous-reconciliation
 stimulus_status=$?

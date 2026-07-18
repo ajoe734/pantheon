@@ -29,6 +29,9 @@ class FakeStore:
     def enqueue(self, payload: dict) -> None:
         self.enqueued.append(json.loads(json.dumps(payload)))
 
+    def queue_depth(self) -> int:
+        return len(self.enqueued)
+
 
 def _summary(binding: dict, *, run_id: str) -> dict:
     return {
@@ -50,6 +53,7 @@ def _summary(binding: dict, *, run_id: str) -> dict:
 
 def _success_getter(binding: dict, *, now_iso: str):
     run_id = f"run-{binding['binding_id']}-{now_iso}-1"
+    heartbeat_at = stimulus._utc_now()
 
     def get_json(url: str, **_kwargs):
         if "desired-state" in url:
@@ -62,6 +66,9 @@ def _success_getter(binding: dict, *, now_iso: str):
                         "runtime_id": binding["runtime_id"],
                         "capital_pool_id": binding["capital_pool_id"],
                         "status": "running",
+                        "started_at": heartbeat_at,
+                        "last_heartbeat_at": heartbeat_at,
+                        "heartbeat_status": "active",
                     }
                 ]
             }
@@ -102,22 +109,25 @@ def _run(
                 ]
             }
 
+    execute_args = {
+        "runtime_manager_url": "http://runtime-manager:8081",
+        "runtime_manager_token": "test-token",
+        "paper_fleet_reconciler_url": "http://paper-fleet-reconciler:8011",
+        "telemetry_url": "http://telemetry:8083",
+        "reconciliation_url": "http://reconciliation-drift-svc:8102",
+        "signal_store_url": "redis://signal-store:6379",
+        "timeout_seconds": 1,
+        "poll_seconds": 0.001,
+        "http_get_json": get_json,
+        "http_post_json": post_json,
+        "store_factory": lambda _binding: store,
+        "sleeper": lambda _seconds: None,
+        "now_factory": lambda: now_iso,
+    }
+    execute_args.update(execute_kwargs or {})
     code, artifact = stimulus.execute(
         output=tmp_path / "stimulus.json",
-        runtime_manager_url="http://runtime-manager:8081",
-        runtime_manager_token="test-token",
-        paper_fleet_reconciler_url="http://paper-fleet-reconciler:8011",
-        telemetry_url="http://telemetry:8083",
-        reconciliation_url="http://reconciliation-drift-svc:8102",
-        signal_store_url="redis://signal-store:6379",
-        timeout_seconds=1,
-        poll_seconds=0.001,
-        http_get_json=get_json,
-        http_post_json=post_json,
-        store_factory=lambda _binding: store,
-        sleeper=lambda _seconds: None,
-        now_factory=lambda: now_iso,
-        **(execute_kwargs or {}),
+        **execute_args,
     )
     return code, artifact, store, posts
 
@@ -137,6 +147,7 @@ def test_stimulus_enqueues_waits_for_runtime_lifecycle_and_reconciles(tmp_path):
     assert artifact["stimulus"]["queue_key"] == (
         "pantheon:signals:pending:rb-loop-prod-tel-002"
     )
+    assert artifact["stimulus"]["queue_depth_after_enqueue"] == 1
     assert artifact["stimulus"]["lifecycle_summary_event_id"] == (
         "event-position-loop-prod-tel-002"
     )
@@ -155,6 +166,142 @@ def test_stimulus_enqueues_waits_for_runtime_lifecycle_and_reconciles(tmp_path):
         "credentials_included": False,
         "response_payloads_included": False,
     }
+
+
+def test_stimulus_waits_for_fresh_worker_heartbeat_before_enqueue(tmp_path):
+    binding = _binding()
+    now_iso = "2026-07-18T14:00:00Z"
+    run_id = f"run-{binding['binding_id']}-{now_iso}-1"
+    heartbeat_at = stimulus._utc_now()
+    fleet_calls = 0
+
+    def get_json(url: str, **_kwargs):
+        nonlocal fleet_calls
+        if "desired-state" in url:
+            return {"bindings": [binding]}
+        if "api/fleet/state" in url:
+            fleet_calls += 1
+            worker = {
+                "binding_id": binding["binding_id"],
+                "runtime_id": binding["runtime_id"],
+                "capital_pool_id": binding["capital_pool_id"],
+                "status": "running",
+            }
+            if fleet_calls >= 2:
+                worker.update(
+                    {
+                        "started_at": heartbeat_at,
+                        "last_heartbeat_at": heartbeat_at,
+                        "heartbeat_status": "active",
+                    }
+                )
+            return {"workers": [worker]}
+        if "runtime-summaries" in url:
+            return {"summaries": [_summary(binding, run_id=run_id)]}
+        raise AssertionError(f"unexpected GET {url}")
+
+    code, artifact, store, _posts = _run(
+        tmp_path,
+        binding=binding,
+        get_json=get_json,
+        execute_kwargs={"now_factory": lambda: now_iso},
+    )
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert len(store.enqueued) == 1
+    assert fleet_calls >= 2
+
+
+def test_stimulus_fails_before_enqueue_when_worker_heartbeat_is_not_fresh(tmp_path):
+    binding = _binding()
+
+    def get_json(url: str, **_kwargs):
+        if "desired-state" in url:
+            return {"bindings": [binding]}
+        if "api/fleet/state" in url:
+            return {
+                "workers": [
+                    {
+                        "binding_id": binding["binding_id"],
+                        "runtime_id": binding["runtime_id"],
+                        "capital_pool_id": binding["capital_pool_id"],
+                        "status": "running",
+                    }
+                ]
+            }
+        if "runtime-summaries" in url:
+            raise AssertionError("stimulus must not enqueue before worker readiness")
+        raise AssertionError(f"unexpected GET {url}")
+
+    code, artifact, store, posts = _run(
+        tmp_path,
+        binding=binding,
+        get_json=get_json,
+        execute_kwargs={"worker_ready_timeout_seconds": 0},
+    )
+
+    assert code == 1
+    assert artifact["failure"]["code"] == "paper_worker_not_ready"
+    assert artifact["failure"]["timed_out"] is True
+    assert artifact["failure"]["details"]["binding_id"] == binding["binding_id"]
+    assert artifact["failure"]["details"]["last_worker"]["runtime_id"] == binding["runtime_id"]
+    assert store.enqueued == []
+    assert posts == []
+
+
+def test_stimulus_timeout_reports_worker_queue_and_last_summary_details(tmp_path):
+    binding = _binding()
+    now_iso = "2026-07-18T14:00:00Z"
+    heartbeat_at = stimulus._utc_now()
+    ticks = iter([0.0, 0.0, 0.0, 0.0, 1.0])
+
+    def monotonic() -> float:
+        return next(ticks, 1.0)
+
+    def get_json(url: str, **_kwargs):
+        if "desired-state" in url:
+            return {"bindings": [binding]}
+        if "api/fleet/state" in url:
+            return {
+                "workers": [
+                    {
+                        "binding_id": binding["binding_id"],
+                        "runtime_id": binding["runtime_id"],
+                        "capital_pool_id": binding["capital_pool_id"],
+                        "status": "running",
+                        "started_at": heartbeat_at,
+                        "last_heartbeat_at": heartbeat_at,
+                        "heartbeat_status": "active",
+                    }
+                ]
+            }
+        if "runtime-summaries" in url:
+            return {"summaries": [_summary(binding, run_id="different-run")]}
+        raise AssertionError(f"unexpected GET {url}")
+
+    code, artifact, store, posts = _run(
+        tmp_path,
+        binding=binding,
+        get_json=get_json,
+        execute_kwargs={
+            "now_factory": lambda: now_iso,
+            "timeout_seconds": 0.01,
+            "worker_ready_timeout_seconds": 0,
+            "monotonic": monotonic,
+        },
+    )
+
+    assert code == 1
+    assert artifact["failure"]["code"] == "lifecycle_signal_timeout"
+    details = artifact["failure"]["details"]
+    assert details["worker"]["binding_id"] == binding["binding_id"]
+    assert details["queue_key"] == "pantheon:signals:pending:rb-loop-prod-tel-002"
+    assert details["queue_depth_after_timeout"] == 1
+    assert details["summary_seen"] is True
+    assert details["last_lifecycle_identity"]["run_id"] == "different-run"
+    assert len(store.enqueued) == 1
+    assert posts == []
 
 
 def test_stimulus_fails_when_no_active_paper_binding_is_available(tmp_path):

@@ -501,8 +501,6 @@ class PaperFleetReconciler:
         return subprocess.Popen(
             cmd,
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             close_fds=True,
         )
 
