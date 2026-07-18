@@ -144,6 +144,7 @@ def test_stimulus_enqueues_waits_for_runtime_lifecycle_and_reconciles(tmp_path):
     assert posts[0][0].endswith("/api/reconciliation-drift/scheduled-reconcile")
     assert posts[0][1]["tick_id"].startswith("loop-prod-tel-002-")
     assert posts[0][1]["binding_id"] == "rb-loop-prod-tel-002"
+    assert posts[0][1]["dispatch_incidents"] is False
     assert artifact["redaction"] == {
         "tokens_included": False,
         "credentials_included": False,
