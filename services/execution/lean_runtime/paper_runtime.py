@@ -1588,9 +1588,19 @@ class RuntimeBindingResolver:
         client: RuntimeManagerClient,
         runtime_id: str | None,
         runtime_context: PantheonRuntimeContext | None = None,
+        runtime_binding_id: str | None = None,
     ) -> None:
         self._client = client
         self._runtime_id = runtime_id
+        self._runtime_binding_id = str(
+            runtime_binding_id
+            or (
+                runtime_context.runtime_binding_id
+                if runtime_context is not None
+                else ""
+            )
+            or ""
+        ).strip()
         self._context_binding = (
             _binding_from_runtime_context(runtime_context) if runtime_context is not None else None
         )
@@ -1617,6 +1627,35 @@ class RuntimeBindingResolver:
             for binding in bindings
             if binding.get("runtime_id") == self._runtime_id
         ]
+        if self._runtime_binding_id:
+            exact_matches = [
+                binding
+                for binding in matches
+                if str(
+                    binding.get("binding_id")
+                    or binding.get("runtime_binding_id")
+                    or ""
+                ).strip()
+                == self._runtime_binding_id
+            ]
+            if exact_matches:
+                matches = exact_matches
+            elif self._context_binding is not None:
+                self._cached_binding = dict(self._context_binding)
+                self._binding_source = "runtime_context"
+                self._last_sync_at = _iso_now()
+                self._last_error = None
+                return self._cached_binding
+            else:
+                self._cached_binding = None
+                self._binding_source = None
+                self._last_sync_at = _iso_now()
+                self._last_error = (
+                    "runtime binding lookup found no exact binding_id "
+                    f"{self._runtime_binding_id!r} for runtime_id "
+                    f"{self._runtime_id!r}"
+                )
+                return None
         if not matches:
             self._cached_binding = dict(self._context_binding) if self._context_binding else None
             self._binding_source = "runtime_context" if self._context_binding else None
@@ -2351,6 +2390,7 @@ class PaperRuntimeService:
             self._runtime_manager_client,
             self._identity.runtime_id,
             runtime_context=runtime_context,
+            runtime_binding_id=self._identity.binding_id,
         )
         self._telemetry = telemetry_emitter or RuntimeTelemetryEmitter(
             self._identity,
