@@ -1491,6 +1491,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
 
         with (
             mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
             mock.patch.object(
                 ai_status,
                 "canonical_task_state_lock",

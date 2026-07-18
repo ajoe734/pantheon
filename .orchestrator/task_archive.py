@@ -163,6 +163,88 @@ def save_archive_index(index: dict[str, Any]) -> None:
     write_json(ARCHIVE_INDEX_FILE, payload)
 
 
+def get_outbox_snapshots() -> dict[str, Any]:
+    outbox_snapshots = {}
+    if STATUS_FILE.exists():
+        try:
+            status_data = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+            if isinstance(status_data, dict):
+                outbox = status_data.get("status_archive_outbox")
+                if outbox not in (None, {}, []):
+                    validated_outbox = validate_status_archive_outbox(outbox)
+                    for item in validated_outbox["snapshots"]:
+                        t_id = normalize_task_id(item.get("task_id"))
+                        if t_id:
+                            outbox_snapshots[t_id] = item
+        except Exception:
+            pass
+    return outbox_snapshots
+
+
+def validate_archive_snapshot(
+    snapshot: Any,
+    filename_task_id: str | None = None,
+    outbox_snapshots: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not isinstance(snapshot, dict):
+        raise RuntimeError("snapshot is not a JSON object")
+
+    task_id = normalize_task_id(
+        snapshot.get("task_id")
+        or ((snapshot.get("task") or {}).get("id"))
+        or snapshot.get("id")
+    )
+    if not task_id:
+        raise RuntimeError("snapshot is missing task id")
+
+    if filename_task_id:
+        expected_normalized = normalize_task_id(filename_task_id)
+        if task_id != expected_normalized:
+            raise RuntimeError(
+                f"snapshot task_id {task_id} does not match expected filename task_id {expected_normalized}"
+            )
+
+    # Enforce modern or legacy contract or proven outbox provenance
+    valid_contract = is_valid_modern_contract(snapshot) or is_valid_legacy_contract(snapshot)
+    if not valid_contract:
+        if outbox_snapshots is None:
+            outbox_snapshots = get_outbox_snapshots()
+        if task_id not in outbox_snapshots:
+            raise RuntimeError(
+                f"snapshot for {task_id} does not satisfy any valid contract "
+                f"and lacks proven durable outbox provenance"
+            )
+        # Validate the snapshot content itself matches the outbox snapshot exactly
+        outbox_snap = outbox_snapshots[task_id]
+        if _canonical_json_sha256(snapshot) != _canonical_json_sha256(outbox_snap):
+            raise RuntimeError(
+                f"snapshot for {task_id} content does not match the outbox snapshot exactly"
+            )
+
+    # STRICT SNAPSHOT VALIDATION
+    version = snapshot.get("version")
+    if version is not None:
+        try:
+            if int(version) != ARCHIVE_VERSION:
+                raise RuntimeError(f"snapshot has invalid version: {version}")
+        except (ValueError, TypeError):
+            raise RuntimeError(f"snapshot has malformed version: {version}")
+
+    outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
+    if outcome not in {TERMINAL_OUTCOME_COMPLETED, TERMINAL_OUTCOME_SUPERSEDED}:
+        raise RuntimeError(f"snapshot has invalid terminal_outcome: {outcome}")
+
+    status_val = snapshot.get("terminal_status") or (snapshot.get("task") or {}).get("status")
+    if status_val is not None and str(status_val).strip().lower() != "done":
+        raise RuntimeError(f"snapshot has invalid status: {status_val}")
+
+    archived_at = str(snapshot.get("archived_at") or "").strip()
+    if not archived_at:
+        raise RuntimeError("snapshot is missing archived_at")
+
+    return snapshot
+
+
 def load_archived_snapshot(task_id: str | None) -> dict[str, Any] | None:
     normalized = normalize_task_id(task_id)
     if not normalized:
@@ -174,9 +256,9 @@ def load_archived_snapshot(task_id: str | None) -> dict[str, Any] | None:
         nonblocking=False,
     ):
         snapshot = load_json(path, default=None)
-    if not isinstance(snapshot, dict):
+    if snapshot is None:
         return None
-    return snapshot
+    return validate_archive_snapshot(snapshot, filename_task_id=normalized)
 
 
 def load_archived_task(task_id: str | None) -> dict[str, Any] | None:
@@ -263,7 +345,9 @@ def is_valid_modern_contract(snapshot: Any) -> bool:
         "handoffs",
         "blockers",
     }
-    if set(snapshot.keys()) != expected_keys:
+    keys = set(snapshot.keys())
+    allowed_keys = expected_keys | {"correction_context"}
+    if not (expected_keys <= keys <= allowed_keys):
         return False
     task = snapshot.get("task")
     if not isinstance(task, dict):
@@ -342,7 +426,10 @@ def _canonical_json_sha256(value: Any) -> str:
 
 
 def _is_status_archive_snapshot_valid(snapshot: Any) -> bool:
-    if not isinstance(snapshot, dict) or set(snapshot) != {
+    if not isinstance(snapshot, dict):
+        return False
+    keys = set(snapshot.keys())
+    expected = {
         "version",
         "task_id",
         "archived_at",
@@ -351,7 +438,9 @@ def _is_status_archive_snapshot_valid(snapshot: Any) -> bool:
         "task",
         "handoffs",
         "blockers",
-    }:
+    }
+    allowed = expected | {"correction_context"}
+    if not (expected <= keys <= allowed):
         return False
     task = snapshot.get("task")
     return bool(
@@ -554,37 +643,16 @@ def _rebuild_archive_index_locked(
                 if not isinstance(snapshot, dict):
                     raise RuntimeError(f"Committed snapshot for {sha} is not a JSON object")
 
+                basename = os.path.basename(file_path)
+                filename_task_id = os.path.splitext(basename)[0]
+                validate_archive_snapshot(snapshot, filename_task_id=filename_task_id, outbox_snapshots=outbox_snapshots)
+
                 task_id = normalize_task_id(
                     snapshot.get("task_id")
                     or ((snapshot.get("task") or {}).get("id"))
                     or snapshot.get("id")
                 )
-                if not task_id:
-                    raise RuntimeError(f"Committed snapshot for {sha} is missing task id")
-
-                basename = os.path.basename(file_path)
-                if basename != f"{task_id}.json":
-                    raise RuntimeError(f"Committed snapshot filename {basename} does not match task_id {task_id}")
-
-                # Enforce modern or legacy contract or proven outbox provenance for committed snapshot
-                valid_contract = is_valid_modern_contract(snapshot) or is_valid_legacy_contract(snapshot)
-                if not valid_contract:
-                    if not task_id or task_id not in outbox_snapshots:
-                        raise RuntimeError(
-                            f"committed snapshot for {task_id} does not satisfy any valid contract "
-                            f"and lacks proven durable outbox provenance"
-                        )
-                    # Validate the snapshot content itself matches the outbox snapshot exactly
-                    outbox_snap = outbox_snapshots[task_id]
-                    if _canonical_json_sha256(snapshot) != _canonical_json_sha256(outbox_snap):
-                        raise RuntimeError(
-                            f"committed snapshot for {task_id} content does not match the outbox snapshot exactly"
-                        )
-
                 outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
-                if outcome not in {TERMINAL_OUTCOME_COMPLETED, TERMINAL_OUTCOME_SUPERSEDED}:
-                    raise RuntimeError(f"Committed snapshot {task_id} has invalid terminal_outcome: {outcome}")
-
                 archived_at = str(snapshot.get("archived_at") or "").strip()
                 summaries.append({
                     "task_id": task_id,
@@ -616,45 +684,15 @@ def _rebuild_archive_index_locked(
                     if not text:
                         raise RuntimeError(f"uncommitted snapshot is empty: {path}")
                     snapshot = json.loads(text)
-                    if not isinstance(snapshot, dict):
-                        raise RuntimeError(f"uncommitted snapshot is not a JSON object: {path}")
+                    filename_task_id = os.path.splitext(basename)[0]
+                    validate_archive_snapshot(snapshot, filename_task_id=filename_task_id, outbox_snapshots=outbox_snapshots)
 
-                    # Enforce the modern contract or proven outbox provenance
-                    valid_contract = is_valid_modern_contract(snapshot)
                     task_id = normalize_task_id(
                         snapshot.get("task_id")
                         or ((snapshot.get("task") or {}).get("id"))
                         or snapshot.get("id")
                     )
-
-                    if not valid_contract:
-                        if not task_id or task_id not in outbox_snapshots:
-                            raise RuntimeError(
-                                f"uncommitted snapshot at {path} does not satisfy the complete modern contract "
-                                f"and lacks proven durable outbox provenance"
-                            )
-                        # Validate the snapshot content itself matches the outbox snapshot exactly
-                        outbox_snap = outbox_snapshots[task_id]
-                        if _canonical_json_sha256(snapshot) != _canonical_json_sha256(outbox_snap):
-                            raise RuntimeError(
-                                f"uncommitted snapshot at {path} content does not match the outbox snapshot exactly"
-                            )
-
-                    # STRICT SNAPSHOT VALIDATION
-                    if not task_id:
-                        raise RuntimeError(f"uncommitted snapshot is missing task id: {path}")
-                    if basename != f"{task_id}.json":
-                        raise RuntimeError(f"uncommitted snapshot filename {basename} does not match task_id {task_id}")
-                    version = snapshot.get("version")
-                    if version is not None and int(version) != ARCHIVE_VERSION:
-                        raise RuntimeError(f"uncommitted snapshot has invalid version: {version}")
                     outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
-                    if outcome not in {TERMINAL_OUTCOME_COMPLETED, TERMINAL_OUTCOME_SUPERSEDED}:
-                        raise RuntimeError(f"uncommitted snapshot has invalid terminal_outcome: {outcome}")
-                    status_val = snapshot.get("terminal_status") or (snapshot.get("task") or {}).get("status")
-                    if status_val is not None and str(status_val).strip().lower() != "done":
-                        raise RuntimeError(f"uncommitted snapshot has invalid status: {status_val}")
-
                     archived_at = str(snapshot.get("archived_at") or "").strip()
                     summaries.append({
                         "task_id": task_id,
@@ -877,7 +915,9 @@ class TaskResolver:
         if not normalized:
             return None
         snapshot = load_json(archive_task_path_in_dir(normalized, self._archive_tasks_dir), default=None)
-        return snapshot if isinstance(snapshot, dict) else None
+        if snapshot is None:
+            return None
+        return validate_archive_snapshot(snapshot, filename_task_id=normalized)
 
     def _load_archived_task(self, task_id: str | None) -> dict[str, Any] | None:
         snapshot = self._load_archived_snapshot(task_id)

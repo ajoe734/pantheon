@@ -91,29 +91,31 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertEqual(evaluation["risk_class"], "unknown")
 
     def test_edit_allows_configured_execute_plans_workspace_root(self) -> None:
-        evaluation = permission_broker.evaluate_tool_request(
-            "Edit",
-            {"file_path": "/home/lupin/code/execute-plans/src/lib/bff/client.ts"},
-            {
-                "permission_broker": {
-                    "allowed_workspace_roots": ["../execute-plans"],
-                }
-            },
-        )
+        with mock.patch("permission_broker.ROOT", Path("/home/lupin/code/pantheon")):
+            evaluation = permission_broker.evaluate_tool_request(
+                "Edit",
+                {"file_path": "/home/lupin/code/execute-plans/src/lib/bff/client.ts"},
+                {
+                    "permission_broker": {
+                        "allowed_workspace_roots": ["../execute-plans"],
+                    }
+                },
+            )
 
         self.assertEqual(evaluation["decision"], "allow")
         self.assertEqual(evaluation["risk_class"], "repo_write")
 
     def test_edit_outside_configured_workspace_roots_is_denied(self) -> None:
-        evaluation = permission_broker.evaluate_tool_request(
-            "Edit",
-            {"file_path": "/tmp/outside.ts"},
-            {
-                "permission_broker": {
-                    "allowed_workspace_roots": ["../execute-plans"],
-                }
-            },
-        )
+        with mock.patch("permission_broker.ROOT", Path("/home/lupin/code/pantheon")):
+            evaluation = permission_broker.evaluate_tool_request(
+                "Edit",
+                {"file_path": "/tmp/outside.ts"},
+                {
+                    "permission_broker": {
+                        "allowed_workspace_roots": ["../execute-plans"],
+                    }
+                },
+            )
 
         self.assertEqual(evaluation["decision"], "deny")
         self.assertEqual(evaluation["risk_class"], "out_of_workspace")
