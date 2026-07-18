@@ -138,20 +138,23 @@ components:
             next_page_token: {type: [string, "null"]}
           additionalProperties: true
       additionalProperties: false
-    CandidateDecisionEnvelope:
-      type: object
-      required: [data, meta]
-      properties:
-        data: {$ref: "#/components/schemas/CandidateDecisionRecord"}
-        meta: {type: object, additionalProperties: true}
-      additionalProperties: false
-    CandidateDecisionListEnvelope:
+    CandidateReadbackEnvelope:
       type: object
       required: [data, meta]
       properties:
         data:
-          type: array
-          items: {$ref: "#/components/schemas/CandidateDecisionRecord"}
+          type: object
+          required: [candidate, revisions, decisions, validation_receipts, formal_approval_receipts, etag, readiness, execution_authority]
+          properties:
+            candidate: {type: object, additionalProperties: true}
+            revisions: {type: array, items: {type: object, additionalProperties: true}}
+            decisions: {type: array, items: {$ref: "#/components/schemas/CandidateDecisionRecord"}}
+            validation_receipts: {type: array, items: {$ref: "#/components/schemas/AuthoritativeValidationReceipt"}}
+            formal_approval_receipts: {type: array, items: {$ref: "#/components/schemas/FormalApprovalReceipt"}}
+            etag: {type: string, pattern: '^"[a-f0-9]{64}"$'}
+            readiness: {type: object, additionalProperties: true}
+            execution_authority: {const: none}
+          additionalProperties: false
         meta: {type: object, additionalProperties: true}
       additionalProperties: false
     ValidationEnvelope:
@@ -159,6 +162,28 @@ components:
       required: [data, meta]
       properties:
         data: {$ref: "#/components/schemas/AuthoritativeValidationReceipt"}
+        meta: {type: object, additionalProperties: true}
+      additionalProperties: false
+    FormalApprovalEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: {$ref: "#/components/schemas/FormalApprovalReceipt"}
+        meta: {type: object, additionalProperties: true}
+      additionalProperties: false
+    ReviewReadinessEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [proposal_id, readiness, etag, execution_authority]
+          properties:
+            proposal_id: {type: string, minLength: 1}
+            readiness: {type: object, additionalProperties: true}
+            etag: {type: string, pattern: '^"[a-f0-9]{64}"$'}
+            execution_authority: {const: none}
+          additionalProperties: false
         meta: {type: object, additionalProperties: true}
       additionalProperties: false
     ErrorEnvelope:
@@ -335,7 +360,7 @@ paths:
     post:
       operationId: createCandidateFromPersonaRecommendedMeasure
       summary: Create a governed candidate from an exact provider-authored measure
-      x-implementation-status: contract_only
+      x-implementation-status: implemented
       parameters:
         - {$ref: "#/components/parameters/InteractionId"}
         - {$ref: "#/components/parameters/MeasureId"}
@@ -351,7 +376,12 @@ paths:
           description: Governed proposal created from exact recommendation provenance
           content:
             application/json:
-              schema: {type: object}
+              schema: {$ref: "#/components/schemas/CandidateReadbackEnvelope"}
+        "200":
+          description: Idempotent replay of the exact candidate
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CandidateReadbackEnvelope"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
@@ -360,16 +390,16 @@ paths:
     get:
       operationId: listCandidateDecisions
       summary: Read durable operator candidate decisions
-      x-implementation-status: contract_only
+      x-implementation-status: implemented
       parameters:
         - {$ref: "#/components/parameters/ProposalId"}
         - {$ref: "#/components/parameters/XTenantId"}
       responses:
         "200":
-          description: Candidate decision history
+          description: Durable candidate detail, history, receipts, readiness, and current ETag
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/CandidateDecisionListEnvelope"}
+              schema: {$ref: "#/components/schemas/CandidateReadbackEnvelope"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
@@ -377,7 +407,7 @@ paths:
       operationId: decidePersonaRecommendedCandidate
       summary: Modify, accept for governed review, reject, defer, or cancel a candidate
       description: accept_for_review is not formal approval and never executes the candidate.
-      x-implementation-status: contract_only
+      x-implementation-status: implemented
       parameters:
         - {$ref: "#/components/parameters/ProposalId"}
         - {$ref: "#/components/parameters/XTenantId"}
@@ -393,7 +423,7 @@ paths:
           description: Candidate decision appended; accepted_for_review remains non-approval
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/CandidateDecisionEnvelope"}
+              schema: {$ref: "#/components/schemas/CandidateReadbackEnvelope"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
@@ -403,7 +433,7 @@ paths:
       operationId: requestAuthoritativeCandidateValidation
       summary: Ask the canonical validator to validate an exact revision and digest
       description: Browser-supplied validation results are forbidden; this request contains only immutable references.
-      x-implementation-status: contract_only
+      x-implementation-status: implemented
       parameters:
         - {$ref: "#/components/parameters/ProposalId"}
         - {$ref: "#/components/parameters/XTenantId"}
@@ -415,20 +445,104 @@ paths:
           application/json:
             schema: {$ref: "#/components/schemas/AuthoritativeValidationRequest"}
       responses:
-        "202":
-          description: Validation accepted by the canonical validation authority
+        "200":
+          description: Validation completed by the canonical validation authority and read back durably
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/ValidationEnvelope"}
+              schema: {$ref: "#/components/schemas/CandidateReadbackEnvelope"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
+  /bff/agora/proposals/{proposal_id}/candidate:
+    get:
+      operationId: getPersonaRecommendedCandidate
+      summary: Read the durable candidate aggregate and current full-record ETag
+      x-implementation-status: implemented
+      parameters:
+        - {$ref: "#/components/parameters/ProposalId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+      responses:
+        "200":
+          description: Durable candidate aggregate
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CandidateReadbackEnvelope"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /bff/agora/proposals/{proposal_id}/review-readiness:
+    get:
+      operationId: getPersonaCandidateReviewReadiness
+      summary: Read canonical validator and reviewer-store readiness
+      x-implementation-status: implemented
+      parameters:
+        - {$ref: "#/components/parameters/ProposalId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+      responses:
+        "200":
+          description: Fail-closed validation and reviewer readiness
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ReviewReadinessEnvelope"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /bff/agora/proposals/{proposal_id}/formal-approvals/{approval_decision_id}:link:
+    post:
+      operationId: linkCanonicalPersonaCandidateApproval
+      summary: Link an exact canonical ApprovalDecision after passed validation
+      x-implementation-status: implemented
+      parameters:
+        - {$ref: "#/components/parameters/ProposalId"}
+        - {name: approval_decision_id, in: path, required: true, schema: {type: string, minLength: 1}}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IfMatch"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expected_revision, expected_proposal_digest]
+              properties:
+                expected_revision: {type: integer, minimum: 1}
+                expected_proposal_digest: {type: string, pattern: "^[a-f0-9]{64}$"}
+              additionalProperties: false
+      responses:
+        "200":
+          description: Exact formal approval linked and returned in durable readback
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CandidateReadbackEnvelope"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /bff/agora/proposals/{proposal_id}/formal-approvals/{approval_decision_id}:
+    get:
+      operationId: getLinkedPersonaCandidateApproval
+      summary: Read an exact linked canonical formal approval receipt
+      x-implementation-status: implemented
+      parameters:
+        - {$ref: "#/components/parameters/ProposalId"}
+        - {name: approval_decision_id, in: path, required: true, schema: {type: string, minLength: 1}}
+        - {$ref: "#/components/parameters/XTenantId"}
+      responses:
+        "200":
+          description: Exact formal approval receipt
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/FormalApprovalEnvelope"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
   /bff/agora/proposals/{proposal_id}/validations/{validation_receipt_id}:
     get:
       operationId: getAuthoritativeCandidateValidation
       summary: Read a canonical validation receipt bound to exact proposal bytes
-      x-implementation-status: contract_only
+      x-implementation-status: implemented
       parameters:
         - {$ref: "#/components/parameters/ProposalId"}
         - {$ref: "#/components/parameters/ValidationReceiptId"}

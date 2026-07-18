@@ -11736,6 +11736,48 @@ class ReadSurfaceStore:
             return self._project_canonical_approval_decision(raw) if raw else None
         return (self._local_fallback("approval_decisions") or {}).get(decision_id)
 
+    def get_canonical_approval_decision_readback(
+        self, decision_id: Optional[str]
+    ) -> Dict[str, Any]:
+        """Preserve canonical availability; never substitute local fixtures."""
+        if not decision_id:
+            return {"available": False, "record": None, "source": "canonical.approval_decision"}
+        available, raw = self._canonical.approval_decision(decision_id)
+        return {
+            "available": bool(available),
+            "record": self._project_canonical_candidate_approval(raw) if available and raw else None,
+            "source": "canonical.approval_decision",
+        }
+
+    @staticmethod
+    def _project_canonical_candidate_approval(raw: Dict[str, Any]) -> Dict[str, Any]:
+        """Preserve the checksum-covered candidate FormalApprovalReceipt."""
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        receipt = {
+            "approval_decision_id": raw.get("approval_decision_id") or raw.get("decision_id") or raw.get("id"),
+            "authority": raw.get("authority"),
+            "tenant_id": raw.get("tenant_id") or metadata.get("tenant_id"),
+            "proposal_id": raw.get("proposal_id"),
+            "revision": raw.get("revision") or raw.get("proposal_revision"),
+            "proposal_digest": raw.get("proposal_digest") or raw.get("proposal_content_digest"),
+            "validation_receipt_id": raw.get("validation_receipt_id"),
+            "validation_receipt_sha256": raw.get("validation_receipt_sha256"),
+            "proposer_id": raw.get("proposer_id"),
+            "reviewer_id": raw.get("reviewer_id") or raw.get("actor_id"),
+            "outcome": raw.get("outcome") or raw.get("decision"),
+            "self_approval": raw.get("self_approval"),
+            "decided_at": raw.get("decided_at"),
+            "expires_at": raw.get("expires_at"),
+            "receipt_sha256": raw.get("receipt_sha256"),
+            "execution_authority": raw.get("execution_authority"),
+        }
+        return {
+            **receipt,
+            "revoked_at": raw.get("revoked_at"),
+            "superseded_by": raw.get("superseded_by"),
+            "decision_state": raw.get("decision_state") or raw.get("state"),
+        }
+
     def get_capital_pool(self, pool_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not pool_id:
             return None
