@@ -5,7 +5,7 @@ import json
 import os
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import jsonschema
@@ -253,6 +253,88 @@ def test_same_key_double_resolve_replays_exact_receipt_then_submits(monkeypatch)
     )
     response = _submit(c, body)
     assert response.status_code == 202, response.text
+
+
+def test_replay_persists_only_returned_receipt_and_eligibility_uses_it(monkeypatch):
+    """A replay candidate from a later clock tick must never become canonical."""
+    import main as bff_main
+
+    c = client(monkeypatch)
+    real_datetime = datetime
+
+    class TickingDateTime(real_datetime):
+        current = real_datetime.now(timezone.utc).replace(microsecond=0)
+
+        @classmethod
+        def now(cls, tz=None):
+            cls.current += timedelta(seconds=2)
+            value = cls.current
+            return value if tz is not None else value.replace(tzinfo=None)
+
+    # models.utc_now() is the exact callable captured by the already-mounted
+    # router.  Advancing it makes the discarded replay candidate observably
+    # different from the first receipt instead of relying on second-level
+    # wall-clock timing.
+    monkeypatch.setitem(bff_main.utc_now.__globals__, "datetime", TickingDateTime)
+
+    original_save = InteractionLifecycleStore.save_context_binding
+    saves = []
+
+    def recording_save(store, binding, *, owner_user_id):
+        before = len(store._context_bindings)
+        saved = original_save(store, binding, owner_user_id=owner_user_id)
+        saves.append((store, dict(binding), before, len(store._context_bindings)))
+        return saved
+
+    monkeypatch.setattr(InteractionLifecycleStore, "save_context_binding", recording_save)
+    body = _v19_request(
+        c,
+        monkeypatch,
+        resolve_key=f"clocked-replay-{uuid.uuid4().hex}",
+        double_resolve=True,
+    )
+
+    assert len(saves) == 2
+    store, returned_binding, first_before, first_after = saves[0]
+    _, replay_binding, replay_before, replay_after = saves[1]
+    assert replay_binding == returned_binding
+    assert first_after == first_before + 1
+    assert replay_before == replay_after == first_after
+    assert store.latest_context_binding(
+        returned_binding["tenant_id"], "interaction-user", returned_binding["workshop_id"],
+    ) == returned_binding
+    assert body["participants"][0]["captured_at"] == returned_binding["resolved_at"]
+
+    browser_capture = TickingDateTime.current.isoformat().replace("+00:00", "Z")
+    body["human_request"]["submitted_at"] = browser_capture
+    body["context_snapshot"]["captured_at"] = browser_capture
+    submitted = _submit(c, body)
+    assert submitted.status_code == 202, submitted.text
+
+
+def test_memory_context_binding_replay_does_not_add_rows_or_rewind_latest():
+    store = InteractionLifecycleStore()
+
+    def binding(name, resolved_at):
+        return {
+            "binding_id": f"binding-{name}",
+            "tenant_id": "tenant",
+            "workshop_id": "workshop",
+            "context_digest": f"digest-{name}",
+            "resolved_at": resolved_at,
+        }
+
+    first = binding("first", "2026-07-18T00:00:00Z")
+    later = binding("later", "2026-07-18T00:00:02Z")
+    store.save_context_binding(first, owner_user_id="operator")
+    store.save_context_binding(first, owner_user_id="operator")
+    assert len(store._context_bindings) == 1
+    assert store.latest_context_binding("tenant", "operator", "workshop") == first
+
+    store.save_context_binding(later, owner_user_id="operator")
+    store.save_context_binding(first, owner_user_id="operator")
+    assert len(store._context_bindings) == 2
+    assert store.latest_context_binding("tenant", "operator", "workshop") == later
 
 
 def test_submit_matches_its_exact_binding_when_another_tab_resolves_later(monkeypatch):
