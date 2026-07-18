@@ -18,6 +18,7 @@ from services.execution.lean_runtime.paper_runtime import (
     OrderEvent,
     PaperExecutionAlgorithm,
     PaperRuntimeService,
+    RuntimeBindingResolver,
     RuntimeTelemetryEmitter,
 )
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
@@ -325,6 +326,57 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             runtime_id=binding["runtime_id"],
         )
         return signal
+
+    def test_binding_resolver_prefers_exact_worker_binding_for_shared_runtime(self):
+        runtime_id = "paper-runtime-shared"
+        other = self._binding()
+        other.update(
+            {
+                "binding_id": "rb-other",
+                "runtime_id": runtime_id,
+                "capital_pool_id": "pool-other",
+            }
+        )
+        target = self._binding()
+        target.update(
+            {
+                "binding_id": "rb-target",
+                "runtime_id": runtime_id,
+                "capital_pool_id": "pool-target",
+            }
+        )
+        resolver = RuntimeBindingResolver(
+            _FakeRuntimeManagerClient([other, target]),
+            runtime_id,
+            runtime_binding_id="rb-target",
+        )
+
+        resolved = resolver.resolve()
+
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved["binding_id"], "rb-target")
+        self.assertEqual(resolver.snapshot()["binding_id"], "rb-target")
+
+    def test_binding_resolver_fails_closed_when_exact_worker_binding_missing(self):
+        runtime_id = "paper-runtime-shared"
+        other = self._binding()
+        other.update(
+            {
+                "binding_id": "rb-other",
+                "runtime_id": runtime_id,
+                "capital_pool_id": "pool-other",
+            }
+        )
+        resolver = RuntimeBindingResolver(
+            _FakeRuntimeManagerClient([other]),
+            runtime_id,
+            runtime_binding_id="rb-target",
+        )
+
+        self.assertIsNone(resolver.resolve())
+        snapshot = resolver.snapshot()
+        self.assertFalse(snapshot["resolved"])
+        self.assertIn("no exact binding_id", snapshot["last_error"])
 
     def test_http_handler_exposes_standard_health_probes(self):
         with patch(
