@@ -2358,6 +2358,103 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             supervisor.task_declared_priority_rank({"priority": "P99"}),
         )
 
+    def test_dispatcher_cools_down_only_an_unchanged_task_signature(self) -> None:
+        previous_task = {
+            "id": "NO-PROGRESS-REVIEW",
+            "status": "review",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "priority": "P0",
+            "depends_on": [],
+            "last_update": "2026-07-17T17:00:00Z",
+        }
+        previous_event = supervisor.build_dispatch_event(
+            previous_task,
+            "Codex",
+            "review_ready_dispatch",
+            {previous_task["id"]: previous_task},
+        )
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "seen_event_keys": {previous_event["key"]: supervisor.utc_now()},
+        }
+        config = json.loads(json.dumps(self.config))
+        config["ready_dispatcher"]["unchanged_task_cooldown_seconds"] = 900
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [previous_task]},
+            ),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                return_value=True,
+            ) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertFalse(changed)
+        queue_delivery_event.assert_not_called()
+
+        updated_task = dict(previous_task)
+        updated_task["last_update"] = "2026-07-17T17:01:00Z"
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [updated_task]},
+            ),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                return_value=True,
+            ) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        queue_delivery_event.assert_called_once()
+        self.assertNotEqual(
+            queue_delivery_event.call_args.args[1]["key"],
+            previous_event["key"],
+        )
+
+    def test_queue_completion_starts_unchanged_signature_cooldown(self) -> None:
+        state = {
+            "queue": {
+                "events": {
+                    "evt-complete": {
+                        "status": "started",
+                        "event_key": "dispatcher:Codex:TASK:review:same-signature",
+                    }
+                }
+            },
+            "workers": {},
+        }
+        worker = {
+            "run_id": "run-complete",
+            "queue_event_id": "evt-complete",
+        }
+
+        supervisor.finalize_queue_event_record(
+            self.config,
+            state,
+            worker,
+            "completed",
+        )
+
+        record = state["queue"]["events"]["evt-complete"]
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(
+            state["seen_event_keys"][record["event_key"]],
+            record["processed_at"],
+        )
+
     def test_dispatcher_queues_multiple_codex_tasks_up_to_worker_slot_capacity(self) -> None:
         config = json.loads(json.dumps(self.config))
         config["agents"]["codex"]["worker_slots"] = ["codex1_1", "codex1_2", "codex1_3", "codex1_4"]
