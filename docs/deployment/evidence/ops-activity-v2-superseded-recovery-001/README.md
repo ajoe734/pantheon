@@ -64,4 +64,3 @@ The permission broker now denies auto-worker `ai_status.py` and
 `PANTHEON_COMMAND_ROOT`. Regression coverage includes the original
 `cd /home/lupin/code/pantheon && ... python3 scripts/ai_status.py` command,
 the pinned command-root form, and non-worker compatibility.
-

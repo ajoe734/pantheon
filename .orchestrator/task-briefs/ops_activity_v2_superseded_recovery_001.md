@@ -44,4 +44,3 @@ scope:
   compatibility.
 - Post-install supervisor process, heartbeat, loop, dispatch, quota, and
   blocked-backlog readback.
-
