@@ -142,9 +142,19 @@ def run_batch(
         )
         for _ in range(count)
     ]
+    # Wait for all processes to finish within the absolute batch deadline
+    batch_timeout = timeout
+    deadline = started + batch_timeout
+    while time.monotonic() < deadline:
+        if all(p.poll() is not None for p in processes):
+            break
+        time.sleep(0.05)
+
     outputs: list[dict[str, Any]] = []
-    for process in processes:
-        stdout, stderr = process.communicate(timeout=timeout)
+    for i, process in enumerate(processes):
+        if process.poll() is None:
+            raise TimeoutError(f"Process {i} did not exit within the absolute batch deadline of {batch_timeout} seconds.")
+        stdout, stderr = process.communicate()
         outputs.append(
             {
                 "returncode": process.returncode,
@@ -176,6 +186,9 @@ def run_batch(
         heartbeat = data.get("heartbeat_age_seconds")
         if isinstance(heartbeat, int | float):
             heartbeat_values.append(float(heartbeat))
+        # Assert restart counters are null
+        assert data.get("restart_count_window") is None, f"Expected null restart_count_window, got {data.get('restart_count_window')}"
+        assert data.get("restart_count_hour") is None, f"Expected null restart_count_hour, got {data.get('restart_count_hour')}"
 
     summary = {
         "label": label,
@@ -247,6 +260,13 @@ def run_post_release_probe(repo: Path, root: Path, config_path: Path, paths: dic
     assert probe_json["reason"] == "supervisor_healthy", probe_json
     assert health.returncode == 0, health.stderr
     assert health_json["healthy"] is True, health_json
+
+    watchdog_state_hash = file_digest(paths["watchdog_state"])
+    metrics_hash = file_digest(paths["metrics"])
+    assert watchdog_state_hash["exists"] is True, "Expected watchdog-state.json to exist"
+    assert metrics_hash["exists"] is True, "Expected metrics.jsonl to exist"
+    assert metrics_hash["lines"] == 1, f"Expected exactly 1 line in metrics.jsonl, got {metrics_hash['lines']}"
+
     return {
         "elapsed_seconds": round(time.monotonic() - started, 6),
         "probe": {
@@ -259,8 +279,8 @@ def run_post_release_probe(repo: Path, root: Path, config_path: Path, paths: dic
             "stdout": health_json,
             "stderr": health.stderr,
         },
-        "watchdog_state_hash": file_digest(paths["watchdog_state"]),
-        "metrics_hash": file_digest(paths["metrics"]),
+        "watchdog_state_hash": watchdog_state_hash,
+        "metrics_hash": metrics_hash,
         "activity_log_hash": file_digest(paths["activity_log"]),
     }
 
@@ -273,6 +293,10 @@ def main() -> int:
     args = parser.parse_args()
 
     repo = Path(args.repo).resolve()
+    repo_head_sha = git_head(repo)
+    intended_sha = os.environ.get("INTENDED_SHA", IMPLEMENTATION_MERGE)
+    assert repo_head_sha == intended_sha, f"Expected repo HEAD to be {intended_sha}, got {repo_head_sha}"
+
     root, config_path, paths = build_fixture_root()
     supervisor_handle = paths["supervisor_lock"].open("w", encoding="utf-8")
     fcntl.flock(supervisor_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
