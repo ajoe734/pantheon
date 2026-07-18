@@ -17,7 +17,7 @@
   "task": {
     "base_branch": "dev",
     "evidence_cut_at": "2026-07-18T18:11:09Z",
-    "evidence_cut_semantics": "Current exact-SHA hosted pass run 29655287111 against public BFF SHA 060b2eb999c6ccbb3ce50153c747127c0deafc33 supersedes the earlier 29653015381 fail-closed reprobe for product-level admission; governed status lifecycle mutation remains separately blocked by command-runtime SHA mismatch.",
+    "evidence_cut_semantics": "Current exact-SHA hosted pass run 29655287111 against public BFF SHA 060b2eb999c6ccbb3ce50153c747127c0deafc33 supersedes the earlier 29653015381 fail-closed reprobe for product-level admission; governed status lifecycle mutation remains separately blocked by Codex2 lease identity normalization.",
     "id": "LOOP-PROD-PER-001",
     "overall_admission": "ready_for_independent_review_status_command_blocked",
     "owner": "Codex2",
@@ -374,7 +374,7 @@
       "current hosted reconcile returned status ok with authoritative_readback.available=true, paper worker running, active RuntimeBinding, and first-evaluation schedule meta",
       "current hosted first-evaluation gate passed with workflow pantheon.persona.first-evaluation, registered job 69083430-dfa4-4046-9fb1-a1dd822c1d6b, request persona-provisioning:persona-1078f601d489f0baeb88:pantheon.persona.first-evaluation",
       "hosted security negative checks passed: unauthenticated create 401, cross-tenant create 403, live-capital create 422",
-      "status lifecycle mutation remains separately blocked because PANTHEON_COMMAND_ROOT HEAD e99442c5aee4e5b0936787d64fe3af1194ee56e4 does not match PANTHEON_COMMAND_RUNTIME_SHA 1035637a2ab0a7edee3a9229949abbbc75314d4f"
+      "status lifecycle mutation remains separately blocked because AI_NAME=Codex2 normalizes to codex while the active worker lease agent codex2_1 normalizes to codex2_"
     ],
     "local_verification_commands": [
       "python3 -m py_compile services/control-plane/cron/persona_cron_registrar.py services/control-plane/cron/test_persona_cron_registrar.py services/openclaw-gateway-adapter/main.py services/openclaw-gateway-adapter/test_main.py services/control-plane/bff/test_persona_provisioning_readback.py",
@@ -696,7 +696,7 @@
       "delivery": "pass_through_pr_3872_and_current_evidence_commit",
       "independent_review": "pending_claude_review",
       "reviewer": "Claude",
-      "evidence": "implementation PR #3872 merged with checks and current hosted probe run 29655287111 passed; governed status handoff is blocked by command-runtime SHA mismatch and must not be hand-edited."
+      "evidence": "implementation PR #3872 merged with checks and current hosted probe run 29655287111 passed; governed status handoff is blocked by Codex2 lease identity normalization and must not be hand-edited."
     },
     {
       "id": "AC6",
@@ -777,9 +777,9 @@
       "severity": "high",
       "owner": "Supervisor/status command lane",
       "expiry": "2026-07-19T23:59:59Z",
-      "description": "AI_NAME=Codex2 governed status commands fail because PANTHEON_COMMAND_ROOT HEAD e99442c5aee4e5b0936787d64fe3af1194ee56e4 does not match PANTHEON_COMMAND_RUNTIME_SHA 1035637a2ab0a7edee3a9229949abbbc75314d4f.",
+      "description": "AI_NAME=Codex2 governed status commands fail because validate_active_status_command_lease normalizes actor Codex2 to codex while the active worker lease agent codex2_1 normalizes to codex2_.",
       "containment": "Do not hand-edit ai-status.json/current-work/ai-activity-log.jsonl. Report the blocker and require supervisor/status command runtime repair before lifecycle mutation to review/done.",
-      "recheck_trigger": "status command can run AI_NAME=Codex2 progress/handoff/done for LOOP-PROD-PER-001 from PANTHEON_COMMAND_ROOT without runtime SHA mismatch",
+      "recheck_trigger": "status command can run AI_NAME=Codex2 progress/handoff/done for LOOP-PROD-PER-001 from PANTHEON_COMMAND_ROOT without lease identity mismatch",
       "blocking_scope": "governed status lifecycle mutation only; product proof and repo evidence are ready for Claude review"
     }
   },
@@ -982,6 +982,15 @@
       "actor": "Codex2",
       "ref": "PANTHEON_COMMAND_ROOT/scripts/ai-status.sh",
       "reason": "AI_NAME=Codex2 governed status command blocked by runtime SHA mismatch: command root e99442c5aee4e5b0936787d64fe3af1194ee56e4, expected 1035637a2ab0a7edee3a9229949abbbc75314d4f."
+    },
+    {
+      "sequence": 18,
+      "recorded_at": "2026-07-18T19:09:48Z",
+      "kind": "status_lifecycle_update",
+      "status": "blocked",
+      "actor": "Codex2",
+      "ref": "PANTHEON_COMMAND_ROOT/scripts/ai-status.sh handoff LOOP-PROD-PER-001 Claude",
+      "reason": "AI_NAME=Codex2 governed handoff is blocked by lease identity mismatch: actor Codex2 normalized to codex, active worker lease agent codex2_1 normalized to codex2_. Product proof remains ready for independent Claude review."
     }
   ]
 }
