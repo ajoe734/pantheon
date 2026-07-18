@@ -608,6 +608,50 @@ pushed exact head supersedes the approval of `c1c699eb...` and must receive a
 fresh Antigravity governed approval plus a GitHub approval review before manual
 merge. Auto-merge remains disabled.
 
+### Current-base closeout revalidation
+
+The next owner-finalization dispatch found PR #3778 at governed-approved head
+`34c920f43046c5dcd9223b1cb8dcbdd44deec384`, but GitHub again reported the PR
+as `BEHIND`: `origin/dev` had advanced two commits through PR #3830 to
+`5fdf28f2e8c22e26220efbe40fcff47c6fb32106`. Those commits changed only
+`scripts/ai_status.py` and `scripts/test_ai_status.py`; they did not touch this
+task's store, tests, review, or evidence paths. The branch composed the current
+tip without conflict, producing pre-evidence merge head
+`ebd2c3ab4843179d5b0e845f758eef79a7d14e83`, and was revalidated at
+2026-07-18T01:40:33Z:
+
+```text
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py -q
+22 passed in 8.56s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py -q
+6 passed in 6.18s
+
+python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py -q
+20 passed in 9.31s
+
+python3 -m pytest services/reconciliation-drift/tests/ -q
+79 passed in 24.86s
+
+python3 -m py_compile services/reconciliation-drift/store.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py
+(no output; passed)
+
+git diff --check origin/dev...HEAD
+(no output; clean)
+
+git show --check --oneline HEAD
+(no whitespace errors)
+
+python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge
+(no output; passed)
+```
+
+This evidence-only update does not alter store or test behavior. Its resulting
+pushed full SHA supersedes the governed approval of `34c920f...`; Antigravity
+must approve that unchanged exact head before manual merge. GitHub-native
+approval remains unavailable because the shared credential is also the PR
+author. Auto-merge remains disabled.
+
 ### Push-event trailer check false positive
 
 The `Commit trailers` check's `push` event range (`f06027d02..b506dc93a`)
