@@ -241,6 +241,14 @@ command-runtime pin variables shown above before replaying the isolated test
 matrix, because those live controls are intentionally inherited by child
 processes.
 
+Planner review corrected the transition runbook to revision 3. The pending
+intent recovery was already executed exactly once and accepted in PR #3788;
+the P0 merge-to-install window must only prove that result remains
+`already_resolved` and must not run recovery execute again. Revision 3 also
+records the previously implicit 60-second writer/lock/activity-hash cadence,
+explicit minute-30/minute-40 abort thresholds, and byte-exact cron/config
+evidence required before the planner may authorize the exact merge install.
+
 ### Live read-only observation
 
 A 44-second, three-sample read-only window at `22:54:17Z`–`22:55:01Z`
