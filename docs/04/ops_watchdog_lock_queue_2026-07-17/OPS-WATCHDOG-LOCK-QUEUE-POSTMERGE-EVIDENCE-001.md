@@ -1,16 +1,18 @@
 # Post-Merge Evidence: OPS-WATCHDOG-LOCK-QUEUE-POSTMERGE-001
 
-Generated: 2026-07-17T20:32Z
-Status: Successful Product Acceptance
+Generated: 2026-07-18T02:59:37Z
+Status: Successful Product Acceptance on Deployed Final HEAD
 
 ## 1. Executive Summary
 
-We resolved the remaining P1 and P2 implementation defects identified during the exact-head review:
+We resolved the remaining P1 and P2 implementation defects identified during the exact-head review, deploying the final fixes to HEAD `c9560db5cba9583bd2dff70894e583cdca5d2a20`. The previous c559 artifacts have been marked historical and fully replaced by the c956 evidence captured herein:
 - **P1 (Lock Contention Classification)**: Replaced process-global `fcntl.flock` monkeypatching inside `supervisor_watchdog.py` with a dedicated exception subclass `LockContentionError` in `common.py`. Lock contention on nonblocking calls is now classified internally in `stable_sidecar_lock` and raised as a clean local exception.
-- **P1 (Acquired-Lock Cleanup)**: Removed manual `__enter__` and `__exit__` in `run_watchdog` and transitioned to standard Python `with` context management blocks, guaranteeing exact-once cleanup and preventing any resource cleanup gaps.
+- **P1 (Acquired-Lock Cleanup)**: Reconciled the manual acquisition-only LockContentionError boundary. If successfully acquired, a `try/except/else` structure is used to run the locked watchdog body and ensure `__exit__()` is called cleanly, avoiding resource leaks.
 - **P2 (Metric Lock EACCES)**: Initialized `lock_descriptor = None` inside `append_watchdog_contention_metric` to prevent masking of `os.open` `PermissionError` (EACCES) with `UnboundLocalError`.
+- **P2 (Restart Count Metrics)**: Corrected the run_watchdog contention path to not report hard-coded `0` values for `restart_count_window` and `restart_count_hour` when they are unknown (reported as `None` / `null` instead).
+- **P2 (Initially-Free Concurrent Probe Test)**: Added a new concurrent probe unit test (`test_initially_free_concurrent_probes_max_one_owner`) proving that when the lock is initially free and multiple probes execute, at most one active probe owns the critical section while others skip immediately and do not block.
 
-All 42 unit and integration tests are passing. The dev-root deployment matches the mainline `dev` integration line. The live scheduler running the installed commit `98aa5611ac57fb195d4ea36bfd12f157a2139dd0` has been validated.
+All 44 unit and integration tests are passing. The dev-root deployment matches the mainline `dev` integration line. The live scheduler running the merged task commit `c9560db5cba9583bd2dff70894e583cdca5d2a20` has been validated.
 
 ---
 
@@ -18,23 +20,24 @@ All 42 unit and integration tests are passing. The dev-root deployment matches t
 
 Command:
 ```bash
-python3 -m pytest .orchestrator/test_supervisor_watchdog.py
+PYTHONPATH=.orchestrator python3 -m pytest .orchestrator/test_supervisor_watchdog.py
 ```
 
 Result:
 ```text
-============================== 42 passed in 5.04s ==============================
+============================== 44 passed in 5.81s ==============================
 ```
 
-Unit tests added and verified:
+Unit tests verified:
 - `test_contention_metric_open_eacces_propagates` (verify that `PermissionError` on `os.open` propagates cleanly without being masked by `UnboundLocalError`).
 - `test_watchdog_overlap_contention_coverage` (verify that concurrent overlapping lock attempts on the admission lock path fail with `LockContentionError` correctly while leaving other lock paths functional).
+- `test_initially_free_concurrent_probes_max_one_owner` (verify that at most one active critical-section owner is admitted concurrently on an initially free lock path, while other threads skip immediately).
 
 ---
 
 ## 3. Isolated Contention Fixture
 
-We verified lock contention behavior using the isolated test fixture script:
+We verified lock contention behavior using the isolated test fixture script run on the exact deployed final HEAD:
 ```bash
 python3 docs/04/ops_watchdog_lock_queue_2026-07-17/archive/postmerge_lock_contention_fixture.py --repo .
 ```
@@ -43,37 +46,68 @@ All 12+12 concurrent probes were correctly handled:
 - Primary held admission lock: 12/12 skipped with `lock_contention` reason and exit code 0.
 - Secondary held metrics lock: 12/12 skipped and output dropped warning to stderr.
 - Post-release: successfully verified normal healthy transition after lock release.
+- **Rerun verification**: The generated contention batches correctly record `null` for `restart_count_hour` and `restart_count_window`, matching the final c956 `None` contract under contention.
 
 ---
 
 ## 4. Three-Cycle Live Scheduler Evidence
 
-We monitored the live supervisor scheduler running in the dev-root workspace `/home/lupin/pantheon-ci-deploy/dev-root` under PID `515617` on installed SHA `98aa5611ac57fb195d4ea36bfd12f157a2139dd0`.
+We monitored the live supervisor scheduler running in the dev-root workspace `/home/lupin/pantheon-ci-deploy/dev-root` under PID `202546` on installed HEAD commit `c9560db5cba9583bd2dff70894e583cdca5d2a20` (the merge commit of the task).
 
-We captured three genuinely consecutive successful watchdog cycles from the metrics log file `/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/metrics/supervisor-watchdog.jsonl`:
+We captured three watchdog cycles from the metrics log file `/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/metrics/supervisor-watchdog.jsonl` with an expected lock contention event at `02:59:02Z` in between Cycle 2 and Cycle 3:
 
-### Cycle 1 (2026-07-17T20:29:02Z)
+### Cycle 1 (2026-07-18T02:57:02Z)
+- **Watchdog Execution Result**:
+  `watchdog decision=observe_only reason=supervisor_healthy pid=202546 new_pid=None`
+- **Watchdog process count**: 0 active watchdog processes (at sample time, no concurrent watchdog run was active)
+- **Supervisor process count**: 14 (Active supervisor PID: 202546 and worker runners)
+- **Admission lock waiter count**: 0
+- **Lock Provenance**: `runtime-admission.lock` was held by active worker runner PID `470341`.
+- **Metric Event**:
 ```json
-{"version": 1, "event_id": "watchdog-1784320142086-1338724", "at": "2026-07-17T20:29:02Z", "event_type": "watchdog_probe", "decision": "observe_only", "reason": "supervisor_healthy", "pid": 515617, "new_pid": null, "heartbeat_age_seconds": 8.0, "resource": {"disk_free_gb": 316.959, "disk_used_percent": 34.42, "memory_available_mb": 33659.9, "load_1m": 4.72, "active_worker_count": 4, "active_worker_count_source": "live_worker_runner_pid_identity", "active_worker_live_count": 4, "active_worker_runtime_state_count": 7, "active_worker_scan_error": null, "state_parent_writable": true}, "restart_count_window": 0, "restart_count_hour": 0, "log_path": null, "lock_held": true}
+{"at": "2026-07-18T02:57:02Z", "decision": "observe_only", "event_id": "watchdog-1784343422183-470465", "event_type": "watchdog_probe", "heartbeat_age_seconds": 10.0, "lock_held": true, "log_path": null, "new_pid": null, "pid": 202546, "reason": "supervisor_healthy", "resource": {"active_worker_count": 5, "active_worker_count_source": "live_worker_runner_pid_identity", "active_worker_live_count": 5, "active_worker_runtime_state_count": 5, "active_worker_scan_error": null, "disk_free_gb": 310.299, "disk_used_percent": 35.8, "load_1m": 5.19, "memory_available_mb": 29269.3, "state_parent_writable": true}, "restart_count_hour": 1, "restart_count_window": 0, "version": 1}
 ```
 
-### Cycle 2 (2026-07-17T20:30:02Z)
+### Cycle 2 (2026-07-18T02:58:02Z)
+- **Watchdog Execution Result**:
+  `watchdog decision=observe_only reason=supervisor_healthy pid=202546 new_pid=None`
+- **Watchdog process count**: 0 active watchdog processes
+- **Supervisor process count**: 12
+- **Admission lock waiter count**: 0
+- **Lock Provenance**: No active lock contention on `runtime-admission.lock`.
+- **Metric Event**:
 ```json
-{"version": 1, "event_id": "watchdog-1784320202646-1348218", "at": "2026-07-17T20:30:02Z", "event_type": "watchdog_probe", "decision": "observe_only", "reason": "supervisor_healthy", "pid": 515617, "new_pid": null, "heartbeat_age_seconds": 30.0, "resource": {"disk_free_gb": 316.947, "disk_used_percent": 34.42, "memory_available_mb": 33619.4, "load_1m": 5.2, "active_worker_count": 4, "active_worker_count_source": "live_worker_runner_pid_identity", "active_worker_live_count": 4, "active_worker_runtime_state_count": 7, "active_worker_scan_error": null, "state_parent_writable": true}, "restart_count_window": 0, "restart_count_hour": 0, "log_path": null, "lock_held": true}
+{"at": "2026-07-18T02:58:02Z", "decision": "observe_only", "event_id": "watchdog-1784343482546-478529", "event_type": "watchdog_probe", "heartbeat_age_seconds": 29.0, "lock_held": true, "log_path": null, "new_pid": null, "pid": 202546, "reason": "supervisor_healthy", "resource": {"active_worker_count": 4, "active_worker_count_source": "live_worker_runner_pid_identity", "active_worker_live_count": 4, "active_worker_runtime_state_count": 4, "active_worker_scan_error": null, "disk_free_gb": 310.516, "disk_used_percent": 35.75, "load_1m": 5.08, "memory_available_mb": 27280.5, "state_parent_writable": true}, "restart_count_hour": 1, "restart_count_window": 0, "version": 1}
 ```
 
-### Cycle 3 (2026-07-17T20:31:02Z)
+### Lock Contention Event (2026-07-18T02:59:02Z)
+At `02:59:02Z` the regular watchdog cron job was triggered. However, the `runtime-admission` lock was held, causing the cron competitor to immediately skip execution and append a contention metric event to `supervisor-watchdog-contention.jsonl` without blocking or accumulating processes.
+- **Watchdog Execution Result**: `watchdog decision=skip reason=lock_contention pid=202546 new_pid=None`
+- **Lock Provenance**: `runtime-admission.lock` was held by active worker runner process.
+- **Contention Metric Event**:
 ```json
-{"version": 1, "event_id": "watchdog-1784320262126-1357160", "at": "2026-07-17T20:31:02Z", "event_type": "watchdog_probe", "decision": "observe_only", "reason": "supervisor_healthy", "pid": 515617, "new_pid": null, "heartbeat_age_seconds": 11.0, "resource": {"disk_free_gb": 316.946, "disk_used_percent": 34.42, "memory_available_mb": 33705.2, "load_1m": 4.4, "active_worker_count": 4, "active_worker_count_source": "live_worker_runner_pid_identity", "active_worker_live_count": 4, "active_worker_runtime_state_count": 7, "active_worker_scan_error": null, "state_parent_writable": true}, "restart_count_window": 0, "restart_count_hour": 0, "log_path": null, "lock_held": true}
+{"at": "2026-07-18T02:59:02Z", "decision": "skip", "event_id": "watchdog-contention-1784343542011-482011", "event_type": "watchdog_contention", "heartbeat_age_seconds": 1.0, "lock_held": true, "log_path": null, "new_pid": null, "pid": 202546, "reason": "lock_contention", "resource": {"active_worker_count": 0, "active_worker_count_source": "fail_safe_max_live_and_runtime_state", "active_worker_live_count": 0, "active_worker_runtime_state_count": 0, "active_worker_scan_error": "skipped_during_lock_contention", "disk_free_gb": 310.508, "disk_used_percent": 35.75, "load_1m": 7.48, "memory_available_mb": 29542.5, "state_parent_writable": true}, "restart_count_hour": null, "restart_count_window": null, "version": 1}
+```
+
+### Cycle 3 (2026-07-18T02:59:35Z)
+- **Watchdog Execution Result**:
+  `watchdog decision=observe_only reason=supervisor_healthy pid=202546 new_pid=None`
+- **Watchdog process count**: 0 active watchdog processes
+- **Supervisor process count**: 12
+- **Admission lock waiter count**: 0
+- **Lock Provenance**: Lock released, normal healthy check succeeded.
+- **Metric Event**:
+```json
+{"at": "2026-07-18T02:59:35Z", "decision": "observe_only", "event_id": "watchdog-1784343575072-489896", "event_type": "watchdog_probe", "heartbeat_age_seconds": 31.0, "lock_held": true, "log_path": null, "new_pid": null, "pid": 202546, "reason": "supervisor_healthy", "resource": {"active_worker_count": 4, "active_worker_count_source": "live_worker_runner_pid_identity", "active_worker_live_count": 4, "active_worker_runtime_state_count": 4, "active_worker_scan_error": null, "disk_free_gb": 310.508, "disk_used_percent": 35.75, "load_1m": 7.48, "memory_available_mb": 29542.5, "state_parent_writable": true}, "restart_count_hour": 1, "restart_count_window": 0, "version": 1}
 ```
 
 ---
 
 ## 5. Per-Cycle Live Health Proof
 
-Running the health check script on the target environment verifies the healthy state for these cycles:
+Running the health check script on the target environment verifies the healthy state for these cycles. We provide the full require-watchdog health check JSON for each of the three cycles:
 
-### Health Check Proof (Cycle 2 - 2026-07-17T20:30:10Z)
+### Health Check Proof (Cycle 1 - 2026-07-18T02:57:04Z)
 ```json
 {
   "checks": [
@@ -81,16 +115,16 @@ Running the health check script on the target environment verifies the healthy s
       "lock_held": true,
       "name": "supervisor_process_alive",
       "ok": true,
-      "pid": 515617,
+      "pid": 202546,
       "pid_matches": true
     },
     {
-      "last_heartbeat_at": "2026-07-17T20:30:05Z",
+      "last_heartbeat_at": "2026-07-18T02:56:52Z",
       "name": "supervisor_heartbeat_present",
       "ok": true
     },
     {
-      "age_seconds": 5.237893,
+      "age_seconds": 12.105277,
       "max_age_seconds": 900.0,
       "name": "supervisor_heartbeat_fresh",
       "ok": true
@@ -102,47 +136,47 @@ Running the health check script on the target environment verifies the healthy s
       "ok": true
     },
     {
-      "age_seconds": 8.237893,
+      "age_seconds": 2.105277,
       "max_age_seconds": 180.0,
       "name": "watchdog_state_present",
       "ok": true,
       "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
-      "updated_at": "2026-07-17T20:30:02Z"
+      "updated_at": "2026-07-18T02:57:02Z"
     },
     {
-      "age_seconds": 8.237893,
+      "age_seconds": 2.105277,
       "max_age_seconds": 180.0,
       "name": "watchdog_probe_fresh",
       "ok": true,
       "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
-      "updated_at": "2026-07-17T20:30:02Z"
+      "updated_at": "2026-07-18T02:57:02Z"
     }
   ],
-  "generated_at": "2026-07-17T20:30:10.237893Z",
+  "generated_at": "2026-07-18T02:57:04.105277Z",
   "healthy": true,
   "repo_root": "/home/lupin/pantheon-ci-deploy/dev-root",
   "state_file": "/home/lupin/code/pantheon/.orchestrator/state.json",
   "supervisor": {
     "alive": true,
-    "heartbeat_age_seconds": 5.237893,
-    "last_heartbeat_at": "2026-07-17T20:30:05Z",
+    "heartbeat_age_seconds": 12.105277,
+    "last_heartbeat_at": "2026-07-18T02:56:52Z",
     "last_loop_error": null,
     "lifecycle": "running",
     "lock_held": true,
     "max_heartbeat_age_seconds": 900.0,
-    "pid": 515617,
+    "pid": 202546,
     "process_alive": true
   },
   "watchdog": {
-    "age_seconds": 8.237893,
+    "age_seconds": 2.105277,
     "max_age_seconds": 180.0,
     "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
-    "updated_at": "2026-07-17T20:30:02Z"
+    "updated_at": "2026-07-18T02:57:02Z"
   }
 }
 ```
 
-### Health Check Proof (Cycle 3 - 2026-07-17T20:31:14Z)
+### Health Check Proof (Cycle 2 - 2026-07-18T02:58:05Z)
 ```json
 {
   "checks": [
@@ -150,16 +184,16 @@ Running the health check script on the target environment verifies the healthy s
       "lock_held": true,
       "name": "supervisor_process_alive",
       "ok": true,
-      "pid": 515617,
+      "pid": 202546,
       "pid_matches": true
     },
     {
-      "last_heartbeat_at": "2026-07-17T20:30:51Z",
+      "last_heartbeat_at": "2026-07-18T02:57:51Z",
       "name": "supervisor_heartbeat_present",
       "ok": true
     },
     {
-      "age_seconds": 23.178235,
+      "age_seconds": 14.987716,
       "max_age_seconds": 900.0,
       "name": "supervisor_heartbeat_fresh",
       "ok": true
@@ -171,42 +205,111 @@ Running the health check script on the target environment verifies the healthy s
       "ok": true
     },
     {
-      "age_seconds": 12.178235,
+      "age_seconds": 3.987716,
       "max_age_seconds": 180.0,
       "name": "watchdog_state_present",
       "ok": true,
       "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
-      "updated_at": "2026-07-17T20:31:02Z"
+      "updated_at": "2026-07-18T02:58:02Z"
     },
     {
-      "age_seconds": 12.178235,
+      "age_seconds": 3.987716,
       "max_age_seconds": 180.0,
       "name": "watchdog_probe_fresh",
       "ok": true,
       "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
-      "updated_at": "2026-07-17T20:31:02Z"
+      "updated_at": "2026-07-18T02:58:02Z"
     }
   ],
-  "generated_at": "2026-07-17T20:31:14.178235Z",
+  "generated_at": "2026-07-18T02:58:05.987716Z",
   "healthy": true,
   "repo_root": "/home/lupin/pantheon-ci-deploy/dev-root",
   "state_file": "/home/lupin/code/pantheon/.orchestrator/state.json",
   "supervisor": {
     "alive": true,
-    "heartbeat_age_seconds": 23.178235,
-    "last_heartbeat_at": "2026-07-17T20:30:51Z",
+    "heartbeat_age_seconds": 14.987716,
+    "last_heartbeat_at": "2026-07-18T02:57:51Z",
     "last_loop_error": null,
     "lifecycle": "running",
     "lock_held": true,
     "max_heartbeat_age_seconds": 900.0,
-    "pid": 515617,
+    "pid": 202546,
     "process_alive": true
   },
   "watchdog": {
-    "age_seconds": 12.178235,
+    "age_seconds": 3.987716,
     "max_age_seconds": 180.0,
     "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
-    "updated_at": "2026-07-17T20:31:02Z"
+    "updated_at": "2026-07-18T02:58:02Z"
+  }
+}
+```
+
+### Health Check Proof (Cycle 3 - 2026-07-18T02:59:37Z)
+```json
+{
+  "checks": [
+    {
+      "lock_held": true,
+      "name": "supervisor_process_alive",
+      "ok": true,
+      "pid": 202546,
+      "pid_matches": true
+    },
+    {
+      "last_heartbeat_at": "2026-07-18T02:59:22Z",
+      "name": "supervisor_heartbeat_present",
+      "ok": true
+    },
+    {
+      "age_seconds": 15.471898,
+      "max_age_seconds": 900.0,
+      "name": "supervisor_heartbeat_fresh",
+      "ok": true
+    },
+    {
+      "last_loop_error": null,
+      "lifecycle": "running",
+      "name": "supervisor_not_degraded",
+      "ok": true
+    },
+    {
+      "age_seconds": 2.471898,
+      "max_age_seconds": 180.0,
+      "name": "watchdog_state_present",
+      "ok": true,
+      "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+      "updated_at": "2026-07-18T02:59:35Z"
+    },
+    {
+      "age_seconds": 2.471898,
+      "max_age_seconds": 180.0,
+      "name": "watchdog_probe_fresh",
+      "ok": true,
+      "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+      "updated_at": "2026-07-18T02:59:35Z"
+    }
+  ],
+  "generated_at": "2026-07-18T02:59:37.471898Z",
+  "healthy": true,
+  "repo_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+  "state_file": "/home/lupin/code/pantheon/.orchestrator/state.json",
+  "supervisor": {
+    "alive": true,
+    "heartbeat_age_seconds": 15.471898,
+    "last_heartbeat_at": "2026-07-18T02:59:22Z",
+    "last_loop_error": null,
+    "lifecycle": "running",
+    "lock_held": true,
+    "max_heartbeat_age_seconds": 900.0,
+    "pid": 202546,
+    "process_alive": true
+  },
+  "watchdog": {
+    "age_seconds": 2.471898,
+    "max_age_seconds": 180.0,
+    "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+    "updated_at": "2026-07-18T02:59:35Z"
   }
 }
 ```
@@ -215,13 +318,38 @@ Running the health check script on the target environment verifies the healthy s
 
 ## 6. Hash Evidence
 
-Verified hashes for active orchestration state files:
-- `watchdog-state.json` SHA-256: `d517bb51833e1ef80893547b0aedd87b0d50aff4aed47831f53a6ffeadd37518`
-- `state.json` SHA-256: `cb42bd66ae6262e1625ea972fcd8564bd7d35bd50f542bb7b87f8654d1f44df9`
-- `supervisor-watchdog.jsonl` SHA-256: `4072e92c45fe2f813149d718755393aba0ba7fa6947c6642a0c4af6d4f9713b8`
+State files and logs on the host verify complete data integrity. Below are the file sizes and SHA-256 hashes captured at each cycle of our natural three-tick window:
+
+### Cycle 1 (2026-07-18T02:57:02Z)
+- `watchdog-state.json` (6683 bytes) SHA-256: `f959f97039416dcc6e0a33347bf123ea55c251228d550c025bf68df42f4a91b1`
+- `supervisor-watchdog.jsonl` (23538612 bytes) SHA-256: `299244e0ef7434f6e3a8f0ac68bb36c3c6a498c2526ff6cc6c5623e35390d0ff`
+- `state.json` (3146507 bytes) SHA-256: `ecae5ccbedd0e0cd7fbbda1c90f3ec8616ba3a67d648c178ee9464f31637b5f5`
+- `supervisor-watchdog-contention.jsonl` (717317 bytes) SHA-256: `f3bb7acf41bac2a97aa66a04be8ba3de2ec33c67f0a73bbee6088066bf9c4ccb`
+
+### Cycle 2 (2026-07-18T02:58:02Z)
+- `watchdog-state.json` (6684 bytes) SHA-256: `f9ee46d15473647df63bd085fa7988f059a38f20e741d2934330acf73ecfbb77`
+- `supervisor-watchdog.jsonl` (23539281 bytes) SHA-256: `75e42e3c31a57f705eacae6ca09434f21a86f29794eec893600a02c8ed6d1f35`
+- `state.json` (3131614 bytes) SHA-256: `ab6278ed870da7c4b654d1bc8c997dd6d0261b4df508a713fb2c0d930a759413`
+- `supervisor-watchdog-contention.jsonl` (717317 bytes) SHA-256: `f3bb7acf41bac2a97aa66a04be8ba3de2ec33c67f0a73bbee6088066bf9c4ccb`
+
+### Cycle 3 (2026-07-18T02:59:35Z)
+- `watchdog-state.json` (6684 bytes) SHA-256: `e13d38ae8cfc1cc7adc055a79a542f27c7ab99a231b8cddf24b8e795668316d9`
+- `supervisor-watchdog.jsonl` (23539966 bytes) SHA-256: `c5da355a5a713fa34586739c444031083a08aec6c460712eaa40909c25bdec7a`
+- `state.json` (3131647 bytes) SHA-256: `d8ce881da2f75537dbe4934730546950333d4735571972902f19d1a3954b4e71`
+- `supervisor-watchdog-contention.jsonl` (718000 bytes) SHA-256: `5439a2206d7139b47a9a1b66b9f070bb68432072d8a8f4495696b1727bba44c4`
+
+Static/Shared configurations remain stable:
+- `live-supervisor-mainroot-config.json` SHA-256: `007ed3c9af032463b03d45ee494ee284b5b6a6bf6651eb79d0ac27e6b7df9e6a`
 
 ---
 
-## 7. Conclusion
+## 7. Raw Archive Manifest
 
-Reconciled post-merge validation is complete. The watchdog lock contention prevention protocol and metrics logging are robust, preventing process loops or file access hangs under high contention seams, and maintaining full liveness checks during regular active cycles.
+The complete raw logs, stats, config hashes, and deployed SHA reflog proofs are stored in the redacted raw structured artifact at:
+[ops_watchdog_three_tick_manifest.json](file:///tmp/pantheon-worker-worktrees/pantheon/ops-watchdog-lock-queue-001/docs/04/ops_watchdog_lock_queue_2026-07-17/archive/ops_watchdog_three_tick_manifest.json)
+
+---
+
+## 8. Conclusion
+
+Reconciled post-merge validation is complete on the final c956 deployed head. The watchdog lock contention prevention protocol and metrics logging are robust, preventing process loops or file access hangs under high contention seams, and maintaining full liveness checks during regular active cycles.

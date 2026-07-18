@@ -88,11 +88,28 @@ def _worker_incident_put_after_barrier(
     store.put_evaluation({"evaluation_id": evaluation_id, "status": "ok"})
 
 
+def _assert_alert_source_fails_closed(module, store, original: bytes) -> None:
+    store.alerts_path.write_bytes(original)
+    original_sha = hashlib.sha256(original).hexdigest()
+
+    with pytest.raises(module.ReconciliationStoreError):
+        store.list_alert_handoffs()
+
+    with pytest.raises(module.ReconciliationStoreError):
+        store.put_alert_handoff({"alert_id": "alert-new", "status": "sent"})
+
+    surviving_bytes = store.alerts_path.read_bytes()
+    assert surviving_bytes == original
+    assert hashlib.sha256(surviving_bytes).hexdigest() == original_sha
+    assert list(store.data_dir.glob(f".{store.alerts_path.name}.*.tmp")) == []
+
+
 def test_json_store_recovers_concatenated_maps_and_rewrites_valid_json(tmp_path: Path) -> None:
     module = _load_store_module()
     store = module.ReconciliationDriftStore(tmp_path)
     store.evaluations_path.write_text(
         json.dumps({"eval-a": {"evaluation_id": "eval-a", "status": "ok"}})
+        + " \t\r\n"
         + json.dumps({"eval-b": {"evaluation_id": "eval-b", "status": "warning"}}),
         encoding="utf-8",
     )
@@ -196,6 +213,88 @@ def test_json_store_fails_closed_on_invalid_map_values(tmp_path: Path) -> None:
     assert hashlib.sha256(surviving_bytes).hexdigest() == original_sha
 
 
+@pytest.mark.parametrize(
+    "original",
+    [b"", b" \t\r\n"],
+    ids=["zero-byte", "json-whitespace-only"],
+)
+def test_json_store_fails_closed_on_existing_source_without_json_document(
+    tmp_path: Path, original: bytes
+) -> None:
+    module = _load_store_module()
+    store = module.ReconciliationDriftStore(tmp_path)
+
+    _assert_alert_source_fails_closed(module, store, original)
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    ["\f", "\u00a0"],
+    ids=["form-feed", "non-breaking-space"],
+)
+def test_json_store_fails_closed_on_non_json_whitespace_suffix(
+    tmp_path: Path, suffix: str
+) -> None:
+    module = _load_store_module()
+    store = module.ReconciliationDriftStore(tmp_path)
+    original = (
+        json.dumps({"alert-a": {"alert_id": "alert-a", "status": "sent"}}) + suffix
+    ).encode("utf-8")
+
+    _assert_alert_source_fails_closed(module, store, original)
+
+
+def test_json_store_fails_closed_when_later_concatenated_map_is_invalid(tmp_path: Path) -> None:
+    module = _load_store_module()
+    store = module.ReconciliationDriftStore(tmp_path)
+    original = (
+        json.dumps({"alert-a": {"alert_id": "alert-a", "status": "sent"}})
+        + json.dumps({"alert-b": "not-an-object"})
+    ).encode("utf-8")
+
+    _assert_alert_source_fails_closed(module, store, original)
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_json_store_fails_closed_on_non_finite_numeric_value(
+    tmp_path: Path, number: str
+) -> None:
+    module = _load_store_module()
+    store = module.ReconciliationDriftStore(tmp_path)
+    original = (
+        '{"alert-a":{"alert_id":"alert-a","score":' + number + "}}"
+    ).encode("utf-8")
+
+    _assert_alert_source_fails_closed(module, store, original)
+
+
+def test_json_store_fails_closed_on_duplicate_key_within_document(tmp_path: Path) -> None:
+    module = _load_store_module()
+    store = module.ReconciliationDriftStore(tmp_path)
+    original = (
+        b'{"alert-a":{"alert_id":"alert-a","status":"sent"},'
+        b'"alert-a":{"alert_id":"alert-a","status":"replaced"}}'
+    )
+
+    _assert_alert_source_fails_closed(module, store, original)
+
+
+def test_json_store_rejects_non_finite_put_without_changing_source(tmp_path: Path) -> None:
+    module = _load_store_module()
+    store = module.ReconciliationDriftStore(tmp_path)
+    store.put_alert_handoff({"alert_id": "alert-a", "status": "sent"})
+    original = store.alerts_path.read_bytes()
+    original_sha = hashlib.sha256(original).hexdigest()
+
+    with pytest.raises(ValueError):
+        store.put_alert_handoff({"alert_id": "alert-b", "score": float("nan")})
+
+    surviving_bytes = store.alerts_path.read_bytes()
+    assert surviving_bytes == original
+    assert hashlib.sha256(surviving_bytes).hexdigest() == original_sha
+    assert list(tmp_path.glob(f".{store.alerts_path.name}.*.tmp")) == []
+
+
 def test_json_store_simulated_replace_failure_keeps_original_and_cleans_tmp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -241,6 +340,8 @@ def test_json_store_simulated_fsync_failure_keeps_original_and_cleans_tmp(
         raise OSError("simulated fsync failure")
 
     monkeypatch.setattr(module.os, "fsync", _boom)
+    replace_calls = []
+    monkeypatch.setattr(module.os, "replace", lambda *args, **kwargs: replace_calls.append(args))
 
     with pytest.raises(OSError):
         store.put_alert_handoff({"alert_id": "alert-b", "status": "sent"})
@@ -251,6 +352,7 @@ def test_json_store_simulated_fsync_failure_keeps_original_and_cleans_tmp(
 
     leftover_tmp_files = list(tmp_path.glob(f".{store.alerts_path.name}.*.tmp"))
     assert leftover_tmp_files == []
+    assert replace_calls == []
 
 
 def test_incident_pr3753_concurrent_distinct_writers_lose_exactly_one_update(tmp_path: Path) -> None:

@@ -19,7 +19,7 @@ ROOT = THIS_DIR.parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from common import config_path, durable_write_bytes, load_config, repo_root_for_config, utc_now, write_activity_log, LockContentionError
+from common import config_path, durable_write_bytes, load_config, repo_root_for_config, utc_now, write_activity_log, LockContentionError, resolved_coordinator_status_root
 from runtime_state import runtime_state_lock, save_runtime_state
 
 
@@ -76,6 +76,7 @@ def watchdog_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("max_load_1m", max(4.0, float(os.cpu_count() or 1) * 4.0))
     settings.setdefault("max_active_workers", 12)
     settings.setdefault("supervisor_command", ["python3", "-u", ".orchestrator/supervisor.py", "--verbose"])
+    settings.setdefault("contention_deadline_seconds", 2.0)
     return settings
 
 
@@ -84,7 +85,8 @@ def supervisor_pid_path(config: dict[str, Any]) -> Path:
 
 
 def supervisor_lock_path(config: dict[str, Any]) -> Path:
-    return config_path(config, "state_file").parent / "supervisor.lock"
+    coord_root = resolved_coordinator_status_root(config)
+    return coord_root / ".orchestrator" / "supervisor.lock"
 
 
 def supervisor_lock_held(config: dict[str, Any]) -> bool:
@@ -395,7 +397,7 @@ def append_watchdog_contention_metric(config: dict[str, Any], payload: dict[str,
         try:
             fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except (BlockingIOError, OSError) as exc:
-            if isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK):
+            if getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK):
                 sys.stderr.write("watchdog contention metric write dropped due to lock contention\n")
                 sys.stderr.flush()
                 return
@@ -711,40 +713,122 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
         shared=False,
         nonblocking=True,
     )
+    acquired = False
     try:
-        with lock_manager:
-            return _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
+        lock_manager.__enter__()
+        acquired = True
     except LockContentionError:
         # We hit lock contention.
         # Construct a skip/contention result without writing to the locked state files.
-        now = datetime.now(timezone.utc).replace(microsecond=0)
-        pid = read_pid_file(supervisor_pid_path(config))
-        runtime_state, state_error = load_runtime_state_file(config)
-        heartbeat_age = heartbeat_age_seconds(runtime_state, now)
+        import threading
+
         settings = watchdog_settings(config)
-        resource = resource_snapshot(config, runtime_state, settings, skip_proc_scan=True)
-        lock_held = supervisor_lock_held(config)
+        deadline = float(settings.get("contention_deadline_seconds", 2.0))
 
-        result = {
-            "decision": "skip",
-            "reason": "lock_contention",
-            "pid": pid,
-            "new_pid": None,
-            "heartbeat_age_seconds": heartbeat_age,
-            "resource": resource,
-            "restart_count_window": 0,
-            "restart_count_hour": 0,
-            "log_path": None,
-            "lock_held": lock_held,
-        }
+        thread_result = {}
 
-        try:
-            append_watchdog_contention_metric(config, result, settings)
-        except Exception as metric_exc:
-            sys.stderr.write(f"watchdog contention metric write failed: {metric_exc}\n")
+        def contention_worker():
+            try:
+                now = datetime.now(timezone.utc).replace(microsecond=0)
+                pid = read_pid_file(supervisor_pid_path(config))
+                runtime_state, state_error = load_runtime_state_file(config)
+                heartbeat_age = heartbeat_age_seconds(runtime_state, now)
+                resource = resource_snapshot(config, runtime_state, settings, skip_proc_scan=True)
+                lock_held = supervisor_lock_held(config)
+
+                result = {
+                    "decision": "skip",
+                    "reason": "lock_contention",
+                    "pid": pid,
+                    "new_pid": None,
+                    "heartbeat_age_seconds": heartbeat_age,
+                    "resource": resource,
+                    "restart_count_window": None,
+                    "restart_count_hour": None,
+                    "log_path": None,
+                    "lock_held": lock_held,
+                }
+
+                try:
+                    append_watchdog_contention_metric(config, result, settings)
+                except Exception as metric_exc:
+                    sys.stderr.write(f"watchdog contention metric write failed: {metric_exc}\n")
+                    sys.stderr.flush()
+
+                thread_result["res"] = result
+            except Exception as e:
+                thread_result["error"] = e
+
+        t = threading.Thread(target=contention_worker)
+        t.daemon = True
+        t.start()
+        t.join(timeout=deadline)
+
+        if t.is_alive():
+            sys.stderr.write("watchdog contention path execution timed out (decoupled)\n")
             sys.stderr.flush()
+            return {
+                "decision": "skip",
+                "reason": "lock_contention_timeout",
+                "pid": None,
+                "new_pid": None,
+                "heartbeat_age_seconds": None,
+                "resource": {
+                    "disk_free_gb": 0.0,
+                    "disk_used_percent": 0.0,
+                    "memory_available_mb": None,
+                    "load_1m": 0.0,
+                    "active_worker_count": 0,
+                    "active_worker_count_source": "skipped_due_to_timeout",
+                    "active_worker_live_count": 0,
+                    "active_worker_runtime_state_count": 0,
+                    "active_worker_scan_error": "timeout",
+                    "state_parent_writable": False,
+                },
+                "restart_count_window": None,
+                "restart_count_hour": None,
+                "log_path": None,
+                "lock_held": None,
+            }
 
-        return result
+        if "res" in thread_result:
+            return thread_result["res"]
+        else:
+            err = thread_result.get("error", "unknown thread failure")
+            sys.stderr.write(f"watchdog contention path failed: {err}\n")
+            sys.stderr.flush()
+            return {
+                "decision": "skip",
+                "reason": "lock_contention_error",
+                "pid": None,
+                "new_pid": None,
+                "heartbeat_age_seconds": None,
+                "resource": {
+                    "disk_free_gb": 0.0,
+                    "disk_used_percent": 0.0,
+                    "memory_available_mb": None,
+                    "load_1m": 0.0,
+                    "active_worker_count": 0,
+                    "active_worker_count_source": "skipped_due_to_error",
+                    "active_worker_live_count": 0,
+                    "active_worker_runtime_state_count": 0,
+                    "active_worker_scan_error": str(err),
+                    "state_parent_writable": False,
+                },
+                "restart_count_window": None,
+                "restart_count_hour": None,
+                "log_path": None,
+                "lock_held": None,
+            }
+
+    try:
+        result = _run_watchdog_locked(config, restart=restart, dry_run=dry_run)
+    except BaseException:
+        lock_manager.__exit__(*sys.exc_info())
+        raise
+    else:
+        lock_manager.__exit__(None, None, None)
+    return result
 
 
 def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_run: bool = False) -> dict[str, Any]:

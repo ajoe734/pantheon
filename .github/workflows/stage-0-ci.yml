@@ -9,13 +9,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Run the normal stage-0 gate or strict BFF live evidence"
+        description: "Run stage-0, strict BFF live evidence, or a task-scoped hosted probe"
         required: true
         default: stage0
         type: choice
         options:
           - stage0
           - live-evidence
+          - loop-prod-per-001-hosted-probe
       environment:
         description: "GitHub environment for live-evidence secrets"
         required: true
@@ -28,6 +29,11 @@ on:
         description: "Target BFF base URL for live evidence"
         required: true
         default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+        type: string
+      expected_sha:
+        description: "Expected deployed BFF source commit SHA for task-scoped hosted probes"
+        required: false
+        default: ""
         type: string
       approval_race_id:
         description: "Expendable approval id for the two-operator race proof"
@@ -48,13 +54,13 @@ permissions:
 
 concurrency:
   group: >-
-    pantheon-stage0-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'live-evidence' && format('live-evidence-{0}', inputs.environment) || 'stage0' }}
+    pantheon-stage0-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'stage0' && format('{0}-{1}', inputs.mode, inputs.environment) || 'stage0' }}
   cancel-in-progress: true
 
 jobs:
   discover:
     name: Discover changed stage-0 targets
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'live-evidence' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0' }}
     runs-on: ubuntu-latest
     outputs:
       target_ids: ${{ steps.detect.outputs.target_ids }}
@@ -88,7 +94,7 @@ jobs:
 
   baseline:
     name: Run baseline stage-0 gate
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'live-evidence' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0' }}
     runs-on: ubuntu-latest
     needs:
       - discover
@@ -112,7 +118,7 @@ jobs:
     needs:
       - discover
       - baseline
-    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode != 'live-evidence') && needs.discover.outputs.verify_count != '0' }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0') && needs.discover.outputs.verify_count != '0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -137,7 +143,7 @@ jobs:
     needs:
       - discover
       - baseline
-    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode != 'live-evidence') && needs.discover.outputs.build_count != '0' }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0') && needs.discover.outputs.build_count != '0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -274,4 +280,50 @@ jobs:
             .lovable/audits/current-run/release-gate-summary.md
             .lovable/audits/current-run/BFF-LUV-AUTHED-LIVE-001-live-smoke.json
             .lovable/audits/current-run/BFF-CONSOL-011-sse-replay-smoke.json
+          if-no-files-found: error
+
+  loop-prod-per-001-hosted-probe:
+    name: LOOP-PROD-PER-001 hosted probe
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'loop-prod-per-001-hosted-probe' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 15
+    env:
+      BFF_BASE_URL: ${{ inputs.bff_base_url }}
+      EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
+      TENANT_ID: pantheon-dev
+      DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+      DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
+      DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
+    steps:
+      - name: Validate hosted probe environment
+        run: |
+          if [[ "${{ inputs.environment }}" != "dev" ]]; then
+            echo "LOOP-PROD-PER-001 hosted probe must run against the dev environment." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run hosted persona provisioning probe
+        run: |
+          python3 scripts/probe_loop_prod_per_001_hosted.py \
+            --base-url "${BFF_BASE_URL}" \
+            --expected-sha "${EXPECTED_SHA}" \
+            --tenant-id "${TENANT_ID}" \
+            --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --output ".artifacts/LOOP-PROD-PER-001/hosted-probe.json"
+
+      - name: Upload hosted probe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loop-prod-per-001-hosted-probe
+          path: .artifacts/LOOP-PROD-PER-001/hosted-probe.json
           if-no-files-found: error

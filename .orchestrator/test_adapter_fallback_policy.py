@@ -261,6 +261,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                     return_value=(fake_process, Path("/tmp/claude2.log")),
                 ) as spawn,
             ):
+                os.environ.pop("GH_CONFIG_DIR", None)
                 result = adapter.deliver(request)
 
         self.assertTrue(result.ok)
@@ -464,6 +465,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                 mock.patch("adapters.antigravity._auth_ready", return_value=True),
                 mock.patch("adapters.antigravity.spawn_background_process", return_value=(fake_process, root / "agy2.log")) as spawn,
             ):
+                os.environ.pop("GH_CONFIG_DIR", None)
                 result = adapter.deliver(request)
 
         self.assertTrue(result.ok)

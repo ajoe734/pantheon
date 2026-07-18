@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -46,3 +48,19 @@ def test_ingestion_cursor_is_unique_and_commit_timestamp_is_queryable() -> None:
         migration,
         re.IGNORECASE,
     )
+
+
+def test_compose_gives_telemetry_cold_start_budget_for_large_dlq_spill() -> None:
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    telemetry = compose["services"]["telemetry"]
+
+    assert (
+        telemetry["environment"]["TELEMETRY_STARTUP_TIMEOUT_SECONDS"]
+        == "${TELEMETRY_STARTUP_TIMEOUT_SECONDS:-240}"
+    )
+    healthcheck = telemetry["healthcheck"]
+    assert "timeout=20" in healthcheck["test"][-1]
+    assert healthcheck["interval"] == "15s"
+    assert healthcheck["timeout"] == "25s"
+    assert healthcheck["retries"] == 20
+    assert healthcheck["start_period"] == "300s"

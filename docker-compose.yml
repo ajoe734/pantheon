@@ -807,6 +807,7 @@ services:
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+      TELEMETRY_STARTUP_TIMEOUT_SECONDS: ${TELEMETRY_STARTUP_TIMEOUT_SECONDS:-240}
     volumes:
       - telemetry-data:/data/telemetry
     depends_on:
@@ -819,11 +820,11 @@ services:
     ports:
       - "18083:8083"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8083/readyz', timeout=5).read()"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 5s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8083/readyz', timeout=20).read()"]
+      interval: 15s
+      timeout: 25s
+      retries: 20
+      start_period: 300s
 
   incidents:
     build:
@@ -1734,12 +1735,12 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8102'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8102'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=20).read()\"",
         ]
-      interval: 10s
-      timeout: 5s
+      interval: 15s
+      timeout: 25s
       retries: 10
-      start_period: 5s
+      start_period: 30s
 
   reconciliation-drift-consumer:
     build:

@@ -1,0 +1,294 @@
+{
+  "config_path": "/tmp/pantheon-watchdog-postmerge-8hloer91/.orchestrator/config.json",
+  "fixture_root": "/tmp/pantheon-watchdog-postmerge-8hloer91",
+  "generated_at": "2026-07-18T02:56:04Z",
+  "implementation_merge": "c9560db5cba9583bd2dff70894e583cdca5d2a20",
+  "post_release_probe": {
+    "activity_log_hash": {
+      "exists": true,
+      "lines": 1,
+      "sha256": "4304117b649c744a4691a82e3eb8a3b13c084bd553e15bcccff476f58f85e43a",
+      "size": 701
+    },
+    "elapsed_seconds": 0.285665,
+    "health": {
+      "returncode": 0,
+      "stderr": "",
+      "stdout": {
+        "checks": [
+          {
+            "lock_held": true,
+            "name": "supervisor_process_alive",
+            "ok": true,
+            "pid": 461401,
+            "pid_matches": false
+          },
+          {
+            "last_heartbeat_at": "2026-07-18T02:56:02Z",
+            "name": "supervisor_heartbeat_present",
+            "ok": true
+          },
+          {
+            "age_seconds": 2.250446,
+            "max_age_seconds": 900.0,
+            "name": "supervisor_heartbeat_fresh",
+            "ok": true
+          },
+          {
+            "last_loop_error": null,
+            "lifecycle": "running",
+            "name": "supervisor_not_degraded",
+            "ok": true
+          },
+          {
+            "age_seconds": 0.250446,
+            "max_age_seconds": 180.0,
+            "name": "watchdog_state_present",
+            "ok": true,
+            "state_file": "/tmp/pantheon-watchdog-postmerge-8hloer91/.orchestrator/watchdog-state.json",
+            "updated_at": "2026-07-18T02:56:04Z"
+          },
+          {
+            "age_seconds": 0.250446,
+            "max_age_seconds": 180.0,
+            "name": "watchdog_probe_fresh",
+            "ok": true,
+            "state_file": "/tmp/pantheon-watchdog-postmerge-8hloer91/.orchestrator/watchdog-state.json",
+            "updated_at": "2026-07-18T02:56:04Z"
+          }
+        ],
+        "generated_at": "2026-07-18T02:56:04.250446Z",
+        "healthy": true,
+        "repo_root": "/tmp/pantheon-watchdog-postmerge-8hloer91",
+        "state_file": "/tmp/pantheon-watchdog-postmerge-8hloer91/.orchestrator/state.json",
+        "supervisor": {
+          "alive": true,
+          "heartbeat_age_seconds": 2.250446,
+          "last_heartbeat_at": "2026-07-18T02:56:02Z",
+          "last_loop_error": null,
+          "lifecycle": "running",
+          "lock_held": true,
+          "max_heartbeat_age_seconds": 900.0,
+          "pid": 461401,
+          "process_alive": false
+        },
+        "watchdog": {
+          "age_seconds": 0.250446,
+          "max_age_seconds": 180.0,
+          "state_file": "/tmp/pantheon-watchdog-postmerge-8hloer91/.orchestrator/watchdog-state.json",
+          "updated_at": "2026-07-18T02:56:04Z"
+        }
+      }
+    },
+    "metrics_hash": {
+      "exists": true,
+      "lines": 1,
+      "sha256": "6777d167046748087b62f31b79f6f195aaa042e4dd189c924ca418edf72cf19c",
+      "size": 676
+    },
+    "probe": {
+      "returncode": 0,
+      "stderr": "",
+      "stdout": {
+        "decision": "observe_only",
+        "heartbeat_age_seconds": 2.0,
+        "lock_held": true,
+        "log_path": null,
+        "new_pid": null,
+        "pid": 461401,
+        "reason": "supervisor_healthy",
+        "resource": {
+          "active_worker_count": 5,
+          "active_worker_count_source": "live_worker_runner_pid_identity",
+          "active_worker_live_count": 5,
+          "active_worker_runtime_state_count": 0,
+          "active_worker_scan_error": null,
+          "disk_free_gb": 310.306,
+          "disk_used_percent": 35.79,
+          "load_1m": 6.63,
+          "memory_available_mb": 29352.8,
+          "state_parent_writable": true
+        },
+        "restart_count_hour": 0,
+        "restart_count_window": 0
+      }
+    },
+    "watchdog_state_hash": {
+      "exists": true,
+      "lines": 34,
+      "sha256": "43cdba27979bf873fcd235229c5b8900720bc0095a308200214ea8cc4cfb94f1",
+      "size": 870
+    }
+  },
+  "primary_batch": {
+    "after_hashes": {
+      "contention": {
+        "exists": true,
+        "lines": 11,
+        "sha256": "c514ff40aa9699ad02dd7a27e34e5d6a892fe970e81ce5839d0bb44bafa741a1",
+        "size": 7513
+      },
+      "metrics": {
+        "exists": false,
+        "lines": 0,
+        "sha256": null,
+        "size": 0
+      },
+      "watchdog_state": {
+        "exists": false,
+        "lines": 0,
+        "sha256": null,
+        "size": 0
+      }
+    },
+    "all_returncode_zero": true,
+    "before_hashes": {
+      "contention": {
+        "exists": false,
+        "lines": 0,
+        "sha256": null,
+        "size": 0
+      },
+      "metrics": {
+        "exists": false,
+        "lines": 0,
+        "sha256": null,
+        "size": 0
+      },
+      "watchdog_state": {
+        "exists": false,
+        "lines": 0,
+        "sha256": null,
+        "size": 0
+      }
+    },
+    "contention_metric_lines": 11,
+    "decisions": {
+      "skip": 12
+    },
+    "elapsed_seconds": 0.540338,
+    "heartbeat_age_max": 1.0,
+    "heartbeat_age_min": 0.0,
+    "label": "primary-runtime-admission-lock-held",
+    "lock_held_values": [
+      "True"
+    ],
+    "metric_events_written_plus_dropped": 12,
+    "probe_count": 12,
+    "reasons": {
+      "lock_contention": 12
+    },
+    "sample_stderr": "",
+    "sample_stdout": {
+      "decision": "skip",
+      "heartbeat_age_seconds": 1.0,
+      "lock_held": true,
+      "log_path": null,
+      "new_pid": null,
+      "pid": 461401,
+      "reason": "lock_contention",
+      "resource": {
+        "active_worker_count": 0,
+        "active_worker_count_source": "fail_safe_max_live_and_runtime_state",
+        "active_worker_live_count": 0,
+        "active_worker_runtime_state_count": 0,
+        "active_worker_scan_error": "skipped_during_lock_contention",
+        "disk_free_gb": 310.306,
+        "disk_used_percent": 35.79,
+        "load_1m": 5.46,
+        "memory_available_mb": 29255.4,
+        "state_parent_writable": true
+      },
+      "restart_count_hour": null,
+      "restart_count_window": null
+    },
+    "stderr_drop_count": 1,
+    "terminal_processes": 12
+  },
+  "repo_head": "c9560db5cba9583bd2dff70894e583cdca5d2a20",
+  "secondary_metric_lock_batch": {
+    "after_hashes": {
+      "contention": {
+        "exists": false,
+        "lines": 0,
+        "sha256": null,
+        "size": 0
+      },
+      "metrics": {
+        "exists": false,
+        "lines": 0,
+        "sha256": null,
+        "size": 0
+      },
+      "watchdog_state": {
+        "exists": false,
+        "lines": 0,
+        "sha256": null,
+        "size": 0
+      }
+    },
+    "all_returncode_zero": true,
+    "before_hashes": {
+      "contention": {
+        "exists": false,
+        "lines": 0,
+        "sha256": null,
+        "size": 0
+      },
+      "metrics": {
+        "exists": false,
+        "lines": 0,
+        "sha256": null,
+        "size": 0
+      },
+      "watchdog_state": {
+        "exists": false,
+        "lines": 0,
+        "sha256": null,
+        "size": 0
+      }
+    },
+    "contention_metric_lines": 0,
+    "decisions": {
+      "skip": 12
+    },
+    "elapsed_seconds": 0.839392,
+    "heartbeat_age_max": 1.0,
+    "heartbeat_age_min": 1.0,
+    "label": "primary-and-contention-metric-lock-held",
+    "lock_held_values": [
+      "True"
+    ],
+    "metric_events_written_plus_dropped": 12,
+    "probe_count": 12,
+    "reasons": {
+      "lock_contention": 12
+    },
+    "sample_stderr": "watchdog contention metric write dropped due to lock contention\n",
+    "sample_stdout": {
+      "decision": "skip",
+      "heartbeat_age_seconds": 1.0,
+      "lock_held": true,
+      "log_path": null,
+      "new_pid": null,
+      "pid": 461401,
+      "reason": "lock_contention",
+      "resource": {
+        "active_worker_count": 0,
+        "active_worker_count_source": "fail_safe_max_live_and_runtime_state",
+        "active_worker_live_count": 0,
+        "active_worker_runtime_state_count": 0,
+        "active_worker_scan_error": "skipped_during_lock_contention",
+        "disk_free_gb": 310.306,
+        "disk_used_percent": 35.79,
+        "load_1m": 5.46,
+        "memory_available_mb": 29251.7,
+        "state_parent_writable": true
+      },
+      "restart_count_hour": null,
+      "restart_count_window": null
+    },
+    "stderr_drop_count": 12,
+    "terminal_processes": 12
+  }
+}

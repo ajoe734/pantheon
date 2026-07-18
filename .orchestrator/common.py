@@ -72,6 +72,28 @@ _LOCK_RANKS = {
 _STABLE_LOCK_LOCAL = local()
 
 
+def _assert_no_symlink_components(path: str | Path, *, source: str) -> Path:
+    """Return an absolute lexical path after rejecting every existing symlink.
+
+    Resolving before validation hides ancestor symlinks and can move the
+    activity root, its lock, or an archive/control directory outside the
+    caller-selected status root. Missing suffix components are allowed so the
+    same helper can guard paths that are about to be created.
+    """
+
+    absolute = Path(path).expanduser().absolute()
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current /= part
+        try:
+            mode = current.lstat().st_mode
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(mode):
+            raise RuntimeError(f"{source} path contains a symlink: {current}")
+    return absolute
+
+
 def _reset_stable_lock_state_after_fork() -> None:
     """Drop inherited lock handles without unlocking the parent's file description."""
 
@@ -229,20 +251,20 @@ def stable_sidecar_lock(
         operation |= fcntl.LOCK_NB
     _trace_stable_lock("request", plane, lock_path)
     try:
-        fcntl.flock(handle.fileno(), operation)
+        try:
+            fcntl.flock(handle.fileno(), operation)
+        except (BlockingIOError, OSError) as exc:
+            if nonblocking and getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK):
+                raise LockContentionError(
+                    errno.EAGAIN,
+                    f"lock contention on {lock_path}: {exc}",
+                    str(lock_path),
+                ) from exc
+            raise
         # A pathname swap between open(2) and flock(2) would otherwise leave
         # this process holding an orphaned inode while the next contender opens
         # the replacement.  Verify the pathname still names our locked FD.
         _assert_stable_lock_identity(lock_path, handle.fileno())
-    except (BlockingIOError, OSError) as exc:
-        handle.close()
-        if nonblocking and (isinstance(exc, BlockingIOError) or getattr(exc, "errno", None) in (errno.EAGAIN, errno.EWOULDBLOCK)):
-            raise LockContentionError(
-                errno.EAGAIN,
-                f"lock contention on {lock_path}: {exc}",
-                str(lock_path),
-            ) from exc
-        raise
     except BaseException:
         handle.close()
         raise
@@ -268,16 +290,15 @@ def stable_sidecar_lock(
 
 
 def _canonical_data_parent(data_file: str | Path, *, plane: str) -> Path:
-    data_path = Path(data_file).expanduser()
-    if data_path.is_symlink():
-        raise RuntimeError(
-            f"canonical {plane} data file cannot be a symlink: {data_path}"
-        )
+    data_path = _assert_no_symlink_components(
+        data_file,
+        source=f"canonical {plane} data",
+    )
     # Atomic replacement changes the data-file inode.  Deriving the sidecar
     # from the resolved data leaf would therefore be unsafe when that leaf is
     # a symlink: replacing it changes where the next caller resolves the lock.
     # Resolve only the stable parent directory.
-    return data_path.parent.resolve()
+    return data_path.parent
 
 
 def canonical_task_state_lock_path(status_file: str | Path) -> Path:
@@ -484,6 +505,33 @@ def config_path(config: dict[str, Any], key: str, default: str | None = None) ->
 
 def repo_root_for_config(config: dict[str, Any]) -> Path:
     return config_path(config, "status_file").parents[0]
+
+
+def config_status_root(config: dict[str, Any]) -> Path:
+    paths = config.get("paths") if isinstance(config.get("paths"), dict) else {}
+    if "status_file" in paths:
+        try:
+            return config_path(config, "status_file").parent.resolve()
+        except KeyError:
+            pass
+
+    if "state_file" in paths:
+        try:
+            state_path = config_path(config, "state_file").resolve()
+            if state_path.parent.name == ".orchestrator":
+                return state_path.parent.parent.resolve()
+            return state_path.parent.resolve()
+        except KeyError:
+            pass
+
+    return ROOT.resolve()
+
+
+def resolved_coordinator_status_root(config: dict[str, Any]) -> Path:
+    env_val = os.environ.get("PANTHEON_STATUS_ROOT")
+    if env_val and env_val.strip():
+        return Path(os.path.expanduser(env_val.strip())).resolve()
+    return config_status_root(config)
 
 
 def _expand_workspace_path(value: Any, *, base: Path) -> Path:
@@ -955,6 +1003,9 @@ ACTIVITY_ROTATION_LINEAGE_RECORD_TYPE = "pantheon.activity.rotation_lineage.v1"
 ACTIVITY_ROTATION_HEAD_RECORD_TYPE = "pantheon.activity.lineage_head.v1"
 ACTIVITY_ROTATION_RESOLUTION_RECORD_TYPE = "pantheon.activity.rotation_resolution.v1"
 ACTIVITY_ROTATION_RESOLUTION_TYPE_SUPERSEDED = "superseded-by-legacy-rotation"
+ACTIVITY_ROTATION_RESOLUTION_TYPE_LEGACY_SUPERSEDED = (
+    "legacy-rotation-superseded-by-content-rotation"
+)
 ACTIVITY_ROTATION_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 ACTIVITY_ROTATION_WRITER_GUARD_ENV = "PANTHEON_ACTIVITY_ROTATION_PAUSE"
 ACTIVITY_LOG_STRANDED_V1_INTENT_ERROR = (
@@ -1085,6 +1136,8 @@ def read_regular_file_snapshot(
     source: str,
 ) -> tuple[bytes, os.stat_result]:
     """Read one stable regular-file leaf and return bytes plus its FD stat."""
+
+    path = _assert_no_symlink_components(path, source=source)
 
     flags = (
         os.O_RDONLY
@@ -1253,6 +1306,80 @@ def _canonical_json_line(payload: Any) -> bytes:
         )
         + "\n"
     ).encode("utf-8")
+
+
+class ActivityAuditInvariantError(RuntimeError):
+    """Fail-closed activity reader error with machine-readable evidence."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        invariant: str,
+        evidence: Mapping[str, Any],
+    ) -> None:
+        evidence_payload = {
+            "invariant": invariant,
+            "evidence": dict(evidence),
+        }
+        evidence_sha256 = _canonical_json_sha256(evidence_payload)
+        self.invariant = invariant
+        self.evidence_sha256 = evidence_sha256
+        self.diagnostic = {
+            "record_type": "pantheon.activity.fail_closed.v1",
+            "schema_version": 1,
+            "invariant": invariant,
+            "message": message,
+            "evidence_sha256": evidence_sha256,
+            "evidence": dict(evidence),
+        }
+        encoded = json.dumps(
+            self.diagnostic,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        super().__init__(f"{message}; diagnostic={encoded}")
+
+
+def activity_audit_invariant_error(
+    error: RuntimeError,
+    *,
+    log_path: Path,
+    operation: str,
+) -> ActivityAuditInvariantError:
+    """Normalize activity integrity failures into one structured contract."""
+
+    if isinstance(error, ActivityAuditInvariantError):
+        return error
+    detail = str(error)
+    normalized = detail.lower()
+    if "symlink" in normalized or "escapes status root" in normalized:
+        invariant = "activity_source_path"
+    elif "missing" in normalized:
+        invariant = "activity_source_missing"
+    elif "fork" in normalized or "sequence" in normalized:
+        invariant = "activity_lineage_order"
+    elif any(
+        word in normalized
+        for word in ("digest", "hash", "content", "identity", "mismatch")
+    ):
+        invariant = "activity_content_identity"
+    elif any(word in normalized for word in ("changed", "replaced", "mutated", "truncated")):
+        invariant = "activity_source_stability"
+    elif "recovery" in normalized or "intent" in normalized:
+        invariant = "activity_rotation_recovery"
+    else:
+        invariant = "activity_audit_integrity"
+    return ActivityAuditInvariantError(
+        detail,
+        invariant=invariant,
+        evidence={
+            "log_path": str(log_path),
+            "operation": operation,
+            "error_type": type(error).__name__,
+        },
+    )
 
 
 class DuplicateActivityJSONKeyError(ValueError):
@@ -1659,6 +1786,10 @@ class _HashingActivityArchiveReader:
 def _stream_activity_archive_metrics(path: Path) -> _ActivityArchiveMetrics:
     """Hash and count a gzip archive without retaining either full byte stream."""
 
+    path = _assert_no_symlink_components(
+        path,
+        source="activity rotation archive",
+    )
     try:
         path_stat_before = path.lstat()
     except OSError as exc:
@@ -1741,18 +1872,108 @@ def _stream_activity_archive_metrics(path: Path) -> _ActivityArchiveMetrics:
         os.close(descriptor)
 
 
+def _stream_activity_archive_tail(path: Path, line_count: int) -> bytes:
+    """Read a bounded decompressed tail while pinning one stable archive FD."""
+
+    path = _assert_no_symlink_components(
+        path,
+        source="activity boundary predecessor",
+    )
+    descriptor = os.open(
+        path,
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        path_stat_before = path.lstat()
+        if (
+            not stat.S_ISREG(descriptor_stat.st_mode)
+            or stat.S_ISLNK(path_stat_before.st_mode)
+            or path_stat_before.st_dev != descriptor_stat.st_dev
+            or path_stat_before.st_ino != descriptor_stat.st_ino
+        ):
+            raise RuntimeError(
+                f"activity boundary predecessor changed: {path}"
+            )
+        tail: deque[bytes] = deque(maxlen=line_count)
+        try:
+            with os.fdopen(descriptor, "rb", closefd=False) as file_obj:
+                with gzip.GzipFile(fileobj=file_obj, mode="rb") as handle:
+                    while True:
+                        line = handle.readline()
+                        if not line:
+                            break
+                        tail.append(line)
+        except (EOFError, gzip.BadGzipFile, OSError) as exc:
+            raise RuntimeError(
+                f"activity boundary predecessor is unreadable: {path}"
+            ) from exc
+        path_stat_after = path.lstat()
+        if (
+            stat.S_ISLNK(path_stat_after.st_mode)
+            or path_stat_after.st_dev != descriptor_stat.st_dev
+            or path_stat_after.st_ino != descriptor_stat.st_ino
+            or path_stat_after.st_size != descriptor_stat.st_size
+            or path_stat_after.st_mtime_ns != descriptor_stat.st_mtime_ns
+        ):
+            raise RuntimeError(
+                f"activity boundary predecessor changed during validation: {path}"
+            )
+        return b"".join(tail)
+    finally:
+        os.close(descriptor)
+
+
+def _normalize_activity_boundary_predecessor_path(
+    log_path: Path,
+    value: Any,
+) -> Path:
+    relative = Path(str(value or ""))
+    if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+        raise RuntimeError("activity boundary predecessor path is invalid")
+    predecessor = _assert_no_symlink_components(
+        log_path.parent / relative,
+        source="activity boundary predecessor",
+    )
+    try:
+        predecessor.relative_to(log_path.parent.absolute())
+    except ValueError as exc:
+        raise RuntimeError(
+            "activity boundary predecessor escapes status root"
+        ) from exc
+    if classify_source(predecessor) not in ("legacy_ts_std", "legacy_ts_old"):
+        raise RuntimeError("activity boundary predecessor is not a legacy archive")
+    return predecessor
+
+
 def _normalize_activity_lineage_archive_path(log_path: Path, value: Any) -> Path:
     relative = Path(str(value or ""))
     if not relative.parts or relative.is_absolute() or ".." in relative.parts:
         raise RuntimeError("activity lineage archive path is invalid")
-    archive_path = (log_path.parent / relative).resolve()
+    archive_path = _assert_no_symlink_components(
+        log_path.parent / relative,
+        source="activity lineage archive",
+    )
     try:
-        archive_path.relative_to(log_path.parent.resolve())
+        archive_path.relative_to(log_path.parent.absolute())
     except ValueError as exc:
         raise RuntimeError("activity lineage archive escapes status root") from exc
     if classify_source(archive_path) != "content_addressed":
         raise RuntimeError("activity lineage archive path is not content-addressed")
     return archive_path
+
+
+def _assert_content_addressed_archive_identity(
+    archive_path: Path,
+    payload_sha256: Any,
+) -> None:
+    match = re.fullmatch(r".+\.jsonl-([a-f0-9]{64})\.gz", archive_path.name)
+    if match is None or match.group(1) != payload_sha256:
+        raise RuntimeError(
+            "activity content-addressed archive basename digest mismatch"
+        )
 
 
 def _validate_activity_rotation_lineage_row(
@@ -1853,9 +2074,75 @@ def _validate_activity_rotation_lineage_row(
             or boundary.get("active_source_sha256") != row.get("source_sha256")
         ):
             raise RuntimeError("activity boundary normalization is invalid")
+        for key in (
+            "predecessor_sha256",
+            "excluded_prefix_sha256",
+            "active_source_sha256",
+        ):
+            if not isinstance(boundary.get(key), str) or len(boundary[key]) != 64:
+                raise RuntimeError("activity boundary normalization digest is invalid")
+        for key in (
+            "predecessor_byte_count",
+            "predecessor_line_count",
+            "excluded_prefix_byte_count",
+            "excluded_prefix_line_count",
+        ):
+            if not isinstance(boundary.get(key), int) or boundary[key] < 0:
+                raise RuntimeError("activity boundary normalization count is invalid")
+        predecessor_path = _normalize_activity_boundary_predecessor_path(
+            log_path,
+            boundary.get("predecessor_relative_path"),
+        )
+        if validate_archive:
+            predecessor_metrics = _stream_activity_archive_metrics(predecessor_path)
+            if (
+                predecessor_metrics.payload_sha256
+                != boundary.get("predecessor_sha256")
+                or predecessor_metrics.payload_byte_count
+                != boundary.get("predecessor_byte_count")
+                or predecessor_metrics.payload_line_count
+                != boundary.get("predecessor_line_count")
+            ):
+                raise RuntimeError(
+                    "activity boundary predecessor identity mismatch"
+                )
+            excluded_prefix = _stream_activity_archive_tail(predecessor_path, 1000)
+            if (
+                _sha256_bytes(excluded_prefix)
+                != boundary.get("excluded_prefix_sha256")
+                or len(excluded_prefix)
+                != boundary.get("excluded_prefix_byte_count")
+                or _jsonl_line_count(excluded_prefix)
+                != boundary.get("excluded_prefix_line_count")
+            ):
+                raise RuntimeError(
+                    "activity boundary excluded prefix mismatch"
+                )
+        # A first-boundary source has no lineage-head control row yet, so its
+        # raw source count must be conserved exactly across the archived
+        # payload, retained tail, and byte-proven excluded legacy prefix.
+        expected_source_bytes = (
+            row["archive_byte_count"]
+            + row["tail_byte_count"]
+            + boundary["excluded_prefix_byte_count"]
+        )
+        expected_source_lines = (
+            row["archive_line_count"]
+            + row["tail_line_count"]
+            + boundary["excluded_prefix_line_count"]
+        )
+        if (
+            row["source_byte_count"] != expected_source_bytes
+            or row["source_line_count"] != expected_source_lines
+        ):
+            raise RuntimeError("activity lineage source conservation mismatch")
     archive_path = _normalize_activity_lineage_archive_path(
         log_path,
         row.get("archive_relative_path"),
+    )
+    _assert_content_addressed_archive_identity(
+        archive_path,
+        row.get("archive_payload_sha256"),
     )
     if validate_archive:
         if not archive_path.exists():
@@ -1878,7 +2165,7 @@ def _load_activity_rotation_lineage_unlocked(
     validate_archives: bool = True,
 ) -> tuple[bytes, list[dict[str, Any]], list[Path]]:
     lineage_path = activity_rotation_lineage_path(log_path)
-    if not lineage_path.exists():
+    if not lineage_path.exists() and not lineage_path.is_symlink():
         return b"", [], []
     lineage_bytes = read_regular_file_bytes(
         lineage_path,
@@ -2039,9 +2326,12 @@ def _normalize_activity_resolution_superseding_path(
     relative = Path(str(value or ""))
     if not relative.parts or relative.is_absolute() or ".." in relative.parts:
         raise RuntimeError("activity resolution superseding path is invalid")
-    superseding_path = (log_path.parent / relative).resolve()
+    superseding_path = _assert_no_symlink_components(
+        log_path.parent / relative,
+        source="activity resolution superseding archive",
+    )
     try:
-        superseding_path.relative_to(log_path.parent.resolve())
+        superseding_path.relative_to(log_path.parent.absolute())
     except ValueError as exc:
         raise RuntimeError(
             "activity resolution superseding path escapes status root"
@@ -2063,13 +2353,23 @@ def _validated_activity_rotation_resolution_row(
 ) -> Path:
     if not isinstance(row, dict) or set(row) != ACTIVITY_ROTATION_RESOLUTION_ROW_KEYS:
         raise RuntimeError("activity resolution row schema is not exact")
+    resolution_type = row.get("resolution_type")
+    intent_schema_version = row.get("intent_schema_version")
     if (
         row.get("record_type") != ACTIVITY_ROTATION_RESOLUTION_RECORD_TYPE
         or row.get("schema_version") != ACTIVITY_LOG_ROTATION_SCHEMA_VERSION
-        or row.get("resolution_type") != ACTIVITY_ROTATION_RESOLUTION_TYPE_SUPERSEDED
         or row.get("log_name") != log_path.name
         or row.get("sequence") != expected_sequence
-        or row.get("intent_schema_version") != 1
+        or (
+            intent_schema_version == 1
+            and resolution_type != ACTIVITY_ROTATION_RESOLUTION_TYPE_SUPERSEDED
+        )
+        or (
+            intent_schema_version == ACTIVITY_LOG_ROTATION_SCHEMA_VERSION
+            and resolution_type
+            != ACTIVITY_ROTATION_RESOLUTION_TYPE_LEGACY_SUPERSEDED
+        )
+        or intent_schema_version not in (1, ACTIVITY_LOG_ROTATION_SCHEMA_VERSION)
     ):
         raise RuntimeError("activity resolution row identity is invalid")
     for key in _ACTIVITY_RESOLUTION_DIGEST_KEYS:
@@ -2089,15 +2389,23 @@ def _validated_activity_rotation_resolution_row(
         raise RuntimeError("activity resolution previous digest mismatch")
     if row.get("resolution_id") != activity_rotation_resolution_id(row):
         raise RuntimeError("activity resolution id mismatch")
-    intent_payload = validated_schema_v1_rotation_intent(
-        log_path,
-        row.get("intent_payload"),
-    )
+    if intent_schema_version == 1:
+        intent_payload = validated_schema_v1_rotation_intent(
+            log_path,
+            row.get("intent_payload"),
+        )
+        intent_archive_sha256 = intent_payload["archive_sha256"]
+    else:
+        intent_payload = _validated_activity_rotation_intent(
+            log_path,
+            row.get("intent_payload"),
+        )
+        intent_archive_sha256 = intent_payload["archive_payload_sha256"]
     if (
         intent_payload["transaction_id"] != row.get("resolved_transaction_id")
         or intent_payload["archive_relative_path"]
         != row.get("archive_relative_path")
-        or intent_payload["archive_sha256"] != row.get("archive_payload_sha256")
+        or intent_archive_sha256 != row.get("archive_payload_sha256")
         or intent_payload["tail_sha256"] != row.get("stage_tail_sha256")
         or intent_payload["source_sha256"] != row.get("source_sha256")
     ):
@@ -2109,11 +2417,29 @@ def _validated_activity_rotation_resolution_row(
         or ".." in preserved_relative.parts
     ):
         raise RuntimeError("activity resolution preserved dir is invalid")
+    payload_byte_count = row["archive_byte_count"] + row["stage_tail_byte_count"]
+    payload_line_count = row["archive_line_count"] + row["stage_tail_line_count"]
+    if intent_schema_version == 1:
+        source_counts_valid = (
+            row["source_byte_count"] == payload_byte_count
+            and row["source_line_count"] == payload_line_count
+        )
+    else:
+        intent_lineage_row = intent_payload["lineage_row"]
+        source_counts_valid = (
+            row["source_byte_count"] == intent_lineage_row["source_byte_count"]
+            and row["source_line_count"] == intent_lineage_row["source_line_count"]
+            and row["archive_byte_count"]
+            == intent_lineage_row["archive_byte_count"]
+            and row["archive_line_count"]
+            == intent_lineage_row["archive_line_count"]
+            and row["stage_tail_byte_count"] == intent_payload["tail_byte_count"]
+            and row["stage_tail_line_count"] == intent_payload["tail_line_count"]
+            and row["source_byte_count"] > payload_byte_count
+            and row["source_line_count"] == payload_line_count + 1
+        )
     if (
-        row["source_byte_count"]
-        != row["archive_byte_count"] + row["stage_tail_byte_count"]
-        or row["source_line_count"]
-        != row["archive_line_count"] + row["stage_tail_line_count"]
+        not source_counts_valid
         or row["superseding_byte_count"]
         != row["source_byte_count"] + row["post_intent_suffix_byte_count"]
         or row["superseding_line_count"]
@@ -2129,6 +2455,10 @@ def _validated_activity_rotation_resolution_row(
     archive_path = _normalize_activity_lineage_archive_path(
         log_path,
         row.get("archive_relative_path"),
+    )
+    _assert_content_addressed_archive_identity(
+        archive_path,
+        row.get("archive_payload_sha256"),
     )
     superseding_path = _normalize_activity_resolution_superseding_path(
         log_path,
@@ -2188,7 +2518,11 @@ def _validated_activity_rotation_resolution_row(
             raise RuntimeError(
                 "activity resolution superseding archive line count mismatch"
             )
-    return archive_path
+    return (
+        archive_path
+        if intent_schema_version == 1
+        else superseding_path
+    )
 
 
 def _load_activity_rotation_resolutions_unlocked(
@@ -2569,8 +2903,14 @@ def _partition_activity_rotation_payload(
 
 
 def _legacy_activity_source_paths_unlocked(log_path: Path) -> list[Path]:
-    archive_dir = log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR
-    legacy_dir = log_path.parent / ACTIVITY_LOG_LEGACY_ARCHIVE_SUBDIR
+    archive_dir = _assert_no_symlink_components(
+        log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR,
+        source="activity archive directory",
+    )
+    legacy_dir = _assert_no_symlink_components(
+        log_path.parent / ACTIVITY_LOG_LEGACY_ARCHIVE_SUBDIR,
+        source="legacy activity archive directory",
+    )
     sources: list[Path] = []
     sources.extend(sorted(archive_dir.glob(f"{log_path.name}-*.gz")))
     sources.extend(sorted(legacy_dir.glob(f"{log_path.stem}-*.jsonl.gz")))
@@ -2693,7 +3033,10 @@ def rotate_activity_log_unlocked(
 ) -> Path | None:
     """Durably partition active bytes into one archive and one active tail."""
 
-    log_path = log_path.expanduser().resolve()
+    log_path = _assert_no_symlink_components(
+        log_path,
+        source="activity log",
+    )
     if activity_rotation_writer_guard_active():
         return None
     prepare_activity_audit_unlocked(log_path)
@@ -2739,10 +3082,11 @@ def rotate_activity_log_unlocked(
         return None
 
     archive_digest = hashlib.sha256(archive_payload).hexdigest()
-    archive_dir = (
-        archive_dir.expanduser().resolve()
+    archive_dir = _assert_no_symlink_components(
+        archive_dir
         if archive_dir is not None
-        else (log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR).resolve()
+        else log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR,
+        source="activity archive directory",
     )
     try:
         archive_relative = archive_dir.relative_to(log_path.parent)
@@ -2810,6 +3154,7 @@ def rotate_activity_log_unlocked(
         transaction_id,
     )
     _durable_write_gzip(stage_archive, archive_payload)
+    _activity_rotation_fault("stage_archive")
     archive_gzip_sha = _sha256_bytes(
         read_regular_file_bytes(stage_archive, source="activity rotation archive")
     )
@@ -2856,6 +3201,7 @@ def rotate_activity_log_unlocked(
         "active_sha256": _sha256_bytes(active_bytes),
     }
     durable_write_bytes(stage_tail, tail)
+    _activity_rotation_fault("stage_tail")
     write_json(activity_rotation_intent_path(log_path), intent)
     _activity_rotation_fault("intent")
     return recover_activity_log_rotation_unlocked(log_path)
@@ -2877,7 +3223,10 @@ def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
 
     log_path = _resolved_activity_log_path(log_path)
     assert_activity_audit_stable_unlocked(log_path)
-    archive_dir = log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR
+    archive_dir = _assert_no_symlink_components(
+        log_path.parent / ACTIVITY_LOG_ARCHIVE_SUBDIR,
+        source="activity archive directory",
+    )
     archive_sources = sorted(archive_dir.glob(f"{log_path.name}-*.gz"))
     legacy_sources = _legacy_activity_source_paths_unlocked(log_path)
     lineage_bytes, lineage_rows, lineage_archives = (
@@ -2894,7 +3243,16 @@ def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
         )
     )
     registered_content = {path.resolve() for path in lineage_archives}
-    superseded_content = {path.resolve() for path in superseded_archives}
+    superseded_content = {
+        path.resolve()
+        for path in superseded_archives
+        if classify_source(path) == "content_addressed"
+    }
+    superseded_legacy = {
+        path.resolve()
+        for path in superseded_archives
+        if classify_source(path) in ("legacy_ts_std", "legacy_ts_old")
+    }
     if registered_content & superseded_content:
         raise RuntimeError(
             "activity archive is both lineage-registered and resolution-superseded"
@@ -2907,6 +3265,7 @@ def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
     backed_up_superseded = {
         path.resolve()
         for path in superseded_archives
+        if classify_source(path) == "content_addressed"
         if not path.exists()
         and not path.is_symlink()
         and (
@@ -2919,7 +3278,11 @@ def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
         != registered_content | superseded_content
     ):
         raise RuntimeError("activity content-addressed archives do not match lineage")
-    sources = list(legacy_sources)
+    sources = [
+        source
+        for source in legacy_sources
+        if source.resolve() not in superseded_legacy
+    ]
     sources.extend(lineage_archives)
     if log_path.is_file():
         sources.append(log_path)
@@ -3479,9 +3842,21 @@ def _build_logical_activity_snapshot_unlocked(
                                 or matched_path.resolve() == prev_source.resolve()
                             ):
                                 continue
-                            raise RuntimeError(
+                            raise ActivityAuditInvariantError(
                                 "Matching non-adjacent older tail detected: "
-                                f"{matched_path_raw} -> {source}"
+                                f"{matched_path_raw} -> {source}",
+                                invariant="activity_non_adjacent_tail",
+                                evidence={
+                                    "matched_source": str(matched_path),
+                                    "current_source": str(source),
+                                    "immediate_predecessor": str(prev_source)
+                                    if prev_source is not None
+                                    else None,
+                                    "source_index": source_idx,
+                                    "source_class": source_class,
+                                    "prefix_1000_sha256": prefix_1000_digest,
+                                    "matched_suffix_1000_sha256": prefix_1000_digest,
+                                },
                             )
 
                     def process_line(
@@ -3725,10 +4100,17 @@ def validated_activity_event_digests_unlocked(
         ):
             raise RuntimeError("requested activity event_id is not canonical")
         requested.add(event_id)
-    conn = _build_logical_activity_snapshot_unlocked(
-        log_path,
-        capture_logical_entries=False,
-    )
+    try:
+        conn = _build_logical_activity_snapshot_unlocked(
+            log_path,
+            capture_logical_entries=False,
+        )
+    except RuntimeError as exc:
+        raise activity_audit_invariant_error(
+            exc,
+            log_path=log_path,
+            operation="event_digest_validation",
+        ) from exc
     try:
         result: dict[str, str] = {}
         for event_id in requested:
@@ -3749,11 +4131,13 @@ def _resolved_activity_log_path(log_path: Path) -> Path:
         raise RuntimeError(
             f"activity audit source leaf cannot be a symlink: {requested_log_path}"
         )
-    # Resolve only the stable parent.  Resolving the checked leaf separately
-    # would follow a symlink installed between ``is_symlink`` and ``resolve``;
-    # all later O_NOFOLLOW/inode checks must continue to address the requested
-    # leaf name so such a replacement fails closed.
-    return requested_log_path.parent.resolve() / requested_log_path.name
+    # Keep the lexical path so an ancestor alias cannot silently relocate the
+    # governed status root. The component walk also closes the leaf swap
+    # window between the compatibility check above and later O_NOFOLLOW opens.
+    return _assert_no_symlink_components(
+        requested_log_path,
+        source="activity audit source",
+    )
 
 
 def validated_recent_task_activity(
@@ -3777,24 +4161,33 @@ def validated_recent_task_activity(
         or limit <= 0
     ):
         raise RuntimeError("recent task activity request is not canonical")
-    resolved_log_path = _resolved_activity_log_path(log_path)
-    with activity_audit_lock_file(resolved_log_path, shared=True):
-        snapshot = _build_logical_activity_snapshot_unlocked(
-            resolved_log_path,
-            capture_logical_entries=False,
-            recent_task_id=task_id,
-            recent_limit=limit,
-        )
     try:
-        return [
-            entry
-            for entry, _source, _line_number in _replay_logical_activity_snapshot(
-                snapshot,
-                None,
+        resolved_log_path = _resolved_activity_log_path(log_path)
+        with activity_audit_lock_file(resolved_log_path, shared=True):
+            snapshot = _build_logical_activity_snapshot_unlocked(
+                resolved_log_path,
+                capture_logical_entries=False,
+                recent_task_id=task_id,
+                recent_limit=limit,
             )
-        ]
-    finally:
-        snapshot.close()
+        try:
+            return [
+                entry
+                for entry, _source, _line_number in _replay_logical_activity_snapshot(
+                    snapshot,
+                    None,
+                )
+            ]
+        finally:
+            snapshot.close()
+    except ActivityAuditInvariantError:
+        raise
+    except RuntimeError as exc:
+        raise activity_audit_invariant_error(
+            exc,
+            log_path=log_path,
+            operation="recent_task_activity",
+        ) from exc
 
 
 def stream_logical_activity(
@@ -3809,11 +4202,19 @@ def stream_logical_activity(
     turn incomplete source validation into apparent success.
     """
 
-    log_path = _resolved_activity_log_path(log_path)
+    requested_log_path = Path(log_path)
     snapshot: sqlite3.Connection | None = None
     try:
-        with activity_audit_lock_file(log_path, shared=True):
-            snapshot = _build_logical_activity_snapshot_unlocked(log_path)
+        try:
+            log_path = _resolved_activity_log_path(requested_log_path)
+            with activity_audit_lock_file(log_path, shared=True):
+                snapshot = _build_logical_activity_snapshot_unlocked(log_path)
+        except RuntimeError as exc:
+            raise activity_audit_invariant_error(
+                exc,
+                log_path=requested_log_path,
+                operation="logical_stream_validation",
+            ) from exc
         yield from _replay_logical_activity_snapshot(snapshot, on_collapse)
     finally:
         if snapshot is not None:
@@ -3833,6 +4234,40 @@ def _stream_logical_activity_unlocked(
         snapshot.close()
 
 
+def _activity_log_exceeds_rotation_threshold_unlocked(
+    log_path: Path,
+    max_bytes: int,
+) -> bool:
+    """Check the active leaf size without opening immutable history."""
+
+    if max_bytes <= 0:
+        return False
+    try:
+        descriptor = os.open(
+            log_path,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except FileNotFoundError:
+        return False
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        path_stat = log_path.lstat()
+        if (
+            not stat.S_ISREG(descriptor_stat.st_mode)
+            or stat.S_ISLNK(path_stat.st_mode)
+            or (path_stat.st_dev, path_stat.st_ino)
+            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        ):
+            raise RuntimeError(
+                f"activity audit source must be a stable regular file: {log_path}"
+            )
+        return descriptor_stat.st_size > max_bytes
+    finally:
+        os.close(descriptor)
+
+
 def append_activity_log_entries_unlocked(
     log_path: Path,
     entries: list[dict[str, Any]],
@@ -3842,9 +4277,24 @@ def append_activity_log_entries_unlocked(
 ) -> None:
     """Recover, optionally rotate, and durably append while audit EX is held."""
 
-    log_path = log_path.expanduser().resolve()
+    log_path = _assert_no_symlink_components(
+        log_path,
+        source="activity log",
+    )
     prepare_activity_audit_unlocked(log_path)
-    if rotate_bytes is not None:
+    if activity_rotation_writer_guard_active():
+        # The guard may intentionally suppress intent recovery, but no writer
+        # may append behind that unresolved transaction and invalidate its
+        # source digest. Stable, intent-free logs remain appendable while new
+        # rotations are paused.
+        assert_activity_audit_stable_unlocked(log_path)
+    if (
+        rotate_bytes is not None
+        and _activity_log_exceeds_rotation_threshold_unlocked(
+            log_path,
+            rotate_bytes,
+        )
+    ):
         rotate_activity_log_unlocked(
             log_path,
             max_bytes=rotate_bytes,
@@ -4187,7 +4637,6 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
     planning_active = str(planning_state.get("status") or "") in {"active", "human_required", "accepted"}
     source_ref = task.get("source_ref") if isinstance(task.get("source_ref"), dict) else {}
     source_plane = str(task.get("source_plane") or "").strip()
-    recent = _recent_task_activity(config, task_id)
     path = task_brief_path(task_id)
     ensure_parent(path)
     body = [
@@ -4222,13 +4671,11 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
     artifacts = [str(item).strip() for item in (task.get("artifacts") or []) if str(item).strip()]
     body.extend([f"- {item}" for item in artifacts] or ["- none"])
     body.extend(["", "## Recent Task Activity"])
-    if recent:
-        body.extend(
-            f"- {entry.get('ts') or '-'} · {entry.get('agent') or '-'} · {entry.get('type') or '-'} · {compact_whitespace(entry.get('message') or '-')}"
-            for entry in recent
-        )
-    else:
-        body.append("- none")
+    body.append(
+        "- Omitted from automatic dispatch context. The canonical task row above "
+        "is the bounded handoff context; query validated activity history only for "
+        "targeted forensic work."
+    )
     body.extend(["", "## Relevant Canonical Files", "- AI_COLLABORATION_GUIDE.md", "- ai-status.json"])
     if planning_active:
         session_file = str(planning_state.get("session_file") or "").strip()

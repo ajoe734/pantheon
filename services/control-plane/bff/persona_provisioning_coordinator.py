@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Protocol
@@ -23,6 +25,8 @@ from persona_provisioning import (
 
 
 FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
+_GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
+_UNKNOWN_SOURCE_COMMIT = "0" * 40
 
 
 class OwnerTransport(Protocol):
@@ -66,8 +70,12 @@ class ProvisioningIds:
     strategy_id: str
     baseline_registry_id: str
     baseline_approval_decision_id: str
+    baseline_strategy_artifact_id: str
+    baseline_strategy_artifact_approval_decision_id: str
     registry_id: str
     approval_decision_id: str
+    strategy_artifact_id: str
+    strategy_artifact_approval_decision_id: str
     persona_capital_binding_id: str
     deployment_plan_id: str
     deployment_saga_id: str
@@ -94,8 +102,14 @@ def deterministic_provisioning_ids(record: ProvisioningRecord) -> ProvisioningId
         strategy_id=f"strategy-persona-{token}",
         baseline_registry_id=f"reg-strategy-spec-persona-baseline-{token}",
         baseline_approval_decision_id=f"apv-persona-paper-baseline-{token}",
+        baseline_strategy_artifact_id=f"artifact-persona-paper-baseline-{token}",
+        baseline_strategy_artifact_approval_decision_id=(
+            f"apv-persona-paper-artifact-baseline-{token}"
+        ),
         registry_id=f"reg-strategy-spec-persona-{token}",
         approval_decision_id=f"apv-persona-paper-{token}",
+        strategy_artifact_id=f"artifact-persona-paper-{token}",
+        strategy_artifact_approval_decision_id=f"apv-persona-paper-artifact-{token}",
         persona_capital_binding_id=f"pcb-persona-paper-{token}",
         deployment_plan_id=plan_id,
         deployment_saga_id=f"deployment-saga-{plan_id}",
@@ -109,6 +123,14 @@ def _path_id(value: str) -> str:
 def _stable_hash(value: Mapping[str, Any]) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _source_commit() -> str:
+    for name in ("BFF_COMMIT", "GIT_SHA", "PANTHEON_DEPLOY_SHA"):
+        value = str(os.environ.get(name) or "").strip()
+        if _GIT_SHA_RE.fullmatch(value):
+            return value.lower()
+    return _UNKNOWN_SOURCE_COMMIT
 
 
 def _mapping(value: Any, *, label: str) -> dict[str, Any]:
@@ -170,11 +192,21 @@ class PersonaProvisioningCoordinator:
             "baseline_approval_reviewed",
             "baseline_approval_decided",
             "baseline_strategy_spec_approved",
+            "baseline_strategy_artifact_candidate",
+            "baseline_strategy_artifact_approval_proposed",
+            "baseline_strategy_artifact_approval_reviewed",
+            "baseline_strategy_artifact_approval_decided",
+            "baseline_strategy_artifact_approved",
             "strategy_spec_candidate",
             "approval_proposed",
             "approval_reviewed",
             "approval_decided",
             "strategy_spec_approved",
+            "strategy_artifact_candidate",
+            "strategy_artifact_approval_proposed",
+            "strategy_artifact_approval_reviewed",
+            "strategy_artifact_approval_decided",
+            "strategy_artifact_approved",
         }
         if failed_step not in safe_steps:
             return False
@@ -266,6 +298,41 @@ class PersonaProvisioningCoordinator:
             failed_step = "baseline_strategy_spec_approved"
             active = self._coordinate_registry_approval(active, ids, baseline=True)
 
+            failed_step = "baseline_strategy_artifact_candidate"
+            active = self._coordinate_strategy_artifact(active, ids, baseline=True)
+
+            failed_step = "baseline_strategy_artifact_approval_proposed"
+            active = self._coordinate_approval_proposal(
+                active,
+                ids,
+                baseline=True,
+                strategy_artifact=True,
+            )
+
+            failed_step = "baseline_strategy_artifact_approval_reviewed"
+            active = self._coordinate_approval_review(
+                active,
+                ids,
+                baseline=True,
+                strategy_artifact=True,
+            )
+
+            failed_step = "baseline_strategy_artifact_approval_decided"
+            active = self._coordinate_approval_decision(
+                active,
+                ids,
+                baseline=True,
+                strategy_artifact=True,
+            )
+
+            failed_step = "baseline_strategy_artifact_approved"
+            active = self._coordinate_registry_approval(
+                active,
+                ids,
+                baseline=True,
+                strategy_artifact=True,
+            )
+
             failed_step = "strategy_spec_candidate"
             active = self._coordinate_strategy_spec(active, ids)
 
@@ -280,6 +347,37 @@ class PersonaProvisioningCoordinator:
 
             failed_step = "strategy_spec_approved"
             active = self._coordinate_registry_approval(active, ids)
+
+            failed_step = "strategy_artifact_candidate"
+            active = self._coordinate_strategy_artifact(active, ids)
+
+            failed_step = "strategy_artifact_approval_proposed"
+            active = self._coordinate_approval_proposal(
+                active,
+                ids,
+                strategy_artifact=True,
+            )
+
+            failed_step = "strategy_artifact_approval_reviewed"
+            active = self._coordinate_approval_review(
+                active,
+                ids,
+                strategy_artifact=True,
+            )
+
+            failed_step = "strategy_artifact_approval_decided"
+            active = self._coordinate_approval_decision(
+                active,
+                ids,
+                strategy_artifact=True,
+            )
+
+            failed_step = "strategy_artifact_approved"
+            active = self._coordinate_registry_approval(
+                active,
+                ids,
+                strategy_artifact=True,
+            )
 
             failed_step = "persona_capital_binding_created"
             active = self._coordinate_binding_create(active, ids)
@@ -307,10 +405,15 @@ class PersonaProvisioningCoordinator:
                 "persona_id": active.persona_id,
                 "capital_pool_id": ids.capital_pool_id,
                 "persona_capital_binding_id": ids.persona_capital_binding_id,
-                "rollback_registry_id": ids.baseline_registry_id,
-                "rollback_approval_decision_id": ids.baseline_approval_decision_id,
-                "registry_id": ids.registry_id,
-                "approval_decision_id": ids.approval_decision_id,
+                "rollback_registry_id": ids.baseline_strategy_artifact_id,
+                "rollback_strategy_spec_registry_id": ids.baseline_registry_id,
+                "rollback_approval_decision_id": (
+                    ids.baseline_strategy_artifact_approval_decision_id
+                ),
+                "strategy_spec_registry_id": ids.registry_id,
+                "registry_id": ids.strategy_artifact_id,
+                "strategy_artifact_id": ids.strategy_artifact_id,
+                "approval_decision_id": ids.strategy_artifact_approval_decision_id,
                 "deployment_plan_id": ids.deployment_plan_id,
                 "deployment_saga_id": ids.deployment_saga_id,
                 "first_evaluation_workflow_id": FIRST_EVALUATION_WORKFLOW_ID,
@@ -393,11 +496,21 @@ class PersonaProvisioningCoordinator:
                 "baseline_approval_reviewed",
                 "baseline_approval_decided",
                 "baseline_strategy_spec_approved",
+                "baseline_strategy_artifact_candidate",
+                "baseline_strategy_artifact_approval_proposed",
+                "baseline_strategy_artifact_approval_reviewed",
+                "baseline_strategy_artifact_approval_decided",
+                "baseline_strategy_artifact_approved",
                 "strategy_spec_candidate",
                 "approval_proposed",
                 "approval_reviewed",
                 "approval_decided",
                 "strategy_spec_approved",
+                "strategy_artifact_candidate",
+                "strategy_artifact_approval_proposed",
+                "strategy_artifact_approval_reviewed",
+                "strategy_artifact_approval_decided",
+                "strategy_artifact_approved",
                 "persona_capital_binding_created",
                 "persona_capital_binding_active",
                 "deployment_plan",
@@ -636,6 +749,26 @@ class PersonaProvisioningCoordinator:
             )
         return ids.registry_id, ids.approval_decision_id, ids.version, "forward"
 
+    @staticmethod
+    def _strategy_artifact_values(
+        ids: ProvisioningIds,
+        *,
+        baseline: bool,
+    ) -> tuple[str, str, str, str]:
+        if baseline:
+            return (
+                ids.baseline_strategy_artifact_id,
+                ids.baseline_strategy_artifact_approval_decision_id,
+                ids.baseline_version,
+                "baseline-artifact",
+            )
+        return (
+            ids.strategy_artifact_id,
+            ids.strategy_artifact_approval_decision_id,
+            ids.version,
+            "forward-artifact",
+        )
+
     def _validate_registry(
         self,
         receipt: Mapping[str, Any],
@@ -645,24 +778,41 @@ class PersonaProvisioningCoordinator:
         registry_id: str | None = None,
         version: str | None = None,
         approval_decision_id: str | None = None,
+        artifact_type: str = "strategy_spec",
     ) -> None:
         entry = _registry_entry(receipt)
         expected_registry_id = registry_id or ids.registry_id
         expected_version = version or ids.version
         if (
             entry.get("registry_id") != expected_registry_id
-            or entry.get("artifact_type") != "strategy_spec"
+            or entry.get("artifact_type") != artifact_type
             or entry.get("strategy_id") != ids.strategy_id
             or entry.get("version") != expected_version
             or entry.get("artifact_state") != state
         ):
             raise PersonaProvisioningCoordinationError(
-                f"Registry readback does not match the stable StrategySpec in state {state}"
+                f"Registry readback does not match the stable {artifact_type} in state {state}"
             )
         if approval_decision_id and entry.get("approval_decision_id") != approval_decision_id:
             raise PersonaProvisioningCoordinationError(
                 "Approved RegistryEntry does not cite the canonical ApprovalDecision"
             )
+        if artifact_type == "execution_bundle":
+            metadata = entry.get("metadata")
+            metadata = metadata if isinstance(metadata, Mapping) else {}
+            artifact = metadata.get("strategy_artifact")
+            if not isinstance(artifact, Mapping):
+                raise PersonaProvisioningCoordinationError(
+                    "StrategyArtifact RegistryEntry is missing metadata.strategy_artifact"
+                )
+            if (
+                artifact.get("artifact_id") != expected_registry_id
+                or artifact.get("strategy_id") != ids.strategy_id
+                or artifact.get("version") != expected_version
+            ):
+                raise PersonaProvisioningCoordinationError(
+                    "StrategyArtifact payload identity does not match RegistryEntry"
+                )
 
     def _coordinate_strategy_spec(
         self,
@@ -711,6 +861,177 @@ class PersonaProvisioningCoordinator:
             receipt=receipt,
         )
 
+    def _strategy_artifact_payload(
+        self,
+        record: ProvisioningRecord,
+        ids: ProvisioningIds,
+        *,
+        baseline: bool = False,
+    ) -> dict[str, Any]:
+        artifact_id, _, version, label = self._strategy_artifact_values(
+            ids,
+            baseline=baseline,
+        )
+        spec_registry_id, _, _, _ = self._artifact_values(ids, baseline=baseline)
+        source_run_id = f"persona-provisioning-{label}-{ids.token}"
+        positive_action = "HOLD" if baseline else "BUY"
+        non_positive_action = "HOLD" if baseline else "SELL"
+        symbols = record.request_payload.get("symbols")
+        if not isinstance(symbols, list) or not all(
+            isinstance(item, str) and item.strip() for item in symbols
+        ):
+            symbols = ["SPY"]
+        artifact = {
+            "artifact_schema_version": "1.0",
+            "artifact_id": artifact_id,
+            "strategy_id": ids.strategy_id,
+            "version": version,
+            "algorithm_ref": {
+                "engine": "lean",
+                "repository": "ajoe734/pantheon",
+                "commit": _source_commit(),
+                "path": "services/registry/strategy_artifact.py",
+                "entrypoint": "services.registry.strategy_artifact:evaluate_strategy_action",
+                "signal_interface": (
+                    "services.execution.lean_runtime.paper_signal_producer:Strategy"
+                ),
+                "signal_schema_version": "1.0",
+                "logic_interpreter": (
+                    "services.registry.strategy_artifact:evaluate_strategy_action"
+                ),
+            },
+            "strategy_logic": {
+                "kind": "close_to_close_momentum",
+                "lookback_parameter": "lookback_bars",
+                "threshold_parameter": "momentum_threshold",
+                "positive_action": positive_action,
+                "non_positive_action": non_positive_action,
+            },
+            "parameters": {
+                "symbols": symbols,
+                "bar_frequency": str(record.request_payload.get("bar_frequency") or "1d"),
+                "data_source": str(
+                    record.request_payload.get("data_source")
+                    or "source-ingest:paper/persona-bootstrap"
+                ),
+                "lookback_bars": 2,
+                "momentum_threshold": 0.0,
+                "order_quantity": 0 if baseline else 1,
+                "quantity_type": "SHARES",
+                "zero_momentum_action": non_positive_action,
+            },
+            "mutation_surface": {
+                "controls": [
+                    {
+                        "parameter_key": "lookback_bars",
+                        "value_type": "integer",
+                        "current_value": 2,
+                        "allowed_range": {"min": 2, "max": 60},
+                        "step": 1,
+                    },
+                    {
+                        "parameter_key": "momentum_threshold",
+                        "value_type": "number",
+                        "current_value": 0.0,
+                        "allowed_range": {"min": 0.0, "max": 0.05},
+                        "step": 0.001,
+                    },
+                ],
+                "immutable_parameters": [
+                    "symbols",
+                    "bar_frequency",
+                    "data_source",
+                    "order_quantity",
+                    "quantity_type",
+                    "zero_momentum_action",
+                ],
+            },
+            "lineage": {
+                "source_run_ids": [source_run_id],
+                "source_strategy_spec_id": spec_registry_id,
+            },
+            "provenance_refs": [
+                "task:LOOP-PROD-PER-001",
+                f"persona-provisioning:{ids.token}",
+                f"strategy-spec:{spec_registry_id}",
+            ],
+        }
+        if not baseline:
+            artifact["lineage"]["parent_registry_ids"] = [ids.baseline_strategy_artifact_id]
+        return {
+            "registry_id": artifact_id,
+            "artifact_state": "candidate",
+            "strategy_artifact": artifact,
+            "producer_run_id": source_run_id,
+            "evaluation_summary": {
+                "admission": (
+                    "persona_paper_zero_capital_baseline"
+                    if baseline
+                    else "persona_paper_bootstrap"
+                ),
+                "risk_level": "low",
+                "capital_scale_pct": 0.0,
+                "source_strategy_spec_id": spec_registry_id,
+            },
+            "rollback_target": ids.baseline_strategy_artifact_id if not baseline else None,
+            "metadata": {
+                "tenant_id": record.tenant_id,
+                "persona_id": record.persona_id,
+                "capital_pool_id": ids.capital_pool_id,
+                "persona_capital_binding_id": ids.persona_capital_binding_id,
+                "source_strategy_spec_registry_id": spec_registry_id,
+                "requested_by": self._requested_by(record),
+                "fail_closed_baseline": baseline,
+                "rollback_target_registry_id": (
+                    None if baseline else ids.baseline_strategy_artifact_id
+                ),
+                "provisioning_request_hash": record.request_hash,
+            },
+        }
+
+    def _coordinate_strategy_artifact(
+        self,
+        record: ProvisioningRecord,
+        ids: ProvisioningIds,
+        *,
+        baseline: bool = False,
+    ) -> ProvisioningRecord:
+        artifact_id, approval_id, version, _ = self._strategy_artifact_values(
+            ids,
+            baseline=baseline,
+        )
+        checkpoint_prefix = "baseline_" if baseline else ""
+
+        def validate(receipt: Mapping[str, Any]) -> None:
+            state = str(_registry_entry(receipt).get("artifact_state") or "")
+            if state not in {"candidate", "approved"}:
+                raise PersonaProvisioningCoordinationError(
+                    "StrategyArtifact create readback is neither candidate nor approved"
+                )
+            self._validate_registry(
+                receipt,
+                ids,
+                state=state,
+                registry_id=artifact_id,
+                version=version,
+                approval_decision_id=approval_id if state == "approved" else None,
+                artifact_type="execution_bundle",
+            )
+
+        receipt = self._create_then_get(
+            owner="registry",
+            get_path=f"/api/registry/strategy-artifacts/{_path_id(artifact_id)}",
+            post_path="/api/registry/strategy-artifacts",
+            payload=self._strategy_artifact_payload(record, ids, baseline=baseline),
+            validate=validate,
+        )
+        return self._checkpoint_receipt(
+            record,
+            step=f"{checkpoint_prefix}strategy_artifact_candidate_readback",
+            key=f"{checkpoint_prefix}strategy_artifact_candidate",
+            receipt=receipt,
+        )
+
     def _validate_approval_identity(
         self,
         receipt: Mapping[str, Any],
@@ -741,12 +1062,21 @@ class PersonaProvisioningCoordinator:
         ids: ProvisioningIds,
         *,
         baseline: bool = False,
+        strategy_artifact: bool = False,
     ) -> ProvisioningRecord:
-        registry_id, decision_id, version, label = self._artifact_values(
-            ids,
-            baseline=baseline,
+        values = (
+            self._strategy_artifact_values(ids, baseline=baseline)
+            if strategy_artifact
+            else self._artifact_values(ids, baseline=baseline)
         )
+        registry_id, decision_id, version, label = values
         checkpoint_prefix = "baseline_" if baseline else ""
+        checkpoint_key = (
+            f"{checkpoint_prefix}strategy_artifact_approval_proposed"
+            if strategy_artifact
+            else f"{checkpoint_prefix}approval_proposed"
+        )
+        checkpoint_step = f"{checkpoint_key}_readback"
         payload = {
             "decision_id": decision_id,
             "target_type": "registry_entry",
@@ -788,8 +1118,8 @@ class PersonaProvisioningCoordinator:
         )
         return self._checkpoint_receipt(
             record,
-            step=f"{checkpoint_prefix}approval_proposed_readback",
-            key=f"{checkpoint_prefix}approval_proposed",
+            step=checkpoint_step,
+            key=checkpoint_key,
             receipt=receipt,
         )
 
@@ -799,12 +1129,21 @@ class PersonaProvisioningCoordinator:
         ids: ProvisioningIds,
         *,
         baseline: bool = False,
+        strategy_artifact: bool = False,
     ) -> ProvisioningRecord:
-        registry_id, decision_id, version, _ = self._artifact_values(
-            ids,
-            baseline=baseline,
+        values = (
+            self._strategy_artifact_values(ids, baseline=baseline)
+            if strategy_artifact
+            else self._artifact_values(ids, baseline=baseline)
         )
+        registry_id, decision_id, version, _ = values
         checkpoint_prefix = "baseline_" if baseline else ""
+        checkpoint_key = (
+            f"{checkpoint_prefix}strategy_artifact_approval_reviewed"
+            if strategy_artifact
+            else f"{checkpoint_prefix}approval_reviewed"
+        )
+        checkpoint_step = f"{checkpoint_key}_readback"
         get_path = f"/api/governance/approvals/{_path_id(decision_id)}"
 
         def ready(receipt: Mapping[str, Any]) -> bool:
@@ -834,8 +1173,8 @@ class PersonaProvisioningCoordinator:
         )
         return self._checkpoint_receipt(
             record,
-            step=f"{checkpoint_prefix}approval_reviewed_readback",
-            key=f"{checkpoint_prefix}approval_reviewed",
+            step=checkpoint_step,
+            key=checkpoint_key,
             receipt=receipt,
         )
 
@@ -845,12 +1184,21 @@ class PersonaProvisioningCoordinator:
         ids: ProvisioningIds,
         *,
         baseline: bool = False,
+        strategy_artifact: bool = False,
     ) -> ProvisioningRecord:
-        registry_id, decision_id, version, _ = self._artifact_values(
-            ids,
-            baseline=baseline,
+        values = (
+            self._strategy_artifact_values(ids, baseline=baseline)
+            if strategy_artifact
+            else self._artifact_values(ids, baseline=baseline)
         )
+        registry_id, decision_id, version, _ = values
         checkpoint_prefix = "baseline_" if baseline else ""
+        checkpoint_key = (
+            f"{checkpoint_prefix}strategy_artifact_approval_decided"
+            if strategy_artifact
+            else f"{checkpoint_prefix}approval_decided"
+        )
+        checkpoint_step = f"{checkpoint_key}_readback"
         get_path = f"/api/governance/approvals/{_path_id(decision_id)}"
 
         def ready(receipt: Mapping[str, Any]) -> bool:
@@ -891,8 +1239,8 @@ class PersonaProvisioningCoordinator:
         )
         return self._checkpoint_receipt(
             record,
-            step=f"{checkpoint_prefix}approval_decided_readback",
-            key=f"{checkpoint_prefix}approval_decided",
+            step=checkpoint_step,
+            key=checkpoint_key,
             receipt=receipt,
         )
 
@@ -902,13 +1250,23 @@ class PersonaProvisioningCoordinator:
         ids: ProvisioningIds,
         *,
         baseline: bool = False,
+        strategy_artifact: bool = False,
     ) -> ProvisioningRecord:
-        registry_id, decision_id, version, _ = self._artifact_values(
-            ids,
-            baseline=baseline,
+        values = (
+            self._strategy_artifact_values(ids, baseline=baseline)
+            if strategy_artifact
+            else self._artifact_values(ids, baseline=baseline)
         )
+        registry_id, decision_id, version, _ = values
         checkpoint_prefix = "baseline_" if baseline else ""
-        get_path = f"/api/registry/strategy-specs/{_path_id(registry_id)}"
+        registry_kind = "strategy-artifacts" if strategy_artifact else "strategy-specs"
+        artifact_type = "execution_bundle" if strategy_artifact else "strategy_spec"
+        checkpoint_key = (
+            f"{checkpoint_prefix}strategy_artifact_approved"
+            if strategy_artifact
+            else f"{checkpoint_prefix}strategy_spec_approved"
+        )
+        get_path = f"/api/registry/{registry_kind}/{_path_id(registry_id)}"
 
         def ready(receipt: Mapping[str, Any]) -> bool:
             entry = _registry_entry(receipt)
@@ -934,12 +1292,13 @@ class PersonaProvisioningCoordinator:
                 registry_id=registry_id,
                 version=version,
                 approval_decision_id=decision_id,
+                artifact_type=artifact_type,
             ),
         )
         return self._checkpoint_receipt(
             record,
-            step=f"{checkpoint_prefix}strategy_spec_approved_readback",
-            key=f"{checkpoint_prefix}strategy_spec_approved",
+            step=f"{checkpoint_key}_readback",
+            key=checkpoint_key,
             receipt=receipt,
         )
 
@@ -978,7 +1337,8 @@ class PersonaProvisioningCoordinator:
             "created_by": self.actor_id,
             "metadata": {
                 "tenant_id": record.tenant_id,
-                "registry_id": ids.registry_id,
+                "registry_id": ids.strategy_artifact_id,
+                "strategy_spec_registry_id": ids.registry_id,
                 "requested_by": self._requested_by(record),
                 "provisioning_request_hash": record.request_hash,
             },
@@ -1055,16 +1415,16 @@ class PersonaProvisioningCoordinator:
         ids: ProvisioningIds,
     ) -> ProvisioningRecord:
         registry_receipt = _mapping(
-            record.references.get("strategy_spec_approved"),
-            label="checkpointed approved RegistryEntry",
+            record.references.get("strategy_artifact_approved"),
+            label="checkpointed approved StrategyArtifact RegistryEntry",
         )
         approval_receipt = _mapping(
-            record.references.get("approval_decided"),
+            record.references.get("strategy_artifact_approval_decided"),
             label="checkpointed ApprovalDecision",
         )
         baseline_receipt = _mapping(
-            record.references.get("baseline_strategy_spec_approved"),
-            label="checkpointed approved zero-capital baseline RegistryEntry",
+            record.references.get("baseline_strategy_artifact_approved"),
+            label="checkpointed approved zero-capital baseline StrategyArtifact RegistryEntry",
         )
         registry_entry = _registry_entry(registry_receipt)
         baseline_entry = _registry_entry(baseline_receipt)
@@ -1072,17 +1432,18 @@ class PersonaProvisioningCoordinator:
             baseline_receipt,
             ids,
             state="approved",
-            registry_id=ids.baseline_registry_id,
+            registry_id=ids.baseline_strategy_artifact_id,
             version=ids.baseline_version,
-            approval_decision_id=ids.baseline_approval_decision_id,
+            approval_decision_id=ids.baseline_strategy_artifact_approval_decision_id,
+            artifact_type="execution_bundle",
         )
         payload = {
             "plan_id": ids.deployment_plan_id,
-            "approval_decision_id": ids.approval_decision_id,
+            "approval_decision_id": ids.strategy_artifact_approval_decision_id,
             "capital_pool_id": ids.capital_pool_id,
             "target_stage": "paper",
             "current_stage": "none",
-            "registry_id": ids.registry_id,
+            "registry_id": ids.strategy_artifact_id,
             "registry_entry": registry_entry,
             "approval_decision": approval_receipt,
             "created_by": self.actor_id,
@@ -1110,8 +1471,13 @@ class PersonaProvisioningCoordinator:
                 "persona_capital_binding_id": ids.persona_capital_binding_id,
                 "execution_context": "paper",
                 "rollback_semantics": "zero_capital_safe_stop",
-                "rollback_registry_id": ids.baseline_registry_id,
-                "rollback_approval_decision_id": ids.baseline_approval_decision_id,
+                "strategy_spec_registry_id": ids.registry_id,
+                "strategy_artifact_id": ids.strategy_artifact_id,
+                "rollback_registry_id": ids.baseline_strategy_artifact_id,
+                "rollback_strategy_spec_registry_id": ids.baseline_registry_id,
+                "rollback_approval_decision_id": (
+                    ids.baseline_strategy_artifact_approval_decision_id
+                ),
                 "requested_by": self._requested_by(record),
                 "provisioning_request_hash": record.request_hash,
             },
@@ -1124,8 +1490,9 @@ class PersonaProvisioningCoordinator:
             metadata = metadata if isinstance(metadata, Mapping) else {}
             if (
                 receipt.get("plan_id") != ids.deployment_plan_id
-                or receipt.get("approval_decision_id") != ids.approval_decision_id
-                or receipt.get("artifact_id") != ids.registry_id
+                or receipt.get("approval_decision_id")
+                != ids.strategy_artifact_approval_decision_id
+                or receipt.get("artifact_id") != ids.strategy_artifact_id
                 or receipt.get("artifact_version") != ids.version
                 or receipt.get("strategy_id") != ids.strategy_id
                 or receipt.get("capital_pool_id") != ids.capital_pool_id
@@ -1136,7 +1503,8 @@ class PersonaProvisioningCoordinator:
                 or receipt.get("binding_id") == ids.persona_capital_binding_id
                 or metadata.get("persona_capital_binding_id")
                 != ids.persona_capital_binding_id
-                or rollback.get("target_artifact_id") != ids.baseline_registry_id
+                or metadata.get("strategy_artifact_id") != ids.strategy_artifact_id
+                or rollback.get("target_artifact_id") != ids.baseline_strategy_artifact_id
                 or rollback.get("target_version") != ids.baseline_version
             ):
                 raise PersonaProvisioningCoordinationError(
@@ -1180,8 +1548,8 @@ class PersonaProvisioningCoordinator:
 
         registry_entry = _registry_entry(
             _mapping(
-                record.references.get("strategy_spec_approved"),
-                label="checkpointed approved RegistryEntry",
+                record.references.get("strategy_artifact_approved"),
+                label="checkpointed approved StrategyArtifact RegistryEntry",
             )
         )
         receipt = self._transition_then_get(

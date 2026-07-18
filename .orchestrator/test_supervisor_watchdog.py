@@ -16,6 +16,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import supervisor_watchdog  # noqa: E402
 
 
+_OLD_ENV = {}
+
+
+def setUpModule() -> None:
+    global _OLD_ENV
+    _OLD_ENV = dict(os.environ)
+    for k in list(os.environ.keys()):
+        if k.startswith("PANTHEON_"):
+            del os.environ[k]
+
+
+def tearDownModule() -> None:
+    os.environ.clear()
+    os.environ.update(_OLD_ENV)
+
+
 class SupervisorWatchdogTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = tempfile.TemporaryDirectory()
@@ -471,7 +487,8 @@ class SupervisorWatchdogTests(unittest.TestCase):
 
     def hold_lock(self, pid: int = 999):
         """Create supervisor.lock and hold an exclusive flock for the test's lifetime."""
-        lock_path = self.state_file.parent / "supervisor.lock"
+        lock_path = supervisor_watchdog.supervisor_lock_path(self.config)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
         lock_path.write_text(f"{pid}\n", encoding="utf-8")
         handle = open(lock_path, "a+", encoding="utf-8")
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -514,7 +531,9 @@ class SupervisorWatchdogTests(unittest.TestCase):
         # No lock file at all.
         self.assertFalse(supervisor_watchdog.supervisor_lock_held(self.config))
         # File present but nobody holds the flock.
-        (self.state_file.parent / "supervisor.lock").write_text("0\n", encoding="utf-8")
+        lock_path = supervisor_watchdog.supervisor_lock_path(self.config)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path.write_text("0\n", encoding="utf-8")
         self.assertFalse(supervisor_watchdog.supervisor_lock_held(self.config))
 
     def test_lock_held_with_missing_pid_observes_only(self) -> None:
@@ -643,19 +662,32 @@ class SupervisorWatchdogTests(unittest.TestCase):
         })
 
         import subprocess
+        import signal
         processes = []
-        for _ in range(12):
-            p = subprocess.Popen(
-                [sys.executable, str(Path(supervisor_watchdog.__file__).resolve()), "--config", str(config_path), "--json"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            processes.append(p)
-
         outputs = []
-        for p in processes:
-            stdout, stderr = p.communicate(timeout=5.0)
-            outputs.append((p.returncode, stdout, stderr))
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("PANTHEON_")}
+        try:
+            for _ in range(12):
+                p = subprocess.Popen(
+                    [sys.executable, str(Path(supervisor_watchdog.__file__).resolve()), "--config", str(config_path), "--json"],
+                    env=clean_env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    start_new_session=True,
+                )
+                processes.append(p)
+
+            for p in processes:
+                stdout, stderr = p.communicate(timeout=5.0)
+                outputs.append((p.returncode, stdout, stderr))
+        finally:
+            for p in processes:
+                if p.poll() is None:
+                    try:
+                        os.killpg(p.pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+                    p.wait()
 
         for code, stdout, stderr in outputs:
             self.assertEqual(code, 0, f"Subprocess failed with stderr: {stderr.decode()}")
@@ -679,6 +711,90 @@ class SupervisorWatchdogTests(unittest.TestCase):
             event = json.loads(line)
             self.assertEqual(event["decision"], "skip")
             self.assertEqual(event["reason"], "lock_contention")
+
+    def test_initially_free_concurrent_probes_max_one_owner(self) -> None:
+        """Proves that when the lock is initially free and multiple concurrent probes execute,
+        at most one active probe can own the critical section while others immediately skip."""
+        import threading
+        import time
+
+        self.write_pid(123)
+        now = datetime.now(timezone.utc)
+        self.write_state({
+            "supervisor": {
+                "pid": 123,
+                "last_heartbeat_at": supervisor_watchdog.isoformat_utc(now),
+                "lifecycle": "running"
+            }
+        })
+
+        active_owners = 0
+        max_seen_owners = 0
+        owner_lock = threading.Lock()
+        
+        entered_event = threading.Event()
+        continue_event = threading.Event()
+
+        orig_run_locked = supervisor_watchdog._run_watchdog_locked
+
+        def mock_run_locked(*args, **kwargs):
+            nonlocal active_owners, max_seen_owners
+            with owner_lock:
+                active_owners += 1
+                if active_owners > max_seen_owners:
+                    max_seen_owners = active_owners
+            
+            entered_event.set()
+            continue_event.wait(timeout=5.0)
+            
+            try:
+                res = orig_run_locked(*args, **kwargs)
+            finally:
+                with owner_lock:
+                    active_owners -= 1
+            return res
+
+        with mock.patch.object(supervisor_watchdog, "_run_watchdog_locked", side_effect=mock_run_locked), \
+             mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()):
+            
+            results = []
+            threads = []
+            
+            def worker():
+                res = supervisor_watchdog.run_watchdog(self.config, restart=True)
+                results.append(res)
+
+            t1 = threading.Thread(target=worker)
+            threads.append(t1)
+            t1.start()
+
+            self.assertTrue(entered_event.wait(timeout=5.0))
+
+            for _ in range(4):
+                t = threading.Thread(target=worker)
+                threads.append(t)
+                t.start()
+
+            for t in threads[1:]:
+                t.join(timeout=5.0)
+
+            continue_event.set()
+            t1.join(timeout=5.0)
+
+            decisions = [r["decision"] for r in results]
+            reasons = [r["reason"] for r in results]
+            
+            self.assertEqual(decisions.count("observe_only"), 1)
+            self.assertEqual(decisions.count("skip"), 4)
+            self.assertEqual(reasons.count("lock_contention"), 4)
+
+            for r in results:
+                if r["decision"] == "skip":
+                    self.assertIsNone(r["restart_count_window"])
+                    self.assertIsNone(r["restart_count_hour"])
+
+            self.assertEqual(max_seen_owners, 1)
+            self.assertEqual(active_owners, 0)
 
     def test_metric_lock_contention_subprocess_launches(self) -> None:
         """Spawn concurrent watchdog processes via subprocess while BOTH the primary lock and the metric lock are held,
@@ -715,20 +831,33 @@ class SupervisorWatchdogTests(unittest.TestCase):
         })
 
         import subprocess
+        import signal
         processes = []
-        for _ in range(5):
-            p = subprocess.Popen(
-                [sys.executable, str(Path(supervisor_watchdog.__file__).resolve()), "--config", str(config_path), "--json"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            processes.append(p)
-
         outputs = []
-        for p in processes:
-            # Enforce a strict timeout deadline of 2.0 seconds
-            stdout, stderr = p.communicate(timeout=2.0)
-            outputs.append((p.returncode, stdout, stderr))
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("PANTHEON_")}
+        try:
+            for _ in range(5):
+                p = subprocess.Popen(
+                    [sys.executable, str(Path(supervisor_watchdog.__file__).resolve()), "--config", str(config_path), "--json"],
+                    env=clean_env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    start_new_session=True,
+                )
+                processes.append(p)
+
+            for p in processes:
+                # Enforce a strict timeout deadline of 2.0 seconds
+                stdout, stderr = p.communicate(timeout=2.0)
+                outputs.append((p.returncode, stdout, stderr))
+        finally:
+            for p in processes:
+                if p.poll() is None:
+                    try:
+                        os.killpg(p.pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+                    p.wait()
 
         for code, stdout, stderr in outputs:
             self.assertEqual(code, 0, f"Subprocess failed with stderr: {stderr.decode()}")
@@ -782,7 +911,8 @@ class SupervisorWatchdogTests(unittest.TestCase):
 
         # Validate with supervisor_runtime_health.py --require-watchdog --json
         # We lock supervisor.lock to simulate that the supervisor process is alive
-        sup_lock_path = self.state_file.parent / "supervisor.lock"
+        sup_lock_path = supervisor_watchdog.supervisor_lock_path(self.config)
+        sup_lock_path.parent.mkdir(parents=True, exist_ok=True)
         sup_lock_handle = open(sup_lock_path, "w", encoding="utf-8")
         fcntl.flock(sup_lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
 
@@ -792,13 +922,25 @@ class SupervisorWatchdogTests(unittest.TestCase):
             json.dump(self.config, f)
 
         import subprocess
+        import signal
         health_script_path = Path(__file__).resolve().parent.parent / "scripts" / "supervisor_runtime_health.py"
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("PANTHEON_")}
         p = subprocess.Popen(
             [sys.executable, str(health_script_path), "--repo", str(self.root), "--require-watchdog", "--json"],
+            env=clean_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            start_new_session=True,
         )
-        stdout, stderr = p.communicate(timeout=5.0)
+        try:
+            stdout, stderr = p.communicate(timeout=5.0)
+        finally:
+            if p.poll() is None:
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                p.wait()
 
         fcntl.flock(sup_lock_handle.fileno(), fcntl.LOCK_UN)
         sup_lock_handle.close()
@@ -1011,6 +1153,25 @@ class SupervisorWatchdogTests(unittest.TestCase):
 
         self.assertEqual(exit_calls, 1, "Lock manager exit should have been called exactly once to clean up lock.")
 
+    def test_watchdog_locked_body_contention_propagates(self) -> None:
+        """Verify that a LockContentionError raised inside the locked body (e.g. from a nested lock attempt)
+        is propagated and NOT caught or converted to a benign skip by run_watchdog."""
+        import errno
+        self.write_pid(123)
+        self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}})
+
+        def nested_contention_run(*args, **kwargs):
+            from common import LockContentionError
+            import errno
+            raise LockContentionError(errno.EAGAIN, "Nested lock contention", "dummy.lock")
+
+        with mock.patch.object(supervisor_watchdog, "_run_watchdog_locked", nested_contention_run):
+            from common import LockContentionError
+            with self.assertRaises(LockContentionError) as ctx:
+                supervisor_watchdog.run_watchdog(self.config, restart=True)
+            self.assertEqual(ctx.exception.errno, errno.EAGAIN)
+            self.assertIn("Nested lock contention", str(ctx.exception))
+
     def test_contention_metric_open_eacces_propagates(self) -> None:
         """Verify that when the metrics-lock os.open raises EACCES, the original OSError is propagated without UnboundLocalError."""
         import errno
@@ -1051,6 +1212,42 @@ class SupervisorWatchdogTests(unittest.TestCase):
         
         with canonical_task_state_lock_file(status_file, shared=False, nonblocking=True):
             pass
+
+    def test_lock_contention_timeout_decouples_and_returns_fallback(self) -> None:
+        """Verify that when operations in the contention path hang/timeout,
+        run_watchdog returns lock_contention_timeout fallback without blocking indefinitely."""
+        import time
+        from common import LockContentionError
+
+        # Set a short timeout deadline in configuration
+        config = dict(self.config)
+        config["watchdog"] = dict(config["watchdog"])
+        config["watchdog"]["contention_deadline_seconds"] = 0.1
+
+        # Hold the runtime lock to trigger LockContentionError
+        lock_dir = self.root / ".orchestrator"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "runtime-admission.lock"
+        lock_handle = open(lock_path, "w", encoding="utf-8")
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lock_handle.close)
+
+        # Mock supervisor_lock_held to block/sleep longer than the deadline
+        def slow_lock_held(*args, **kwargs):
+            time.sleep(0.5)
+            return True
+
+        with mock.patch.object(supervisor_watchdog, "supervisor_lock_held", slow_lock_held):
+            start = time.monotonic()
+            result = supervisor_watchdog.run_watchdog(config, restart=True)
+            elapsed = time.monotonic() - start
+
+        # Check that it timed out and returned within a reasonable window (less than 0.4s, since timeout is 0.1)
+        self.assertLess(elapsed, 0.4)
+        self.assertEqual(result["decision"], "skip")
+        self.assertEqual(result["reason"], "lock_contention_timeout")
+        self.assertEqual(result["resource"]["active_worker_count_source"], "skipped_due_to_timeout")
+        self.assertEqual(result["resource"]["active_worker_scan_error"], "timeout")
 
 
 class ActiveWorkerCountDedupeTests(unittest.TestCase):
@@ -1163,6 +1360,34 @@ class ActiveWorkerCountDedupeTests(unittest.TestCase):
         }
         reasons = supervisor_watchdog.resource_pressure_reasons(snapshot, settings)
         self.assertIn("active_worker_count_above_threshold", reasons)
+
+    def test_harness_cleanup_leaves_no_lingering_processes(self) -> None:
+        """Verify that when a process is spawned under start_new_session=True, 
+        our cleanup wrapper successfully kills the process group and leaves no lingering processes."""
+        import subprocess
+        import signal
+
+        # Spawn a process that runs sleep
+        p = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(10)"],
+            start_new_session=True,
+        )
+        self.addCleanup(p.wait) # backup
+
+        pid = p.pid
+        # Verify it's alive
+        self.assertTrue(supervisor_watchdog.pid_is_alive(pid))
+
+        # Kill the process group
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except OSError:
+            pass
+        p.wait()
+
+        # Verify it is now dead
+        self.assertFalse(supervisor_watchdog.pid_is_alive(pid))
+
 
 
 if __name__ == "__main__":

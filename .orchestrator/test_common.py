@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import tracemalloc
 import unittest
 from itertools import islice
@@ -129,6 +130,8 @@ class JsonLoadResilienceTests(unittest.TestCase):
             ):
                 env.pop(env_name, None)
             env["PANTHEON_STATUS_ROOT"] = str(status_root)
+            env["AI_NAME"] = "Ops"
+
 
             result = subprocess.run(
                 [sys.executable, str(repo_root / "scripts" / "ai_status.py"), "sync"],
@@ -419,6 +422,53 @@ class ClaudeAuthTests(unittest.TestCase):
 
 
 class RecentTaskActivityTests(unittest.TestCase):
+    def test_automatic_task_brief_never_scans_global_activity_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status_file = root / "ai-status.json"
+            status_file.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "TASK-1",
+                                "title": "Bounded dispatch context",
+                                "status": "in_progress",
+                                "owner": "Codex",
+                                "reviewer": "Claude",
+                                "depends_on": [],
+                                "artifacts": [],
+                                "next": "Finish without global history scan",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            brief_path = root / "task-brief.md"
+            config = {
+                "paths": {
+                    "status_file": str(status_file),
+                    "activity_log": str(root / "huge-activity-log.jsonl"),
+                }
+            }
+
+            with (
+                mock.patch.object(common, "task_brief_path", return_value=brief_path),
+                mock.patch.object(
+                    common,
+                    "_recent_task_activity",
+                    side_effect=AssertionError("global activity scan must not run"),
+                ) as recent_activity,
+            ):
+                result = common.write_task_brief(config, "TASK-1")
+
+            recent_activity.assert_not_called()
+            self.assertEqual(result, brief_path)
+            rendered = brief_path.read_text(encoding="utf-8")
+            self.assertIn("Finish without global history scan", rendered)
+            self.assertIn("Omitted from automatic dispatch context", rendered)
+
     def test_recent_task_activity_returns_latest_rows_from_validated_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -471,12 +521,22 @@ class RecentTaskActivityTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertRaisesRegex(RuntimeError, "Bad JSON"):
+            with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
                 common._recent_task_activity(
                     {"paths": {"activity_log": str(activity_log)}},
                     "TASK-1",
                     limit=3,
                 )
+
+        self.assertEqual(
+            ctx.exception.diagnostic["record_type"],
+            "pantheon.activity.fail_closed.v1",
+        )
+        self.assertEqual(
+            ctx.exception.diagnostic["evidence"]["operation"],
+            "recent_task_activity",
+        )
+        self.assertIn("Bad JSON", ctx.exception.diagnostic["message"])
 
     def test_recent_task_activity_rejects_duplicate_keys_in_active_and_gzip(self) -> None:
         ambiguous = (
@@ -559,11 +619,11 @@ class StableCanonicalLockPathTests(unittest.TestCase):
                     data_path.symlink_to(target)
                     with self.assertRaisesRegex(
                         RuntimeError,
-                        rf"canonical {plane} data file cannot be a symlink",
+                        rf"canonical {plane} data path contains a symlink",
                     ):
                         lock_path_for(data_path)
 
-    def test_lock_paths_resolve_the_parent_without_rejecting_parent_aliases(self) -> None:
+    def test_lock_paths_reject_parent_aliases(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             real_root = root / "real-status-root"
@@ -571,18 +631,15 @@ class StableCanonicalLockPathTests(unittest.TestCase):
             alias_root = root / "status-root-alias"
             alias_root.symlink_to(real_root, target_is_directory=True)
 
-            self.assertEqual(
-                common.canonical_task_state_lock_path(
-                    alias_root / "ai-status.json"
-                ),
-                real_root / ".orchestrator" / "task-state.lock",
-            )
-            self.assertEqual(
-                common.activity_audit_lock_path(
-                    alias_root / "ai-activity-log.jsonl"
-                ),
-                real_root / ".orchestrator" / "activity-audit.lock",
-            )
+            for lock_path_for, leaf in (
+                (common.canonical_task_state_lock_path, "ai-status.json"),
+                (common.activity_audit_lock_path, "ai-activity-log.jsonl"),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "path contains a symlink",
+                ):
+                    lock_path_for(alias_root / leaf)
 
     def test_stable_sidecar_rejects_a_symlink_leaf(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -649,6 +706,39 @@ class StableCanonicalLockPathTests(unittest.TestCase):
                     nonblocking=False,
                 ):
                     self.fail("replaced sidecar pathname must never be admitted")
+
+    def test_stable_sidecar_identity_validation_eagain_is_propagated(self) -> None:
+        """Verify that an EAGAIN OSError raised from the post-flock identity validation
+        is propagated and NOT converted to LockContentionError."""
+        import errno
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            lock_path = root / "task-state.lock"
+
+            call_count = 0
+            def fake_assert(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count > 1:
+                    raise OSError(errno.EAGAIN, "EAGAIN during validation")
+
+            mock_flock = mock.Mock(side_effect=common.fcntl.flock)
+
+            with (
+                mock.patch("common._assert_stable_lock_identity", fake_assert),
+                mock.patch.object(common.fcntl, "flock", mock_flock),
+                self.assertRaises(OSError) as ctx,
+            ):
+                with common.stable_sidecar_lock(
+                    lock_path,
+                    plane="task_state",
+                    shared=False,
+                    nonblocking=True,
+                ):
+                    self.fail("should not reach here")
+            self.assertEqual(ctx.exception.errno, errno.EAGAIN)
+            self.assertNotIsInstance(ctx.exception, common.LockContentionError)
+            mock_flock.assert_called()
 
     def test_pid_change_resets_inherited_thread_local_state(self) -> None:
         fake_handle = mock.Mock()
@@ -748,7 +838,14 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
 
     def test_sigkill_at_each_rotation_boundary_recovers_exactly_once(self) -> None:
         context = multiprocessing.get_context("fork")
-        for point in ("intent", "archive", "tail", "lineage"):
+        for point in (
+            "stage_archive",
+            "stage_tail",
+            "intent",
+            "archive",
+            "tail",
+            "lineage",
+        ):
             with self.subTest(point=point), tempfile.TemporaryDirectory() as tmpdir:
                 log_path = Path(tmpdir) / "ai-activity-log.jsonl"
                 original = [
@@ -838,7 +935,10 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
                 target_path.unlink()
                 target_path.symlink_to(external)
 
-                with self.assertRaisesRegex(RuntimeError, "stable regular file"):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "stable regular file|path contains a symlink",
+                ):
                     common.write_activity_log(
                         {
                             "paths": {
@@ -851,6 +951,107 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
                             "type": "rotation_test",
                         },
                     )
+
+    def test_rotation_guard_rejects_append_behind_pending_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_path.write_text(
+                "".join(
+                    json.dumps(
+                        {
+                            "event_id": f"original-{index}",
+                            "payload": "x" * 256,
+                        }
+                    )
+                    + "\n"
+                    for index in range(3)
+                ),
+                encoding="utf-8",
+            )
+            intent = self._leave_pending_rotation(log_path)
+            intent_path = common.activity_rotation_intent_path(log_path)
+            original_log = log_path.read_bytes()
+            original_intent = intent_path.read_bytes()
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {common.ACTIVITY_ROTATION_WRITER_GUARD_ENV: "1"},
+                ),
+                self.assertRaisesRegex(RuntimeError, "recovery is pending"),
+            ):
+                common.write_activity_log(
+                    {
+                        "paths": {
+                            "activity_log": str(log_path),
+                            "activity_log_rotate_bytes": 1_000_000,
+                        }
+                    },
+                    {
+                        "event_id": "must-not-append",
+                        "type": "rotation_test",
+                    },
+                )
+
+            self.assertEqual(log_path.read_bytes(), original_log)
+            self.assertEqual(intent_path.read_bytes(), original_intent)
+            self.assertEqual(
+                json.loads(intent_path.read_text(encoding="utf-8")),
+                intent,
+            )
+
+    def test_append_below_rotation_threshold_does_not_scan_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_path.write_text('{"event_id":"old"}\n', encoding="utf-8")
+
+            with mock.patch.object(
+                common,
+                "activity_audit_source_paths_unlocked",
+                side_effect=AssertionError("history must stay unopened"),
+            ):
+                common.write_activity_log(
+                    {
+                        "paths": {
+                            "activity_log": str(log_path),
+                            "activity_log_rotate_bytes": 1024 * 1024,
+                        }
+                    },
+                    {"event_id": "new", "type": "bounded_append_test"},
+                )
+
+            self.assertEqual(
+                [row["event_id"] for row in self._audit_rows(log_path)],
+                ["old", "new"],
+            )
+
+    def test_append_above_rotation_threshold_still_scans_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_path.write_text(
+                json.dumps({"event_id": "old", "payload": "x" * 256}) + "\n",
+                encoding="utf-8",
+            )
+
+            with (
+                mock.patch.object(
+                    common,
+                    "activity_audit_source_paths_unlocked",
+                    side_effect=RuntimeError("history validation marker"),
+                ),
+                self.assertRaisesRegex(RuntimeError, "history validation marker"),
+            ):
+                common.write_activity_log(
+                    {
+                        "paths": {
+                            "activity_log": str(log_path),
+                            "activity_log_rotate_bytes": 1,
+                        }
+                    },
+                    {"event_id": "must-not-append", "type": "rotation_test"},
+                )
+
+            self.assertNotIn("must-not-append", log_path.read_text(encoding="utf-8"))
 
     def test_interrupted_non_newline_tail_is_repaired_before_append(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -909,7 +1110,8 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
             archive_leaf.symlink_to(external)
 
             with self.assertRaisesRegex(
-                RuntimeError, "activity audit source leaf cannot be a symlink"
+                RuntimeError,
+                "path contains a symlink|source leaf cannot be a symlink",
             ):
                 with common.activity_audit_lock_file(
                     log_path, shared=True, nonblocking=False
@@ -951,6 +1153,73 @@ class LogicalActivityReaderTests(unittest.TestCase):
             "".join(json.dumps(entry) + "\n" for entry in entries),
             encoding="utf-8",
         )
+
+    def _write_registered_content_archive(
+        self,
+        archive_name: str | None,
+        entries: list[dict],
+        *,
+        tail_entries: list[dict] | None = None,
+    ) -> Path:
+        archive_payload = b"".join(
+            (json.dumps(entry) + "\n").encode("utf-8") for entry in entries
+        )
+        payload_sha256 = hashlib.sha256(archive_payload).hexdigest()
+        archive_name = archive_name or (
+            f"{self.log_path.name}-{payload_sha256}.gz"
+        )
+        archive_path = self.archive_dir / archive_name
+        self._write_gz(archive_path, entries)
+        tail_payload = b"".join(
+            (json.dumps(entry) + "\n").encode("utf-8")
+            for entry in (tail_entries or [])
+        )
+        transaction_id = "activity-rotation-test-nonadjacent-tail"
+        row = {
+            "record_type": common.ACTIVITY_ROTATION_LINEAGE_RECORD_TYPE,
+            "schema_version": common.ACTIVITY_LOG_ROTATION_SCHEMA_VERSION,
+            "log_name": self.log_path.name,
+            "sequence": 1,
+            "transaction_id": transaction_id,
+            "archive_relative_path": str(archive_path.relative_to(self.root)),
+            "archive_payload_sha256": payload_sha256,
+            "archive_gzip_sha256": hashlib.sha256(
+                archive_path.read_bytes()
+            ).hexdigest(),
+            "archive_byte_count": len(archive_payload),
+            "archive_line_count": len(entries),
+            "source_sha256": payload_sha256,
+            "source_payload_sha256": payload_sha256,
+            "source_byte_count": len(archive_payload),
+            "source_line_count": len(entries),
+            "tail_sha256": hashlib.sha256(tail_payload).hexdigest(),
+            "tail_byte_count": len(tail_payload),
+            "tail_line_count": len(tail_payload.splitlines()) if tail_payload else 0,
+            "previous_sequence": 0,
+            "previous_transaction_id": None,
+            "previous_lineage_sha256": hashlib.sha256(b"").hexdigest(),
+            "boundary_normalization": None,
+        }
+        lineage_bytes = common._canonical_json_line(row)
+        lineage_path = common.activity_rotation_lineage_path(self.log_path)
+        lineage_path.parent.mkdir(parents=True, exist_ok=True)
+        lineage_path.write_bytes(lineage_bytes)
+        control = {
+            "record_type": common.ACTIVITY_ROTATION_HEAD_RECORD_TYPE,
+            "schema_version": common.ACTIVITY_LOG_ROTATION_SCHEMA_VERSION,
+            "log_name": self.log_path.name,
+            "sequence": row["sequence"],
+            "transaction_id": transaction_id,
+            "archive_payload_sha256": row["archive_payload_sha256"],
+            "archive_gzip_sha256": row["archive_gzip_sha256"],
+            "lineage_sha256": hashlib.sha256(lineage_bytes).hexdigest(),
+            "lineage_row_sha256": common._canonical_json_sha256(row),
+            "tail_sha256": row["tail_sha256"],
+            "tail_byte_count": row["tail_byte_count"],
+            "tail_line_count": row["tail_line_count"],
+        }
+        self.log_path.write_bytes(common._canonical_json_line(control) + tail_payload)
+        return archive_path
 
     def _append_active(self, entries: list[dict]) -> None:
         with self.log_path.open("ab") as handle:
@@ -1100,6 +1369,36 @@ class LogicalActivityReaderTests(unittest.TestCase):
         logical_ids = [entry["event_id"] for entry, _, _ in common.stream_logical_activity(self.log_path)]
         self.assertEqual(logical_ids, [f"event-{idx}" for idx in range(2300)])
 
+    def test_boundary_predecessor_replacement_cannot_hide_excluded_rows(self):
+        legacy_entries = self._make_entries(0, 1500)
+        active_entries = self._make_entries(500, 1800)
+        predecessor = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        self._write_gz(predecessor, legacy_entries)
+        self._write_active(active_entries)
+
+        with common.activity_audit_lock_file(self.log_path, shared=False):
+            common.rotate_activity_log_unlocked(
+                self.log_path,
+                max_bytes=1,
+                keep_lines=1000,
+            )
+
+        # Replace the pinned predecessor with a valid gzip that contains only
+        # its non-overlap prefix. Trusting the manifest without reopening this
+        # source would silently lose the 1000 excluded rows.
+        self._write_gz(predecessor, legacy_entries[:500])
+        with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
+            list(common.stream_logical_activity(self.log_path))
+
+        self.assertEqual(
+            ctx.exception.diagnostic["invariant"],
+            "activity_content_identity",
+        )
+        self.assertIn(
+            "boundary predecessor identity mismatch",
+            ctx.exception.diagnostic["message"],
+        )
+
     def test_first_content_rotation_rejects_bad_boundary_candidates(self):
         predecessor = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
         legacy_entries = self._make_entries(0, 1500)
@@ -1168,6 +1467,25 @@ class LogicalActivityReaderTests(unittest.TestCase):
         self.assertEqual(source_names, lineage_names)
         logical_ids = [entry["event_id"] for entry, _, _ in common.stream_logical_activity(self.log_path)]
         self.assertEqual(logical_ids, [entry["event_id"] for entry in creation_entries])
+
+    def test_content_archive_basename_must_match_payload_digest(self):
+        archive = self._write_registered_content_archive(
+            f"{self.log_path.name}-{'0' * 64}.gz",
+            [{"event_id": "wrong-content-name", "message": "payload"}],
+        )
+
+        with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
+            list(common.stream_logical_activity(self.log_path))
+
+        self.assertEqual(
+            ctx.exception.diagnostic["invariant"],
+            "activity_content_identity",
+        )
+        self.assertEqual(
+            ctx.exception.diagnostic["message"],
+            "activity content-addressed archive basename digest mismatch",
+        )
+        self.assertTrue(archive.exists())
 
     def test_archive_metrics_bind_raw_and_payload_to_one_stream(self):
         first_payload = b'{"event_id":"coherent-first"}\n'
@@ -1592,7 +1910,10 @@ class LogicalActivityReaderTests(unittest.TestCase):
         target = self.root / "some-file"
         target.write_text("{}", encoding="utf-8")
         f1.symlink_to(target)
-        with self.assertRaisesRegex(RuntimeError, "Source is a symlink or changed|Source is not a regular file|activity audit source leaf cannot be a symlink"):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "path contains a symlink|source leaf cannot be a symlink",
+        ):
             list(common.stream_logical_activity(self.log_path))
 
     def test_active_log_symlink_is_rejected_before_leaf_resolution(self):
@@ -1606,9 +1927,41 @@ class LogicalActivityReaderTests(unittest.TestCase):
         stream = common.stream_logical_activity(self.log_path)
         with self.assertRaisesRegex(
             RuntimeError,
-            "activity audit source leaf cannot be a symlink",
+            "(?:path contains a symlink|source leaf cannot be a symlink)",
         ):
             next(stream)
+
+    def test_dangling_lineage_symlink_fails_closed(self):
+        self._write_active([{"event_id": "active"}])
+        lineage_path = common.activity_rotation_lineage_path(self.log_path)
+        lineage_path.parent.mkdir(parents=True, exist_ok=True)
+        lineage_path.symlink_to(self.root / "missing-lineage.jsonl")
+
+        with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
+            list(common.stream_logical_activity(self.log_path))
+
+        self.assertEqual(
+            ctx.exception.diagnostic["invariant"],
+            "activity_source_path",
+        )
+
+    def test_archive_parent_symlink_fails_closed(self):
+        external_archive_dir = self.root / "external-archives"
+        external_archive_dir.mkdir()
+        self.archive_dir.rmdir()
+        self.archive_dir.symlink_to(external_archive_dir, target_is_directory=True)
+        self._write_gz(
+            self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz",
+            [{"event_id": "external"}],
+        )
+
+        with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
+            list(common.stream_logical_activity(self.log_path))
+
+        self.assertEqual(
+            ctx.exception.diagnostic["invariant"],
+            "activity_source_path",
+        )
 
     def test_active_log_symlink_swap_during_leaf_guard_is_rejected(self):
         self._write_active([{"event_id": "original"}])
@@ -1638,7 +1991,7 @@ class LogicalActivityReaderTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 RuntimeError,
                 "(?:activity audit source leaf|canonical activity-audit data file) "
-                "cannot be a symlink",
+                "cannot be a symlink|activity audit source path contains a symlink",
             ):
                 list(common.stream_logical_activity(self.log_path))
         self.assertTrue(swapped)
@@ -2221,6 +2574,48 @@ class LogicalActivityReaderTests(unittest.TestCase):
         f_1609.unlink()
         if self.log_path.exists():
             self.log_path.unlink()
+
+    def test_content_archive_non_adjacent_tail_diagnostic_is_structured_and_bounded(
+        self,
+    ):
+        f_1609 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1609Z.gz"
+        f_2337 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T2337Z.gz"
+        older_tail = [{"message": f"older-tail-{index}"} for index in range(1000)]
+        self._write_gz(
+            f_1609,
+            [{"message": f"older-prefix-{index}"} for index in range(50)]
+            + older_tail,
+        )
+        self._write_gz(
+            f_2337,
+            [{"message": f"newer-unrelated-{index}"} for index in range(1200)],
+        )
+        content_archive = self._write_registered_content_archive(
+            None,
+            older_tail + [{"message": "content-tail"}],
+        )
+
+        started = time.monotonic()
+        with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
+            list(common.stream_logical_activity(self.log_path))
+        elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 2.0)
+        diagnostic = ctx.exception.diagnostic
+        self.assertEqual(
+            diagnostic["record_type"],
+            "pantheon.activity.fail_closed.v1",
+        )
+        self.assertEqual(diagnostic["invariant"], "activity_non_adjacent_tail")
+        self.assertEqual(len(diagnostic["evidence_sha256"]), 64)
+        evidence = diagnostic["evidence"]
+        self.assertEqual(evidence["matched_source"], str(f_1609))
+        self.assertEqual(evidence["current_source"], str(content_archive))
+        self.assertEqual(evidence["immediate_predecessor"], str(f_2337))
+        self.assertEqual(
+            evidence["prefix_1000_sha256"],
+            evidence["matched_suffix_1000_sha256"],
+        )
 
     def test_recover_status_activity_outbox_integration(self):
         import sys

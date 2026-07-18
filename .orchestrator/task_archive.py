@@ -38,6 +38,41 @@ def iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def read_task_archive_file_safe(path: Path) -> str:
+    import stat
+    import errno
+    try:
+        st = os.lstat(path)
+        if stat.S_ISLNK(st.st_mode):
+            raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
+        if not stat.S_ISREG(st.st_mode):
+            raise RuntimeError(f"archive-leaf must be a regular file: {path}")
+    except FileNotFoundError:
+        raise
+    except OSError as e:
+        raise RuntimeError(f"Failed to lstat archive-leaf {path}: {e}")
+
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
+        raise
+
+    try:
+        fst = os.fstat(fd)
+        if not stat.S_ISREG(fst.st_mode):
+            raise RuntimeError(f"archive-leaf fd must be a regular file: {path}")
+        with open(fd, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise e
+
+
 def _archive_fault(point: str) -> None:
     if str(os.environ.get("LOOP_TEST_ARCHIVE_SIGKILL_AFTER") or "").strip() == point:
         os.kill(os.getpid(), 9)
@@ -163,6 +198,88 @@ def save_archive_index(index: dict[str, Any]) -> None:
     write_json(ARCHIVE_INDEX_FILE, payload)
 
 
+def get_outbox_snapshots() -> dict[str, Any]:
+    outbox_snapshots = {}
+    if STATUS_FILE.exists():
+        try:
+            status_data = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+            if isinstance(status_data, dict):
+                outbox = status_data.get("status_archive_outbox")
+                if outbox not in (None, {}, []):
+                    validated_outbox = validate_status_archive_outbox(outbox)
+                    for item in validated_outbox["snapshots"]:
+                        t_id = normalize_task_id(item.get("task_id"))
+                        if t_id:
+                            outbox_snapshots[t_id] = item
+        except Exception:
+            pass
+    return outbox_snapshots
+
+
+def validate_archive_snapshot(
+    snapshot: Any,
+    filename_task_id: str | None = None,
+    outbox_snapshots: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not isinstance(snapshot, dict):
+        raise RuntimeError("snapshot is not a JSON object")
+
+    task_id = normalize_task_id(
+        snapshot.get("task_id")
+        or ((snapshot.get("task") or {}).get("id"))
+        or snapshot.get("id")
+    )
+    if not task_id:
+        raise RuntimeError("snapshot is missing task id")
+
+    if filename_task_id:
+        expected_normalized = normalize_task_id(filename_task_id)
+        if task_id != expected_normalized:
+            raise RuntimeError(
+                f"snapshot task_id {task_id} does not match expected filename task_id {expected_normalized}"
+            )
+
+    # Enforce modern or legacy contract or proven outbox provenance
+    valid_contract = is_valid_modern_contract(snapshot) or is_valid_legacy_contract(snapshot)
+    if not valid_contract:
+        if outbox_snapshots is None:
+            outbox_snapshots = get_outbox_snapshots()
+        if task_id not in outbox_snapshots:
+            raise RuntimeError(
+                f"snapshot for {task_id} does not satisfy any valid contract "
+                f"and lacks proven durable outbox provenance"
+            )
+        # Validate the snapshot content itself matches the outbox snapshot exactly
+        outbox_snap = outbox_snapshots[task_id]
+        if _canonical_json_sha256(snapshot) != _canonical_json_sha256(outbox_snap):
+            raise RuntimeError(
+                f"snapshot for {task_id} content does not match the outbox snapshot exactly"
+            )
+
+    # STRICT SNAPSHOT VALIDATION
+    version = snapshot.get("version")
+    if version is not None:
+        try:
+            if int(version) != ARCHIVE_VERSION:
+                raise RuntimeError(f"snapshot has invalid version: {version}")
+        except (ValueError, TypeError):
+            raise RuntimeError(f"snapshot has malformed version: {version}")
+
+    outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
+    if outcome not in {TERMINAL_OUTCOME_COMPLETED, TERMINAL_OUTCOME_SUPERSEDED}:
+        raise RuntimeError(f"snapshot has invalid terminal_outcome: {outcome}")
+
+    status_val = snapshot.get("terminal_status") or (snapshot.get("task") or {}).get("status")
+    if status_val is not None and str(status_val).strip().lower() != "done":
+        raise RuntimeError(f"snapshot has invalid status: {status_val}")
+
+    archived_at = str(snapshot.get("archived_at") or "").strip()
+    if not archived_at:
+        raise RuntimeError("snapshot is missing archived_at")
+
+    return snapshot
+
+
 def load_archived_snapshot(task_id: str | None) -> dict[str, Any] | None:
     normalized = normalize_task_id(task_id)
     if not normalized:
@@ -173,10 +290,16 @@ def load_archived_snapshot(task_id: str | None) -> dict[str, Any] | None:
         shared=True,
         nonblocking=False,
     ):
-        snapshot = load_json(path, default=None)
-    if not isinstance(snapshot, dict):
-        return None
-    return snapshot
+        try:
+            text = read_task_archive_file_safe(path)
+            if not text.strip():
+                return None
+            snapshot = json.loads(text)
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            raise RuntimeError(f"Failed to load archive snapshot safely: {e}")
+    return validate_archive_snapshot(snapshot, filename_task_id=normalized)
 
 
 def load_archived_task(task_id: str | None) -> dict[str, Any] | None:
@@ -250,33 +373,387 @@ def recent_terminal_summaries(limit: int = DEFAULT_RECENT_LIMIT) -> list[dict[st
         return summaries
 
 
-def _rebuild_archive_index_locked(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -> dict[str, Any]:
+def is_valid_modern_contract(snapshot: Any) -> bool:
+    if not isinstance(snapshot, dict):
+        return False
+    expected_keys = {
+        "version",
+        "task_id",
+        "archived_at",
+        "terminal_status",
+        "terminal_outcome",
+        "task",
+        "handoffs",
+        "blockers",
+    }
+    keys = set(snapshot.keys())
+    allowed_keys = expected_keys | {"correction_context"}
+    if not (expected_keys <= keys <= allowed_keys):
+        return False
+    task = snapshot.get("task")
+    if not isinstance(task, dict):
+        return False
+    if str(task.get("status") or "").strip().lower() != "done":
+        return False
+    if str(task.get("id") or "").strip() != str(snapshot.get("task_id") or "").strip():
+        return False
+    if str(snapshot.get("terminal_status") or "").strip().lower() != "done":
+        return False
+
+    task_status_val = str(task.get("status") or "").strip().lower()
+    outcome_val = str(task.get("terminal_outcome") or "").strip().lower()
+    expected_outcome = ""
+    if outcome_val:
+        expected_outcome = outcome_val
+    elif task_status_val == "done":
+        expected_outcome = "completed"
+
+    if str(snapshot.get("terminal_outcome") or "").strip().lower() != expected_outcome:
+        return False
+    if not isinstance(snapshot.get("handoffs"), list):
+        return False
+    if not isinstance(snapshot.get("blockers"), list):
+        return False
+    try:
+        if int(snapshot.get("version") or 0) != 1:
+            return False
+    except Exception:
+        return False
+    if not str(snapshot.get("task_id") or "").strip():
+        return False
+    if not str(snapshot.get("archived_at") or "").strip():
+        return False
+    return True
+
+
+def is_valid_legacy_contract(snapshot: Any) -> bool:
+    if not isinstance(snapshot, dict):
+        return False
+    # A legacy snapshot must have id or task_id
+    task_id = normalize_task_id(snapshot.get("id") or snapshot.get("task_id"))
+    if not task_id:
+        return False
+    # status must be done
+    status_val = str(
+        snapshot.get("status")
+        or snapshot.get("terminal_status")
+        or (TERMINAL_STATUS_DONE if snapshot.get("terminal_outcome") else "")
+    ).strip().lower()
+    if status_val != "done":
+        return False
+    # terminal_outcome must be completed or superseded
+    outcome = str(
+        snapshot.get("terminal_outcome")
+        or ("completed" if status_val == "done" else "")
+    ).strip().lower()
+    if outcome not in {TERMINAL_OUTCOME_COMPLETED, TERMINAL_OUTCOME_SUPERSEDED}:
+        return False
+    # archived_at must be present
+    archived_at = str(snapshot.get("archived_at") or "").strip()
+    if not archived_at:
+        return False
+    return True
+
+
+def _canonical_json_sha256(value: Any) -> str:
+    import hashlib
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _is_status_archive_snapshot_valid(snapshot: Any) -> bool:
+    if not isinstance(snapshot, dict):
+        return False
+    keys = set(snapshot.keys())
+    expected = {
+        "version",
+        "task_id",
+        "archived_at",
+        "terminal_status",
+        "terminal_outcome",
+        "task",
+        "handoffs",
+        "blockers",
+    }
+    allowed = expected | {"correction_context"}
+    if not (expected <= keys <= allowed):
+        return False
+    task = snapshot.get("task")
+    return bool(
+        snapshot.get("version") == 1
+        and snapshot.get("terminal_status") == "done"
+        and str(snapshot.get("task_id") or "").strip()
+        and str(snapshot.get("archived_at") or "").strip()
+        and isinstance(task, dict)
+        and task.get("id") == snapshot.get("task_id")
+        and task.get("status") == "done"
+        and snapshot.get("terminal_outcome") in {"completed", "superseded"}
+        and isinstance(snapshot.get("handoffs"), list)
+        and isinstance(snapshot.get("blockers"), list)
+    )
+
+
+def validate_status_archive_outbox(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version",
+        "transaction_id",
+        "snapshots",
+    }:
+        raise RuntimeError("status archive outbox schema is not exact")
+    snapshots = value.get("snapshots")
+    if (
+        value.get("schema_version") != 1
+        or not isinstance(snapshots, list)
+        or not snapshots
+        or any(not _is_status_archive_snapshot_valid(snapshot) for snapshot in snapshots)
+        or len({str(snapshot["task_id"]) for snapshot in snapshots}) != len(snapshots)
+    ):
+        raise RuntimeError("status archive outbox contract is invalid")
+    expected_id = "ai-status-archive-tx-" + _canonical_json_sha256(snapshots)
+    if value.get("transaction_id") != expected_id:
+        raise RuntimeError("status archive outbox digest mismatch")
+    return value
+
+
+def _rebuild_archive_index_locked(
+    *,
+    recent_limit: int = DEFAULT_RECENT_LIMIT,
+    allow_uncommitted: bool = True,
+    bypass_downgrade_check: bool = False,
+    pinned_commit: str = "HEAD",
+) -> dict[str, Any]:
+    import subprocess
+    import io
     summaries: list[dict[str, Any]] = []
-    if ARCHIVE_TASKS_DIR.exists():
-        for path in sorted(ARCHIVE_TASKS_DIR.glob("*.json")):
-            snapshot = load_json(path, default=None)
-            if not isinstance(snapshot, dict):
-                continue
-            # Resolve the task id across all archive snapshot schema variants.
-            # Legacy entries store the id at the top level as ``id`` (not
-            # ``task_id`` / nested ``task.id``); without this fallback such files
-            # resolve to None and are silently excluded from the index forever.
-            task_id = normalize_task_id(
-                snapshot.get("task_id")
-                or ((snapshot.get("task") or {}).get("id"))
-                or snapshot.get("id")
+    committed_snapshots: dict[str, str] = {}
+
+    existing_index = load_json(ARCHIVE_INDEX_FILE, default=None)
+    existing_total = 0
+    if isinstance(existing_index, dict) and not bypass_downgrade_check:
+        existing_total = int(existing_index.get("counts", {}).get("total") or 0)
+
+    # Load archive outbox task IDs for provenance verification
+    outbox_snapshots = {}
+    if STATUS_FILE.exists():
+        status_data = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+        if isinstance(status_data, dict):
+            outbox = status_data.get("status_archive_outbox")
+            if outbox not in (None, {}, []):
+                # Validate the canonical outbox schema/digest/payload exactly
+                validated_outbox = validate_status_archive_outbox(outbox)
+                for item in validated_outbox["snapshots"]:
+                    t_id = normalize_task_id(item.get("task_id"))
+                    if t_id:
+                        outbox_snapshots[t_id] = item
+
+    is_git = False
+    git_dir_exists = (STATUS_ROOT / ".git").exists() or any((p / ".git").exists() for p in STATUS_ROOT.parents)
+    res_git = subprocess.run(
+        ["git", "-C", str(STATUS_ROOT), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res_git.returncode == 0 and res_git.stdout.strip() == "true":
+        is_git = True
+    elif git_dir_exists:
+        raise RuntimeError(f"Git probe failed inside git repository context: {res_git.stderr.strip()}")
+
+    if is_git:
+        # Verify pinned_commit is a valid git ref/commit
+        res_verify = subprocess.run(
+            ["git", "-C", str(STATUS_ROOT), "rev-parse", "--verify", f"{pinned_commit}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res_verify.returncode != 0:
+            raise RuntimeError(f"Invalid pinned commit/ref: {pinned_commit}")
+
+        if pinned_commit == "HEAD":
+            res_head = subprocess.run(
+                ["git", "-C", str(STATUS_ROOT), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
             )
-            if not task_id:
+            if res_head.returncode != 0:
+                raise RuntimeError("Failed to resolve HEAD")
+            pinned_commit = res_head.stdout.strip()
+
+        # Get list of files with uncommitted changes (modified, deleted, added, etc.)
+        uncommitted_files = set()
+        if allow_uncommitted:
+            res_status = subprocess.run(
+                ["git", "-C", str(STATUS_ROOT), "status", "--porcelain", "ai-task-archive/tasks/"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if res_status.returncode == 0:
+                for line in res_status.stdout.splitlines():
+                    if line.strip():
+                        # Format: XY path
+                        parts = line.strip().split(maxsplit=1)
+                        if len(parts) == 2:
+                            uncommitted_files.add(os.path.basename(parts[1]))
+
+        # Get committed file list and SHAs from pinned commit
+        res = subprocess.run(
+            ["git", "-C", str(STATUS_ROOT), "ls-tree", "-r", pinned_commit, "ai-task-archive/tasks/"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(f"git ls-tree failed for {pinned_commit}")
+
+        sha_to_filename: dict[str, str] = {}
+        for line in res.stdout.splitlines():
+            line = line.strip()
+            if not line:
                 continue
-            outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
-            archived_at = str(snapshot.get("archived_at") or "").strip()
-            summaries.append(
-                {
+            parts = line.split(maxsplit=3)
+            if len(parts) < 4:
+                raise RuntimeError(f"Malformed ls-tree row: {line}")
+            mode, obj_type, sha, file_path = parts[0], parts[1], parts[2], parts[3]
+            # OID validation: check SHA length and hex characters
+            if len(sha) not in (40, 64) or not all(c in "0123456789abcdefABCDEF" for c in sha):
+                raise RuntimeError(f"Invalid OID in ls-tree row: {line}")
+            if obj_type != "blob":
+                continue
+            if file_path.endswith(".json"):
+                basename = os.path.basename(file_path)
+                if basename in uncommitted_files:
+                    # Skip git version, we will read it from disk later
+                    continue
+                committed_snapshots[basename] = sha
+                sha_to_filename[sha] = file_path
+
+        # Read committed blobs using cat-file --batch
+        if sha_to_filename:
+            stdin_data = "\n".join(sha_to_filename.keys()).encode("utf-8") + b"\n"
+            proc = subprocess.Popen(
+                ["git", "-C", str(STATUS_ROOT), "cat-file", "--batch"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+            )
+            stdout_data, _ = proc.communicate(input=stdin_data)
+            if proc.returncode != 0:
+                raise RuntimeError("git cat-file --batch failed")
+
+            stream = io.BytesIO(stdout_data)
+            parsed_count = 0
+            for sha, file_path in sha_to_filename.items():
+                header = stream.readline()
+                if not header:
+                    raise RuntimeError(f"early cat-file EOF: expected header for {sha}")
+                h_parts = header.split()
+                if len(h_parts) < 3:
+                    raise RuntimeError(f"git cat-file returned malformed header for {sha}: {header}")
+                h_sha = h_parts[0].decode("utf-8")
+                h_type = h_parts[1]
+                h_size_str = h_parts[2]
+                if h_sha != sha:
+                    raise RuntimeError(f"git cat-file OID mismatch: expected {sha}, got {h_sha}")
+                if h_type != b"blob":
+                    raise RuntimeError(f"git cat-file returned invalid type for {sha}: {h_type}")
+                try:
+                    size = int(h_size_str)
+                except ValueError:
+                    raise RuntimeError(f"git cat-file returned invalid size for {sha}: {h_size_str}")
+
+                content = stream.read(size)
+                if len(content) != size:
+                    raise RuntimeError(f"early cat-file EOF: expected {size} bytes for blob {sha}, got {len(content)}")
+
+                terminator = stream.read(1)
+                if terminator != b"\n":
+                    raise RuntimeError(f"git cat-file missing terminator newline for {sha}, got {terminator}")
+
+                try:
+                    snapshot = json.loads(content.decode("utf-8"))
+                except Exception as e:
+                    raise RuntimeError(f"Malformed JSON in committed snapshot for blob {sha}: {e}")
+
+                if not isinstance(snapshot, dict):
+                    raise RuntimeError(f"Committed snapshot for {sha} is not a JSON object")
+
+                basename = os.path.basename(file_path)
+                filename_task_id = os.path.splitext(basename)[0]
+                validate_archive_snapshot(snapshot, filename_task_id=filename_task_id, outbox_snapshots=outbox_snapshots)
+
+                task_id = normalize_task_id(
+                    snapshot.get("task_id")
+                    or ((snapshot.get("task") or {}).get("id"))
+                    or snapshot.get("id")
+                )
+                outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
+                archived_at = str(snapshot.get("archived_at") or "").strip()
+                summaries.append({
                     "task_id": task_id,
                     "terminal_outcome": outcome,
                     "archived_at": archived_at,
-                }
-            )
+                })
+                parsed_count += 1
+
+            # Count validation
+            if parsed_count != len(sha_to_filename):
+                raise RuntimeError(f"git cat-file count mismatch: expected {len(sha_to_filename)} blobs, parsed {parsed_count}")
+
+    # Process newly created / uncommitted local snapshots
+    if allow_uncommitted and ARCHIVE_TASKS_DIR.exists():
+        for path in ARCHIVE_TASKS_DIR.glob("*.json"):
+            try:
+                st = os.lstat(path)
+                import stat
+                if stat.S_ISLNK(st.st_mode):
+                    raise RuntimeError(f"uncommitted snapshot cannot be a symlink: {path}")
+                if not stat.S_ISREG(st.st_mode):
+                    continue
+            except OSError:
+                continue
+            try:
+                path.relative_to(ARCHIVE_TASKS_DIR)
+            except ValueError:
+                continue
+
+            basename = path.name
+            if basename not in committed_snapshots:
+                try:
+                    text = read_task_archive_file_safe(path).strip()
+                    if not text:
+                        raise RuntimeError(f"uncommitted snapshot is empty: {path}")
+                    snapshot = json.loads(text)
+                    filename_task_id = os.path.splitext(basename)[0]
+                    validate_archive_snapshot(snapshot, filename_task_id=filename_task_id, outbox_snapshots=outbox_snapshots)
+
+                    task_id = normalize_task_id(
+                        snapshot.get("task_id")
+                        or ((snapshot.get("task") or {}).get("id"))
+                        or snapshot.get("id")
+                    )
+                    outcome = str(snapshot.get("terminal_outcome") or "").strip().lower() or TERMINAL_OUTCOME_COMPLETED
+                    archived_at = str(snapshot.get("archived_at") or "").strip()
+                    summaries.append({
+                        "task_id": task_id,
+                        "terminal_outcome": outcome,
+                        "archived_at": archived_at,
+                    })
+                except Exception as e:
+                    raise RuntimeError(f"Failed to parse newly created snapshot at {path}: {e}")
+
+    total_found = len(summaries)
+    if existing_total > 0 and total_found < existing_total:
+        raise RuntimeError(
+            f"Archive index rebuild check failed: found {total_found} snapshots but "
+            f"existing index has {existing_total}. Failing closed to prevent index downgrade."
+        )
 
     summaries.sort(key=lambda item: (str(item.get("archived_at") or ""), str(item.get("task_id") or "")), reverse=True)
     index = default_archive_index()
@@ -295,7 +772,31 @@ def rebuild_archive_index(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -> dict[s
         shared=False,
         nonblocking=False,
     ):
-        return _rebuild_archive_index_locked(recent_limit=recent_limit)
+        return _rebuild_archive_index_locked(
+            recent_limit=recent_limit,
+            allow_uncommitted=True,
+            bypass_downgrade_check=False,
+        )
+
+
+def rebuild_archive_index_from_commit(
+    *,
+    recent_limit: int = DEFAULT_RECENT_LIMIT,
+    pinned_commit: str = "HEAD",
+    bypass_downgrade_check: bool = False,
+) -> dict[str, Any]:
+    with canonical_task_state_lock_file(
+        STATUS_FILE,
+        shared=False,
+        nonblocking=False,
+    ):
+        return _rebuild_archive_index_locked(
+            recent_limit=recent_limit,
+            allow_uncommitted=False,
+            bypass_downgrade_check=bypass_downgrade_check,
+            pinned_commit=pinned_commit,
+        )
+
 
 
 def _archive_task_snapshot_locked(
@@ -312,6 +813,9 @@ def _archive_task_snapshot_locked(
     if not task_id:
         raise ValueError("Task id is required for archiving")
 
+    path = archive_task_path(task_id)
+    if path.is_symlink():
+        raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
     existing = load_archived_snapshot(task_id)
     archived_at = archived_at or (
         str(existing.get("archived_at") or "").strip()
@@ -459,8 +963,17 @@ class TaskResolver:
         normalized = normalize_task_id(task_id)
         if not normalized:
             return None
-        snapshot = load_json(archive_task_path_in_dir(normalized, self._archive_tasks_dir), default=None)
-        return snapshot if isinstance(snapshot, dict) else None
+        path = archive_task_path_in_dir(normalized, self._archive_tasks_dir)
+        try:
+            text = read_task_archive_file_safe(path)
+            if not text.strip():
+                return None
+            snapshot = json.loads(text)
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            raise RuntimeError(f"Failed to load archive snapshot safely: {e}")
+        return validate_archive_snapshot(snapshot, filename_task_id=normalized)
 
     def _load_archived_task(self, task_id: str | None) -> dict[str, Any] | None:
         snapshot = self._load_archived_snapshot(task_id)

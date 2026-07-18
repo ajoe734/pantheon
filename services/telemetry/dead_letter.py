@@ -12,6 +12,7 @@ Per TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md §8.2:
 
 from __future__ import annotations
 
+from collections import deque
 import json
 import logging
 from datetime import datetime, timezone
@@ -219,39 +220,53 @@ class DeadLetterQueue:
         if not self._spill_path or not self._spill_path.exists():
             return 0
 
-        count = 0
+        observed_count = 0
+        retained_lines: deque[str] = deque(maxlen=self._max_memory_entries)
         try:
             with open(self._spill_path, "r") as f:
                 for line in f:
                     line = line.strip()
                     if not line:
                         continue
-                    try:
-                        data = json.loads(line)
-                        entry = DeadLetterEntry(
-                            event=data.get("event", {}),
-                            tags=data.get("tags", []),
-                            reason=data.get("reason", ""),
-                            retry_count=data.get("retry_count", 0),
-                            original_attempt_count=data.get("original_attempt_count", 0),
-                        )
-                        entry.rejected_at = data.get("rejected_at", entry.rejected_at)
-                        self._entries.append(entry)
-                        count += 1
-                    except json.JSONDecodeError:
-                        continue
+                    observed_count += 1
+                    retained_lines.append(line)
         except Exception as e:
             log.error(f"DeadLetterQueue.load_from_spill failed: {e}")
+            return 0
+
+        invalid_retained_count = 0
+        retained_count = 0
+        for line in retained_lines:
+            try:
+                data = json.loads(line)
+                entry = DeadLetterEntry(
+                    event=data.get("event", {}),
+                    tags=data.get("tags", []),
+                    reason=data.get("reason", ""),
+                    retry_count=data.get("retry_count", 0),
+                    original_attempt_count=data.get("original_attempt_count", 0),
+                )
+                entry.rejected_at = data.get("rejected_at", entry.rejected_at)
+                self._entries.append(entry)
+                retained_count += 1
+            except json.JSONDecodeError:
+                invalid_retained_count += 1
+                log.warning("DeadLetterQueue skipped invalid retained spill line")
 
         # Trim to max memory entries
         if len(self._entries) > self._max_memory_entries:
             self._entries = self._entries[-self._max_memory_entries:]
-        self._total_rejected += count
+        loaded_count = max(0, observed_count - invalid_retained_count)
+        self._total_rejected += loaded_count
         if self._total_rejected >= self._incident_threshold:
             self._incident_fired = True
 
-        log.info(f"DeadLetterQueue loaded {count} entries from spill file")
-        return count
+        log.info(
+            "DeadLetterQueue observed %s persisted spill entries and retained %s in memory",
+            loaded_count,
+            retained_count,
+        )
+        return loaded_count
 
     def stats(self) -> dict[str, Any]:
         """Return DLQ statistics for monitoring."""

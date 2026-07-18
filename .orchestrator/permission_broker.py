@@ -138,9 +138,22 @@ DENY_BASH_PATTERNS = [
 ]
 
 SAFE_TOOLS = {"Read", "Grep", "Glob", "LS", "Task", "TodoRead", "TodoWrite", "ReadNotebook", "ToolSearch"}
+# Harness-internal orchestration tools that only poll/query in-session state
+# (background task output, task metadata, cron schedules, monitor streams).
+# They never touch the filesystem or network, so they are safe to auto-allow
+# the same way SAFE_TOOLS is, but are kept in a distinct bucket/risk_class so
+# the approval evidence trail still shows they are harness polling rather
+# than repo reads. See OPS-APPROVAL-BROKER-RISK-CLASS-001: TaskOutput/Agent
+# falling through to risk_class=unknown -> indefinite pending caused repeated
+# multi-hour suspended_approval stalls for claude worker slots.
+HARNESS_ORCHESTRATION_READ_TOOLS = {"TaskOutput", "TaskGet", "TaskList", "Monitor", "CronList"}
 EDIT_TOOLS = {"Edit", "MultiEdit", "Write"}
 NETWORK_TOOLS = {"WebFetch", "WebSearch"}
 SAFE_AGENT_SUBAGENT_TYPES = {"explore", "review"}
+# Substring markers checked against a normalized (lowercased, hyphen/underscore
+# collapsed to spaces) subagent_type so variants like "code-review" or
+# "code-reviewer" are recognized without needing an exact-match entry above.
+SAFE_AGENT_SUBAGENT_TYPE_MARKERS = ("explore", "review")
 SAFE_AGENT_MARKERS = (
     "verify",
     "find",
@@ -1048,6 +1061,95 @@ def _finalize_git_decision(shell_command: str, config: dict[str, Any]) -> dict[s
     }
 
 
+def _worker_status_runtime_decision(shell_command: str) -> dict[str, str] | None:
+    """Reject governed status writes through a stale worker checkout.
+
+    Auto workers receive one installed command runtime. A relative
+    ``scripts/ai_status.py`` from their task or central status checkout can be
+    older than the live supervisor and can publish an incompatible legacy
+    rotation. Non-worker developer commands are intentionally unaffected.
+    """
+
+    if not (
+        str(os.environ.get("ORCH_RUN_ID") or "").strip()
+        or str(os.environ.get("ORCH_TASK_ID") or "").strip()
+    ):
+        return None
+    command_root_raw = str(os.environ.get("PANTHEON_COMMAND_ROOT") or "").strip()
+    command_root = Path(command_root_raw).expanduser().resolve() if command_root_raw else None
+    current_dir: str | None = None
+    saw_status_command = False
+    for segment_raw in _shell_command_segments_with_and(shell_command):
+        try:
+            tokens = shlex.split(segment_raw)
+        except ValueError:
+            continue
+        if not tokens:
+            continue
+        if tokens[0] == "cd" and len(tokens) == 2:
+            current_dir = tokens[1]
+            continue
+        index = 0
+        while index < len(tokens) and re.match(
+            r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[index]
+        ):
+            index += 1
+        if index < len(tokens) and tokens[index] == "timeout":
+            index += 1
+            while index < len(tokens) and tokens[index].startswith("-"):
+                index += 1
+            if index < len(tokens):
+                index += 1
+        if index >= len(tokens):
+            continue
+        if tokens[index] in {"python", "python3", "bash", "sh"}:
+            index += 1
+        if index >= len(tokens):
+            continue
+        script = tokens[index]
+        normalized = script.replace("\\", "/")
+        if not normalized.endswith(
+            ("scripts/ai_status.py", "scripts/ai-status.sh")
+        ):
+            continue
+        saw_status_command = True
+        if normalized.startswith(
+            ("$PANTHEON_COMMAND_ROOT/", "${PANTHEON_COMMAND_ROOT}/")
+        ):
+            continue
+        script_path = Path(script).expanduser()
+        if script_path.is_absolute() and command_root is not None:
+            try:
+                script_path.resolve().relative_to(command_root)
+                continue
+            except ValueError:
+                pass
+        if not script_path.is_absolute() and command_root is not None and current_dir:
+            if current_dir in ("$PANTHEON_COMMAND_ROOT", "${PANTHEON_COMMAND_ROOT}"):
+                continue
+            try:
+                if Path(current_dir).expanduser().resolve() == command_root:
+                    continue
+            except OSError:
+                pass
+        return {
+            "decision": "deny",
+            "reason": (
+                "Auto-worker status commands must run through "
+                "$PANTHEON_COMMAND_ROOT; the requested script resolves through "
+                "a stale checkout."
+            ),
+            "risk_class": "stale_status_command_runtime",
+        }
+    if saw_status_command and command_root is None:
+        return {
+            "decision": "deny",
+            "reason": "Auto-worker status command runtime is not pinned.",
+            "risk_class": "stale_status_command_runtime",
+        }
+    return None
+
+
 def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, config: dict[str, Any]) -> dict[str, Any]:
     tool_input = tool_input or {}
     decision = "defer"
@@ -1059,6 +1161,10 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
         decision = "allow"
         reason = f"{tool_name} is read-only."
         risk_class = "safe_read"
+    elif tool_name in HARNESS_ORCHESTRATION_READ_TOOLS:
+        decision = "allow"
+        reason = f"{tool_name} is a read-only harness orchestration/polling tool."
+        risk_class = "harness_orchestration_read"
     elif tool_name == "Agent":
         agent_decision = _evaluate_agent_request(tool_input)
         if agent_decision is not None:
@@ -1076,8 +1182,13 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
             risk_class = "out_of_workspace"
     elif tool_name == "Bash":
         shell_command = tool_input.get("command") or tool_input.get("cmd") or tool_input.get("raw_command") or ""
+        status_runtime_decision = _worker_status_runtime_decision(str(shell_command))
         finalize_decision = _finalize_git_decision(str(shell_command), config)
-        if finalize_decision is not None:
+        if status_runtime_decision is not None:
+            decision = status_runtime_decision["decision"]
+            risk_class = status_runtime_decision["risk_class"]
+            reason = status_runtime_decision["reason"]
+        elif finalize_decision is not None:
             decision = finalize_decision["decision"]
             risk_class = finalize_decision["risk_class"]
             reason = finalize_decision["reason"]
@@ -1110,15 +1221,81 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
     }
 
 
+def _marker_pattern(marker: str) -> re.Pattern[str]:
+    normalized = re.escape(marker.strip()).replace(r"\ ", r"\s+")
+    return re.compile(rf"\b{normalized}\b")
+
+
 def _contains_marker(text: str, markers: tuple[str, ...]) -> bool:
     for marker in markers:
-        if re.search(rf"\b{re.escape(marker.strip())}\b", text):
+        if _marker_pattern(marker).search(text):
+            return True
+    return False
+
+
+def _unsafe_agent_marker_is_negated(text: str, marker_start: int) -> bool:
+    prefix = text[max(0, marker_start - 48) : marker_start]
+    return bool(
+        re.search(
+            (
+                r"(?:^|[\s.;:!?(\[])"
+                r"(?:do\s+not|don't|dont|never|must\s+not|should\s+not|cannot|can't|no\s+need\s+to|without|avoid)"
+                r"\s+(?:\w+\s+){0,3}$"
+            ),
+            prefix,
+        )
+    )
+
+
+def _unsafe_agent_marker_is_read_only_context(text: str, marker: str, start: int, end: int) -> bool:
+    prefix = text[max(0, start - 40) : start]
+    suffix = text[end : end + 40]
+    previous_word = re.search(r"\b([a-z]+)\W*$", prefix)
+    if marker == "change":
+        if previous_word and previous_word.group(1) in {
+            "approved",
+            "current",
+            "existing",
+            "implemented",
+            "merged",
+            "reviewed",
+        }:
+            return True
+        return bool(re.match(r"\s+(?:already\s+)?(?:in|under|being|is|was|has)\b", suffix))
+    if marker == "commit":
+        if previous_word and previous_word.group(1) in {
+            "base",
+            "current",
+            "exact",
+            "head",
+            "merged",
+            "relevant",
+            "reviewed",
+            "target",
+        }:
+            return True
+        return bool(re.match(r"[\s,]+(?:under|already|being|is|was|has|on|in)\b", suffix))
+    return False
+
+
+def _contains_unsafe_agent_action_marker(text: str, markers: tuple[str, ...]) -> bool:
+    for marker in markers:
+        normalized = marker.strip()
+        if not normalized:
+            continue
+        for match in _marker_pattern(normalized).finditer(text):
+            if _unsafe_agent_marker_is_negated(text, match.start()):
+                continue
+            if _unsafe_agent_marker_is_read_only_context(text, normalized, match.start(), match.end()):
+                continue
             return True
     return False
 
 
 def _contains_unsafe_agent_push_marker(text: str) -> bool:
     for match in re.finditer(r"\bpush\b", text):
+        if _unsafe_agent_marker_is_negated(text, match.start()):
+            continue
         after = text[match.end() : match.end() + 16]
         if re.match(r"[_\s-]*(status|state)\b", after):
             continue
@@ -1128,13 +1305,29 @@ def _contains_unsafe_agent_push_marker(text: str) -> bool:
 
 def _contains_unsafe_agent_marker(text: str) -> bool:
     non_run_markers = tuple(marker for marker in UNSAFE_AGENT_MARKERS if marker.strip() not in {"push", "run"})
-    if _contains_marker(text, non_run_markers):
+    if _contains_unsafe_agent_action_marker(text, non_run_markers):
         return True
     if _contains_unsafe_agent_push_marker(text):
         return True
-    if not _contains_marker(text, ("run",)):
+    unnegated_run_markers = [
+        match
+        for match in re.finditer(r"\brun\b", text)
+        if not _unsafe_agent_marker_is_negated(text, match.start())
+    ]
+    if not unnegated_run_markers:
         return False
     return not any(pattern.search(text) for pattern in SAFE_AGENT_RUN_PATTERNS)
+
+
+def _normalize_subagent_type(value: str) -> str:
+    return re.sub(r"[-_]+", " ", value.strip().lower())
+
+
+def _is_safe_agent_subagent_type(subagent_type: str) -> bool:
+    if subagent_type in SAFE_AGENT_SUBAGENT_TYPES:
+        return True
+    normalized = _normalize_subagent_type(subagent_type)
+    return any(marker in normalized for marker in SAFE_AGENT_SUBAGENT_TYPE_MARKERS)
 
 
 def _evaluate_agent_request(tool_input: dict[str, Any]) -> dict[str, str] | None:
@@ -1146,7 +1339,7 @@ def _evaluate_agent_request(tool_input: dict[str, Any]) -> dict[str, str] | None
         return None
     if _contains_unsafe_agent_marker(combined):
         return None
-    if subagent_type in SAFE_AGENT_SUBAGENT_TYPES or _contains_marker(combined, SAFE_AGENT_MARKERS):
+    if _is_safe_agent_subagent_type(subagent_type) or _contains_marker(combined, SAFE_AGENT_MARKERS):
         return {
             "decision": "allow",
             "reason": "Agent request is scoped to read-only repo exploration/review.",
