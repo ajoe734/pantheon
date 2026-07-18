@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Narrow recovery for a stranded schema-v1 activity rotation intent.
+"""Narrow recovery for a stranded activity rotation intent.
 
 OPS-ACTIVITY-ROTATION-PENDING-INTENT-RECOVERY-001.
 
-This tool resolves exactly one incident class: a valid, fully staged
-schema-v1 activity rotation intent whose transaction was superseded by a
-later legacy timestamp rotation before the active-file swap completed. The
-proven byte relationships are:
+This tool resolves valid, fully staged schema-v1 and schema-v2 activity
+rotation intents whose transaction was superseded by a later legacy
+timestamp rotation. The proven byte relationships are:
 
-    staged_archive_payload + staged_tail == intent_source            (exact)
+    staged_archive_payload + staged_tail == intent_source_payload    (exact)
     installed_content_archive_payload   == staged_archive_payload    (exact)
     superseding_legacy_payload          == intent_source + appended  (exact)
     active                              == legacy_suffix(k) + newer  (exact)
 
-Recovery never rewrites, truncates, renames, recompresses, or deletes the
-active log, any archive, or any historical byte. It publishes one durable,
-idempotent, crash-safe resolution record that registers the orphan
-content-addressed archive as superseded, preserves the original intent and
-staged files as immutable evidence copies, and only then removes the
-pending intent marker so governed readers and writers can resume.
+Schema-v1 recovery leaves the active log and all historical bytes untouched
+and registers the orphan content archive as superseded. Schema-v2 recovery
+finishes the intended content rotation, reconstructs the active log from the
+staged tail plus every proven post-intent append, and registers only the
+accidental legacy archive as superseded. Both paths preserve immutable
+incident evidence and keep readers fail-closed until the transaction is
+fully readable.
 
 Modes:
   inventory  read-only capture of the incident state (no locks are opened).
@@ -59,6 +59,9 @@ FAULT_ENV = "LOOP_TEST_PENDING_INTENT_RECOVERY_SIGKILL_AFTER"
 PRESERVED_INTENT_NAME = "intent.json"
 PRESERVED_STAGE_ARCHIVE_NAME = "staged-archive.gz"
 PRESERVED_STAGE_TAIL_NAME = "staged-tail.bin"
+PRESERVED_ACTIVE_NAME = "active-before-recovery.jsonl"
+PRESERVED_LINEAGE_NAME = "lineage-before-recovery.jsonl"
+PRESERVED_LATE_APPEND_NAME = "active-append-after-pin.jsonl"
 PRESERVED_MANIFEST_NAME = "preserved-manifest.json"
 
 
@@ -206,6 +209,14 @@ def _legacy_listing(log_path: Path, root: Path) -> list[dict[str, Any]]:
     return listing
 
 
+def _validated_recovery_intent(log_path: Path, payload: Any) -> dict[str, Any]:
+    """Accept only the two exact intent contracts handled by this tool."""
+
+    if common._is_schema_v1_rotation_intent_shape(payload):
+        return common.validated_schema_v1_rotation_intent(log_path, payload)
+    return common._validated_activity_rotation_intent(log_path, payload)
+
+
 def capture_inventory(
     status_root: str | Path,
     *,
@@ -242,7 +253,7 @@ def capture_inventory(
             ) from exc
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise RecoveryProofError("pending rotation intent is unreadable") from exc
-        intent_payload = common.validated_schema_v1_rotation_intent(log_path, parsed)
+        intent_payload = _validated_recovery_intent(log_path, parsed)
 
     if intent_payload is not None:
         transaction_id = str(intent_payload["transaction_id"])
@@ -279,7 +290,12 @@ def capture_inventory(
         raw_bytes["active"] = raw
 
     lineage_path = common.activity_rotation_lineage_path(log_path)
-    artifacts["lineage"] = _lstat_record(lineage_path, root)
+    record, raw, _ = _read_artifact(
+        lineage_path, root, source="activity rotation lineage"
+    )
+    artifacts["lineage"] = record
+    if raw is not None:
+        raw_bytes["lineage"] = raw
     resolutions_path = common.activity_rotation_resolutions_path(log_path)
     record, raw, _ = _read_artifact(
         resolutions_path, root, source="rotation resolutions"
@@ -333,6 +349,256 @@ def _load_superseded_resolution(
     return None
 
 
+def _prove_schema_v2_relations(
+    root: Path,
+    log_path: Path,
+    manifest: dict[str, Any],
+    raw: dict[str, bytes],
+) -> dict[str, Any]:
+    """Prove a schema-v2 intent superseded by one legacy rotation."""
+
+    intent = manifest["intent_payload"]
+    transaction_id = str(intent["transaction_id"])
+    existing_row = _load_superseded_resolution(log_path, transaction_id)
+    if existing_row is not None:
+        return {
+            "incident_class": "schema-v2-pending-intent-superseded",
+            "intent_present": True,
+            "transaction_id": transaction_id,
+            "already_resolved": True,
+            "resolution_id": existing_row["resolution_id"],
+        }
+
+    stage_archive_payload = raw.get("stage_archive_payload")
+    stage_archive_raw = raw.get("stage_archive")
+    stage_tail = raw.get("stage_tail")
+    installed_payload = raw.get("installed_archive_payload")
+    installed_raw = raw.get("installed_archive")
+    active_raw = raw.get("active")
+    lineage_raw = raw.get("lineage")
+    if stage_archive_payload is None or stage_archive_raw is None:
+        raise RecoveryProofError("staged rotation archive is missing")
+    if stage_tail is None:
+        raise RecoveryProofError("staged rotation tail is missing")
+    if installed_payload is None or installed_raw is None:
+        raise RecoveryProofError("installed content archive is missing")
+    if active_raw is None:
+        raise RecoveryProofError("active activity log is missing")
+    if active_raw and not active_raw.endswith(b"\n"):
+        raise RecoveryProofError("active activity log has a partial trailing line")
+    if lineage_raw is None:
+        raise RecoveryProofError("schema-v2 recovery requires the previous lineage")
+
+    if _sha(stage_archive_payload) != intent["archive_payload_sha256"]:
+        raise RecoveryProofError("staged archive payload digest mismatch vs intent")
+    if _sha(stage_archive_raw) != intent["archive_gzip_sha256"]:
+        raise RecoveryProofError("staged archive gzip digest mismatch vs intent")
+    if _sha(stage_tail) != intent["tail_sha256"]:
+        raise RecoveryProofError("staged tail digest mismatch vs intent")
+    if len(stage_tail) != intent["tail_byte_count"]:
+        raise RecoveryProofError("staged tail byte count mismatch vs intent")
+    if _line_count(stage_tail) != intent["tail_line_count"]:
+        raise RecoveryProofError("staged tail line count mismatch vs intent")
+    source_payload = stage_archive_payload + stage_tail
+    if _sha(source_payload) != intent["source_payload_sha256"]:
+        raise RecoveryProofError(
+            "staged archive plus staged tail does not reconstruct source payload"
+        )
+    if installed_payload != stage_archive_payload or installed_raw != stage_archive_raw:
+        raise RecoveryProofError(
+            "installed content archive differs from the staged archive"
+        )
+
+    lineage_bytes, lineage_rows, lineage_paths = (
+        common._load_activity_rotation_lineage_unlocked(
+            log_path, validate_archives=True
+        )
+    )
+    if lineage_bytes != lineage_raw:
+        raise RecoveryProofError("lineage changed during schema-v2 proof")
+    if _sha(lineage_bytes) != intent["lineage_previous_sha256"]:
+        raise RecoveryProofError("intent does not extend the installed lineage")
+    if not lineage_rows:
+        raise RecoveryProofError("schema-v2 superseding incident has no prior lineage")
+    last = lineage_rows[-1]
+    row = intent["lineage_row"]
+    if (
+        row.get("sequence") != int(last["sequence"]) + 1
+        or row.get("previous_sequence") != last["sequence"]
+        or row.get("previous_transaction_id") != last["transaction_id"]
+        or row.get("previous_lineage_sha256") != _sha(lineage_bytes)
+    ):
+        raise RecoveryProofError("intent lineage predecessor binding mismatch")
+    row_bytes = common._canonical_json_line(row)
+    if _sha(lineage_bytes + row_bytes) != intent["lineage_sha256"]:
+        raise RecoveryProofError("intent lineage target digest mismatch")
+
+    _resolution_bytes, _resolution_rows, excluded_paths = (
+        common._load_activity_rotation_resolutions_unlocked(
+            log_path, validate_archives=True
+        )
+    )
+    accounted_content = {
+        _relative_to_root(path, root)
+        for path in lineage_paths + excluded_paths
+        if common.classify_source(path) == "content_addressed"
+    }
+    installed_relative = str(intent["archive_relative_path"])
+    for entry in manifest["archive_listing"]:
+        if entry["source_class"] != "content_addressed":
+            continue
+        if entry["relative_path"] in accounted_content:
+            continue
+        if entry["relative_path"] == installed_relative:
+            continue
+        raise RecoveryProofError(
+            "unexplained content-addressed archive on disk: "
+            + entry["relative_path"]
+        )
+
+    source_byte_count = int(row["source_byte_count"])
+    source_line_count = int(row["source_line_count"])
+    candidates: list[tuple[dict[str, Any], bytes, bytes]] = []
+    for entry in manifest["archive_listing"]:
+        if entry["source_class"] not in ("legacy_ts_std", "legacy_ts_old"):
+            continue
+        entry_path = root / entry["relative_path"]
+        compressed = common.read_regular_file_bytes(
+            entry_path, source="legacy activity archive"
+        )
+        if _sha(compressed) != entry["sha256"]:
+            raise RecoveryProofError(
+                f"legacy archive changed during proof: {entry['relative_path']}"
+            )
+        try:
+            payload = gzip.decompress(compressed)
+        except (OSError, EOFError, gzip.BadGzipFile) as exc:
+            raise RecoveryProofError(
+                f"legacy archive gzip stream is invalid: {entry['relative_path']}"
+            ) from exc
+        if len(payload) < source_byte_count:
+            continue
+        candidate_source = payload[:source_byte_count]
+        if _sha(candidate_source) == intent["source_sha256"]:
+            candidates.append((entry, payload, candidate_source))
+    if len(candidates) != 1:
+        raise RecoveryProofError(
+            "expected exactly one legacy archive containing the schema-v2 "
+            f"intent source as an exact byte prefix; found {len(candidates)}"
+        )
+    superseding_entry, superseding_payload, source = candidates[0]
+    if _line_count(source) != source_line_count:
+        raise RecoveryProofError("schema-v2 intent source line count mismatch")
+    control, control_line, captured_payload = common._split_activity_lineage_head(
+        source, source=log_path
+    )
+    expected_control = {
+        "record_type": common.ACTIVITY_ROTATION_HEAD_RECORD_TYPE,
+        "schema_version": common.ACTIVITY_LOG_ROTATION_SCHEMA_VERSION,
+        "log_name": log_path.name,
+        "sequence": last["sequence"],
+        "transaction_id": last["transaction_id"],
+        "archive_payload_sha256": last["archive_payload_sha256"],
+        "archive_gzip_sha256": last["archive_gzip_sha256"],
+        "lineage_sha256": _sha(lineage_bytes),
+        "lineage_row_sha256": common._canonical_json_sha256(last),
+        "tail_sha256": last["tail_sha256"],
+        "tail_byte_count": last["tail_byte_count"],
+        "tail_line_count": last["tail_line_count"],
+    }
+    if control != expected_control or not control_line:
+        raise RecoveryProofError("schema-v2 source lineage-head mismatch")
+    if captured_payload != source_payload:
+        raise RecoveryProofError(
+            "schema-v2 source payload differs from staged archive plus tail"
+        )
+
+    post_intent_suffix = superseding_payload[len(source):]
+    if post_intent_suffix and not post_intent_suffix.endswith(b"\n"):
+        raise RecoveryProofError(
+            "post-intent suffix in the superseding archive is not newline-terminated"
+        )
+    superseding_ids = _event_ids(
+        superseding_payload, source="superseding legacy archive"
+    )
+    _require_unique(superseding_ids, source="superseding legacy archive")
+
+    superseding_lines = superseding_payload.splitlines(keepends=True)
+    active_lines = active_raw.splitlines(keepends=True)
+    overlap_lines = 0
+    for count in range(min(len(superseding_lines), len(active_lines)), 0, -1):
+        if active_raw.startswith(b"".join(superseding_lines[-count:])):
+            overlap_lines = count
+            break
+    retained_overlap = (
+        b"".join(superseding_lines[-overlap_lines:]) if overlap_lines else b""
+    )
+    post_rotation_suffix = active_raw[len(retained_overlap):]
+    if post_rotation_suffix and not post_rotation_suffix.endswith(b"\n"):
+        raise RecoveryProofError(
+            "post-rotation active suffix is not newline-terminated"
+        )
+    active_ids = _event_ids(active_raw, source="active activity log")
+    _require_unique(active_ids, source="active activity log")
+    if set(active_ids[overlap_lines:]) & set(superseding_ids):
+        raise RecoveryProofError(
+            "post-rotation active suffix repeats superseding archive events"
+        )
+    logical_total = len(superseding_ids) + len(active_ids) - overlap_lines
+    distinct_total = len(set(superseding_ids) | set(active_ids))
+    if logical_total != distinct_total:
+        raise RecoveryProofError("logical event conservation failed")
+
+    target_active = (
+        common._activity_lineage_head_bytes(intent["active_control"])
+        + stage_tail
+        + post_intent_suffix
+        + post_rotation_suffix
+    )
+    return {
+        "incident_class": "schema-v2-pending-intent-superseded",
+        "intent_present": True,
+        "transaction_id": transaction_id,
+        "already_resolved": False,
+        "source_sha256": _sha(source),
+        "source_byte_count": len(source),
+        "source_line_count": _line_count(source),
+        "source_payload_sha256": _sha(source_payload),
+        "previous_control_byte_count": len(control_line),
+        "archive_payload_sha256": _sha(stage_archive_payload),
+        "archive_byte_count": len(stage_archive_payload),
+        "archive_line_count": _line_count(stage_archive_payload),
+        "stage_tail_sha256": _sha(stage_tail),
+        "stage_tail_byte_count": len(stage_tail),
+        "stage_tail_line_count": _line_count(stage_tail),
+        "installed_equals_staged": True,
+        "superseding_relative_path": superseding_entry["relative_path"],
+        "superseding_gzip_sha256": superseding_entry["sha256"],
+        "superseding_payload_sha256": _sha(superseding_payload),
+        "superseding_byte_count": len(superseding_payload),
+        "superseding_line_count": _line_count(superseding_payload),
+        "post_intent_suffix_sha256": _sha(post_intent_suffix),
+        "post_intent_suffix_byte_count": len(post_intent_suffix),
+        "post_intent_suffix_line_count": _line_count(post_intent_suffix),
+        "active_sha256": _sha(active_raw),
+        "active_byte_count": len(active_raw),
+        "active_line_count": len(active_ids),
+        "retained_overlap_sha256": _sha(retained_overlap),
+        "retained_overlap_byte_count": len(retained_overlap),
+        "retained_overlap_line_count": overlap_lines,
+        "post_rotation_suffix_sha256": _sha(post_rotation_suffix),
+        "post_rotation_suffix_byte_count": len(post_rotation_suffix),
+        "post_rotation_suffix_line_count": _line_count(post_rotation_suffix),
+        "target_active_sha256": _sha(target_active),
+        "target_active_byte_count": len(target_active),
+        "target_lineage_sha256": intent["lineage_sha256"],
+        "logical_event_total": logical_total,
+        "logical_event_distinct": distinct_total,
+        "missing_event_count": 0,
+        "duplicate_event_count": 0,
+    }
+
+
 def prove_relations(
     status_root: Path,
     *,
@@ -346,6 +612,26 @@ def prove_relations(
     log_path = root / log_name
     intent = manifest.get("intent_payload")
     artifacts = manifest["artifacts"]
+
+    if intent is None:
+        _resolution_bytes, resolution_rows, _paths = (
+            common._load_activity_rotation_resolutions_unlocked(
+                log_path, validate_archives=True
+            )
+        )
+        if not resolution_rows:
+            raise RecoveryProofError(
+                "no pending intent and no resolution record; nothing to recover"
+            )
+        return {
+            "incident_class": "pending-intent-superseded",
+            "intent_present": False,
+            "already_resolved_transaction_ids": [
+                str(row["resolved_transaction_id"]) for row in resolution_rows
+            ],
+        }
+    if intent.get("schema_version") == common.ACTIVITY_LOG_ROTATION_SCHEMA_VERSION:
+        return _prove_schema_v2_relations(root, log_path, manifest, raw)
 
     lineage_path = common.activity_rotation_lineage_path(log_path)
     if artifacts["lineage"].get("exists"):
@@ -554,19 +840,24 @@ def _build_resolution_row(
 ) -> dict[str, Any]:
     proof = manifest["proof"]
     intent = manifest["intent_payload"]
+    intent_schema_version = int(intent["schema_version"])
     transaction_id = str(intent["transaction_id"])
     intent_record = manifest["artifacts"]["intent"]
     preserved_dir = common.activity_rotation_preserved_dir(log_path, transaction_id)
     row: dict[str, Any] = {
         "record_type": common.ACTIVITY_ROTATION_RESOLUTION_RECORD_TYPE,
         "schema_version": common.ACTIVITY_LOG_ROTATION_SCHEMA_VERSION,
-        "resolution_type": common.ACTIVITY_ROTATION_RESOLUTION_TYPE_SUPERSEDED,
+        "resolution_type": (
+            common.ACTIVITY_ROTATION_RESOLUTION_TYPE_SUPERSEDED
+            if intent_schema_version == 1
+            else common.ACTIVITY_ROTATION_RESOLUTION_TYPE_LEGACY_SUPERSEDED
+        ),
         "log_name": log_path.name,
         "sequence": sequence,
         "resolution_id": "",
         "previous_resolutions_sha256": _sha(previous_resolutions_bytes),
         "resolved_transaction_id": transaction_id,
-        "intent_schema_version": 1,
+        "intent_schema_version": intent_schema_version,
         "intent_sha256": intent_record["sha256"],
         "intent_payload": dict(intent),
         "archive_relative_path": str(intent["archive_relative_path"]),
@@ -652,6 +943,8 @@ def _compare_pinned_immutable(
     check("stage_archive", ("sha256", "byte_count", "inode", "device"))
     check("stage_tail", ("sha256", "byte_count", "inode", "device"))
     check("intent", ("sha256", "byte_count", "inode", "device"))
+    if not cleanup_phase:
+        check("lineage", ("sha256", "byte_count", "inode", "device"))
 
     pinned_archives = {
         entry["relative_path"]: entry for entry in pinned["archive_listing"]
@@ -771,6 +1064,262 @@ def _durable_copy(destination: Path, payload: bytes) -> None:
         raise RecoveryProofError(f"preserved copy readback mismatch: {destination}")
 
 
+def _preserve_or_read(
+    destination: Path,
+    live_payload: bytes | None,
+    expected_sha256: str,
+    *,
+    source: str,
+) -> bytes:
+    """Publish an evidence copy, or read the exact copy on crash retry."""
+
+    if live_payload is not None and _sha(live_payload) == expected_sha256:
+        _durable_copy(destination, live_payload)
+        return live_payload
+    preserved = common.read_regular_file_bytes(destination, source=source)
+    if _sha(preserved) != expected_sha256:
+        raise RecoveryProofError(f"preserved copy digest mismatch for {source}")
+    return preserved
+
+
+def _execute_schema_v2_unlocked(
+    root: Path,
+    log_path: Path,
+    pinned_manifest: dict[str, Any],
+    fresh_manifest: dict[str, Any],
+    fresh_raw: dict[str, bytes],
+    *,
+    pinned_digest: str,
+    writer_guard_attestation: str,
+    existing_row: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Finish schema-v2 rotation and exclude the accidental legacy archive."""
+
+    intent = pinned_manifest["intent_payload"]
+    proof = pinned_manifest["proof"]
+    transaction_id = str(intent["transaction_id"])
+    intent_path = common.activity_rotation_intent_path(log_path)
+    stage_archive_path, stage_tail_path = common._activity_rotation_stage_paths(
+        log_path, transaction_id
+    )
+    lineage_path = common.activity_rotation_lineage_path(log_path)
+    resolutions_path = common.activity_rotation_resolutions_path(log_path)
+    preserved_dir = common.activity_rotation_preserved_dir(log_path, transaction_id)
+    preserved_dir.mkdir(parents=True, exist_ok=True)
+    pinned_artifacts = pinned_manifest["artifacts"]
+
+    active_live = fresh_raw.get("active")
+    lineage_live = fresh_raw.get("lineage")
+    active_before = _preserve_or_read(
+        preserved_dir / PRESERVED_ACTIVE_NAME,
+        active_live,
+        pinned_artifacts["active"]["sha256"],
+        source="pre-recovery active activity log",
+    )
+    lineage_before = _preserve_or_read(
+        preserved_dir / PRESERVED_LINEAGE_NAME,
+        lineage_live,
+        pinned_artifacts["lineage"]["sha256"],
+        source="pre-recovery activity lineage",
+    )
+    intent_before = _preserve_or_read(
+        preserved_dir / PRESERVED_INTENT_NAME,
+        fresh_raw.get("intent"),
+        pinned_artifacts["intent"]["sha256"],
+        source="pending rotation intent",
+    )
+    stage_archive_before = _preserve_or_read(
+        preserved_dir / PRESERVED_STAGE_ARCHIVE_NAME,
+        fresh_raw.get("stage_archive"),
+        pinned_artifacts["stage_archive"]["sha256"],
+        source="staged rotation archive",
+    )
+    stage_tail_before = _preserve_or_read(
+        preserved_dir / PRESERVED_STAGE_TAIL_NAME,
+        fresh_raw.get("stage_tail"),
+        pinned_artifacts["stage_tail"]["sha256"],
+        source="staged rotation tail",
+    )
+    preserved_manifest = {
+        "resolved_transaction_id": transaction_id,
+        "inventory_sha256": pinned_digest,
+        "files": {
+            PRESERVED_ACTIVE_NAME: _sha(active_before),
+            PRESERVED_LINEAGE_NAME: _sha(lineage_before),
+            PRESERVED_INTENT_NAME: _sha(intent_before),
+            PRESERVED_STAGE_ARCHIVE_NAME: _sha(stage_archive_before),
+            PRESERVED_STAGE_TAIL_NAME: _sha(stage_tail_before),
+        },
+    }
+    _durable_copy(
+        preserved_dir / PRESERVED_MANIFEST_NAME,
+        (_canonical_json(preserved_manifest) + "\n").encode("utf-8"),
+    )
+    _fault("preserve")
+
+    resolutions_bytes = (
+        common.read_regular_file_bytes(
+            resolutions_path, source="activity rotation resolutions"
+        )
+        if resolutions_path.exists() or resolutions_path.is_symlink()
+        else b""
+    )
+    if existing_row is None:
+        _bytes, rows, _paths = common._load_activity_rotation_resolutions_unlocked(
+            log_path, validate_archives=True
+        )
+        del _bytes, _paths
+        row = _build_resolution_row(
+            log_path,
+            pinned_manifest,
+            previous_resolutions_bytes=resolutions_bytes,
+            sequence=len(rows) + 1,
+            inventory_sha256=pinned_digest,
+            writer_guard_attestation=writer_guard_attestation,
+        )
+        common.durable_write_bytes(
+            resolutions_path,
+            resolutions_bytes + (_canonical_json(row) + "\n").encode("utf-8"),
+        )
+    else:
+        row = existing_row
+        if row.get("inventory_sha256") != pinned_digest:
+            raise RecoveryProofError(
+                "existing resolution row was pinned to a different inventory"
+            )
+    _fault("resolution")
+    _bytes, rows, excluded_paths = (
+        common._load_activity_rotation_resolutions_unlocked(
+            log_path, validate_archives=True
+        )
+    )
+    del _bytes
+    if not any(r.get("resolution_id") == row["resolution_id"] for r in rows):
+        raise RecoveryProofError("schema-v2 resolution record readback missing")
+    superseding_path = (root / proof["superseding_relative_path"]).resolve()
+    if superseding_path not in [path.resolve() for path in excluded_paths]:
+        raise RecoveryProofError("accidental legacy archive is not excluded")
+    _fault("resolution-readback")
+
+    superseding_raw = common.read_regular_file_bytes(
+        superseding_path, source="superseding legacy activity archive"
+    )
+    if _sha(superseding_raw) != proof["superseding_gzip_sha256"]:
+        raise RecoveryProofError("superseding legacy archive changed after pinning")
+    try:
+        superseding_payload = gzip.decompress(superseding_raw)
+    except (OSError, EOFError, gzip.BadGzipFile) as exc:
+        raise RecoveryProofError("superseding legacy archive is unreadable") from exc
+    post_intent_suffix = superseding_payload[proof["source_byte_count"] :]
+    post_rotation_suffix = active_before[proof["retained_overlap_byte_count"] :]
+    if _sha(post_intent_suffix) != proof["post_intent_suffix_sha256"]:
+        raise RecoveryProofError("post-intent suffix changed after pinning")
+    if _sha(post_rotation_suffix) != proof["post_rotation_suffix_sha256"]:
+        raise RecoveryProofError("post-rotation suffix changed after pinning")
+    base_target_active = (
+        common._activity_lineage_head_bytes(intent["active_control"])
+        + stage_tail_before
+        + post_intent_suffix
+        + post_rotation_suffix
+    )
+    if (
+        _sha(base_target_active) != proof["target_active_sha256"]
+        or len(base_target_active) != proof["target_active_byte_count"]
+    ):
+        raise RecoveryProofError("schema-v2 reconstructed active digest mismatch")
+    target_lineage = lineage_before + common._canonical_json_line(
+        intent["lineage_row"]
+    )
+    if _sha(target_lineage) != proof["target_lineage_sha256"]:
+        raise RecoveryProofError("schema-v2 reconstructed lineage digest mismatch")
+
+    current_active = common.read_regular_file_bytes(
+        log_path, source="active activity log"
+    )
+    if current_active.startswith(active_before):
+        late_append = current_active[len(active_before) :]
+    elif current_active.startswith(base_target_active):
+        late_append = current_active[len(base_target_active) :]
+    else:
+        raise RecoveryProofError(
+            "active log is not an append-only extension of pinned or reconstructed"
+        )
+    if late_append and not late_append.endswith(b"\n"):
+        raise RecoveryProofError("post-pin active append has a partial trailing row")
+    late_ids = _event_ids(late_append, source="post-pin active append")
+    _require_unique(late_ids, source="post-pin active append")
+    prior_ids = set(
+        _event_ids(superseding_payload, source="superseding legacy archive")
+        + _event_ids(post_rotation_suffix, source="post-rotation active suffix")
+    )
+    if prior_ids & set(late_ids):
+        raise RecoveryProofError("post-pin active append repeats a preserved event")
+    _durable_copy(
+        preserved_dir / PRESERVED_LATE_APPEND_NAME,
+        late_append,
+    )
+    preserved_manifest["files"][PRESERVED_LATE_APPEND_NAME] = _sha(late_append)
+    _durable_copy(
+        preserved_dir / PRESERVED_MANIFEST_NAME,
+        (_canonical_json(preserved_manifest) + "\n").encode("utf-8"),
+    )
+    target_active = base_target_active + late_append
+    if current_active != target_active:
+        common.durable_write_bytes(log_path, target_active)
+    _fault("v2-active")
+    current_lineage = common.read_regular_file_bytes(
+        lineage_path, source="activity rotation lineage"
+    )
+    if current_lineage == lineage_before:
+        common.durable_write_bytes(lineage_path, target_lineage)
+    elif current_lineage != target_lineage:
+        raise RecoveryProofError("lineage is neither pinned nor reconstructed")
+    _fault("v2-lineage")
+
+    if common.read_regular_file_bytes(log_path, source="active activity log") != target_active:
+        raise RecoveryProofError("schema-v2 active readback mismatch")
+    if common.read_regular_file_bytes(lineage_path, source="activity rotation lineage") != target_lineage:
+        raise RecoveryProofError("schema-v2 lineage readback mismatch")
+
+    intent_path.unlink(missing_ok=True)
+    _fault("unlink-intent")
+    stage_archive_path.unlink(missing_ok=True)
+    stage_tail_path.unlink(missing_ok=True)
+    common._fsync_directory(intent_path.parent)
+    _fault("unlink-stage")
+
+    common.assert_activity_audit_stable_unlocked(log_path)
+    sources = common.activity_audit_source_paths_unlocked(log_path)
+    resolved_sources = [source.resolve() for source in sources]
+    intended_archive = (root / str(intent["archive_relative_path"])).resolve()
+    if intended_archive not in resolved_sources:
+        raise RecoveryProofError("intended content archive is not a logical source")
+    if superseding_path in resolved_sources:
+        raise RecoveryProofError("accidental legacy archive remains a logical source")
+    logical_count = sum(1 for _entry in common._stream_logical_activity_unlocked(log_path))
+
+    return {
+        "mode": "execute",
+        "status": "resolved",
+        "generated_utc": _utc_now(),
+        "status_root": str(root),
+        "pinned_inventory_sha256": pinned_digest,
+        "resolved_transaction_id": transaction_id,
+        "resolution_id": row["resolution_id"],
+        "resolution_sequence": row["sequence"],
+        "preserved_relative_dir": row["preserved_relative_dir"],
+        "active_sha256_after": _sha(target_active),
+        "post_pin_append_sha256": _sha(late_append),
+        "post_pin_append_byte_count": len(late_append),
+        "post_pin_append_line_count": _line_count(late_append),
+        "lineage_sha256_after": _sha(target_lineage),
+        "logical_source_count_after": len(sources),
+        "logical_event_count_after": logical_count,
+        "writer_guard_attestation": writer_guard_attestation,
+        "mutation_performed": True,
+    }
+
+
 def execute(
     status_root: str | Path,
     pinned_manifest: dict[str, Any],
@@ -821,7 +1370,10 @@ def _execute_unlocked(
 
     pinned_intent = pinned_manifest.get("intent_payload")
     if pinned_intent is None:
-        raise RecoveryProofError("pinned inventory has no pending schema-v1 intent")
+        raise RecoveryProofError(
+            "pinned inventory has no pending schema-v1 intent or schema-v2 intent"
+        )
+    intent_schema_version = int(pinned_intent["schema_version"])
     transaction_id = str(pinned_intent["transaction_id"])
     fresh_intent = fresh_manifest.get("intent_payload")
     existing_row = _load_superseded_resolution(log_path, transaction_id)
@@ -829,7 +1381,10 @@ def _execute_unlocked(
     problems = _compare_pinned_immutable(
         pinned_manifest,
         fresh_manifest,
-        require_exact_active=True,
+        require_exact_active=(
+            existing_row is None
+            or intent_schema_version == 1
+        ),
         cleanup_phase=existing_row is not None,
     )
 
@@ -846,6 +1401,18 @@ def _execute_unlocked(
         )
 
     _fault("pin-recheck")
+
+    if intent_schema_version == common.ACTIVITY_LOG_ROTATION_SCHEMA_VERSION:
+        return _execute_schema_v2_unlocked(
+            root,
+            log_path,
+            pinned_manifest,
+            fresh_manifest,
+            fresh_raw,
+            pinned_digest=pinned_digest,
+            writer_guard_attestation=writer_guard_attestation,
+            existing_row=existing_row,
+        )
 
     stage_archive_path, stage_tail_path = common._activity_rotation_stage_paths(
         log_path, transaction_id
