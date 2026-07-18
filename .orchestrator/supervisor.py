@@ -44,6 +44,8 @@ from common import (
     normalize_agent_id,
     is_github_cli_auth_failure,
     preserve_github_cli_auth_env,
+    resolved_coordinator_status_root,
+    config_status_root,
     relpath,
     selected_shared_files,
     shell_quote,
@@ -172,7 +174,8 @@ def supervisor_pid_path(config: dict[str, Any]) -> Path:
 
 
 def supervisor_lock_path(config: dict[str, Any]) -> Path:
-    return config_path(config, "state_file").parent / "supervisor.lock"
+    coord_root = resolved_coordinator_status_root(config)
+    return coord_root / ".orchestrator" / "supervisor.lock"
 
 
 # Held open for the lifetime of the winning supervisor process. The advisory
@@ -209,6 +212,30 @@ def acquire_singleton_lock(config: dict[str, Any]) -> bool:
     except OSError:
         pass
     return True
+
+
+
+def check_status_root_consistency(config: dict[str, Any], allow_isolated: bool = False) -> None:
+    env_val = os.environ.get("PANTHEON_STATUS_ROOT")
+    if not env_val or not env_val.strip():
+        # 完全清空的 env -> 不檢查
+        return
+
+    env_status_root = Path(os.path.expanduser(env_val.strip())).resolve()
+    cfg_status_root = config_status_root(config)
+
+    if env_status_root != cfg_status_root:
+        if allow_isolated:
+            return
+        msg = (
+            f"ERROR: PANTHEON_STATUS_ROOT consistency gate failed!\n"
+            f"  Environment PANTHEON_STATUS_ROOT = {env_status_root}\n"
+            f"  Config resolved status root     = {cfg_status_root}\n"
+            f"Paths do not match. To run supervisor in this configuration, "
+            f"either unset PANTHEON_STATUS_ROOT, align the config paths, or pass --allow-isolated-status-root."
+        )
+        print(msg, file=sys.stderr)
+        sys.exit(1)
 
 
 def write_supervisor_pid(config: dict[str, Any]) -> None:
@@ -347,6 +374,14 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Authorize --poll-interval below the configured value. Reserved for "
             "ad-hoc incident debugging; do not use for steady-state runs."
+        ),
+    )
+    parser.add_argument(
+        "--allow-isolated-status-root",
+        action="store_true",
+        help=(
+            "Allow supervisor to start when environment PANTHEON_STATUS_ROOT "
+            "does not match config resolved status root."
         ),
     )
     parser.add_argument("--quiet", action="store_true", help="Suppress terminal heartbeat output.")
@@ -11031,6 +11066,7 @@ def main() -> int:
     args = parse_args()
     SUPERVISOR_LOG_QUIET = args.quiet
     config = load_config(args.config)
+    check_status_root_consistency(config, allow_isolated=args.allow_isolated_status_root)
     if args.clear_provider_pause:
         with runtime_state_lock(config, shared=False, nonblocking=False):
             state = load_runtime_state(config)

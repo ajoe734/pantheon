@@ -507,6 +507,33 @@ def repo_root_for_config(config: dict[str, Any]) -> Path:
     return config_path(config, "status_file").parents[0]
 
 
+def config_status_root(config: dict[str, Any]) -> Path:
+    paths = config.get("paths") if isinstance(config.get("paths"), dict) else {}
+    if "status_file" in paths:
+        try:
+            return config_path(config, "status_file").parent.resolve()
+        except KeyError:
+            pass
+
+    if "state_file" in paths:
+        try:
+            state_path = config_path(config, "state_file").resolve()
+            if state_path.parent.name == ".orchestrator":
+                return state_path.parent.parent.resolve()
+            return state_path.parent.resolve()
+        except KeyError:
+            pass
+
+    return ROOT.resolve()
+
+
+def resolved_coordinator_status_root(config: dict[str, Any]) -> Path:
+    env_val = os.environ.get("PANTHEON_STATUS_ROOT")
+    if env_val and env_val.strip():
+        return Path(os.path.expanduser(env_val.strip())).resolve()
+    return config_status_root(config)
+
+
 def _expand_workspace_path(value: Any, *, base: Path) -> Path:
     path = Path(os.path.expanduser(str(value)))
     if not path.is_absolute():
