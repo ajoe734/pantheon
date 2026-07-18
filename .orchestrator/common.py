@@ -1003,6 +1003,9 @@ ACTIVITY_ROTATION_LINEAGE_RECORD_TYPE = "pantheon.activity.rotation_lineage.v1"
 ACTIVITY_ROTATION_HEAD_RECORD_TYPE = "pantheon.activity.lineage_head.v1"
 ACTIVITY_ROTATION_RESOLUTION_RECORD_TYPE = "pantheon.activity.rotation_resolution.v1"
 ACTIVITY_ROTATION_RESOLUTION_TYPE_SUPERSEDED = "superseded-by-legacy-rotation"
+ACTIVITY_ROTATION_RESOLUTION_TYPE_LEGACY_SUPERSEDED = (
+    "legacy-rotation-superseded-by-content-rotation"
+)
 ACTIVITY_ROTATION_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 ACTIVITY_ROTATION_WRITER_GUARD_ENV = "PANTHEON_ACTIVITY_ROTATION_PAUSE"
 ACTIVITY_LOG_STRANDED_V1_INTENT_ERROR = (
@@ -2350,13 +2353,23 @@ def _validated_activity_rotation_resolution_row(
 ) -> Path:
     if not isinstance(row, dict) or set(row) != ACTIVITY_ROTATION_RESOLUTION_ROW_KEYS:
         raise RuntimeError("activity resolution row schema is not exact")
+    resolution_type = row.get("resolution_type")
+    intent_schema_version = row.get("intent_schema_version")
     if (
         row.get("record_type") != ACTIVITY_ROTATION_RESOLUTION_RECORD_TYPE
         or row.get("schema_version") != ACTIVITY_LOG_ROTATION_SCHEMA_VERSION
-        or row.get("resolution_type") != ACTIVITY_ROTATION_RESOLUTION_TYPE_SUPERSEDED
         or row.get("log_name") != log_path.name
         or row.get("sequence") != expected_sequence
-        or row.get("intent_schema_version") != 1
+        or (
+            intent_schema_version == 1
+            and resolution_type != ACTIVITY_ROTATION_RESOLUTION_TYPE_SUPERSEDED
+        )
+        or (
+            intent_schema_version == ACTIVITY_LOG_ROTATION_SCHEMA_VERSION
+            and resolution_type
+            != ACTIVITY_ROTATION_RESOLUTION_TYPE_LEGACY_SUPERSEDED
+        )
+        or intent_schema_version not in (1, ACTIVITY_LOG_ROTATION_SCHEMA_VERSION)
     ):
         raise RuntimeError("activity resolution row identity is invalid")
     for key in _ACTIVITY_RESOLUTION_DIGEST_KEYS:
@@ -2376,15 +2389,23 @@ def _validated_activity_rotation_resolution_row(
         raise RuntimeError("activity resolution previous digest mismatch")
     if row.get("resolution_id") != activity_rotation_resolution_id(row):
         raise RuntimeError("activity resolution id mismatch")
-    intent_payload = validated_schema_v1_rotation_intent(
-        log_path,
-        row.get("intent_payload"),
-    )
+    if intent_schema_version == 1:
+        intent_payload = validated_schema_v1_rotation_intent(
+            log_path,
+            row.get("intent_payload"),
+        )
+        intent_archive_sha256 = intent_payload["archive_sha256"]
+    else:
+        intent_payload = _validated_activity_rotation_intent(
+            log_path,
+            row.get("intent_payload"),
+        )
+        intent_archive_sha256 = intent_payload["archive_payload_sha256"]
     if (
         intent_payload["transaction_id"] != row.get("resolved_transaction_id")
         or intent_payload["archive_relative_path"]
         != row.get("archive_relative_path")
-        or intent_payload["archive_sha256"] != row.get("archive_payload_sha256")
+        or intent_archive_sha256 != row.get("archive_payload_sha256")
         or intent_payload["tail_sha256"] != row.get("stage_tail_sha256")
         or intent_payload["source_sha256"] != row.get("source_sha256")
     ):
@@ -2396,11 +2417,29 @@ def _validated_activity_rotation_resolution_row(
         or ".." in preserved_relative.parts
     ):
         raise RuntimeError("activity resolution preserved dir is invalid")
+    payload_byte_count = row["archive_byte_count"] + row["stage_tail_byte_count"]
+    payload_line_count = row["archive_line_count"] + row["stage_tail_line_count"]
+    if intent_schema_version == 1:
+        source_counts_valid = (
+            row["source_byte_count"] == payload_byte_count
+            and row["source_line_count"] == payload_line_count
+        )
+    else:
+        intent_lineage_row = intent_payload["lineage_row"]
+        source_counts_valid = (
+            row["source_byte_count"] == intent_lineage_row["source_byte_count"]
+            and row["source_line_count"] == intent_lineage_row["source_line_count"]
+            and row["archive_byte_count"]
+            == intent_lineage_row["archive_byte_count"]
+            and row["archive_line_count"]
+            == intent_lineage_row["archive_line_count"]
+            and row["stage_tail_byte_count"] == intent_payload["tail_byte_count"]
+            and row["stage_tail_line_count"] == intent_payload["tail_line_count"]
+            and row["source_byte_count"] > payload_byte_count
+            and row["source_line_count"] == payload_line_count + 1
+        )
     if (
-        row["source_byte_count"]
-        != row["archive_byte_count"] + row["stage_tail_byte_count"]
-        or row["source_line_count"]
-        != row["archive_line_count"] + row["stage_tail_line_count"]
+        not source_counts_valid
         or row["superseding_byte_count"]
         != row["source_byte_count"] + row["post_intent_suffix_byte_count"]
         or row["superseding_line_count"]
@@ -2479,7 +2518,11 @@ def _validated_activity_rotation_resolution_row(
             raise RuntimeError(
                 "activity resolution superseding archive line count mismatch"
             )
-    return archive_path
+    return (
+        archive_path
+        if intent_schema_version == 1
+        else superseding_path
+    )
 
 
 def _load_activity_rotation_resolutions_unlocked(
@@ -3200,7 +3243,16 @@ def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
         )
     )
     registered_content = {path.resolve() for path in lineage_archives}
-    superseded_content = {path.resolve() for path in superseded_archives}
+    superseded_content = {
+        path.resolve()
+        for path in superseded_archives
+        if classify_source(path) == "content_addressed"
+    }
+    superseded_legacy = {
+        path.resolve()
+        for path in superseded_archives
+        if classify_source(path) in ("legacy_ts_std", "legacy_ts_old")
+    }
     if registered_content & superseded_content:
         raise RuntimeError(
             "activity archive is both lineage-registered and resolution-superseded"
@@ -3213,6 +3265,7 @@ def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
     backed_up_superseded = {
         path.resolve()
         for path in superseded_archives
+        if classify_source(path) == "content_addressed"
         if not path.exists()
         and not path.is_symlink()
         and (
@@ -3225,7 +3278,11 @@ def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
         != registered_content | superseded_content
     ):
         raise RuntimeError("activity content-addressed archives do not match lineage")
-    sources = list(legacy_sources)
+    sources = [
+        source
+        for source in legacy_sources
+        if source.resolve() not in superseded_legacy
+    ]
     sources.extend(lineage_archives)
     if log_path.is_file():
         sources.append(log_path)
