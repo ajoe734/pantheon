@@ -519,12 +519,22 @@ class RecentTaskActivityTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertRaisesRegex(RuntimeError, "Bad JSON"):
+            with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
                 common._recent_task_activity(
                     {"paths": {"activity_log": str(activity_log)}},
                     "TASK-1",
                     limit=3,
                 )
+
+        self.assertEqual(
+            ctx.exception.diagnostic["record_type"],
+            "pantheon.activity.fail_closed.v1",
+        )
+        self.assertEqual(
+            ctx.exception.diagnostic["evidence"]["operation"],
+            "recent_task_activity",
+        )
+        self.assertIn("Bad JSON", ctx.exception.diagnostic["message"])
 
     def test_recent_task_activity_rejects_duplicate_keys_in_active_and_gzip(self) -> None:
         ambiguous = (

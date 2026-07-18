@@ -1678,16 +1678,8 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
     task_id = str(task.get("id") or "").strip()
     if not task_id:
         raise SystemExit("Cannot archive a task without an id")
-    related_handoffs = [
-        deepcopy(handoff)
-        for handoff in state.get("handoffs", [])
-        if handoff.get("task_id") == task_id
-    ]
-    related_blockers = [
-        deepcopy(blocker)
-        for blocker in state.get("blockers", [])
-        if blocker.get("task_id") == task_id
-    ]
+    related_handoffs = [deepcopy(handoff) for handoff in state.get("handoffs", []) if handoff.get("task_id") == task_id]
+    related_blockers = [deepcopy(blocker) for blocker in state.get("blockers", []) if blocker.get("task_id") == task_id]
     existing = archived_task_snapshot(task_id)
     snapshot = {
         "version": 1,

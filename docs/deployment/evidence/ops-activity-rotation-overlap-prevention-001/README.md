@@ -56,9 +56,6 @@ Not changed:
 - Added the exact non-adjacent-tail fixture with a genuinely content-addressed
   lineage archive whose basename is derived from its payload digest, plus a
   bounded deadline assertion.
-- Tightened task archive idempotency discovered during full status validation:
-  an existing archive snapshot may be reused only when task identity,
-  terminal outcome, handoffs, and blockers match the active terminal task.
 
 ## Central Read-Only Preconditions
 
@@ -198,8 +195,13 @@ central activity root.
 Final composition commands and results:
 
 ```bash
-python3 .orchestrator/test_common.py
-PANTHEON_STATUS_ROOT=/tmp/pantheon-ai-status-tests-... python3 -m unittest scripts.test_ai_status
+env -u PANTHEON_ACTIVITY_ROTATION_PAUSE -u PANTHEON_COMMAND_ROOT \
+  -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_STATUS_COMMAND_ROOT \
+  python3 .orchestrator/test_common.py
+env -u PANTHEON_ACTIVITY_ROTATION_PAUSE -u PANTHEON_COMMAND_ROOT \
+  -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_STATUS_COMMAND_ROOT \
+  PANTHEON_STATUS_ROOT=/tmp/pantheon-ai-status-tests-... \
+  python3 -m unittest scripts.test_ai_status
 python3 -m unittest scripts.test_activity_audit_logical_inventory scripts.test_status_file_guard
 python3 .orchestrator/test_activity_pending_intent_recovery.py
 python3 .orchestrator/test_runtime_state.py
@@ -228,6 +230,16 @@ Results before the final evidence-only commit:
 - status-command runtime pin: 6 passed;
 - task archive index: passed;
 - `py_compile` and `git diff --check`: passed.
+
+Final reviewer-finding closure also verified that
+`validated_recent_task_activity` converts path, lineage, content, and replay
+failures through the same `pantheon.activity.fail_closed.v1` diagnostic
+boundary as the other public forensic readers. The terminal-task archive
+function is byte-identical to `origin/dev`; it is not part of this task's
+final range diff. Dispatched worker shells must clear the rotation-pause and
+command-runtime pin variables shown above before replaying the isolated test
+matrix, because those live controls are intentionally inherited by child
+processes.
 
 ### Live read-only observation
 

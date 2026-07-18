@@ -4077,24 +4077,33 @@ def validated_recent_task_activity(
         or limit <= 0
     ):
         raise RuntimeError("recent task activity request is not canonical")
-    resolved_log_path = _resolved_activity_log_path(log_path)
-    with activity_audit_lock_file(resolved_log_path, shared=True):
-        snapshot = _build_logical_activity_snapshot_unlocked(
-            resolved_log_path,
-            capture_logical_entries=False,
-            recent_task_id=task_id,
-            recent_limit=limit,
-        )
     try:
-        return [
-            entry
-            for entry, _source, _line_number in _replay_logical_activity_snapshot(
-                snapshot,
-                None,
+        resolved_log_path = _resolved_activity_log_path(log_path)
+        with activity_audit_lock_file(resolved_log_path, shared=True):
+            snapshot = _build_logical_activity_snapshot_unlocked(
+                resolved_log_path,
+                capture_logical_entries=False,
+                recent_task_id=task_id,
+                recent_limit=limit,
             )
-        ]
-    finally:
-        snapshot.close()
+        try:
+            return [
+                entry
+                for entry, _source, _line_number in _replay_logical_activity_snapshot(
+                    snapshot,
+                    None,
+                )
+            ]
+        finally:
+            snapshot.close()
+    except ActivityAuditInvariantError:
+        raise
+    except RuntimeError as exc:
+        raise activity_audit_invariant_error(
+            exc,
+            log_path=log_path,
+            operation="recent_task_activity",
+        ) from exc
 
 
 def stream_logical_activity(
