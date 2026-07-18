@@ -1121,6 +1121,15 @@ class ActivityAuditRecoveryTests(unittest.TestCase):
 
 class LogicalActivityReaderTests(unittest.TestCase):
     def setUp(self):
+        self.production_continuity_anchors = (
+            common.ACTIVITY_REQUIRED_CONTINUITY_ANCHORS
+        )
+        self.continuity_anchor_patch = mock.patch.object(
+            common,
+            "ACTIVITY_REQUIRED_CONTINUITY_ANCHORS",
+            (),
+        )
+        self.continuity_anchor_patch.start()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temp_dir.name)
         self.log_path = self.root / "ai-activity-log.jsonl"
@@ -1131,6 +1140,7 @@ class LogicalActivityReaderTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp_dir.cleanup()
+        self.continuity_anchor_patch.stop()
 
     def _write_gz(self, path: Path, entries: list[dict]):
         with gzip.open(path, "wt", encoding="utf-8") as handle:
@@ -1154,12 +1164,30 @@ class LogicalActivityReaderTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _continuity_anchor_for(
+        self,
+        source: Path,
+    ) -> common.ActivityRequiredContinuityAnchor:
+        raw = source.read_bytes()
+        payload = gzip.decompress(raw)
+        return common.ActivityRequiredContinuityAnchor(
+            relative_path=str(source.relative_to(self.root)),
+            basename=source.name,
+            source_class=common.classify_source(source),
+            gzip_sha256=hashlib.sha256(raw).hexdigest(),
+            gzip_byte_count=len(raw),
+            payload_sha256=hashlib.sha256(payload).hexdigest(),
+            payload_byte_count=len(payload),
+            payload_line_count=len(payload.splitlines()),
+        )
+
     def _write_registered_content_archive(
         self,
         archive_name: str | None,
         entries: list[dict],
         *,
         tail_entries: list[dict] | None = None,
+        boundary_predecessor: Path | None = None,
     ) -> Path:
         archive_payload = b"".join(
             (json.dumps(entry) + "\n").encode("utf-8") for entry in entries
@@ -1174,6 +1202,35 @@ class LogicalActivityReaderTests(unittest.TestCase):
             (json.dumps(entry) + "\n").encode("utf-8")
             for entry in (tail_entries or [])
         )
+        boundary_normalization = None
+        excluded_prefix = b""
+        if boundary_predecessor is not None:
+            predecessor_payload = gzip.decompress(boundary_predecessor.read_bytes())
+            predecessor_lines = predecessor_payload.splitlines(keepends=True)
+            self.assertGreaterEqual(len(predecessor_lines), 1000)
+            excluded_prefix = b"".join(predecessor_lines[-1000:])
+            active_source_sha256 = hashlib.sha256(
+                excluded_prefix + archive_payload + tail_payload
+            ).hexdigest()
+            boundary_normalization = {
+                "type": "legacy-active-prefix-1000",
+                "predecessor_relative_path": str(
+                    boundary_predecessor.relative_to(self.root)
+                ),
+                "predecessor_sha256": hashlib.sha256(
+                    predecessor_payload
+                ).hexdigest(),
+                "predecessor_byte_count": len(predecessor_payload),
+                "predecessor_line_count": len(predecessor_lines),
+                "excluded_prefix_sha256": hashlib.sha256(
+                    excluded_prefix
+                ).hexdigest(),
+                "excluded_prefix_byte_count": len(excluded_prefix),
+                "excluded_prefix_line_count": 1000,
+                "active_source_sha256": active_source_sha256,
+            }
+        else:
+            active_source_sha256 = payload_sha256
         transaction_id = "activity-rotation-test-nonadjacent-tail"
         row = {
             "record_type": common.ACTIVITY_ROTATION_LINEAGE_RECORD_TYPE,
@@ -1188,17 +1245,25 @@ class LogicalActivityReaderTests(unittest.TestCase):
             ).hexdigest(),
             "archive_byte_count": len(archive_payload),
             "archive_line_count": len(entries),
-            "source_sha256": payload_sha256,
-            "source_payload_sha256": payload_sha256,
-            "source_byte_count": len(archive_payload),
-            "source_line_count": len(entries),
+            "source_sha256": active_source_sha256,
+            "source_payload_sha256": hashlib.sha256(
+                archive_payload + tail_payload
+            ).hexdigest(),
+            "source_byte_count": (
+                len(excluded_prefix) + len(archive_payload) + len(tail_payload)
+            ),
+            "source_line_count": (
+                len(excluded_prefix.splitlines())
+                + len(entries)
+                + len(tail_payload.splitlines())
+            ),
             "tail_sha256": hashlib.sha256(tail_payload).hexdigest(),
             "tail_byte_count": len(tail_payload),
             "tail_line_count": len(tail_payload.splitlines()) if tail_payload else 0,
             "previous_sequence": 0,
             "previous_transaction_id": None,
             "previous_lineage_sha256": hashlib.sha256(b"").hexdigest(),
-            "boundary_normalization": None,
+            "boundary_normalization": boundary_normalization,
         }
         lineage_bytes = common._canonical_json_line(row)
         lineage_path = common.activity_rotation_lineage_path(self.log_path)
@@ -1233,6 +1298,32 @@ class LogicalActivityReaderTests(unittest.TestCase):
             for line in lineage_path.read_text(encoding="utf-8").splitlines()
             if line
         ]
+
+    def test_production_continuity_anchor_identity_is_exact(self):
+        self.assertEqual(
+            self.production_continuity_anchors,
+            (
+                common.ActivityRequiredContinuityAnchor(
+                    relative_path=(
+                        "archive/logs/"
+                        "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+                    ),
+                    basename="ai-activity-log.jsonl-2026-07-16T1450Z.gz",
+                    source_class="legacy_ts_std",
+                    gzip_sha256=(
+                        "f4c09816106783bde90463df6a1a8b227384cf088e1ab05d299c3caa"
+                        "1398e9cc"
+                    ),
+                    gzip_byte_count=744328,
+                    payload_sha256=(
+                        "0606251610b53ff3427fb9cd71eb01250ca806a0e2010b5550482f2dc1"
+                        "a49d2b"
+                    ),
+                    payload_byte_count=5278061,
+                    payload_line_count=1981,
+                ),
+            ),
+        )
 
     def _write_lineage_rows(self, rows: list[dict]) -> None:
         common.activity_rotation_lineage_path(self.log_path).write_text(
@@ -1323,6 +1414,280 @@ class LogicalActivityReaderTests(unittest.TestCase):
         for idx, (entry, _, _) in enumerate(results):
             self.assertEqual(entry["event_id"], f"event-{idx}")
 
+    def test_incident_continuity_anchor_rejects_unregistered_0404_to_1754_gap(
+        self,
+    ):
+        overlap = [
+            {"message": f"incident-overlap-{index}"}
+            for index in range(1000)
+        ]
+        predecessor = (
+            self.archive_dir
+            / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        )
+        component_tail = (
+            self.archive_dir
+            / "ai-activity-log.jsonl-2026-07-17T0404Z.gz"
+        )
+        unregistered_successor = (
+            self.archive_dir
+            / "ai-activity-log.jsonl-2026-07-17T1754Z.gz"
+        )
+        self._write_gz(predecessor, [{"message": "pre-anchor"}] + overlap)
+        self._write_gz(component_tail, overlap + [{"message": "0404-tail"}])
+        self._write_gz(
+            unregistered_successor,
+            [
+                {"message": f"unregistered-successor-{index}"}
+                for index in range(1001)
+            ],
+        )
+        anchor = self._continuity_anchor_for(predecessor)
+
+        with mock.patch.object(
+            common,
+            "ACTIVITY_REQUIRED_CONTINUITY_ANCHORS",
+            (anchor,),
+        ):
+            with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
+                list(common.stream_logical_activity(self.log_path))
+
+        diagnostic = ctx.exception.diagnostic
+        self.assertEqual(
+            diagnostic["invariant"],
+            "activity_unregistered_disjoint_edge",
+        )
+        evidence = diagnostic["evidence"]
+        self.assertEqual(evidence["continuity_anchor"], anchor.relative_path)
+        self.assertEqual(evidence["predecessor_path"], str(component_tail))
+        self.assertEqual(evidence["successor_path"], str(unregistered_successor))
+        self.assertEqual(evidence["predecessor_class"], "legacy_ts_std")
+        self.assertEqual(evidence["successor_class"], "legacy_ts_std")
+
+    def test_continuity_anchor_identity_tamper_withholds_rows_and_callbacks(self):
+        overlap = [
+            {"message": f"identity-overlap-{index}"}
+            for index in range(1000)
+        ]
+        predecessor = (
+            self.archive_dir
+            / "ai-activity-log.jsonl-2026-07-16T1404Z.gz"
+        )
+        anchor_source = (
+            self.archive_dir
+            / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        )
+        self._write_gz(predecessor, [{"message": "predecessor"}] + overlap)
+        self._write_gz(anchor_source, overlap + [{"message": "anchor-pass"}])
+        anchor = self._continuity_anchor_for(anchor_source)
+
+        self._write_gz(anchor_source, overlap + [{"message": "anchor-fail"}])
+        tampered_raw = anchor_source.read_bytes()
+        tampered_payload = gzip.decompress(tampered_raw)
+        self.assertNotEqual(hashlib.sha256(tampered_raw).hexdigest(), anchor.gzip_sha256)
+        self.assertNotEqual(
+            hashlib.sha256(tampered_payload).hexdigest(),
+            anchor.payload_sha256,
+        )
+
+        yielded_rows = []
+        collapsed_edges = []
+        disjoint_edges = []
+        with mock.patch.object(
+            common,
+            "ACTIVITY_REQUIRED_CONTINUITY_ANCHORS",
+            (anchor,),
+        ):
+            with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
+                for row in common.stream_logical_activity(
+                    self.log_path,
+                    on_collapse=lambda *args: collapsed_edges.append(args),
+                    on_disjoint=lambda *args: disjoint_edges.append(args),
+                ):
+                    yielded_rows.append(row)
+
+        self.assertEqual(
+            ctx.exception.diagnostic["invariant"],
+            "activity_content_identity",
+        )
+        self.assertIn(
+            "required-continuity anchor identity mismatch",
+            ctx.exception.diagnostic["message"],
+        )
+        self.assertEqual(yielded_rows, [])
+        self.assertEqual(collapsed_edges, [])
+        self.assertEqual(disjoint_edges, [])
+
+    def test_continuity_anchor_requires_path_to_active_log(self):
+        anchor_source = (
+            self.archive_dir
+            / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        )
+        self._write_gz(
+            anchor_source,
+            [
+                {"message": f"terminal-anchor-{index}"}
+                for index in range(1001)
+            ],
+        )
+        anchor = self._continuity_anchor_for(anchor_source)
+        yielded_rows = []
+        collapsed_edges = []
+        disjoint_edges = []
+
+        with mock.patch.object(
+            common,
+            "ACTIVITY_REQUIRED_CONTINUITY_ANCHORS",
+            (anchor,),
+        ):
+            with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
+                for row in common.stream_logical_activity(
+                    self.log_path,
+                    on_collapse=lambda *args: collapsed_edges.append(args),
+                    on_disjoint=lambda *args: disjoint_edges.append(args),
+                ):
+                    yielded_rows.append(row)
+
+        self.assertEqual(
+            ctx.exception.diagnostic["invariant"],
+            "activity_continuity_not_active",
+        )
+        evidence = ctx.exception.diagnostic["evidence"]
+        self.assertEqual(evidence["continuity_anchor"], anchor.relative_path)
+        self.assertEqual(evidence["terminal_path"], str(anchor_source))
+        self.assertEqual(evidence["terminal_class"], "legacy_ts_std")
+        self.assertEqual(evidence["expected_active_path"], str(self.log_path))
+        self.assertEqual(yielded_rows, [])
+        self.assertEqual(collapsed_edges, [])
+        self.assertEqual(disjoint_edges, [])
+
+    def test_lineage_authorizes_disjoint_edges_and_replays_callbacks(self):
+        legacy_entries = self._make_entries(0, 1500)
+        active_entries = self._make_entries(500, 1300)
+        predecessor = (
+            self.archive_dir
+            / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        )
+        self._write_gz(predecessor, legacy_entries)
+        self._write_active(active_entries)
+        anchor = self._continuity_anchor_for(predecessor)
+
+        with mock.patch.object(
+            common,
+            "ACTIVITY_REQUIRED_CONTINUITY_ANCHORS",
+            (anchor,),
+        ):
+            with common.activity_audit_lock_file(self.log_path, shared=False):
+                first_archive = common.rotate_activity_log_unlocked(
+                    self.log_path,
+                    max_bytes=1,
+                    keep_lines=0,
+                )
+            self.assertIsNotNone(first_archive)
+            assert first_archive is not None
+            second_archive = self._append_and_rotate(
+                self._make_entries(1800, 5),
+                keep_lines=0,
+            )
+            lineage_rows = self._lineage_rows()
+            self.assertEqual(len(lineage_rows), 2)
+            disjoint_edges: list[tuple[Path, Path, str]] = []
+
+            results = list(
+                common.stream_logical_activity(
+                    self.log_path,
+                    on_disjoint=lambda previous, current, authority: (
+                        disjoint_edges.append((previous, current, authority))
+                    ),
+                )
+            )
+
+        self.assertEqual(
+            [entry["event_id"] for entry, _, _ in results],
+            [f"event-{index}" for index in range(1805)],
+        )
+        first_transaction_id = lineage_rows[0]["transaction_id"]
+        second_transaction_id = lineage_rows[1]["transaction_id"]
+        self.assertEqual(
+            disjoint_edges,
+            [
+                (
+                    predecessor,
+                    first_archive,
+                    f"schema-v2-lineage-boundary:1:{first_transaction_id}",
+                ),
+                (
+                    first_archive,
+                    second_archive,
+                    "schema-v2-lineage-chain:"
+                    f"1:{first_transaction_id}->2:{second_transaction_id}",
+                ),
+                (
+                    second_archive,
+                    self.log_path,
+                    f"schema-v2-lineage-head:2:{second_transaction_id}",
+                ),
+            ],
+        )
+
+    def test_lineage_rejects_inserted_legacy_edge_and_withholds_callbacks(self):
+        legacy_entries = self._make_entries(0, 1500)
+        active_entries = self._make_entries(500, 1300)
+        predecessor = (
+            self.archive_dir
+            / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        )
+        inserted = (
+            self.archive_dir
+            / "ai-activity-log.jsonl-2026-07-17T1754Z.gz"
+        )
+        self._write_gz(predecessor, legacy_entries)
+        self._write_active(active_entries)
+        anchor = self._continuity_anchor_for(predecessor)
+
+        with mock.patch.object(
+            common,
+            "ACTIVITY_REQUIRED_CONTINUITY_ANCHORS",
+            (anchor,),
+        ):
+            with common.activity_audit_lock_file(self.log_path, shared=False):
+                archive = common.rotate_activity_log_unlocked(
+                    self.log_path,
+                    max_bytes=1,
+                    keep_lines=0,
+                )
+            self.assertIsNotNone(archive)
+            assert archive is not None
+            self._write_gz(
+                inserted,
+                legacy_entries[-1000:]
+                + [{"event_id": "inserted-edge", "message": "unregistered"}],
+            )
+            disjoint_edges: list[tuple[Path, Path, str]] = []
+
+            with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
+                list(
+                    common.stream_logical_activity(
+                        self.log_path,
+                        on_disjoint=lambda previous, current, authority: (
+                            disjoint_edges.append((previous, current, authority))
+                        ),
+                    )
+                )
+
+        diagnostic = ctx.exception.diagnostic
+        self.assertEqual(
+            diagnostic["invariant"],
+            "activity_unregistered_disjoint_edge",
+        )
+        evidence = diagnostic["evidence"]
+        self.assertEqual(evidence["continuity_anchor"], anchor.relative_path)
+        self.assertEqual(evidence["predecessor_path"], str(inserted))
+        self.assertEqual(evidence["successor_path"], str(archive))
+        self.assertEqual(evidence["predecessor_class"], "legacy_ts_std")
+        self.assertEqual(evidence["successor_class"], "content_addressed")
+        self.assertEqual(disjoint_edges, [])
+
     def test_legacy_archive_to_active_log_overlap(self):
         entries1 = self._make_entries(500, 1000)
         entries_active = self._make_entries(500, 1500)
@@ -1368,6 +1733,37 @@ class LogicalActivityReaderTests(unittest.TestCase):
 
         logical_ids = [entry["event_id"] for entry, _, _ in common.stream_logical_activity(self.log_path)]
         self.assertEqual(logical_ids, [f"event-{idx}" for idx in range(2300)])
+
+    def test_first_content_rotation_rejects_unbound_legacy_disjoint_gap(self):
+        predecessor = (
+            self.archive_dir
+            / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        )
+        self._write_gz(predecessor, self._make_entries(0, 1001))
+        self._write_active(self._make_entries(2000, 1001))
+        active_before = self.log_path.read_bytes()
+
+        with common.activity_audit_lock_file(self.log_path, shared=False):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "lacks byte-proven legacy continuity",
+            ):
+                common.rotate_activity_log_unlocked(
+                    self.log_path,
+                    max_bytes=1,
+                    keep_lines=0,
+                )
+
+        self.assertEqual(self.log_path.read_bytes(), active_before)
+        self.assertFalse(
+            common.activity_rotation_lineage_path(self.log_path).exists()
+        )
+        self.assertFalse(
+            any(
+                common.classify_source(path) == "content_addressed"
+                for path in self.archive_dir.glob("*.gz")
+            )
+        )
 
     def test_boundary_predecessor_replacement_cannot_hide_excluded_rows(self):
         legacy_entries = self._make_entries(0, 1500)
@@ -2593,6 +2989,7 @@ class LogicalActivityReaderTests(unittest.TestCase):
         content_archive = self._write_registered_content_archive(
             None,
             older_tail + [{"message": "content-tail"}],
+            boundary_predecessor=f_2337,
         )
 
         started = time.monotonic()

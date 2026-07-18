@@ -60,6 +60,10 @@ EXPECTED_INCIDENTS = {
     ("ai-activity-log.jsonl-2026-07-16T1404Z.gz", "ai-activity-log.jsonl-2026-07-16T1450Z.gz"),
 }
 
+INCIDENT_CONTINUITY_ANCHOR = (
+    "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+)
+
 SOURCE_CLASS_LABELS = {
     "legacy_ts_std": "std",
     "legacy_ts_old": "old",
@@ -328,6 +332,7 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
 
             # 3. Stream logical activity and collect folds
             folds = []
+            authorized_disjoint_edges = []
 
             def on_collapse(prev_s, next_s, lines_folded, bytes_folded, digest_val):
                 p_name = prev_s.name if prev_s else ""
@@ -370,7 +375,27 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                     "fold_type": "valid_legacy_rotation"
                 })
 
-            logical_gen = stream_logical_activity(log_file, on_collapse=on_collapse)
+            def on_disjoint(prev_s, next_s, authority):
+                authority_value = str(authority or "").strip()
+                authority_type, separator, authority_identity = (
+                    authority_value.partition(":")
+                )
+                if not separator or not authority_type or not authority_identity:
+                    raise RuntimeError(
+                        "Logical reader returned an invalid disjoint-edge authority"
+                    )
+                authorized_disjoint_edges.append({
+                    "prev_source": prev_s.name,
+                    "next_source": next_s.name,
+                    "authority_type": authority_type,
+                    "authority": authority_value,
+                })
+
+            logical_gen = stream_logical_activity(
+                log_file,
+                on_collapse=on_collapse,
+                on_disjoint=on_disjoint,
+            )
             logical_entries = 0
             logical_event_id_lines = 0
             for entry, source_path, line_number in logical_gen:
@@ -391,52 +416,76 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                     "activity source set changed between physical and logical passes"
                 )
 
-            # Resolve the exact-overlap component that begins at the final
-            # incident archive.  Legacy keep-lines rotations originally made
-            # this component reach active, but a later validated disjoint
-            # rotation epoch may terminate it at an archive.  Missing overlap
-            # is not corruption by itself: the shared logical reader has
-            # already validated the complete ordered source set, duplicate
-            # identities, and non-adjacent overlap constraints.
+            # Resolve the incident continuity path from the exact historical
+            # anchor.  Every hop must be either a byte-proven fold or a
+            # lineage-bound disjoint edge emitted by the shared reader after
+            # validation completes.  Filename ordering alone is never edge
+            # authority.
             prev_to_fold = {f["prev_source"]: f for f in folds if f["prev_source"]}
-            start_node = None
-            for p_name in prev_to_fold:
-                if "2026-07-16T1450Z" in p_name:
-                    start_node = p_name
-                    break
+            prev_to_disjoint = {}
+            for edge in authorized_disjoint_edges:
+                p_name = edge["prev_source"]
+                if p_name in prev_to_disjoint:
+                    raise RuntimeError(
+                        f"Multiple authorized disjoint successors for {p_name}"
+                    )
+                prev_to_disjoint[p_name] = edge
+
+            ordered_names = [source.name for source in sources]
+            start_node = (
+                INCIDENT_CONTINUITY_ANCHOR
+                if INCIDENT_CONTINUITY_ANCHOR in ordered_names
+                else None
+            )
 
             incident_tail_folds = []
+            incident_tail_disjoint_edges = []
+            incident_tail_steps = []
             incident_tail_terminal_source = None
-            incident_tail_boundary_successor = None
-            incident_tail_boundary_successor_class = None
             incident_tail_reaches_active = False
             if start_node:
                 curr = start_node
                 visited: set[str] = set()
-                while curr != "ai-activity-log.jsonl" and curr in prev_to_fold:
+                while curr != "ai-activity-log.jsonl":
                     if curr in visited:
-                        raise RuntimeError(f"Incident lineage cycle at {curr}")
+                        raise RuntimeError(f"Incident continuity cycle at {curr}")
                     visited.add(curr)
-                    f = prev_to_fold[curr]
-                    incident_tail_folds.append(f)
-                    curr = f["next_source"]
+                    fold = prev_to_fold.get(curr)
+                    disjoint = prev_to_disjoint.get(curr)
+                    if fold is not None and disjoint is not None:
+                        raise RuntimeError(
+                            f"Ambiguous incident continuity edge at {curr}"
+                        )
+                    if fold is not None:
+                        incident_tail_folds.append(fold)
+                        incident_tail_steps.append({
+                            "prev": fold["prev_source"],
+                            "next": fold["next_source"],
+                            "edge_type": "byte_identical_fold",
+                            "authority": None,
+                        })
+                        curr = fold["next_source"]
+                        continue
+                    if disjoint is not None:
+                        incident_tail_disjoint_edges.append(disjoint)
+                        incident_tail_steps.append({
+                            "prev": disjoint["prev_source"],
+                            "next": disjoint["next_source"],
+                            "edge_type": "authorized_disjoint",
+                            "authority": disjoint["authority"],
+                        })
+                        curr = disjoint["next_source"]
+                        continue
+                    raise RuntimeError(
+                        "Incident continuity from 1450Z does not reach active: "
+                        f"no byte-identical fold or authorized disjoint edge from {curr}"
+                    )
                 incident_tail_terminal_source = curr
                 incident_tail_reaches_active = curr == "ai-activity-log.jsonl"
                 if not incident_tail_reaches_active:
-                    ordered_names = [source.name for source in sources]
-                    try:
-                        terminal_index = ordered_names.index(curr)
-                    except ValueError as exc:
-                        raise RuntimeError(
-                            f"Incident lineage terminal source is missing: {curr}"
-                        ) from exc
-                    if terminal_index + 1 >= len(sources):
-                        raise RuntimeError(
-                            f"Incident lineage terminal source has no successor: {curr}"
-                        )
-                    successor = sources[terminal_index + 1]
-                    incident_tail_boundary_successor = successor.name
-                    incident_tail_boundary_successor_class = classify_source(successor)
+                    raise RuntimeError(
+                        "Incident continuity from 1450Z did not reach active"
+                    )
 
             # Map folds to their dynamic classification
             for f in folds:
@@ -467,11 +516,13 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                     if not any(f["prev_source"] == p_name and f["next_source"] == n_name for f in folds):
                         raise RuntimeError(f"Required fold not observed: {p_name} -> {n_name}")
 
-            # Assert lineage complete if 1450Z is present
-            has_1450 = any("2026-07-16T1450Z" in name for name in source_names)
-            if has_1450 and not incident_tail_folds:
+            # Assert continuity complete if the exact 1450Z anchor is present.
+            # A valid lineage-normalized path can be entirely disjoint, so the
+            # presence of a fold is not itself the completion condition.
+            has_1450 = INCIDENT_CONTINUITY_ANCHOR in source_names
+            if has_1450 and not incident_tail_reaches_active:
                 raise RuntimeError(
-                    "Incident lineage from 1450Z was expected but not found."
+                    "Incident continuity from 1450Z was expected to reach active."
                 )
 
             # Rehash and restat every source after logical pass to verify stability
@@ -544,15 +595,15 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                 line_count_classes[lc] = line_count_classes.get(lc, 0) + 1
 
             observed_incident_tail_pairs = [
-                {"prev": f["prev_source"], "next": f["next_source"]}
-                for f in incident_tail_folds
+                {"prev": step["prev"], "next": step["next"]}
+                for step in incident_tail_steps
             ]
             incident_tail_boundary = {
                 "start_source": start_node,
                 "terminal_source": incident_tail_terminal_source,
                 "reaches_active": incident_tail_reaches_active,
-                "successor_source": incident_tail_boundary_successor,
-                "successor_class": incident_tail_boundary_successor_class,
+                "successor_source": None,
+                "successor_class": None,
             }
 
             observed_pinned_pairs = {
@@ -612,7 +663,12 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                 "total_mismatch_folds": 0,
                 "folds_details": folds,
                 "observed_incident_tail_pairs": observed_incident_tail_pairs,
+                "incident_tail_steps": incident_tail_steps,
                 "incident_tail_boundary": incident_tail_boundary,
+                "authorized_disjoint_edges": authorized_disjoint_edges,
+                "incident_tail_authorized_disjoint_edges": (
+                    incident_tail_disjoint_edges
+                ),
                 "pinned_exception_identities": pinned_exception_identities,
             }
 
@@ -678,31 +734,47 @@ def generate_inventory(status_root: Path | None = None, evidence_dir: Path | Non
                 "Using a callback-based diagnostics mechanism, it successfully identified and folded the duplicate overlaps from legacy timestamp rotations.\n"
             )
 
-            evidence_md.append("### Observed Incident Tail Overlap Component")
-            evidence_md.append("| Predecessor Source | Successor Source |")
-            evidence_md.append("| :--- | :--- |")
-            for pair in observed_incident_tail_pairs:
-                evidence_md.append(f"| `{pair['prev']}` | `{pair['next']}` |")
+            evidence_md.append("### Observed Incident Continuity Path")
+            evidence_md.append(
+                "| Predecessor Source | Successor Source | Edge Type | Authority |"
+            )
+            evidence_md.append("| :--- | :--- | :--- | :--- |")
+            for step in incident_tail_steps:
+                authority = (
+                    f"`{step['authority']}`"
+                    if step["authority"] is not None
+                    else "byte-identical overlap"
+                )
+                evidence_md.append(
+                    f"| `{step['prev']}` | `{step['next']}` | "
+                    f"`{step['edge_type']}` | {authority} |"
+                )
             evidence_md.append("")
             if start_node is None:
                 evidence_md.append(
                     "The historical 1450Z incident-tail start source is not present "
                     "in this inventory; no incident-tail boundary is asserted."
                 )
-            elif incident_tail_reaches_active:
-                evidence_md.append(
-                    "This exact-overlap component reaches the active log. It is "
-                    "generated from verified adjacent fold diagnostics; superseded "
-                    "archive-to-active shorthand is not retained."
-                )
             else:
                 evidence_md.append(
-                    "This exact-overlap component terminates at "
-                    f"`{incident_tail_terminal_source}` before the validated disjoint "
-                    f"successor `{incident_tail_boundary_successor}` "
-                    f"(`{incident_tail_boundary_successor_class}`). The shared logical "
-                    "reader validated the full boundary without collapsing it."
+                    "This continuity path reaches the active log using only "
+                    "byte-identical folds and lineage-bound disjoint edges emitted "
+                    "by the validation-complete shared logical reader."
                 )
+            evidence_md.append("")
+
+            evidence_md.append("### Authorized Disjoint Edges")
+            evidence_md.append(
+                "| Predecessor Source | Successor Source | Authority Type | Authority |"
+            )
+            evidence_md.append("| :--- | :--- | :--- | :--- |")
+            for edge in authorized_disjoint_edges:
+                evidence_md.append(
+                    f"| `{edge['prev_source']}` | `{edge['next_source']}` | "
+                    f"`{edge['authority_type']}` | `{edge['authority']}` |"
+                )
+            if not authorized_disjoint_edges:
+                evidence_md.append("| _none_ | _none_ | _none_ | _none_ |")
             evidence_md.append("")
 
             evidence_md.append("### Standard 1,000-Line Log Folds")

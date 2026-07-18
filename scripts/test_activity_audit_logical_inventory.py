@@ -92,8 +92,15 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
             (self.pinned_exception,),
         )
         self.pinned_registry_patch.start()
+        self.continuity_anchor_patch = mock.patch.object(
+            common,
+            "ACTIVITY_REQUIRED_CONTINUITY_ANCHORS",
+            (),
+        )
+        self.continuity_anchor_patch.start()
 
     def tearDown(self):
+        self.continuity_anchor_patch.stop()
         self.pinned_registry_patch.stop()
         inventory.STATUS_ROOT_DEFAULT = self.original_status_root
         inventory.LOG_FILE_DEFAULT = self.original_log_file
@@ -127,6 +134,25 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
     def _get_hermetic_pinned_bytes(self):
         return self.pinned_predecessor_payload, self.pinned_successor_payload
 
+    def _install_continuity_anchor(
+        self,
+        source: Path,
+    ) -> common.ActivityRequiredContinuityAnchor:
+        raw = source.read_bytes()
+        payload = gzip.decompress(raw)
+        anchor = common.ActivityRequiredContinuityAnchor(
+            relative_path=str(source.relative_to(self.status_root)),
+            basename=source.name,
+            source_class=common.classify_source(source),
+            gzip_sha256=hashlib.sha256(raw).hexdigest(),
+            gzip_byte_count=len(raw),
+            payload_sha256=hashlib.sha256(payload).hexdigest(),
+            payload_byte_count=len(payload),
+            payload_line_count=len(payload.splitlines()),
+        )
+        common.ACTIVITY_REQUIRED_CONTINUITY_ANCHORS = (anchor,)
+        return anchor
+
     def _setup_all_four_incident_pairs(self):
         """Helper to create files that trigger the four expected incident folds
         in stream_logical_activity.
@@ -149,6 +175,7 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
 
         f5 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
         self._write_gz(f5, overlap_C + overlap_D)
+        self._install_continuity_anchor(f5)
 
         # Active log overlap
         self.log_path.write_text(
@@ -484,6 +511,7 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         f5 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
         f6 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1609Z.gz"
         self._write_gz(f5, overlap_C + overlap_D)
+        self._install_continuity_anchor(f5)
 
         # 1609 has event_id_count = 0 (byte_identical no event IDs) to verify post_incident_rotation classification
         no_id_overlap_E = [{"val": i} for i in range(1000)]
@@ -527,32 +555,115 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         )
         self.assertTrue(summary["incident_tail_boundary"]["reaches_active"])
 
-    def test_incident_tail_can_end_at_validated_disjoint_boundary(self):
+    def test_incident_tail_rejects_unregistered_disjoint_boundary(self):
         self._setup_all_four_incident_pairs()
         f5 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
-        active_entries = [
-            {"event_id": f"boundary-overlap-{index}"}
-            for index in range(1000)
-        ]
-        f4 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1404Z.gz"
-        with gzip.open(f4, "rt", encoding="utf-8") as handle:
+        inventory.generate_inventory(
+            status_root=self.status_root,
+            evidence_dir=self.status_root / "evidence",
+        )
+        manifest_before = (
+            self.status_root / "evidence" / "manifest.json"
+        ).read_bytes()
+        summary_before = (
+            self.status_root / "evidence" / "summary.json"
+        ).read_bytes()
+        evidence_before = (
+            self.status_root / "evidence" / "evidence.md"
+        ).read_bytes()
+
+        with gzip.open(f5, "rt", encoding="utf-8") as handle:
             predecessor_overlap = [
                 json.loads(line)
                 for line in handle.read().splitlines()[-1000:]
             ]
         f6 = self.archive_dir / "ai-activity-log.jsonl-2026-07-17T0404Z.gz"
         f7 = self.archive_dir / "ai-activity-log.jsonl-2026-07-17T1754Z.gz"
-        self._write_gz(f5, predecessor_overlap + active_entries)
-        self._write_gz(f6, active_entries + [{"event_id": "f6-terminal"}])
+        self._write_gz(
+            f6,
+            predecessor_overlap + [{"event_id": "f6-terminal"}],
+        )
         disjoint_successor_entries = [
             {"event_id": f"disjoint-successor-{index}"}
             for index in range(1001)
         ]
         self._write_gz(f7, disjoint_successor_entries)
         self.log_path.write_text(
-            json.dumps({"event_id": "disjoint-active"}) + "\n",
+            "\n".join(
+                json.dumps(entry)
+                for entry in (
+                    disjoint_successor_entries[-1000:]
+                    + [{"event_id": "disjoint-active"}]
+                )
+            )
+            + "\n",
             encoding="utf-8",
         )
+
+        with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
+            inventory.generate_inventory(
+                status_root=self.status_root,
+                evidence_dir=self.status_root / "evidence",
+            )
+        self.assertEqual(
+            ctx.exception.diagnostic["invariant"],
+            "activity_unregistered_disjoint_edge",
+        )
+        diagnostic_evidence = ctx.exception.diagnostic["evidence"]
+        self.assertEqual(diagnostic_evidence["predecessor_path"], str(f6))
+        self.assertEqual(diagnostic_evidence["successor_path"], str(f7))
+        self.assertEqual(
+            (self.status_root / "evidence" / "manifest.json").read_bytes(),
+            manifest_before,
+        )
+        self.assertEqual(
+            (self.status_root / "evidence" / "summary.json").read_bytes(),
+            summary_before,
+        )
+        self.assertEqual(
+            (self.status_root / "evidence" / "evidence.md").read_bytes(),
+            evidence_before,
+        )
+
+    def test_incident_tail_accepts_lineage_bound_disjoint_edges(self):
+        self._setup_all_four_incident_pairs()
+        f5 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+
+        with common.activity_audit_lock_file(self.log_path, shared=False):
+            content_archive = common.rotate_activity_log_unlocked(
+                self.log_path,
+                max_bytes=1,
+                keep_lines=0,
+            )
+        self.assertIsNotNone(content_archive)
+        assert content_archive is not None
+        lineage_rows = [
+            json.loads(line)
+            for line in common.activity_rotation_lineage_path(
+                self.log_path
+            ).read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        self.assertEqual(len(lineage_rows), 1)
+        lineage_row = lineage_rows[0]
+        transaction_id = lineage_row["transaction_id"]
+        expected_edges = [
+            {
+                "prev_source": f5.name,
+                "next_source": content_archive.name,
+                "authority_type": "schema-v2-lineage-boundary",
+                "authority": (
+                    "schema-v2-lineage-boundary:"
+                    f"1:{transaction_id}"
+                ),
+            },
+            {
+                "prev_source": content_archive.name,
+                "next_source": self.log_path.name,
+                "authority_type": "schema-v2-lineage-head",
+                "authority": f"schema-v2-lineage-head:1:{transaction_id}",
+            },
+        ]
 
         inventory.generate_inventory(
             status_root=self.status_root,
@@ -563,45 +674,25 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
                 encoding="utf-8"
             )
         )
+        self.assertEqual(summary["authorized_disjoint_edges"], expected_edges)
+        self.assertEqual(
+            summary["incident_tail_authorized_disjoint_edges"],
+            expected_edges,
+        )
         self.assertEqual(
             summary["observed_incident_tail_pairs"],
-            [{"prev": f5.name, "next": f6.name}],
+            [
+                {"prev": f5.name, "next": content_archive.name},
+                {"prev": content_archive.name, "next": self.log_path.name},
+            ],
         )
-        self.assertEqual(
-            summary["incident_tail_boundary"],
-            {
-                "start_source": f5.name,
-                "terminal_source": f6.name,
-                "reaches_active": False,
-                "successor_source": f7.name,
-                "successor_class": "legacy_ts_std",
-            },
-        )
-        self.assertFalse(
-            any(
-                fold["prev_source"] == f6.name
-                and fold["next_source"] == f7.name
-                for fold in summary["folds_details"]
-            )
-        )
-        logical_event_ids = {
-            entry["event_id"]
-            for entry, _source, _line in common.stream_logical_activity(
-                self.log_path
-            )
-            if entry.get("event_id")
-        }
-        self.assertIn("f6-terminal", logical_event_ids)
-        self.assertTrue(
-            {
-                entry["event_id"]
-                for entry in disjoint_successor_entries
-            }.issubset(logical_event_ids)
-        )
+        self.assertTrue(summary["incident_tail_boundary"]["reaches_active"])
         evidence_text = (self.status_root / "evidence" / "evidence.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn("validated disjoint successor", evidence_text)
+        for edge in expected_edges:
+            self.assertIn(edge["authority"], evidence_text)
+        self.assertNotIn("validated disjoint successor", evidence_text)
 
     def test_failure_leaves_evidence_unchanged(self):
         self._setup_all_four_incident_pairs()

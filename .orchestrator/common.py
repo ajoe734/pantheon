@@ -1409,6 +1409,43 @@ def strict_activity_json_loads(payload: str | bytes | bytearray) -> Any:
 
 
 @dataclass(frozen=True, slots=True)
+class ActivityRequiredContinuityAnchor:
+    """Closed source identity that only activates stricter edge validation."""
+
+    relative_path: str
+    basename: str
+    source_class: str
+    gzip_sha256: str
+    gzip_byte_count: int
+    payload_sha256: str
+    payload_byte_count: int
+    payload_line_count: int
+
+
+ACTIVITY_REQUIRED_CONTINUITY_ANCHORS: Final[
+    tuple[ActivityRequiredContinuityAnchor, ...]
+] = (
+    ActivityRequiredContinuityAnchor(
+        relative_path=(
+            "archive/logs/"
+            "ai-activity-log.jsonl-2026-07-16T1450Z.gz"
+        ),
+        basename="ai-activity-log.jsonl-2026-07-16T1450Z.gz",
+        source_class="legacy_ts_std",
+        gzip_sha256=(
+            "f4c09816106783bde90463df6a1a8b227384cf088e1ab05d299c3caa1398e9cc"
+        ),
+        gzip_byte_count=744328,
+        payload_sha256=(
+            "0606251610b53ff3427fb9cd71eb01250ca806a0e2010b5550482f2dc1a49d2b"
+        ),
+        payload_byte_count=5278061,
+        payload_line_count=1981,
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
 class HistoricalActivityOverlapException:
     """Closed identity for one byte-proven legacy overlap exception."""
 
@@ -2962,18 +2999,18 @@ def _activity_boundary_normalization_unlocked(
     source_sha256: str,
     existing_lineage_rows: list[dict[str, Any]],
     existing_content_archives: list[Path],
-) -> tuple[bytes, dict[str, Any] | None]:
+) -> tuple[bytes, dict[str, Any] | None, bool]:
     if existing_lineage_rows or existing_content_archives:
-        return active_payload, None
+        return active_payload, None, False
     legacy_sources = _legacy_activity_source_paths_unlocked(log_path)
     if not legacy_sources:
-        return active_payload, None
+        return active_payload, None, False
     predecessor = legacy_sources[-1]
     predecessor_payload = _activity_source_payload(predecessor)
     predecessor_lines = predecessor_payload.splitlines(keepends=True)
     active_lines = active_payload.splitlines(keepends=True)
     if len(predecessor_lines) < 999 or len(active_lines) < 999:
-        return active_payload, None
+        return active_payload, None, True
     overlap_len = 0
     for count in (999, 1000, 1001):
         if len(predecessor_lines) >= count and len(active_lines) >= count:
@@ -3006,7 +3043,7 @@ def _activity_boundary_normalization_unlocked(
         ):
             raise RuntimeError("first content-addressed boundary matches non-adjacent legacy source")
     if overlap_len != 1000:
-        return active_payload, None
+        return active_payload, None, True
     excluded_prefix = prefix_1000
     assert excluded_prefix is not None
     predecessor_relative = _activity_rotation_relative_path(log_path, predecessor)
@@ -3021,7 +3058,7 @@ def _activity_boundary_normalization_unlocked(
         "excluded_prefix_line_count": 1000,
         "active_source_sha256": source_sha256,
     }
-    return active_payload[len(excluded_prefix):], boundary
+    return active_payload[len(excluded_prefix):], boundary, True
 
 
 def rotate_activity_log_unlocked(
@@ -3065,7 +3102,7 @@ def rotate_activity_log_unlocked(
         if classify_source(source) == "content_addressed"
     ]
     source_sha256 = _sha256_bytes(data)
-    source_payload, boundary_normalization = (
+    source_payload, boundary_normalization, legacy_boundary_required = (
         _activity_boundary_normalization_unlocked(
             log_path,
             active_payload,
@@ -3101,6 +3138,10 @@ def rotate_activity_log_unlocked(
     )
     if archive_path.resolve() in {path.resolve() for path in superseded_for_rotate}:
         raise RuntimeError("activity rotation archive path is already superseded")
+    if legacy_boundary_required and boundary_normalization is None:
+        raise RuntimeError(
+            "first content-addressed rotation lacks byte-proven legacy continuity"
+        )
     lineage_relative = activity_rotation_lineage_path(log_path).relative_to(
         log_path.parent
     )
@@ -3337,6 +3378,19 @@ class _ActivitySourceSnapshot:
     raw_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class _ActivityAuthorizedDisjointEdge:
+    predecessor: Path
+    successor: Path
+    authority: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivitySourcePlan:
+    sources: tuple[Path, ...]
+    authorized_disjoint_edges: tuple[_ActivityAuthorizedDisjointEdge, ...]
+
+
 def _ordered_activity_sources_unlocked(log_path: Path) -> list[Path]:
     sources = activity_audit_source_paths_unlocked(log_path)
     legacy_old = [
@@ -3346,6 +3400,71 @@ def _ordered_activity_sources_unlocked(log_path: Path) -> list[Path]:
         source for source in sources if classify_source(source) != "legacy_ts_old"
     ]
     return legacy_old + remaining
+
+
+def _ordered_activity_source_plan_unlocked(log_path: Path) -> _ActivitySourcePlan:
+    """Return ordered sources plus exact schema-v2 disjoint-edge authority."""
+
+    sources = _ordered_activity_sources_unlocked(log_path)
+    _lineage_bytes, lineage_rows, lineage_archives = (
+        _load_activity_rotation_lineage_unlocked(
+            log_path,
+            validate_archives=True,
+        )
+    )
+    authorized: list[_ActivityAuthorizedDisjointEdge] = []
+    if lineage_rows:
+        first_row = lineage_rows[0]
+        boundary = first_row.get("boundary_normalization")
+        if boundary is not None:
+            predecessor = _normalize_activity_boundary_predecessor_path(
+                log_path,
+                boundary.get("predecessor_relative_path"),
+            )
+            authorized.append(
+                _ActivityAuthorizedDisjointEdge(
+                    predecessor=predecessor,
+                    successor=lineage_archives[0],
+                    authority=(
+                        "schema-v2-lineage-boundary:"
+                        f"{first_row['sequence']}:{first_row['transaction_id']}"
+                    ),
+                )
+            )
+
+        for previous_index in range(len(lineage_rows) - 1):
+            previous_row = lineage_rows[previous_index]
+            next_row = lineage_rows[previous_index + 1]
+            authorized.append(
+                _ActivityAuthorizedDisjointEdge(
+                    predecessor=lineage_archives[previous_index],
+                    successor=lineage_archives[previous_index + 1],
+                    authority=(
+                        "schema-v2-lineage-chain:"
+                        f"{previous_row['sequence']}:{previous_row['transaction_id']}"
+                        "->"
+                        f"{next_row['sequence']}:{next_row['transaction_id']}"
+                    ),
+                )
+            )
+
+        if log_path.is_file():
+            last_row = lineage_rows[-1]
+            authorized.append(
+                _ActivityAuthorizedDisjointEdge(
+                    predecessor=lineage_archives[-1],
+                    successor=log_path,
+                    authority=(
+                        "schema-v2-lineage-head:"
+                        f"{last_row['sequence']}:{last_row['transaction_id']}"
+                    ),
+                )
+            )
+
+    return _ActivitySourcePlan(
+        sources=tuple(sources),
+        authorized_disjoint_edges=tuple(authorized),
+    )
 
 
 def _sha256_file_descriptor(descriptor: int) -> str:
@@ -3448,6 +3567,55 @@ def _validate_historical_activity_source(
             f"Invalid {role} gzip byte count for historical exception: "
             f"{raw_byte_count}"
         )
+
+
+def _required_continuity_anchor_for_source(
+    log_path: Path,
+    source: Path,
+    *,
+    raw_sha256: str,
+    raw_byte_count: int,
+    payload_sha256: str,
+    payload_byte_count: int,
+    payload_line_count: int,
+) -> ActivityRequiredContinuityAnchor | None:
+    relative_path = _activity_rotation_relative_path(log_path, source)
+    matches = [
+        anchor
+        for anchor in ACTIVITY_REQUIRED_CONTINUITY_ANCHORS
+        if anchor.basename == source.name or anchor.relative_path == relative_path
+    ]
+    if len(matches) > 1:
+        raise RuntimeError("activity continuity anchor registry is ambiguous")
+    if not matches:
+        return None
+    anchor = matches[0]
+    observed = (
+        relative_path,
+        source.name,
+        classify_source(source),
+        raw_sha256,
+        raw_byte_count,
+        payload_sha256,
+        payload_byte_count,
+        payload_line_count,
+    )
+    expected = (
+        anchor.relative_path,
+        anchor.basename,
+        anchor.source_class,
+        anchor.gzip_sha256,
+        anchor.gzip_byte_count,
+        anchor.payload_sha256,
+        anchor.payload_byte_count,
+        anchor.payload_line_count,
+    )
+    if observed != expected:
+        raise RuntimeError(
+            "activity required-continuity anchor identity mismatch: "
+            f"{relative_path}"
+        )
+    return anchor
 
 
 def _assert_activity_sources_stable_unlocked(
@@ -3559,7 +3727,12 @@ def _build_logical_activity_snapshot_unlocked(
     ):
         raise RuntimeError("recent activity snapshot query is invalid")
 
-    sources = _ordered_activity_sources_unlocked(log_path)
+    source_plan = _ordered_activity_source_plan_unlocked(log_path)
+    sources = list(source_plan.sources)
+    authorized_disjoint_edges = {
+        (edge.predecessor, edge.successor): edge.authority
+        for edge in source_plan.authorized_disjoint_edges
+    }
     conn = _open_ephemeral_activity_snapshot_database()
     snapshots: list[_ActivitySourceSnapshot] = []
     recent_entries: deque[tuple[str, str, int]] | None = (
@@ -3593,6 +3766,12 @@ def _build_logical_activity_snapshot_unlocked(
             "line_count INTEGER NOT NULL, byte_count INTEGER NOT NULL, "
             "sha256 TEXT NOT NULL)"
         )
+        conn.execute(
+            "CREATE TABLE disjoint_events ("
+            "sequence INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "predecessor_path TEXT NOT NULL, successor_path TEXT NOT NULL, "
+            "authority TEXT NOT NULL)"
+        )
 
         def capture_entry(
             entry: dict[str, Any],
@@ -3617,6 +3796,7 @@ def _build_logical_activity_snapshot_unlocked(
         prev_buffer_1001: list[bytes] = []
         max_ts_std: str | None = None
         max_ts_old: str | None = None
+        required_continuity_anchor: ActivityRequiredContinuityAnchor | None = None
 
         for source_idx, source in enumerate(sources):
             current_hasher = hashlib.sha256()
@@ -3720,6 +3900,7 @@ def _build_logical_activity_snapshot_unlocked(
                             break
 
                     should_collapse = False
+                    authorized_disjoint_authority: str | None = None
                     overlap_len = 0
                     max_check = min(
                         len(prev_buffer_1001), len(current_buffer_1001)
@@ -3824,6 +4005,38 @@ def _build_logical_activity_snapshot_unlocked(
                             raise RuntimeError(
                                 "Invalid overlap: mismatch in 1000-line candidate "
                                 f"between {prev_source.name} and {source.name}"
+                            )
+
+                    if overlap_len == 0 and prev_source is not None:
+                        previous_class = classify_source(prev_source)
+                        authorized_disjoint_authority = (
+                            authorized_disjoint_edges.get((prev_source, source))
+                        )
+                        requires_disjoint_authority = (
+                            required_continuity_anchor is not None
+                            or previous_class == "content_addressed"
+                            or source_class == "content_addressed"
+                        )
+                        if (
+                            requires_disjoint_authority
+                            and authorized_disjoint_authority is None
+                        ):
+                            raise ActivityAuditInvariantError(
+                                "Unregistered disjoint activity edge: "
+                                f"{prev_source.name} -> {source.name}",
+                                invariant="activity_unregistered_disjoint_edge",
+                                evidence={
+                                    "continuity_anchor": (
+                                        required_continuity_anchor.relative_path
+                                        if required_continuity_anchor is not None
+                                        else None
+                                    ),
+                                    "predecessor_path": str(prev_source),
+                                    "successor_path": str(source),
+                                    "predecessor_class": previous_class,
+                                    "successor_class": source_class,
+                                    "source_index": source_idx,
+                                },
                             )
 
                     if len(current_buffer_1001) >= 1000:
@@ -4006,6 +4219,18 @@ def _build_logical_activity_snapshot_unlocked(
                                 hashlib.sha256(collapsed_bytes).hexdigest(),
                             ),
                         )
+                    elif authorized_disjoint_authority is not None:
+                        assert prev_source is not None
+                        conn.execute(
+                            "INSERT INTO disjoint_events "
+                            "(predecessor_path, successor_path, authority) "
+                            "VALUES (?, ?, ?)",
+                            (
+                                str(prev_source),
+                                str(source),
+                                authorized_disjoint_authority,
+                            ),
+                        )
 
                     source_payload_sha256 = current_hasher.hexdigest()
                     _validate_historical_activity_source(
@@ -4016,6 +4241,17 @@ def _build_logical_activity_snapshot_unlocked(
                         payload_byte_count=current_byte_count,
                         payload_line_count=current_line_count,
                     )
+                    continuity_anchor = _required_continuity_anchor_for_source(
+                        log_path,
+                        source,
+                        raw_sha256=raw_sha256,
+                        raw_byte_count=raw_byte_count,
+                        payload_sha256=source_payload_sha256,
+                        payload_byte_count=current_byte_count,
+                        payload_line_count=current_line_count,
+                    )
+                    if continuity_anchor is not None:
+                        required_continuity_anchor = continuity_anchor
                     prev_source = source
                     prev_source_payload_sha256 = source_payload_sha256
                     prev_buffer_1001 = list(sliding_window_1001)
@@ -4046,6 +4282,25 @@ def _build_logical_activity_snapshot_unlocked(
                 os.close(descriptor)
 
         _assert_activity_sources_stable_unlocked(log_path, sources, snapshots)
+        if required_continuity_anchor is not None and (
+            prev_source is None or prev_source.resolve() != log_path.resolve()
+        ):
+            raise ActivityAuditInvariantError(
+                "Required activity continuity does not reach the active log",
+                invariant="activity_continuity_not_active",
+                evidence={
+                    "continuity_anchor": required_continuity_anchor.relative_path,
+                    "terminal_path": (
+                        str(prev_source) if prev_source is not None else None
+                    ),
+                    "terminal_class": (
+                        classify_source(prev_source)
+                        if prev_source is not None
+                        else None
+                    ),
+                    "expected_active_path": str(log_path),
+                },
+            )
         if recent_entries is not None:
             conn.executemany(
                 "INSERT INTO logical_entries "
@@ -4062,6 +4317,7 @@ def _build_logical_activity_snapshot_unlocked(
 def _replay_logical_activity_snapshot(
     conn: sqlite3.Connection,
     on_collapse: Callable[[Path | None, Path, int, int, str], None] | None,
+    on_disjoint: Callable[[Path, Path, str], None] | None = None,
 ) -> Generator[tuple[dict[str, Any], Path, int], None, None]:
     if on_collapse is not None:
         for row in conn.execute(
@@ -4070,6 +4326,12 @@ def _replay_logical_activity_snapshot(
         ):
             predecessor = Path(row[0]) if row[0] is not None else None
             on_collapse(predecessor, Path(row[1]), row[2], row[3], row[4])
+    if on_disjoint is not None:
+        for row in conn.execute(
+            "SELECT predecessor_path, successor_path, authority "
+            "FROM disjoint_events ORDER BY sequence"
+        ):
+            on_disjoint(Path(row[0]), Path(row[1]), row[2])
     for payload, source_path, line_number in conn.execute(
         "SELECT payload, source_path, line_number "
         "FROM logical_entries ORDER BY sequence"
@@ -4193,13 +4455,14 @@ def validated_recent_task_activity(
 def stream_logical_activity(
     log_path: Path,
     on_collapse: Callable[[Path | None, Path, int, int, str], None] | None = None,
+    on_disjoint: Callable[[Path, Path, str], None] | None = None,
 ) -> Generator[tuple[dict[str, Any], Path, int], None, None]:
     """Replay a validation-complete, bounded-disk logical activity snapshot.
 
-    The first row and every collapse callback are withheld until all sources
-    pass ordering, JSON, duplicate, identity, metadata, and before/after raw
-    digest checks under the shared activity lock. Early stop therefore cannot
-    turn incomplete source validation into apparent success.
+    The first row and every collapse or disjoint callback are withheld until
+    all sources pass ordering, JSON, duplicate, identity, metadata, and
+    before/after raw digest checks under the shared activity lock. Early stop
+    therefore cannot turn incomplete source validation into apparent success.
     """
 
     requested_log_path = Path(log_path)
@@ -4215,7 +4478,11 @@ def stream_logical_activity(
                 log_path=requested_log_path,
                 operation="logical_stream_validation",
             ) from exc
-        yield from _replay_logical_activity_snapshot(snapshot, on_collapse)
+        yield from _replay_logical_activity_snapshot(
+            snapshot,
+            on_collapse,
+            on_disjoint,
+        )
     finally:
         if snapshot is not None:
             snapshot.close()
@@ -4224,12 +4491,17 @@ def stream_logical_activity(
 def _stream_logical_activity_unlocked(
     log_path: Path,
     on_collapse: Callable[[Path | None, Path, int, int, str], None] | None = None,
+    on_disjoint: Callable[[Path, Path, str], None] | None = None,
 ) -> Generator[tuple[dict[str, Any], Path, int], None, None]:
     """Compatibility path for callers that already hold the activity lock."""
 
     snapshot = _build_logical_activity_snapshot_unlocked(log_path)
     try:
-        yield from _replay_logical_activity_snapshot(snapshot, on_collapse)
+        yield from _replay_logical_activity_snapshot(
+            snapshot,
+            on_collapse,
+            on_disjoint,
+        )
     finally:
         snapshot.close()
 
