@@ -250,6 +250,8 @@ def load_archived_snapshot(task_id: str | None) -> dict[str, Any] | None:
     if not normalized:
         return None
     path = archive_task_path(normalized)
+    if path.is_symlink():
+        raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
     with canonical_task_state_lock_file(
         STATUS_FILE,
         shared=True,
@@ -767,6 +769,9 @@ def _archive_task_snapshot_locked(
     if not task_id:
         raise ValueError("Task id is required for archiving")
 
+    path = archive_task_path(task_id)
+    if path.is_symlink():
+        raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
     existing = load_archived_snapshot(task_id)
     archived_at = archived_at or (
         str(existing.get("archived_at") or "").strip()
@@ -914,7 +919,10 @@ class TaskResolver:
         normalized = normalize_task_id(task_id)
         if not normalized:
             return None
-        snapshot = load_json(archive_task_path_in_dir(normalized, self._archive_tasks_dir), default=None)
+        path = archive_task_path_in_dir(normalized, self._archive_tasks_dir)
+        if path.is_symlink():
+            raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
+        snapshot = load_json(path, default=None)
         if snapshot is None:
             return None
         return validate_archive_snapshot(snapshot, filename_task_id=normalized)

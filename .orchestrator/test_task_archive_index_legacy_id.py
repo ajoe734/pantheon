@@ -246,3 +246,27 @@ def test_rebuild_indexes_requires_exact_outbox_provenance_for_invalid_contracts(
     index = task_archive.rebuild_archive_index(recent_limit=10)
     assert index["counts"]["total"] == 1
     assert "SPOOF-001" in index["recent_terminal_ids"]
+
+
+def test_load_archived_snapshot_rejects_symlink(tmp_path, monkeypatch) -> None:
+    import pytest
+    archive_dir = tmp_path / "ai-task-archive"
+    tasks_dir = archive_dir / "tasks"
+    tasks_dir.mkdir(parents=True)
+    
+    monkeypatch.setattr(task_archive, "STATUS_ROOT", tmp_path)
+    monkeypatch.setattr(task_archive, "ARCHIVE_DIR", archive_dir)
+    monkeypatch.setattr(task_archive, "ARCHIVE_TASKS_DIR", tasks_dir)
+    monkeypatch.setattr(task_archive, "STATUS_FILE", tmp_path / "ai-status.json")
+
+    # Create a symlink
+    path = tasks_dir / "SPOOF-001.json"
+    path.symlink_to(tmp_path / "nonexistent")
+
+    with pytest.raises(RuntimeError, match="archive-leaf cannot be a symlink"):
+        task_archive.load_archived_snapshot("SPOOF-001")
+
+    resolver = task_archive.TaskResolver([], archive_tasks_dir=tasks_dir)
+    with pytest.raises(RuntimeError, match="archive-leaf cannot be a symlink"):
+        resolver.snapshot("SPOOF-001")
+

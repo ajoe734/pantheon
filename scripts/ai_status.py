@@ -534,6 +534,17 @@ def validate_active_status_command_lease(command: str, args: list[str]) -> None:
     if not isinstance(worker, Mapping):
         raise RuntimeError(f"active status command lease not found for ORCH_RUN_ID={run_id}")
 
+    # Bind lease to AI identity (AI_NAME)
+    actor = current_actor()
+    worker_agent_id = str(worker.get("agent_id") or worker.get("provider") or "").strip()
+    if worker_agent_id:
+        canonical_actor = canonical_agent_name(actor)
+        canonical_worker_agent = canonical_agent_name(worker_agent_id)
+        if canonical_actor.lower() != canonical_worker_agent.lower():
+            raise RuntimeError(
+                f"status command lease AI identity mismatch: actor {canonical_actor} != worker agent {canonical_worker_agent}"
+            )
+
     status = str(worker.get("status") or "").strip()
     if status not in ACTIVE_WORKER_LEASE_STATUSES:
         raise RuntimeError(
@@ -1619,6 +1630,8 @@ def count_terminal_since(threshold_iso: str | None) -> tuple[int, int]:
     if not ARCHIVE_TASKS_DIR.exists():
         return (0, 0)
     for path in ARCHIVE_TASKS_DIR.glob("*.json"):
+        if path.is_symlink():
+            raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
         try:
             snapshot = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -4458,6 +4471,8 @@ def build_dashboard_bundle(
     bff_consol_archived_ids: list[str] = []
     if ARCHIVE_TASKS_DIR.exists():
         for path in ARCHIVE_TASKS_DIR.glob("BFF-CONSOL-*.json"):
+            if path.is_symlink():
+                raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
             stem = path.stem
             if stem.endswith("-SIDECAR-BFF-HANDOFF") or stem.endswith("-SIDECAR-ACCEPTANCE") or stem.endswith("-SIDECAR-REVIEW"):
                 continue
