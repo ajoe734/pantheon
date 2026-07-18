@@ -313,6 +313,58 @@ def test_scheduled_reconcile_uses_authoritative_health_and_lag_for_green() -> No
         )
 
 
+def test_scheduled_reconcile_can_target_one_binding() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        target = _healthy_runtime_summary(
+            binding_id="rtb-sched-target-001",
+            runtime_id="runtime-sched-target-001",
+            last_event_id="evt-sched-target-001",
+        )
+        other = _healthy_runtime_summary(
+            binding_id="rtb-sched-other-001",
+            runtime_id="runtime-sched-other-001",
+            last_event_id="evt-sched-other-001",
+        )
+
+        with mock.patch.object(
+            svc,
+            "_fetch_telemetry_runtime_summaries",
+            return_value=[other, target],
+        ):
+            response = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={
+                    "tick_id": "tick-target-binding-001",
+                    "binding_id": "rtb-sched-target-001",
+                },
+            )
+
+        assert response.status_code == 201
+        payload = response.json()
+        assert payload["evaluated_binding_count"] == 1
+        assert payload["skipped_binding_count"] == 0
+        assert payload["telemetry_summaries_fetched"] == 1
+        assert payload["evaluation_ids"] == [
+            svc._tick_evaluation_id(
+                "tick-target-binding-001",
+                "rtb-sched-target-001",
+            )
+        ]
+        assert (
+            svc.store.get_evaluation(
+                svc._tick_evaluation_id(
+                    "tick-target-binding-001",
+                    "rtb-sched-other-001",
+                )
+            )
+            is None
+        )
+
+
 def test_scheduled_lag_breach_creates_deterministic_report_and_dedup_incident() -> None:
     from fastapi.testclient import TestClient
 

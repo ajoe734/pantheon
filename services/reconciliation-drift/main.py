@@ -1242,6 +1242,7 @@ def mark_alert_handoff(alert_id: str, body: HandoffBody) -> Dict[str, Any]:
 
 class ScheduledReconcileBody(BaseModel):
     tick_id: Optional[str] = None
+    binding_id: Optional[str] = None
 
 
 class IncidentTriggerBody(BaseModel):
@@ -2198,6 +2199,20 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
             "triggered_at": timestamp,
             "detail": "telemetry service unavailable",
         }
+
+    requested_binding_id = str(body.binding_id or "").strip()
+    if requested_binding_id:
+        summaries = [
+            summary
+            for summary in summaries
+            if str(
+                summary.get("binding_id")
+                or summary.get("runtime_binding_id")
+                or summary.get("id")
+                or ""
+            ).strip()
+            == requested_binding_id
+        ]
 
     if not summaries:
         return {
