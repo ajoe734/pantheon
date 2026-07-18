@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Antigravity
 - Reviewer: Codex
-- Next: Exact head 347fba342ffb6c3f1d5abc8c869d0d32cef1843f rejected again; no new candidate followed the prior exact-SHA rejection. Compose origin/dev@88cf3c65b5428bc649ed7b76a117b274776a96a9 (candidate is behind 36), then fix strict archive/outbox validation and FIFO/TOCTOU-safe archive reads; bind status leases to normalized logical actor and require leases for auto workers; enforce heartbeat/status role plus run-id and the complete governed-path matrix; restore signal handlers; make scrubbed suites leave tracked mirrors byte-identical; fix five git diff-check errors. Keep auto-merge disabled, rerun complete exact-head suites, push a new SHA, and re-handoff.
+- Next: Supervisor re-dispatched OPS-WORKTREE-CENTRAL-STATUS-ROOT-FINAL-REVIEW-002; task remains in progress.
 
 ## Summary
 由 Antigravity 把 #3750 從過期核准退回 Codex2；owner 同步最新 dev 135d266b、重跑完整測試，再由 Antigravity 對新 final head 核准且不得新增 review commit。
