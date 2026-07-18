@@ -1,0 +1,99 @@
+name: Rotate execute-plans dev proof JWTs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rotate-execute-plans-dev-proof-jwts
+  cancel-in-progress: false
+
+jobs:
+  rotate:
+    name: Validate live dev identities before rotation
+    if: ${{ github.repository == 'ajoe734/pantheon' && github.ref == 'refs/heads/dev' }}
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 10
+    env:
+      DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io' }}
+      DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
+      DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
+      DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+      GH_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+    steps:
+      - name: Checkout the dispatched dev SHA
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Mint, live-validate, then rotate frontend proof secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          readonly expected_url="https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+          readonly target_repo="ajoe734/execute-plans"
+          if [[ "${DEV_BFF_URL%/}" != "${expected_url}" ]]; then
+            echo "Refusing rotation: DEV_BFF_URL is not the allowlisted dev BFF." >&2
+            exit 1
+          fi
+          if [[ -z "${DEV_BFF_JWT_SECRET}" || -z "${GH_TOKEN}" ]]; then
+            echo "Refusing rotation: required dev or coordination credential is absent." >&2
+            exit 1
+          fi
+
+          credential_dir="${RUNNER_TEMP}/pantheon-dev-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'rm -rf -- "${credential_dir}"' EXIT
+          python3 scripts/mint_execute_plans_dev_proof_jwts.py \
+            --output-dir "${credential_dir}" \
+            --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          curl --silent --show-error --fail \
+            --connect-timeout 10 --max-time 30 \
+            "${DEV_BFF_URL%/}/readyz" >/dev/null
+
+          for label in operator_a operator_b viewer; do
+            response="${credential_dir}/${label}.me.json"
+            status="$(curl --silent --show-error \
+              --connect-timeout 10 --max-time 30 \
+              --output "${response}" --write-out '%{http_code}' \
+              --header "Authorization: Bearer $(<"${credential_dir}/${label}.jwt")" \
+              --header 'X-Tenant-Id: pantheon-dev' \
+              "${DEV_BFF_URL%/}/bff/me")"
+            if [[ "${status}" != "200" ]]; then
+              echo "Live /bff/me rejected ${label}; no frontend secret was updated." >&2
+              exit 1
+            fi
+            expected_sub="$(jq -r --arg label "${label}" '.identities[$label].sub' "${credential_dir}/manifest.json")"
+            expected_role="$(jq -r --arg label "${label}" '.identities[$label].roles[0]' "${credential_dir}/manifest.json")"
+            jq -e \
+              --arg sub "${expected_sub}" \
+              --arg role "${expected_role}" \
+              --arg tenant 'pantheon-dev' \
+              '.data.currentUser.id == $sub
+               and (.data.roles | sort) == [$role]
+               and .data.tenant_id == $tenant
+               and .data.tenant.id == $tenant
+               and (.data.tenant.allowed_ids | sort) == [$tenant]' \
+              "${response}" >/dev/null || {
+                echo "Live /bff/me identity, role, or tenant mismatch for ${label}; no frontend secret was updated." >&2
+                exit 1
+              }
+          done
+
+          subject_a="$(jq -r '.identities.operator_a.sub' "${credential_dir}/manifest.json")"
+          subject_b="$(jq -r '.identities.operator_b.sub' "${credential_dir}/manifest.json")"
+          subject_viewer="$(jq -r '.identities.viewer.sub' "${credential_dir}/manifest.json")"
+          if [[ "${subject_a}" == "${subject_b}" || "${subject_a}" == "${subject_viewer}" || "${subject_b}" == "${subject_viewer}" ]]; then
+            echo "Generated subjects are not distinct; no frontend secret was updated." >&2
+            exit 1
+          fi
+
+          gh api "repos/${target_repo}/actions/secrets/public-key" >/dev/null
+          gh secret set PANTHEON_BFF_OPERATOR_A_TOKEN --repo "${target_repo}" < "${credential_dir}/operator_a.jwt"
+          gh secret set PANTHEON_BFF_OPERATOR_B_TOKEN --repo "${target_repo}" < "${credential_dir}/operator_b.jwt"
+          gh secret set PANTHEON_BFF_VIEWER_TOKEN --repo "${target_repo}" < "${credential_dir}/viewer.jwt"
+          gh secret set PANTHEON_BFF_RBAC_TOKENS_JSON --repo "${target_repo}" < "${credential_dir}/rbac.json"
+          echo "Live dev validation passed and four execute-plans proof secrets were rotated."
