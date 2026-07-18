@@ -173,6 +173,47 @@ def error_reason(response: dict[str, Any]) -> str | None:
     return str(error.get("code") or "") or None
 
 
+def _strategy_artifact_authority_ids(*records: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        metadata = record.get("metadata")
+        if isinstance(metadata, dict):
+            for key in ("strategy_artifact_id", "artifact_id"):
+                value = str(metadata.get(key) or "").strip()
+                if value:
+                    ids.add(value)
+            attestation = metadata.get("authoritative_loader_attestation")
+            if isinstance(attestation, dict):
+                for key in ("strategy_artifact_id", "artifact_id"):
+                    value = str(attestation.get(key) or "").strip()
+                    if value:
+                        ids.add(value)
+        nested_plan = record.get("deployment_plan")
+        if isinstance(nested_plan, dict):
+            value = str(nested_plan.get("artifact_id") or "").strip()
+            if value:
+                ids.add(value)
+    return ids
+
+
+def is_canonical_strategy_artifact_id(artifact_id: str, *authority_records: dict[str, Any]) -> bool:
+    artifact_id = str(artifact_id or "").strip()
+    if not artifact_id:
+        return False
+    if artifact_id.startswith("reg-strategy-spec-"):
+        return False
+    authority_ids = {
+        value
+        for value in _strategy_artifact_authority_ids(*authority_records)
+        if value and not value.startswith("reg-strategy-spec-")
+    }
+    if authority_ids:
+        return artifact_id in authority_ids
+    return artifact_id.startswith(("artifact-", "reg-strategy-artifact-"))
+
+
 def check(evidence: dict[str, Any], name: str, passed: bool, details: dict[str, Any] | None = None) -> None:
     evidence["checks"].append(
         {
@@ -550,6 +591,18 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
     deployment_plan_data = body_data(deployment_plan or {})
     plan_artifact_id = str(deployment_plan_data.get("artifact_id") or "")
     binding_artifact_id = str(runtime_binding_data.get("artifact_id") or "")
+    binding_has_strategy_artifact = is_canonical_strategy_artifact_id(
+        binding_artifact_id,
+        runtime_binding_data,
+        runtime_status_data,
+        deployment_plan_data,
+    )
+    plan_has_strategy_artifact = is_canonical_strategy_artifact_id(
+        plan_artifact_id,
+        runtime_binding_data,
+        runtime_status_data,
+        deployment_plan_data,
+    )
     check(
         evidence,
         "runtime_binding.authoritative_readback",
@@ -561,7 +614,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
             or runtime_binding_data.get("id") == runtime_binding_id
         )
         and runtime_binding_data.get("runtime_id") == runtime_id
-        and (not binding_artifact_id or binding_artifact_id.startswith("reg-strategy-artifact-")),
+        and binding_has_strategy_artifact,
         {
             "status": (runtime_binding or {}).get("status"),
             "runtime_binding_id": runtime_binding_id,
@@ -592,7 +645,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
         bool(deployment_plan)
         and deployment_plan.get("status") == 200
         and deployment_plan_data.get("id") == deployment_plan_id
-        and plan_artifact_id.startswith("reg-strategy-artifact-")
+        and plan_has_strategy_artifact
         and (not binding_artifact_id or binding_artifact_id == plan_artifact_id),
         {
             "status": (deployment_plan or {}).get("status"),
