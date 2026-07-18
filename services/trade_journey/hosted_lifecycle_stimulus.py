@@ -390,7 +390,11 @@ def trigger_reconciliation(
         + "/api/reconciliation-drift/scheduled-reconcile"
     )
     try:
-        payload = http_post_json(endpoint, {"tick_id": tick_id}, timeout=20.0)
+        payload = http_post_json(
+            endpoint,
+            {"tick_id": tick_id, "binding_id": binding_id},
+            timeout=20.0,
+        )
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         raise _http_error(
             "reconciliation_unavailable",
