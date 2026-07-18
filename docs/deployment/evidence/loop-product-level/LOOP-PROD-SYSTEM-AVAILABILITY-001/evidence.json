@@ -1,0 +1,79 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-SYSTEM-AVAILABILITY-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "After this manifest's PR merges, existing record_log entries are immutable.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "id": "LOOP-PROD-SYSTEM-AVAILABILITY-001",
+    "title": "Restore dev-login transport in strict mode",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "target_environment": "dev",
+    "target_maturity": "proven-live",
+    "repository": "ajoe734/execute-plans",
+    "task_branch": "task/LOOP-PROD-SYSTEM-AVAILABILITY-001",
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-18T10:57:00Z"
+  },
+  "scope": {
+    "authoritative_write_owner": "Antigravity for frontend dev-login client credentials retrieval and self-healing token storage bridge",
+    "implementation_changed_files": [
+      "src/lib/auth/bffBrowserSession.ts",
+      "src/lib/auth/AuthProvider.tsx",
+      "src/lib/auth/bffBrowserSession.test.ts"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-SYSTEM-AVAILABILITY-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-SYSTEM-AVAILABILITY-001/evidence.sha256"
+    ]
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "9fef0490f23055977114b036dd899e3a6c9df03f",
+        "subject": "LOOP-PROD-SYSTEM-AVAILABILITY-001: Restore dev-login in strict mode"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "9fef0490f23055977114b036dd899e3a6c9df03f",
+      "number": 387,
+      "url": "https://github.com/ajoe734/execute-plans/pull/387"
+    }
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "npx vitest run src/lib/auth/bffBrowserSession.test.ts",
+        "conclusion": "6 passed",
+        "result": "pass"
+      },
+      {
+        "command": "npx vitest run src/test/public-build-auth-contract.test.ts src/test/deploy-safe-defaults.test.ts src/test/strict-browser-auth-source-contract.test.ts",
+        "conclusion": "5 tests passed (strict-browser-auth-source-contract) and all others passed",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-18T10:57:00Z"
+  },
+  "record_log": [
+    {
+      "actor": "Antigravity",
+      "kind": "implementation_pr_opened",
+      "recorded_at": "2026-07-18T10:57:00Z",
+      "reference": "https://github.com/ajoe734/execute-plans/pull/387",
+      "sequence": 1,
+      "sha": "9fef0490f23055977114b036dd899e3a6c9df03f",
+      "status": "pass"
+    }
+  ]
+}
