@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 DEPLOY = ROOT / "scripts" / "deploy_nonprod_vm.sh"
-CONTROLLER_SHA = "0ecb85c6a7062c7a2bb4d20d012d4801400637f7"
+CONTROLLER_SHA = "9e564718da8c39199a4c311f1a667b74226e3428"
 CONTROLLER_SCRIPT_SHA256 = (
     "52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048"
 )

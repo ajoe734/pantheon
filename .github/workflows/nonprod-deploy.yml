@@ -87,7 +87,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: ajoe734/pantheon
-          ref: 0ecb85c6a7062c7a2bb4d20d012d4801400637f7
+          ref: 9e564718da8c39199a4c311f1a667b74226e3428
           path: .lease-controller
           fetch-depth: 1
           persist-credentials: false
@@ -229,7 +229,7 @@ jobs:
           unset BASH_ENV ENV PYTHONPATH PYTHONHOME CDPATH
           unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
           controller="${GITHUB_WORKSPACE}/.lease-controller"
-          [[ "$(git -C "${controller}" rev-parse HEAD)" == "0ecb85c6a7062c7a2bb4d20d012d4801400637f7" ]]
+          [[ "$(git -C "${controller}" rev-parse HEAD)" == "9e564718da8c39199a4c311f1a667b74226e3428" ]]
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
@@ -937,7 +937,7 @@ jobs:
             echo "## Dev deployment"
             echo "- Payload: \`${{ steps.target.outputs.sha }}\`"
             echo "- Lease: \`${{ steps.lease.outputs.lease_id }}\`"
-            echo "- Controller: \`0ecb85c6a7062c7a2bb4d20d012d4801400637f7\`"
+            echo "- Controller: \`9e564718da8c39199a4c311f1a667b74226e3428\`"
             echo "- Target: \`dev/${TARGET_COMPONENT}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
