@@ -138,9 +138,22 @@ DENY_BASH_PATTERNS = [
 ]
 
 SAFE_TOOLS = {"Read", "Grep", "Glob", "LS", "Task", "TodoRead", "TodoWrite", "ReadNotebook", "ToolSearch"}
+# Harness-internal orchestration tools that only poll/query in-session state
+# (background task output, task metadata, cron schedules, monitor streams).
+# They never touch the filesystem or network, so they are safe to auto-allow
+# the same way SAFE_TOOLS is, but are kept in a distinct bucket/risk_class so
+# the approval evidence trail still shows they are harness polling rather
+# than repo reads. See OPS-APPROVAL-BROKER-RISK-CLASS-001: TaskOutput/Agent
+# falling through to risk_class=unknown -> indefinite pending caused repeated
+# multi-hour suspended_approval stalls for claude worker slots.
+HARNESS_ORCHESTRATION_READ_TOOLS = {"TaskOutput", "TaskGet", "TaskList", "Monitor", "CronList"}
 EDIT_TOOLS = {"Edit", "MultiEdit", "Write"}
 NETWORK_TOOLS = {"WebFetch", "WebSearch"}
 SAFE_AGENT_SUBAGENT_TYPES = {"explore", "review"}
+# Substring markers checked against a normalized (lowercased, hyphen/underscore
+# collapsed to spaces) subagent_type so variants like "code-review" or
+# "code-reviewer" are recognized without needing an exact-match entry above.
+SAFE_AGENT_SUBAGENT_TYPE_MARKERS = ("explore", "review")
 SAFE_AGENT_MARKERS = (
     "verify",
     "find",
@@ -1059,6 +1072,10 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
         decision = "allow"
         reason = f"{tool_name} is read-only."
         risk_class = "safe_read"
+    elif tool_name in HARNESS_ORCHESTRATION_READ_TOOLS:
+        decision = "allow"
+        reason = f"{tool_name} is a read-only harness orchestration/polling tool."
+        risk_class = "harness_orchestration_read"
     elif tool_name == "Agent":
         agent_decision = _evaluate_agent_request(tool_input)
         if agent_decision is not None:
@@ -1137,6 +1154,17 @@ def _contains_unsafe_agent_marker(text: str) -> bool:
     return not any(pattern.search(text) for pattern in SAFE_AGENT_RUN_PATTERNS)
 
 
+def _normalize_subagent_type(value: str) -> str:
+    return re.sub(r"[-_]+", " ", value.strip().lower())
+
+
+def _is_safe_agent_subagent_type(subagent_type: str) -> bool:
+    if subagent_type in SAFE_AGENT_SUBAGENT_TYPES:
+        return True
+    normalized = _normalize_subagent_type(subagent_type)
+    return any(marker in normalized for marker in SAFE_AGENT_SUBAGENT_TYPE_MARKERS)
+
+
 def _evaluate_agent_request(tool_input: dict[str, Any]) -> dict[str, str] | None:
     description = str(tool_input.get("description") or "")
     prompt = str(tool_input.get("prompt") or "")
@@ -1146,7 +1174,7 @@ def _evaluate_agent_request(tool_input: dict[str, Any]) -> dict[str, str] | None
         return None
     if _contains_unsafe_agent_marker(combined):
         return None
-    if subagent_type in SAFE_AGENT_SUBAGENT_TYPES or _contains_marker(combined, SAFE_AGENT_MARKERS):
+    if _is_safe_agent_subagent_type(subagent_type) or _contains_marker(combined, SAFE_AGENT_MARKERS):
         return {
             "decision": "allow",
             "reason": "Agent request is scoped to read-only repo exploration/review.",
