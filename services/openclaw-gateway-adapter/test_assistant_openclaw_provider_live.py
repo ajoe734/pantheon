@@ -167,6 +167,38 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             provider.gateway_agents_list()
         self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_SERIALIZATION_FAILURE")
 
+    def test_gateway_agents_list_caps_subprocess_to_remaining_budget(self) -> None:
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = list(cmd)
+            captured["timeout"] = kwargs["timeout"]
+
+            class R:
+                returncode = 0
+                stdout = '{"agents":[]}'
+                stderr = ""
+
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        provider.gateway_agents_list(timeout_seconds=0.75)
+
+        self.assertEqual(captured["timeout"], 0.75)
+        timeout_index = captured["cmd"].index("--timeout") + 1
+        self.assertGreater(int(captured["cmd"][timeout_index]), 750)
+
+    def test_gateway_agents_list_maps_blocked_probe_timeout(self) -> None:
+        def blocked(_cmd, **kwargs):
+            raise subprocess.TimeoutExpired(cmd="openclaw gateway call agents.list", timeout=kwargs["timeout"])
+
+        provider = self._make_provider(run_func=blocked)
+        with self.assertRaises(OpenClawProviderError) as ctx:
+            provider.gateway_agents_list(timeout_seconds=0.25)
+
+        self.assertEqual(ctx.exception.status_code, 504)
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_TIMEOUT")
+
     def test_gateway_cron_update_forwards_command_and_params_unchanged(self) -> None:
         captured: list[list[str]] = []
 

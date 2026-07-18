@@ -368,10 +368,10 @@ class AssistantOpenClawProvider:
             )
         return self._gateway_call(method, params)
 
-    def gateway_agents_list(self) -> List[Dict[str, Any]]:
+    def gateway_agents_list(self, *, timeout_seconds: Optional[float] = None) -> List[Dict[str, Any]]:
         """Read the gateway's live agent registry without widening the cron proxy."""
 
-        payload = self._gateway_call("agents.list")
+        payload = self._gateway_call("agents.list", timeout_seconds=timeout_seconds)
         agents = payload.get("agents") if isinstance(payload, dict) else None
         if not isinstance(agents, list) or any(not isinstance(item, dict) for item in agents):
             raise OpenClawProviderError(
@@ -381,7 +381,13 @@ class AssistantOpenClawProvider:
             )
         return agents
 
-    def _gateway_call(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _gateway_call(
+        self,
+        method: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        timeout_seconds: Optional[float] = None,
+    ) -> Dict[str, Any]:
         """Call one adapter-owned gateway RPC after the public method allowlist."""
 
         binary = self._openclaw_bin()
@@ -397,12 +403,25 @@ class AssistantOpenClawProvider:
                 status_code=503,
                 error_code="OPENCLAW_TOKEN_NOT_CONFIGURED",
             )
+        probe_timeout = self._timeout
+        if timeout_seconds is not None:
+            probe_timeout = min(float(timeout_seconds), float(self._timeout))
+        if probe_timeout <= 0:
+            raise OpenClawProviderError(
+                f"openclaw gateway call {method} exhausted its readiness budget.",
+                status_code=504,
+                error_code="OPENCLAW_GATEWAY_TIMEOUT",
+            )
         effective_url = self._gateway_url or _DEFAULT_GATEWAY_WS_URL
         cmd = [
             binary, "gateway", "call", method,
             "--url", effective_url,
             "--token", self._token,
             "--json",
+            # Keep the CLI's own RPC deadline just beyond the process cap.  The
+            # Python subprocess deadline below remains the authoritative total
+            # readiness budget and therefore cannot be bypassed by a hung CLI.
+            "--timeout", str(max(1, int(probe_timeout * 1000) + 1000)),
         ]
         if params is not None:
             cmd.extend(["--params", json.dumps(params, separators=(",", ":"), sort_keys=True)])
@@ -415,10 +434,10 @@ class AssistantOpenClawProvider:
             "OPENCLAW_SUPPRESS_NOTES": "1",
         }
         try:
-            proc = self._run(cmd, capture_output=True, text=True, timeout=self._timeout, env=run_env)
+            proc = self._run(cmd, capture_output=True, text=True, timeout=probe_timeout, env=run_env)
         except subprocess.TimeoutExpired as exc:
             raise OpenClawProviderError(
-                f"openclaw gateway call {method} timed out after {self._timeout}s.",
+                f"openclaw gateway call {method} timed out after {probe_timeout:g}s.",
                 status_code=504, error_code="OPENCLAW_GATEWAY_TIMEOUT",
             ) from exc
         except Exception as exc:  # noqa: BLE001

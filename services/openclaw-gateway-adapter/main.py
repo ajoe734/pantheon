@@ -2290,19 +2290,44 @@ class _PersonaOpinionAgentNotReady(RuntimeError):
     pass
 
 
-def _live_persona_opinion_agent(agent_id: str) -> Optional[Dict[str, Any]]:
+def _live_persona_opinion_agent(
+    agent_id: str,
+    *,
+    timeout_seconds: Optional[float] = None,
+) -> Optional[Dict[str, Any]]:
     return next(
         (
             item
-            for item in _OPENCLAW_AGENT_PROVIDER.gateway_agents_list()
+            for item in _OPENCLAW_AGENT_PROVIDER.gateway_agents_list(
+                timeout_seconds=timeout_seconds,
+            )
             if str(item.get("id") or "") == agent_id
         ),
         None,
     )
 
 
-def _require_live_persona_opinion_agent(agent_id: str) -> Dict[str, Any]:
-    agent = _live_persona_opinion_agent(agent_id)
+def _require_live_persona_opinion_agent(
+    agent_id: str,
+    *,
+    timeout_seconds: Optional[float] = None,
+) -> Dict[str, Any]:
+    effective_timeout = (
+        _PERSONA_OPINION_AGENT_READY_TIMEOUT_SECONDS
+        if timeout_seconds is None
+        else timeout_seconds
+    )
+    try:
+        agent = _live_persona_opinion_agent(
+            agent_id,
+            timeout_seconds=effective_timeout,
+        )
+    except GatewayOpenClawProviderError as exc:
+        if exc.error_code != "OPENCLAW_GATEWAY_TIMEOUT":
+            raise
+        raise _PersonaOpinionAgentNotReady(
+            f"Governed Persona agent {agent_id} live visibility probe exhausted its bounded budget."
+        ) from exc
     if agent is None:
         raise _PersonaOpinionAgentNotReady(
             f"Governed Persona agent {agent_id} is not visible in the live OpenClaw gateway registry."
@@ -2332,7 +2357,24 @@ def _wait_for_live_persona_opinion_agent(
     )
     deadline = clock() + timeout
     while True:
-        agent = _live_persona_opinion_agent(agent_id)
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise _PersonaOpinionAgentNotReady(
+                f"Governed Persona agent {agent_id} was not visible in the live OpenClaw gateway "
+                f"registry within {timeout:g} seconds."
+            )
+        try:
+            agent = _live_persona_opinion_agent(
+                agent_id,
+                timeout_seconds=remaining,
+            )
+        except GatewayOpenClawProviderError as exc:
+            if exc.error_code != "OPENCLAW_GATEWAY_TIMEOUT":
+                raise
+            raise _PersonaOpinionAgentNotReady(
+                f"Governed Persona agent {agent_id} live visibility probe exhausted its bounded "
+                f"{timeout:g}-second budget."
+            ) from exc
         if agent is not None:
             return agent
         remaining = deadline - clock()
