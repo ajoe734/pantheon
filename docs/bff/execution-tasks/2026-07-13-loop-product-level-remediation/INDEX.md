@@ -1,7 +1,7 @@
 # Loop Product-Level Remediation Execution Packet — 2026-07-13
 
-Status: blocked on external `LOOP-PROD-RUNTIME-BOOT-001`; only catalog
-validation is currently authoritative
+Status: primary catalog dispatch is paused while the runtime gate sequencing
+correction is implemented by a fleet
 
 Primary planning baseline:
 `docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md`
@@ -16,6 +16,19 @@ Dispatcher:
 
 Dispatcher tests:
 `scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py`
+
+Sequencing correction:
+`LOOP-PROD-RUNTIME-GATE-SEPARATION-001.md`
+
+Machine-readable corrective packet:
+`corrections/runtime-gate-separation-task.v1.json`
+
+The protected verifier policy and Ed25519 completion verdict are final
+closeout controls. They must not block primary task materialization. The fleet
+must first merge the sequencing correction, then rerun validation and the
+zero-write dry-run before dispatching the 48 primary tasks. The final
+`LOOP-PROD-CLOSE-002` task remains the only task allowed to install and consume
+the protected completion authority.
 
 Planning authority delivery:
 
@@ -34,7 +47,11 @@ Planning authority delivery:
 
 ## Addendum Gating & Batching Rationale
 
-The remaining 10 addendum tasks (ATTEST, AUTH-BOOT, AUTH-OPS, BROWSER-AUTH, CLOSE-002, DELIVERY, FE-BUILD, FE-EVID, FLEET, SIGNOFF) are deliberately gated and cannot be dispatched (applied) onto the live board until the prerequisite bootstrap task `LOOP-PROD-RUNTIME-BOOT-001` transitions to `done`. This strict dependency ensures that all subsequent productization tasks run with the proper runtime task audit lock protocol in place, failing closed otherwise to preserve system integrity.
+The addendum implementation tasks remain gated only on the runtime lock
+implementation and its strict zero-write safety proof. They must not be gated
+on the final protected completion authority. The external verifier policy,
+Ed25519 signature, revocation record, and Human/Ops final verdict are consumed
+by `LOOP-PROD-CLOSE-002` after the product work is complete.
 
 ### Addendum convergence audit
 
