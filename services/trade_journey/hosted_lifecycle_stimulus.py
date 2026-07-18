@@ -135,6 +135,29 @@ def _clean(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _parse_utc(value: Any) -> datetime | None:
+    raw = _clean(value)
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _safe_queue_depth(store: Any) -> int | None:
+    queue_depth = getattr(store, "queue_depth", None)
+    if not callable(queue_depth):
+        return None
+    try:
+        return int(queue_depth())
+    except Exception:  # noqa: BLE001 - diagnostics must not mask the root error
+        return None
+
+
 def _safe_receipt_details(receipt: Mapping[str, Any]) -> dict[str, Any]:
     details: dict[str, Any] = {}
     for key in (
@@ -150,6 +173,53 @@ def _safe_receipt_details(receipt: Mapping[str, Any]) -> dict[str, Any]:
         "error",
     ):
         value = receipt.get(key)
+        if value not in (None, "", [], {}):
+            details[key] = value
+    return details
+
+
+def _safe_worker_details(worker: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(worker, Mapping):
+        return {}
+    details: dict[str, Any] = {}
+    for key in (
+        "binding_id",
+        "runtime_id",
+        "capital_pool_id",
+        "status",
+        "started_at",
+        "last_heartbeat_at",
+        "heartbeat_status",
+        "restart_count",
+        "last_exit_code",
+        "last_error",
+    ):
+        value = worker.get(key)
+        if value not in (None, "", [], {}):
+            details[key] = value
+    return details
+
+
+def _safe_identity_details(identity: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(identity, Mapping):
+        return {}
+    details: dict[str, Any] = {}
+    for key in (
+        "event_id",
+        "event_type",
+        "created_at",
+        "binding_id",
+        "runtime_id",
+        "capital_pool_id",
+        "run_id",
+        "signal_id",
+        "sequence_no",
+        "source_mode",
+        "environment",
+        "execution_mode",
+        "deployment_stage",
+    ):
+        value = identity.get(key)
         if value not in (None, "", [], {}):
             details[key] = value
     return details
@@ -241,6 +311,51 @@ def _running_worker_by_binding(
     return running
 
 
+def _worker_matches_binding(
+    worker: Mapping[str, Any] | None,
+    binding: Mapping[str, Any],
+) -> bool:
+    if worker is None:
+        return False
+    if _clean(worker.get("status")).lower() != "running":
+        return False
+    if _clean(worker.get("binding_id")) != _clean(binding.get("binding_id")):
+        return False
+    if _clean(worker.get("runtime_id")) != _clean(binding.get("runtime_id")):
+        return False
+    if _clean(worker.get("capital_pool_id")) != _clean(binding.get("capital_pool_id")):
+        return False
+    return True
+
+
+def _fresh_worker_heartbeat(
+    worker: Mapping[str, Any],
+    *,
+    max_age_seconds: float,
+) -> bool:
+    heartbeat_at = _parse_utc(worker.get("last_heartbeat_at"))
+    if heartbeat_at is None:
+        return False
+    started_at = _parse_utc(worker.get("started_at"))
+    if started_at is not None and (heartbeat_at - started_at).total_seconds() < -5:
+        return False
+    age_seconds = (datetime.now(timezone.utc) - heartbeat_at).total_seconds()
+    if age_seconds < -30:
+        return False
+    return age_seconds <= max(1.0, float(max_age_seconds))
+
+
+def _matching_worker_for_binding(
+    workers: Sequence[Mapping[str, Any]],
+    binding: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    running_by_binding = _running_worker_by_binding(workers)
+    worker = running_by_binding.get(_clean(binding.get("binding_id")))
+    if _worker_matches_binding(worker, binding):
+        return worker
+    return None
+
+
 def select_active_paper_binding(
     bindings: Sequence[Mapping[str, Any]],
     *,
@@ -262,11 +377,7 @@ def select_active_paper_binding(
             continue
         if running_by_binding is not None:
             worker = running_by_binding.get(_clean(binding.get("binding_id")))
-            if worker is None:
-                continue
-            if _clean(worker.get("runtime_id")) != _clean(binding.get("runtime_id")):
-                continue
-            if _clean(worker.get("capital_pool_id")) != _clean(binding.get("capital_pool_id")):
+            if not _worker_matches_binding(worker, binding):
                 continue
         return dict(binding)
     if active_paper_binding_seen and running_by_binding is not None:
@@ -278,6 +389,53 @@ def select_active_paper_binding(
         "no_active_paper_binding",
         "no active paper binding with complete lifecycle identity was available",
     )
+
+
+def wait_for_ready_paper_worker(
+    *,
+    paper_fleet_reconciler_url: str,
+    binding: Mapping[str, Any],
+    timeout_seconds: float,
+    poll_seconds: float,
+    heartbeat_max_age_seconds: float,
+    initial_workers: Sequence[Mapping[str, Any]] | None = None,
+    http_get_json: JsonGetter = _http_get_json,
+    sleeper: Sleeper = time.sleep,
+    monotonic: Clock = time.monotonic,
+) -> Mapping[str, Any]:
+    deadline = monotonic() + max(0.0, timeout_seconds)
+    workers_to_check = list(initial_workers or [])
+    last_worker: Mapping[str, Any] | None = None
+    while True:
+        if workers_to_check:
+            workers = workers_to_check
+            workers_to_check = []
+        else:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise StimulusError(
+                    "paper_worker_not_ready",
+                    "paper runtime worker did not publish a fresh heartbeat before stimulus",
+                    timed_out=True,
+                    details={
+                        "binding_id": _clean(binding.get("binding_id")),
+                        "runtime_id": _clean(binding.get("runtime_id")),
+                        "last_worker": _safe_worker_details(last_worker),
+                    },
+                )
+            workers = fetch_running_paper_workers(
+                paper_fleet_reconciler_url,
+                http_get_json=http_get_json,
+            )
+        worker = _matching_worker_for_binding(workers, binding)
+        if worker is not None:
+            last_worker = worker
+            if _fresh_worker_heartbeat(
+                worker,
+                max_age_seconds=heartbeat_max_age_seconds,
+            ):
+                return dict(worker)
+        sleeper(min(max(0.05, poll_seconds), max(0.0, deadline - monotonic())))
 
 
 def _default_store_factory(signal_store_url: str) -> StoreFactory:
@@ -378,6 +536,24 @@ def _matching_lifecycle_identity(
     return None
 
 
+def _latest_lifecycle_identity_for_binding(
+    summaries: Sequence[Mapping[str, Any]],
+    *,
+    binding: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    binding_id = _clean(binding.get("binding_id"))
+    runtime_id = _clean(binding.get("runtime_id"))
+    for summary in summaries:
+        if _clean(summary.get("binding_id") or summary.get("runtime_binding_id")) != binding_id:
+            continue
+        if runtime_id and _clean(summary.get("runtime_id")) != runtime_id:
+            continue
+        identity = summary.get("last_lifecycle_identity")
+        if isinstance(identity, Mapping):
+            return identity
+    return None
+
+
 def wait_for_lifecycle_summary(
     *,
     telemetry_url: str,
@@ -391,6 +567,8 @@ def wait_for_lifecycle_summary(
 ) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
     endpoint = telemetry_url.rstrip("/") + "/api/telemetry/runtime-summaries"
     deadline = monotonic() + max(0.0, timeout_seconds)
+    last_identity: Mapping[str, Any] | None = None
+    summary_seen = False
     while True:
         remaining = deadline - monotonic()
         if remaining <= 0:
@@ -398,6 +576,13 @@ def wait_for_lifecycle_summary(
                 "lifecycle_signal_timeout",
                 "paper runtime did not publish the stimulus lifecycle snapshot before the deadline",
                 timed_out=True,
+                details={
+                    "binding_id": _clean(binding.get("binding_id")),
+                    "runtime_id": _clean(binding.get("runtime_id")),
+                    "run_id": run_id,
+                    "summary_seen": summary_seen,
+                    "last_lifecycle_identity": _safe_identity_details(last_identity),
+                },
             )
         try:
             payload = http_get_json(endpoint, timeout=min(10.0, remaining))
@@ -407,8 +592,16 @@ def wait_for_lifecycle_summary(
                 "telemetry runtime summaries query failed",
                 exc,
             )
+        summaries = _summaries(payload)
+        latest = _latest_lifecycle_identity_for_binding(
+            summaries,
+            binding=binding,
+        )
+        if latest is not None:
+            last_identity = latest
+            summary_seen = True
         match = _matching_lifecycle_identity(
-            _summaries(payload),
+            summaries,
             binding=binding,
             run_id=run_id,
         )
@@ -507,6 +700,8 @@ def run_stimulus(
     signal_store_url: str,
     timeout_seconds: float,
     poll_seconds: float,
+    worker_ready_timeout_seconds: float = 120.0,
+    worker_heartbeat_max_age_seconds: float = 120.0,
     reconciliation_timeout_seconds: float = 60.0,
     allow_ambiguous_reconciliation: bool = False,
     quantity: float = 7.0,
@@ -533,24 +728,57 @@ def run_stimulus(
     )
     if store_factory is None:
         store_factory = _default_store_factory(signal_store_url)
-    now_iso = now_factory()
-    enqueued = enqueue_stimulus_signal(
-        binding,
-        now_iso=now_iso,
-        store_factory=store_factory,
-        quantity=quantity,
-        symbol=symbol,
-    )
-    _summary, identity = wait_for_lifecycle_summary(
-        telemetry_url=telemetry_url,
+    ready_worker = wait_for_ready_paper_worker(
+        paper_fleet_reconciler_url=paper_fleet_reconciler_url,
         binding=binding,
-        run_id=enqueued["run_id"],
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=worker_ready_timeout_seconds,
         poll_seconds=poll_seconds,
+        heartbeat_max_age_seconds=worker_heartbeat_max_age_seconds,
+        initial_workers=workers,
         http_get_json=http_get_json,
         sleeper=sleeper,
         monotonic=monotonic,
     )
+    store = store_factory(binding)
+    now_iso = now_factory()
+    enqueued = enqueue_stimulus_signal(
+        binding,
+        now_iso=now_iso,
+        store_factory=lambda _binding: store,
+        quantity=quantity,
+        symbol=symbol,
+    )
+    try:
+        _summary, identity = wait_for_lifecycle_summary(
+            telemetry_url=telemetry_url,
+            binding=binding,
+            run_id=enqueued["run_id"],
+            timeout_seconds=timeout_seconds,
+            poll_seconds=poll_seconds,
+            http_get_json=http_get_json,
+            sleeper=sleeper,
+            monotonic=monotonic,
+        )
+    except StimulusError as exc:
+        if exc.code == "lifecycle_signal_timeout":
+            details = dict(exc.safe_details)
+            details.update(
+                {
+                    "worker": _safe_worker_details(ready_worker),
+                    "queue_key": enqueued["queue_key"],
+                    "signal_count": enqueued["signal_count"],
+                }
+            )
+            queue_depth = _safe_queue_depth(store)
+            if queue_depth is not None:
+                details["queue_depth_after_timeout"] = queue_depth
+            raise StimulusError(
+                exc.code,
+                exc.safe_message,
+                timed_out=exc.timed_out,
+                details=details,
+            ) from exc
+        raise
     tick_id = f"loop-prod-tel-002-{enqueued['run_id']}"
     receipt = trigger_reconciliation(
         reconciliation_url=reconciliation_url,
@@ -572,6 +800,7 @@ def run_stimulus(
             "signal_ids": enqueued["signal_ids"],
             "signal_count": enqueued["signal_count"],
             "queue_key": enqueued["queue_key"],
+            "queue_depth_after_enqueue": _safe_queue_depth(store),
             "lifecycle_summary_event_id": _clean(identity.get("event_id")),
             "lifecycle_sequence_no": identity.get("sequence_no"),
             "tick_id": tick_id,
@@ -647,6 +876,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--timeout-seconds", "--timeout", dest="timeout", type=float, default=180.0)
     parser.add_argument("--poll-seconds", "--poll", dest="poll", type=float, default=5.0)
+    parser.add_argument("--worker-ready-timeout-seconds", type=float, default=120.0)
+    parser.add_argument("--worker-heartbeat-max-age-seconds", type=float, default=120.0)
     parser.add_argument("--reconciliation-timeout-seconds", type=float, default=60.0)
     parser.add_argument(
         "--allow-ambiguous-reconciliation",
@@ -693,6 +924,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         signal_store_url=args.signal_store_url,
         timeout_seconds=args.timeout,
         poll_seconds=args.poll,
+        worker_ready_timeout_seconds=args.worker_ready_timeout_seconds,
+        worker_heartbeat_max_age_seconds=args.worker_heartbeat_max_age_seconds,
         reconciliation_timeout_seconds=args.reconciliation_timeout_seconds,
         allow_ambiguous_reconciliation=args.allow_ambiguous_reconciliation,
         quantity=args.quantity,

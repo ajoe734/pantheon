@@ -27,6 +27,8 @@ def test_nonprod_workflow_has_opt_in_read_only_canonical_lifecycle_probe() -> No
     assert "services.trade_journey.hosted_lifecycle_stimulus" in script
     assert "--print-high-watermark" in script
     assert "--baseline-high-watermark" in script
+    assert "--worker-ready-timeout-seconds" in script
+    assert "--worker-heartbeat-max-age-seconds" in script
     assert "--allow-ambiguous-reconciliation" in script
     assert "paper-signal-producer" in script
     assert "services.trade_journey.hosted_bff_readback" in source
