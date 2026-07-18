@@ -132,6 +132,35 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertEqual(evaluation["decision"], "allow")
         self.assertEqual(evaluation["risk_class"], "safe_read")
 
+    def test_incident_general_purpose_read_only_agent_request_is_auto_allowed(self) -> None:
+        # Direct shape of apr-20260717T190756Z-4b4e5586: the actual
+        # incident used subagent_type="general-purpose" and read-only review
+        # wording with negated unsafe phrases ("Do not fix", "do not edit").
+        # Those negations must not make the request look mutating.
+        evaluation = permission_broker.evaluate_tool_request(
+            "Agent",
+            {
+                "description": "Review activity reader hardening code",
+                "prompt": (
+                    "You are doing an independent correctness/security review of a merged "
+                    "change in the pantheon repo, already checked out at the relevant "
+                    "commit on top of a merge of origin/dev. Files to actually read in "
+                    "full and reason about: .orchestrator/common.py, .orchestrator/test_common.py, "
+                    "and scripts/activity_audit_logical_inventory.py. Your job: find REAL "
+                    "correctness/security bugs or gaps between what's claimed and what's "
+                    "actually implemented - not style nits. Report back with confirmed "
+                    "findings and things you checked. Do not fix anything - this is "
+                    "read-only review, do not edit files."
+                ),
+                "subagent_type": "general-purpose",
+                "run_in_background": False,
+            },
+            {},
+        )
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "safe_read")
+
     def test_mutating_agent_request_still_requires_review(self) -> None:
         evaluation = permission_broker.evaluate_tool_request(
             "Agent",
@@ -139,6 +168,23 @@ class ProviderPermissionsTest(unittest.TestCase):
                 "description": "Implement missing routes",
                 "prompt": "Explore the repo and edit the BFF to add the missing endpoints, then update tests.",
                 "subagent_type": "Explore",
+            },
+            {},
+        )
+
+        self.assertEqual(evaluation["decision"], "defer")
+        self.assertEqual(evaluation["risk_class"], "unknown")
+
+    def test_mutating_agent_request_with_negated_edit_still_requires_review(self) -> None:
+        evaluation = permission_broker.evaluate_tool_request(
+            "Agent",
+            {
+                "description": "Review and repair tests",
+                "prompt": (
+                    "Do not edit files during the first pass. Then update the regression "
+                    "tests, commit the fix, and report the result."
+                ),
+                "subagent_type": "general-purpose",
             },
             {},
         )
