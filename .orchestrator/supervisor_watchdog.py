@@ -733,8 +733,8 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
             "new_pid": None,
             "heartbeat_age_seconds": heartbeat_age,
             "resource": resource,
-            "restart_count_window": 0,
-            "restart_count_hour": 0,
+            "restart_count_window": None,
+            "restart_count_hour": None,
             "log_path": None,
             "lock_held": lock_held,
         }

@@ -1,0 +1,417 @@
+{
+  "generated_at": "2026-07-18T02:28:05.601528Z",
+  "deployed_sha": "c5592c1068a8570c659cb484dbd53466c080769b",
+  "reflog_proof": [
+    "c5592c106 HEAD@{2026-07-18 01:47:35 +0000}: checkout: moving from 332feddda122fef92240c637ff407fe960c2ba3f to c5592c1068a8570c659cb484dbd53466c080769b",
+    "332feddda HEAD@{2026-07-18 01:46:49 +0000}: reset: moving to 332feddda122fef92240c637ff407fe960c2ba3f",
+    "c5592c106 HEAD@{2026-07-18 01:46:12 +0000}: pull origin dev: Fast-forward",
+    "5fdf28f2e HEAD@{2026-07-18 01:29:49 +0000}: reset: moving to origin/dev",
+    "332feddda HEAD@{2026-07-18 00:54:50 +0000}: reset: moving to origin/dev",
+    "d606a77ac HEAD@{2026-07-18 00:14:57 +0000}: reset: moving to origin/dev",
+    "ed98b2803 HEAD@{2026-07-18 00:07:16 +0000}: reset: moving to origin/dev",
+    "deab7fc14 HEAD@{2026-07-17 23:31:40 +0000}: reset: moving to origin/dev",
+    "d091b6e2a HEAD@{2026-07-17 23:30:04 +0000}: reset: moving to origin/dev",
+    "7be97fa5c HEAD@{2026-07-17 23:12:17 +0000}: checkout: moving from 4d7388c37f0145a3ab0f35dedfa5a5a5612ccb7d to 7be97fa5cffe99e704e672b5aa56abe1515da5d9"
+  ],
+  "ticks": [
+    {
+      "timestamp": "2026-07-18T02:26:04.582886Z",
+      "watchdog_metric_event": {
+        "version": 1,
+        "event_id": "watchdog-1784341561641-142476",
+        "at": "2026-07-18T02:26:01Z",
+        "event_type": "watchdog_probe",
+        "decision": "observe_only",
+        "reason": "supervisor_healthy",
+        "pid": 3670380,
+        "new_pid": null,
+        "heartbeat_age_seconds": 31.0,
+        "resource": {
+          "disk_free_gb": 311.072,
+          "disk_used_percent": 35.64,
+          "memory_available_mb": 29950.6,
+          "load_1m": 5.73,
+          "active_worker_count": 2,
+          "active_worker_count_source": "live_worker_runner_pid_identity",
+          "active_worker_live_count": 2,
+          "active_worker_runtime_state_count": 2,
+          "active_worker_scan_error": null,
+          "state_parent_writable": true
+        },
+        "restart_count_window": 0,
+        "restart_count_hour": 0,
+        "log_path": null,
+        "lock_held": true
+      },
+      "require_watchdog_health": {
+        "checks": [
+          {
+            "lock_held": true,
+            "name": "supervisor_process_alive",
+            "ok": true,
+            "pid": 3670380,
+            "pid_matches": true
+          },
+          {
+            "last_heartbeat_at": "2026-07-18T02:26:02Z",
+            "name": "supervisor_heartbeat_present",
+            "ok": true
+          },
+          {
+            "age_seconds": 2.67025,
+            "max_age_seconds": 900.0,
+            "name": "supervisor_heartbeat_fresh",
+            "ok": true
+          },
+          {
+            "last_loop_error": null,
+            "lifecycle": "running",
+            "name": "supervisor_not_degraded",
+            "ok": true
+          },
+          {
+            "age_seconds": 3.67025,
+            "max_age_seconds": 180.0,
+            "name": "watchdog_state_present",
+            "ok": true,
+            "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+            "updated_at": "2026-07-18T02:26:01Z"
+          },
+          {
+            "age_seconds": 3.67025,
+            "max_age_seconds": 180.0,
+            "name": "watchdog_probe_fresh",
+            "ok": true,
+            "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+            "updated_at": "2026-07-18T02:26:01Z"
+          }
+        ],
+        "generated_at": "2026-07-18T02:26:04.670250Z",
+        "healthy": true,
+        "repo_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "state_file": "/home/lupin/code/pantheon/.orchestrator/state.json",
+        "supervisor": {
+          "alive": true,
+          "heartbeat_age_seconds": 2.67025,
+          "last_heartbeat_at": "2026-07-18T02:26:02Z",
+          "last_loop_error": null,
+          "lifecycle": "running",
+          "lock_held": true,
+          "max_heartbeat_age_seconds": 900.0,
+          "pid": 3670380,
+          "process_alive": true
+        },
+        "watchdog": {
+          "age_seconds": 3.67025,
+          "max_age_seconds": 180.0,
+          "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+          "updated_at": "2026-07-18T02:26:01Z"
+        }
+      },
+      "process_evidence": {
+        "pid": 3670380,
+        "alive": true,
+        "cmdline": "python3 -u /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --verbose",
+        "threads_count": 1
+      },
+      "file_manifest": {
+        "watchdog-state.json": {
+          "exists": true,
+          "size_bytes": 6438,
+          "mtime": "2026-07-18T02:26:01.633925Z",
+          "sha256": "3a2f9a85242158780a5b5acafe22a11e0d2bd9c259ec186507bdab0ad8e92f1d"
+        },
+        "supervisor-watchdog.jsonl": {
+          "exists": true,
+          "size_bytes": 23521593,
+          "mtime": "2026-07-18T02:26:01.640926Z",
+          "sha256": "c9c3b0d4a2df98e65e9fb0528f8a2a75e7ffcc6eda74b726f38fd86ede638860"
+        },
+        "supervisor-watchdog-contention.jsonl": {
+          "exists": true,
+          "size_bytes": 712543,
+          "mtime": "2026-07-18T02:19:02.141209Z",
+          "sha256": "c48e45392cc2c660bd0c8500bd060a29664f31e1243a05ca5b72ddbd87d6d85b"
+        },
+        "state.json": {
+          "exists": true,
+          "size_bytes": 3105664,
+          "mtime": "2026-07-18T02:26:03.281612Z",
+          "sha256": "840785c30912e0e5fab77ab9427d7b20c3e3c3dc501b7c8834b3d171503f6cfc"
+        },
+        "live-supervisor-mainroot-config.json": {
+          "exists": true,
+          "size_bytes": 49496,
+          "mtime": "2026-07-18T01:15:21.186649Z",
+          "sha256": "007ed3c9af032463b03d45ee494ee284b5b6a6bf6651eb79d0ac27e6b7df9e6a"
+        }
+      }
+    },
+    {
+      "timestamp": "2026-07-18T02:27:03.981086Z",
+      "watchdog_metric_event": {
+        "version": 1,
+        "event_id": "watchdog-1784341621754-154140",
+        "at": "2026-07-18T02:27:01Z",
+        "event_type": "watchdog_probe",
+        "decision": "observe_only",
+        "reason": "supervisor_healthy",
+        "pid": 3670380,
+        "new_pid": null,
+        "heartbeat_age_seconds": 11.0,
+        "resource": {
+          "disk_free_gb": 310.854,
+          "disk_used_percent": 35.68,
+          "memory_available_mb": 29687.0,
+          "load_1m": 5.04,
+          "active_worker_count": 3,
+          "active_worker_count_source": "live_worker_runner_pid_identity",
+          "active_worker_live_count": 3,
+          "active_worker_runtime_state_count": 3,
+          "active_worker_scan_error": null,
+          "state_parent_writable": true
+        },
+        "restart_count_window": 0,
+        "restart_count_hour": 0,
+        "log_path": null,
+        "lock_held": true
+      },
+      "require_watchdog_health": {
+        "checks": [
+          {
+            "lock_held": true,
+            "name": "supervisor_process_alive",
+            "ok": true,
+            "pid": 3670380,
+            "pid_matches": true
+          },
+          {
+            "last_heartbeat_at": "2026-07-18T02:26:50Z",
+            "name": "supervisor_heartbeat_present",
+            "ok": true
+          },
+          {
+            "age_seconds": 14.039266,
+            "max_age_seconds": 900.0,
+            "name": "supervisor_heartbeat_fresh",
+            "ok": true
+          },
+          {
+            "last_loop_error": null,
+            "lifecycle": "running",
+            "name": "supervisor_not_degraded",
+            "ok": true
+          },
+          {
+            "age_seconds": 3.039266,
+            "max_age_seconds": 180.0,
+            "name": "watchdog_state_present",
+            "ok": true,
+            "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+            "updated_at": "2026-07-18T02:27:01Z"
+          },
+          {
+            "age_seconds": 3.039266,
+            "max_age_seconds": 180.0,
+            "name": "watchdog_probe_fresh",
+            "ok": true,
+            "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+            "updated_at": "2026-07-18T02:27:01Z"
+          }
+        ],
+        "generated_at": "2026-07-18T02:27:04.039266Z",
+        "healthy": true,
+        "repo_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "state_file": "/home/lupin/code/pantheon/.orchestrator/state.json",
+        "supervisor": {
+          "alive": true,
+          "heartbeat_age_seconds": 14.039266,
+          "last_heartbeat_at": "2026-07-18T02:26:50Z",
+          "last_loop_error": null,
+          "lifecycle": "running",
+          "lock_held": true,
+          "max_heartbeat_age_seconds": 900.0,
+          "pid": 3670380,
+          "process_alive": true
+        },
+        "watchdog": {
+          "age_seconds": 3.039266,
+          "max_age_seconds": 180.0,
+          "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+          "updated_at": "2026-07-18T02:27:01Z"
+        }
+      },
+      "process_evidence": {
+        "pid": 3670380,
+        "alive": true,
+        "cmdline": "python3 -u /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --verbose",
+        "threads_count": 1
+      },
+      "file_manifest": {
+        "watchdog-state.json": {
+          "exists": true,
+          "size_bytes": 6438,
+          "mtime": "2026-07-18T02:27:01.748041Z",
+          "sha256": "9eb5480b92dd0f36c8ef7b7d6624c3ad854fe10eeea0f4d47e20bf12f9a13920"
+        },
+        "supervisor-watchdog.jsonl": {
+          "exists": true,
+          "size_bytes": 23522271,
+          "mtime": "2026-07-18T02:27:01.755041Z",
+          "sha256": "f2fe3d0bd51b65f2c2b5041d65f9e7bb27e7622a6fa086a0c064595c12706c33"
+        },
+        "supervisor-watchdog-contention.jsonl": {
+          "exists": true,
+          "size_bytes": 712543,
+          "mtime": "2026-07-18T02:19:02.141209Z",
+          "sha256": "c48e45392cc2c660bd0c8500bd060a29664f31e1243a05ca5b72ddbd87d6d85b"
+        },
+        "state.json": {
+          "exists": true,
+          "size_bytes": 3123359,
+          "mtime": "2026-07-18T02:26:50.870836Z",
+          "sha256": "786abcabadf334a5c80522f00ff82ebab3c369d1e4a0247c7e7ebdd7c14ce89e"
+        },
+        "live-supervisor-mainroot-config.json": {
+          "exists": true,
+          "size_bytes": 49496,
+          "mtime": "2026-07-18T01:15:21.186649Z",
+          "sha256": "007ed3c9af032463b03d45ee494ee284b5b6a6bf6651eb79d0ac27e6b7df9e6a"
+        }
+      }
+    },
+    {
+      "timestamp": "2026-07-18T02:28:04.281562Z",
+      "watchdog_metric_event": {
+        "version": 1,
+        "event_id": "watchdog-1784341682075-166239",
+        "at": "2026-07-18T02:28:02Z",
+        "event_type": "watchdog_probe",
+        "decision": "observe_only",
+        "reason": "supervisor_healthy",
+        "pid": 3670380,
+        "new_pid": null,
+        "heartbeat_age_seconds": 30.0,
+        "resource": {
+          "disk_free_gb": 310.851,
+          "disk_used_percent": 35.68,
+          "memory_available_mb": 29807.1,
+          "load_1m": 6.34,
+          "active_worker_count": 3,
+          "active_worker_count_source": "live_worker_runner_pid_identity",
+          "active_worker_live_count": 3,
+          "active_worker_runtime_state_count": 3,
+          "active_worker_scan_error": null,
+          "state_parent_writable": true
+        },
+        "restart_count_window": 0,
+        "restart_count_hour": 0,
+        "log_path": null,
+        "lock_held": true
+      },
+      "require_watchdog_health": {
+        "checks": [
+          {
+            "lock_held": true,
+            "name": "supervisor_process_alive",
+            "ok": true,
+            "pid": 3670380,
+            "pid_matches": true
+          },
+          {
+            "last_heartbeat_at": "2026-07-18T02:27:31Z",
+            "name": "supervisor_heartbeat_present",
+            "ok": true
+          },
+          {
+            "age_seconds": 33.343176,
+            "max_age_seconds": 900.0,
+            "name": "supervisor_heartbeat_fresh",
+            "ok": true
+          },
+          {
+            "last_loop_error": null,
+            "lifecycle": "running",
+            "name": "supervisor_not_degraded",
+            "ok": true
+          },
+          {
+            "age_seconds": 2.343176,
+            "max_age_seconds": 180.0,
+            "name": "watchdog_state_present",
+            "ok": true,
+            "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+            "updated_at": "2026-07-18T02:28:02Z"
+          },
+          {
+            "age_seconds": 2.343176,
+            "max_age_seconds": 180.0,
+            "name": "watchdog_probe_fresh",
+            "ok": true,
+            "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+            "updated_at": "2026-07-18T02:28:02Z"
+          }
+        ],
+        "generated_at": "2026-07-18T02:28:04.343176Z",
+        "healthy": true,
+        "repo_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "state_file": "/home/lupin/code/pantheon/.orchestrator/state.json",
+        "supervisor": {
+          "alive": true,
+          "heartbeat_age_seconds": 33.343176,
+          "last_heartbeat_at": "2026-07-18T02:27:31Z",
+          "last_loop_error": null,
+          "lifecycle": "running",
+          "lock_held": true,
+          "max_heartbeat_age_seconds": 900.0,
+          "pid": 3670380,
+          "process_alive": true
+        },
+        "watchdog": {
+          "age_seconds": 2.343176,
+          "max_age_seconds": 180.0,
+          "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+          "updated_at": "2026-07-18T02:28:02Z"
+        }
+      },
+      "process_evidence": {
+        "pid": 3670380,
+        "alive": true,
+        "cmdline": "python3 -u /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --verbose",
+        "threads_count": 1
+      },
+      "file_manifest": {
+        "watchdog-state.json": {
+          "exists": true,
+          "size_bytes": 6438,
+          "mtime": "2026-07-18T02:28:02.067720Z",
+          "sha256": "5a46068151b921c32cf1d46e5dc87cf413490b30cadefb9388b1bcb97282b1db"
+        },
+        "supervisor-watchdog.jsonl": {
+          "exists": true,
+          "size_bytes": 23522949,
+          "mtime": "2026-07-18T02:28:02.074170Z",
+          "sha256": "bba67282ea87ce6990d262561dd5a6f8f8f4eaddfad33f3cf6cf9b629750dc91"
+        },
+        "supervisor-watchdog-contention.jsonl": {
+          "exists": true,
+          "size_bytes": 712543,
+          "mtime": "2026-07-18T02:19:02.141209Z",
+          "sha256": "c48e45392cc2c660bd0c8500bd060a29664f31e1243a05ca5b72ddbd87d6d85b"
+        },
+        "state.json": {
+          "exists": true,
+          "size_bytes": 3123656,
+          "mtime": "2026-07-18T02:27:31.932471Z",
+          "sha256": "828116e61e75fb6710f66b02fb03307e8cad7ca60e236a474ff0ecf3cb86e9ff"
+        },
+        "live-supervisor-mainroot-config.json": {
+          "exists": true,
+          "size_bytes": 49496,
+          "mtime": "2026-07-18T01:15:21.186649Z",
+          "sha256": "007ed3c9af032463b03d45ee494ee284b5b6a6bf6651eb79d0ac27e6b7df9e6a"
+        }
+      }
+    }
+  ]
+}
