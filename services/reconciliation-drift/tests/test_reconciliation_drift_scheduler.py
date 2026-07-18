@@ -365,6 +365,50 @@ def test_scheduled_reconcile_can_target_one_binding() -> None:
         )
 
 
+def test_scheduled_reconcile_can_skip_incident_dispatch_for_targeted_probe() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        target = _healthy_runtime_summary(
+            binding_id="rtb-sched-target-dispatch-001",
+            runtime_id="runtime-sched-target-dispatch-001",
+            last_event_id="evt-sched-target-dispatch-001",
+            queue_lag_ms=20_000,
+        )
+
+        with (
+            mock.patch.object(
+                svc,
+                "_fetch_telemetry_runtime_summaries",
+                return_value=[target],
+            ),
+            mock.patch.object(
+                svc,
+                "_classify_drift_report_incident",
+                side_effect=AssertionError("incident dispatch should be skipped"),
+            ) as classify,
+        ):
+            response = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={
+                    "tick_id": "tick-target-no-incident-001",
+                    "binding_id": "rtb-sched-target-dispatch-001",
+                    "dispatch_incidents": False,
+                },
+            )
+
+        assert response.status_code == 201
+        payload = response.json()
+        assert payload["incident_dispatch_enabled"] is False
+        assert payload["evaluated_binding_count"] == 1
+        assert payload["drift_report_ids"] == []
+        assert payload["incident_ids"] == []
+        assert payload["incident_delivery_errors"] == []
+        assert classify.call_count == 0
+
+
 def test_scheduled_lag_breach_creates_deterministic_report_and_dedup_incident() -> None:
     from fastapi.testclient import TestClient
 

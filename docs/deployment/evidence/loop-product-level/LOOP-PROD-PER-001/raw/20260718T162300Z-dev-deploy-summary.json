@@ -1,0 +1,55 @@
+{
+  "schema_version": "loop_prod_per_001.deploy_summary.v1",
+  "generated_at": "2026-07-18T16:23:00Z",
+  "task_id": "LOOP-PROD-PER-001",
+  "environment": "dev",
+  "public_bff_base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "accepted_evidence_cut": {
+    "hosted_probe_run_id": 29651757459,
+    "hosted_probe_job_id": 88099168852,
+    "hosted_probe_completed_at": "2026-07-18T16:22:57Z",
+    "hosted_probe_conclusion": "success",
+    "expected_source_commit_sha": "36262a8133770aa49287582c840029cec1b3014e",
+    "observed_source_commit_sha": "36262a8133770aa49287582c840029cec1b3014e",
+    "raw_probe_ref": "raw/20260718T162257Z-hosted-probe-pass.json"
+  },
+  "deploy_runs": [
+    {
+      "run_id": 29649101040,
+      "workflow": "Pantheon Nonprod Deploy",
+      "head_sha": "df60d6be6247dada2fe62d7c75ad56c11459e9a7",
+      "created_at": "2026-07-18T14:59:39Z",
+      "completed_at": "2026-07-18T15:44:43Z",
+      "conclusion": "failure",
+      "dev_stack_deploy_step": "success",
+      "terminal_failure_step": "Dev canonical paper lifecycle hosted probe",
+      "terminal_failure_scope": "LOOP-PROD-TEL-002 reconciliation_unavailable probe",
+      "per_acceptance_use": "superseded_by_current_deploy"
+    },
+    {
+      "run_id": 29650856548,
+      "workflow": "Pantheon Nonprod Deploy",
+      "head_sha": "36262a8133770aa49287582c840029cec1b3014e",
+      "created_at": "2026-07-18T15:52:53Z",
+      "completed_at": "2026-07-18T16:19:25Z",
+      "conclusion": "failure",
+      "dev_stack_deploy_step": "success",
+      "terminal_failure_step": "Dev canonical paper lifecycle hosted probe",
+      "terminal_failure_scope": "LOOP-PROD-TEL-002 reconciliation_unavailable probe",
+      "per_acceptance_use": "accepted_stack_identity_for_per_hosted_probe"
+    }
+  ],
+  "latest_public_bff_observation": {
+    "observed_at": "2026-07-18T16:19:25Z",
+    "source_commit_sha": "36262a8133770aa49287582c840029cec1b3014e",
+    "build_time": "2026-07-18T15:56:05Z",
+    "auth_mode": "strict",
+    "auth_stub": false,
+    "readyz_status": "ok",
+    "readyz_dependencies": [
+      "runtime_manager",
+      "governance",
+      "deployment"
+    ]
+  }
+}
