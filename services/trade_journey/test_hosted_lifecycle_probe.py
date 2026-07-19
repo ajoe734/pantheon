@@ -120,7 +120,7 @@ def _natural_lifecycle_rows() -> list[dict]:
     event_types = [*probe.REQUIRED_EVENT_TYPES, "reconciliation_completed"]
     selected = [json.loads(json.dumps(by_type[event_type])) for event_type in event_types]
     signal_event_id = selected[0]["event_id"]
-    fill_event_id = selected[3]["event_id"]
+    fill_event_id = selected[5]["event_id"]
     evaluation_id = "evaluation-paper-001"
     event_ids = [
         signal_event_id,
@@ -133,7 +133,19 @@ def _natural_lifecycle_rows() -> list[dict]:
         str(
             uuid.uuid5(
                 probe.PAPER_LIFECYCLE_UUID_NAMESPACE,
+                f"{fill_event_id}:risk_evaluation",
+            )
+        ),
+        str(
+            uuid.uuid5(
+                probe.PAPER_LIFECYCLE_UUID_NAMESPACE,
                 f"{fill_event_id}:order_submitted",
+            )
+        ),
+        str(
+            uuid.uuid5(
+                probe.PAPER_LIFECYCLE_UUID_NAMESPACE,
+                f"{fill_event_id}:order_accepted",
             )
         ),
         fill_event_id,
@@ -236,11 +248,13 @@ def test_probe_correlates_committed_events_to_live_journey_and_loop(tmp_path):
     assert code == 0
     assert artifact["outcome"] == "passed"
     assert artifact["proof"]["source"]["baseline_high_watermark"] == 0
-    assert artifact["proof"]["source"]["source_high_watermark"] == 6
+    assert artifact["proof"]["source"]["source_high_watermark"] == 8
     assert [event["event_type"] for event in artifact["proof"]["events"]] == [
         "signal_generation",
         "trade_decision",
+        "risk_evaluation",
         "order_submitted",
+        "order_accepted",
         "paper_fill_simulated",
         "position_snapshot",
         "reconciliation_completed",
@@ -307,8 +321,8 @@ def test_probe_reads_only_rows_after_baseline_for_incremental_source(tmp_path):
         state_path=root / "controller_state.json",
         bundle_root=root,
         deployment_sha="deployed-sha",
-    ).project_records(shifted_rows, mode="live", source_high_watermark=106)
-    source = IncrementalSource(baseline=100, high=106, rows=shifted_rows)
+    ).project_records(shifted_rows, mode="live", source_high_watermark=108)
+    source = IncrementalSource(baseline=100, high=108, rows=shifted_rows)
 
     code, artifact = asyncio.run(
         probe.execute(
@@ -327,7 +341,7 @@ def test_probe_reads_only_rows_after_baseline_for_incremental_source(tmp_path):
     assert source.snapshot_after_baselines == [100]
     assert source.snapshot_calls == 0
     assert artifact["proof"]["source"]["baseline_high_watermark"] == 100
-    assert artifact["proof"]["source"]["source_high_watermark"] == 106
+    assert artifact["proof"]["source"]["source_high_watermark"] == 108
 
 
 def test_probe_uses_explicit_baseline_without_initial_high_watermark(tmp_path):
@@ -339,8 +353,8 @@ def test_probe_uses_explicit_baseline_without_initial_high_watermark(tmp_path):
         state_path=root / "controller_state.json",
         bundle_root=root,
         deployment_sha="deployed-sha",
-    ).project_records(shifted_rows, mode="live", source_high_watermark=206)
-    source = IncrementalSource(baseline=999, high=206, rows=shifted_rows)
+    ).project_records(shifted_rows, mode="live", source_high_watermark=208)
+    source = IncrementalSource(baseline=999, high=208, rows=shifted_rows)
 
     code, artifact = asyncio.run(
         probe.execute(
@@ -360,7 +374,7 @@ def test_probe_uses_explicit_baseline_without_initial_high_watermark(tmp_path):
     assert source.snapshot_after_baselines == [200]
     assert source.snapshot_calls == 0
     assert artifact["proof"]["source"]["baseline_high_watermark"] == 200
-    assert artifact["proof"]["source"]["source_high_watermark"] == 206
+    assert artifact["proof"]["source"]["source_high_watermark"] == 208
 
 
 def test_main_prints_high_watermark_without_projection_root_or_output(monkeypatch, capsys):
@@ -454,17 +468,17 @@ def test_probe_rejects_tampered_projection_manifest(tmp_path):
 def test_probe_rejects_old_lifecycle_inherited_by_expected_deployment(tmp_path):
     root, rows = _publish(tmp_path, sha="old-sha")
     unrelated = json.loads(json.dumps(lifecycle_rows()[2]))
-    unrelated["ingested_seq"] = 7
+    unrelated["ingested_seq"] = 9
     LifecycleProjector(
         state_path=root / "controller_state.json",
         bundle_root=root,
         deployment_sha="new-sha",
-    ).project_records([unrelated], mode="live", source_high_watermark=7)
+    ).project_records([unrelated], mode="live", source_high_watermark=9)
 
     output = tmp_path / "old-lifecycle.json"
     code, artifact = asyncio.run(
         probe.execute(
-            source=BaselineSource(7, rows),
+            source=BaselineSource(9, rows),
             projection_root=root,
             expected_sha="new-sha",
             output=output,
