@@ -755,6 +755,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
             return res
 
         with mock.patch.object(supervisor_watchdog, "_run_watchdog_locked", side_effect=mock_run_locked), \
+             mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=True), \
              mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()):
             
             results = []

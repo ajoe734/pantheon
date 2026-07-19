@@ -44,6 +44,30 @@ Preferred install:
 python3 scripts/supervisor_watchdog_install.py --method auto --start-now
 ```
 
+When the supervisor command checkout and canonical status checkout are
+different, pin the generated live config explicitly. Relative config paths are
+not safe for this split-root topology:
+
+```bash
+python3 scripts/provision_live_supervisor_config.py \
+  --repo-config /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/config.json \
+  --live-config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \
+  --command-root /home/lupin/pantheon-ci-deploy/dev-root \
+  --status-root /home/lupin/pantheon
+python3 scripts/supervisor_watchdog_install.py \
+  --repo /home/lupin/pantheon-ci-deploy/dev-root \
+  --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \
+  --method auto \
+  --start-now
+```
+
+The dev root deployment performs these commands automatically after the root
+stack validations pass. It fails the deployment unless the user-systemd timer
+(or cron fallback), watchdog probe, singleton supervisor, and canonical
+heartbeat all become healthy. For user systemd it also enables and verifies
+login linger, so the timer starts after a reboot without requiring an
+interactive login.
+
 `--method auto` prefers a user systemd timer and falls back to cron when user
 systemd is unavailable.
 

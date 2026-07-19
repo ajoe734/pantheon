@@ -23,6 +23,18 @@ def test_render_systemd_service_points_at_repo_watchdog() -> None:
     assert 'ExecStart="/tmp/pantheon repo/scripts/run-supervisor-watchdog.sh" --restart' in unit
 
 
+def test_render_systemd_service_pins_explicit_live_config() -> None:
+    repo = Path("/tmp/pantheon repo")
+    config = Path("/tmp/pantheon runtime/live supervisor.json")
+
+    unit = render_systemd_service(repo, config)
+
+    assert (
+        'ExecStart="/tmp/pantheon repo/scripts/run-supervisor-watchdog.sh" '
+        '--restart --config "/tmp/pantheon runtime/live supervisor.json"'
+    ) in unit
+
+
 def test_render_systemd_timer_runs_every_minute() -> None:
     timer = render_systemd_timer()
 
@@ -43,3 +55,13 @@ def test_render_cron_line_is_idempotently_tagged() -> None:
     assert "scripts/run-supervisor-watchdog.sh --restart" in line
     assert ".orchestrator/logs/supervisor-watchdog-cron.log" in line
     assert line.endswith(CRON_TAG)
+
+
+def test_render_cron_line_pins_shell_quoted_live_config() -> None:
+    repo = Path("/home/lupin/pantheon dev")
+    config = Path("/home/lupin/pantheon runtime/live supervisor.json")
+
+    line = render_cron_line(repo, config)
+
+    assert "cd '/home/lupin/pantheon dev'" in line
+    assert "--config '/home/lupin/pantheon runtime/live supervisor.json'" in line

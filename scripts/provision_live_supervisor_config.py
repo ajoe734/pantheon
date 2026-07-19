@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Render the split-root supervisor config used by the Pantheon dev VM.
+
+The supervisor code runs from an immutable deployment worktree while all
+coordination state remains in the canonical Pantheon checkout mounted into the
+BFF. Relative config paths would otherwise resolve under the command checkout
+and create a second task/status universe.
+"""
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import os
+import stat
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+
+def load_json_object(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"config must contain a JSON object: {path}")
+    return payload
+
+
+def deep_merge(base: Any, overlay: Any) -> Any:
+    if isinstance(base, dict) and isinstance(overlay, dict):
+        merged = copy.deepcopy(base)
+        for key, value in overlay.items():
+            merged[key] = deep_merge(merged[key], value) if key in merged else copy.deepcopy(value)
+        return merged
+    return copy.deepcopy(overlay)
+
+
+def first_symlink_component(path: Path) -> Path | None:
+    absolute = path.absolute()
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current /= part
+        try:
+            if current.is_symlink():
+                return current
+        except OSError:
+            return current
+    return None
+
+
+def canonical_status_paths(repo_config: dict[str, Any], status_root: Path) -> dict[str, str]:
+    paths = repo_config.get("paths")
+    if not isinstance(paths, dict) or not paths:
+        raise ValueError("repo config must define a non-empty paths object")
+
+    rendered: dict[str, str] = {}
+    for key, raw_value in paths.items():
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            raise ValueError(f"repo config path {key!r} must be a non-empty string")
+        source = Path(os.path.expanduser(raw_value))
+        candidate = source if source.is_absolute() else status_root / source
+        candidate = candidate.absolute()
+        symlink = first_symlink_component(candidate)
+        if symlink is not None:
+            raise ValueError(f"repo config path {key!r} contains a symlink component: {symlink}")
+        candidate = candidate.resolve()
+        try:
+            candidate.relative_to(status_root)
+        except ValueError as exc:
+            raise ValueError(
+                f"repo config path {key!r} escapes canonical status root: {candidate}"
+            ) from exc
+        rendered[key] = str(candidate)
+
+    expected_status_file = status_root / "ai-status.json"
+    if Path(rendered.get("status_file", "")) != expected_status_file:
+        raise ValueError(
+            "live supervisor status_file must resolve to the canonical status root: "
+            f"expected {expected_status_file}, got {rendered.get('status_file')!r}"
+        )
+    return rendered
+
+
+def build_live_config(
+    repo_config: dict[str, Any],
+    *,
+    existing_live_config: dict[str, Any] | None,
+    command_root: Path,
+    status_root: Path,
+    live_config_path: Path,
+    python_executable: Path,
+) -> dict[str, Any]:
+    rendered = deep_merge(repo_config, existing_live_config or {})
+    rendered["paths"] = canonical_status_paths(repo_config, status_root)
+
+    watchdog = rendered.setdefault("watchdog", {})
+    if not isinstance(watchdog, dict):
+        raise ValueError("watchdog config must be a JSON object")
+    watchdog["supervisor_command"] = [
+        str(python_executable),
+        "-u",
+        str(command_root / ".orchestrator" / "supervisor.py"),
+        "--config",
+        str(live_config_path),
+        "--verbose",
+    ]
+    return rendered
+
+
+def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.is_symlink():
+        raise ValueError(f"refusing to replace symlink live config: {path}")
+    symlink = first_symlink_component(path.parent)
+    if symlink is not None:
+        raise ValueError(f"live config parent contains a symlink component: {symlink}")
+
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), stat.S_IRUSR | stat.S_IWUSR)
+            json.dump(payload, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def validated_root(path: Path, *, label: str, required: tuple[str, ...]) -> Path:
+    expanded = path.expanduser().absolute()
+    symlink = first_symlink_component(expanded)
+    if symlink is not None:
+        raise ValueError(f"{label} contains a symlink component: {symlink}")
+    resolved = expanded.resolve()
+    if not resolved.is_dir():
+        raise ValueError(f"{label} is not a directory: {resolved}")
+    for relative in required:
+        candidate = resolved / relative
+        if not candidate.exists() or candidate.is_symlink():
+            raise ValueError(f"{label} is missing regular path {relative}: {candidate}")
+    return resolved
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo-config", required=True)
+    parser.add_argument("--live-config", required=True)
+    parser.add_argument("--command-root", required=True)
+    parser.add_argument("--status-root", required=True)
+    parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--json", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        command_root = validated_root(
+            Path(args.command_root),
+            label="command root",
+            required=(
+                ".git",
+                ".orchestrator/supervisor.py",
+                "scripts/run-supervisor-watchdog.sh",
+            ),
+        )
+        status_root = validated_root(
+            Path(args.status_root),
+            label="status root",
+            required=(".git", "ai-status.json"),
+        )
+        if command_root == status_root:
+            raise ValueError("split-root dev supervisor requires distinct command and status roots")
+
+        repo_config_path = Path(args.repo_config).expanduser().absolute()
+        live_config_path = Path(args.live_config).expanduser().absolute()
+        repo_config_symlink = first_symlink_component(repo_config_path)
+        if repo_config_symlink is not None or not repo_config_path.is_file():
+            raise ValueError(f"repo config must be a regular non-symlink file: {repo_config_path}")
+        repo_config_path = repo_config_path.resolve()
+
+        repo_config = load_json_object(repo_config_path)
+        existing = None
+        if live_config_path.exists():
+            if live_config_path.is_symlink() or not live_config_path.is_file():
+                raise ValueError(f"live config must be a regular non-symlink file: {live_config_path}")
+            existing = load_json_object(live_config_path)
+
+        python_executable = Path(args.python).expanduser().resolve()
+        if not python_executable.is_file():
+            raise ValueError(f"python executable does not exist: {python_executable}")
+        rendered = build_live_config(
+            repo_config,
+            existing_live_config=existing,
+            command_root=command_root,
+            status_root=status_root,
+            live_config_path=live_config_path,
+            python_executable=python_executable,
+        )
+        write_json_atomic(live_config_path, rendered)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"live supervisor config provisioning failed: {exc}", file=sys.stderr)
+        return 2
+
+    summary = {
+        "command_root": str(command_root),
+        "status_root": str(status_root),
+        "live_config": str(live_config_path),
+        "supervisor_command": rendered["watchdog"]["supervisor_command"],
+    }
+    if args.json:
+        print(json.dumps(summary, indent=2, sort_keys=True))
+    else:
+        print(
+            "provisioned live supervisor config: "
+            f"command_root={command_root} status_root={status_root} config={live_config_path}"
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

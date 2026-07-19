@@ -19,6 +19,13 @@ def repo_root_from(value: str | None) -> Path:
     return raw.resolve()
 
 
+def explicit_regular_file(value: str) -> Path:
+    raw = Path(value).expanduser().absolute()
+    if raw.is_symlink() or not raw.is_file():
+        raise ValueError(f"expected a regular non-symlink file: {raw}")
+    return raw.resolve()
+
+
 def systemd_quote(value: Path | str) -> str:
     text = str(value)
     if not text:
@@ -28,7 +35,14 @@ def systemd_quote(value: Path | str) -> str:
     return text
 
 
-def render_systemd_service(repo_root: Path) -> str:
+def render_watchdog_arguments(config_path: Path | None = None) -> str:
+    arguments = ["--restart"]
+    if config_path is not None:
+        arguments.extend(["--config", systemd_quote(config_path)])
+    return " ".join(arguments)
+
+
+def render_systemd_service(repo_root: Path, config_path: Path | None = None) -> str:
     script = repo_root / "scripts" / "run-supervisor-watchdog.sh"
     return "\n".join(
         [
@@ -41,7 +55,7 @@ def render_systemd_service(repo_root: Path) -> str:
             "Type=oneshot",
             f"WorkingDirectory={systemd_quote(repo_root)}",
             "Environment=PYTHONUNBUFFERED=1",
-            f"ExecStart={systemd_quote(script)} --restart",
+            f"ExecStart={systemd_quote(script)} {render_watchdog_arguments(config_path)}",
             "",
         ]
     )
@@ -67,11 +81,14 @@ def render_systemd_timer() -> str:
     )
 
 
-def render_cron_line(repo_root: Path) -> str:
+def render_cron_line(repo_root: Path, config_path: Path | None = None) -> str:
     repo = shlex.quote(str(repo_root))
+    config_argument = ""
+    if config_path is not None:
+        config_argument = f" --config {shlex.quote(str(config_path))}"
     return (
         f"* * * * * cd {repo} && mkdir -p .orchestrator/logs && "
-        "bash scripts/run-supervisor-watchdog.sh --restart "
+        f"bash scripts/run-supervisor-watchdog.sh --restart{config_argument} "
         f">> .orchestrator/logs/supervisor-watchdog-cron.log 2>&1 {CRON_TAG}"
     )
 
@@ -105,11 +122,21 @@ def write_text(path: Path, content: str, *, dry_run: bool) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def install_systemd(repo_root: Path, *, dry_run: bool, start_now: bool) -> None:
+def install_systemd(
+    repo_root: Path,
+    *,
+    config_path: Path | None,
+    dry_run: bool,
+    start_now: bool,
+) -> None:
     unit_dir = Path.home() / ".config" / "systemd" / "user"
     service_path = unit_dir / SERVICE_NAME
     timer_path = unit_dir / TIMER_NAME
-    write_text(service_path, render_systemd_service(repo_root), dry_run=dry_run)
+    write_text(
+        service_path,
+        render_systemd_service(repo_root, config_path),
+        dry_run=dry_run,
+    )
     write_text(timer_path, render_systemd_timer(), dry_run=dry_run)
     run_command(["systemctl", "--user", "daemon-reload"], dry_run=dry_run)
     run_command(["systemctl", "--user", "enable", "--now", TIMER_NAME], dry_run=dry_run)
@@ -137,8 +164,8 @@ def current_crontab() -> list[str]:
     return result.stdout.splitlines()
 
 
-def install_cron(repo_root: Path, *, dry_run: bool) -> None:
-    line = render_cron_line(repo_root)
+def install_cron(repo_root: Path, *, config_path: Path | None, dry_run: bool) -> None:
+    line = render_cron_line(repo_root, config_path)
     existing = [raw for raw in current_crontab() if CRON_TAG not in raw]
     new_content = "\n".join([*existing, line]).rstrip() + "\n"
     if dry_run:
@@ -168,6 +195,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--repo", default=".", help="Pantheon repository root. Defaults to cwd.")
     parser.add_argument(
+        "--config",
+        default=None,
+        help=(
+            "Explicit supervisor/watchdog config. The absolute resolved path is "
+            "persisted in the systemd unit or cron entry."
+        ),
+    )
+    parser.add_argument(
         "--method",
         choices=["auto", "systemd", "cron"],
         default="auto",
@@ -188,6 +223,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     repo_root = repo_root_from(args.repo)
+    try:
+        config_path = explicit_regular_file(args.config) if args.config and not args.uninstall else None
+    except ValueError as exc:
+        print(f"watchdog config is invalid: {exc}", file=sys.stderr)
+        return 2
     if not (repo_root / "scripts" / "run-supervisor-watchdog.sh").exists():
         print(f"not a Pantheon repo root, missing scripts/run-supervisor-watchdog.sh: {repo_root}", file=sys.stderr)
         return 2
@@ -204,9 +244,14 @@ def main() -> int:
                 uninstall_cron(dry_run=args.dry_run)
         else:
             if method == "systemd":
-                install_systemd(repo_root, dry_run=args.dry_run, start_now=args.start_now)
+                install_systemd(
+                    repo_root,
+                    config_path=config_path,
+                    dry_run=args.dry_run,
+                    start_now=args.start_now,
+                )
             else:
-                install_cron(repo_root, dry_run=args.dry_run)
+                install_cron(repo_root, config_path=config_path, dry_run=args.dry_run)
     except subprocess.CalledProcessError as exc:
         print(f"watchdog persistence command failed: {exc}", file=sys.stderr)
         return exc.returncode or 1
