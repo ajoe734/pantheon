@@ -117,7 +117,8 @@ Healthy output must have:
 - `healthy: true`
 - `supervisor.alive: true`
 - `supervisor.heartbeat_age_seconds` under the configured watchdog threshold
-- a fresh watchdog state update, normally under 180 seconds old
+- a fresh watchdog probe, normally under 180 seconds old, proven by either the
+  serialized watchdog state update or a valid lock-contention metric
 
 For a live shell check:
 
@@ -139,6 +140,8 @@ To prevent supervisor watchdog processes from queuing up and accumulating under 
    - Under contention, the watchdog does not attempt to write to the main `watchdog-state.json` or `metrics.jsonl` files (which would trigger blocking writes).
    - Instead, it attempts a nonblocking write to `.orchestrator/metrics/supervisor-watchdog-contention.jsonl` using a separate `.lock` file.
    - If the contention metrics lock is also contended, the metric write is dropped and a message is written to `sys.stderr` to prevent secondary blocking loops.
+   - Runtime health uses the newest valid contention metric as probe-freshness
+     evidence while still requiring the serialized watchdog state file to exist.
 
 3. **Diagnostics & JSON Contract**:
    - When run with `--json`, a contended watchdog probe exits with code `0` and outputs a structured JSON contract detailing the contention event:

@@ -92,3 +92,99 @@ def test_require_watchdog_fails_when_probe_is_stale(tmp_path: Path) -> None:
     assert report["healthy"] is False
     failed = {item["name"] for item in report["checks"] if not item["ok"]}
     assert "watchdog_probe_fresh" in failed
+
+
+def test_require_watchdog_accepts_fresh_lock_contention_probe(tmp_path: Path) -> None:
+    repo = tmp_path
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
+    write_json(
+        repo / ".orchestrator" / "config.json",
+        {
+            "paths": {"state_file": ".orchestrator/state.json"},
+            "watchdog": {
+                "state_file": ".orchestrator/watchdog-state.json",
+                "contention_metrics_file": ".orchestrator/metrics/watchdog-contention.jsonl",
+            },
+        },
+    )
+    write_json(
+        repo / ".orchestrator" / "state.json",
+        {"supervisor": {"last_heartbeat_at": "2026-06-06T06:29:50Z", "lifecycle": "running"}},
+    )
+    write_json(repo / ".orchestrator" / "watchdog-state.json", {"updated_at": "2026-06-06T06:00:00Z"})
+    contention_path = repo / ".orchestrator" / "metrics" / "watchdog-contention.jsonl"
+    contention_path.parent.mkdir(parents=True, exist_ok=True)
+    contention_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "version": 1,
+                        "at": "2026-06-06T06:29:40Z",
+                        "decision": "skip",
+                        "reason": "lock_contention",
+                        "lock_held": True,
+                    }
+                ),
+                "{partial",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    lock_path = repo / ".orchestrator" / "supervisor.lock"
+    lock_handle = lock_path.open("a+", encoding="utf-8")
+    try:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        report = evaluate_runtime_health(repo, now=now, require_watchdog=True, max_watchdog_age=180)
+    finally:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+        lock_handle.close()
+
+    assert report["healthy"] is True
+    assert report["watchdog"]["probe_source"] == "contention_metric"
+    assert report["watchdog"]["probe_updated_at"] == "2026-06-06T06:29:40Z"
+
+
+def test_require_watchdog_rejects_untrusted_contention_probe(tmp_path: Path) -> None:
+    repo = tmp_path
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
+    write_json(
+        repo / ".orchestrator" / "config.json",
+        {
+            "paths": {"state_file": ".orchestrator/state.json"},
+            "watchdog": {"state_file": ".orchestrator/watchdog-state.json"},
+        },
+    )
+    write_json(
+        repo / ".orchestrator" / "state.json",
+        {"supervisor": {"last_heartbeat_at": "2026-06-06T06:29:50Z", "lifecycle": "running"}},
+    )
+    write_json(repo / ".orchestrator" / "watchdog-state.json", {"updated_at": "2026-06-06T06:00:00Z"})
+    contention_path = repo / ".orchestrator" / "metrics" / "supervisor-watchdog-contention.jsonl"
+    contention_path.parent.mkdir(parents=True, exist_ok=True)
+    contention_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "at": "2026-06-06T06:29:40Z",
+                "decision": "skip",
+                "reason": "lock_contention",
+                "lock_held": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    lock_path = repo / ".orchestrator" / "supervisor.lock"
+    lock_handle = lock_path.open("a+", encoding="utf-8")
+    try:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        report = evaluate_runtime_health(repo, now=now, require_watchdog=True, max_watchdog_age=180)
+    finally:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+        lock_handle.close()
+
+    assert report["healthy"] is False
+    failed = {item["name"] for item in report["checks"] if not item["ok"]}
+    assert "watchdog_probe_fresh" in failed
